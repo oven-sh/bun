@@ -4,6 +4,7 @@
 use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{Js, Vm};
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
@@ -125,22 +126,22 @@ macro_rules! impl_timer_object {
                 js_value
             }
 
-            pub(crate) fn to_primitive(this: &Self) -> ::bun_jsc::JsResult<u64> {
-                this.internals.to_primitive()
+            pub(crate) fn to_primitive(this: &::bun_jsc::Vm<Self>) -> ::bun_jsc::JsResult<u64> {
+                this.internals.to_primitive(this.as_vm())
             }
 
             pub(crate) fn do_ref(
-                this: &Self,
+                this: &::bun_jsc::Vm<Self>,
                 this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
             ) -> ::bun_jsc::JSValue {
-                this.internals.do_ref(this_value.to_js())
+                this.on(&this.internals).do_ref(this_value.to_js())
             }
 
             pub(crate) fn do_unref(
-                this: &Self,
+                this: &::bun_jsc::Vm<Self>,
                 this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
             ) -> ::bun_jsc::JSValue {
-                this.internals.do_unref(this_value.to_js())
+                this.on(&this.internals).do_unref(this_value.to_js())
             }
 
             pub(crate) fn has_ref(this: &Self) -> bool {
@@ -363,7 +364,7 @@ impl DateHeaderTimer {
         if loop_.should_enable_date_header_timer() {
             // Reschedule it automatically for 1 second later.
             self.event_loop_timer.next.set(now.add_ms(1000));
-            timer_all().insert(&raw const self.event_loop_timer);
+            timer_all(vm).insert(&raw const self.event_loop_timer);
         }
     }
 }
@@ -390,7 +391,7 @@ impl Default for EventLoopDelayMonitor {
 }
 
 impl EventLoopDelayMonitor {
-    pub(crate) fn enable(&self, interval: &Rc<Interval>) {
+    pub(crate) fn enable(self: &Vm<Self>, interval: &Rc<Interval>) {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         // SAFETY: JS thread; the borrow ends at this statement, which runs no JS.
         unsafe { &mut *self.enabled.get() }.push(EnabledInterval {
@@ -400,14 +401,14 @@ impl EventLoopDelayMonitor {
         self.schedule();
     }
 
-    pub(crate) fn disable(&self, interval: &Rc<Interval>) {
+    pub(crate) fn disable(self: &Vm<Self>, interval: &Rc<Interval>) {
         // SAFETY: as `enable`.
         unsafe { &mut *self.enabled.get() }
             .retain(|enabled| !core::ptr::eq(enabled.interval.as_ptr(), Rc::as_ptr(interval)));
         self.schedule();
     }
 
-    pub(crate) fn disable_all(&self) {
+    pub(crate) fn disable_all(self: &Vm<Self>) {
         // SAFETY: as `enable`.
         unsafe { &mut *self.enabled.get() }.clear();
         self.schedule();
@@ -431,7 +432,7 @@ impl EventLoopDelayMonitor {
             }
             true
         });
-        self.schedule();
+        vm.as_vm().on(self).schedule();
         if allocated > 0 {
             // This can collect, so it comes last.
             vm.jsc_vm()
@@ -440,12 +441,12 @@ impl EventLoopDelayMonitor {
     }
 
     /// Arms the timer for the interval that is due first.
-    fn schedule(&self) {
+    fn schedule(self: &Vm<Self>) {
         // SAFETY: JS thread; `min_by` is the last use.
         let enabled = unsafe { &*self.enabled.get() };
         let next = enabled.iter().map(|enabled| enabled.next);
         if let Some(next) = next.min_by(Timespec::order) {
-            timer_all().update(&raw const self.event_loop_timer, &next);
+            timer_all(self.bun_vm()).update(&raw const self.event_loop_timer, &next);
         } else {
             self.event_loop_timer.disarm();
         }
@@ -540,7 +541,9 @@ pub(crate) struct All {
 }
 
 impl All {
-    pub(crate) fn init() -> Self {
+    /// # Safety
+    /// It goes into this thread's `RuntimeState`, and is used only while that is installed.
+    pub(crate) unsafe fn init() -> Self {
         Self {
             last_id: Cell::new(1),
             first_id_of_hot_run: Cell::new(0),
@@ -664,7 +667,9 @@ impl All {
         let uv_timer = unsafe { &mut *self.uv_timer.get() };
         if uv_timer.data.is_null() {
             uv_timer.init(uv::Loop::get());
-            uv_timer.data = VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
+            // SAFETY: the contract of `init`, on its thread.
+            uv_timer.data = VirtualMachine::get_mut_ptr(unsafe { Vm::assume(self) })
+                .cast::<core::ffi::c_void>();
             uv_timer.unref();
         }
         debug_assert!(
@@ -722,8 +727,9 @@ impl All {
         // back exactly the handle pointer we registered in `ensure_uv_timer`);
         // recover the containing `All` via container_of. It is live for the VM lifetime.
         let all = unsafe { &*bun_core::from_field_ptr!(All, uv_timer, uv_timer_t) };
-        // SAFETY: `data` was set to the VM ptr in `ensure_uv_timer` (non-null).
-        let vm = unsafe { &*(*uv_timer_t).data.cast::<VirtualMachine>() };
+        // SAFETY: `data` was set to the VM ptr in `ensure_uv_timer` (non-null). `uv_run` dispatches, and teardown
+        // closes the handle before it turns the loop without a heap.
+        let vm = unsafe { &*(*uv_timer_t).data.cast::<Js<VirtualMachine>>() };
         all.drain_timers(vm);
         all.ensure_uv_timer();
     }
@@ -799,7 +805,7 @@ impl All {
     fn drain_due_wtf_timers(
         &self,
         maybe_now: &mut Option<Timespec>,
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
     ) -> Option<Timespec> {
         loop {
             let min = {
@@ -847,7 +853,7 @@ impl All {
         spec: &mut Timespec,
         has_pending_immediate: bool,
         quic_next_tick_us: Option<i64>,
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
         now_out: &mut Option<Timespec>,
     ) -> bool {
         #[cfg(unix)]
@@ -931,7 +937,7 @@ impl All {
         self.timers.delete_min()
     }
 
-    pub(crate) fn drain_timers(&self, vm: &VirtualMachine) {
+    pub(crate) fn drain_timers(&self, vm: &Js<VirtualMachine>) {
         let mut wtf_now: Option<Timespec> = None;
         let _ = self.drain_due_wtf_timers(&mut wtf_now, vm);
 
@@ -972,7 +978,9 @@ impl All {
                     uv_idle.init(uv::Loop::get());
                     // Note: `data` is only used as a
                     // non-null "initialized" sentinel — never dereferenced.
-                    uv_idle.data = VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
+                    // SAFETY: as in `ensure_uv_timer`.
+                    uv_idle.data = VirtualMachine::get_mut_ptr(unsafe { Vm::assume(self) })
+                        .cast::<core::ffi::c_void>();
                 }
                 uv_idle.start(Some(Self::on_uv_idle_noop));
             }
@@ -1206,12 +1214,12 @@ const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
 /// as uncaught, or — if it is the VM's termination — tell the drain to stop.
 #[inline]
 fn fold_timer(
-    vm: &VirtualMachine,
+    vm: &Js<VirtualMachine>,
     fired: bun_event_loop::JsResult<()>,
 ) -> Result<(), bun_jsc::Stopped> {
     #[cold]
     #[inline(never)]
-    fn report(vm: &VirtualMachine, err: bun_jsc::JsError) -> Result<(), bun_jsc::Stopped> {
+    fn report(vm: &Js<VirtualMachine>, err: bun_jsc::JsError) -> Result<(), bun_jsc::Stopped> {
         bun_jsc::task::report_error_or_terminate(vm.global(), err)
     }
     match fired {

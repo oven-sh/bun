@@ -1,11 +1,11 @@
 use bun_core::EncodedSlice;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::virtual_machine::{GCLevel, VirtualMachine};
-use bun_jsc::{self as jsc, JSType, JSValue, JsResult};
+use bun_jsc::virtual_machine::GCLevel;
+use bun_jsc::{self as jsc, JSType, JSValue, JsResult, Vm};
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _};
 
-pub(crate) fn gc_aggression_level(level: Option<f64>) -> i32 {
-    let vm = VirtualMachine::get();
+pub(crate) fn gc_aggression_level(level: Option<f64>, vm: Vm) -> i32 {
+    let vm = vm.bun_vm();
     let previous = vm.aggressive_garbage_collection.get() as i32;
     match level.map(|level| level as i32) {
         Some(1) => vm.aggressive_garbage_collection.set(GCLevel::Mild),

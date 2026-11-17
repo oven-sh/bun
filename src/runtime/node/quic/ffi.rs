@@ -19,6 +19,8 @@ use core::ffi::c_void;
 ///   thread, so the returned `&T` cannot race another thread, and every
 ///   mutable field of these types is `Cell`-based (shared-ref interior
 ///   mutability), so `&T` is the right reference to hand the callback body.
+/// * `T` may be a `Js`: `lsquic_engine_destroy` also calls back below a finalizer, where
+///   `release_native` has set `closed`, which `schedule_process` tests first.
 ///
 /// The caller must not hold the returned reference past the callback.
 pub(crate) unsafe fn ctx_ref<'a, T>(ctx: *mut c_void) -> Option<&'a T> {

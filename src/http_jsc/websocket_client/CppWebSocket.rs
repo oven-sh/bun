@@ -13,8 +13,7 @@ use bun_boringssl::c::OwnedSslCtx;
 use bun_core::String as BunString;
 use bun_core::ffi::FfiSlice;
 use bun_http1::Response;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{ContextId, JSGlobalObject, JSValue, JsResult, VirtualMachineRef};
+use bun_jsc::{ContextId, JSGlobalObject, JSValue, Js, JsResult};
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_uws_sys::Socket;
 
@@ -199,7 +198,7 @@ impl CppWebSocket {
     /// with 1006. A non-empty `system_code` overrides `reason`'s `error.code`; `detail` is appended
     /// to the message.
     pub(crate) fn did_fail(
-        &self,
+        self: &Js<Self>,
         reason: ErrorCode,
         buffered_amount: usize,
         system_code: BunString,
@@ -212,13 +211,13 @@ impl CppWebSocket {
         } else {
             system_code
         };
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+        let _scope = self.bun_vm().enter_event_loop_scope();
         WebSocket__didFail(self, message, buffered_amount, code, detail);
     }
 
     /// Dispatch the native `'handshake'` event; C++ copies all slices synchronously.
     pub(crate) fn did_receive_handshake_response(
-        &self,
+        self: &Js<Self>,
         response: &Response,
         is_upgrade: bool,
         body: &[u8],
@@ -231,7 +230,7 @@ impl CppWebSocket {
                 value: header.value().into(),
             })
             .collect();
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+        let _scope = self.bun_vm().enter_event_loop_scope();
         let result = WebSocket__didReceiveHandshakeResponse(
             self,
             u16::try_from(response.status_code).unwrap_or(0),
@@ -254,42 +253,42 @@ impl CppWebSocket {
     }
 
     /// A decoded body chunk of a non-101 response.
-    pub(crate) fn did_receive_response_body(&self, chunk: &[u8]) {
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+    pub(crate) fn did_receive_response_body(self: &Js<Self>, chunk: &[u8]) {
+        let _scope = self.bun_vm().enter_event_loop_scope();
         WebSocket__didReceiveResponseBody(self, chunk.into());
     }
 
     /// `aborted`: the connection closed before the body was complete. `reset`: a read failed.
     /// C++ drops its pointer to the upgrade client.
-    pub(crate) fn did_end_response_body(&self, aborted: bool, reset: bool) {
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+    pub(crate) fn did_end_response_body(self: &Js<Self>, aborted: bool, reset: bool) {
+        let _scope = self.bun_vm().enter_event_loop_scope();
         WebSocket__didEndResponseBody(self, aborted, reset);
     }
 
     /// The connection closed without an error. `code` and `reason` come from the peer's Close
     /// frame, or are 1006 and empty if it never sent one.
     pub(crate) fn did_close(
-        &self,
+        self: &Js<Self>,
         code: u16,
         reason: BunString,
         was_clean: bool,
         buffered_amount: usize,
     ) {
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+        let _scope = self.bun_vm().enter_event_loop_scope();
         WebSocket__didClose(self, code, reason, was_clean, buffered_amount);
     }
 
     /// We received the peer's Close frame and wrote or queued ours. Sets `readyState` to CLOSING
     /// and notifies `ws`. `code` is 1005 if the frame had no payload.
-    pub(crate) fn did_start_closing_handshake(&self, code: u16, reason: BunString) {
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+    pub(crate) fn did_start_closing_handshake(self: &Js<Self>, code: u16, reason: BunString) {
+        let _scope = self.bun_vm().enter_event_loop_scope();
         WebSocket__didStartClosingHandshake(self, code, reason);
     }
 
     /// `ws` only: emits `error` for a failed connection. `did_close` follows once it closes.
-    pub(crate) fn did_error(&self, reason: ErrorCode, detail: BunString) {
+    pub(crate) fn did_error(self: &Js<Self>, reason: ErrorCode, detail: BunString) {
         let info = reason.info();
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+        let _scope = self.bun_vm().enter_event_loop_scope();
         WebSocket__didError(
             self,
             BunString::static_(info.message),
@@ -298,18 +297,18 @@ impl CppWebSocket {
         );
     }
 
-    pub(crate) fn did_receive_text(&self, text: BunString) {
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+    pub(crate) fn did_receive_text(self: &Js<Self>, text: BunString) {
+        let _scope = self.bun_vm().enter_event_loop_scope();
         WebSocket__didReceiveText(self, text);
     }
 
-    pub(crate) fn did_receive_bytes(&self, bytes: &[u8], opcode: u8) {
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+    pub(crate) fn did_receive_bytes(self: &Js<Self>, bytes: &[u8], opcode: u8) {
+        let _scope = self.bun_vm().enter_event_loop_scope();
         WebSocket__didReceiveBytes(self, bytes.into(), opcode);
     }
 
-    pub(crate) fn did_drain(&self) {
-        let _scope = VirtualMachine::get().enter_event_loop_scope();
+    pub(crate) fn did_drain(self: &Js<Self>) {
+        let _scope = self.bun_vm().enter_event_loop_scope();
         WebSocket__didDrain(self);
     }
 
@@ -317,16 +316,16 @@ impl CppWebSocket {
     // ever entered from JS, so these are nested calls and don't enter the event loop.
 
     /// C++ copies `bytes`. The JS callback can re-enter the client.
-    pub(crate) fn stream_write(&self, bytes: &[u8]) {
+    pub(crate) fn stream_write(self: &Js<Self>, bytes: &[u8]) {
         WebSocket__streamWrite(self, bytes.into());
     }
 
     /// Half-close the stream. Nothing more will be written.
-    pub(crate) fn stream_end(&self) {
+    pub(crate) fn stream_end(self: &Js<Self>) {
         WebSocket__streamEnd(self);
     }
 
-    pub(crate) fn stream_destroy(&self) {
+    pub(crate) fn stream_destroy(self: &Js<Self>) {
         WebSocket__streamDestroy(self);
     }
 
@@ -371,7 +370,7 @@ impl CppWebSocket {
 
     /// The one verdict on a completed TLS handshake. May run JS that closes the WebSocket.
     pub(crate) fn accepts_tls_peer(
-        &self,
+        self: &Js<Self>,
         handshake: TlsHandshake,
         ssl: Option<&mut boringssl::c::SSL>,
         chain_verified: bool,
@@ -398,7 +397,7 @@ impl CppWebSocket {
                 // Before the 101 the upgrade client hears of a renegotiation too.
                 ssl.is_some_and(|ssl| {
                     SSL_total_renegotiations(ssl) > 0
-                        || run_check_server_identity(context, callback, ssl, hostname)
+                        || run_check_server_identity(context, callback, ssl, hostname, self.js())
                 }) || !enforce
             }
         }
@@ -407,30 +406,31 @@ impl CppWebSocket {
     /// `connect` dispatches `open` and returns the connected client, or null if an `open`
     /// listener closed it. Bytes that arrived with the 101 are parsed after `open`'s microtasks.
     fn open_then_deliver_initial_data<const SSL: bool>(
+        js: Js,
         connect: impl FnOnce() -> *mut core::ffi::c_void,
     ) {
         let client = {
-            let _scope = VirtualMachine::get().enter_event_loop_scope();
+            let _scope = js.bun_vm().enter_event_loop_scope();
             core::ptr::NonNull::new(connect().cast::<WebSocket<SSL>>()).map(|client| {
                 // SAFETY: C++ holds a ref on the client it returns.
                 RefPtr::from_this(unsafe { ThisPtr::new(client.as_ptr()) })
             })
         };
         if let Some(client) = client {
-            WebSocket::<SSL>::deliver_initial_data(client.this_ptr());
+            WebSocket::<SSL>::deliver_initial_data(js.on(client.this_ptr()));
         }
     }
 
     /// `buffered_data` and `secure` are handed on to the connected client.
     pub(crate) fn did_connect<const SSL: bool>(
-        &self,
+        self: &Js<Self>,
         socket: &mut Socket,
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
         verified_hostname: &[u8],
     ) {
-        Self::open_then_deliver_initial_data::<SSL>(|| {
+        Self::open_then_deliver_initial_data::<SSL>(self.js(), || {
             WebSocket__didConnect(
                 self,
                 socket,
@@ -444,12 +444,12 @@ impl CppWebSocket {
 
     /// `buffered_data` is handed on to the connected client.
     pub(crate) fn did_connect_with_tunnel(
-        &self,
+        self: &Js<Self>,
         tunnel: ThisPtr<WebSocketProxyTunnel>,
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     ) {
-        Self::open_then_deliver_initial_data::<false>(|| {
+        Self::open_then_deliver_initial_data::<false>(self.js(), || {
             WebSocket__didConnectWithTunnel(self, tunnel, buffered_data, deflate_params)
         });
     }
@@ -465,8 +465,9 @@ fn run_check_server_identity(
     callback: JSValue,
     ssl: &mut boringssl::c::SSL,
     hostname: &[u8],
+    js: Js,
 ) -> bool {
-    let vm = VirtualMachineRef::get();
+    let vm = js.bun_vm();
     let _context = vm.enter_context(context);
     let _scope = vm.enter_event_loop_scope();
     match call_check_server_identity(vm.global(), callback, ssl, hostname) {

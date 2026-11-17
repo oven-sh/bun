@@ -149,7 +149,13 @@ fn expand_uws_callback(args: &UwsCallbackArgs, func: &ItemFn) -> syn::Result<Tok
     } else {
         (
             quote! { *const ::core::ffi::c_void },
-            quote! { &*__ctx.cast::<Self>() },
+            match &*recv.ty {
+                syn::Type::Reference(r) => {
+                    let pointee = &r.elem;
+                    quote! { &*__ctx.cast::<#pointee>() }
+                }
+                ty => return Err(syn::Error::new(ty.span(), "expected a reference")),
+            },
         )
     };
 

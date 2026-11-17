@@ -109,7 +109,9 @@ impl Handler {
             return Ok(());
         }
 
-        let _ = VirtualMachine::get().uncaught_exception(global_object, error_value, false);
+        let _ = global_object
+            .bun_vm()
+            .uncaught_exception(global_object, error_value, false);
         Ok(())
     }
 
@@ -124,7 +126,7 @@ impl Handler {
             on_pong: JSValue::ZERO,
             app: None,
             server: None,
-            vm: bun_ptr::BackRef::new(VirtualMachine::get()),
+            vm: bun_ptr::BackRef::new(global_object.bun_vm()),
             global_object: bun_ptr::BackRef::new(global_object),
             context: global_object.bun_vm().context_of_caller().id(),
             flags: HandlerFlags::empty(),

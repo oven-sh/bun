@@ -13,9 +13,9 @@ use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
 use bun_core::EncodedSlice;
-use bun_core::{Global, Output};
-use bun_jsc as jsc;
+use bun_core::{Global, Loop, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{self as jsc, Js};
 
 // `repl.rs` is a sibling file with no other consumers; declare it as a child
 // module here so `Repl` resolves without touching `cli/mod.rs`.
@@ -78,7 +78,8 @@ impl ReplCommand {
             is_main_thread: true,
             ..Default::default()
         };
-        let vm = VirtualMachine::init(ctx.log, options)?;
+        // SAFETY: the main thread runs one command, whose one VM this is until `exit`. `ctx.log` is never freed.
+        let vm = unsafe { VirtualMachine::init(ctx.log, options, Loop::assume(&())) }?;
 
         vm.preload.set(core::mem::take(&mut ctx.preloads));
         vm.dns_result_order.set(dns_order as u8);
@@ -126,7 +127,7 @@ impl ReplCommand {
         };
 
         let _api_lock = global.vm().get_api_lock();
-        ReplRunner::start(&mut runner)
+        ReplRunner::start(&mut runner, vm.js())
     }
 
     fn dump_build_error(vm: &VirtualMachine) {
@@ -152,11 +153,11 @@ struct ReplRunner<'a, 'r> {
 }
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
-    fn start(this: &mut ReplRunner<'a, 'r>) -> ! {
-        let vm = VirtualMachine::get();
+    fn start(this: &mut ReplRunner<'a, 'r>, js: Js<'r>) -> ! {
+        let vm = js.bun_vm();
 
         // Set up the REPL environment (now inside API lock)
-        if this.setup_repl_environment().is_err() {
+        if this.setup_repl_environment(js).is_err() {
             // setupGlobalRequire threw a JS exception — surface it and exit
             if let Some(exception) = vm.global().try_take_exception() {
                 vm.print_error_like_object_to_console(exception);
@@ -182,7 +183,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         } else {
             // Interactive: run the REPL loop
-            if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
+            if let Err(err) = this.repl.run_with_vm(Some(js.bun_vm())) {
                 bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
             }
         }
@@ -192,8 +193,8 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         vm.global_exit()
     }
 
-    fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
-        let vm = VirtualMachine::get();
+    fn setup_repl_environment(&mut self, js: Js) -> bun_jsc::JsResult<()> {
+        let vm = js.bun_vm();
         let global = vm.global();
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)

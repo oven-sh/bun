@@ -7,7 +7,7 @@ use bun_core::printer as js_printer;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_lint::utils::text::natural_compare;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::Vm;
 use bun_sys::{self};
 
 use super::bun_test::{BunTest, EntryId, ScopeId, TestScheduleEntry};
@@ -325,7 +325,7 @@ impl Snapshots {
 
     /// Loads the running test's snapshot file if it isn't the current one. Never creates it.
     #[optimize(size)]
-    pub(crate) fn format_of(&mut self, expect: &Expect) -> Result<Format, Error> {
+    pub(crate) fn format_of(&mut self, expect: &Vm<Expect>) -> Result<Format, Error> {
         let buntest = expect.bun_test().ok_or(Error::SnapshotFailed)?;
         let test_file = buntest.file;
         if let Some(file) = self._current_file.as_ref().filter(|file| file.test_file.id == test_file.id) {
@@ -354,7 +354,7 @@ impl Snapshots {
             self.file_buf.extend_from_slice(format.header());
         } else {
             self.file_buf = contents;
-            if self.parse_file(path).is_err() {
+            if self.parse_file(path, expect.as_vm()).is_err() {
                 self.file_buf = Vec::new();
                 self.values.clear();
                 return Err(Error::ParseError);
@@ -378,7 +378,7 @@ impl Snapshots {
 
     pub(crate) fn match_or_write(
         &mut self,
-        expect: &Expect,
+        expect: &Vm<Expect>,
         received: &[u8],
         hint: &[u8],
     ) -> Result<Outcome, Error> {
@@ -452,8 +452,8 @@ impl Snapshots {
         Ok(Outcome::Written)
     }
 
-    fn parse_file(&mut self, snapshot_file_path: &[u8]) -> Result<(), Error> {
-        let vm = VirtualMachine::get();
+    fn parse_file(&mut self, snapshot_file_path: &[u8], vm: Vm) -> Result<(), Error> {
+        let vm = vm.bun_vm();
         let mut opts =
             js_parser::ParserOptions::init(vm.transpiler.get().options.jsx.clone(), bun_ast::Loader::Js);
         opts.features.no_macros = true;
@@ -602,7 +602,7 @@ impl Snapshots {
     #[cold]
     pub(crate) fn match_or_write_file(
         &mut self,
-        expect: &Expect,
+        expect: &Vm<Expect>,
         path: &[u8],
         received: &[u8],
         hint: &[u8],
@@ -738,9 +738,9 @@ impl Snapshots {
     }
 
     #[optimize(size)]
-    pub(crate) fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
+    pub(crate) fn write_inline_snapshots(&mut self, vm: Vm) -> Result<bool, Error> {
         let success = core::cell::Cell::new(true);
-        let vm = VirtualMachine::get();
+        let vm = vm.bun_vm();
 
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();

@@ -19,6 +19,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
+use crate::Js;
 use bun_core::{Timespec, TimespecMockMode};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -269,7 +270,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
     /// This is similar to the main event loop's tick but completely isolated
     ///
     /// `timeout` is an absolute deadline on the real (never mocked) clock.
-    pub fn tick_with_timeout(&self, timeout: Option<&Timespec>) -> TickState {
+    pub fn tick_with_timeout(self: &Js<Self>, timeout: Option<&Timespec>) -> TickState {
         let duration_storage: Option<Timespec>;
         let duration: Option<&Timespec> = match timeout {
             Some(ts) => {
@@ -320,7 +321,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
             }
         }
 
-        self.event_loop.tick_tasks_only();
+        self.on(&*self.event_loop).tick_tasks_only();
 
         let did_timeout = self.did_timeout.replace(false);
 

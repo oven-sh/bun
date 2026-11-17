@@ -60,7 +60,7 @@ const tracked: Set<string> | null = (() => {
 const BANNED =
   /let\s+(?:mut\s+)?\w+\s*(?::[^=;{}]*)?=\s*unsafe\s*\{\s*&mut\s+\*(?:this|ctx|p|ptr|self_ptr|this_ptr|raw|task|handle|data|context|user_data|parent|client|ws|req|resp|socket)\b\s*\}\s*;/g;
 
-// Script re-enters the VM through `VirtualMachine::get()`, so it has no exclusive borrow of any length.
+// Script re-enters the VM through `bun_vm()`, so it has no exclusive borrow of any length.
 const EXCLUSIVE_VM =
   /&\s*(?:'\w+\s+)?mut\s+(?:(?:\w+::)*VirtualMachine(?:Ref)?\b|\*(?:\w+::)*get_mut_ptr\(|\*(?:jsc_)?vm(?:_ptr|_instance)?\b(?!\s*[.(]))/g;
 const VM_IMPL = /^impl(?:<[^>]*>)? (?:[\w:]+ for )?(?:\w+::)*VirtualMachine \{\n(?:(?!\}).*\n)*\}/gm;

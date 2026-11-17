@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use bun_core::{ZBox, ZStr, strings};
+use bun_core::{Loop, ZBox, ZStr, strings};
 use bun_paths::resolve_path::{self, Platform, platform};
 use bun_ptr::{AliasableBox, BackRef, RefPtr};
 use bun_sys::{E, File, Maybe, dir_iterator};
@@ -59,7 +59,7 @@ impl Opts {
     }
 }
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     note_found_on_disk();
     let (flags, paths) = Builtin::of(interp, cmd).split_flags();
     let mut opts = Opts::default();
@@ -112,7 +112,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     Yield::suspended()
 }
 
-fn on_shell_rm_task_done(interp: &Interpreter, task: RefPtr<ShellRmTask>) {
+fn on_shell_rm_task_done(interp: &Loop<Interpreter>, task: RefPtr<ShellRmTask>) {
     let cmd = task.cmd;
     // SAFETY: the pool is done with the task.
     let task_err = unsafe { (*task.as_ptr()).err.get_mut().take() };
@@ -688,11 +688,12 @@ impl DirTask {
     ///
     /// # Safety
     /// `this` must be a live [`DirTask`] posted via [`queue_for_write`]; main thread.
-    pub(crate) fn run_from_main_thread(this: *mut DirTask) {
+    pub(crate) fn run_from_main_thread(this: *mut DirTask, loop_: Loop) {
         // SAFETY: caller contract.
         let (rm, deleted_entries) = unsafe { Self::take_queued(this) };
         // SAFETY: both set by `schedule`. No `&ShellRmTask`: the pool may be writing `task.poster`.
         let (interp, cmd) = unsafe { (&*(*rm.as_ptr()).task.interp, (*rm.as_ptr()).cmd) };
+        let interp = loop_.on(interp);
         let next = Batch::report(interp, cmd, None, deleted_entries);
         drop(rm);
         next.run(interp);
@@ -716,9 +717,9 @@ impl DirTask {
     }
 }
 
-fn dir_task_run_from_main_thread_mini(this: *mut DirTask, _: *mut ()) {
+fn dir_task_run_from_main_thread_mini(this: *mut DirTask, _: *mut (), loop_: Loop) {
     // SAFETY: mini-loop trampoline for a DirTask posted via `queue_for_write`.
-    DirTask::run_from_main_thread(this);
+    DirTask::run_from_main_thread(this, loop_);
 }
 
 // ── Taskable / ShellTaskCtx glue ──────────────────────────────────────────
@@ -757,7 +758,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
             "ShellRmTask scheduled via ShellTask::schedule; use ShellRmTask::schedule"
         );
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Loop<Interpreter>) {
         // SAFETY: the ref `schedule` made, which `finish_concurrently` posted.
         on_shell_rm_task_done(interp, unsafe { RefPtr::from_raw(this) })
     }

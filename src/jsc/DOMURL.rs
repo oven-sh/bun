@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use crate::{JSValue, VM, WrapperGuard};
+use crate::{JSValue, Js, VM, WrapperGuard};
 use bun_core as bstr;
 
 bun_opaque::opaque_ffi! {
@@ -32,11 +32,8 @@ impl DOMURL {
         unsafe { WrapperGuard::new(value, WebCore__DOMURL__cast_(*value, vm)) }
     }
 
-    pub fn cast(value: &JSValue) -> Option<WrapperGuard<'_, DOMURL>> {
-        Self::cast_(
-            value,
-            crate::virtual_machine::VirtualMachine::get().global().vm(),
-        )
+    pub fn cast<'a>(value: &'a JSValue, js: Js) -> Option<WrapperGuard<'a, DOMURL>> {
+        Self::cast_(value, js.bun_vm().global().vm())
     }
 
     pub fn file_system_path(&self) -> Result<bstr::String, ToFileSystemPathError> {

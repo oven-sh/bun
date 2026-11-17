@@ -26,8 +26,8 @@ use bun_io::{
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
-    self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    MarkedArrayBuffer, SysErrorJsc,
+    self as jsc, EventLoopHandle, JSGlobalObject, JSValue, Js, JsCell, JsRef, JsResult,
+    MarkedArrayBuffer, SysErrorJsc, Vm,
 };
 use bun_sys::{self as sys, Fd, File};
 
@@ -306,7 +306,7 @@ impl Terminal {
         let pty_result = create_pty(options.cols, options.rows)?;
 
         // The intrusive ref_count starts at 1: the JS wrapper's ref.
-        let terminal = bun_ptr::RefPtr::new(Terminal {
+        let terminal_ref = bun_ptr::RefPtr::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             #[cfg(unix)]
             master: JsCell::new(Some(pty_result.master)),
@@ -339,7 +339,8 @@ impl Terminal {
             tty_state: Cell::new(bun_core::tty::State::new()),
             abort_handle: jsc::AbortHandle::for_owner::<Terminal>(),
         });
-        let owner = |tag| Owner::new(tag, terminal.as_ptr().cast());
+        let terminal = global_object.on(&*terminal_ref);
+        let owner = |tag| Owner::new(tag, terminal_ref.as_ptr().cast());
         // SAFETY: `owner` points to the heap allocation that holds the reader and the writer.
         unsafe {
             terminal.reader.set_owner(owner(PollTag::TerminalReader));
@@ -350,10 +351,10 @@ impl Terminal {
         // Start writer with the write fd - adds a ref. On `Err` the unused closure drops the file.
         match terminal
             .writer
-            .start(&*terminal, event_loop, pty_result.write.fd(), true)
+            .start(terminal, event_loop, pty_result.write.fd(), true)
             .map(|()| pty_result.write.into_raw())
         {
-            sys::Result::Ok(_) => terminal.writer_ref.set(Some(terminal.clone())),
+            sys::Result::Ok(_) => terminal.writer_ref.set(Some(terminal_ref.clone())),
             sys::Result::Err(_) => {
                 // The writer took neither its ref nor the fd, and the reader never started.
                 drop(pty_result.read);
@@ -372,7 +373,7 @@ impl Terminal {
             return Err(terminal.fail_reader_start());
         };
         pty_result.read.into_raw();
-        terminal.reader_ref.set(Some(terminal.clone()));
+        terminal.reader_ref.set(Some(terminal_ref.clone()));
         terminal.on_read_result(result);
         if terminal.is_reader_done() {
             return Err(terminal.fail_reader_start());
@@ -391,7 +392,7 @@ impl Terminal {
             return Err(terminal.fail_reader_start());
         }
 
-        Ok(terminal)
+        Ok(terminal_ref)
     }
 
     /// `this_value` is the JS wrapper, which owns the ref [`open`](Self::open) returned.
@@ -430,7 +431,7 @@ impl Terminal {
     /// `close_internal` closes what is still open (a writer that is still
     /// open releases its ref through `on_close`); `open` then drops
     /// the initial ref.
-    fn fail_reader_start(&self) -> InitError {
+    fn fail_reader_start(self: &Js<Self>) -> InitError {
         self.close_internal();
         InitError::ReaderStartFailed
     }
@@ -512,12 +513,12 @@ impl Terminal {
 
     /// Spawn-side error-path teardown for a terminal created via
     /// `create_from_spawn` whose subprocess never started.
-    pub(crate) fn abandon_from_spawn(&self) {
+    pub(crate) fn abandon_from_spawn(self: &Js<Self>) {
         self.close_without_callbacks();
     }
 
     /// No callback follows (on Windows the reader drains on after `close_internal`), and the wrapper may be collected.
-    fn close_without_callbacks(&self) {
+    fn close_without_callbacks(self: &Js<Self>) {
         self.this_value.with_mut(|v| v.downgrade());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
@@ -553,7 +554,7 @@ impl Terminal {
     /// the output queue on last slave close; holding ours until
     /// Subprocess::on_process_exit keeps a fast child's writes.
     #[cfg(unix)]
-    pub(crate) fn drain_and_close_slave_fd(&self) {
+    pub(crate) fn drain_and_close_slave_fd(self: &Js<Self>) {
         let flags = self.flags.get();
         if flags.contains(Flags::CLOSED) {
             return;
@@ -616,7 +617,7 @@ impl Terminal {
     /// hpcon is passed to the thread by value so the Terminal struct may be freed
     /// before the thread completes.
     #[cfg(windows)]
-    fn close_pseudoconsole_off_thread(&self, hpcon: windows::PseudoConsole) {
+    fn close_pseudoconsole_off_thread(self: &Js<Self>, hpcon: windows::PseudoConsole) {
         // PORTING.md bans std::process but not std::thread; a raw detached OS
         // thread is intentional here (no event-loop integration needed).
         match std::thread::Builder::new().spawn(move || hpcon.close()) {
@@ -1145,7 +1146,7 @@ impl Terminal {
 
         // No drain fires from inside `write()`: the flag is restored below.
         let had_buffered = self.writer_has_buffered.replace(false);
-        let write_result = self.writer.write(self, bytes);
+        let write_result = self.writer.write(global_object.on(self), bytes);
         // The writer can close inside `write()` and keep the bytes; no drain follows them.
         let writer_done = self.is_writer_done();
         let has_pending = self.writer.has_pending_data() && !writer_done;
@@ -1329,17 +1330,17 @@ impl Terminal {
     }
 
     /// Close the terminal
-    pub(crate) fn close(&self, _: &mut JsScope<'_>) {
-        self.close_internal();
+    pub(crate) fn close(&self, cx: &mut JsScope<'_>) {
+        cx.on(self).close_internal();
     }
 
     /// Async dispose for "using" syntax
     pub(crate) fn async_dispose(&self, cx: &mut JsScope<'_>) -> JSValue {
-        self.close_without_callbacks();
+        cx.on(self).close_without_callbacks();
         jsc::JSPromise::resolved_promise_value(cx.global(), JSValue::UNDEFINED)
     }
 
-    fn close_internal(&self) {
+    fn close_internal(self: &Js<Self>) {
         if self.flags.get().contains(Flags::CLOSED) {
             return;
         }
@@ -1377,7 +1378,7 @@ impl Terminal {
         }
     }
 
-    pub(crate) fn on_writer_io(&self, event: IoEvent) {
+    pub(crate) fn on_writer_io(self: &Js<Self>, event: IoEvent) {
         self.writer.on_io(self, event);
     }
 
@@ -1399,7 +1400,7 @@ impl Terminal {
         self.maybe_downgrade_after_eof();
     }
 
-    pub(crate) fn read(&self, event: Option<IoEvent>) {
+    pub(crate) fn read(self: &Js<Self>, event: Option<IoEvent>) {
         let event_loop = self.event_loop_handle.as_event_loop_ctx();
         let result = self.reader.read_chunks(event_loop, event, |chunk, _| {
             self.on_read_chunk(&chunk);
@@ -1410,7 +1411,7 @@ impl Terminal {
 
     /// Takes `reader_ref` before the exit callback so re-entry (`terminal.close()` from the
     /// callback) finds it gone and no-ops.
-    fn on_read_result(&self, result: ReadResult) {
+    fn on_read_result(self: &Js<Self>, result: ReadResult) {
         // 0 = EOF, 1 = PTY read error; not the subprocess's exit code.
         let exit_code = match result {
             ReadResult::Pending => return,
@@ -1441,7 +1442,7 @@ impl Terminal {
     /// read with EIO instead of EOF. Left alone, the writer waits for a drain
     /// that cannot come and the reader delivers echo after `exit`.
     #[cfg(unix)]
-    fn finish_io_after_eof(&self) {
+    fn finish_io_after_eof(self: &Js<Self>) {
         // EOF closes the reader itself, a read error does not.
         if !self.reader.is_done() {
             self.on_read_result(self.reader.close());
@@ -1537,7 +1538,7 @@ impl Terminal {
         {
             Ok(data) => data,
             Err(err) => {
-                crate::dispatch::fold(Err(err));
+                crate::dispatch::fold(global_this.js(), Err(err));
                 return;
             }
         };
@@ -1553,12 +1554,13 @@ impl Terminal {
         );
     }
 
-    pub(crate) fn finalize(&self) {
+    pub(crate) fn finalize(self: &Vm<Self>) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
         self.this_value.with_mut(|v| v.finalize());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
-        self.close_internal();
+        // SAFETY: it reaches `on_close` and `on_read_result`, which leave the heap alone once `FINALIZED` is set.
+        unsafe { Js::assume(self) }.on(&**self).close_internal();
     }
 }
 
@@ -1568,11 +1570,13 @@ impl Drop for Terminal {
         // Close all FDs if not already closed (handles constructor error paths)
         // closeInternal() checks flags.closed and returns early on subsequent calls,
         // so this is safe even if finalize() already called it
-        self.close_internal();
+        // SAFETY: `!Send`, and teardown closes a worker's reader and writer by the VM's last sweep. With no ref left
+        // `writer_ref` and `reader_ref` are empty, so `on_close` and `on_read_result` return at once.
+        unsafe { Js::assume(self) }.on(&*self).close_internal();
     }
 }
 
-impl WriteHandler for Terminal {
+impl WriteHandler for Js<'_, Terminal> {
     fn on_close(&self) {
         bun_output::scoped_log!(Terminal, "onWriterClose");
         if let Some(_writer_ref) = self.writer_ref.replace(None) {

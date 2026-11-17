@@ -13,6 +13,7 @@ use crate::shell::states::base::{Base, Env, InheritedEnv};
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
+use bun_core::Loop;
 
 pub(crate) struct Expansion {
     pub(crate) base: Base,
@@ -118,7 +119,7 @@ impl Expansion {
     /// atom, appending no-IO expansions to `current_out` and yielding to a
     /// child `Script` whenever a `$(...)` is encountered. Re-entered after
     /// `child_done` advances `word_idx`.
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         loop {
             let event_loop = interp.event_loop;
             let command_ctx = interp.command_ctx;
@@ -575,7 +576,7 @@ impl Expansion {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,

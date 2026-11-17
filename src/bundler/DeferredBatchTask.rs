@@ -5,6 +5,7 @@
 //! awaiting `.defer()`, so nothing else orders the pass's completion after this hop).
 
 use crate::BundleV2;
+use bun_core::Loop;
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
@@ -23,8 +24,9 @@ impl bun_event_loop::Taskable for DeferredBatchTask {
     /// The plugins' VM released the hop unrun (it is shutting down; its stop phase has answered what the
     /// plugins held): nothing to resolve, but the pass is waiting for the hop to come back.
     unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: released ⇒ never ran; `BundleV2` is alive until this comes back.
-        unsafe { (*this).come_back() };
+        // SAFETY: released ⇒ never ran; `BundleV2` is alive until this comes back. The hop is only posted and has no
+        // context, so it is `release_queued_tasks` that releases it: outside a collection, before the global goes.
+        unsafe { (*this).come_back(Loop::assume(&this)) };
     }
     /// A step of the bundle, which is waiting for it to come back: what the build reports is its
     /// completion's to decide.
@@ -53,7 +55,7 @@ impl DeferredBatchTask {
     }
 
     /// Plugins' (JS) thread.
-    pub fn run_on_js_thread(&mut self) {
+    pub fn run_on_js_thread(&mut self, loop_: Loop) {
         {
             let bv2 = self.get_bundle_v2();
             // A cancelled pass rejects the `.defer()` promises rather than resuming plugins into it.
@@ -61,11 +63,11 @@ impl DeferredBatchTask {
             let rejected = bv2.completion.as_ref().is_some_and(|c| c.is_cancelled());
             bv2.plugins_mut().expect("plugins").drain_deferred(rejected);
         }
-        self.come_back();
+        self.come_back(loop_);
     }
 
     /// Plugins' (JS) thread → bundle thread: the hop's pending item is consumed there.
-    fn come_back(&mut self) {
+    fn come_back(&mut self, loop_: Loop) {
         if let Some(waiter) = self.waiter.take() {
             // SAFETY: `aot::plugins` frees the waiter only after it has waited for this answer.
             unsafe { waiter.as_ref() }.answer_drained();
@@ -75,14 +77,14 @@ impl DeferredBatchTask {
         let bv2 = self.get_bundle_v2();
         match bv2.any_loop() {
             // bake: the plugins run on the loop that runs the bundle; already there.
-            bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(),
+            bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(loop_),
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
                 // the bundle thread runs this.
                 unsafe {
                     mini.enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
                         this,
-                        |_, bv2| (*bv2).decrement_scan_counter(),
+                        |_, bv2, loop_| (*bv2).decrement_scan_counter(loop_),
                         core::mem::offset_of!(Self, returned),
                     );
                 }

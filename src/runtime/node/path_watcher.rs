@@ -285,7 +285,7 @@ impl PathWatcher {
 
     /// JS-thread entry point from `FSWatcher.detach()`. Removes one handler; if it was
     /// the last, tears down the OS watch and frees.
-    pub(crate) fn detach(Handle(id): Handle, ctx: *mut c_void) {
+    pub(crate) fn detach(Handle(id): Handle, ctx: *mut c_void, _: bun_jsc::Vm) {
         let mut locked = DEFAULT_MANAGER.wait().lock();
         let manager = &mut *locked;
 

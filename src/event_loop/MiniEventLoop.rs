@@ -25,6 +25,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
+use bun_core::Loop;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 #[cfg(not(windows))]
 use bun_io::file_poll::Store as FilePollStore;
@@ -205,6 +206,8 @@ impl MiniEventLoop {
     }
 
     fn run_tasks(&self, context: *mut c_void) {
+        // SAFETY: as for the handlers that `loop_.tick()` runs: the thread that made this loop ticks it, from no finalizer.
+        let loop_ = unsafe { Loop::assume(self) };
         loop {
             // SAFETY: a queued task is live until it runs. It may queue others and free itself, so
             // nothing is borrowed across the call.
@@ -214,7 +217,11 @@ impl MiniEventLoop {
                 };
                 ((*task).callback, (*task).ctx)
             };
-            callback(ctx.expect("ctx is non-null").as_ptr(), context.cast());
+            callback(
+                ctx.expect("ctx is non-null").as_ptr(),
+                context.cast(),
+                loop_,
+            );
         }
     }
 
@@ -251,7 +258,7 @@ impl MiniEventLoop {
     pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
         &self,
         ctx: *mut C,
-        callback: fn(*mut C, *mut P),
+        callback: fn(*mut C, *mut P, Loop),
         field_offset: usize,
     ) {
         // SAFETY: caller contract — see fn `# Safety`.

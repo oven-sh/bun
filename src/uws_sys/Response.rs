@@ -88,6 +88,9 @@ pub struct Response<const SSL: bool> {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
+// SAFETY: the body that `opaque_ffi!` emits.
+unsafe impl<const SSL: bool> bun_opaque::Opaque for Response<SSL> {}
+
 impl<const SSL: bool> Response<SSL> {
     #[inline(always)]
     const fn ssl_flag() -> i32 {

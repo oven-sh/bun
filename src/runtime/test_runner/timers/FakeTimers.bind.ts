@@ -83,7 +83,7 @@ export const getTimerCount = b.fn({
   throws: true,
 });
 export const clearAllTimers = b.fn({ ...chainable, export: "Bun__FakeTimers__clearAllTimers" });
-export const isFakeTimers = b.fn({ export: "Bun__FakeTimers__isFakeTimers", returns: b.bool });
+export const isFakeTimers = b.fn({ passVm: true, export: "Bun__FakeTimers__isFakeTimers", returns: b.bool });
 export const getMockedSystemTime = b.fn({
   export: "Bun__FakeTimers__getMockedSystemTime",
   returns: b.f64.asDate.nullable,

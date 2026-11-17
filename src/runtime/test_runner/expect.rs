@@ -8,7 +8,7 @@ use bun_jsc::{
     JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator,
 };
-use bun_jsc::{JsClass as _, StringJsc as _};
+use bun_jsc::{Js, JsClass as _, StringJsc as _};
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
@@ -781,7 +781,7 @@ impl Expect {
 
     #[optimize(size)]
     fn inline_snapshot(m: &Matcher<'_>, received: Received, property_matchers: Option<JSValue>, result: Option<&[u8]>) -> Verdict {
-        let (this, global_this) = (m.call.expect, m.global);
+        let (this, global_this) = (m.global.on(m.call.expect), m.global);
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else { return fail_outside_of_a_test(m, false) };
         let update = runner.with_snapshots(|snapshots| snapshots.update_snapshots);
@@ -942,7 +942,7 @@ impl Expect {
 
     #[optimize(size)]
     fn snapshot(m: &Matcher<'_>, received: Received, property_matchers: Option<JSValue>, hint: &[u8]) -> Verdict {
-        let (this, global_this) = (m.call.expect, m.global);
+        let (this, global_this) = (m.global.on(m.call.expect), m.global);
         let Some(runner) = Jest::runner() else { return fail_outside_of_a_test(m, true) };
         let mut pretty_value: Vec<u8> = Vec::new();
         let format = match runner.with_snapshots(|snapshots| snapshots.format_of(this)) {
@@ -1276,7 +1276,7 @@ impl Expect {
                 js_promise::Status::Pending => unreachable!(),
                 js_promise::Status::Fulfilled => {}
                 js_promise::Status::Rejected => {
-                    bun_test::print_error(VirtualMachine::get(), global_this, result, None);
+                    bun_test::print_error(global_this.bun_vm(), global_this, result, None);
                     return Err(global_this.throw(format_args!(
                         "Matcher `{}` returned a promise that rejected",
                         matcher_name,
@@ -1340,7 +1340,7 @@ impl Expect {
         callee: JsLocal<'_>,
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        let _gc = cx.global().bun_vm().auto_gc_on_drop();
+        let _gc = cx.heap.bun_vm().auto_gc_on_drop();
         let (this, callee, arguments) = (this_value.to_js(), callee.to_js(), JsLocal::to_js_slice(args));
 
         // try to retrieve the Expect instance
@@ -1883,7 +1883,7 @@ impl ExpectCustomAsymmetricMatcher {
         received: JsLocal<'_>,
     ) -> JsResult<bool> {
         let pass = Pass::barrier();
-        let _entered = pass.enter();
+        let _entered = cx.heap.as_vm().on(&pass).enter();
         self.execute_impl(this_value.to_js(), cx.global(), received.to_js())
     }
 
@@ -2019,7 +2019,7 @@ impl ExpectMatcherContext {
         };
         let _testers = add_equality_testers::EqualityTestersScope::enter(global_this, custom_testers)?;
         let pass = Pass::barrier();
-        let _entered = pass.enter();
+        let _entered = global_this.on(&pass).enter();
         if strict_check {
             a.jest_strict_deep_equals(b, global_this)
         } else {
@@ -2068,7 +2068,7 @@ struct FirstReport {
 }
 
 impl FirstReport {
-    fn take(vm: &VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    fn take(vm: &Js<VirtualMachine>, global: &JSGlobalObject, value: JSValue) {
         let Some(this) = vm.on_unhandled_rejection_ctx.get() else { return };
         // SAFETY: `call_to_throw` points the ctx at its local only while this is the handler.
         let this = unsafe { &mut *this.cast::<FirstReport>() };

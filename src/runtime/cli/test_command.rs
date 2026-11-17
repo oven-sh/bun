@@ -9,13 +9,13 @@ use crate::cli::test::parallel::runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
-use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{self as bun, Global, Loop, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc};
+use bun_jsc::{self as jsc, Js, Vm};
 use bun_options_types::aot_options::ReplacedByTests;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironment, TestGlobals};
@@ -2123,7 +2123,7 @@ impl CommandLineReporter {
 
     pub(crate) fn handle_test_completed(
         buntest: &bun_test::BunTest,
-        sequence: &bun_test::Execution::ExecutionSequence,
+        sequence: &Js<bun_test::Execution::ExecutionSequence>,
         test_entry: &bun_test::ExecutionEntry,
         elapsed_ns: u64,
     ) {
@@ -2246,7 +2246,7 @@ impl CommandLineReporter {
                 this.update_summary(|summary| summary.fail += 1);
 
                 if this.summary().fail == this.jest.bail {
-                    this.bail_out(VirtualMachine::get());
+                    this.bail_out(sequence.bun_vm());
                 }
             }
         }
@@ -2274,7 +2274,7 @@ impl CommandLineReporter {
 
     /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
     /// A `--parallel` worker never gets here: its `jest.bail` is 0, and the coordinator counts the failures.
-    pub(crate) fn bail_out(&self, vm: &VirtualMachine) -> ! {
+    pub(crate) fn bail_out(&self, vm: &Js<VirtualMachine>) -> ! {
         self.print_summary();
         pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
@@ -2319,7 +2319,7 @@ impl CommandLineReporter {
     }
 
     /// `bun test --aot --coverage`: the files that ran as compiled code join those that JSC has counted.
-    pub(crate) fn add_compiled_files_to_coverage(vm: &VirtualMachine) {
+    pub(crate) fn add_compiled_files_to_coverage(vm: &Js<VirtualMachine>) {
         let mut files: Vec<(Vec<u8>, Vec<u64>)> = Vec::new();
         bun_jsc::compiled_program::for_each_counted_file(
             vm.global(),
@@ -2332,7 +2332,8 @@ impl CommandLineReporter {
                 continue;
             };
             let (path, ranges) = (&description[..end_of_path], &description[end_of_path + 1..]);
-            if !BunTest__shouldGenerateCodeCoverage(&bun_core::StringView::from_bytes(path)) {
+            if !BunTest__shouldGenerateCodeCoverage(vm.on(&*bun_core::StringView::from_bytes(path)))
+            {
                 continue;
             }
             let Ok(text) = File::read_from(Fd::cwd(), path) else {
@@ -2349,6 +2350,7 @@ impl CommandLineReporter {
                 transpiled.already_bundled,
                 ranges,
                 counts,
+                vm.as_vm(),
             );
         }
     }
@@ -2356,7 +2358,7 @@ impl CommandLineReporter {
     /// This process's coverage, one `Report` per instrumented file, sorted by
     /// path, with `coveragePathIgnorePatterns` applied.
     pub(crate) fn for_each_coverage_report(
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
         opts: &CodeCoverageOptions,
         mut each: impl FnMut(CodeCoverageReport<'_>),
     ) {
@@ -2392,7 +2394,7 @@ impl CommandLineReporter {
     /// Returns false if `lcov.info` could not be written.
     pub(crate) fn generate_code_coverage(
         &self,
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
         opts: &mut CodeCoverageOptions,
     ) -> bool {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
@@ -2599,7 +2601,7 @@ fn write_lcov_report(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::String) -> bool {
+extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &Vm<bun_core::String>) -> bool {
     let zig_slice = test_name_str.to_utf8();
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check
@@ -2611,7 +2613,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         return false;
     }
 
-    let options = &VirtualMachine::get().transpiler.get().options;
+    let options = &test_name_str.bun_vm().transpiler.get().options;
 
     // Skip the wrapper modules Bun generates for these suffixes. Other queries (a plugin's `./a.vue?x`) are user code.
     if let Some(query) = strings::index_of_char_usize(slice, b'?') {
@@ -2824,7 +2826,8 @@ impl TestCommand {
             graph: run_compiled::graph(),
             ..Default::default()
         };
-        let vm = VirtualMachine::init(ctx.log, options)?;
+        // SAFETY: the main thread runs one command, whose one VM this is until `exit`. `ctx.log` is never freed.
+        let vm = unsafe { VirtualMachine::init(ctx.log, options, Loop::assume(&reporter)) }?;
         crate::jsc_hooks::runtime_state_of(vm)
             .test_runner
             .set(Some(&reporter.jest));
@@ -2878,7 +2881,7 @@ impl TestCommand {
         vm.test_isolation_state
             .shares_global
             .set(run_compiled::test_files_share_global(ctx));
-        crate::jsc_hooks::timer_all()
+        crate::jsc_hooks::timer_all(vm)
             .zero_delay_is_due_when_idle
             .set(true);
 
@@ -3301,7 +3304,7 @@ impl TestCommand {
         }
 
         let runner = &reporter.jest;
-        let write_snapshots_success = runner.with_snapshots(Snapshots::write_inline_snapshots)?;
+        let write_snapshots_success = runner.write_inline_snapshots(vm.as_vm())?;
         runner.with_snapshots(Snapshots::write_snapshot_file)?;
         let mut write_coverage_success = true;
         if reporter.summary().pass > 20
@@ -3713,7 +3716,7 @@ impl TestCommand {
         Ok(())
     }
 
-    fn run_event_loop_for_watch(vm: &VirtualMachine) {
+    fn run_event_loop_for_watch(vm: &Js<VirtualMachine>) {
         vm.event_loop().tick_possibly_forever();
 
         loop {
@@ -3728,12 +3731,12 @@ impl TestCommand {
 
     pub(crate) fn run_all_tests(
         reporter_: &'static CommandLineReporter,
-        vm_: &VirtualMachine,
+        vm_: &Js<VirtualMachine>,
         files_: &[Interned],
     ) {
         struct Context<'a> {
             reporter: &'static CommandLineReporter,
-            vm: &'a VirtualMachine,
+            vm: &'a Js<'a, VirtualMachine>,
             files: &'a [Interned],
         }
         impl<'a> Context<'a> {
@@ -3764,7 +3767,8 @@ impl TestCommand {
                         Global::mimalloc_cleanup(false);
                         if isolate {
                             crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                            vm.swap_global_for_test_isolation();
+                            // SAFETY: between two files; what follows asks the VM for its global object again.
+                            unsafe { vm.swap_global_for_test_isolation() };
                             reporter
                                 .jest
                                 .bun_test_root
@@ -3835,7 +3839,7 @@ impl TestCommand {
     }
 
     fn undo_module_mocks(
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
         global: &jsc::JSGlobalObject,
         file_path: &[u8],
         next_load_shares_global: bool,
@@ -3896,7 +3900,7 @@ impl TestCommand {
     #[optimize(size)]
     pub(crate) fn run(
         reporter: &'static CommandLineReporter,
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
     ) -> crate::Result<()> {

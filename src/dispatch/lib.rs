@@ -61,6 +61,7 @@ struct Interface {
 struct Method {
     attrs: Vec<Attribute>,
     name: Ident,
+    receiver: Option<syn::Receiver>,
     args: Vec<(Ident, Type)>,
     ret: ReturnType,
 }
@@ -83,6 +84,12 @@ impl Parse for Interface {
             let mname: Ident = body.parse()?;
             let argp;
             parenthesized!(argp in body);
+            let receiver = if argp.peek(Token![self]) {
+                Some(argp.parse()?)
+            } else {
+                None
+            };
+            argp.parse::<Option<Token![,]>>()?;
             let mut args = Vec::new();
             while !argp.is_empty() {
                 let an: Ident = argp.parse()?;
@@ -98,6 +105,7 @@ impl Parse for Interface {
             methods.push(Method {
                 attrs,
                 name: mname,
+                receiver,
                 args,
                 ret,
             });
@@ -201,6 +209,10 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         let at = m.args.iter().map(|(_, t)| t);
         let ret = &m.ret;
         let attrs = &m.attrs;
+        let receiver = m
+            .receiver
+            .as_ref()
+            .map_or_else(|| quote!(&self), |r| quote!(#r));
         let arms = variants.iter().map(|v| {
             let s = sym(name, v, mn);
             quote! {
@@ -214,7 +226,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             #(#attrs)*
             #[inline]
             #[allow(clippy::not_unsafe_ptr_arg_deref)]
-            pub fn #mn(&self #(, #an: #at)*) #ret {
+            pub fn #mn(#receiver #(, #an: #at)*) #ret {
                 match self.kind { #(#arms),* }
             }
         }

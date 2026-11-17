@@ -3,8 +3,9 @@ use core::fmt::Arguments;
 
 use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
 use bun_core::{Timespec, TimespecMockMode};
+use bun_jsc::{Js, Vm};
 
-use crate::jsc::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer, VirtualMachine};
+use crate::jsc::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
 
 pub struct ConnectionTimers {
     idle_timeout_ms: u32,
@@ -48,13 +49,17 @@ impl ConnectionTimers {
     }
 }
 
-fn start(timer: &OwnedTimer, ms: u32) {
+fn start(timer: &Vm<OwnedTimer>, ms: u32) {
     timer.next.set(Timespec::ms_from_now(
         TimespecMockMode::ForceRealTime,
         ms.into(),
     ));
     // SAFETY: an unlinked field (both callers see to it) of a boxed connection.
-    unsafe { VirtualMachine::get().timer_insert(OwnedTimer::node(timer)) };
+    unsafe {
+        timer
+            .bun_vm()
+            .timer_insert(OwnedTimer::node(&raw const **timer))
+    };
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -65,13 +70,13 @@ pub enum Phase {
     Failed,
 }
 
-pub trait TimedConnection {
+pub trait TimedConnection: Sized {
     fn timers(&self) -> &ConnectionTimers;
     fn phase(&self) -> Phase;
     /// In flight or queued.
     fn has_requests(&self) -> bool;
     fn is_processing_data(&self) -> bool;
-    fn fail_timeout(&self, kind: ConnTimeoutKind, message: Arguments<'_>);
+    fn fail_timeout(self: &Js<Self>, kind: ConnTimeoutKind, message: Arguments<'_>);
     /// Tells the pool to give this connection no more work.
     fn notify_retiring(&self);
 
@@ -95,7 +100,7 @@ pub trait TimedConnection {
         }
     }
 
-    fn reset_connection_timeout(&self) {
+    fn reset_connection_timeout(self: &Vm<Self>) {
         // A read resets the idle timeout at its end, and leaves the connection timeout running.
         if self.is_processing_data() {
             return;
@@ -104,11 +109,11 @@ pub trait TimedConnection {
         timer.disarm();
         let (_, ms, _) = self.timeout();
         if ms != 0 {
-            start(timer, ms);
+            start(self.on(timer), ms);
         }
     }
 
-    fn on_connection_timeout(&self) {
+    fn on_connection_timeout(self: &Js<Self>) {
         self.timers().timer.state.set(EventLoopTimerState::FIRED);
         let (kind, ms, stage) = self.timeout();
         if ms != 0 && !self.is_processing_data() {
@@ -116,16 +121,16 @@ pub trait TimedConnection {
         }
     }
 
-    fn start_max_lifetime_timer(&self) {
+    fn start_max_lifetime_timer(self: &Vm<Self>) {
         let timers = self.timers();
         if timers.max_lifetime_ms != 0
             && timers.max_lifetime_timer.state.get() != EventLoopTimerState::ACTIVE
         {
-            start(&timers.max_lifetime_timer, timers.max_lifetime_ms);
+            start(self.on(&timers.max_lifetime_timer), timers.max_lifetime_ms);
         }
     }
 
-    fn on_max_lifetime_timeout(&self) {
+    fn on_max_lifetime_timeout(self: &Js<Self>) {
         let timers = self.timers();
         timers
             .max_lifetime_timer
@@ -142,7 +147,7 @@ pub trait TimedConnection {
     }
 
     /// Called wherever the connection can stop being busy. Returns whether it closed.
-    fn retire_if_idle(&self) -> bool {
+    fn retire_if_idle(self: &Js<Self>) -> bool {
         let is_due = self.timers().lifetime_exceeded.get()
             && self.phase() == Phase::Connected
             && !self.is_busy();
@@ -152,7 +157,7 @@ pub trait TimedConnection {
         is_due
     }
 
-    fn fail_lifetime_timeout(&self) {
+    fn fail_lifetime_timeout(self: &Js<Self>) {
         let (kind, ms) = (ConnTimeoutKind::MaxLifetime, self.timers().max_lifetime_ms);
         self.fail_timeout(kind, format_args!("{}", fmt_conn_timeout(kind, ms, "")));
     }

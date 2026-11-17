@@ -9,6 +9,7 @@
 
 use core::ffi::{c_int, c_void};
 
+use bun_jsc::Js;
 use bun_uws::NewSocketHandler;
 // `SocketKind` / `us_bun_verify_error_t` must come from `bun_uws_sys` — that's
 // what `us_socket_t::kind()` and the `VTable` callback signatures use. The
@@ -45,15 +46,15 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
         // Bun.connect / Bun.listen
         removable_body!(Sockets, ReturnDefault, {
             t[SocketKind::BunSocketTcp as usize] =
-                Some(vtable::make::<handlers::BunSocket<false>>());
+                Some(vtable::make::<Js<handlers::BunSocket<false>>>());
             t[SocketKind::BunListenerTcp as usize] =
-                Some(vtable::make::<handlers::BunListener<false>>());
+                Some(vtable::make::<Js<handlers::BunListener<false>>>());
         });
         removable_body!(TlsSockets, ReturnDefault, {
             t[SocketKind::BunSocketTls as usize] =
-                Some(vtable::make::<handlers::BunSocket<true>>());
+                Some(vtable::make::<Js<handlers::BunSocket<true>>>());
             t[SocketKind::BunListenerTls as usize] =
-                Some(vtable::make::<handlers::BunListener<true>>());
+                Some(vtable::make::<Js<handlers::BunListener<true>>>());
         });
 
         // HTTP client thread
@@ -67,31 +68,35 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
         // WebSocket client
         removable_body!(WebSocket, ReturnDefault, {
             t[SocketKind::WsClientUpgrade as usize] =
-                Some(vtable::make::<handlers::WSUpgrade<false>>());
+                Some(vtable::make::<Js<handlers::WSUpgrade<false>>>());
             t[SocketKind::WsClientUpgradeTls as usize] =
-                Some(vtable::make::<handlers::WSUpgrade<true>>());
-            t[SocketKind::WsClient as usize] = Some(vtable::make::<handlers::WSClient<false>>());
-            t[SocketKind::WsClientTls as usize] = Some(vtable::make::<handlers::WSClient<true>>());
+                Some(vtable::make::<Js<handlers::WSUpgrade<true>>>());
+            t[SocketKind::WsClient as usize] =
+                Some(vtable::make::<Js<handlers::WSClient<false>>>());
+            t[SocketKind::WsClientTls as usize] =
+                Some(vtable::make::<Js<handlers::WSClient<true>>>());
         });
 
         // SQL drivers
         removable_body!(Sql, ReturnDefault, {
-            t[SocketKind::Postgres as usize] = Some(vtable::make::<handlers::Postgres<false>>());
-            t[SocketKind::PostgresTls as usize] = Some(vtable::make::<handlers::Postgres<true>>());
-            t[SocketKind::Mysql as usize] = Some(vtable::make::<handlers::MySQL<false>>());
-            t[SocketKind::MysqlTls as usize] = Some(vtable::make::<handlers::MySQL<true>>());
+            t[SocketKind::Postgres as usize] =
+                Some(vtable::make::<Js<handlers::Postgres<false>>>());
+            t[SocketKind::PostgresTls as usize] =
+                Some(vtable::make::<Js<handlers::Postgres<true>>>());
+            t[SocketKind::Mysql as usize] = Some(vtable::make::<Js<handlers::MySQL<false>>>());
+            t[SocketKind::MysqlTls as usize] = Some(vtable::make::<Js<handlers::MySQL<true>>>());
         });
         removable_body!(Valkey, ReturnDefault, {
-            t[SocketKind::Valkey as usize] = Some(vtable::make::<handlers::Valkey<false>>());
-            t[SocketKind::ValkeyTls as usize] = Some(vtable::make::<handlers::Valkey<true>>());
+            t[SocketKind::Valkey as usize] = Some(vtable::make::<Js<handlers::Valkey<false>>>());
+            t[SocketKind::ValkeyTls as usize] = Some(vtable::make::<Js<handlers::Valkey<true>>>());
         });
 
         // IPC
         removable_body!(Ipc, ReturnDefault, {
-            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<Js<handlers::SpawnIPC>>());
         });
         removable_body!(Spawn, ReturnDefault, {
-            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<Js<handlers::SpawnIPC>>());
         });
 
         t
@@ -160,6 +165,9 @@ macro_rules! us_dispatch_shims {
                     // SAFETY: `f` is the vtable callback for this socket kind; loop.c
                     // guarantees `$recv` and any data/len buffers are live for the call,
                     // and the vtable entry's signature matches this shim's C ABI exactly.
+                    // `Js`: the groups of those kinds belong to a VM. An open socket keeps its wrapper strong,
+                    // and teardown closes it before `~VM`. What a finalizer does close is cut off from script
+                    // first: the WebSocket client from its C++ object, IPC by `close_event_sent`.
                     unsafe { f($($call),*) }
                 }
                 None => $default,
@@ -219,13 +227,13 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
             return s;
         };
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
-        // guarantees the buffer outlives this call.
-        let slice = unsafe { core::slice::from_raw_parts(data, len) };
-        crate::dispatch::fold(TLSSocket::on_data(
-            raw,
-            NewSocketHandler::<true>::from(s),
-            slice,
-        ));
+        // guarantees the buffer outlives this call. A VM owns the sockets of this kind,
+        // and only a read gets here.
+        let (slice, js) = unsafe { (core::slice::from_raw_parts(data, len), Js::assume(&s)) };
+        crate::dispatch::fold(
+            js,
+            TLSSocket::on_data(js.on(raw), NewSocketHandler::<true>::from(s), slice),
+        );
     }
     s
 }
@@ -259,9 +267,9 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
         return;
     };
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
-    // duration of this call.
-    let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    crate::dispatch::fold(TLSSocket::on_session(tls, slice));
+    // duration of this call. `js`: as in `us_dispatch_ssl_raw_tap`.
+    let (slice, js) = unsafe { (core::slice::from_raw_parts(data, len), Js::assume(&s)) };
+    crate::dispatch::fold(js, TLSSocket::on_session(js.on(tls), slice));
 }
 
 /// The name check of the verify step, routed to the owner of the socket in the handshake: a `US_IDENTITY_*` verdict.
@@ -356,7 +364,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_keylog(
         return;
     };
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
-    // duration of this call.
-    let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    crate::dispatch::fold(TLSSocket::on_keylog(tls, slice));
+    // duration of this call. `js`: as in `us_dispatch_ssl_raw_tap`.
+    let (slice, js) = unsafe { (core::slice::from_raw_parts(data, len), Js::assume(&s)) };
+    crate::dispatch::fold(js, TLSSocket::on_keylog(js.on(tls), slice));
 }

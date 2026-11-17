@@ -1493,7 +1493,7 @@ impl FFI {
         };
         let object_value = symbols.to_js();
         jsc::mark_binding();
-        let vm = jsc::VirtualMachineRef::get();
+        let vm = global.bun_vm();
 
         if object_value.is_empty_or_undefined_or_null() {
             return Ok(invalid_options_arg(global));

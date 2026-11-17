@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bstr::BStr;
-use bun_core::{ZBox, ZStr, strings};
+use bun_core::{Loop, ZBox, ZStr, strings};
 use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
 
@@ -25,7 +25,7 @@ pub(crate) struct Mv {
     err: Option<bun_sys::Error>,
 }
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     let (flags, operands) = Builtin::of(interp, cmd).split_flags();
     let mut no_clobber = false;
     for ch in flags.iter().flat_map(|flag| flag.iter().skip(1)) {
@@ -74,7 +74,7 @@ impl ShellWork for ShellMvCheckTargetTask {
             Err(e) => Err(e),
         };
     }
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Loop<Interpreter>) -> Yield {
         let cmd = self.cmd;
         let [sources @ .., _] = Builtin::of(interp, cmd).split_flags().1 else {
             return Builtin::fail_usage(interp, cmd, USAGE);
@@ -181,7 +181,7 @@ impl ShellWork for ShellMvBatchedTask {
         }
     }
 
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Loop<Interpreter>) -> Yield {
         let cmd = self.cmd;
         let bltn = Builtin::of_mut(interp, cmd);
         let State::Mv(mv) = &mut bltn.state else {

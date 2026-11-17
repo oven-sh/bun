@@ -22,14 +22,15 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
+use bun_core::proof::Pointer;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_io::{JsKeepAlive, KeepAlive};
+use bun_io::KeepAlive;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::debugger::AsyncTaskTracker;
 use crate::virtual_machine::VirtualMachine;
 use crate::vm_handle::Ticket;
-use crate::{JSGlobalObject, JsResult};
+use crate::{JSGlobalObject, Js, JsKeepAlive, JsResult, Vm};
 
 // ── tokens ────────────────────────────────────────────────────────────────
 
@@ -43,19 +44,27 @@ pub struct JsThread<'a> {
 }
 
 impl<'a> JsThread<'a> {
+    #[inline(always)]
+    pub fn js(&self) -> Js<'a> {
+        self.global.js()
+    }
+    #[inline(always)]
+    pub fn on<'b, P: Pointer<'b>>(&'b self, p: P) -> P::To<Js<'b, P::Of>> {
+        self.global.on(p)
+    }
     #[inline]
     pub fn global(&self) -> &'a JSGlobalObject {
         self.global
     }
     #[inline]
-    pub fn vm(&self) -> &'a VirtualMachine {
+    pub fn vm(&self) -> &'a Js<'a, VirtualMachine> {
         self.global.bun_vm()
     }
     /// The context of the script this thread is running for: the host function's caller, or the
     /// one a completion entered.
     #[inline]
-    pub fn context(&self) -> &'a crate::ScriptExecutionContext {
-        self.context
+    pub fn context(&self) -> &'a Js<'a, crate::ScriptExecutionContext> {
+        self.global.on(self.context)
     }
 }
 
@@ -319,7 +328,7 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
     /// Reached through the header (`release_unrun_erased`): the tag is shared.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract; JS thread with the heap alive.
-        drop(unsafe { Self::take(this, VirtualMachine::get()) })
+        drop(unsafe { Self::take(this, Vm::assume(&this).bun_vm()) })
     }
     /// `JobHeader::context`.
     unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
@@ -358,7 +367,7 @@ impl<C: JobContext> Job<C> {
                 callback: Self::run_on_pool,
             },
             concurrent_task: ConcurrentTask::default(),
-            _keep_alive: JsKeepAlive::active(),
+            _keep_alive: JsKeepAlive::active(cx.vm()),
             off,
             js,
         }));

@@ -13,6 +13,7 @@
 //! the file descriptor.
 
 use bun_collections::VecExt;
+use bun_core::Loop;
 #[cfg(windows)]
 use core::cell::Cell;
 use core::cell::UnsafeCell;
@@ -288,7 +289,7 @@ impl IOWriter {
 
     // ── start ────────────────────────────────────────────────────────────
 
-    fn __start(&self) -> sys::Result<()> {
+    fn __start(self: &Loop<Self>) -> sys::Result<()> {
         let (fd, pollable) = (self.fd(), self.state().flags.pollable);
         crate::shell_log!("IOWriter(fd={}) __start()", fd);
         let started = self.writer.start(self, self.io_evtloop(), fd, pollable);
@@ -370,7 +371,7 @@ impl IOWriter {
     /// here: the caller sits inside the enqueuing child's trampoline, so the
     /// error completion has to bounce off it (`on_sync_error`) instead of
     /// re-entering `Yield::run` (see `DbgDepthGuard`).
-    fn write(&self) -> WriteOutcome {
+    fn write(self: &Loop<Self>) -> WriteOutcome {
         let s = self.state();
         #[cfg(not(windows))]
         debug_assert!(s.flags.pollable);
@@ -571,7 +572,7 @@ impl IOWriter {
 
     /// POSIX-only. `child` is the writer being enqueued (see `on_sync_error`).
     #[cfg(not(windows))]
-    fn do_file_write(&self, child: ChildPtr) -> Yield {
+    fn do_file_write(self: &Loop<Self>, child: ChildPtr) -> Yield {
         {
             let s = self.state();
             debug_assert!(!s.flags.pollable);
@@ -625,13 +626,13 @@ impl IOWriter {
 
     // ── poll callback ───────────────────────────────────────────────────
 
-    pub(crate) fn on_io(&self, event: IoEvent) {
+    pub(crate) fn on_io(self: &Loop<Self>, event: IoEvent) {
         self.writer.on_io(self, event);
     }
 
     /// The `BufferedWriter.onWrite` hook. Runs on the event loop when the fd
     /// is writable.
-    fn on_write_pollable(&self, amount: usize, status: WriteStatus) {
+    fn on_write_pollable(self: &Loop<Self>, amount: usize, status: WriteStatus) {
         // NOTE: `set_writing` re-derives `state()` on Windows, which would
         // invalidate `s` under Stacked Borrows; do it before binding `s`
         // (matches the ordering in `on_error`).
@@ -698,7 +699,11 @@ impl IOWriter {
     /// completion per chunk. A child that finishes at its first error has to
     /// `cancel_chunks` there. The first chunk of `withhold` is returned
     /// instead of run (see `on_sync_error`).
-    fn fail_pending_writers(&self, err: &sys::Error, withhold: Option<ChildPtr>) -> Option<Yield> {
+    fn fail_pending_writers(
+        self: &Loop<Self>,
+        err: &sys::Error,
+        withhold: Option<ChildPtr>,
+    ) -> Option<Yield> {
         // A completion may drop the last external `Rc` to this writer.
         let _keepalive = self.keepalive();
         self.set_writing(false);
@@ -756,7 +761,7 @@ impl IOWriter {
     /// synchronous failure is the first write attempt of a batch); if a poll
     /// re-registration fails while other chunks are still queued, those are
     /// dispatched the way the async path dispatches them.
-    fn on_sync_error(&self, child: ChildPtr, err: &sys::Error) -> Yield {
+    fn on_sync_error(self: &Loop<Self>, child: ChildPtr, err: &sys::Error) -> Yield {
         // `None`: an inline completion made `child` cancel its chunks, so it has finished.
         self.fail_pending_writers(err, Some(child))
             .unwrap_or_else(Yield::done)
@@ -764,7 +769,7 @@ impl IOWriter {
 
     /// Drive a `Yield` from inside an async poll callback. Requires `interp`
     /// to have been set; if not, the chunk-complete is dropped (debug-asserts).
-    fn run_yield(&self, y: Yield) {
+    fn run_yield(self: &Loop<Self>, y: Yield) {
         let Some(interp) = self.state().interp else {
             debug_assert!(
                 matches!(y, Yield::Done),
@@ -776,7 +781,7 @@ impl IOWriter {
         // holds the Rc). Single-threaded; R-2: `Interpreter::run` takes
         // `&self` now — `ParentRef: Deref<Target=Interpreter>` yields the
         // shared borrow without `assume_mut()`.
-        y.run(&interp);
+        y.run(self.on(&*interp));
     }
 
     // ── enqueue ─────────────────────────────────────────────────────────
@@ -812,7 +817,7 @@ impl IOWriter {
     }
 
     #[cfg(not(windows))]
-    fn enqueue_file(&self, child: ChildPtr) -> Yield {
+    fn enqueue_file(self: &Loop<Self>, child: ChildPtr) -> Yield {
         let s = self.state();
         if s.is_writing {
             return Yield::suspended();
@@ -826,7 +831,7 @@ impl IOWriter {
 
     /// You MUST have already added the data to `self.buf`!
     /// `child` is the writer that was just pushed (see `on_sync_error`).
-    fn enqueue_internal(&self, child: ChildPtr) -> Yield {
+    fn enqueue_internal(self: &Loop<Self>, child: ChildPtr) -> Yield {
         debug_assert!(!self.state().flags.broken_pipe);
         debug_assert!(self.state().err.is_none());
         #[cfg(not(windows))]
@@ -844,7 +849,7 @@ impl IOWriter {
     /// Queue `buf` for writing; when the chunk completes (or errors),
     /// `child`'s `on_io_writer_chunk` fires.
     pub(crate) fn enqueue(
-        &self,
+        self: &Loop<Self>,
         child: ChildPtr,
         bytelist: Option<*mut Vec<u8>>,
         buf: &[u8],
@@ -880,13 +885,13 @@ enum WriteOutcome {
     IsActuallyFile,
 }
 
-impl BufferedWriteHandler for IOWriter {
+impl BufferedWriteHandler for Loop<'_, IOWriter> {
     fn with_buffer<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R {
         f(self.get_buffer())
     }
 }
 
-impl WriteHandler for IOWriter {
+impl WriteHandler for Loop<'_, IOWriter> {
     fn on_write(&self, amount: usize, status: WriteStatus) {
         self.on_write_pollable(amount, status);
     }
@@ -995,7 +1000,7 @@ impl Drop for State {
 /// hot-path). Called by `Yield::OnIoWriterChunk` and by the writer's poll
 /// callback.
 pub(crate) fn on_io_writer_chunk(
-    interp: &Interpreter,
+    interp: &Loop<Interpreter>,
     child: ChildPtr,
     written: usize,
     err: Option<sys::SystemError>,

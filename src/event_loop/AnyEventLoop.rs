@@ -20,10 +20,8 @@ use crate::{JsEventLoop, JsEventLoopKind};
 // handle construction (`JsEventLoop::new`); all dispatch sites are safe method
 // calls.
 unsafe extern "Rust" {
-    /// `jsc::VirtualMachine::get().event_loop()` — erased `*mut jsc::EventLoop`
-    /// for the current thread. Kept as a bare extern (no owner). No caller-side
-    /// preconditions: panics (not UB) if no VM is bound on this thread.
-    pub(crate) safe fn __bun_js_event_loop_current() -> *mut ();
+    /// Erased `*mut jsc::EventLoop` of the current thread, which has a VM. Kept as a bare extern (no owner).
+    pub(crate) fn __bun_js_event_loop_current() -> *mut ();
 }
 
 /// Wrap an erased `*mut jsc::EventLoop` in a
@@ -163,9 +161,13 @@ impl EventLoopHandle {
     }
 
     /// The current thread's JS event loop, for callers that cannot name `VirtualMachine`.
-    pub fn js_current() -> EventLoopHandle {
+    ///
+    /// # Safety
+    /// This thread has a VM.
+    pub unsafe fn js_current() -> EventLoopHandle {
         EventLoopHandle::Js {
-            owner: JsEventLoop::current(),
+            // SAFETY: the caller's.
+            owner: unsafe { JsEventLoop::current() },
         }
     }
 

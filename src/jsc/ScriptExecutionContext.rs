@@ -11,7 +11,7 @@
 use core::ptr;
 
 use crate::virtual_machine::SweepResult;
-use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
+use crate::{AbortSignal, AbortSignalRef, JSValue, Js, JsCell, Vm};
 
 pub use bun_event_loop::ContextId;
 
@@ -70,8 +70,8 @@ pub enum ContextTimer {
     AbortSignal,
 }
 
-impl Default for ScriptExecutionContext {
-    fn default() -> Self {
+impl ScriptExecutionContext {
+    fn new() -> Self {
         Self {
             id: JsCell::new(ContextId::default()),
             head: JsCell::new(ptr::null_mut()),
@@ -83,9 +83,13 @@ impl Default for ScriptExecutionContext {
             timers: JsCell::new(Default::default()),
         }
     }
-}
 
-impl ScriptExecutionContext {
+    #[inline(always)]
+    fn bun_vm(&self) -> &crate::VirtualMachineRef {
+        // SAFETY: only a VM makes one, and it owns it. Not `Sync`.
+        unsafe { Vm::assume(self) }.bun_vm()
+    }
+
     #[inline]
     pub fn id(&self) -> ContextId {
         *self.id.get()
@@ -95,7 +99,7 @@ impl ScriptExecutionContext {
     /// Its identifier is the first global's ([`bind`](Self::bind)), which does not change: the
     /// globals `bun test --isolate` makes inherit it.
     pub(crate) fn root() -> Self {
-        Self::default()
+        Self::new()
     }
 
     /// Once, when the VM's first global has been made.
@@ -105,14 +109,14 @@ impl ScriptExecutionContext {
 
     /// `VirtualMachine::dead_context`: stopped from the start.
     pub(crate) fn dead() -> Self {
-        let context = Self::default();
+        let context = Self::new();
         context.id.set(ContextId::DEAD);
         context.stopped.set(true);
         context
     }
 
     pub(crate) fn for_graph(id: ContextId, dom_context: *mut core::ffi::c_void) -> Self {
-        let context = Self::default();
+        let context = Self::new();
         context.id.set(id);
         context.dom_context.set(dom_context);
         context
@@ -150,7 +154,7 @@ impl ScriptExecutionContext {
 
     /// A graph's context stops for good (JS thread): one stop-phase sweep over
     /// its handles and its client sockets.
-    pub(crate) fn stop(&self, reason: StopReason) -> SweepResult {
+    pub(crate) fn stop(self: &Js<Self>, reason: StopReason) -> SweepResult {
         self.stopped.set(true);
         self.stop_again_queued.set(false);
         let result = self.stop_handles(reason);
@@ -175,7 +179,7 @@ impl ScriptExecutionContext {
         self.timers
             .with_mut(|timers| bun_core::handle_oom(timers.put(timer, kind)));
         if self.is_stopped() {
-            crate::VirtualMachineRef::get().stop_graph_context_again(self.id());
+            self.bun_vm().stop_graph_context_again(self.id());
         }
     }
 
@@ -263,7 +267,7 @@ impl ScriptExecutionContext {
     /// One stop-phase sweep (JS thread): until none is armed, the newest
     /// handle is unlinked and its owner told to stop, including what a close
     /// handler it runs opens meanwhile.
-    pub fn stop_handles(&self, reason: StopReason) -> SweepResult {
+    pub fn stop_handles(self: &Js<Self>, reason: StopReason) -> SweepResult {
         let mut result = SweepResult::Idle;
         loop {
             let newest = *self.tail.get();
@@ -365,7 +369,7 @@ impl AbortHandle {
             if context.is_stopped() {
                 // Script of a disposed graph is still opening things: they go on
                 // the next turn of the loop, not under the caller that is arming.
-                crate::VirtualMachineRef::get().stop_graph_context_again(context.id());
+                context.bun_vm().stop_graph_context_again(context.id());
             }
         }
     }
@@ -442,16 +446,17 @@ pub trait AbortHandleOwner: Sized {
     ///
     /// # Safety
     /// `this` is live.
-    unsafe fn on_abort(this: *mut Self, cause: AbortCause);
+    unsafe fn on_abort(this: *mut Js<Self>, cause: AbortCause);
 }
 
 impl AbortHandle {
     unsafe fn owner_aborted<O: AbortHandleOwner>(handle: *mut AbortHandle, cause: AbortCause) {
         // SAFETY: armed/followed through `*_owner::<O>`, so `handle` is `O`'s field.
+        // `stop_handles` takes a `Js`, and a signal fires where it can dispatch its `abort` event.
         unsafe {
             let owner = O::from_abort_handle(handle);
             let _keep_alive = O::keep_alive(owner);
-            O::on_abort(owner, cause)
+            O::on_abort(owner.cast::<Js<O>>(), cause)
         }
     }
 
@@ -501,7 +506,7 @@ macro_rules! impl_abort_handle_owner {
                 unsafe { ::bun_core::from_field_ptr!(Self, $field, handle) }
             }
             unsafe fn on_abort(
-                $this: *mut Self,
+                $this: *mut $crate::Js<Self>,
                 $cause: $crate::script_execution_context::AbortCause,
             ) {
                 $body
@@ -552,10 +557,10 @@ extern "C" fn Bun__ScriptExecutionContext__create(
 }
 
 /// # Safety
-/// `vm` is this thread's live VM and `context` one it created and has not destroyed.
+/// `vm` is this thread's live VM and `context` one it created and has not destroyed. Not from a finalizer.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__ScriptExecutionContext__stop(
-    vm: *mut crate::VirtualMachineRef,
+    vm: *mut Js<crate::VirtualMachineRef>,
     context: *mut ScriptExecutionContext,
 ) {
     // SAFETY: fn contract.
@@ -565,7 +570,7 @@ unsafe extern "C" fn Bun__ScriptExecutionContext__stop(
 }
 
 /// # Safety
-/// As [`Bun__ScriptExecutionContext__stop`]; `context` is not used again.
+/// `vm` and `context` as for [`Bun__ScriptExecutionContext__stop`]; `context` is not used again.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__ScriptExecutionContext__release(
     vm: *mut crate::VirtualMachineRef,

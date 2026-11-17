@@ -130,7 +130,7 @@ impl DevServer {
             styles: match framework_bundle.cached_css_file_array.get() {
                 Some(a) => a,
                 None => 'arr: {
-                    let js = self.generate_css_js_array(route_index)?;
+                    let js = self.generate_css_js_array(route_index, global.js())?;
                     let route_bundle::Data::Framework(framework_bundle) =
                         &mut self.route_bundles[route_bundle_index.get() as usize].data
                     else {
@@ -151,10 +151,11 @@ impl DevServer {
         route_bundle_index: route_bundle::Index,
         req: SavedRequestUnion,
         resp: AnyResponse,
+        js: Js,
     ) -> JsResult<()> {
         // Extract route params by re-matching the URL
         // TODO: lazy structure caching since we are making these objects a lot
-        let global = self.vm().global();
+        let global = self.global(js);
         let params_js_value = {
             let mut params: router::MatchedParams = Default::default();
             let url_bunstr = match &req {
@@ -484,7 +485,7 @@ impl DevServer {
                 client_bundle
             }
         };
-        self.source_maps.add_weak_ref(source_map_id);
+        (self.source_maps).add_weak_ref(source_map_id, self.vm.as_vm());
         StaticRoute::on_with_method(client_bundle, method, resp);
     }
 }
@@ -597,7 +598,11 @@ impl DevServer {
         Ok(client_bundle)
     }
 
-    fn generate_css_js_array(&mut self, route_index: router::RouteIndex) -> JsResult<JSValue> {
+    fn generate_css_js_array(
+        &mut self,
+        route_index: router::RouteIndex,
+        js: Js,
+    ) -> JsResult<JSValue> {
         let _lock = self.graph_safety_lock.guard();
 
         // Prepare bitsets
@@ -608,7 +613,7 @@ impl DevServer {
         self.trace_all_route_imports(route_index, &mut gts, TraceImportGoal::FindCss)?;
 
         let names: &[u64] = &self.graphs.client.current_css_files;
-        let global = self.vm().global();
+        let global = self.global(js);
         let arr = jsc::JSArray::create_empty(global, names.len())?;
         for (i, item) in names.iter().enumerate() {
             let mut buf =

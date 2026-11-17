@@ -4,6 +4,7 @@
 
 use core::cell::UnsafeCell;
 
+use bun_core::Loop;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_sys::{self as sys, Fd};
 
@@ -152,7 +153,7 @@ impl IOReader {
 
     /// Idempotent function to start the reading. The caller's trampoline is on the stack,
     /// so a failure to start is returned as a continuation (see `finish_listeners`).
-    pub(crate) fn start(&self) -> Yield {
+    pub(crate) fn start(self: &Loop<Self>) -> Yield {
         #[cfg(windows)]
         if self.state().reached_eof {
             return self.finish_listeners(None);
@@ -193,7 +194,7 @@ impl IOReader {
     }
 
     /// A listener has written the chunks it got. Reads on if the reader was paused for that.
-    pub(crate) fn resume(&self) -> Yield {
+    pub(crate) fn resume(self: &Loop<Self>) -> Yield {
         if !self.state().paused {
             return Yield::suspended();
         }
@@ -223,7 +224,7 @@ impl IOReader {
     }
 
     /// A listener may drop every other `Rc`.
-    pub(crate) fn on_io(self: &std::rc::Rc<Self>, event: IoEvent) {
+    pub(crate) fn on_io(self: &Loop<Self>, event: IoEvent) {
         let result = self
             .reader
             .read_chunks(self.io_evtloop(), Some(event), |chunk, state| {
@@ -236,7 +237,7 @@ impl IOReader {
         }
     }
 
-    fn on_read_chunk(&self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
+    fn on_read_chunk(self: &Loop<Self>, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
         self.set_reading(false);
         // NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
         // both re-derive `state()` (and the interpreter callback may re-enter
@@ -246,7 +247,7 @@ impl IOReader {
         let mut i = 0usize;
         while i < self.state().readers.len() {
             let r = self.state().readers[i];
-            let interp = self.state().interp;
+            let interp = self.on(self.state().interp.as_deref());
             let mut remove = false;
             self.run_yield(dispatch_read_chunk(r, chunk, &mut remove, interp));
             if remove {
@@ -269,9 +270,9 @@ impl IOReader {
         should_continue
     }
 
-    fn on_reader_error(&self, err: &sys::Error) {
+    fn on_reader_error(self: &Loop<Self>, err: &sys::Error) {
         self.set_reading(false);
-        let interp = self.state().interp;
+        let interp = self.on(self.state().interp.as_deref());
         for r in self.take_readers() {
             // Re-derive a fresh SystemError per callee (see
             // IOWriter.on_error note).
@@ -280,14 +281,14 @@ impl IOReader {
         }
     }
 
-    fn on_reader_done(&self) {
+    fn on_reader_done(self: &Loop<Self>) {
         self.set_reading(false);
         // Set this before notifying listeners, because a notification can start the next `cat`.
         #[cfg(windows)]
         {
             self.state().reached_eof = true;
         }
-        let interp = self.state().interp;
+        let interp = self.on(self.state().interp.as_deref());
         for r in self.take_readers() {
             self.run_yield(dispatch_reader_done(r, None, interp));
         }
@@ -295,9 +296,9 @@ impl IOReader {
 
     /// Reports EOF (`None`) or an error to the listeners from under `start()`. Returns the last
     /// continuation instead of running it, so consecutive `cat`s don't nest `Yield::run` calls.
-    fn finish_listeners(&self, err: Option<&sys::Error>) -> Yield {
+    fn finish_listeners(self: &Loop<Self>, err: Option<&sys::Error>) -> Yield {
         let _keepalive = self.keepalive();
-        let interp = self.state().interp;
+        let interp = self.on(self.state().interp.as_deref());
         let mut readers = self.take_readers();
         let last = readers.pop();
         let done = |r| dispatch_reader_done(r, err.map(sys::Error::to_shell_system_error), interp);
@@ -316,7 +317,7 @@ impl IOReader {
         core::mem::take(&mut self.state().readers)
     }
 
-    fn run_yield(&self, y: Yield) {
+    fn run_yield(self: &Loop<Self>, y: Yield) {
         let Some(interp) = self.state().interp else {
             debug_assert!(
                 matches!(y, Yield::Done | Yield::Suspended),
@@ -326,7 +327,7 @@ impl IOReader {
         };
         // `ParentRef: Deref<Target=Interpreter>` — the interpreter owns the IO
         // struct holding this Rc and outlives every IOReader. Single-threaded.
-        y.run(&interp);
+        y.run(self.on(&*interp));
     }
 }
 
@@ -356,12 +357,11 @@ fn dispatch_read_chunk(
     child: ChildPtr,
     chunk: &[u8],
     remove: &mut bool,
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
+    interp: Option<&Loop<Interpreter>>,
 ) -> Yield {
     let Some(interp) = interp else {
         return Yield::suspended();
     };
-    let interp = interp.get();
     match child.tag {
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_chunk(interp, child.node, chunk, remove)
@@ -381,12 +381,11 @@ fn awaits_write(child: ChildPtr, interp: Option<bun_ptr::ParentRef<Interpreter>>
 fn dispatch_reader_done(
     child: ChildPtr,
     err: Option<sys::SystemError>,
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
+    interp: Option<&Loop<Interpreter>>,
 ) -> Yield {
     let Some(interp) = interp else {
         return Yield::suspended();
     };
-    let interp = interp.get();
     match child.tag {
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)

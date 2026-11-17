@@ -927,7 +927,7 @@ pub unsafe trait UvStream: UvHandle {
             if n == 0 {
                 return; // EAGAIN / EWOULDBLOCK
             }
-            // SAFETY: `req.data` was set to `context` above.
+            // SAFETY: `req.data` was set to `context` above. From `uv_run` on the loop's thread, and not after `uv_close`.
             let ctx = unsafe { &*(*req).data.cast::<T>() };
             if n < 0 {
                 // SAFETY: stream prefix invariant.

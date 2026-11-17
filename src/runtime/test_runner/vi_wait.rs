@@ -5,8 +5,8 @@ use bun_io::KeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    AbortHandle, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsClass as _,
-    JsError, JsResult, JsThread, Strong, StrongCell,
+    AbortHandle, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, Js, JsClass as _,
+    JsError, JsResult, JsThread, Strong, StrongCell, Vm,
 };
 
 use super::expect::expect_deferred::RunningEntry;
@@ -198,7 +198,7 @@ impl ViWait {
 
         let this = ViWait::from_js(&this_value).expect("to_js returns the wrapper");
         this.root.set(Strong::create(this_value, global));
-        this.keep_alive.ref_(bun_io::js_vm_ctx());
+        this.keep_alive.ref_(cx.vm().loop_ctx());
         // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
         unsafe { AbortHandle::arm_owner(this.as_ptr(), cx.context()) };
 
@@ -206,7 +206,7 @@ impl ViWait {
             match thrown_value(global, err) {
                 Ok(error) => this.settle(global, this_value, Err(error))?,
                 Err(err) => {
-                    this.finish();
+                    cx.on(&*this).finish();
                     return Err(err);
                 }
             }
@@ -214,7 +214,7 @@ impl ViWait {
         if this.is_pending() {
             let now = Timespec::now(TimespecMockMode::ForceRealTime);
             this.deadline.set(now.add_ms(i64::from(timeout_ms)));
-            this.arm(&now);
+            cx.on(&*this).arm(&now);
         }
         Ok(promise)
     }
@@ -223,7 +223,7 @@ impl ViWait {
         self.root.is_some()
     }
 
-    fn arm(&self, now: &Timespec) {
+    fn arm(self: &Vm<Self>, now: &Timespec) {
         let next_poll = now.add_ms(i64::from(self.interval_ms.max(1)));
         let deadline = self.deadline.get();
         let next = if next_poll.order(&deadline).is_lt() {
@@ -231,14 +231,14 @@ impl ViWait {
         } else {
             deadline
         };
-        timer_all().update(&raw const self.timer, &next);
+        timer_all(self.bun_vm()).update(&raw const self.timer, &next);
     }
 
     /// Idempotent. The wrapper may be collected afterwards.
-    fn finish(&self) {
+    fn finish(self: &Vm<Self>) {
         self.timer.disarm();
         self.abort_handle.leave();
-        self.keep_alive.unref(bun_io::js_vm_ctx());
+        self.keep_alive.unref(self.bun_vm().loop_ctx());
         self.root.clear();
     }
 
@@ -252,7 +252,7 @@ impl ViWait {
         if !self.is_pending() {
             return Ok(());
         }
-        self.finish();
+        global.on(self).finish();
         let Some(promise) = js::promise_get_cached(this_value).and_then(JSValue::as_promise) else {
             return Ok(());
         };
@@ -378,13 +378,17 @@ impl ViWait {
                 ExpectDeferred__setCauseIfNone(global, error, timeout_error)
             })
         {
-            self.finish();
+            global.on(self).finish();
             return Err(terminated);
         }
         self.settle(global, this_value, Err(error))
     }
 
-    pub(crate) fn on_timer_fire(&self, now: &Timespec, vm: &VirtualMachine) -> JsResult<()> {
+    pub(crate) fn on_timer_fire(
+        self: &Vm<Self>,
+        now: &Timespec,
+        vm: &Js<VirtualMachine>,
+    ) -> JsResult<()> {
         self.timer.state.set(EventLoopTimerState::FIRED);
         let Some(this_value) = self.root.get() else {
             return Ok(());

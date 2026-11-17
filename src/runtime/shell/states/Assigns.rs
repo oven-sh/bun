@@ -7,6 +7,7 @@ use crate::shell::states::base::{Base, InheritedEnv};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 use crate::shell::{EnvStr, ExitCode};
+use bun_core::Loop;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AssignCtx {
@@ -56,7 +57,7 @@ impl Assigns {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         loop {
             let (shell, node) = {
                 let me = interp.as_assigns(this);
@@ -86,7 +87,7 @@ impl Assigns {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,

@@ -66,11 +66,11 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
+fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool, js: Js) {
     // Held to the end: a stopped server frees `dev` with its last request.
     let (script_requests, _pending_request) = match &mut dev.current_bundle {
         Some(current_bundle) => {
-            drain_current_bundle_requests(current_bundle);
+            drain_current_bundle_requests(current_bundle, js);
             (
                 ::core::mem::take(&mut current_bundle.script_requests),
                 current_bundle.pending_request.take(),
@@ -135,7 +135,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
     }
 }
 
-pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
+pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle, js: Js) {
     if current_bundle.requests.first().is_some() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
@@ -143,7 +143,7 @@ pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) 
         );
     }
     while let Some(req) = current_bundle.requests.pop_first() {
-        req.take_handler().fail();
+        req.take_handler().fail(js);
     }
 }
 
@@ -153,16 +153,17 @@ pub(super) fn finalize_bundle(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
     result: bundler::bundle_v2::DevServerOutput,
+    js: Js,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
     let mut had_sent_hmr_event = false;
-    let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
-    finalize_bundle_cleanup(dev, had_sent_hmr_event);
+    let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event, js);
+    finalize_bundle_cleanup(dev, had_sent_hmr_event, js);
     finalized
 }
 
 /// Evaluates the server chunk: an object of the functions of its modules. None of them runs.
-fn load_server_chunk(dev: &mut DevServer) -> crate::Result<jsc::JsResult<JSValue>> {
+fn load_server_chunk(dev: &mut DevServer, js: Js) -> crate::Result<jsc::JsResult<JSValue>> {
     let graph = &mut dev.graphs.server;
     let source_map_json = if !graph.current_chunk_source_maps.is_empty() {
         let mut source_map_entry = source_map_store::Entry::default();
@@ -180,14 +181,14 @@ fn load_server_chunk(dev: &mut DevServer) -> crate::Result<jsc::JsResult<JSValue
             // This memory will be owned by the `DevServerSourceProvider` in C++
             let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
             server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
-                dev.global(),
+                dev.global(js),
                 BunString::clone_utf8(&server_bundle),
                 json.as_ptr(),
                 json.len(),
             )
         }
         None => server_hmr_ffi::bake_load_server_hmr_patch(
-            dev.global(),
+            dev.global(js),
             BunString::clone_latin1(&server_bundle),
         ),
     })
@@ -195,8 +196,8 @@ fn load_server_chunk(dev: &mut DevServer) -> crate::Result<jsc::JsResult<JSValue
 
 /// Takes the modules that JavaScriptCore refuses out of the server chunk, and marks their files stale. Returns whether
 /// any module is left.
-fn leave_out_refused_modules(dev: &mut DevServer) -> bool {
-    let global = dev.global();
+fn leave_out_refused_modules(dev: &mut DevServer, js: Js) -> bool {
+    let global = dev.global(js);
     let codes = ::core::mem::take(&mut dev.graphs.server.current_chunk_code);
     let source_maps = ::core::mem::take(&mut dev.graphs.server.current_chunk_source_maps);
     dev.graphs.server.current_chunk_len = 0;
@@ -214,7 +215,7 @@ fn leave_out_refused_modules(dev: &mut DevServer) -> bool {
                 let exception = global.take_exception(err);
                 // The error of the chunk was the first one's.
                 if ::core::mem::replace(&mut any_refused, true) {
-                    dev.vm().print_error_like_object_to_console(exception);
+                    (js.on(dev.vm())).print_error_like_object_to_console(exception);
                 }
                 let index = source_map.file_index.get() as usize;
                 dev.graphs.server.stale_files.set(index);
@@ -230,6 +231,7 @@ fn finalize_bundle_inner(
     bv2: &mut BundleV2,
     result: bundler::bundle_v2::DevServerOutput,
     had_sent_hmr_event: &mut bool,
+    js: Js,
 ) -> JsResult<()> {
     // Note: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
     // mutably. Erase to a raw pointer and reborrow at each use site via the
@@ -651,21 +653,21 @@ fn finalize_bundle_inner(
     // Load all new chunks into the server runtime.
     if !dev.frontend_only && dev.graphs.server.current_chunk_len > 0 {
         'load: {
-            let global = dev.global();
-            let server_modules = match load_server_chunk(dev)? {
+            let global = dev.global(js);
+            let server_modules = match load_server_chunk(dev, js)? {
                 Ok(modules) => modules,
                 Err(err) => {
                     // JavaScriptCore can refuse text that Bun's parser takes, such as `/(/`. The error is printed,
                     // the module stays as it was, and the others of the chunk are loaded without it.
-                    dev.vm()
+                    js.on(dev.vm())
                         .print_error_like_object_to_console(global.take_exception(err));
-                    if !leave_out_refused_modules(dev) {
+                    if !leave_out_refused_modules(dev, js) {
                         break 'load;
                     }
-                    match load_server_chunk(dev)? {
+                    match load_server_chunk(dev, js)? {
                         Ok(modules) => modules,
                         Err(err) => {
-                            dev.vm()
+                            js.on(dev.vm())
                                 .print_error_like_object_to_console(global.take_exception(err));
                             break 'load;
                         }
@@ -689,7 +691,7 @@ fn finalize_bundle_inner(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    dev.vm()
+                    js.on(dev.vm())
                         .print_error_like_object_to_console(global.take_exception(err));
                     break 'load;
                 }
@@ -1196,6 +1198,7 @@ fn finalize_bundle_inner(
                 req.route_bundle_index,
                 SavedRequestUnion::Saved(&saved),
                 saved.response,
+                js,
             )?,
             Handler::BundledHtmlPage(ram) => {
                 dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)

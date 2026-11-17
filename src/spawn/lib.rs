@@ -11,6 +11,8 @@
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
 //! and `bun_threading` — none of which depend back on this crate, so no cycle.
 
+#![feature(arbitrary_self_types)]
+
 // ──────────────────────────────────────────────────────────────────────────
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
@@ -65,7 +67,7 @@ bun_dispatch::link_interface! {
         HostProcess,
         SyncWindows,
     ] {
-        fn on_process_exit(status: Status, rusage: &Rusage);
+        fn on_process_exit(self: &bun_core::Loop<Self>, status: Status, rusage: &Rusage);
     }
 }
 

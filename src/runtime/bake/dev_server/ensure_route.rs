@@ -7,6 +7,7 @@ pub(super) struct RequestEnsureRouteBundledCtx<'a> {
     pub(super) resp: AnyResponse,
     pub(super) kind: deferred_request::HandlerKind,
     pub(super) route_bundle_index: route_bundle::Index,
+    pub(super) js: Js<'a>,
 }
 
 impl RequestEnsureRouteBundledCtx<'_> {
@@ -22,6 +23,7 @@ impl RequestEnsureRouteBundledCtx<'_> {
             self.kind,
             req,
             self.resp,
+            self.js,
         )?)
     }
 
@@ -32,7 +34,8 @@ impl RequestEnsureRouteBundledCtx<'_> {
                     ReqOrSaved::Req(r) => SavedRequestUnion::Stack(r),
                     ReqOrSaved::Aborted => unreachable!(),
                 };
-                dev.on_framework_request_with_bundle(self.route_bundle_index, req, self.resp)
+                let js = self.js;
+                dev.on_framework_request_with_bundle(self.route_bundle_index, req, self.resp, js)
             }
             deferred_request::HandlerKind::BundledHtmlPage => {
                 let method = self.req.method();
@@ -256,6 +259,7 @@ impl DevServer {
         kind: deferred_request::HandlerKind,
         req: ReqOrSaved<'_>,
         resp: AnyResponse,
+        js: Js,
     ) -> crate::Result<Deferral> {
         let ReqOrSaved::Req(req) = req else {
             unreachable!()
@@ -278,7 +282,7 @@ impl DevServer {
                 );
             }
             deferred_request::HandlerKind::ServerHandler => {
-                let global = self.vm().global();
+                let global = self.global(js);
                 let Some(saved) = self
                     .server
                     .as_ref()
@@ -361,6 +365,7 @@ impl DevServer {
         html: bun_ptr::ThisPtr<HTMLBundleRoute>,
         req: &mut Request,
         resp: AnyResponse,
+        js: Js,
     ) -> Result<(), AllocError> {
         if !is_allowed_dev_host(self, req) {
             host_forbidden(resp);
@@ -374,6 +379,7 @@ impl DevServer {
             resp,
             kind: deferred_request::HandlerKind::BundledHtmlPage,
             route_bundle_index,
+            js,
         };
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
@@ -382,7 +388,7 @@ impl DevServer {
             // trampoline (`StaticRouteLike`, which otherwise never enters
             // JS): what bundling left pending is folded at this boundary.
             Err(err @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
-                crate::dispatch::fold(Err(err))
+                crate::dispatch::fold(js, Err(err))
             }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }

@@ -1254,14 +1254,18 @@ impl GitSubprocess {
         debug_assert!(this.process.get().is_none());
         let process = spawned.to_process_handle(this.event_loop);
         process.set_exit_handler(this);
+        // SAFETY: auto-install queues no git task. A command gets here from `main`, on its thread.
+        let loop_ = unsafe { bun_core::Loop::assume(&this) };
         // The exit handler may run inside `watch_or_reap` / `on_exit` and free
         // `this`; after those only the local handle is touched.
-        match process.watch_or_reap() {
+        match loop_.on(&process).watch_or_reap() {
             Ok(false) => this.process.set(Some(process)),
             Ok(true) => {}
             Err(err) => {
                 if !process.has_exited() {
-                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
+                    loop_
+                        .on(&process)
+                        .on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
                 }
             }
         }

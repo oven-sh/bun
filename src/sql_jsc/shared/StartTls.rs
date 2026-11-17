@@ -1,11 +1,11 @@
 use core::ptr::NonNull;
 
 use bun_boringssl_sys::OwnedSslCtx;
+use bun_jsc::Js;
 use bun_jsc::rare_data::SocketGroups;
 use bun_sql::shared::SSLMode;
 use bun_uws::{self as uws, AnySocket, InternalSocket, SocketGroup, SocketKind, SocketTLS};
 
-use crate::jsc::VirtualMachine;
 use crate::jsc::api::server_config::SSLConfig;
 
 pub(crate) enum StartTlsError {
@@ -32,6 +32,7 @@ pub(crate) fn start_tls<T>(
     secure: Option<&OwnedSslCtx>,
     tls_config: &SSLConfig,
     ssl_mode: SSLMode,
+    js: Js,
     store: impl FnOnce(AnySocket),
 ) -> Result<(), StartTlsError> {
     let AnySocket::SocketTcp(tcp) = socket else {
@@ -48,7 +49,7 @@ pub(crate) fn start_tls<T>(
     let ext_size = size_of::<Option<NonNull<T>>>() as i32;
     // SAFETY: `raw` is live. `adopt_tls` may move the socket.
     let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-        group(groups, VirtualMachine::get().uws_loop()),
+        group(groups, js.bun_vm().uws_loop()),
         kind,
         ssl_ctx,
         tls_config.sni(),

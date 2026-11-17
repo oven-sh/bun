@@ -1,8 +1,7 @@
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSType, JSValue, JsClass as _};
+use bun_jsc::{JSGlobalObject, JSType, JSValue, JsClass as _, Vm};
 
 use crate::generated_bindgen::crypto::{EncodedUUID, UUIDEncodingOrTimestamp, UUIDTimestamp};
 use crate::node::Encoding;
@@ -58,10 +57,10 @@ impl Crypto {
         Ok(array)
     }
 
-    pub(crate) fn random_uuid(&self) -> BunString {
+    pub(crate) fn random_uuid(self: &Vm<Self>) -> BunString {
         let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
-        let uuid = VirtualMachine::get().rare_data().next_uuid();
+        let uuid = self.bun_vm().rare_data().next_uuid();
 
         uuid.print(
             (&mut bytes[0..36])
@@ -157,7 +156,7 @@ pub(crate) fn random_uuid_v7<'a>(
         ),
     };
 
-    let entropy = VirtualMachine::get().rare_data().entropy();
+    let entropy = heap.bun_vm().rare_data().entropy();
 
     let uuid = UUID7::init(timestamp, entropy, timestamp_source);
 

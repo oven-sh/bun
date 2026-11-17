@@ -33,7 +33,7 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 
 pub(crate) mod js_bundler {
     use super::*;
-    use bun_core::Utf8Bytes;
+    use bun_core::{Loop, Utf8Bytes};
     use core::ptr::NonNull;
 
     type OwnedString = MutableString;
@@ -2078,12 +2078,12 @@ pub(crate) mod js_bundler {
     }
 
     #[inline(never)]
-    fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {
+    fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>, loop_: Loop) {
         bun_removable_features::removable_definition!(Bundler, on_notify_defer_mini_wrap);
         // SAFETY: callback contract — `load` was passed as the `Context` arg to
         // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
         // `BundleV2` backref the mini loop's tick supplies as `extra`.
-        BundleV2::on_notify_defer(unsafe { &mut *load }, unsafe { &mut *ctx });
+        BundleV2::on_notify_defer(unsafe { &mut *load }, unsafe { &mut *ctx }, loop_);
     }
 
     #[unsafe(no_mangle)]
@@ -2214,8 +2214,11 @@ pub(crate) mod js_bundler {
     impl Drop for OwnedPlugin {
         fn drop(&mut self) {
             jsc::mark_binding();
+            // SAFETY: `!Send`, and made from a global object. A build drops it before teardown's wait ends, a
+            // server in the VM's last sweep at the latest.
+            let vm = unsafe { jsc::Vm::assume(self) };
             // The VM's last sweep can free a server after its plugin object.
-            if jsc::virtual_machine::VirtualMachine::get().is_shutting_down() {
+            if vm.bun_vm().is_shutting_down() {
                 return;
             }
             self.tombstone();

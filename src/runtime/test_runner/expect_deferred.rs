@@ -10,7 +10,7 @@ use bun_jsc::call_frame::CallerSrcLoc;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::{
     AnyPromise, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue,
-    JsClass as _, JsError, JsResult, Strong,
+    Js, JsClass as _, JsError, JsResult, Strong, Vm,
 };
 use bun_ptr::CellExt as _;
 
@@ -356,12 +356,12 @@ pub(crate) struct Pass {
     recent: [[Cell<JSValue>; 3]; Pass::RECENT],
 }
 
-pub(crate) struct EnteredPass<'a>(&'a Pass);
+pub(crate) struct EnteredPass<'a>(&'a Vm<'a, Pass>);
 
 impl Drop for EnteredPass<'_> {
     #[inline]
     fn drop(&mut self) {
-        Pass::innermost().set(self.0.outer.get());
+        Pass::innermost(self.0.as_vm()).set(self.0.outer.get());
     }
 }
 
@@ -395,21 +395,21 @@ impl Pass {
     }
 
     #[inline]
-    fn innermost() -> &'static Cell<*const Pass> {
-        &crate::jsc_hooks::runtime_state().matcher_pass
+    fn innermost(vm: Vm<'_>) -> &Cell<*const Pass> {
+        &crate::jsc_hooks::runtime_state(vm.bun_vm()).matcher_pass
     }
 
     #[inline]
-    pub(crate) fn enter(&self) -> EnteredPass<'_> {
-        self.outer.set(Self::innermost().replace(self));
+    pub(crate) fn enter<'a>(self: &'a Vm<Self>) -> EnteredPass<'a> {
+        self.outer.set(Self::innermost(self.as_vm()).replace(&raw const **self));
         EnteredPass(self)
     }
 
     /// `None` if no matcher body is running or a barrier is in between, so the caller can't defer.
     #[inline]
-    fn current<'a>() -> Option<&'a Pass> {
+    fn current(js: Js<'_>) -> Option<&Pass> {
         // SAFETY: a live `EnteredPass` in a caller's frame borrows whatever `innermost()` points to.
-        unsafe { Self::innermost().get().as_ref() }.filter(|pass| pass.role == Role::Matcher)
+        unsafe { Self::innermost(js.as_vm()).get().as_ref() }.filter(|pass| pass.role == Role::Matcher)
     }
 
     #[inline]
@@ -441,7 +441,7 @@ impl Pass {
         question: Question,
         mut ask: impl FnMut() -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
-        let Some(pass) = Self::current() else {
+        let Some(pass) = Self::current(global.js()) else {
             return ask();
         };
         let at = pass.cursor.get();
@@ -571,7 +571,7 @@ impl Pass {
     /// `promise` must come from `once()`, so the re-run sees the same one.
     #[cold]
     pub(crate) fn wait_for(global: &JSGlobalObject, promise: AnyPromise) -> JsError {
-        let Some(pass) = Self::current() else {
+        let Some(pass) = Self::current(global.js()) else {
             return global.throw(format_args!(
                 "An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)"
             ));
@@ -617,7 +617,7 @@ impl ExpectDeferred {
     }
 
     pub(crate) fn call_site(global: &JSGlobalObject, expect: JSValue) -> Option<CallerSrcLoc> {
-        let deferred = Pass::current()?.replayed()?;
+        let deferred = Pass::current(global.js())?.replayed()?;
         if js::expect_get_cached(deferred) != Some(expect) {
             return None;
         }
@@ -712,7 +712,7 @@ impl ExpectDeferred {
                 None => 0,
             };
             let pass = Pass::replaying(deferred);
-            let _entered = pass.enter();
+            let _entered = global.on(&pass).enter();
             let result = call.call(global, JSValue::UNDEFINED, &[]);
             if u64::from(pass.cursor.get()) >= recorded
                 || matches!(result, Ok(returned) if returned == promise)
@@ -800,7 +800,7 @@ impl ExpectDeferred {
             }
             let is_handled = js::promise_get_cached(deferred)
                 .is_some_and(ExpectDeferred__isHandled);
-            crate::dispatch::fold(this.abandon(global, deferred, Some(buntest)));
+            crate::dispatch::fold(global.js(), this.abandon(global, deferred, Some(buntest)));
             if is_handled {
                 continue;
             }
@@ -986,7 +986,7 @@ impl Expect {
             return self.call_modified_matcher(cx, call, &matcher);
         }
         let pass = Pass::of_matcher();
-        let _entered = pass.enter();
+        let _entered = cx.heap.as_vm().on(&pass).enter();
         match matcher(cx, call) {
             Ok(value) => Ok(value),
             Err(error) => self.matcher_failed(cx.global(), call, error),
@@ -1014,7 +1014,7 @@ impl Expect {
         matcher: Matcher<'_, 'a>,
     ) -> JsResult<JSValue> {
         let pass = Pass::of_matcher();
-        let _entered = pass.enter();
+        let _entered = cx.heap.as_vm().on(&pass).enter();
         let flags = call.flags;
         let result = if flags.promise() != Promise::None {
             self.call_matcher_on_promise(cx, call, matcher)

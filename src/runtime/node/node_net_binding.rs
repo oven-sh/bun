@@ -4,9 +4,8 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsKeepAlive, JsResult};
 use bun_uws as uws;
 
 use crate::generated_bindgen::socket_body::SocketHandle;

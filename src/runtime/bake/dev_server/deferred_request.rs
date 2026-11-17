@@ -122,9 +122,9 @@ impl Handler {
     }
 
     /// Ends the response, which removes the abort callback that points to the request.
-    pub(super) fn fail(self) {
+    pub(super) fn fail(self, js: Js) {
         if let Handler::ServerHandler(saved) = self {
-            saved.ctx.end_with_internal_server_error();
+            saved.ctx.end_with_internal_server_error(js);
         } else {
             self.abort();
         }

@@ -13,7 +13,7 @@ use bun_bundler::options::{self as bundler_options, LoaderExt as _};
 use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
-use bun_jsc::JsCell;
+use bun_jsc::{Js, JsCell};
 use bun_ptr::{RefCount, RefPtr, ThisPtr};
 use bun_uws::{AnyRequest, AnyResponse};
 
@@ -160,17 +160,23 @@ impl Route {
         })
     }
 
-    pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(this: ThisPtr<Js<Self>>, req: AnyRequest, resp: AnyResponse) {
         Self::on_any_request(this, req, resp, false);
     }
 
-    pub(crate) fn on_head_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_head_request(this: ThisPtr<Js<Self>>, req: AnyRequest, resp: AnyResponse) {
         Self::on_any_request(this, req, resp, true);
     }
 
     #[inline(never)]
-    fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+    fn on_any_request(
+        this: ThisPtr<Js<Self>>,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        is_head: bool,
+    ) {
         bun_removable_features::removable_definition!(Bundler, Self::on_any_request);
+        let (this, js) = (this.plain(), this.proof());
         let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
 
@@ -191,6 +197,7 @@ impl Route {
                             this,
                             bun_opaque::opaque_deref_mut(h1),
                             resp,
+                            js,
                         ));
                     }
                     AnyRequest::H3(_) => {
@@ -267,9 +274,9 @@ impl Route {
                         );
                     }
                     if is_head {
-                        StaticRoute::on_head_request(html.this_ptr(), req, resp);
+                        StaticRoute::on_head_request(js.on(html.this_ptr()), req, resp);
                     } else {
-                        StaticRoute::on_request(html.this_ptr(), req, resp);
+                        StaticRoute::on_request(js.on(html.this_ptr()), req, resp);
                     }
                 }
             }
@@ -585,7 +592,7 @@ impl Route {
                 ));
                 self.state.set(State::Html(html_route_clone));
 
-                if !bun_core::handle_oom(server.reload_static_routes()) {
+                if !bun_core::handle_oom(global_this.on(&server).reload_static_routes()) {
                     // Server has shutdown, so it won't receive any new requests
                     // TODO: handle this case
                 }

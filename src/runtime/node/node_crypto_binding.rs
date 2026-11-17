@@ -385,9 +385,7 @@ pub(crate) fn random_uuid(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> Bun
     let uuid = if options.disable_entropy_cache {
         UUID::init()
     } else {
-        // SAFETY: it only leads to the VM's entropy cache.
-        let global = unsafe { heap.global() };
-        global.bun_vm().rare_data().next_uuid()
+        heap.bun_vm().rare_data().next_uuid()
     };
 
     uuid.print(

@@ -9,6 +9,7 @@ use core::cell::Cell;
 
 use crate::shell::interpreter::{Interpreter, NodeId, StateKind, log};
 use crate::shell::states::pipeline::Pipeline;
+use bun_core::Loop;
 
 /// A "continuation" of the shell interpreter. Shell state-machine functions
 /// return a `Yield`; `Yield::run(&Interpreter)` is the trampoline that
@@ -90,7 +91,7 @@ impl Drop for DbgDepthGuard {
 
 impl Yield {
     /// Trampoline: drive the interpreter until it suspends/finishes.
-    pub(crate) fn run(self, interp: &Interpreter) {
+    pub(crate) fn run(self, interp: &Loop<Interpreter>) {
         let tag: &'static str = (&self).into();
         let _depth = DbgDepthGuard::enter(tag);
 
@@ -142,7 +143,10 @@ impl Yield {
         }
     }
 
-    fn drain_pipelines(interp: &Interpreter, pipeline_stack: &mut Vec<NodeId>) -> Option<Yield> {
+    fn drain_pipelines(
+        interp: &Loop<Interpreter>,
+        pipeline_stack: &mut Vec<NodeId>,
+    ) -> Option<Yield> {
         while let Some(&id) = pipeline_stack.last() {
             if Pipeline::is_starting_cmds(interp, id) {
                 return Some(interp.next_node(id));

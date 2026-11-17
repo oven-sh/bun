@@ -4,6 +4,7 @@ use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKi
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 pub(crate) struct Stmt {
     pub(crate) base: Base,
@@ -44,7 +45,7 @@ impl Stmt {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         let (idx, len, parent, last, shell) = {
             let me = interp.as_stmt(this);
             (
@@ -66,7 +67,7 @@ impl Stmt {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,

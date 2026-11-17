@@ -1,8 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
+use crate::{JSGlobalObject, JSValue, Js, JsResult, VM, host_fn};
 use bun_core::ffi::FfiSlice;
 use bun_core::{EncodedSlice, String as BunString, StringPointer};
 use bun_http_types::ETag::{HeaderEntryColumns as _, Headers};
@@ -234,10 +233,8 @@ impl FetchHeaders {
         NonNull::new(WebCore__FetchHeaders__cast_(value, vm))
     }
 
-    pub fn cast(value: JSValue) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: `VirtualMachine::get()` is only called from the JS thread, where
-        // `global` is a live non-null JSGlobalObject for the VM's lifetime.
-        let global = VirtualMachine::get().global();
+    pub fn cast(value: JSValue, js: Js) -> Option<NonNull<FetchHeaders>> {
+        let global = js.bun_vm().global();
         Self::cast_(value, global.vm())
     }
 

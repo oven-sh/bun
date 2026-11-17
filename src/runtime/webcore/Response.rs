@@ -155,7 +155,7 @@ impl BodyAbortListener {
             if let BodyValue::Locked(locked) = response.get_body_value() {
                 if let Some(readable) = locked.readable.get() {
                     readable.value.ensure_still_alive();
-                    crate::dispatch::fold(readable.error(&global, reason));
+                    crate::dispatch::fold(global.js(), readable.error(&global, reason));
                 }
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
@@ -1207,7 +1207,7 @@ impl Init {
 
     fn set_headers(&mut self, global_this: &JSGlobalObject, headers: JSValue) -> JsResult<()> {
         // `JSValue::as_class_ref::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
-        if let Some(orig) = FetchHeaders::cast(headers) {
+        if let Some(orig) = FetchHeaders::cast(headers, global_this.js()) {
             // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS; `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
             let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
             if !orig.is_empty() {

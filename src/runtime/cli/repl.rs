@@ -25,7 +25,7 @@ use bun_core::tty;
 use bun_core::{Environment, Output, env_var, fmt, identifier};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Js, JsResult, ProtectedJSValue};
 use bun_paths as path;
 use bun_sys::{self as sys, Fd};
 
@@ -968,7 +968,7 @@ pub(super) struct Repl<'a> {
     stdin_buf_end: usize,
 
     // JavaScript VM (JSC_BORROW per LIFETIMES.tsv)
-    pub(super) vm: Option<&'a VirtualMachine>,
+    pub(super) vm: Option<&'a Js<'a, VirtualMachine>>,
     pub(super) global: Option<&'a JSGlobalObject>,
 
     // Special REPL variables
@@ -1095,7 +1095,7 @@ impl<'a> Repl<'a> {
     }
 
     /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
-    fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
+    fn wait_for_promise_or_sigint(vm: &Js<VirtualMachine>, promise: *mut jsc::JSPromise) -> bool {
         use core::sync::atomic::Ordering;
         SIGINT_DURING_WAIT.store(false, Ordering::Release);
         while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
@@ -2297,7 +2297,7 @@ impl<'a> Repl<'a> {
 
     pub(super) fn run_with_vm(
         &mut self,
-        vm: Option<&'a VirtualMachine>,
+        vm: Option<&'a Js<'a, VirtualMachine>>,
     ) -> Result<(), crate::Error> {
         self.vm = vm;
         if let Some(v) = vm {

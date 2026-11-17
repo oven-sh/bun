@@ -54,6 +54,7 @@ pub(crate) use crate::jsc::AbortSignal;
 // Takes a `&VirtualMachine` and reaches the queue via
 // `vm.event_loop().deferred_tasks`.
 use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
+use bun_jsc::Js;
 
 #[derive(Debug, Default)]
 pub(crate) struct AutoFlusher {
@@ -71,7 +72,7 @@ pub(crate) trait HasAutoFlusher: Sized {
     /// `this` must be the same pointer that was registered via
     /// [`AutoFlusher::erased_ctx`] (i.e. a valid, live `*mut Self`), and the
     /// call must occur on the JS thread with no aliasing `&mut Self`.
-    unsafe fn on_auto_flush(this: *mut Self) -> bool;
+    unsafe fn on_auto_flush(this: *mut Js<Self>) -> bool;
 }
 
 impl AutoFlusher {
@@ -93,8 +94,8 @@ impl AutoFlusher {
         unsafe extern "C" fn trampoline<T: HasAutoFlusher>(ctx: *mut core::ffi::c_void) -> bool {
             // SAFETY: `ctx` is exactly the `*mut T` registered via
             // `erased_ctx` below; `DeferredTaskQueue::run` feeds it back
-            // unchanged.
-            unsafe { <T as HasAutoFlusher>::on_auto_flush(ctx.cast::<T>()) }
+            // unchanged, from the event loop of the VM that it was registered with.
+            unsafe { <T as HasAutoFlusher>::on_auto_flush(ctx.cast::<Js<T>>()) }
         }
         trampoline::<T>
     }
@@ -161,9 +162,10 @@ impl HasAutoFlusher for file_sink::FileSink {
     }
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
-    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+    unsafe fn on_auto_flush(this: *mut Js<Self>) -> bool {
         // SAFETY: fn contract.
-        unsafe { !(*this).end_unneeded_auto_flush() && (*this).ref_guard().on_auto_flush() }
+        let this = unsafe { &*this };
+        !this.end_unneeded_auto_flush() && this.on(&*this.ref_guard()).on_auto_flush()
     }
 }
 
@@ -174,9 +176,12 @@ impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
     }
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
-    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+    unsafe fn on_auto_flush(this: *mut Js<Self>) -> bool {
         // SAFETY: fn contract.
-        unsafe { (*this).on_auto_flush() }
+        unsafe {
+            let js = (*this).js();
+            (*this.cast::<Self>()).on_auto_flush(js)
+        }
     }
 }
 
@@ -338,26 +343,31 @@ impl SinkHandle {
     }
 
     /// SAFETY: every non-None variant's pointee is alive for as long as this handle is installed.
-    pub fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
-        match *self {
+    pub fn write(self: &Js<Self>, data: &streams::Result<'_>) -> streams::Writable {
+        let js = self.js();
+        match ***self {
             SinkHandle::None => streams::Writable::Done,
             SinkHandle::ServerResponse(any) => {
-                removable_body!(Serve, Abort, { any.write_chunk(data) })
+                removable_body!(Serve, Abort, js, { any.write_chunk(data, js) })
             }
-            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, js, {
                 // SAFETY: live backref; ByteStream clears sink before free.
-                unsafe { p.get_mut() }.write(data)
+                unsafe { p.get_mut() }.write(data, js)
             }),
-            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, { p.write(data) }),
-            SinkHandle::FileSink(p) => p.ref_guard().write(data),
-            SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),
-            SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+            SinkHandle::S3Upload(p) => {
+                removable_body!(S3Client, Abort, js, { js.on(p).write(data) })
+            }
+            SinkHandle::FileSink(p) => js.on(&*p.ref_guard()).write(data),
+            SinkHandle::HTMLRewriter(p) => {
+                removable_body!(HtmlRewriter, Abort, js, { js.on(p).write(data) })
+            }
+            SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, js, {
                 // SAFETY: live backref; transform detaches before the JSSink is finalized.
-                unsafe { p.get_mut() }.write(data)
+                unsafe { p.get_mut() }.write(data, js)
             }),
-            SinkHandle::HttpsResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+            SinkHandle::HttpsResponse(mut p) => removable_body_of_either!(Serve, WebStreams, js, {
                 // SAFETY: live backref; transform detaches before the JSSink is finalized.
-                unsafe { p.get_mut() }.write(data)
+                unsafe { p.get_mut() }.write(data, js)
             }),
         }
     }
@@ -365,24 +375,25 @@ impl SinkHandle {
     /// Signal end-of-stream (or terminal error) to the attached sink.
     ///
     /// SAFETY: same pointee-liveness invariant as [`Self::write`].
-    pub fn end(&self, err: Option<streams::StreamError>) {
-        match *self {
+    pub fn end(self: &Js<Self>, err: Option<streams::StreamError>) {
+        let js = self.js();
+        match ***self {
             SinkHandle::None => {}
             SinkHandle::ServerResponse(any) => {
-                removable_body!(Serve, Abort, { any.end_chunk(err.as_ref()) })
+                removable_body!(Serve, Abort, js, { any.end_chunk(err.as_ref(), js) })
             }
-            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, js, {
                 // SAFETY: live backref; ByteStream clears sink before free.
-                unsafe { p.get_mut() }.end_from_stream(err)
+                unsafe { p.get_mut() }.end_from_stream(err, js)
             }),
-            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, js, {
                 if let Some(sink) = p.ref_guard() {
-                    s3::multipart::NetworkSink::end_from_stream(&sink, err)
+                    s3::multipart::NetworkSink::end_from_stream(&sink, err, js)
                 }
             }),
-            SinkHandle::FileSink(p) => p.ref_guard().end_from_stream(err),
+            SinkHandle::FileSink(p) => js.on(&*p.ref_guard()).end_from_stream(err),
             SinkHandle::HTMLRewriter(p) => {
-                removable_body!(HtmlRewriter, Abort, { p.end_from_stream(err) })
+                removable_body!(HtmlRewriter, Abort, js, { js.on(p).end_from_stream(err) })
             }
             SinkHandle::HttpResponse(_) => {}
             SinkHandle::HttpsResponse(_) => {}

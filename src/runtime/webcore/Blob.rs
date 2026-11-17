@@ -1251,7 +1251,7 @@ impl BlobExt for Blob {
                     ),
                 );
                 let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-                let started = sink.start_writer(owns_fd, is_stdout_or_stderr);
+                let started = cx.on(&*sink).start_writer(owns_fd, is_stdout_or_stderr);
                 if let bun_sys::Result::Err(err) = started {
                     return Ok(
                         JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
@@ -1429,7 +1429,7 @@ impl BlobExt for Blob {
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
             let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-            let start_result = sink.start_writer(owns_fd, is_stdout_or_stderr);
+            let start_result = cx.on(&*sink).start_writer(owns_fd, is_stdout_or_stderr);
             if let bun_sys::Result::Err(err) = start_result {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -2994,7 +2994,7 @@ impl<'a> FormDataContext<'a> {
                                 max_size: Some(blob.size.get()),
                                 ..Default::default()
                             };
-                            let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
+                            let res = node_fs.read_file(&rf_args, Some(global_this.js()));
                             match res {
                                 Err(err) => {
                                     self.failed = true;
@@ -3591,7 +3591,7 @@ pub(crate) fn write_file_with_source_destination(
             let mut promise = jsc::JSPromiseStrong::default();
             promise.set(cx.global(), promise_value);
             write_file::WriteFileWindows::start(
-                cx.global().bun_vm().event_loop(),
+                jsc::virtual_machine::VmRef::event_loop(cx.global().bun_vm()),
                 cx.context(),
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
@@ -3625,7 +3625,7 @@ pub(crate) fn write_file_with_source_destination(
             return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
-                cx.global().bun_vm().event_loop(),
+                jsc::virtual_machine::VmRef::event_loop(cx.global().bun_vm()),
                 cx.context(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 destination_blob.size.get(),
@@ -4022,7 +4022,9 @@ pub(crate) fn write_file_internal(
             match tag {
                 BodyTag::Use => {
                     // SAFETY: exclusive borrow scoped to the call; `use_()` runs no JS.
-                    Ok(ControlFlow::Continue(unsafe { (*body_value).use_() }))
+                    Ok(ControlFlow::Continue(unsafe {
+                        (*body_value).use_(cx.js())
+                    }))
                 }
                 BodyTag::Error => {
                     let err_js = {
@@ -4034,7 +4036,7 @@ pub(crate) fn write_file_internal(
                     };
                     // SAFETY: exclusive borrow scoped to the call; no other
                     // borrow of the body value is live.
-                    let _ = unsafe { (*body_value).use_() };
+                    let _ = unsafe { (*body_value).use_(cx.js()) };
                     Ok(ControlFlow::Break(
                         JSPromise::rejected_promise(cx.global(), err_js).to_js(),
                     ))
@@ -4131,13 +4133,16 @@ pub(crate) fn write_file_internal(
                                 let err_js = err.to_js(cx.global());
                                 // SAFETY: `err` is not used after `to_js`, so this is the only
                                 // live borrow of the value.
-                                let _ = unsafe { (*body_value).use_() };
+                                let _ = unsafe { (*body_value).use_(cx.js()) };
                                 return Ok(ControlFlow::Break(
                                     JSPromise::rejected_promise(cx.global(), err_js).to_js(),
                                 ));
                             }
-                            // SAFETY: the match borrow ended with the pattern; no other borrow is live.
-                            _ => return Ok(ControlFlow::Continue(unsafe { (*body_value).use_() })),
+                            _ => {
+                                // SAFETY: the match borrow ended with the pattern; no other borrow is live.
+                                let blob = unsafe { (*body_value).use_(cx.js()) };
+                                return Ok(ControlFlow::Continue(blob));
+                            }
                         }
                     }
                     let task = Box::new(WriteFileWaitFromLockedValueTask {
@@ -4162,7 +4167,7 @@ pub(crate) fn write_file_internal(
                     // Signalled last (see `PendingValue::on_start_buffering`):
                     // `then_wrap` may run and `*body_value` be replaced inside.
                     if let Some((on_start_buffering, producer_task)) = producer_hook {
-                        on_start_buffering(producer_task);
+                        on_start_buffering(producer_task, cx.js());
                     }
                     Ok(ControlFlow::Break(promise))
                 }

@@ -1465,6 +1465,7 @@ fn allocate_package_manager(
         wr!(
             event_loop,
             if runtime_auto_install {
+                // SAFETY: only a running VM, on its thread, asks its resolver to auto-install.
                 EventLoopHandle::js_current()
             } else {
                 EventLoopHandle::leak_mini()

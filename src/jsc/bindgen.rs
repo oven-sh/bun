@@ -7,11 +7,12 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::Environment;
+use bun_core::proof::Pointer;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
-    JsClass, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue, Js,
+    JsClass, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg, Vm,
     WrapperGuard,
 };
 
@@ -52,6 +53,17 @@ impl<'a> JsHeap<'a> {
     #[inline(always)]
     pub unsafe fn global(&self) -> &JSGlobalObject {
         self.global_object()
+    }
+
+    #[inline(always)]
+    pub fn as_vm(&self) -> Vm<'a> {
+        // SAFETY: `'a` is the call that the engine or the event loop made on the VM's thread.
+        unsafe { Vm::assume(&()) }
+    }
+
+    #[inline(always)]
+    pub fn bun_vm(&self) -> &'a VirtualMachine {
+        self.as_vm().bun_vm()
     }
 
     #[inline(always)]
@@ -298,6 +310,18 @@ impl<'a> JsScope<'a> {
     #[inline(always)]
     pub fn global(&mut self) -> &JSGlobalObject {
         self.heap.global_object()
+    }
+
+    /// As [`global`](Self::global).
+    #[inline(always)]
+    pub fn js(&mut self) -> Js<'_> {
+        self.global().js()
+    }
+
+    /// As [`global`](Self::global).
+    #[inline(always)]
+    pub fn on<'b, P: Pointer<'b>>(&'b mut self, p: P) -> P::To<Js<'b, P::Of>> {
+        self.global().on(p)
     }
 
     /// For the APIs that take the tree's own proof of being on the JS thread.
@@ -1183,7 +1207,9 @@ pub struct StrongWrapper<T>(Strong, PhantomData<*const T>);
 unsafe impl<T> crate::job::JsAffine for StrongWrapper<T> {}
 
 fn rooted_value(root: &Strong) -> JSValue {
-    assert!(VirtualMachine::get_or_null().is_some_and(|vm| !vm.closed()));
+    // SAFETY: nothing calls this once the fields of the VM drop. Only a flag is read.
+    let loop_ = unsafe { bun_core::Loop::assume(root) };
+    assert!(VirtualMachine::get_or_null(loop_).is_some_and(|vm| !vm.closed()));
     root.get()
 }
 

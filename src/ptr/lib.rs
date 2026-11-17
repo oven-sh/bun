@@ -13,6 +13,8 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
+use bun_core::proof::{Pointer, Proof};
+
 mod cell_ext;
 pub use cell_ext::{CellExt, OptionCellExt, VecCellExt};
 
@@ -207,6 +209,15 @@ impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
     #[inline]
     fn from(p: ThisPtr<T>) -> Self {
         BackRef(p.0, core::marker::PhantomData)
+    }
+}
+
+impl<'a, T: 'a, P> Pointer<'a> for BackRef<T, P> {
+    type Of = T;
+    type To<W: 'a> = BackRef<W, P>;
+    #[inline(always)]
+    unsafe fn cast<W: 'a>(self) -> BackRef<W, P> {
+        BackRef(self.0.cast(), core::marker::PhantomData)
     }
 }
 
@@ -515,6 +526,38 @@ impl<T> ThisPtr<T> {
         // SAFETY: `ThisPtr::new` invariant — pointee is live, non-null,
         // aligned, and no exclusive borrow overlaps this shared one.
         unsafe { self.0.as_ref() }
+    }
+}
+
+impl<'a, T: 'a> Pointer<'a> for ThisPtr<T> {
+    type Of = T;
+    type To<W: 'a> = ThisPtr<W>;
+    #[inline(always)]
+    unsafe fn cast<W: 'a>(self) -> ThisPtr<W> {
+        ThisPtr(self.0.cast())
+    }
+}
+
+/// None touches the pointee, which may be gone.
+impl<W: Proof> ThisPtr<W> {
+    #[inline(always)]
+    pub fn plain(self) -> ThisPtr<W::Of> {
+        ThisPtr(self.0.cast())
+    }
+
+    #[inline(always)]
+    pub fn proof(self) -> W::On<()> {
+        // SAFETY: what a pointer to a `W` says.
+        unsafe { W::proof() }
+    }
+
+    #[inline(always)]
+    pub fn on<'b, P: Pointer<'b>>(self, p: P) -> P::To<W::On<P::Of>>
+    where
+        W::On<P::Of>: 'b,
+    {
+        // SAFETY: as in `proof`.
+        unsafe { p.cast() }
     }
 }
 

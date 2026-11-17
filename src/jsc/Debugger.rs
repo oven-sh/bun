@@ -11,12 +11,11 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::{String as BunString, StringView};
+use bun_core::{Loop, String as BunString, StringView};
 use bun_io::KeepAlive;
-use bun_io::js_vm_ctx;
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
-use crate::{self as jsc, JSGlobalObject, ZigException};
+use crate::{self as jsc, JSGlobalObject, Js, Vm, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);
@@ -187,7 +186,7 @@ impl Debugger {
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
     /// `start()` (debugger thread) signals, then run the wait-loop until a
     /// frontend connects (`Debugger__didConnect`) or the deadline elapses.
-    pub fn wait_for_debugger_if_necessary(this: &VirtualMachine) {
+    pub fn wait_for_debugger_if_necessary(this: &Js<VirtualMachine>) {
         bun_removable_features::call_removable!(
             Inspector,
             ReturnDefault,
@@ -197,7 +196,7 @@ impl Debugger {
     }
 
     #[inline(never)]
-    fn wait_for_debugger(this: &VirtualMachine) {
+    fn wait_for_debugger(this: &Js<VirtualMachine>) {
         let Some(dbg) = this.debugger.get() else {
             return;
         };
@@ -259,8 +258,10 @@ impl Debugger {
                 timer.init(uv_loop);
 
                 extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
-                    if let Some(d) = VirtualMachine::get().debugger.get() {
-                        d.poll_ref.unref(js_vm_ctx());
+                    // SAFETY: libuv runs it from the loop of the VM that armed it.
+                    let vm = unsafe { Vm::assume(&handle) }.bun_vm();
+                    if let Some(d) = vm.debugger.get() {
+                        d.poll_ref.unref(vm.loop_ctx());
                     }
                     // SAFETY: the timer given up below, which fires once.
                     drop(unsafe { uv::Owned::from_raw(handle) });
@@ -313,7 +314,7 @@ impl Debugger {
                     let elapsed =
                         bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
                     if elapsed.order(&deadline) != core::cmp::Ordering::Less {
-                        dbg.poll_ref.unref(js_vm_ctx());
+                        dbg.poll_ref.unref(this.loop_ctx());
                         bun_core::scoped_log!(debugger, "Timed out waiting for the debugger");
                         break;
                     }
@@ -382,7 +383,7 @@ impl Debugger {
         this.event_loop().ensure_waker();
 
         if dbg.wait_for_connection.get() != Wait::Off {
-            dbg.poll_ref.ref_(js_vm_ctx());
+            dbg.poll_ref.ref_(this.loop_ctx());
             dbg.must_block_until_connected.set(true);
         }
         Ok(())
@@ -411,17 +412,19 @@ impl Debugger {
             is_main_thread: false,
             ..Default::default()
         };
-        let vm = VirtualMachine::init(&raw mut log, options)
+        // SAFETY: the top of this thread, and its only VM. The frame that holds `log` never returns.
+        let vm = unsafe { VirtualMachine::init(&raw mut log, options, Loop::assume(&log)) }
             .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.event_loop().ensure_waker();
 
         extern "C" fn start_trampoline(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut slot` below; `hold_api_lock` calls this
             // synchronously on the same frame.
-            let init = unsafe { (*ctx.cast::<Option<DebuggerThreadInit>>()).take() };
-            Debugger::start(init.expect("init"));
+            let slot = unsafe { (*ctx.cast::<Option<(DebuggerThreadInit, Js)>>()).take() };
+            let (init, js) = slot.expect("init");
+            Debugger::start(init, js);
         }
-        let mut slot = Some(init);
+        let mut slot = Some((init, vm.js()));
         #[allow(deprecated)]
         vm.global()
             .vm()
@@ -431,10 +434,10 @@ impl Debugger {
     /// Runs inside `holdAPILock` on the debugger thread. Publishes the
     /// inspector URL(s), wakes the futex the debuggee VM is blocked on, then
     /// spins this thread's event loop forever.
-    fn start(init: DebuggerThreadInit) -> ! {
+    fn start(init: DebuggerThreadInit, js: Js) -> ! {
         jsc::mark_binding();
 
-        let this: &VirtualMachine = VirtualMachine::get();
+        let this = js.bun_vm();
         let global: &JSGlobalObject = this.global();
         let DebuggerThreadInit {
             debuggee,
@@ -494,8 +497,8 @@ impl Debugger {
 /// `BUN_INSPECT`, or a previous `inspector.open()`), when called off the main
 /// thread, or when the debugger thread could not be started.
 // HOST_EXPORT(Debugger__startNodeInspectorServer, c)
-pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: bool) -> bool {
-    let this: &VirtualMachine = VirtualMachine::get();
+pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: bool, js: Js) -> bool {
+    let this = js.bun_vm();
     if !this.is_main_thread.get() {
         return false;
     }
@@ -549,11 +552,11 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
 /// `inspector.open(port, host, true)` / `inspector.waitForDebugger()` — block,
 /// ticking the event loop, until a frontend connects to the inspector.
 // HOST_EXPORT(Debugger__waitForNodeInspectorConnection, c)
-pub fn wait_for_node_inspector_connection() {
+pub fn wait_for_node_inspector_connection(js: Js) {
     // Node blocks on every waitForDebugger() call for a fresh
     // Runtime.runIfWaitingForDebugger, even if a frontend already resolved a
     // previous wait — see test-inspector-wait-for-connection.js.
-    let this = VirtualMachine::get();
+    let this = js.bun_vm();
     {
         let Some(dbg) = this.debugger.get() else {
             return;
@@ -561,7 +564,7 @@ pub fn wait_for_node_inspector_connection() {
         if dbg.wait_for_connection.get() == Wait::Off {
             // Mirror `create()`: the ref pairs with the unref in `did_connect`.
             dbg.wait_for_connection.set(Wait::Forever);
-            dbg.poll_ref.ref_(js_vm_ctx());
+            dbg.poll_ref.ref_(this.loop_ctx());
         }
         dbg.must_block_until_connected.set(true);
     }
@@ -572,26 +575,26 @@ pub fn wait_for_node_inspector_connection() {
 /// undo `create()`'s `poll_ref.ref_()` so the process can exit. Without this
 /// the ref leaks and the event loop never drains.
 // HOST_EXPORT(Debugger__abandonNodeInspectorWait, c)
-pub fn abandon_node_inspector_wait() {
-    let Some(dbg) = VirtualMachine::get().debugger.get() else {
+pub fn abandon_node_inspector_wait(vm: Vm) {
+    let Some(dbg) = vm.bun_vm().debugger.get() else {
         return;
     };
     if dbg.wait_for_connection.get() != Wait::Off {
         dbg.wait_for_connection.set(Wait::Off);
         dbg.must_block_until_connected.set(false);
-        dbg.poll_ref.unref(js_vm_ctx());
+        dbg.poll_ref.unref(vm.bun_vm().loop_ctx());
     }
 }
 
 // HOST_EXPORT(Debugger__didConnect, c)
-pub fn did_connect() {
-    let this = VirtualMachine::get();
+pub fn did_connect(vm: Vm) {
+    let this = vm.bun_vm();
     let Some(dbg) = this.debugger.get() else {
         return;
     };
     if dbg.wait_for_connection.get() != Wait::Off {
         dbg.wait_for_connection.set(Wait::Off);
-        dbg.poll_ref.unref(js_vm_ctx());
+        dbg.poll_ref.unref(this.loop_ctx());
         this.event_loop().wakeup();
     }
 }
@@ -812,8 +815,8 @@ impl TestReporterHandle {
 }
 
 // HOST_EXPORT(Bun__TestReporterAgentEnable, c)
-pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
-    if let Some(dbg) = VirtualMachine::get().debugger.get() {
+pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle, vm: Vm) {
+    if let Some(dbg) = vm.bun_vm().debugger.get() {
         bun_core::scoped_log!(TestReporterAgent, "enable");
         dbg.test_reporter_agent.handle.set(agent);
 
@@ -836,8 +839,8 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
 }
 
 // HOST_EXPORT(Bun__TestReporterAgentDisable, c)
-pub fn test_reporter_agent_disable(_agent: *mut TestReporterHandle) {
-    if let Some(dbg) = VirtualMachine::get().debugger.get() {
+pub fn test_reporter_agent_disable(_agent: *mut TestReporterHandle, vm: Vm) {
+    if let Some(dbg) = vm.bun_vm().debugger.get() {
         bun_core::scoped_log!(TestReporterAgent, "disable");
         dbg.test_reporter_agent.handle.set(core::ptr::null_mut());
     }
@@ -929,16 +932,16 @@ impl LifecycleHandle {
 }
 
 // HOST_EXPORT(Bun__LifecycleAgentEnable, c)
-pub fn lifecycle_agent_enable(agent: *mut LifecycleHandle) {
-    if let Some(dbg) = VirtualMachine::get().debugger.get() {
+pub fn lifecycle_agent_enable(agent: *mut LifecycleHandle, vm: Vm) {
+    if let Some(dbg) = vm.bun_vm().debugger.get() {
         bun_core::scoped_log!(LifecycleAgent, "enable");
         dbg.lifecycle_reporter_agent.handle.set(agent);
     }
 }
 
 // HOST_EXPORT(Bun__LifecycleAgentDisable, c)
-pub fn lifecycle_agent_disable(_agent: *mut LifecycleHandle) {
-    if let Some(dbg) = VirtualMachine::get().debugger.get() {
+pub fn lifecycle_agent_disable(_agent: *mut LifecycleHandle, vm: Vm) {
+    if let Some(dbg) = vm.bun_vm().debugger.get() {
         bun_core::scoped_log!(LifecycleAgent, "disable");
         dbg.lifecycle_reporter_agent
             .handle

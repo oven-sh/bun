@@ -8,6 +8,7 @@ use crate::shell::io::IO;
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 pub(crate) struct Script {
     pub(crate) base: Base,
@@ -50,7 +51,7 @@ impl Script {
         id
     }
 
-    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         if Self::stmt_count(interp, this) == 0 {
             return Self::finish(interp, this, 0);
         }
@@ -75,13 +76,13 @@ impl Script {
         Stmt::start(interp, stmt)
     }
 
-    fn finish(interp: &Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
+    fn finish(interp: &Loop<Interpreter>, this: NodeId, exit_code: ExitCode) -> Yield {
         let parent = interp.as_script(this).base.parent;
         interp.child_done(parent, this, exit_code)
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,

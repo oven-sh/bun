@@ -3,7 +3,7 @@ import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::dns_jsc::Resolver" });
 
-export const getRuntimeDefaultResultOrderOption = b.fn({ returns: b.string });
+export const getRuntimeDefaultResultOrderOption = b.fn({ passVm: true, returns: b.string });
 
 const method = { capability: "js", throws: true } as const;
 

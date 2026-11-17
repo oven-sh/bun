@@ -180,6 +180,7 @@ pub struct SqlRuntimeHooks {
     pub ssl_ctx_get_or_create: fn(
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
+        vm: Vm,
     ) -> Option<OwnedSslCtx>,
     /// `SSLConfig::fromJS` — parse a JS TLS-options object. `None` if it held no TLS config, or threw.
     pub ssl_config_from_js: fn(&JSGlobalObject, JSValue) -> Option<Box<bun_http::SSLConfig>>,
@@ -229,8 +230,6 @@ pub(crate) trait VirtualMachineSqlExt {
     /// shadowing the inherent VirtualMachine::rare_data() (which returns the
     /// bun_jsc RareData holding the per-protocol SocketGroups).
     fn sql_state(&self) -> &RareData;
-    /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx;
     /// `context`'s per-protocol uws [`bun_uws::SocketGroup`], for a new connection its script opens.
     fn postgres_socket_group<'a, const SSL: bool>(
         &'a self,
@@ -246,10 +245,6 @@ impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
     fn sql_state(&self) -> &RareData {
         (hooks().sql_rare)(self)
-    }
-    #[inline]
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        bun_io::js_vm_ctx()
     }
     #[inline]
     fn postgres_socket_group<'a, const SSL: bool>(
@@ -273,7 +268,7 @@ impl VirtualMachineSqlExt for VirtualMachine {
 
 /// What `callback` throws is reported, not returned.
 pub(crate) fn run_callback(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
-    VirtualMachine::get().event_loop().run_callback(
+    global.bun_vm().event_loop().run_callback(
         bun_event_loop::ContextId::NONE,
         callback,
         global,
@@ -293,12 +288,13 @@ pub(crate) trait AutoFlush: Sized {
     /// Connected, without backpressure, and with something to write.
     fn can_flush(&self) -> bool;
     /// Returns what it left in `auto_flush_registered`: whether to run again after the next turn.
-    fn on_auto_flush(&self) -> bool;
+    fn on_auto_flush(self: &Js<Self>) -> bool;
 
     fn register_auto_flusher(&self) {
         extern "C" fn run<T: AutoFlush>(ctx: *mut c_void) -> bool {
-            let this = NonNull::new(ctx.cast::<T>()).expect("auto-flush ctx non-null");
-            bun_ptr::ParentRef::from(this).on_auto_flush()
+            let this = NonNull::new(ctx.cast::<Js<T>>()).expect("auto-flush ctx non-null");
+            // SAFETY: registered below with the event loop of its VM, until it drops at the latest.
+            unsafe { this.as_ref() }.on_auto_flush()
         }
         if !self.auto_flush_registered().get() && self.can_flush() {
             let tasks = &self.vm().event_loop().deferred_tasks;
@@ -383,11 +379,13 @@ pub mod api {
 }
 
 use bun_boringssl_sys::OwnedSslCtx;
+use bun_jsc::{Js, Vm};
 
 /// The `SSL_CTX` for `opts` from the `SSLContextCache` of this thread's VM.
 pub(crate) fn ssl_ctx_get_or_create(
     opts: &bun_uws::us_bun_socket_context_options_t,
     err: &mut bun_uws::create_bun_socket_error_t,
+    vm: Vm,
 ) -> Option<OwnedSslCtx> {
-    (hooks().ssl_ctx_get_or_create)(opts, err)
+    (hooks().ssl_ctx_get_or_create)(opts, err, vm)
 }

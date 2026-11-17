@@ -1,4 +1,5 @@
 use bstr::BStr;
+use bun_core::Loop;
 use bun_jsc::ThreadIsolated;
 use bun_paths::resolve_path;
 
@@ -14,7 +15,7 @@ use crate::shell::yield_::Yield;
 
 const USAGE: &[u8] = b"usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n";
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     let (flags, operands) = Builtin::of(interp, cmd).split_flags();
     let mut opts = Opts::default();
     if let Err(flag) = flags.iter().try_for_each(|flag| opts.parse(flag)) {
@@ -185,6 +186,7 @@ impl ShellCpTask {
         src: PathLike<'static>,
         dest: PathLike<'static>,
         result: bun_sys::Maybe<()>,
+        loop_: Loop,
     ) {
         self.src_absolute = Some(src.into_vec());
         self.tgt_absolute = Some(dest.into_vec());
@@ -192,7 +194,7 @@ impl ShellCpTask {
             self.err = Some(ShellErr::new_sys(&e));
         }
         // SAFETY: the box `schedule` made, which `run_from_main_thread` takes back.
-        unsafe { ShellTask::run_from_main_thread(bun_core::heap::into_raw(self)) };
+        unsafe { ShellTask::run_from_main_thread(bun_core::heap::into_raw(self), loop_) };
     }
 
     /// Unlike most shell builtins this does NOT use the generic
@@ -481,7 +483,7 @@ impl ShellTaskCtx for ShellCpTask {
             "ShellCpTask scheduled via ShellTask::schedule; use ShellCpTask::schedule"
         );
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Loop<Interpreter>) {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is the live heap-allocated task posted via `ShellTask::schedule`.
         let task = unsafe { bun_core::heap::take(this) };

@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::{JSGlobalObject, JSValue, JsError};
+use crate::{JSGlobalObject, JSValue, Js, JsError};
 
 // All JSC__VM__* shims take only a `JSC::VM*` (and at most a
 // `JSGlobalObject*` / `JSC::Exception*` / scalar). `VM` and `JSGlobalObject`
@@ -163,7 +163,7 @@ impl VM {
         JSC__VM__releaseWeakRefs(self)
     }
 
-    pub fn drain_microtasks(&self) {
+    pub fn drain_microtasks(self: &Js<Self>) {
         JSC__VM__drainMicrotasks(self)
     }
 

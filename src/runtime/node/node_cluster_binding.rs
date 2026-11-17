@@ -6,8 +6,7 @@
 
 use crate::ipc::{IsInternal, SerializeAndSendResult};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional, Vm};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::generated_bindgen::node_cluster_binding::{
@@ -266,8 +265,8 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 
-pub(crate) fn set_ref(enabled: bool) {
-    let vm = VirtualMachine::get();
+pub(crate) fn set_ref(enabled: bool, vm: Vm) {
+    let vm = vm.bun_vm();
     vm.channel_ref_overridden.set(true);
     if enabled {
         vm.channel_ref.ref_(vm.loop_ctx());
@@ -292,8 +291,8 @@ pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     }
 }
 
-pub(crate) fn channel_ignore_one_disconnect_event_listener() {
-    let vm = VirtualMachine::get();
+pub(crate) fn channel_ignore_one_disconnect_event_listener(vm: Vm) {
+    let vm = vm.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
         .set(true);
 }

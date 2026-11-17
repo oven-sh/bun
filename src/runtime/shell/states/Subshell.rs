@@ -1,3 +1,4 @@
+use bun_core::Loop;
 use bun_ptr::AliasableBox;
 
 use crate::shell::ExitCode;
@@ -70,7 +71,7 @@ impl Subshell {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         let (state_tag, parent) = {
             let me = interp.as_subshell(this);
             (<&'static str>::from(&me.state), me.base.parent)

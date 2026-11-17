@@ -242,6 +242,7 @@ impl PosixBufferedReader {
     /// # Safety
     /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, and `self` is a
     /// field of it that does not move, until `self` is dropped or has another owner.
+    /// Where that arm says `Js` or `Vm`, only a thread that has a VM starts it.
     pub unsafe fn set_owner(&self, owner: Owner) {
         // SAFETY: caller contract.
         unsafe { self.handle.set_owner(owner) };
@@ -866,7 +867,7 @@ impl Completion {
     };
 
     /// # Safety
-    /// `owner` was stored by `set_owner`.
+    /// `owner` was stored by `set_owner`. As `bun_core::Loop::assume`.
     unsafe fn dispatch(self, owner: Owner) {
         if !matches!(self, Completion::Ended(ReadResult::Pending)) {
             // SAFETY: `set_owner`'s contract.
@@ -1013,7 +1014,7 @@ impl WindowsBufferedReader {
         // SAFETY: recorded by `set_source_owner`; the slot is replaced or dropped before the reader
         // goes away (`from`, `close_source`). Not used once the owner runs, which may free it.
         let this = unsafe { &*this.cast::<WindowsBufferedReader>() };
-        // SAFETY: `set_owner` stored this owner.
+        // SAFETY: `set_owner` stored this owner. From the stop phase, which has a `Loop`.
         unsafe { Completion::Ended(this.close()).dispatch(this.owner.get()) };
     }
 
@@ -1122,7 +1123,7 @@ impl WindowsBufferedReader {
                 read_file_again: false,
             }
         };
-        // SAFETY: `set_owner` stored this owner.
+        // SAFETY: `set_owner` stored this owner. From `uv_run`, and not after `uv_close`.
         unsafe { completion.dispatch(this.owner.get()) };
     }
 
@@ -1146,7 +1147,7 @@ impl WindowsBufferedReader {
                 unsafe { bun_core::vec::commit_spare(buffer, amount) }
             });
         }
-        // SAFETY: `set_owner` stored this owner.
+        // SAFETY: `set_owner` stored this owner. From `uv_run`. Teardown drains the requests before `~VM`.
         unsafe { completion.dispatch(this.owner.get()) };
     }
 

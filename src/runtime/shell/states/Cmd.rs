@@ -17,6 +17,7 @@ use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
+use bun_core::Loop;
 
 pub(crate) struct Cmd {
     pub(crate) base: Base,
@@ -174,7 +175,7 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         loop {
             let (shell, node) = {
                 let me = interp.as_cmd(this);
@@ -255,7 +256,7 @@ impl Cmd {
     /// `WaitingWriteErr`: throw on write failure, otherwise finish the Cmd
     /// with exit code 1.
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         _written: usize,
         e: Option<bun_sys::SystemError>,
@@ -273,7 +274,7 @@ impl Cmd {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -373,7 +374,7 @@ impl Cmd {
 
     /// Resolves argv[0] to a builtin or falls through to subprocess spawn
     /// (still gated).
-    fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
+    fn transition_to_exec(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         // NUL-terminate every arg for the argv of a subprocess.
         for a in &mut interp.as_cmd_mut(this).args {
             if a.last() != Some(&0) {
@@ -572,6 +573,7 @@ impl Cmd {
             cmd_parent,
             child_out,
             &mut did_exit_immediately,
+            interp.as_loop(),
         );
         drop((shellio, redirection_fd));
 
@@ -597,7 +599,7 @@ impl Cmd {
 
         if did_exit_immediately {
             // `watch()` failed → process already gone.
-            let process = subproc.proc().this_ptr();
+            let process = interp.on(subproc.proc().this_ptr());
             if let Some(status) = process.status() {
                 let rusage = crate::api::bun::process::rusage_zeroed();
                 bun_spawn::Process::on_exit(process, status.clone(), &rusage);
@@ -626,7 +628,7 @@ impl Cmd {
     /// triple. Returns `Ok(Some(yield))` when the redirect failed and a
     /// failing-error write was queued; `Err` when a JS exception was raised.
     fn init_subproc_redirections(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         stdio: &mut [Stdio; 3],
         redirect_stdout: &mut Option<crate::jsc::PinnedArrayBuffer>,

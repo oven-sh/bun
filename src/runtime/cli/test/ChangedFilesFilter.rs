@@ -25,6 +25,7 @@ use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, getenv_z};
 #[cfg(windows)]
 use bun_jsc::EventLoopHandle;
+use bun_jsc::Vm;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
@@ -79,7 +80,7 @@ pub(crate) fn filter<'a>(
     let changed_files = if let Some(trigger_set) = consume_watch_trigger() {
         trigger_set
     } else {
-        match get_changed_files(top_level_dir, changed_since) {
+        match get_changed_files(top_level_dir, changed_since, vm.as_vm()) {
             Ok(set) => set,
             Err(GitError::GitNotFound) => {
                 Output::err_generic(
@@ -422,7 +423,9 @@ pub(crate) enum GitError {
 fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
+    vm: Vm,
 ) -> core::result::Result<StringSet, GitError> {
+    let run_git = move |git: &[u8], cwd: &[u8], args: &[&[u8]]| run_git(git, cwd, args, vm);
     let mut which_buf = CorePathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
     let Some(git_path) = which(
         &mut which_buf,
@@ -545,7 +548,7 @@ pub(crate) enum GitResult {
 }
 
 #[optimize(size)]
-fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
+fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]], _vm: Vm) -> GitResult {
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
     argv.push(git_path);
     // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
@@ -568,7 +571,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         windows: spawn_sync::WindowsOptions {
             // `init` takes the erased `*mut ()` event-loop pointer
             // directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
+            loop_: EventLoopHandle::init(_vm.bun_vm().event_loop_ptr()),
             ..Default::default()
         },
         ..Default::default()

@@ -9,10 +9,11 @@ use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
-    MIN_SAFE_INTEGER, VM,
+    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, Js, JsError, JsResult,
+    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
+use bun_core::proof::Pointer;
 
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{String as BunString, StringView};
@@ -668,7 +669,7 @@ impl JSGlobalObject {
     }
 
     pub(crate) fn reload(&self) -> JsResult<()> {
-        self.vm().drain_microtasks();
+        self.on(self.vm()).drain_microtasks();
         self.vm().collect_async(false);
         crate::cpp::JSC__JSGlobalObject__reload(self)
     }
@@ -1037,36 +1038,37 @@ impl JSGlobalObject {
         vm.regular_event_loop.global_is_going() || core::ptr::eq(self.bun_vm_unsafe().cast(), vm)
     }
 
-    /// Shared-reference accessor for the Bun `VirtualMachine`. Alias of
-    /// [`bun_vm`](Self::bun_vm) kept for call-site compatibility.
-    #[inline]
-    pub fn bun_vm_ref(&self) -> &'static VirtualMachine {
-        self.bun_vm()
+    #[inline(always)]
+    pub fn js(&self) -> Js<'_> {
+        // SAFETY: a global object is the right to run script on its thread.
+        unsafe { Js::assume(self) }
     }
 
-    /// Returns the Bun `VirtualMachine` owning this global as a safe
-    /// `&'static`. The VM is a per-thread singleton allocated once in
-    /// `VirtualMachine::init` and never freed while a global exists, so the
-    /// `'static` lifetime is sound.
+    #[inline(always)]
+    pub fn on<'a, P: Pointer<'a>>(&'a self, p: P) -> P::To<Js<'a, P::Of>> {
+        self.js().on(p)
+    }
+
+    /// Returns the Bun `VirtualMachine` owning this global.
     ///
     /// Reads the thread-local directly instead of calling
     /// `JSC__JSGlobalObject__bunVM` — cross-language LTO does not inline the
     /// C++ shim, and the two are address-equal by construction (asserted in
     /// debug builds). JS thread only; another thread uses a [`VmHandle`](crate::VmHandle).
     #[inline]
-    pub fn bun_vm(&self) -> &'static VirtualMachine {
+    pub fn bun_vm(&self) -> &Js<'_, VirtualMachine> {
         if cfg!(debug_assertions) {
             // if this fails
             // you most likely need to run
             //   make clean-jsc-bindings
             //   make bindings -j10
-            if let Some(vm_) = VirtualMachine::get_or_null() {
+            if let Some(vm_) = VirtualMachine::get_or_null(self.js().as_loop()) {
                 debug_assert!(self.names_bun_vm(vm_));
             } else {
                 panic!("This thread lacks a Bun VM");
             }
         }
-        VirtualMachine::get()
+        self.js().bun_vm()
     }
 
     /// Runs the `unhandledRejection` machinery, which catches and reports its own exceptions; what
@@ -1522,18 +1524,9 @@ unsafe extern "C" {
 }
 
 impl ScriptExecutionContextIdentifier {
-    /// Returns `None` if the context referred to by `self` no longer exists.
-    pub(crate) fn global_object(self) -> Option<GlobalRef> {
-        // FFI call returns a valid pointer or null; the JSGlobalObject is owned
-        // by the VM and outlives any ScriptExecutionContext id pointing at it.
-        // `JSGlobalObject` is an opaque ZST handle so the deref is the
-        // centralised `opaque_ref` proof.
-        let p = ScriptExecutionContextIdentifier__getGlobalObject(self.0);
-        (!p.is_null()).then(|| GlobalRef::from(JSGlobalObject::opaque_ref(p)))
-    }
-
+    /// Whether the context still exists. Any thread.
     pub fn valid(self) -> bool {
-        self.global_object().is_some()
+        !ScriptExecutionContextIdentifier__getGlobalObject(self.0).is_null()
     }
 }
 

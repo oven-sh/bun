@@ -11,7 +11,7 @@
 //!      `Bun__transpileFile` / `Bun__transpileVirtualModule` /
 //!      `Bun__resolveAndFetchBuiltinModule` / `Bun__resolveEmbeddedNodeFile`
 //!      C++ entry points.
-//!   4. `__bun_get_vm_ctx` / `__bun_http_sync_download_*` — low-tier extern impls.
+//!   4. `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
@@ -31,7 +31,7 @@ use bun_jsc::virtual_machine::{
 };
 use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
-    JSValue, JsCell, JsResult, ResolvedSource, StringJsc as _,
+    JSValue, Js, JsCell, JsResult, ResolvedSource, StringJsc as _, Vm,
 };
 
 use bun_ast::ImportKind;
@@ -115,7 +115,7 @@ static RUNTIME_STATE: Cell<*mut RuntimeState> = Cell::new(ptr::null_mut());
 
 /// This thread's [`RuntimeState`]. Every JS host call runs with one installed.
 #[inline]
-pub(crate) fn runtime_state() -> &'static RuntimeState {
+pub(crate) fn runtime_state(_: &VirtualMachine) -> &RuntimeState {
     let state = RUNTIME_STATE.get();
     debug_assert!(!state.is_null(), "RuntimeState not installed");
     // SAFETY: the box is freed with the VM (at the top of the thread, or on a path that never
@@ -126,8 +126,8 @@ pub(crate) fn runtime_state() -> &'static RuntimeState {
 
 /// [`runtime_state`] for hooks that also run without one.
 #[inline]
-pub(crate) fn try_runtime_state() -> Option<&'static RuntimeState> {
-    (!RUNTIME_STATE.get().is_null()).then(runtime_state)
+pub(crate) fn try_runtime_state(vm: &VirtualMachine) -> Option<&RuntimeState> {
+    (!RUNTIME_STATE.get().is_null()).then(|| runtime_state(vm))
 }
 
 /// [`runtime_state`] without the thread-local.
@@ -141,8 +141,8 @@ pub(crate) fn runtime_state_of(vm: &VirtualMachine) -> &RuntimeState {
 
 /// This thread's timers.
 #[inline]
-pub(crate) fn timer_all() -> &'static timer::All {
-    &runtime_state().timer
+pub(crate) fn timer_all(vm: &VirtualMachine) -> &timer::All {
+    &runtime_state(vm).timer
 }
 
 /// [`timer_all`] without the thread-local.
@@ -153,16 +153,18 @@ pub(crate) fn timer_all_of(vm: &VirtualMachine) -> &timer::All {
 
 /// [`timer_all`] for hooks that also run without a `RuntimeState`.
 #[inline]
-fn try_timer_all() -> Option<&'static timer::All> {
-    try_runtime_state().map(|state| &state.timer)
+fn try_timer_all(vm: &VirtualMachine) -> Option<&timer::All> {
+    try_runtime_state(vm).map(|state| &state.timer)
 }
 
 /// Per-VM lazy DNS resolver storage. Shared borrow only — script can
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
-pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
-    &runtime_state().global_dns_data
+pub(crate) fn global_dns_data(
+    vm: &VirtualMachine,
+) -> &core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
+    &runtime_state(vm).global_dns_data
 }
 
 /// [`RuntimeState::stat_watcher_scheduler`] of `vm`.
@@ -174,8 +176,8 @@ pub(crate) fn stat_watcher_scheduler(
 
 /// [`RuntimeState::ssl_ctx_cache`] of this thread's VM.
 #[inline]
-pub(crate) fn ssl_ctx_cache() -> &'static crate::api::SSLContextCache::SSLContextCache {
-    &runtime_state().ssl_ctx_cache
+pub(crate) fn ssl_ctx_cache(vm: &VirtualMachine) -> &crate::api::SSLContextCache::SSLContextCache {
+    &runtime_state(vm).ssl_ctx_cache
 }
 
 /// [`RuntimeState::sql_rare`] of `vm`.
@@ -185,8 +187,10 @@ pub(crate) fn sql_rare(vm: &VirtualMachine) -> &bun_sql_jsc::jsc::RareData {
 
 /// [`RuntimeState::path_watchers`] of this thread's VM.
 #[cfg(windows)]
-pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers {
-    runtime_state().path_watchers.get_or_init(Default::default)
+pub(crate) fn path_watchers(vm: &VirtualMachine) -> &crate::node::win_watcher::PathWatchers {
+    runtime_state(vm)
+        .path_watchers
+        .get_or_init(Default::default)
 }
 
 /// [`RuntimeState::request_pools`] of `vm`.
@@ -196,12 +200,24 @@ pub(crate) fn request_pools(vm: &VirtualMachine) -> &crate::server::RequestPools
 
 /// [`RuntimeState::lint`] of this thread's VM.
 #[inline]
-pub(crate) fn lint_vm() -> &'static core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>> {
-    &runtime_state().lint
+pub(crate) fn lint_vm(
+    vm: &VirtualMachine,
+) -> &core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>> {
+    &runtime_state(vm).lint
+}
+
+/// [`RuntimeState::test_runner`], on any thread.
+#[inline]
+pub(crate) fn test_runner() -> Option<&'static crate::test_runner::jest::TestRunner> {
+    // SAFETY: cleared before the box is freed, and only a copy leaves.
+    unsafe { RUNTIME_STATE.get().as_ref() }?.test_runner.get()
 }
 
 /// Takes [`RuntimeState::lint`] out of this thread's VM, which is about to end.
-pub(crate) fn take_lint_vm() -> Option<Box<crate::cli::lint_js::LintVm>> {
+///
+/// # Safety
+/// Nothing borrowed from [`runtime_state`] is used afterwards.
+pub(crate) unsafe fn take_lint_vm() -> Option<Box<crate::cli::lint_js::LintVm>> {
     let state = RUNTIME_STATE.get();
     debug_assert!(!state.is_null(), "take_lint_vm before init_runtime_state");
     // SAFETY: this thread's state, and no `runtime_state()` borrow is live at the top of the thread.
@@ -236,7 +252,7 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
     let slot = &vm.rare_data().default_client_ssl_ctx;
     if slot.get().is_none() {
         let mut err = bun_uws::create_bun_socket_error_t::none;
-        let cache = ssl_ctx_cache();
+        let cache = ssl_ctx_cache(vm);
         // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
         // each client SSL to VERIFY_PEER + the shared bundled-root store, so
         // `new WebSocket("wss://…")` (which shares this CTX and defaults to
@@ -273,13 +289,13 @@ fn default_client_ssl_ctx_for_websocket(vm: &VirtualMachine) -> *mut bun_uws::Ss
 ///
 #[inline(never)]
 fn ssl_ctx_cache_get_or_create(
-    _vm: &VirtualMachine,
+    vm: &VirtualMachine,
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
 ) -> Option<bun_boringssl::c::OwnedSslCtx> {
     // The WebSocket client alone calls it.
     bun_removable_features::removable_definition!(WebSocket, ssl_ctx_cache_get_or_create);
-    ssl_ctx_cache().get_or_create_opts(opts, err)
+    ssl_ctx_cache(vm).get_or_create_opts(opts, err)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -290,7 +306,8 @@ fn ssl_ctx_cache_get_or_create(
 /// VM init does that names a `bun_runtime` type.
 fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeState {
     let state = bun_core::heap::into_raw(Box::new(RuntimeState {
-        timer: timer::All::init(),
+        // SAFETY: installed below.
+        timer: unsafe { timer::All::init() },
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
@@ -539,7 +556,7 @@ unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `NotFound` returns `error.ModuleNotFound`,
 /// `JSModuleLoader.import` throwing returns a rejected promise.
-fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
+fn load_preloads(vm: &Js<VirtualMachine>) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
     // ── is_in_preload guard ─────────────────────────────────────────────
     let global = vm.global();
     vm.is_in_preload.set(true);
@@ -707,7 +724,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
 }
 
 /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
-fn ensure_debugger(vm: &VirtualMachine, block_until_connected: bool) {
+fn ensure_debugger(vm: &Js<VirtualMachine>, block_until_connected: bool) {
     // Note: `Debugger::create` / `wait_for_debugger_if_necessary` live in
     // `bun_jsc::debugger::Debugger` (Debugger.rs); the heavy bodies (futex
     // spin, debugger-thread spawn, deadline poll-loop) are there. This hook
@@ -735,7 +752,7 @@ fn ensure_debugger(vm: &VirtualMachine, block_until_connected: bool) {
 ///
 /// PERF: the one fn-ptr indirection is dwarfed by the kqueue/epoll syscall it
 /// gates.
-fn auto_tick(vm: &VirtualMachine) {
+fn auto_tick(vm: &Js<VirtualMachine>) {
     let el = vm.event_loop();
     let loop_ = el.usockets_loop();
 
@@ -765,7 +782,7 @@ fn auto_tick(vm: &VirtualMachine) {
     }
 
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
-    let state = try_runtime_state();
+    let state = try_runtime_state(vm);
     if let Some(state) = state {
         state.timer.update_date_header_timer_if_necessary(loop_, vm);
     }
@@ -856,7 +873,7 @@ fn run_pending_test_step(global: &JSGlobalObject) {
 /// the tail, and no debug sleep-timer logging. Used by `bun_main` /
 /// `on_before_exit` drain loops where blocking when the loop is idle would
 /// hang shutdown.
-fn auto_tick_active(vm: &VirtualMachine) {
+fn auto_tick_active(vm: &Js<VirtualMachine>) {
     let el = vm.event_loop();
     let loop_ = el.usockets_loop();
 
@@ -881,7 +898,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
         }
     }
 
-    let Some(state) = try_runtime_state() else {
+    let Some(state) = try_runtime_state(vm) else {
         loop_.tick_without_idle();
         vm.on_after_event_loop();
         return;
@@ -934,7 +951,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
 /// `ConsoleObject::Formatter`. Dispatched here so the high tier owns the
 /// formatter.
 fn print_exception(
-    vm_ref: &VirtualMachine,
+    vm_ref: &Js<VirtualMachine>,
     value: JSValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
 ) {
@@ -986,17 +1003,19 @@ unsafe fn timer_insert(
 
 #[unsafe(no_mangle)]
 fn __bun_remove_timer(timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
-    timer_all().remove(timer);
+    // SAFETY: `disarm` found it active. Only this thread's `All` sets that, and teardown disarms what it holds.
+    let vm = unsafe { Vm::assume(timer) };
+    timer_all(vm.bun_vm()).remove(timer);
 }
 
 /// For `AbortSignal::Timeout`, which turns its delay into a deadline below this tier.
-fn timer_min_delay_ms() -> u32 {
-    try_timer_all().map_or(0, |all| all.fake_timers.min_delay_ms())
+fn timer_min_delay_ms(vm: Vm) -> u32 {
+    try_timer_all(vm.bun_vm()).map_or(0, |all| all.fake_timers.min_delay_ms())
 }
 
 /// For `AbortSignal::Timeout`, like `timer_min_delay_ms`.
-fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
-    let Some(all) = try_timer_all() else {
+fn abort_signal_timeout_clock(vm: Vm) -> bun_core::TimespecMockMode {
+    let Some(all) = try_timer_all(vm.bun_vm()) else {
         return bun_core::TimespecMockMode::ForceRealTime;
     };
     match all.fake_timers.abort_signal_timeout_clock() {
@@ -1005,8 +1024,8 @@ fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
     }
 }
 
-fn timers_left() -> TimersLeft {
-    let Some(all) = try_timer_all() else {
+fn timers_left(vm: Vm) -> TimersLeft {
+    let Some(all) = try_timer_all(vm.bun_vm()) else {
         return TimersLeft::default();
     };
     TimersLeft {
@@ -1017,14 +1036,17 @@ fn timers_left() -> TimersLeft {
 
 /// Runs `f`, which must not run script, on the `NodeFS` of `vm`.
 pub(crate) fn with_node_fs<R>(
-    vm: &'static VirtualMachine,
+    vm: &VirtualMachine,
     f: impl FnOnce(&mut crate::node::fs::NodeFS) -> R,
 ) -> R {
     runtime_state_of(vm).node_fs.with_mut(|node_fs| {
         f(node_fs.get_or_insert_with(|| crate::node::fs::NodeFS {
             sync_error_buf: bun_paths::path_buffer_pool::get(),
             // `vm` gates the embedded-file lookups inside `node:fs`.
-            vm: vm.standalone_module_graph.is_some().then_some(vm),
+            vm: vm
+                .standalone_module_graph
+                .is_some()
+                .then_some(bun_jsc::virtual_machine::VmRef::new(vm)),
         }))
     })
 }
@@ -1034,7 +1056,7 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
-fn name_text_of_blob_url(blob_id: &[u8], vm: &VirtualMachine) -> Option<Vec<u8>> {
+fn name_text_of_blob_url(blob_id: &[u8], vm: &Js<VirtualMachine>) -> Option<Vec<u8>> {
     let registry = crate::webcore::object_url_registry::ObjectURLRegistry::singleton();
     let blob = registry.resolve_and_dupe(blob_id, vm.global())?;
     let loader = blob.get_loader(vm).filter(|_| !blob.needs_to_read_file());
@@ -1287,16 +1309,16 @@ unsafe fn parse_worker_exec_argv_flags(
 }
 
 /// Drops the owners of polls, which are slots of `RareData`: it is freed before the runtime state.
-fn stop_watches_for_vm_teardown() {
-    if let Some(state) = try_runtime_state() {
+fn stop_watches_for_vm_teardown(vm: Vm) {
+    if let Some(state) = try_runtime_state(vm.bun_vm()) {
         state.cron_os_jobs.release_for_vm_teardown();
         state.memory_pressure_watcher.set(None);
         state.browsers.release_for_vm_teardown();
     }
 }
 
-pub(crate) fn hot_reload_generation() -> f64 {
-    let vm = VirtualMachine::get();
+pub(crate) fn hot_reload_generation(vm: Vm) -> f64 {
+    let vm = vm.bun_vm();
     if vm.hot_reload.get() == bun_jsc::virtual_machine::HotReload::Hot {
         f64::from(vm.hot_reload_counter.get())
     } else {
@@ -1310,8 +1332,8 @@ pub(crate) fn hot_reload_generation() -> f64 {
 /// `only`, just those script of that (stopped) context set.
 /// `timer::All` lives in `bun_runtime`; callers (`global_exit`,
 /// `WebWorker::shutdown`) are in `bun_jsc`, hence the hook.
-fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
-    let Some(all) = try_timer_all() else {
+fn cancel_timers(vm: &Js<VirtualMachine>, only: Option<bun_jsc::ContextId>) {
+    let Some(all) = try_timer_all(vm) else {
         return;
     };
     if only.is_none() {
@@ -1354,7 +1376,7 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
 
 /// `RuntimeHooks::end_hot_run_timers`.
 fn end_hot_run_timers(vm: &VirtualMachine, cancel: CancelHotRunTimers) {
-    let Some(timers) = try_timer_all() else {
+    let Some(timers) = try_timer_all(vm) else {
         return;
     };
     if cancel != CancelHotRunTimers::None {
@@ -1372,23 +1394,23 @@ fn end_hot_run_timers(vm: &VirtualMachine, cancel: CancelHotRunTimers) {
 ///
 /// # Safety
 /// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.
-unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) {
+unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: &VirtualMachine) {
     #[cfg(windows)]
-    timer_all().close_loop_handles_for_vm_teardown();
+    timer_all(_vm).close_loop_handles_for_vm_teardown();
 }
 
 /// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
 ///
 /// # Safety
 /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> SweepResult {
+unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine, js: Js) -> SweepResult {
     // SAFETY: per the contract above.
-    stop_active_handles_for_vm_teardown(unsafe { &*vm })
+    stop_active_handles_for_vm_teardown(unsafe { js.on(&*vm) })
 }
 
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
-unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
-    if let Some(all) = try_timer_all() {
+unsafe fn disarm_all_timers_for_vm_teardown(vm: &VirtualMachine) {
+    if let Some(all) = try_timer_all(vm) {
         // SAFETY: JS thread; teardown has forbidden script.
         unsafe { all.disarm_all_for_vm_teardown() };
     }
@@ -1398,8 +1420,8 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
 /// are all still live.
-fn stop_dns_for_vm_teardown() -> SweepResult {
-    let Some(state) = try_runtime_state() else {
+fn stop_dns_for_vm_teardown(js: Js) -> SweepResult {
+    let Some(state) = try_runtime_state(js.bun_vm()) else {
         return SweepResult::Idle;
     };
     let mut result = SweepResult::Idle;
@@ -1422,21 +1444,21 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 /// handles when it runs, so drain first so they are armed before the sweep,
 /// then stop. (VM teardown must *not* drain here — its
 /// prepareForDestruction discards the pre-exit queues.)
-pub(crate) fn stop_active_handles_for_test_isolation(vm: &VirtualMachine) {
+pub(crate) fn stop_active_handles_for_test_isolation(vm: &Js<VirtualMachine>) {
     let _ = vm.event_loop().drain_microtasks();
     let _ = stop_active_handles(vm, bun_jsc::StopReason::Disposed);
 }
 
-pub(crate) fn stop_active_handles_for_vm_teardown(vm: &VirtualMachine) -> SweepResult {
+pub(crate) fn stop_active_handles_for_vm_teardown(vm: &Js<VirtualMachine>) -> SweepResult {
     stop_active_handles(vm, bun_jsc::StopReason::VmTeardown)
 }
 
 /// One stop-phase sweep over what the VM's contexts own: every armed
 /// [`bun_jsc::AbortHandle`] (Node's `HandleWrap` list) is closed natively now,
 /// while the VM is alive, rather than by a GC finalizer during `~VM`.
-fn stop_active_handles(vm: &VirtualMachine, reason: bun_jsc::StopReason) -> SweepResult {
-    if let Some(all) = try_timer_all() {
-        all.event_loop_delay.disable_all();
+fn stop_active_handles(vm: &Js<VirtualMachine>, reason: bun_jsc::StopReason) -> SweepResult {
+    if let Some(all) = try_timer_all(vm) {
+        vm.on(&all.event_loop_delay).disable_all();
     }
     vm.stop_context_handles(reason)
 }
@@ -2746,6 +2768,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     b"",
                     &mut public_path,
                     bun_paths::Platform::Loose,
+                    jsc_vm.as_vm(),
                 );
                 bun_string_jsc::create_utf8_for_js(global_object, &public_path)
                     .map_err(|_| crate::Error::JSError)?
@@ -2922,6 +2945,7 @@ fn js_synthetic_module(name: &'static [u8]) -> ResolvedSource {
 fn get_hardcoded_module(
     specifier: &bun_core::String,
     hardcoded: HardcodedModule,
+    vm: Vm,
 ) -> Option<ResolvedSource> {
     // The analytics-side set stores `&'static str` names
     // (cycle break — see `bun_analytics::features::BUILTIN_MODULES`), so feed
@@ -2930,7 +2954,7 @@ fn get_hardcoded_module(
 
     match hardcoded {
         HardcodedModule::BunMain => {
-            let vm = VirtualMachine::get();
+            let vm = vm.bun_vm();
             let ep = vm.entry_point.get();
             // A compiled entry point runs without the wrapper: the text is empty.
             let is_compiled = vm.main_entry_point.get() == MainEntryPoint::Compiled;
@@ -3040,7 +3064,7 @@ fn __bun_fetch_builtin_module(
     if let Some(&hardcoded) = HardcodedModule::MAP.get(spec) {
         // `None` ⇒ recognised builtin but not servable right now → fall
         // through to filesystem resolution.
-        return get_hardcoded_module(specifier, hardcoded);
+        return get_hardcoded_module(specifier, hardcoded, jsc_vm.as_vm());
     }
 
     if let Some((name, tag)) = bun_jsc::module_loader::exposed_internal_tag(spec) {
@@ -3283,7 +3307,7 @@ struct LoaderResult<'a> {
 /// `options.getLoaderAndVirtualSource` — high-tier body.
 fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
-    jsc_vm: &'a VirtualMachine,
+    jsc_vm: &'a Js<VirtualMachine>,
     virtual_source_to_use: &'a mut Option<bun_ast::Source<'a>>,
     source_blob: &'a mut Option<crate::webcore::Blob>,
     type_attribute_str: Option<&[u8]>,
@@ -3767,7 +3791,7 @@ fn transpile_file<const DATA_ONLY: bool>(
     let mut source_blob: Option<crate::webcore::Blob> = None;
     let mut lr = match get_loader_and_virtual_source(
         _specifier.slice(),
-        jsc_vm,
+        global.on(jsc_vm),
         &mut virtual_source_to_use,
         &mut source_blob,
         type_attribute_str,
@@ -4405,9 +4429,11 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
 
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
+pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(
+    path: &Vm<bun_core::String>,
+) -> bun_core::String {
     bun_jsc::mark_binding();
-    if VirtualMachine::get().standalone_module_graph.is_none() {
+    if path.bun_vm().standalone_module_graph.is_none() {
         return bun_core::String::DEAD;
     }
     let input_path = path.to_utf8();
@@ -4425,7 +4451,7 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
 /// source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
-    specifier: &bun_core::String,
+    specifier: &Vm<bun_core::String>,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
     bun_jsc::mark_binding();
@@ -4445,7 +4471,7 @@ pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
         debug_assert!(false);
         return false;
     };
-    let Some(resolved) = get_hardcoded_module(specifier, hardcoded) else {
+    let Some(resolved) = get_hardcoded_module(specifier, hardcoded, specifier.as_vm()) else {
         return false;
     };
     *ret = ErrorableResolvedSource::ok(resolved);
@@ -4460,20 +4486,13 @@ pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
 // `__bun_run_wtf_timer`) live in [`crate::dispatch`] alongside the other
 // §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_io`).
 
-/// `bun_io::__bun_get_vm_ctx` body. Declared
-/// `extern "Rust"` in `bun_io::posix_event_loop`; link-time resolved.
-#[unsafe(no_mangle)]
-fn __bun_get_vm_ctx() -> bun_io::EventLoopCtx {
-    VirtualMachine::get().loop_ctx()
-}
-
 /// `dateForHeader`: wrap the header bytes in a
 /// `bun.String`, call `String.parseDate(&s, vm.global)`, return the integer
 /// value if finite and non-negative, else `None`. Lives in this crate (callers
 /// are `server::FileRoute` / `server::StaticRoute`) so `bun_uws_sys` (T0) has
 /// no upward hook into `bun_jsc`.
-pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
-    let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+pub(crate) fn parse_http_date(value: &[u8], js: Js) -> Option<u64> {
+    let vm = js.bun_vm();
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives
     // the VM; `parse_http_date` is only reachable from a `Bun.serve` request
     // callback (JS thread, VM live).

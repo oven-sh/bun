@@ -6,6 +6,7 @@ use core::mem::size_of;
 use bun_core::strings;
 use bun_http::Method;
 use bun_io::FileType;
+use bun_jsc::Js;
 use bun_paths::resolve_path;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_resolver::fs::StatHash;
@@ -98,22 +99,18 @@ impl DirectoryRoute {
         }))
     }
 
-    pub(crate) fn on_head_request(
-        this: ThisPtr<DirectoryRoute>,
-        req: AnyRequest,
-        resp: AnyResponse,
-    ) {
+    pub(crate) fn on_head_request(this: ThisPtr<Js<Self>>, req: AnyRequest, resp: AnyResponse) {
         Self::on(this, req, resp, Method::HEAD);
     }
 
-    pub(crate) fn on_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(this: ThisPtr<Js<Self>>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         Self::on(this, req, resp, method);
     }
 
-    fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
+    fn on(this: ThisPtr<Js<Self>>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         debug_assert!(this.server.get().is_some());
-        let route = PendingRequest::new(RefPtr::from_this(this));
+        let route = PendingRequest::new(RefPtr::from_this(this.plain()));
         if let Some(server) = this.server.get() {
             resp.timeout(server.config().idle_timeout);
         }
@@ -161,13 +158,20 @@ impl DirectoryRoute {
         let last_modified_ms = (last_modified_ms > 0).then_some(last_modified_ms);
 
         let range = if method == Method::GET || method == Method::HEAD {
-            RangeRequest::from_request(&req, size, Some(etag), last_modified_ms)
+            RangeRequest::from_request(&req, size, Some(etag), last_modified_ms, this.proof())
         } else {
             RangeRequest::Result::None
         };
 
-        let status_code =
-            status_for_preconditions(&req, method, 200, Some(etag), last_modified_ms, range);
+        let status_code = status_for_preconditions(
+            &req,
+            method,
+            200,
+            Some(etag),
+            last_modified_ms,
+            range,
+            this.proof(),
+        );
 
         req.set_yield(false);
         write_any_status(resp, status_code);
@@ -239,7 +243,7 @@ impl DirectoryRoute {
         FileResponseStream::start(FileResponseStreamOptions {
             fd: file.into(),
             resp,
-            vm: bun_ptr::BackRef::new(server.vm()),
+            vm: this.on(server.vm()),
             file_type: FileType::File,
             pollable: false,
             offset: body_offset,

@@ -5,7 +5,7 @@ use bun_collections::VecExt;
 use bun_io::FileType;
 use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, Chunk, IoEvent, Owner, PollTag, ReadResult, ReadState};
-use bun_jsc::JsCell;
+use bun_jsc::{Js, JsCell, Vm};
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd};
 
@@ -248,8 +248,8 @@ impl FileReader {
     }
 
     /// `this` pins the JS wrapper too: a consumer (JS, or a native sink such as HTMLRewriter) can drop the stream's last GC root.
-    pub(crate) fn read(this: &RefPtr<Source>, event: Option<IoEvent>) {
-        let this = &this.context;
+    pub(crate) fn read(this: &RefPtr<Source>, event: Option<IoEvent>, js: Js) {
+        let this = js.on(&this.context);
         let result = this
             .reader
             .read_chunks(this.event_loop_ctx(), event, |chunk, state| {
@@ -258,7 +258,7 @@ impl FileReader {
         this.on_read_result(result);
     }
 
-    fn on_read_result(&self, result: ReadResult) {
+    fn on_read_result(self: &Js<Self>, result: ReadResult) {
         match result {
             ReadResult::Pending => {}
             ReadResult::Done => self.on_reader_done(),
@@ -266,7 +266,7 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn on_start(&self) -> streams::Start {
+    pub(crate) fn on_start(self: &Js<Self>) -> streams::Start {
         self.set_reader_owner();
         let was_lazy = !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
@@ -399,7 +399,7 @@ impl FileReader {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
                     self.on_read_result(self.reader.unpause());
-                    Self::read(&self.ref_guard(), None);
+                    Self::read(&self.ref_guard(), None, self.js());
                 }
             }
         }
@@ -419,7 +419,7 @@ impl FileReader {
         self.parent_const()
             .global_this
             .set(Some(bun_ptr::BackRef::new(global)));
-        match self.on_start() {
+        match global.on(self).on_start() {
             streams::Start::Ready | streams::Start::Empty | streams::Start::ChunkSize(_) => None,
             other => Some(other),
         }
@@ -440,11 +440,12 @@ impl FileReader {
     }
 
     /// Sink's drain ack: unpause, push any buffered bytes, then resume reading.
-    pub(crate) fn pull_into_sink(&self) {
+    pub(crate) fn pull_into_sink(self: &Js<Self>) {
         if !self.sink_paused.replace(false) {
             return;
         }
         let sink = *self.sink.get();
+        let sink = self.on(&sink);
         if sink.is_none() {
             return;
         }
@@ -488,7 +489,7 @@ impl FileReader {
         if !self.reader.has_pending_read() {
             let this = self.ref_guard();
             self.on_read_result(self.reader.unpause());
-            Self::read(&this, None);
+            Self::read(&this, None, self.js());
         }
     }
 
@@ -500,18 +501,18 @@ impl FileReader {
         let sink = *self.sink.get();
         if sink.is_some() {
             self.detach_sink(Some(&err));
-            sink.end(Some(err));
+            global.on(&sink).end(Some(err));
         } else {
             self.pending.run(streams::Result::Err(err));
         }
     }
 
-    pub(crate) fn on_cancel(&self) {
+    pub(crate) fn on_cancel(self: &Js<Self>) {
         // A sink still wired here must fail, not see an EOF and commit a truncated body.
         let sink = *self.sink.get();
         self.unpipe_without_deref();
         if sink.is_some() {
-            sink.end(Some(streams::StreamError::AbortReason(
+            self.on(&sink).end(Some(streams::StreamError::AbortReason(
                 jsc::CommonAbortReason::UserAbort,
             )));
         }
@@ -528,7 +529,7 @@ impl FileReader {
         }
     }
 
-    fn on_read_chunk(&self, chunk: Chunk<'_>, state: ReadState) -> bool {
+    fn on_read_chunk(self: &Js<Self>, chunk: Chunk<'_>, state: ReadState) -> bool {
         bun_core::scoped_log!(
             FileReader,
             "onReadChunk() = {} ({})",
@@ -569,7 +570,13 @@ impl FileReader {
         }
     }
 
-    fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool) -> bool {
+    fn write_chunk_to_sink(
+        self: &Js<Self>,
+        sink: SinkHandle,
+        chunk: &[u8],
+        has_more: bool,
+    ) -> bool {
+        let sink = self.on(&sink);
         if !chunk.is_empty() {
             let wrote = sink.write(&if has_more {
                 streams::Result::Temporary(chunk)
@@ -677,12 +684,13 @@ impl FileReader {
         }
     }
 
-    fn on_reader_done(&self) {
+    fn on_reader_done(self: &Js<Self>) {
         bun_core::scoped_log!(FileReader, "onReaderDone()");
         // `pending.run()` and `on_close()` can run user JS, and the `self.buffered` /
         // `io_ref` reads below must not land on a freed box.
         let _pin = self.ref_guard();
         let sink = *self.sink.get();
+        let sink = self.on(&sink);
         if sink.is_some() {
             self.consume_reader_buffer();
             if !self.sink_paused.get() {
@@ -714,7 +722,7 @@ impl FileReader {
         self.io_ref.set(None);
     }
 
-    fn on_reader_error(&self, err: sys::Error) {
+    fn on_reader_error(self: &Js<Self>, err: sys::Error) {
         self.consume_reader_buffer();
         if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
             self.buffered.set(Vec::new());
@@ -728,7 +736,7 @@ impl FileReader {
         if sink.is_some() {
             let err = streams::StreamError::Error(err);
             self.detach_sink(Some(&err));
-            sink.end(Some(err));
+            self.on(&sink).end(Some(err));
         } else if self.pending.is_pending() {
             self.pending
                 .run(streams::Result::Err(streams::StreamError::Error(err)));
@@ -780,7 +788,7 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn set_flowing(&self, flag: bool) {
+    pub(crate) fn set_flowing(self: &Js<Self>, flag: bool) {
         bun_core::scoped_log!(
             FileReader,
             "setFlowing({}) was={}",
@@ -798,7 +806,7 @@ impl FileReader {
             self.on_read_result(self.reader.unpause());
             if !self.reader.is_done() && !self.reader.has_pending_read() {
                 // Kick off a new read if needed
-                Self::read(&self.ref_guard(), None);
+                Self::read(&self.ref_guard(), None, self.js());
             }
         } else {
             self.reader.pause();
@@ -815,11 +823,11 @@ bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; 
 impl readable_stream::SourceContext for FileReader {
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
 
-    fn on_start(&self) -> streams::Start {
+    fn on_start(self: &Js<Self>) -> streams::Start {
         Self::on_start(self)
     }
 
-    fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result<'_> {
+    fn on_pull(self: &Js<Self>, buffer: &mut [u8], array: JSValue) -> streams::Result<'_> {
         // `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
@@ -909,15 +917,15 @@ impl readable_stream::SourceContext for FileReader {
         streams::Result::Pending(&self.pending)
     }
 
-    fn on_cancel(&self) {
+    fn on_cancel(self: &Js<Self>) {
         Self::on_cancel(self);
     }
 
-    fn deinit_fn(&self) {
+    fn deinit_fn(self: &Vm<Self>) {
         self.reader.update_ref(false);
     }
 
-    fn wrapper_finalized(&self) {
+    fn wrapper_finalized(self: &Vm<Self>) {
         debug_assert!(!(self.done.get() && self.io_ref.get().is_some()));
         if self.done.get() || self.io_ref.get().is_none() {
             return;
@@ -933,7 +941,7 @@ impl readable_stream::SourceContext for FileReader {
         self.reader.update_ref(enable);
     }
 
-    fn drain_internal_buffer(&self) -> Vec<u8> {
+    fn drain_internal_buffer(self: &Js<Self>) -> Vec<u8> {
         Self::drain(self)
     }
 
@@ -953,10 +961,10 @@ impl Source {
         }
     }
 
-    pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
+    pub fn set_flowing(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
-        self.context.set_flowing(flag == JSValue::TRUE);
+        cx.on(&self.context).set_flowing(flag == JSValue::TRUE);
     }
 }
 

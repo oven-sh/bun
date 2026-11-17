@@ -397,7 +397,7 @@ pub mod bv2_impl {
     use bun_ast::{ExportsKind, ImportKind, ImportRecord};
     use bun_collections::{ArrayHashMap, DynamicBitSet, VecExt};
     use bun_core::strings;
-    use bun_core::{FeatureFlags, Output};
+    use bun_core::{FeatureFlags, Loop, Output};
     use bun_resolver::DataURL;
     use bun_resolver::cache::SourceFd;
     use bun_resolver::fs::PathResolverExt as _;
@@ -786,6 +786,7 @@ pub mod bv2_impl {
             use crate::options::{Loader, Target};
             use crate::parse_task::ParseTask;
             use bun_ast::ImportKind;
+            use bun_core::Loop;
             use bun_core::String as BunString;
             use bun_resolver::fs::PathResolverExt as _;
             use core::mem::transmute;
@@ -1205,10 +1206,10 @@ pub mod bv2_impl {
                 }
             }
             impl ResolveAnswered {
-                pub fn run(self) {
+                pub fn run(self, loop_: Loop) {
                     // SAFETY: `bv2` is a live backref set in `Resolve::init`.
                     let bv2 = unsafe { &mut *self.0.bv2 };
-                    BundleV2::on_resolve(self.0, bv2);
+                    BundleV2::on_resolve(self.0, bv2, loop_);
                 }
             }
             impl<'a> Resolve<'a> {
@@ -1368,10 +1369,10 @@ pub mod bv2_impl {
                 }
             }
             impl LoadAnswered {
-                pub fn run(self) {
+                pub fn run(self, loop_: Loop) {
                     // SAFETY: `bv2` is a live backref set in `Load::init`.
                     let bv2 = unsafe { &mut *self.0.bv2 };
-                    BundleV2::on_load(self.0, bv2);
+                    BundleV2::on_load(self.0, bv2, loop_);
                 }
             }
             /// A plugin `.defer()`red a [`Load`]: the notice to the loop that runs the bundle, when
@@ -1390,11 +1391,11 @@ pub mod bv2_impl {
             }
             impl LoadDeferred {
                 #[inline(never)]
-                pub fn run(&mut self) {
+                pub fn run(&mut self, loop_: Loop) {
                     bun_removable_features::removable_definition!(Bundler, Self::run);
                     // SAFETY: `bv2` is a live backref set in `Load::init`.
                     let bv2 = unsafe { &mut *self.0.bv2 };
-                    BundleV2::on_notify_defer(&mut self.0, bv2);
+                    BundleV2::on_notify_defer(&mut self.0, bv2, loop_);
                 }
             }
         }
@@ -2848,7 +2849,7 @@ pub mod bv2_impl {
             );
         }
 
-        pub(crate) fn decrement_scan_counter(&mut self) {
+        pub(crate) fn decrement_scan_counter(&mut self, loop_: Loop) {
             self.thread_lock.assert_locked();
             debug_assert!(self.graph.pending_items > 0);
             self.graph.pending_items -= 1;
@@ -2857,11 +2858,11 @@ pub mod bv2_impl {
                 ".pending_items - 1 = {}",
                 self.graph.pending_items
             );
-            self.on_after_decrement_scan_counter();
+            self.on_after_decrement_scan_counter(loop_);
         }
 
         #[inline(never)]
-        pub(crate) fn on_after_decrement_scan_counter(&mut self) {
+        pub(crate) fn on_after_decrement_scan_counter(&mut self, loop_: Loop) {
             bun_removable_features::removable_definition!(
                 Bundler,
                 Self::on_after_decrement_scan_counter
@@ -2870,7 +2871,7 @@ pub mod bv2_impl {
                 let dev = self
                     .dev_server
                     .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
-                self.finish_from_bake_dev_server(&dev).expect("oom");
+                self.finish_from_bake_dev_server(&dev, loop_).expect("oom");
             }
         }
 
@@ -4233,23 +4234,31 @@ pub mod bv2_impl {
         }
     }
 
-    fn on_load_mini(load: *mut jsc_api::JSBundler::Load, this: *mut BundleV2<'static>) {
+    fn on_load_mini(
+        load: *mut jsc_api::JSBundler::Load,
+        this: *mut BundleV2<'static>,
+        loop_: Loop,
+    ) {
         // SAFETY: callback contract — `load` is the box passed to
         // `enqueue_task_concurrent_with_extra_ctx`; `this` is the BundleV2 the
         // mini loop's `tick` supplies as ParentContext.
         let (load, this) = unsafe { (bun_core::heap::take(load), &mut *this) };
-        BundleV2::on_load(*load, this);
+        BundleV2::on_load(*load, this, loop_);
     }
 
-    fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
+    fn on_resolve_mini(
+        resolve: *mut jsc_api::JSBundler::Resolve,
+        this: *mut BundleV2<'static>,
+        loop_: Loop,
+    ) {
         // SAFETY: see `on_load_mini`.
         let (resolve, this) = unsafe { (bun_core::heap::take(resolve), &mut *this) };
-        BundleV2::on_resolve(*resolve, this);
+        BundleV2::on_resolve(*resolve, this, loop_);
     }
 
     impl<'a> BundleV2<'a> {
         #[inline(never)]
-        pub(crate) fn on_load(load: jsc_api::JSBundler::Load, this: &mut BundleV2) {
+        pub(crate) fn on_load(load: jsc_api::JSBundler::Load, this: &mut BundleV2, loop_: Loop) {
             bun_removable_features::removable_definition!(Bundler, Self::on_load);
             let jsc_api::JSBundler::LoadOwner::Bundle(mut parse_task) = load.owner else {
                 unreachable!("`on_load_async` answers a waiter");
@@ -4287,7 +4296,7 @@ pub mod bv2_impl {
                         if parse_task.on_load_decides_html_import
                             && !this.html_import_after_on_load(&mut parse_task)
                         {
-                            this.decrement_scan_counter();
+                            this.decrement_scan_counter(loop_);
                             return;
                         }
                         // The enqueue site left the asset bookkeeping to the plugin's answer.
@@ -4314,7 +4323,7 @@ pub mod bv2_impl {
                     );
 
                     // An error occurred, prevent spinning the event loop forever
-                    this.decrement_scan_counter();
+                    this.decrement_scan_counter(loop_);
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
                     // `code`: LoadSuccess { source_code, loader }
@@ -4322,7 +4331,7 @@ pub mod bv2_impl {
                         && parse_task.on_load_decides_html_import
                         && !this.html_import_after_on_load(&mut parse_task)
                     {
-                        this.decrement_scan_counter();
+                        this.decrement_scan_counter(loop_);
                         return;
                     }
                     let source_index = parse_task.source_index;
@@ -4429,7 +4438,7 @@ pub mod bv2_impl {
                     }
 
                     // An error occurred, prevent spinning the event loop forever
-                    this.decrement_scan_counter();
+                    this.decrement_scan_counter(loop_);
                 }
                 jsc_api::JSBundler::LoadValue::Pending => unreachable!(),
             }
@@ -4484,7 +4493,11 @@ pub mod bv2_impl {
         }
 
         #[inline(never)]
-        pub(crate) fn on_resolve(resolve: jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
+        pub(crate) fn on_resolve(
+            resolve: jsc_api::JSBundler::Resolve,
+            this: &mut BundleV2,
+            loop_: Loop,
+        ) {
             bun_removable_features::removable_definition!(Bundler, Self::on_resolve);
             debug_assert!(matches!(
                 resolve.owner,
@@ -4495,7 +4508,7 @@ pub mod bv2_impl {
             let mut this = scopeguard::guard(this, |this| {
                 // Before the decrement: the barrel pass can schedule parse tasks.
                 this.plugin_answer_done(importer_source_index);
-                this.decrement_scan_counter();
+                this.decrement_scan_counter(loop_);
             });
             let this: &mut BundleV2 = &mut **this;
             bun_core::scoped_log!(
@@ -4959,6 +4972,7 @@ pub mod bv2_impl {
         pub(crate) fn finish_from_bake_dev_server(
             &mut self,
             dev_server: &dispatch::DevServerHandle,
+            loop_: Loop,
         ) -> Result<(), AllocError> {
             // SAFETY: DevServer guarantees `current_bundle` is Some during finish.
             // The vtable slot returns `*mut ()` derived from the current bundle's `start_data`;
@@ -5254,6 +5268,7 @@ pub mod bv2_impl {
                         linker_graph,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
                     },
+                    loop_,
                 )
                 .map_err(|_| AllocError)
         }
@@ -6947,7 +6962,11 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
-        pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+        pub fn on_notify_defer(
+            load: &mut jsc_api::JSBundler::Load,
+            this: &mut BundleV2,
+            loop_: Loop,
+        ) {
             debug_assert!(matches!(
                 load.owner,
                 jsc_api::JSBundler::LoadOwner::Bundle(_)
@@ -6955,13 +6974,14 @@ pub mod bv2_impl {
             this.thread_lock.assert_locked();
             load.deferred_in = Some(this.graph.defer_epoch);
             this.graph.deferred_pending += 1;
-            this.decrement_scan_counter();
+            this.decrement_scan_counter(loop_);
         }
 
         #[inline(never)]
         pub(crate) fn on_parse_task_complete(
             mut parse_result: Box<parse_task::Result<'a>>,
             this: &mut BundleV2<'a>,
+            loop_: Loop,
         ) {
             bun_removable_features::removable_definition!(Bundler, Self::on_parse_task_complete);
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
@@ -7392,7 +7412,7 @@ pub mod bv2_impl {
                 u32::try_from(i32::try_from(this.graph.pending_items).expect("int cast") + diff)
                     .expect("int cast");
             if diff < 0 {
-                this.on_after_decrement_scan_counter();
+                this.on_after_decrement_scan_counter(loop_);
             }
         }
     }

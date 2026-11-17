@@ -5,7 +5,7 @@ use super::*;
 /// unsafe function, must be run outside of the event loop
 /// fails with `JSError` on exception
 pub(super) fn load_module(
-    vm: &VirtualMachine,
+    vm: &Js<VirtualMachine>,
     global: &JSGlobalObject,
     key: JSValue,
 ) -> crate::Result<JSValue> {

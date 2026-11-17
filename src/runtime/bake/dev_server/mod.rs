@@ -20,10 +20,10 @@ use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, String as BunString, ZStr, strings};
-use bun_core::{Environment, Output};
+use bun_core::{Environment, Loop, Output};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::virtual_machine::{VirtualMachine, VmRef};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Js, JsResult, Vm};
 use bun_jsc::{LogJsc as _, StringJsc as _};
 use bun_paths::{self as paths, PathBuffer};
 use bun_sys as sys;
@@ -304,12 +304,10 @@ impl DevServer {
         self.vm.get()
     }
 
-    /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
-    /// `'static` so the borrow is decoupled from `&self` and may be held
-    /// across `&mut self` reborrows.
+    /// Does not borrow `self`, so it may be held across `&mut self` reborrows.
     #[inline]
-    fn global(&self) -> &'static JSGlobalObject {
-        self.vm().global()
+    fn global<'a>(&self, js: Js<'a>) -> &'a JSGlobalObject {
+        js.on(VmRef::new(self.vm())).global()
     }
 }
 pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;
@@ -319,7 +317,7 @@ pub(crate) struct Options<'a> {
     /// Arena must live until DevServer drops
     pub arena: &'a Arena,
     pub root: &'a ZStr,
-    pub vm: &'a VirtualMachine,
+    pub vm: &'a Js<'a, VirtualMachine>,
     pub framework: bake::Framework,
     pub bundler_options: bake::SplitBundlerOptions,
     pub broadcast_console_log_from_browser_to_server: bool,

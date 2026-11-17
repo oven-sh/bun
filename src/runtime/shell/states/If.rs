@@ -5,6 +5,7 @@ use crate::shell::io::IO;
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 pub(crate) struct If {
     pub(crate) base: Base,
@@ -76,7 +77,7 @@ impl If {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         let parent = interp.as_if(this).base.parent;
         loop {
             // Read/mutate `state` via a short-lived borrow, decide an action,
@@ -180,7 +181,7 @@ impl If {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,

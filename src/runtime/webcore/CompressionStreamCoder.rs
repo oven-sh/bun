@@ -23,7 +23,7 @@ use bun_core::vec::{BorrowedCursor, append_with};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
     ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong, ThreadIsolated,
-    ThreadIsolatedArg,
+    ThreadIsolatedArg, Vm,
 };
 
 use bun_brotli::c as brotli;
@@ -153,6 +153,7 @@ impl CompressionStreamCoder {
         decompress: bool,
         high_water_mark: usize,
         level: Option<i32>,
+        vm: Vm,
     ) -> Result<Box<Self>, CodecError> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
@@ -222,9 +223,7 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
-            context: bun_jsc::virtual_machine::VirtualMachine::get()
-                .context_of_caller()
-                .id(),
+            context: vm.bun_vm().context_of_caller().id(),
         }))
     }
 
@@ -578,9 +577,12 @@ impl AsyncInput {
 // ─── extern "C" surface (called from JSCompressionStream.cpp) ──────────────
 
 /// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
+///
+/// # Safety
+/// Called from a host function.
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn CompressionStreamCoder__create(
+pub(crate) unsafe extern "C" fn CompressionStreamCoder__create(
     format: u8,
     decompress: bool,
     high_water_mark: usize,
@@ -593,7 +595,9 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
     );
     let format = Format::from_u8(format)?;
     let level = (has_level && !decompress).then_some(level);
-    CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level).ok()
+    // SAFETY: fn contract.
+    let vm = unsafe { Vm::assume(&format) };
+    CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level, vm).ok()
 }
 
 #[inline(never)]
@@ -710,6 +714,7 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformInto(
             'write: {
                 // The sink copies what it needs before returning.
                 let handle = controller.sink_handle();
+                let handle = global.on(&handle);
                 if out.is_empty() || handle.is_none() {
                     break 'write JSValue::UNDEFINED;
                 }

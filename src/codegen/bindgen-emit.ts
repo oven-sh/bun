@@ -1938,6 +1938,7 @@ function rustTakeArguments(args: readonly { name: string; type: Type }[], scope:
 }
 
 const capabilityArgument = { none: [], heap: ["&cx.heap"], js: ["cx"] };
+const vmArgument = (signature: Signature) => (signature.passVm ? ["cx.heap.as_vm()"] : []);
 
 const unit = new UnitType("undefined");
 const infallible = (call: string, throws: boolean, returns: Type | null = null) =>
@@ -2172,7 +2173,7 @@ const rustImplJsClass = (type: ClassType, toJS: string) => `impl bun_jsc::JsClas
 function rustForClass(type: ClassType, scope: RustScope): string {
   const { rustPath, refCounted } = type;
   const receiverArgument = {
-    ref: [refCounted ? "wrapped" : "this.payload_ref()"],
+    ref: [`cx.heap.as_vm().on(${refCounted ? "wrapped" : "this.payload_ref()"})`],
     mut: ["this.payload_mut()"],
     static: [],
   };
@@ -2362,8 +2363,13 @@ unsafe extern "C" {
     }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: bun_ptr::RefPtr<${rustPath}>) {
-    ${type.finalize ? `<${rustPath}>::finalize(&wrapped);\n    ` : ""}drop(wrapped);
+pub ${type.finalize ? "unsafe " : ""}extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: bun_ptr::RefPtr<${rustPath}>) {
+    ${
+      type.finalize
+        ? `// SAFETY: the sweeper calls this on the VM's thread, at the latest while the engine's VM is destroyed.
+    <${rustPath}>::finalize(unsafe { bun_jsc::Vm::assume(&wrapped) }.on(&*wrapped));\n    `
+        : ""
+    }drop(wrapped);
 }
 ${type.overridesToJS ? "" : rustImplJsClass(type, `js_${name}::to_js(bun_ptr::RefPtr::new(self), global)`)}
 `;
@@ -2542,7 +2548,7 @@ bun_jsc::jsc_abi_extern! {
           );
           path = `${file.moduleDefinition.rustPath}::${rustIdent(snakeCase(fn.name.replace(/^_+/, "")))}`;
         }
-        const call = `${path}(${[...capabilityArgument[signature.capability], ...leading, ...rustArguments(signature)].join(", ")})`;
+        const call = `${path}(${[...capabilityArgument[signature.capability], ...leading, ...rustArguments(signature), ...vmArgument(signature)].join(", ")})`;
         return rustThunk(
           thunkSymbol(fn, signature),
           [...leading.map(name => `${name}: JSValue`), ...rustExternParameters(signature, scope)],

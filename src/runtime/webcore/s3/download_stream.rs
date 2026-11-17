@@ -4,7 +4,7 @@ use bun_core::MutableString;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{HTTPClientResult, Headers};
-use bun_io::JsKeepAlive;
+use bun_jsc::{Js, JsKeepAlive};
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
 
@@ -40,6 +40,7 @@ pub struct S3HttpDownloadStreamingTask {
 }
 
 bun_jsc::impl_abort_handle_owner!(S3HttpDownloadStreamingTask, abort_handle, |this, _cause| {
+    let this = this.cast::<Self>();
     // SAFETY: trait contract — `this` is live (armed ⇒ not yet freed by `on_response`).
     unsafe {
         (*this).signal_store.aborted.store(true, Ordering::Relaxed);
@@ -52,7 +53,10 @@ impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
     /// The completion frees the task; run it.
     unsafe fn release_unrun(this: *mut Self) {
-        S3HttpDownloadStreamingTask::on_response(this);
+        // SAFETY: only posted under a ticket, so teardown's wait releases it: on the JS thread,
+        // outside a collection, before the global object goes.
+        let js = unsafe { Js::assume(&this) };
+        S3HttpDownloadStreamingTask::on_response(this, js);
     }
     /// The completion frees the request; the stream it feeds was aborted with its context
     /// (`abort_handle`).
@@ -83,14 +87,14 @@ impl S3HttpDownloadStreamingTask {
     /// # Safety
     /// `this` is live and exclusively accessed by this thread for the duration of the call
     /// (`on_response`).
-    unsafe fn report_progress(this: *mut Self, state: State) {
+    unsafe fn report_progress(this: *mut Self, state: State, js: Js) {
         let has_more = state.has_more();
         let failed = match state.status_code() {
             200 | 204 | 206 => state.request_error() != 0,
             _ => true,
         };
         // SAFETY: fn contract; the wrapper is a separate allocation, so `*this` is not borrowed.
-        let wrapper: &S3DownloadStreamWrapper = unsafe { &(*this).wrapper };
+        let wrapper = js.on(unsafe { &*(*this).wrapper });
         bun_core::scoped_log!(
             S3,
             "reportProgres failed: {} has_more: {} len: {}",
@@ -146,7 +150,7 @@ impl S3HttpDownloadStreamingTask {
     /// `this` must be a live heap pointer produced by `Self::new`; the event loop guarantees
     /// exclusive main-thread access for the duration of this call. When the loaded state's
     /// `has_more` is false this call reclaims and drops the allocation exactly once.
-    pub(crate) fn on_response(this: *mut Self) {
+    pub(crate) fn on_response(this: *mut Self, js: Js) {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
         // Each access below is scoped so no borrow spans `report_progress` (which invokes
@@ -167,7 +171,7 @@ impl S3HttpDownloadStreamingTask {
             };
         }
         // SAFETY: as above.
-        unsafe { Self::report_progress(this, state) };
+        unsafe { Self::report_progress(this, state, js) };
         drop(guard);
         if !has_more {
             // SAFETY: the HTTP thread does not call back again.

@@ -16,7 +16,7 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use bun_jsc::JSGlobalObject;
+use bun_jsc::{JSGlobalObject, Js, Vm};
 use bun_output::{declare_scope, scoped_log};
 use bun_spawn::{self, ProcessHandle, Status};
 
@@ -42,9 +42,9 @@ pub(crate) struct HostProcess {
 /// Of the host that C++ talks to, whichever thread spawned it. 0: none.
 static PID: AtomicI32 = AtomicI32::new(0);
 
-fn unreaped() -> &'static super::Unreaped<HostProcess> {
+fn unreaped(_vm: Vm<'_>) -> &super::Unreaped<HostProcess> {
     #[cfg(target_os = "macos")]
-    return &crate::jsc_hooks::runtime_state().browsers.host;
+    return &crate::jsc_hooks::runtime_state(_vm.bun_vm()).browsers.host;
     #[cfg(not(target_os = "macos"))]
     unreachable!("only macOS spawns a host");
 }
@@ -109,18 +109,18 @@ extern "C" fn Bun__WebViewHost__ensure(
 }
 
 bun_spawn::link_impl_ProcessExit! {
-    HostProcess for HostProcess => |this| {
+    HostProcess for Js<'_, HostProcess> => |this| {
         // Child died (EVFILT_PROC). Socket onClose may or may not have fired
         // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
         // pending promises and mark the host dead.
-        on_process_exit(status, _rusage) => HostProcess::on_exit(this, &status),
+        on_process_exit(status, _rusage) => HostProcess::on_exit(this.cast(), &status, (*this).js()),
     }
 }
 
 impl HostProcess {
-    fn on_exit(this: *mut HostProcess, status: &Status) {
+    fn on_exit(this: *mut HostProcess, status: &Status, js: Js) {
         scoped_log!(WebViewHost, "child exited: {}", status);
-        let Some(host) = super::remove(unreaped(), this) else {
+        let Some(host) = super::remove(unreaped(js.as_vm()), this) else {
             return;
         };
         let pid = host.process.pid;
@@ -186,7 +186,7 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
         process: spawned.to_process_handle(event_loop),
     });
     let process = &host.process;
-    // SAFETY: `host` owns `process`, whose `Drop` detaches the handler.
+    // SAFETY: `host` owns `process`, whose `Drop` detaches the handler. This thread has `vm`.
     let handler = unsafe { ProcessExit::new(ProcessExitKind::HostProcess, host.as_ptr()) };
     Process::set_exit_handler(process, handler);
     match process.watch() {
@@ -204,7 +204,7 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
         }
     }
     PID.store(process.pid, Ordering::Relaxed);
-    unreaped().with_taken(|unreaped| unreaped.push(host));
+    unreaped(vm.as_vm()).with_taken(|unreaped| unreaped.push(host));
     // fd handed to C++ which adopts it into usockets. Not stored here —
     // usockets owns the socket; Rust only owns process lifetime.
     Ok(parent_end.into_raw())

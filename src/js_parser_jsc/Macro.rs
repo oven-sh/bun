@@ -8,8 +8,8 @@ use bun_ast::{Log, Range, Source};
 use bun_bundler::options::TransformOptions;
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::HashMap;
-use bun_core::Output;
 use bun_core::strings;
+use bun_core::{Loop, Output};
 use bun_dotenv::Loader as DotEnvLoader;
 
 use crate::Error;
@@ -22,7 +22,7 @@ use bun_jsc::virtual_machine::{
     InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
 };
 use bun_jsc::{
-    self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
+    self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue, Js,
     JsError, MarkedArgumentBuffer, ModuleLoader, WebCore,
 };
 use bun_jsc::{BuildMessage, ResolveMessage};
@@ -43,6 +43,7 @@ fn call_macro(
     import_range: Range,
     caller: Expr,
     function_name: &[u8],
+    loop_: Loop,
 ) -> crate::Result<Expr> {
     if bun_jsc::compiled_program::compiled_program()
         .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
@@ -132,12 +133,14 @@ fn call_macro(
     );
 
     let vm = match ctx.macro_load_states.get(hash) {
-        Some(MacroLoadState::Loaded) => VirtualMachine::get(),
+        // SAFETY: set below, where this thread has a VM.
+        Some(MacroLoadState::Loaded) => unsafe { Js::assume(bump) }.bun_vm(),
         Some(MacroLoadState::Disabled) => return Ok(caller),
         None => {
             ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
-            let is_new_vm = !VirtualMachine::is_loaded();
-            let vm = if is_new_vm {
+            let (vm, is_new_vm) = if let Some(vm) = VirtualMachine::get_or_null(loop_) {
+                (vm, false)
+            } else {
                 // SAFETY: the contract of `MacroContext::new`. `env` is the build's loader: it
                 // outlives the build and nothing writes to it while parse tasks run.
                 let (options, env) = unsafe {
@@ -146,9 +149,7 @@ fn call_macro(
                         (*transpiler).env.as_ref(),
                     )
                 };
-                init_macro_vm(log, env, options)?
-            } else {
-                VirtualMachine::get()
+                (init_macro_vm(log, env, options, loop_)?, true)
             };
             load_macro(
                 vm,
@@ -192,7 +193,9 @@ fn call_macro(
 /// [`collect_macro_vm_garbage`]: bun_jsc::virtual_machine::collect_macro_vm_garbage
 #[unsafe(no_mangle)]
 fn __bun_macro_collect_vm_garbage() {
-    bun_jsc::virtual_machine::collect_macro_vm_garbage();
+    // SAFETY: a worker ends on its pool thread, whose macro VM is never freed, or with its bundle, no later than `~VM`.
+    // No script runs.
+    bun_jsc::virtual_machine::collect_macro_vm_garbage(unsafe { Loop::assume(&()) });
 }
 
 #[unsafe(no_mangle)]
@@ -207,6 +210,8 @@ fn __bun_macro_context_call(
     caller: Expr,
     function_name: &[u8],
 ) -> Result<Expr, bun_js_parser::Error> {
+    // SAFETY: the parser runs a macro from whatever called it, on any thread. No finalizer parses.
+    let loop_ = unsafe { Loop::assume(&bump) };
     // ABI: the `extern "Rust"` declaration in bun_js_parser names
     // `bun_js_parser::Error`; keep both sides byte-identical.
     let caller_loc = caller.loc;
@@ -220,6 +225,7 @@ fn __bun_macro_context_call(
         import_range,
         caller,
         function_name,
+        loop_,
     )
     .map_err(|e| {
         // visit_expr only prints a fallback "macro threw exception" when
@@ -237,11 +243,12 @@ fn __bun_macro_context_call(
     })
 }
 
-fn init_macro_vm(
+fn init_macro_vm<'a>(
     log: &mut Log,
     env: Option<&DotEnvLoader>,
     transform_options: &TransformOptions,
-) -> crate::Result<&'static VirtualMachine> {
+    loop_: Loop<'a>,
+) -> crate::Result<&'a Js<'a, VirtualMachine>> {
     let mut transform_options = transform_options.clone();
     // Build-only flags about the output bundle. The macro module's own
     // imports must still resolve.
@@ -264,14 +271,15 @@ fn init_macro_vm(
         is_main_thread: false,
         ..Default::default()
     };
-    let vm = VirtualMachine::init(log, options)?;
+    // SAFETY: the one caller has seen that none is loaded, and a thread whose VM has ended parses nothing.
+    let vm = unsafe { VirtualMachine::init(log, options, loop_) }?;
     // This VM stays until the process exits.
     let _ = env_loader.map(AliasableBox::into_raw);
     Ok(vm)
 }
 
 fn load_macro(
-    vm: &VirtualMachine,
+    vm: &Js<VirtualMachine>,
     is_new_vm: bool,
     input_specifier: &[u8],
     function_name: &[u8],
@@ -394,7 +402,7 @@ impl From<MacroError> for Error {
 
 pub(crate) struct Run<'a> {
     pub(crate) caller: Expr,
-    pub(crate) vm: &'a VirtualMachine,
+    pub(crate) vm: &'a Js<'a, VirtualMachine>,
     pub(crate) global: &'a JSGlobalObject,
     /// The parser's arena: the returned `Expr` joins its AST.
     pub(crate) bump: &'a bun_alloc::Arena,
@@ -407,7 +415,7 @@ pub(crate) struct Run<'a> {
 
 impl<'a> Run<'a> {
     pub(crate) fn run_async(
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
         log: &mut Log,
         bump: &bun_alloc::Arena,
         caller: Expr,
@@ -739,7 +747,7 @@ impl<'a> Run<'a> {
 
 impl Runner {
     fn run(
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
         log: &mut Log,
         bump: &bun_alloc::Arena,
         function_name: &[u8],
@@ -841,7 +849,7 @@ impl Runner {
         }
 
         struct CallData<'c> {
-            vm: &'c VirtualMachine,
+            vm: &'c Js<'c, VirtualMachine>,
             log: &'c mut Log,
             bump: &'c bun_alloc::Arena,
             caller: Expr,

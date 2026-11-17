@@ -1,3 +1,5 @@
+use bun_core::Loop;
+
 use crate::AnyResponse;
 use crate::response::Response;
 
@@ -39,7 +41,7 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
 
 /// Dropped once the request is answered or aborted.
 pub trait BodyReaderHandler: 'static {
-    fn on_body(&self, body: &[u8], resp: AnyResponse) -> crate::Result<()>;
+    fn on_body(&self, body: &[u8], resp: AnyResponse, loop_: Loop) -> crate::Result<()>;
 }
 
 /// Reads an entire request body into memory and runs a callback.
@@ -62,8 +64,8 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
 
     fn on_data<R: BodyResponse>(this: *mut Self, r: &mut R, chunk: &[u8], last: bool) {
         let resp = r.to_any();
-        // SAFETY: the box from `read_body`. `read` disarms both callbacks before it answers.
-        let result = unsafe { (*this).read(resp, chunk, last) };
+        // SAFETY: the box from `read_body`. `read` disarms both callbacks before it answers. uWS calls from the loop.
+        let result = unsafe { (*this).read(resp, chunk, last, Loop::assume(&this)) };
         if let Err(err) = &result {
             resp.clear_aborted();
             resp.clear_on_data();
@@ -85,7 +87,13 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
         unsafe { bun_core::heap::destroy(this) };
     }
 
-    fn read(&mut self, resp: AnyResponse, chunk: &[u8], last: bool) -> crate::Result<()> {
+    fn read(
+        &mut self,
+        resp: AnyResponse,
+        chunk: &[u8],
+        last: bool,
+        loop_: Loop,
+    ) -> crate::Result<()> {
         if last {
             // Clears the user data, which `on_aborted` shares.
             resp.clear_on_data();
@@ -94,7 +102,7 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
             return Err(crate::Error::RequestBodyTooLarge);
         }
         if last && self.body.is_empty() {
-            return self.handler.on_body(chunk, resp);
+            return self.handler.on_body(chunk, resp, loop_);
         }
         // Answered with a 500 instead of aborting the process.
         self.body
@@ -102,7 +110,7 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
         self.body.extend_from_slice(chunk);
         if last {
-            return self.handler.on_body(&self.body, resp);
+            return self.handler.on_body(&self.body, resp, loop_);
         }
         Ok(())
     }

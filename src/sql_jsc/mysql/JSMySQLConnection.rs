@@ -2,6 +2,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
+use bun_jsc::{Js, Vm};
 
 use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::api::server_config::SSLConfig;
@@ -51,7 +52,7 @@ pub struct JSMySQLConnection {
     js_value: JsCell<JsRef>,
     global_object: GlobalRef,
     vm: BackRef<VirtualMachine>,
-    poll_ref: bun_io::JsKeepAlive,
+    poll_ref: bun_jsc::JsKeepAlive,
     /// Held from the socket's open to its close.
     socket_ref: Cell<Option<RefPtr<Self>>>,
 
@@ -122,13 +123,8 @@ impl JSMySQLConnection {
     }
 
     #[inline]
-    fn event_loop(&self) -> &'static crate::jsc::EventLoop {
-        VirtualMachine::get().event_loop()
-    }
-
-    #[inline]
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        bun_io::js_vm_ctx()
+    fn event_loop(self: &Js<Self>) -> &Js<'_, crate::jsc::EventLoop> {
+        self.bun_vm().event_loop()
     }
 }
 
@@ -159,7 +155,7 @@ impl TimedConnection for JSMySQLConnection {
         self.reading.get() != Reading::Idle
     }
 
-    fn fail_timeout(&self, kind: ConnTimeoutKind, message: core::fmt::Arguments<'_>) {
+    fn fail_timeout(self: &Js<Self>, kind: ConnTimeoutKind, message: core::fmt::Arguments<'_>) {
         let code = match kind {
             ConnTimeoutKind::Idle => AnyMySQLErrorT::IdleTimeout,
             ConnTimeoutKind::Connection => AnyMySQLErrorT::ConnectionTimedOut,
@@ -193,7 +189,7 @@ impl AutoFlush for JSMySQLConnection {
             && (!self.write_buffer.get().is_empty() || self.queue.is_waiting_to_write())
     }
 
-    fn on_auto_flush(&self) -> bool {
+    fn on_auto_flush(self: &Js<Self>) -> bool {
         let _guard = self.ref_guard();
         // With backpressure, onWritable drains.
         if !self.has_backpressure.get() {
@@ -254,7 +250,7 @@ impl JSMySQLConnection {
         }
     }
 
-    fn flush_queue(&self) {
+    fn flush_queue(self: &Js<Self>) {
         self.flush_data();
         if self.awaits_tls_handshake() {
             if !self.has_backpressure.get() {
@@ -263,11 +259,11 @@ impl JSMySQLConnection {
             return;
         }
         // Under backpressure too: the next reply is for the request behind the one that just ended.
-        self.queue.advance(self);
+        self.on(&self.queue).advance(self);
         self.flush_data();
     }
 
-    fn upgrade_to_tls(&self) {
+    fn upgrade_to_tls(self: &Js<Self>) {
         let started = start_tls(
             self.as_ctx_ptr(),
             self.socket.get(),
@@ -275,6 +271,7 @@ impl JSMySQLConnection {
             self.secure.as_ref(),
             &self.tls_config,
             self.session.get().ssl_mode(),
+            self.js(),
             |socket| self.socket.set(socket),
         );
         // `NotPlain`: the handshake is under way.
@@ -283,11 +280,11 @@ impl JSMySQLConnection {
         }
     }
 
-    pub(crate) fn enqueue_request(&self, item: RefPtr<JSMySQLQuery>) {
+    pub(crate) fn enqueue_request(self: &Js<Self>, item: RefPtr<JSMySQLQuery>) {
         bun_core::scoped_log!(MySQLConnection, "enqueueRequest");
         let _entered = self.entered_from_js();
         self.queue.add(item);
-        self.queue.advance(self);
+        self.on(&self.queue).advance(self);
         self.on_queue_changed();
     }
 
@@ -296,7 +293,7 @@ impl JSMySQLConnection {
         self.vm().enter_event_loop_scope_without_checkpoint()
     }
 
-    fn on_queue_changed(&self) {
+    fn on_queue_changed(self: &Js<Self>) {
         if self.retire_if_idle() {
             return;
         }
@@ -308,7 +305,7 @@ impl JSMySQLConnection {
     }
 
     /// The caller holds a ref.
-    fn drain_internal(&self) {
+    fn drain_internal(self: &Js<Self>) {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
         {
             let _loop_guard = self.event_loop().enter_scope();
@@ -330,26 +327,24 @@ impl JSMySQLConnection {
         self.js_value.with_mut(|r| r.finalize());
     }
 
-    fn update_reference_type(&self) {
+    fn update_reference_type(self: &Vm<Self>) {
         if self.is_active() {
             bun_core::scoped_log!(MySQLConnection, "connection is active");
             if self.js_value.get().is_not_empty() && !self.js_value.get().is_strong() {
                 bun_core::scoped_log!(MySQLConnection, "strong ref until connection is closed");
                 self.js_value.with_mut(|r| r.upgrade(&self.global_object));
             }
-            let ctx = self.vm_ctx();
             if self.is_connected() && self.is_idle() {
-                self.poll_ref.unref(ctx);
+                self.poll_ref.unref();
             } else {
-                self.poll_ref.r#ref(ctx);
+                self.poll_ref.ref_(self.bun_vm());
             }
             return;
         }
         if self.js_value.get().is_not_empty() && self.js_value.get().is_strong() {
             self.js_value.with_mut(|r| r.downgrade());
         }
-        let ctx = self.vm_ctx();
-        self.poll_ref.unref(ctx);
+        self.poll_ref.unref();
     }
 
     pub(crate) fn create_connection<'a>(
@@ -417,7 +412,7 @@ impl JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
-            vm: BackRef::new(VirtualMachine::get()),
+            vm: BackRef::new(global_object.bun_vm()),
             poll_ref: Default::default(),
             socket: Cell::new(AnySocket::SocketTcp(SocketTCP::detached())),
             secure,
@@ -497,8 +492,8 @@ impl JSMySQLConnection {
             };
             this.socket.set(AnySocket::SocketTcp(socket));
         }
-        this.reset_connection_timeout();
-        this.poll_ref.r#ref(vm.vm_ctx());
+        global_object.on(&*this).reset_connection_timeout();
+        this.poll_ref.ref_(vm);
         let this = js::wrap(this, global_object);
         let js_value = this.to_js();
         this.js_value
@@ -523,20 +518,21 @@ impl JSMySQLConnection {
         this.register_auto_flusher();
     }
 
-    pub fn close(this: &Self, _: &mut JsScope<'_>) {
+    pub fn close(this: &Self, cx: &mut JsScope<'_>) {
         let _entered = this.entered_from_js();
-        this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
+        cx.on(this)
+            .fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
     }
 
-    pub fn hold(this: &Self) {
+    pub fn hold(this: &Vm<Self>) {
         this.timers.set_checked_out(true);
         this.reset_connection_timeout();
     }
 
-    pub fn unhold(this: &Self, _: &mut JsScope<'_>) {
+    pub fn unhold(this: &Self, cx: &mut JsScope<'_>) {
         let _entered = this.entered_from_js();
         this.timers.set_checked_out(false);
-        this.on_queue_changed();
+        cx.on(this).on_queue_changed();
     }
 
     pub fn get_in_transaction(&self) -> bool {
@@ -602,7 +598,7 @@ impl JSMySQLConnection {
         }
     }
 
-    fn fail_fmt(&self, error_code: AnyMySQLErrorT, args: core::fmt::Arguments<'_>) {
+    fn fail_fmt(self: &Js<Self>, error_code: AnyMySQLErrorT, args: core::fmt::Arguments<'_>) {
         let mut message: Vec<u8> = Vec::new();
         {
             use std::io::Write;
@@ -614,7 +610,7 @@ impl JSMySQLConnection {
     }
 
     /// In this order: the socket closes, `onclose` tells the pool, the requests are rejected.
-    fn fail_with_js_value(&self, value: JSValue) {
+    fn fail_with_js_value(self: &Js<Self>, value: JSValue) {
         if !self.is_active() {
             return;
         }
@@ -642,17 +638,17 @@ impl JSMySQLConnection {
             run_callback(&self.global_object, on_close, &[js_error]);
         }
 
-        self.queue.clean(value);
+        self.on(&self.queue).clean(value);
         self.update_reference_type();
     }
 
-    fn fail(&self, message: &[u8], err: AnyMySQLErrorT) {
+    fn fail(self: &Js<Self>, message: &[u8], err: AnyMySQLErrorT) {
         let instance = mysql_error_to_js(&self.global_object, Some(message), err);
         self.fail_with_js_value(instance);
     }
 
     /// Outside the packet parser, and synchronous like `onclose` so that the two keep their order.
-    fn notify_connected(&self) {
+    fn notify_connected(self: &Js<Self>) {
         if !self.on_connect_pending.take() || !self.is_connected() {
             return;
         }
@@ -666,7 +662,7 @@ impl JSMySQLConnection {
         run_callback(&self.global_object, on_connect, &[JSValue::NULL, js_value]);
     }
 
-    fn read(&self, mut data: &[u8]) {
+    fn read(self: &Js<Self>, mut data: &[u8]) {
         SocketMonitor::read(data);
         if self.reading.get() == Reading::Deferring {
             self.read_buffer
@@ -699,7 +695,7 @@ impl JSMySQLConnection {
     }
 
     /// Returns what has to wait for more bytes.
-    fn handle_packets<'a>(&self, mut rest: &'a [u8]) -> &'a [u8] {
+    fn handle_packets<'a>(self: &Js<Self>, mut rest: &'a [u8]) -> &'a [u8] {
         loop {
             let packet = match self.session.get().next_packet(&mut rest) {
                 Ok(Some(packet)) => packet,
@@ -726,7 +722,7 @@ impl JSMySQLConnection {
         }
     }
 
-    fn handle_packet<'p>(&self, packet: &'p Packet<'_>) -> Result<(), Failure<'p>> {
+    fn handle_packet<'p>(self: &Js<Self>, packet: &'p Packet<'_>) -> Result<(), Failure<'p>> {
         // The refs are for script, which can end the request.
         if let Some(request) = self.queue.current()
             && let Some((command, statement)) = request.written_command()
@@ -739,14 +735,14 @@ impl JSMySQLConnection {
             Event::Flush => self.flush_queue(),
             Event::Connected => {
                 self.on_connect_pending.set(true);
-                self.queue.advance(self);
+                self.on(&self.queue).advance(self);
             }
         }
         Ok(())
     }
 
     fn handle_reply<'p>(
-        &self,
+        self: &Js<Self>,
         packet: &'p Packet<'_>,
         request: &JSMySQLQuery,
         command: Command,
@@ -767,7 +763,7 @@ impl JSMySQLConnection {
                 self.on_column_name(request, statement, index)?;
             }
             ReplyEvent::Result(result) => {
-                request.resolve(&result);
+                self.on(request).resolve(&result);
                 // Not only `advance()`: what it writes has to be sent, and the auto flusher may not be registered.
                 self.flush_queue();
             }
@@ -778,14 +774,15 @@ impl JSMySQLConnection {
                     self.write(|out| mysql_request::close_statement(statement.wire.get().id, out));
                 }
                 request.prepared();
-                self.queue.advance(self);
+                self.on(&self.queue).advance(self);
             }
             ReplyEvent::Refused(err) => {
                 // The cache holds handles the server has. The next use of the text prepares again.
                 if command == Command::Prepare {
                     self.statements.with_mut(|cache| cache.remove(statement));
                 }
-                request.reject_with_js_value(self.server_error(&err));
+                self.on(request)
+                    .reject_with_js_value(self.server_error(&err));
                 if err.ends_session() {
                     return Err(AnyMySQLErrorT::ConnectionClosed.into());
                 }
@@ -797,20 +794,20 @@ impl JSMySQLConnection {
 
     /// The packet is skipped whole, so the stream is in step: only a VM that is stopping fails the connection.
     fn on_undecodable_row(
-        &self,
+        self: &Js<Self>,
         request: &JSMySQLQuery,
         err: AnyMySQLErrorT,
     ) -> Result<(), AnyMySQLErrorT> {
         if self.global_object.has_pending_termination_exception() {
             return Err(AnyMySQLErrorT::JSError);
         }
-        request.reject_undecodable_row(err);
+        self.on(request).reject_undecodable_row(err);
         Ok(())
     }
 
     /// Runs `transform.column.from`, which is user code.
     fn on_column_name(
-        &self,
+        self: &Js<Self>,
         request: &JSMySQLQuery,
         statement: &MySQLStatement,
         index: usize,
@@ -848,7 +845,7 @@ impl JSMySQLConnection {
     /// Inlined into `handle_reply`, the row decoder loses its own inlining.
     #[inline(never)]
     fn on_result_row(
-        &self,
+        self: &Js<Self>,
         request: &JSMySQLQuery,
         statement: &MySQLStatement,
         reader: PacketReader<'_>,
@@ -895,7 +892,7 @@ impl JSMySQLConnection {
         Ok(())
     }
 
-    fn on_error(&self, err: AnyMySQLErrorT) {
+    fn on_error(self: &Js<Self>, err: AnyMySQLErrorT) {
         let pending = self.global_object.try_take_exception();
         self.fail_with_js_value(
             pending.unwrap_or_else(|| mysql_error_to_js(&self.global_object, None, err)),
@@ -920,7 +917,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_open(this: &JSMySQLConnection, s: NewSocketHandler<SSL>) {
+    pub fn on_open(this: &Js<JSMySQLConnection>, s: NewSocketHandler<SSL>) {
         this.socket.set(Self::socket(s));
         this.session.with_mut(Session::on_open);
         this.socket_ref.set(Some(this.ref_guard()));
@@ -934,7 +931,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     fn on_handshake(
-        this: &JSMySQLConnection,
+        this: &Js<JSMySQLConnection>,
         _: NewSocketHandler<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
@@ -978,11 +975,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub const ON_HANDSHAKE: Option<
-        fn(&JSMySQLConnection, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
+        fn(&Js<JSMySQLConnection>, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
     > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(
-        this: &JSMySQLConnection,
+        this: &Js<JSMySQLConnection>,
         _: NewSocketHandler<SSL>,
         _: i32,
         _: Option<*mut c_void>,
@@ -1003,12 +1000,12 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_end(_: &JSMySQLConnection, socket: NewSocketHandler<SSL>) {
+    pub fn on_end(_: &Js<JSMySQLConnection>, socket: NewSocketHandler<SSL>) {
         // no half closed sockets
         socket.close(uws::CloseKind::Normal);
     }
 
-    pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
+    pub fn on_connect_error(this: &Js<JSMySQLConnection>, _: NewSocketHandler<SSL>, _: i32) {
         // As in `on_close`.
         this.socket.set(AnySocket::SocketTcp(SocketTCP::detached()));
         this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);
@@ -1016,7 +1013,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub fn on_timeout(_: &JSMySQLConnection, _: NewSocketHandler<SSL>) {}
 
-    pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
+    pub fn on_data(this: &Js<JSMySQLConnection>, _: NewSocketHandler<SSL>, data: &[u8]) {
         let _guard = this.ref_guard();
         {
             let _loop_guard = this.event_loop().enter_scope();
@@ -1029,7 +1026,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.on_queue_changed();
     }
 
-    pub fn on_writable(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
+    pub fn on_writable(this: &Js<JSMySQLConnection>, _: NewSocketHandler<SSL>) {
         let _guard = this.ref_guard();
         this.has_backpressure.set(false);
         this.drain_internal();

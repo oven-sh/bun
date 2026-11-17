@@ -970,8 +970,10 @@ impl<'a> SecurityScanSubprocess<'a> {
             unsafe { ProcessExit::new(ProcessExitKind::SecurityScan, core::ptr::from_mut(self)) };
         process.set_exit_handler(handler);
 
+        // SAFETY: auto-install does not scan. A command gets here from `main`, on its thread.
+        let loop_ = unsafe { bun_core::Loop::assume(&event_loop) };
         // May re-enter `on_process_exit` synchronously (already-exited child).
-        if Process::watch_or_reap(process).is_err() {
+        if Process::watch_or_reap(loop_.on(process)).is_err() {
             return Err(crate::Error::ProcessWatchFailed);
         }
 

@@ -19,8 +19,8 @@ use bun_uws::Loop;
 use crate::jsc_hooks::timer_all;
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: &Loop) {
-    if let Some(vm) = VirtualMachine::get_or_null() {
-        timer_all().update_date_header_timer_if_necessary(loop_, vm);
+extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: &bun_core::Loop<Loop>) {
+    if let Some(vm) = VirtualMachine::get_or_null(loop_.as_loop()) {
+        timer_all(vm).update_date_header_timer_if_necessary(loop_, vm);
     }
 }

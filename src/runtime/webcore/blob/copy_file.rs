@@ -9,10 +9,12 @@ use crate::webcore::blob::{self, MkdirpTarget, Retry, store};
 use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
-use bun_io::{self as aio, IntrusiveUvFs as _};
+use bun_io::IntrusiveUvFs as _;
 #[cfg(not(windows))]
 use bun_jsc::JSGlobalObject;
 use bun_jsc::{self as jsc, JSPromise, JSValue};
+#[cfg(windows)]
+use bun_jsc::{Js, virtual_machine::VmRef};
 use bun_paths::PathBuffer;
 use bun_ptr::RefPtr;
 #[cfg(not(windows))]
@@ -906,8 +908,8 @@ pub(crate) struct CopyFileWindows {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) mkdirp_if_not_exists: bool,
     pub(crate) destination_mode: Option<Mode>,
-    pub(crate) event_loop: &'static jsc::event_loop::EventLoop,
-    _keep_alive: aio::JsKeepAlive,
+    pub(crate) event_loop: VmRef<jsc::event_loop::EventLoop>,
+    _keep_alive: jsc::JsKeepAlive,
     /// The context of the script that asked for the copy.
     pub(crate) context: jsc::ContextId,
 
@@ -950,7 +952,7 @@ impl Default for ReadWriteLoop {
 
 #[cfg(windows)]
 impl CopyFileWindows {
-    fn read_write_loop_read(mut self: Box<Self>) {
+    fn read_write_loop_read(mut self: Box<Self>, js: Js) {
         self.read_write_loop.read_buf.clear();
         // reshaped for borrowck — use the full capacity slice.
         let cap = self.read_write_loop.read_buf.capacity();
@@ -959,7 +961,7 @@ impl CopyFileWindows {
             base: self.read_write_loop.read_buf.as_mut_ptr(),
         };
         let source_fd = self.read_write_loop.source_fd.get();
-        let loop_ = self.event_loop.uv_loop();
+        let loop_ = js.on(self.event_loop).uv_loop();
 
         // This io_request is used for both reading and writing.
         // For now, we don't start reading the next chunk until
@@ -980,13 +982,13 @@ impl CopyFileWindows {
         };
         if let Some(err) = rc.to_error(bun_sys::Tag::read) {
             // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.on_read_write_loop_complete(Err(err));
+            unsafe { bun_core::heap::take(this) }.on_read_write_loop_complete(Err(err), js);
         }
     }
 
-    fn read_write_loop_write(mut self: Box<Self>) {
+    fn read_write_loop_write(mut self: Box<Self>, js: Js) {
         let destination_fd = self.read_write_loop.destination_fd.get();
-        let loop_ = self.event_loop.uv_loop();
+        let loop_ = js.on(self.event_loop).uv_loop();
 
         // Re-use the fs request.
         self.io_request.deinit();
@@ -1006,15 +1008,16 @@ impl CopyFileWindows {
         };
         if let Some(err) = rc.to_error(bun_sys::Tag::write) {
             // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.on_read_write_loop_complete(Err(err));
+            unsafe { bun_core::heap::take(this) }.on_read_write_loop_complete(Err(err), js);
         }
     }
 }
 
 #[cfg(windows)]
 extern "C" fn on_read(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_read` left to libuv.
-    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
+    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_read` left to libuv,
+    // which calls back from the VM's loop: a worker drains it before its VM goes.
+    let (mut this, js) = unsafe { (CopyFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
 
     let source_fd = this.read_write_loop.source_fd.get();
     // reshaped for borrowck — `read_buf.items` is `Vec` len-slice.
@@ -1029,7 +1032,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
         rc.int()
     );
     if let Some(err) = rc.to_error(bun_sys::Tag::read) {
-        this.on_read_write_loop_complete(Err(err));
+        this.on_read_write_loop_complete(Err(err), js);
         return;
     }
 
@@ -1040,17 +1043,18 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 
     if rc.int() == 0 {
         // Handle EOF. We can't read any more.
-        this.on_read_write_loop_complete(Ok(()));
+        this.on_read_write_loop_complete(Ok(()), js);
         return;
     }
 
-    this.read_write_loop_write();
+    this.read_write_loop_write(js);
 }
 
 #[cfg(windows)]
 extern "C" fn on_write(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_write` left to libuv.
-    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
+    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_write` left to libuv,
+    // which calls back from the VM's loop: a worker drains it before its VM goes.
+    let (mut this, js) = unsafe { (CopyFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
     let buf_len = this.read_write_loop.read_buf.len();
 
     let destination_fd = this.read_write_loop.destination_fd.get();
@@ -1065,7 +1069,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
     );
 
     if let Some(err) = rc.to_error(bun_sys::Tag::write) {
-        this.on_read_write_loop_complete(Err(err));
+        this.on_read_write_loop_complete(Err(err), js);
         return;
     }
 
@@ -1076,44 +1080,44 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
     if (wrote as usize) < buf_len {
         if wrote == 0 {
             // Handle EOF. We can't write any more.
-            this.on_read_write_loop_complete(Ok(()));
+            this.on_read_write_loop_complete(Ok(()), js);
             return;
         }
 
         let prev_start = buf_len - this.read_write_loop.uv_buf.len as usize;
         let prev = &this.read_write_loop.read_buf[prev_start..];
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
-        this.read_write_loop_write();
+        this.read_write_loop_write(js);
         return;
     }
 
     this.io_request.deinit();
-    this.read_write_loop_read();
+    this.read_write_loop_read(js);
 }
 
 #[cfg(windows)]
 impl CopyFileWindows {
-    fn on_read_write_loop_complete(self: Box<Self>, result: bun_sys::Result<()>) {
+    fn on_read_write_loop_complete(self: Box<Self>, result: bun_sys::Result<()>, js: Js) {
         if let Err(err) = result {
-            self.throw(err);
+            self.throw(err, js);
             return;
         }
 
         let written = self.written_bytes;
-        self.on_complete(written);
+        self.on_complete(written, js);
     }
 
     pub(crate) fn init(
         destination_file_store: RefPtr<Store>,
         source_file_store: RefPtr<Store>,
-        event_loop: &'static jsc::event_loop::EventLoop,
-        context: &jsc::ScriptExecutionContext,
+        event_loop: VmRef<jsc::event_loop::EventLoop>,
+        context: &Js<jsc::ScriptExecutionContext>,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
         destination_mode: Option<Mode>,
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
-        let global = event_loop.global_ref();
+        let global = context.on(event_loop).global_ref();
         let result = Box::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
@@ -1121,7 +1125,7 @@ impl CopyFileWindows {
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
-            _keep_alive: aio::JsKeepAlive::active(),
+            _keep_alive: jsc::JsKeepAlive::active(context.bun_vm()),
             context: context.id(),
             mkdirp_if_not_exists,
             destination_mode,
@@ -1132,7 +1136,7 @@ impl CopyFileWindows {
         });
         let promise = result.promise.value();
 
-        result.copyfile();
+        result.copyfile(context.js());
 
         promise
     }
@@ -1162,7 +1166,7 @@ impl CopyFileWindows {
         }
     }
 
-    fn prepare_read_write_loop(mut self: Box<Self>) {
+    fn prepare_read_write_loop(mut self: Box<Self>, js: Js) {
         // Open the destination first, so that if we need to call
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
@@ -1175,11 +1179,11 @@ impl CopyFileWindows {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
                 if self.mkdirp_if_not_exists && err.get_errno() == bun_sys::E::ENOENT {
-                    self.mkdirp();
+                    self.mkdirp(js);
                     return;
                 }
 
-                self.throw(err);
+                self.throw(err, js);
                 return;
             }
         };
@@ -1192,14 +1196,14 @@ impl CopyFileWindows {
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
-                self.throw(err);
+                self.throw(err, js);
                 return;
             }
         };
 
         self.read_write_loop.read_buf.reserve_exact(64 * 1024);
 
-        self.read_write_loop_read();
+        self.read_write_loop_read(js);
     }
 
     /// `None` if the descriptor has no path: the NUL device, or a pipe (`cat foo.txt | bun bar.ts`).
@@ -1239,13 +1243,13 @@ impl CopyFileWindows {
         Ok(old_path.map(|old_path| (old_path, new_path)))
     }
 
-    fn copyfile(self: Box<Self>) {
+    fn copyfile(self: Box<Self>, js: Js) {
         // This is for making it easier for us to test this code path
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
             .get()
             .unwrap_or(false)
         {
-            self.prepare_read_write_loop();
+            self.prepare_read_write_loop(js);
             return;
         }
 
@@ -1253,10 +1257,10 @@ impl CopyFileWindows {
         let mut pathbuf2 = bun_paths::path_buffer_pool::get();
         let (old_path, new_path) = match self.copyfile_paths(&mut pathbuf2, &mut pathbuf1) {
             Ok(Some(paths)) => paths,
-            Ok(None) => return self.prepare_read_write_loop(),
-            Err(err) => return self.throw(err),
+            Ok(None) => return self.prepare_read_write_loop(js),
+            Err(err) => return self.throw(err, js),
         };
-        let event_loop = self.event_loop;
+        let event_loop = js.on(self.event_loop);
         let this = bun_core::heap::into_raw(self);
         // SAFETY: the VM's loop outlives the request, libuv copies the NUL-terminated paths before
         // it returns, and it has `this` until `on_copy_file`.
@@ -1277,24 +1281,24 @@ impl CopyFileWindows {
                 err = bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::copyfile);
             }
             // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.throw(err.with_path(old_path.as_bytes()));
+            unsafe { bun_core::heap::take(this) }.throw(err.with_path(old_path.as_bytes()), js);
         }
     }
 
-    fn throw(mut self: Box<Self>, err: bun_sys::Error) {
-        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
-        let global_this = self.event_loop.global_ref();
+    fn throw(mut self: Box<Self>, err: bun_sys::Error, js: Js) {
+        let _context = js.bun_vm().enter_context(self.context);
+        let global_this = js.on(self.event_loop).global_ref();
         // A GC cell: not tied to `self`, which is dropped before it is settled.
         let promise = JSPromise::opaque_mut(self.promise.swap());
         let err_instance = err.to_js_with_async_stack(global_this, promise);
 
-        let _guard = self.event_loop.enter_scope();
+        let _guard = js.on(self.event_loop).enter_scope();
         drop(self);
         // This libuv completion is the landing frame for what settling leaves.
-        crate::dispatch::fold(promise.reject(global_this, err_instance));
+        crate::dispatch::fold(js, promise.reject(global_this, err_instance));
     }
 
-    fn on_complete(mut self: Box<Self>, written_actual: usize) {
+    fn on_complete(mut self: Box<Self>, written_actual: usize, js: Js) {
         let mut written = written_actual;
         if written > usize::try_from(self.size).expect("int cast") && self.size != MAX_SIZE {
             self.truncate();
@@ -1317,7 +1321,7 @@ impl CopyFileWindows {
                     .path()
                     .slice_z(&mut pathbuf)
                     .as_ptr();
-                let event_loop = self.event_loop;
+                let event_loop = js.on(self.event_loop);
                 // SAFETY: all-zero is a valid libuv::fs_t
                 self.io_request = bun_core::ffi::zeroed::<libuv::fs_t>();
 
@@ -1342,30 +1346,31 @@ impl CopyFileWindows {
                     if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
                         err = err.with_path(p.slice());
                     }
-                    this.throw(err);
+                    this.throw(err, js);
                 }
                 return;
             }
         }
 
-        self.resolve_promise(written);
+        self.resolve_promise(written, js);
     }
 
-    fn resolve_promise(mut self: Box<Self>, written: usize) {
+    fn resolve_promise(mut self: Box<Self>, written: usize, js: Js) {
         if let PathOrFileDescriptor::Path(path) =
             &self.destination_file_store.data.as_file().pathlike
         {
             crate::node::fs::note_opened_for_write(path.slice(), true);
         }
-        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
-        let global_this = self.event_loop.global_ref();
+        let _context = js.bun_vm().enter_context(self.context);
+        let global_this = js.on(self.event_loop).global_ref();
         // A GC cell: not tied to `self`, which is dropped before it is settled.
         let promise = JSPromise::opaque_mut(self.promise.swap());
-        let _guard = self.event_loop.enter_scope();
+        let _guard = js.on(self.event_loop).enter_scope();
 
         drop(self);
         // As in `throw`: folded at this libuv completion.
         crate::dispatch::fold(
+            js,
             promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)),
         );
     }
@@ -1385,38 +1390,42 @@ impl CopyFileWindows {
         );
     }
 
-    fn mkdirp(mut self: Box<Self>) {
+    fn mkdirp(mut self: Box<Self>, js: Js) {
         bun_sys::syslog!("mkdirp");
         self.mkdirp_if_not_exists = false;
         let destination = self.destination_file_store.data.as_file();
         if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
-            self.throw(bun_sys::Error {
-                errno: bun_sys::SystemErrno::EINVAL as u16,
-                syscall: bun_sys::Tag::mkdir,
-                ..Default::default()
-            });
+            self.throw(
+                bun_sys::Error {
+                    errno: bun_sys::SystemErrno::EINVAL as u16,
+                    syscall: bun_sys::Tag::mkdir,
+                    ..Default::default()
+                },
+                js,
+            );
             return;
         }
 
-        node_fs::async_::AsyncMkdirp::schedule(self);
+        node_fs::async_::AsyncMkdirp::schedule(self, js.as_vm());
     }
 
-    pub(crate) fn on_mkdirp_complete(mut self: Box<Self>) {
+    pub(crate) fn on_mkdirp_complete(mut self: Box<Self>, js: Js) {
         if let Some(err) = self.err.take() {
             // `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with
             // `err` inside `throw`.
-            self.throw(err);
+            self.throw(err, js);
             return;
         }
 
-        self.copyfile();
+        self.copyfile(js);
     }
 }
 
 #[cfg(windows)]
 extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `copyfile` left to libuv.
-    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
+    // SAFETY: `req` is the `io_request` of the box that `copyfile` left to libuv,
+    // which calls back from the VM's loop: a worker drains it before its VM goes.
+    let (mut this, js) = unsafe { (CopyFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
 
     let rc = this.io_request.result;
 
@@ -1441,7 +1450,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 
         if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT && !source_missing {
             this.io_request.deinit();
-            this.mkdirp();
+            this.mkdirp(js);
             return;
         }
 
@@ -1468,7 +1477,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
             }
         }
 
-        this.throw(err);
+        this.throw(err, js);
         return;
     }
 
@@ -1483,17 +1492,18 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     let size = match size {
         Ok(size) => size,
         Err(err) => {
-            this.throw(err);
+            this.throw(err, js);
             return;
         }
     };
-    this.on_complete(usize::try_from(size).expect("int cast"));
+    this.on_complete(usize::try_from(size).expect("int cast"), js);
 }
 
 #[cfg(windows)]
 extern "C" fn on_chmod(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `on_complete` left to libuv.
-    let this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
+    // SAFETY: `req` is the `io_request` of the box that `on_complete` left to libuv,
+    // which calls back from the VM's loop: a worker drains it before its VM goes.
+    let (this, js) = unsafe { (CopyFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
 
     let rc = this.io_request.result;
     if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
@@ -1501,12 +1511,12 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
             err = err.with_path(p.slice());
         }
-        this.throw(err);
+        this.throw(err, js);
         return;
     }
 
     let written = this.written_bytes;
-    this.resolve_promise(written);
+    this.resolve_promise(written, js);
 }
 
 #[cfg(windows)]

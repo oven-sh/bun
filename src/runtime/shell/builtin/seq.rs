@@ -3,10 +3,11 @@ use std::io::Write as _;
 use crate::shell::builtin::{Arg, Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 const USAGE: &[u8] = b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n";
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     let fail = |message: &str| Builtin::fail(interp, cmd, format_args!("{message}\n"));
     let mut args = Builtin::of(interp, cmd).args();
     let mut separator: &[u8] = b"\n";

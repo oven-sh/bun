@@ -26,8 +26,9 @@
 //! own data up via `interp.as_<state>(this)` / `interp.as_<state>_mut(this)`.
 
 use bun_collections::VecExt;
+use bun_core::Loop;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
+use bun_jsc::{JsCell, JsCellRefExt as _, JsRef, Vm};
 use bun_ptr::AliasableBox;
 use core::cell::Cell;
 use core::fmt;
@@ -276,10 +277,10 @@ pub(crate) struct Interpreter {
     pub(crate) root_shell: JsCell<ShellExecEnv>,
     pub args: JsCell<Box<ShellArgs>>,
 
-    pub(crate) keep_alive: bun_io::JsKeepAlive,
+    pub(crate) keep_alive: bun_jsc::JsKeepAlive,
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
     /// child the script spawns belongs to it, and once it stops the script runs no further.
-    pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
+    context: Cell<Option<bun_jsc::ContextId>>,
 
     pub(crate) async_commands_executing: Cell<u32>,
 
@@ -530,7 +531,7 @@ impl Interpreter {
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
-            keep_alive: bun_io::JsKeepAlive::default(),
+            keep_alive: bun_jsc::JsKeepAlive::default(),
             context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
@@ -568,8 +569,17 @@ impl Interpreter {
         mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
         path: &[u8],
         src: &[u8],
+        loop_: Loop,
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false)
+        Self::init_and_run_impl(
+            ctx,
+            mini,
+            bun_paths::basename(path),
+            src,
+            None,
+            false,
+            loop_,
+        )
     }
 
     /// Standalone-shell entrypoint for `bun run <script>` / `bun exec` when
@@ -586,8 +596,9 @@ impl Interpreter {
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
+        loop_: Loop,
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true)
+        Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true, loop_)
     }
 
     /// Shared body for `init_and_run_from_file` / `init_and_run_from_source`.
@@ -601,6 +612,7 @@ impl Interpreter {
         src: &[u8],
         cwd: Option<&[u8]>,
         from_source: bool,
+        loop_: Loop,
     ) -> crate::Result<ExitCode> {
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
@@ -654,7 +666,7 @@ impl Interpreter {
 
         // ── run ────────────────────────────────────────────────────────────
         interp.exit_code.set(Some(1));
-        if let Err(e) = interp.run() {
+        if let Err(e) = loop_.on(&*interp).run() {
             let name = e.name();
             drop(interp);
             bun_core::output::err(
@@ -698,7 +710,7 @@ macro_rules! shell_state_dispatch {
     (@norm [ $( ($v:ident, $h:ident) )+ ]) => {
         /// Signal to `parent` that `child` finished with `exit_code`. This is the
         /// single hoisted `match` dispatching on the parent's state tag.
-        pub(crate) fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
+        pub(crate) fn child_done(self: &Loop<Self>, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
             self.propagate_interrupt(parent, child);
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
@@ -711,7 +723,7 @@ macro_rules! shell_state_dispatch {
 
         /// Advance node `id` by one step. The trampoline (`Yield::run`) calls
         /// this; replaces the per-variant `&mut State` dispatch in Yield.
-        pub(crate) fn next_node(&self, id: NodeId) -> Yield {
+        pub(crate) fn next_node(self: &Loop<Self>, id: NodeId) -> Yield {
             match self.nodes.get()[id.idx()].kind() {
                 $( StateKind::$v => $h::next(self, id), )+
                 StateKind::Free => unreachable!("next on freed {}", id),
@@ -720,7 +732,7 @@ macro_rules! shell_state_dispatch {
 
         /// Start node `id`. Most states return `Yield::<Kind>(id)` immediately;
         /// the trampoline then calls `next_node`.
-        pub(crate) fn start_node(&self, id: NodeId) -> Yield {
+        pub(crate) fn start_node(self: &Loop<Self>, id: NodeId) -> Yield {
             match self.nodes.get()[id.idx()].kind() {
                 $( StateKind::$v => $h::start(self, id), )+
                 StateKind::Free => unreachable!("start on freed {}", id),
@@ -834,7 +846,7 @@ impl Interpreter {
     }
 
     /// A sequencing state stops early: Ctrl+C cut the member short, or the script failed.
-    pub(crate) fn interrupted(&self, id: NodeId) -> bool {
+    pub(crate) fn interrupted(self: &Loop<Self>, id: NodeId) -> bool {
         self.context_stopped()
             || self.failed()
             || self.node(id).base().is_some_and(|b| b.interrupted)
@@ -850,10 +862,15 @@ impl Interpreter {
     }
 
     /// The `Bun.ModuleGraph` whose script started this was disposed (or its realm is going).
-    pub(crate) fn context_stopped(&self) -> bool {
-        self.context
-            .get()
-            .is_some_and(|id| !bun_jsc::virtual_machine::VirtualMachine::get().is_context_live(id))
+    pub(crate) fn context_stopped(self: &Loop<Self>) -> bool {
+        self.vm_and_context()
+            .is_some_and(|(vm, id)| !vm.bun_vm().is_context_live(id))
+    }
+
+    pub(crate) fn vm_and_context<'a>(self: &'a Loop<Self>) -> Option<(Vm<'a>, bun_jsc::ContextId)> {
+        let id = self.context.get()?;
+        // SAFETY: only `run_from_js` sets it, so this thread has a VM.
+        Some((unsafe { Vm::assume(self) }, id))
     }
 
     /// Some ancestor is a member of a multi-command pipeline.
@@ -923,7 +940,7 @@ impl Interpreter {
     /// Note: `Async` must NOT call this — `Async` restricts its child to
     /// pipeline/cmd/if/condexpr and inits without starting (see `Async::next`).
     pub(crate) fn spawn_expr(
-        &self,
+        self: &Loop<Self>,
         shell: *mut ShellExecEnv,
         expr: &ast::Expr,
         parent: NodeId,
@@ -1001,7 +1018,7 @@ impl Interpreter {
         Yield::suspended()
     }
 
-    pub(crate) fn async_cmd_done(&self, async_id: NodeId) {
+    pub(crate) fn async_cmd_done(self: &Loop<Self>, async_id: NodeId) {
         self.free_node(async_id);
         self.async_commands_executing
             .set(self.async_commands_executing.get() - 1);
@@ -1155,7 +1172,7 @@ impl Interpreter {
         Ok(())
     }
 
-    pub(crate) fn run(&self) -> bun_sys::Result<()> {
+    pub(crate) fn run(self: &Loop<Self>) -> bun_sys::Result<()> {
         log!("Interpreter(0x{:x}) run", std::ptr::from_ref(self) as usize);
         self.setup_io_before_run()?;
 
@@ -1251,7 +1268,7 @@ impl Interpreter {
 
     /// Node `id` threw and holds nothing in flight: kill the subprocesses and wind the tree down.
     /// The first failure fills `rejection`, which the trampoline passes to `reject` once it holds no node.
-    pub(crate) fn fail(&self, id: NodeId, rejection: &mut Option<Rejection>) -> Yield {
+    pub(crate) fn fail(self: &Loop<Self>, id: NodeId, rejection: &mut Option<Rejection>) -> Yield {
         if let Some(first) = self.take_failure() {
             *rejection = Some(first);
         }
@@ -1353,7 +1370,8 @@ impl Interpreter {
         let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
         let root = Script::init(self, Env::inherited(shell), ast, NodeId::INTERPRETER, io);
-        Script::start(self, root).run(self);
+        let this = global_this.js().as_loop().on(self);
+        Script::start(this, root).run(this);
         if global_this.has_exception() {
             return Err(crate::jsc::JsError::Thrown);
         }
@@ -2211,7 +2229,7 @@ pub(crate) trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// borrow once; no impl re-enters or frees `self` here (that happens in
     /// `run_from_main_thread`).
     fn run_from_thread_pool(this: &mut Self);
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter);
+    fn run_from_main_thread(this: *mut Self, interp: &Loop<Interpreter>);
 
     /// Recover `*mut Self` from the intrusive `*mut WorkPoolTask` that the
     /// thread pool hands the callback. `WorkPoolTask` is the first
@@ -2400,12 +2418,12 @@ impl ShellTask {
     /// `ctx` must be a live heap allocation that embeds a `ShellTask` at
     /// `C::TASK_OFFSET` whose `interp` back-ref is valid; called on the main
     /// thread after the worker bounce-back.
-    pub(crate) unsafe fn run_from_main_thread<C: ShellTaskCtx>(ctx: *mut C) {
+    pub(crate) unsafe fn run_from_main_thread<C: ShellTaskCtx>(ctx: *mut C, loop_: Loop) {
         log!("ShellTask runFromJS");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            let interp = &*(*this).interp;
+            let interp = loop_.on(&*(*this).interp);
             C::run_from_main_thread(ctx, interp);
         }
     }
@@ -2415,7 +2433,7 @@ impl ShellTask {
 pub(crate) trait ShellWork: Send {
     const TAG: bun_event_loop::TaskTag;
     fn run_from_thread_pool(&mut self, task: &ShellTask);
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield;
+    fn run_from_main_thread(&mut self, interp: &Loop<Interpreter>) -> Yield;
 }
 
 /// Owned by the pool, then by the queue of the interpreter's loop.
@@ -2463,7 +2481,7 @@ impl<W: ShellWork> ShellTaskCtx for PoolTask<W> {
     fn run_from_thread_pool(this: &mut Self) {
         this.work.run_from_thread_pool(&this.task);
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Loop<Interpreter>) {
         // SAFETY: the box that was scheduled, which the queue has let go of.
         let mut this = unsafe { bun_core::heap::take(this) };
         let next = this.work.run_from_main_thread(interp);
@@ -2488,11 +2506,18 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
 }
 
 /// Mini-loop `AnyTaskWithExtraContext` callback shape (`fn(*mut T, *mut ())`).
-fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
+fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(
+    this: *mut ShellTask,
+    _: *mut (),
+    loop_: Loop,
+) {
     // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
     // mini-loop dispatch runs on the main thread.
     unsafe {
-        ShellTask::run_from_main_thread::<C>(bun_core::container_of::<C, _>(this, C::TASK_OFFSET))
+        ShellTask::run_from_main_thread::<C>(
+            bun_core::container_of::<C, _>(this, C::TASK_OFFSET),
+            loop_,
+        )
     };
 }
 
@@ -2573,7 +2598,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     // SAFETY: the payload of `this_value`.
     let interp = unsafe { this_value.payload_ptr().as_ref() };
     interp.this_value.set(JsRef::init_weak(js_value));
-    interp.keep_alive.ref_(global.bun_vm().loop_ctx());
+    interp.keep_alive.ref_(global.bun_vm());
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_value)
 }

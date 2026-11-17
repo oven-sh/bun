@@ -40,6 +40,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_collections::ArrayHashMap;
+use bun_core::Loop;
 
 // Declared `extern "C"` so the
 // same fn-pointer type can flow across the FFI boundary (e.g.
@@ -76,7 +77,7 @@ impl DeferredTaskQueue {
         unsafe { &mut *self.map.get() }.swap_remove(&ctx)
     }
 
-    pub fn run(&self) {
+    pub fn run(self: &Loop<Self>) {
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.
@@ -146,7 +147,8 @@ mod tests {
         let queue = &fixture.queue;
         queue.post_task(Some(NonNull::from(&fixture).cast()), grow);
         queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), count);
-        queue.run();
+        // SAFETY: neither task reaches anything through it.
+        unsafe { Loop::assume(queue) }.on(queue).run();
         assert_eq!((fixture.grow_calls.get(), fixture.calls[0].get()), (1, 1));
     }
 }

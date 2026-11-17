@@ -7,9 +7,7 @@ use core::ptr::NonNull;
 use bun_ptr::{RefCount, RefPtr};
 
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{
-    self as jsc, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult, VirtualMachine,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, Js, JsCell, JsRef, JsResult, Vm};
 use bun_jsc::{JsClass, SysErrorJsc};
 use bun_sys::{self, SignalCode};
 use enumset::{EnumSet, EnumSetType};
@@ -462,17 +460,17 @@ impl Subprocess<'_> {
         Ok(self.get_exited(this_value, cx))
     }
 
-    pub(crate) fn set_event_loop_timer_refd(&self, refd: bool) {
+    pub(crate) fn set_event_loop_timer_refd(self: &Vm<Self>, refd: bool) {
         if self.event_loop_timer_refd.get() == refd {
             return;
         }
         self.event_loop_timer_refd.set(refd);
         let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
-        crate::jsc_hooks::timer_all().increment_timer_ref(delta, uws_loop);
+        crate::jsc_hooks::timer_all(self.bun_vm()).increment_timer_ref(delta, uws_loop);
     }
 
-    pub(crate) fn timeout_callback(&self) {
+    pub(crate) fn timeout_callback(self: &Vm<Self>) {
         self.set_event_loop_timer_refd(false);
         if self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED {
             return;
@@ -601,8 +599,8 @@ impl Subprocess<'_> {
         )
     }
 
-    pub(crate) fn disconnect(&self) {
-        if let Some(ipc_data) = self.ipc() {
+    pub(crate) fn disconnect(self: &Vm<Self>) {
+        if let Some(ipc_data) = self.on(self.ipc()) {
             ipc_data.disconnect();
         }
     }
@@ -710,7 +708,7 @@ impl Subprocess<'_> {
         self.clear_abort_signal();
 
         self.event_loop_timer.disarm();
-        self.set_event_loop_timer_refd(false);
+        jsc_vm.on(self).set_event_loop_timer_refd(false);
 
         jsc_vm.on_subprocess_exit(&self.process);
 
@@ -728,7 +726,7 @@ impl Subprocess<'_> {
                 // outlives this scope; single JS thread.
                 let term = bun_ptr::BackRef::from(terminal);
                 #[cfg(unix)]
-                term.drain_and_close_slave_fd();
+                jsc_vm.on(term).drain_and_close_slave_fd();
                 #[cfg(windows)]
                 term.unref_after_inline_child_exit();
             }
@@ -805,7 +803,7 @@ impl Subprocess<'_> {
                 pipe.source.set(SourceHandle::None);
             }
             let _stdin_sink_ref = self.stdin_sink_ref.replace(None);
-            pipe.on_attached_process_exit(status);
+            jsc_vm.on(&*pipe).on_attached_process_exit(status);
         }
 
         let mut did_update_has_pending_activity = false;
@@ -893,11 +891,11 @@ impl Subprocess<'_> {
             self.update_has_pending_activity();
         }
         if let Some(ipc_data) = self.ipc() {
-            ipc_data.close_after_exit();
+            jsc_vm.on(ipc_data).close_after_exit();
         }
     }
 
-    fn close_io(&self, io: StdioKind) {
+    fn close_io(self: &Js<Self>, io: StdioKind) {
         if self.closed.get().contains(io) {
             return;
         }
@@ -922,7 +920,7 @@ impl Subprocess<'_> {
                 if !called {
                     Writable::finalize(self);
                 } else {
-                    Writable::close(&self.stdin);
+                    Writable::close(self.on(&self.stdin));
                 }
             }
             StdioKind::Stdout => {
@@ -943,7 +941,7 @@ impl Subprocess<'_> {
     }
 
     // This must only be run once per Subprocess
-    pub(crate) fn finalize_streams(&self) {
+    pub(crate) fn finalize_streams(self: &Js<Self>) {
         bun_output::scoped_log!(Subprocess, "finalizeStreams");
         self.close_process();
 
@@ -958,7 +956,7 @@ impl Subprocess<'_> {
         self.abort_handle.disarm();
     }
 
-    pub fn finalize(&self) {
+    pub fn finalize(self: &Vm<Self>) {
         bun_output::scoped_log!(Subprocess, "finalize");
         // Ensure any code which references the "this" value doesn't attempt to
         // access it after it's been freed We cannot call any methods which
@@ -967,11 +965,10 @@ impl Subprocess<'_> {
 
         self.clear_abort_signal();
 
-        debug_assert!(
-            !self.compute_has_pending_activity()
-                || VirtualMachine::VirtualMachine::get().is_shutting_down()
-        );
-        self.finalize_streams();
+        debug_assert!(!self.compute_has_pending_activity() || self.bun_vm().is_shutting_down());
+        // SAFETY: nothing runs through it. `close_io` hands it to a pipe in `stdin` once the getter has run, which
+        // takes the pipe out for good.
+        unsafe { Js::assume(self) }.on(&**self).finalize_streams();
 
         // `stdin_sink_ref` is released in `on_stdin_destroyed()`, reached either
         // via the FileSink's signal (which `Writable::finalize` — called from
@@ -1001,7 +998,7 @@ impl Subprocess<'_> {
             // to false and let GC collect us). Detach and release our ref; any
             // still-queued close task holds its own ref and frees the SendQueue
             // when it runs.
-            ipc_data.detach();
+            self.on(&*ipc_data).detach();
         }
 
         self.update_flags(|f| f.insert(Flags::FINALIZED));
@@ -1214,14 +1211,14 @@ pub(crate) mod testing_apis {
 
     /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper.
     pub(crate) fn close_stdin_writer(
-        _: &mut JsScope<'_>,
+        cx: &mut JsScope<'_>,
         subprocess: &Subprocess<'static>,
     ) -> bool {
         let Writable::Pipe(pipe) = subprocess.stdin.get() else {
             return false;
         };
         let pipe = pipe.clone();
-        pipe.writer.close(&*pipe);
+        pipe.writer.close(cx.on(&*pipe));
         true
     }
 }

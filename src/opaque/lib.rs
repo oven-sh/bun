@@ -60,6 +60,8 @@ macro_rules! opaque_ffi {
             _p: ::core::cell::UnsafeCell<[u8; 0]>,
             _m: ::core::marker::PhantomData<(*mut u8, ::core::marker::PhantomPinned)>,
         }
+        // SAFETY: see the fields.
+        unsafe impl $crate::Opaque for $name {}
         impl $name {
             /// Safe `*const Self → &Self` for an opaque ZST handle. See
             /// [`bun_opaque::opaque_deref`](crate::opaque_deref) for the
@@ -206,6 +208,12 @@ macro_rules! assert_ffi_discr {
     };
 }
 
+/// An opaque FFI handle, as declared by [`opaque_ffi!`].
+///
+/// # Safety
+/// `Self` is a zero-sized stand-in for a foreign object, neither `Copy` nor `Clone`.
+pub unsafe trait Opaque {}
+
 /// Safe `*const T → &T` for a `#[repr(C)]` zero-sized, align-1 opaque FFI
 /// handle (the body emitted by [`opaque_ffi!`]).
 ///
@@ -230,7 +238,7 @@ macro_rules! assert_ffi_discr {
 /// host-fn thunks, generated trampolines) should use
 /// [`opaque_deref_nn`] instead to elide the release-mode `testq; je <panic>`.
 #[inline(always)]
-pub fn opaque_deref<'a, T>(p: *const T) -> &'a T {
+pub fn opaque_deref<'a, T: Opaque>(p: *const T) -> &'a T {
     let p = ::core::ptr::NonNull::new(p.cast_mut()).unwrap_or_else(|| null_handle());
     // SAFETY: non-null established above.
     unsafe { opaque_deref_nn(p.as_ptr()) }
@@ -247,7 +255,7 @@ pub fn opaque_deref<'a, T>(p: *const T) -> &'a T {
 /// `p` must be non-null. (Align-1 ZST means that is the *only* validity
 /// requirement; see [`opaque_deref`] for the full proof.)
 #[inline(always)]
-pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
+pub unsafe fn opaque_deref_nn<'a, T: Opaque>(p: *const T) -> &'a T {
     const {
         assert!(
             ::core::mem::size_of::<T>() == 0,
@@ -273,7 +281,7 @@ pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
 /// case additionally relies on the ZST property to discharge `noalias` (a
 /// mutable borrow of zero bytes cannot overlap any other borrow).
 #[inline(always)]
-pub fn opaque_deref_mut<'a, T>(p: *mut T) -> &'a mut T {
+pub fn opaque_deref_mut<'a, T: Opaque>(p: *mut T) -> &'a mut T {
     const {
         assert!(
             ::core::mem::size_of::<T>() == 0,

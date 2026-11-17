@@ -9,7 +9,7 @@ use crate::ipc::{
 use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, Js, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
@@ -231,7 +231,10 @@ pub(crate) fn do_send(
             if target.is_object() {
                 if let Some(f) = target.get(global_object, name)? {
                     if f.is_callable() {
-                        crate::dispatch::fold(f.call(global_object, target, &[]).map(drop));
+                        crate::dispatch::fold(
+                            global_object.js(),
+                            f.call(global_object, target, &[]).map(drop),
+                        );
                     }
                 }
             }
@@ -333,7 +336,7 @@ pub(crate) fn emit_handle_ipc_message<'a>(
                 Process__emitMessageEvent(global_this, message, handle);
                 return Ok(());
             }
-            IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
+            IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), handle, vm.js())?;
         }
     }
     Ok(())
@@ -400,8 +403,12 @@ impl IPCInstance {
     }
 
     /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
-        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+    pub(crate) fn handle_ipc_message(
+        message: &DecodedIPCMessage,
+        handle: JSValue,
+        js: Js,
+    ) -> JsResult<()> {
+        let vm = js.bun_vm();
         let global_this = vm.global();
 
         match *message {
@@ -427,9 +434,9 @@ impl IPCInstance {
     }
 
     /// Tears down the IPC channel and emits the disconnect events on `process`.
-    pub(crate) fn handle_ipc_close() {
+    pub(crate) fn handle_ipc_close(js: Js) {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
-        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+        let vm = js.bun_vm();
         crate::jsc_hooks::ipc_child_singleton_deinit();
         {
             let _entered = vm.enter_event_loop_scope();
@@ -437,14 +444,14 @@ impl IPCInstance {
         }
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
-        vm.channel_ref.disable();
+        vm.channel_ref.disable(vm.loop_ctx());
     }
 }
 
 /// Returns the initialized IPC instance, lazily creating it from the VM's
 /// recorded `PendingIpc`.
 pub(crate) fn get_ipc_instance(
-    vm: &bun_jsc::virtual_machine::VirtualMachine,
+    vm: &Js<bun_jsc::virtual_machine::VirtualMachine>,
 ) -> Option<&'static IPCInstance> {
     if let Some(inst) = CHANNEL.get() {
         return Some(inst);
@@ -474,6 +481,7 @@ pub(crate) fn get_ipc_instance(
             mode,
             Some(IPC::SendQueueOwner::Instance),
             IPC::SocketUnion::Uninitialized,
+            vm.as_vm(),
         );
 
         let Some(socket) = IPC::Socket::from_fd::<SendQueue>(
@@ -483,7 +491,7 @@ pub(crate) fn get_ipc_instance(
             data.as_ptr(),
             true,
         ) else {
-            data.detach();
+            vm.on(&*data).detach();
             bun_core::warn!("Unable to start IPC socket");
             return None;
         };
@@ -500,6 +508,7 @@ pub(crate) fn get_ipc_instance(
             mode,
             Some(IPC::SendQueueOwner::Instance),
             IPC::SocketUnion::Uninitialized,
+            vm.as_vm(),
         );
         let send_queue: *mut SendQueue = data.as_ptr();
 
@@ -507,8 +516,8 @@ pub(crate) fn get_ipc_instance(
         // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
         // allocation's root raw pointer.
         // SAFETY: `send_queue` is the live SendQueue owned by `data`.
-        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
-            data.detach();
+        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd, vm.js()) } {
+            vm.on(&*data).detach();
             bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
             return None;
         }

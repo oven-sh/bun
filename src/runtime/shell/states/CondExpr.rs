@@ -9,6 +9,7 @@ use crate::shell::io::IO;
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 pub(crate) struct CondExpr {
     pub(crate) base: Base,
@@ -52,7 +53,7 @@ impl CondExpr {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         // Expand each arg via Expansion, then evaluate the operator.
         loop {
             let (shell, node) = {
@@ -80,7 +81,7 @@ impl CondExpr {
 
     /// Evaluates the operator against
     /// the expanded `args` and returns the resulting exit code.
-    fn command_impl_start(interp: &Interpreter, this: NodeId, op: ast::CondExprOp) -> Yield {
+    fn command_impl_start(interp: &Loop<Interpreter>, this: NodeId, op: ast::CondExprOp) -> Yield {
         use ast::CondExprOp as Op;
         let parent = interp.as_condexpr(this).base.parent;
         match op {
@@ -163,7 +164,7 @@ impl CondExpr {
     /// `WaitingWriteErr`: on write failure finish with the errno as the exit
     /// code, otherwise finish with exit code 1.
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         _written: usize,
         err: Option<bun_sys::SystemError>,
@@ -189,7 +190,7 @@ impl CondExpr {
     /// Main-thread re-entry for the
     /// off-thread `stat`/`lstat` posted by a unary file-test operator.
     fn on_stat_task_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         stat: &bun_sys::Result<bun_sys::Stat>,
         path: &[u8],
@@ -226,7 +227,7 @@ impl CondExpr {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -279,7 +280,7 @@ impl CondExpr {
     /// `on_io_writer_chunk`); otherwise append to the captured stderr buffer
     /// and finish with exit 1.
     fn write_failing_error(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
@@ -292,7 +293,7 @@ impl CondExpr {
         if let OutKind::Fd(fd) = &me.io.stderr {
             me.state = CondExprState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::CondExpr);
-            return fd.writer.enqueue(child, fd.captured, &buf);
+            return interp.on(&*fd.writer).enqueue(child, fd.captured, &buf);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (matches `on_io_writer_chunk`).
@@ -315,7 +316,7 @@ impl ShellWork for ShellCondExprStatTask {
         self.stat = crate::shell::interpreter::shell_statat(self.cwd_fd, z);
     }
 
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Loop<Interpreter>) -> Yield {
         CondExpr::on_stat_task_done(interp, self.cond, &self.stat, &self.path)
     }
 }

@@ -9,6 +9,7 @@
 use bun_collections::{ArrayHashMap, LinearFifo, linear_fifo::StaticBuffer};
 use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
+use bun_jsc::Vm;
 use bun_sourcemap::{self as source_map, SourceMapState};
 
 use crate::bake::{self, Side};
@@ -473,7 +474,7 @@ impl SourceMapStore {
     }
 
     /// `SourceMapStore.addWeakRef`.
-    pub(crate) fn add_weak_ref(&mut self, key: Key) {
+    pub(crate) fn add_weak_ref(&mut self, key: Key, vm: Vm) {
         // This function expects that `weak_ref_entry_max` is low.
         let Some(entry) = self.entries.get_mut(&key) else {
             debug_assert!(false);
@@ -515,7 +516,7 @@ impl SourceMapStore {
 
         if self.weak_ref_sweep_timer.state.get() != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            crate::jsc_hooks::timer_all().update(
+            crate::jsc_hooks::timer_all(vm.bun_vm()).update(
                 OwnedTimer::node(&raw const self.weak_ref_sweep_timer),
                 &expire,
             );
@@ -582,6 +583,7 @@ impl SourceMapStore {
     pub(crate) fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,
+        vm: Vm,
     ) {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
@@ -601,7 +603,7 @@ impl SourceMapStore {
                     .weak_ref_sweep_timer
                     .state
                     .set(EventLoopTimerState::FIRED);
-                crate::jsc_hooks::timer_all().update(
+                crate::jsc_hooks::timer_all(vm.bun_vm()).update(
                     OwnedTimer::node(&raw const store.weak_ref_sweep_timer),
                     &Timespec {
                         sec: item.expire + 1,

@@ -1,7 +1,7 @@
 use crate::webcore::streams;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_jsc::HostReturn as _;
-use bun_jsc::{ArrayBuffer, JSType, JSValue};
+use bun_jsc::{ArrayBuffer, JSType, JSValue, Js};
 use bun_sys as syscall;
 
 #[derive(Default)]
@@ -14,7 +14,7 @@ pub(crate) struct ArrayBufferSink {
 }
 
 impl ArrayBufferSink {
-    pub(crate) fn start(&mut self, stream_start: &streams::Start) -> bun_sys::Result<()> {
+    pub(crate) fn start(&mut self, stream_start: &streams::Start, _: Js) -> bun_sys::Result<()> {
         self.bytes.clear_retaining_capacity();
 
         if let streams::Start::ArrayBufferSink {
@@ -56,7 +56,7 @@ impl ArrayBufferSink {
         Ok(JSValue::js_number(0.0))
     }
 
-    pub(crate) fn write(&mut self, data: &streams::Result<'_>) -> streams::result::Writable {
+    pub(crate) fn write(&mut self, data: &streams::Result<'_>, _: Js) -> streams::result::Writable {
         let len = match self.bytes.write(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
@@ -64,7 +64,11 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub(crate) fn write_latin1(&mut self, data: &streams::Result<'_>) -> streams::result::Writable {
+    pub(crate) fn write_latin1(
+        &mut self,
+        data: &streams::Result<'_>,
+        _: Js,
+    ) -> streams::result::Writable {
         let len = match self.bytes.write_latin1(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
@@ -72,7 +76,7 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> streams::result::Writable {
+    pub(crate) fn write_utf16(&mut self, text: &[u16], _: Js) -> streams::result::Writable {
         let len = match self.bytes.write_utf16(text) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
@@ -80,7 +84,7 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub(crate) fn end(&mut self, _: Option<syscall::Error>) -> bun_sys::Result<()> {
+    pub(crate) fn end(&mut self, _: Option<syscall::Error>, _: Js) -> bun_sys::Result<()> {
         Ok(())
     }
 

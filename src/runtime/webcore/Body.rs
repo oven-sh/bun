@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 
 use crate::webcore::jsc::{
     self as jsc, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData, JSGlobalObject,
-    JSPromise, JSValue, JsResult, SystemError, URLSearchParams, VirtualMachine,
+    JSPromise, JSValue, Js, JsResult, SystemError, URLSearchParams, Vm,
 };
 use crate::webcore::{
     self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, Lifetime,
@@ -157,7 +157,7 @@ pub struct PendingValue {
     pub task: Option<NonNull<c_void>>,
 
     /// runs after the data is available.
-    pub(crate) on_receive_value: Option<fn(ctx: NonNull<c_void>, value: &mut Value)>,
+    pub(crate) on_receive_value: Option<fn(ctx: NonNull<c_void>, value: &mut Value, js: Js)>,
 
     /// A consumer that wants the whole body (`.text()`/`.json()`/…,
     /// `Bun.write`) has started waiting on it without realising a stream.
@@ -166,8 +166,8 @@ pub struct PendingValue {
     /// may resolve or fail this body synchronously from inside the call —
     /// replacing the `Value` this `PendingValue` lives in — so callers install
     /// their `promise`/`on_receive_value` first and touch nothing afterwards.
-    pub(crate) on_start_buffering: Option<fn(ctx: NonNull<c_void>)>,
-    pub(crate) on_start_streaming: Option<fn(ctx: NonNull<c_void>) -> DrainResult>,
+    pub(crate) on_start_buffering: Option<fn(ctx: NonNull<c_void>, js: Js)>,
+    pub(crate) on_start_streaming: Option<fn(ctx: NonNull<c_void>, vm: Vm) -> DrainResult>,
     pub(crate) on_readable_stream_available:
         Option<fn(ctx: NonNull<c_void>, global_this: &JSGlobalObject, readable: ReadableStream)>,
     /// Upstream producer to notify on cancel/drain/consumer-attach; forwarded
@@ -448,8 +448,8 @@ pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE
 
 /// Moves `value` into a pooled `HiveRef` slot and returns an owning handle
 /// (ref_count = 1).
-pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
-    let pool: &HiveAllocator = &crate::jsc_hooks::runtime_state().body_value_pool;
+pub(crate) fn hive_alloc(value: Value, vm: Vm) -> BodyHiveHandle {
+    let pool: &HiveAllocator = &crate::jsc_hooks::runtime_state(vm.bun_vm()).body_value_pool;
     // SAFETY: `pool` outlives every handle (process lifetime).
     unsafe { BodyHiveHandle::new(value, pool) }
 }
@@ -678,7 +678,7 @@ impl Value {
             }
             Value::Empty => ReadableStream::empty(cx.global())?,
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
-                let blob = self.use_();
+                let blob = self.use_(cx.js());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
                 ReadableStream::from_blob_copy_ref(cx, &blob, blob_size)?
@@ -719,7 +719,7 @@ impl Value {
             }
             Value::Blob(_) => {
                 let stream = {
-                    let blob = self.use_();
+                    let blob = self.use_(cx.js());
                     blob.resolve_size();
                     if blob.needs_to_read_file() || blob.is_s3() {
                         let blob_size = blob.size.get();
@@ -765,7 +765,7 @@ impl Value {
         let mut drain_result = DrainResult::EstimatedSize(0);
 
         if let Some(drain) = locked.on_start_streaming.take() {
-            drain_result = drain(locked.task.unwrap());
+            drain_result = drain(locked.task.unwrap(), cx.js().as_vm());
         }
 
         if matches!(drain_result, DrainResult::Aborted) {
@@ -911,7 +911,7 @@ impl Value {
                 // only when it is the sole consumer of this pending body.
                 let sole_consumer = locked.promise.is_none() && locked.on_receive_value.is_none();
                 let fed = sole_consumer
-                    .then(|| readable.ptr.bytes())
+                    .then(|| cx.on(readable.ptr.bytes()))
                     .flatten()
                     .map(|bytes| {
                         // BACKREF: `Source::bytes()` payload is live for the
@@ -923,13 +923,13 @@ impl Value {
                 if fed.is_some() {
                     *new = Value::Used;
                 } else {
-                    readable.done();
+                    cx.on(&readable).done();
                 }
                 locked.readable = Default::default();
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
-                callback(locked.task.unwrap(), new);
+                callback(locked.task.unwrap(), new, cx.js());
                 return Ok(());
             }
 
@@ -945,7 +945,7 @@ impl Value {
                             promise.wrap(cx.global(), |_| blob.to_string_transfer(cx))?;
                         }
                         _ => {
-                            let blob = new.use_();
+                            let blob = new.use_(cx.js());
                             promise.wrap(cx.global(), |_| blob.to_string_transfer(cx))?;
                         }
                     },
@@ -977,7 +977,7 @@ impl Value {
                         async_form_data.to_js(cx.global(), blob.slice(), promise)?;
                     }
                     Action::None | Action::GetBlob => {
-                        let blob = new.use_();
+                        let blob = new.use_(cx.js());
                         if let Some(fetch_headers) = headers {
                             // `headers` is a live C++ FetchHeaders handle;
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
@@ -1002,7 +1002,7 @@ impl Value {
         Ok(())
     }
 
-    pub(crate) fn use_(&mut self) -> Blob {
+    pub(crate) fn use_(&mut self, js: Js) -> Blob {
         self.to_blob_if_possible();
 
         match self {
@@ -1013,8 +1013,7 @@ impl Value {
                 new_blob
             }
             Value::InternalBlob(ib) => {
-                // SAFETY: VirtualMachine::get() returns the live per-thread VM.
-                let global = VirtualMachine::get().global();
+                let global = js.bun_vm().global();
                 let new_blob = Blob::init(
                     ib.to_owned_slice(),
                     // we will never resize it from here
@@ -1026,7 +1025,7 @@ impl Value {
                 new_blob
             }
             Value::WTFStringImpl(wtf) => {
-                let global = VirtualMachine::get().global();
+                let global = js.bun_vm().global();
                 let new_blob = Blob::init(wtf.to_utf8().into_vec(), global);
                 *self = Value::Used;
                 new_blob
@@ -1138,7 +1137,7 @@ impl Value {
             if let Some(readable) = locked.readable.get() {
                 // BACKREF: see `Source::bytes()` — payload live for the
                 // lifetime of the ReadableStream JS wrapper.
-                if let Some(bytes) = readable.ptr.bytes() {
+                if let Some(bytes) = global.on(readable.ptr.bytes()) {
                     bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)));
                 } else {
                     // e.g. a `clone()` tee branch; a cancel would end its reads with `{ done: true }`.
@@ -1149,7 +1148,7 @@ impl Value {
             if let Some(on_receive_value) = locked.on_receive_value.take() {
                 // `task` is the live request-ctx pointer registered alongside
                 // this callback.
-                on_receive_value(locked.task.unwrap(), self);
+                on_receive_value(locked.task.unwrap(), self, global.js());
             }
 
             if was_disturbed {
@@ -1181,7 +1180,7 @@ impl Value {
         let mut drain_result = DrainResult::EstimatedSize(0);
 
         if let Some(drain) = locked.on_start_streaming.take() {
-            drain_result = drain(locked.task.unwrap());
+            drain_result = drain(locked.task.unwrap(), cx.js().as_vm());
         }
 
         if matches!(drain_result, DrainResult::Aborted) {
@@ -1419,7 +1418,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             locked.promise = Some(jsc::Strong::create(promise, global_this));
             if let Some(on_start_buffering) = locked.on_start_buffering.take() {
                 // Last use of `locked`: the producer may settle the body, and so replace it.
-                on_start_buffering(locked.task.unwrap());
+                on_start_buffering(locked.task.unwrap(), global_this.js());
             }
             return Ok(promise);
         };
@@ -1871,7 +1870,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         let value = self.get_body_value();
-        let blob = value.use_();
+        let blob = value.use_(global_object.js());
         if blob.content_type().is_empty() {
             if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
                 // `fetch_headers` is a live C++ FetchHeaders handle;

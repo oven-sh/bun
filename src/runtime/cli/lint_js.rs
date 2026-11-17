@@ -21,8 +21,8 @@
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
-use bun_core::strings;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
+use bun_core::{Loop, strings};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Js, Strong, virtual_machine::VirtualMachine};
 use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Serve, Vm, Work, program};
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
@@ -120,8 +120,8 @@ impl LintSpan {
 }
 
 /// Answers `kind` and keeps the answer alive. `None` if no file is being linted.
-fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
-    let state = crate::jsc_hooks::lint_vm().get()?;
+fn ask_and_keep(kind: u32, details: &[u8], vm: jsc::Vm) -> Option<LintSpan> {
+    let state = crate::jsc_hooks::lint_vm(vm.bun_vm()).get()?;
     let mut call = state.call.get()?;
     // SAFETY: it points to the stack of `ThreadVm::call`, which is below this frame and clears the pointer before it
     // returns. `serve` runs no JavaScript, so this is the only reference.
@@ -156,7 +156,7 @@ fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
 /// node. Returns null if no file is being linted.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Lint__ask(
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     kind: u32,
     details: *const u8,
     details_len: usize,
@@ -166,14 +166,14 @@ extern "C" fn Bun__Lint__ask(
         // SAFETY: the caller owns them and keeps them alive until this returns.
         false => unsafe { core::slice::from_raw_parts(details, details_len) },
     };
-    ask_and_keep(kind, details).unwrap_or(LintSpan {
+    ask_and_keep(kind, details, global.js().as_vm()).unwrap_or(LintSpan {
         ptr: core::ptr::null(),
         len: 0,
     })
 }
 
 /// Runs the program in this thread's new VM.
-fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
+fn start_program(vm: &Js<VirtualMachine>) -> Result<LintVm, Vec<u8>> {
     let global = vm.global();
     // Strict, so that a plugin's function can't reach the program's functions through `caller`.
     let mut source = b"(function (native) {\n\
@@ -218,7 +218,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
 }
 
 /// Creates a VM for this thread. `log` outlives it.
-fn start_vm(log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
+fn start_vm(log: *mut bun_ast::Log, loop_: Loop<'_>) -> Result<Js<'_>, Vec<u8>> {
     bun_core::scoped_log!(lint_js, "a VM begins");
     let failed = |what: &str| {
         [
@@ -235,7 +235,9 @@ fn start_vm(log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
         is_main_thread: false,
         ..Default::default()
     };
-    let vm = VirtualMachine::init(log, options).map_err(|error| failed(error.name()))?;
+    // SAFETY: once, at the start of `run_member`'s thread, whose frame holds `log`.
+    let vm = unsafe { VirtualMachine::init(log, options, loop_) }
+        .map_err(|error| failed(error.name()))?;
     // Transpile on this thread. It would only wait for the result anyway.
     vm.transpiler_store.enabled.set(false);
     vm.transpiler
@@ -251,13 +253,13 @@ fn start_vm(log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
         .map_err(|error| failed(error.name()))?;
     vm.load_extra_env();
     vm.event_loop().ensure_waker();
-    Ok(())
+    Ok(vm.js())
 }
 
 /// Returns `vm`'s `LintVm`, and runs the program first if it hasn't run yet. `vm` is this thread's VM, and the caller
 /// holds its lock.
-fn program_of(vm: &VirtualMachine) -> Result<&'static LintVm, Vec<u8>> {
-    let slot = crate::jsc_hooks::lint_vm();
+fn program_of<'a>(vm: &'a Js<VirtualMachine>) -> Result<&'a LintVm, Vec<u8>> {
+    let slot = crate::jsc_hooks::lint_vm(vm);
     match slot.get() {
         Some(state) => Ok(&**state),
         None => {
@@ -272,7 +274,9 @@ struct ThreadVm;
 
 impl Vm for ThreadVm {
     fn call(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>> {
-        let vm = VirtualMachine::get();
+        // SAFETY: only `Own::call` calls this. `with_vm_of` runs it on the member's thread, below a job of `run_member`,
+        // and a `dyn Vm` cannot leave it. `start_vm` has succeeded there, and no job follows `end_vm`.
+        let vm = unsafe { Js::assume(self) }.bun_vm();
         vm.run_with_api_lock(|| {
             let global = vm.global();
             let state = program_of(vm)?;
@@ -392,20 +396,23 @@ pub(super) fn memory() -> usize {
 
 /// Runs the `exit` handlers of this thread's VM, if it has one. Also frees the VM if `frees` or
 /// `BUN_DESTRUCT_VM_ON_EXIT` is set.
-fn end_vm(frees: bool) {
-    if !VirtualMachine::is_loaded() {
+///
+/// # Safety
+/// Neither `loop_` nor anything that it lent is used afterwards.
+unsafe fn end_vm(frees: bool, loop_: Loop) {
+    let Some(vm) = VirtualMachine::get_or_null(loop_) else {
         return;
-    }
-    let vm = VirtualMachine::get();
+    };
     if !frees && !bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false) {
         let _lock = vm.global().vm().get_api_lock();
         return vm.on_exit();
     }
     // Never released: `exit_and_free` frees the VM, and the lock with it.
     let _lock = core::mem::ManuallyDrop::new(vm.global().vm().get_api_lock());
-    drop(crate::jsc_hooks::take_lint_vm());
+    // SAFETY: fn contract.
+    drop(unsafe { crate::jsc_hooks::take_lint_vm() });
     // SAFETY: `start_vm` created it on this thread, which holds its lock. No other thread has a pointer to it.
-    unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr()) };
+    unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr(vm.as_vm()), vm.js()) };
 }
 
 /// Startup state that all VMs share.
@@ -424,7 +431,7 @@ impl Start {
     }
 
     /// As [`start_vm`].
-    fn start_vm(&self, log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
+    fn start_vm<'a>(self: &Loop<'a, Self>, log: *mut bun_ast::Log) -> Result<Js<'a>, Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
             // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
@@ -434,12 +441,12 @@ impl Start {
             }
             // The first VM also creates process-wide singletons like `FileSystem::instance()`, which isn't safe from
             // several threads at once. So the others wait here until it's up.
-            first = Some(start_vm(log).and_then(|()| {
-                let vm = VirtualMachine::get();
-                vm.run_with_api_lock(|| program_of(vm).map(|_| ()))
+            first = Some(start_vm(log, self.as_loop()).and_then(|js| {
+                let vm = js.bun_vm();
+                vm.run_with_api_lock(|| program_of(vm).map(|_| vm.js()))
             }));
         });
-        first.unwrap_or_else(|| start_vm(log))
+        first.unwrap_or_else(|| start_vm(log, self.as_loop()))
     }
 
     /// [`Engine::expect`]
@@ -814,10 +821,12 @@ impl Crew {
     /// The thread function of the member `at`. The thread is never joined: once it's done with its VM it waits until
     /// the process exits.
     fn run_member(crew: &Arc<Crew>, at: usize) -> ! {
+        // SAFETY: the start of the thread. Only `end_vm`, the last use of the proof, frees what it owns.
+        let loop_ = unsafe { Loop::assume(&at) };
         name_this_thread(at);
         bun_sema_driver::run_regions_inline_on_this_thread();
         let mut log = bun_ast::Log::default();
-        let failure = crew.start.start_vm(&raw mut log).err();
+        let failure = loop_.on(&crew.start).start_vm(&raw mut log).err();
         {
             let mut state = crew.state.lock();
             state.all[at].thread = Some(std::thread::current().id());
@@ -846,7 +855,8 @@ impl Crew {
                     }
                 }
                 Next::End { frees } => {
-                    end_vm(frees);
+                    // SAFETY: the loop ends here, and the thread only waits.
+                    unsafe { end_vm(frees, loop_) };
                     crew.state.lock().all[at].is_gone = true;
                     crew.is_over.notify_all();
                     break;

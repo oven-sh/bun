@@ -32,8 +32,8 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
-    Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
+    self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, Js, JsError, JsResult,
+    Node, PendingAbortSignal, StringJsc as _, Vm, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::RefPtr;
@@ -106,9 +106,9 @@ where
 /// `handle_request_for` / `prepare_js_request_context_for` / `on_saved_request`
 /// can be written without naming the concrete `RequestContext<_, SSL, DBG, MUX>`
 /// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
-trait RequestCtxOps: RequestCtx {
+trait RequestCtxOps: RequestCtx + Sized + 'static {
     type Server;
-    type Dispatch;
+    type Dispatch<'a>;
     fn create_in(
         slot: *mut Self,
         server: &Self::Server,
@@ -116,14 +116,14 @@ trait RequestCtxOps: RequestCtx {
         resp: uws::AnyResponse,
         method: Option<http::Method>,
     );
-    fn dispatch(&self) -> Self::Dispatch;
-    fn respond(
-        dispatch: Self::Dispatch,
+    fn dispatch<'a>(self: &Js<'a, Self>) -> Self::Dispatch<'a>;
+    fn respond<'a>(
+        dispatch: Self::Dispatch<'a>,
         server: &Self::Server,
         request_value: JSValue,
         response_value: JSValue,
-    ) -> Option<bun_ptr::BackRef<Self>>;
-    fn to_async(&self, req: &mut Self::Req, request_object: &Request);
+    ) -> Option<bun_ptr::BackRef<Js<'a, Self>>>;
+    fn to_async(self: &Js<Self>, req: &mut Self::Req, request_object: &Request);
     fn ctx_method(&self) -> http::Method;
     fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>);
     #[allow(
@@ -138,11 +138,14 @@ trait RequestCtxOps: RequestCtx {
     fn set_request_body_content_len(&self, len: usize);
     fn set_is_transfer_encoding(&self, v: bool);
     fn set_is_waiting_for_request_body(&self, v: bool);
-    fn arm_on_data(&self, resp: uws::AnyResponse);
+    fn arm_on_data(self: &Js<Self>, resp: uws::AnyResponse);
     // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
     // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
-    fn on_start_buffering_callback(this: NonNull<c_void>);
-    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult;
+    fn on_start_buffering_callback(this: NonNull<c_void>, js: Js);
+    fn on_start_streaming_request_body_callback(
+        this: NonNull<c_void>,
+        vm: Vm,
+    ) -> WebCore::DrainResult;
     fn on_request_body_readable_stream_available(
         this: NonNull<c_void>,
         global_this: &JSGlobalObject,
@@ -157,7 +160,7 @@ where
     ThisServer: super::ServerLike + 'static,
 {
     type Server = ThisServer;
-    type Dispatch = Dispatch<ThisServer, SSL, DBG, MUX>;
+    type Dispatch<'a> = Dispatch<'a, ThisServer, SSL, DBG, MUX>;
     #[inline]
     fn create_in(
         slot: *mut Self,
@@ -177,20 +180,20 @@ where
         );
     }
     #[inline]
-    fn dispatch(&self) -> Self::Dispatch {
+    fn dispatch<'a>(self: &Js<'a, Self>) -> Self::Dispatch<'a> {
         Dispatch::new(self)
     }
     #[inline]
-    fn respond(
-        dispatch: Self::Dispatch,
+    fn respond<'a>(
+        dispatch: Self::Dispatch<'a>,
         server: &ThisServer,
         rq: JSValue,
         rv: JSValue,
-    ) -> Option<bun_ptr::BackRef<Self>> {
+    ) -> Option<bun_ptr::BackRef<Js<'a, Self>>> {
         Self::respond(dispatch, server, rq, rv)
     }
     #[inline]
-    fn to_async(&self, req: &mut Self::Req, ro: &Request) {
+    fn to_async(self: &Js<Self>, req: &mut Self::Req, ro: &Request) {
         Self::to_async(self, std::ptr::from_mut(req).cast(), ro)
     }
     #[inline]
@@ -239,9 +242,9 @@ where
         self.flags.set_is_waiting_for_request_body(v)
     }
     #[inline]
-    fn arm_on_data(&self, resp: uws::AnyResponse) {
+    fn arm_on_data(self: &Js<Self>, resp: uws::AnyResponse) {
         fn handler<S, const SSL_: bool, const DBG_: bool, const MUX_: bool>(
-            ctx: *mut NewRequestContext<S, SSL_, DBG_, MUX_>,
+            ctx: *mut Js<NewRequestContext<S, SSL_, DBG_, MUX_>>,
             chunk: &[u8],
             last: bool,
         ) where
@@ -252,12 +255,15 @@ where
         resp.on_data(handler::<ThisServer, SSL, DBG, MUX>, self.as_ctx_ptr());
     }
     #[inline]
-    fn on_start_buffering_callback(this: NonNull<c_void>) {
-        Self::on_start_buffering_callback(this)
+    fn on_start_buffering_callback(this: NonNull<c_void>, js: Js) {
+        Self::on_start_buffering_callback(this, js)
     }
     #[inline]
-    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult {
-        Self::on_start_streaming_request_body_callback(this)
+    fn on_start_streaming_request_body_callback(
+        this: NonNull<c_void>,
+        vm: Vm,
+    ) -> WebCore::DrainResult {
+        Self::on_start_streaming_request_body_callback(this, vm)
     }
     #[inline]
     fn on_request_body_readable_stream_available(
@@ -1133,7 +1139,7 @@ impl ServePlugins {
         }
         if let Some(server) = dev_server {
             if let Some(dev) = server.dev_server_mut() {
-                bun_core::handle_oom(dev.on_plugins_rejected());
+                bun_core::handle_oom(dev.on_plugins_rejected(global.js()));
             }
         }
 
@@ -1299,12 +1305,12 @@ pub(super) use super::{
 // `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
 // `app.ws(...)` accept `*mut Self` / `*mut UserRoute<..>` as the upgrade ctx.
 impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeServer<SSL>
-    for NewServer<SSL, DEBUG>
+    for Js<'_, NewServer<SSL, DEBUG>>
 where
     // NOTE: see the bounded `impl NewServer` below for why these are
     // spelled out — `on_web_socket_upgrade` lives in that impl.
-    NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
-    NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
+    ServerRequestContext<SSL, DEBUG>: super::request_context::RequestContextHostFns,
+    ServerMuxRequestContext<SSL, DEBUG>: super::request_context::RequestContextHostFns,
 {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
@@ -1317,7 +1323,13 @@ where
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
         // dispatch inside `on_web_socket_upgrade`.
         unsafe {
-            Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
+            NewServer::on_web_socket_upgrade(
+                this,
+                bun_opaque::opaque_deref_mut(res),
+                req,
+                context,
+                id,
+            )
         };
     }
 }
@@ -1662,7 +1674,7 @@ where
             resp.write_status(b"426 Upgrade Required");
             resp.write_header(b"Sec-WebSocket-Version", b"13");
             upgrader.flags.set_has_written_status(true);
-            upgrader.end_without_body(true);
+            global.on(upgrader).end_without_body(true);
             return Ok(false);
         }
 
@@ -1867,7 +1879,7 @@ where
             self.user_routes.with_mut(|user_routes| user_routes.clear());
         }
 
-        let route_list_value = self.set_routes();
+        let route_list_value = global.on(self).set_routes();
         if new_config.had_routes_object {
             Self::js_gc_route_list_set(server_js, global, route_list_value);
         }
@@ -1882,7 +1894,7 @@ where
         }
     }
 
-    pub(crate) fn reload_static_routes(&self) -> Result<bool, crate::Error> {
+    pub(crate) fn reload_static_routes(self: &Js<Self>) -> Result<bool, crate::Error> {
         if self.app().is_none() {
             // Static routes will get cleaned up when the server is stopped
             return Ok(false);
@@ -2027,7 +2039,7 @@ where
                 BunString::clone_utf8(url.href),
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
-                crate::webcore::body::hive_alloc(body),
+                crate::webcore::body::hive_alloc(body, global.js().as_vm()),
                 method,
             )
         } else if let Some(request_) = input
@@ -2278,7 +2290,11 @@ where
 
     /// Route handler for the HTTP/2 and HTTP/3 apps (`R` = `uws::H2::Response`
     /// or `uws::H3::Response`); both hand us the same decoded-header request.
-    pub(super) fn on_mux_request<R: RespLike>(&self, req: &mut uws::H3::Request, resp: &mut R) {
+    pub(super) fn on_mux_request<R: RespLike>(
+        self: &Js<Self>,
+        req: &mut uws::H3::Request,
+        resp: &mut R,
+    ) {
         if self.config.get().on_request.is_empty() {
             return Self::on_mux_404(self, req, resp);
         }
@@ -2286,7 +2302,7 @@ where
     }
 
     pub(super) fn on_mux_user_route_request<R: RespLike>(
-        user_route: &UserRoute<SSL, DEBUG>,
+        user_route: &Js<UserRoute<SSL, DEBUG>>,
         req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
@@ -2295,7 +2311,7 @@ where
         );
     }
 
-    pub(super) fn on_mux_404<R: RespLike>(_this: &Self, _req: &mut uws::H3::Request, resp: &mut R) {
+    pub(super) fn on_mux_404<R: RespLike>(_: &Js<Self>, _req: &mut uws::H3::Request, resp: &mut R) {
         resp.write_status(b"404 Not Found");
         resp.end_without_body(false);
     }
@@ -2312,7 +2328,7 @@ where
 
     #[inline(never)]
     pub(crate) fn on_bun_info_request(
-        &self,
+        self: &Vm<Self>,
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
@@ -2332,7 +2348,7 @@ where
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
         let source = bun_ast::Source::init_empty_file(b"info.json");
-        let transpiler = VirtualMachine::VirtualMachine::get().transpiler.get();
+        let transpiler = self.bun_vm().transpiler.get();
         let _ = bun_js_printer::print_json(
             &mut writer,
             BunInfo::generate(transpiler).expect("unreachable"),
@@ -2356,14 +2372,14 @@ where
     // been removed.
 
     fn on_user_route_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        user_route: &UserRoute<SSL, DEBUG>,
+        user_route: &Js<UserRoute<SSL, DEBUG>>,
         req: &mut Ctx::Req,
         resp: &mut R,
     ) {
         debug_assert!(!user_route.server.is_null());
         // SAFETY: `UserRoute.server` is a back-pointer to the owning server,
         // which outlives every route it registered.
-        let server = unsafe { &*user_route.server };
+        let server = user_route.on(unsafe { &*user_route.server });
         let index = user_route.id;
 
         let Some(server_js) = server.js_value_for_dispatch() else {
@@ -2405,9 +2421,9 @@ where
     }
 
     fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
-        &self,
+        self: &Js<Self>,
         request: &DispatchedRequest,
-        ctx: Ctx::Dispatch,
+        ctx: Ctx::Dispatch<'_>,
         req: &mut Ctx::Req,
         response_value: JSValue,
     ) {
@@ -2421,7 +2437,7 @@ where
     }
 
     fn on_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        &self,
+        self: &Js<Self>,
         req: &mut Ctx::Req,
         resp: &mut R,
     ) {
@@ -2449,11 +2465,11 @@ where
     }
 
     fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        &self,
+        self: &Js<Self>,
         req: &mut Ctx::Req,
         resp: &mut R,
         method: Option<http::Method>,
-    ) -> Option<(RefPtr<Request>, Ctx::Dispatch)> {
+    ) -> Option<(RefPtr<Request>, Ctx::Dispatch<'_>)> {
         jsc::mark_binding!();
 
         // We need to register the handler immediately since uSockets will not buffer.
@@ -2544,7 +2560,7 @@ where
             }
         };
         // SAFETY: ctx_slot was just initialized by create_in.
-        let ctx = unsafe { &*ctx_slot };
+        let ctx = self.on(unsafe { &*ctx_slot });
         let dispatch = ctx.dispatch();
 
         self.vm()
@@ -2552,7 +2568,7 @@ where
             .deprecated_report_extra_memory(core::mem::size_of::<Ctx>());
 
         // Pooled body slot, ref_count = 1.
-        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null, self.as_vm());
         // The ctx and Request each own a +1 on the same slot.
         ctx.set_request_body(Some(body_hive.clone()));
 
@@ -2662,7 +2678,7 @@ where
     }
 
     fn upgrade_web_socket_user_route(
-        this: &UserRoute<SSL, DEBUG>,
+        this: &Js<UserRoute<SSL, DEBUG>>,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
@@ -2674,7 +2690,7 @@ where
         debug_assert!(!this.server.is_null());
         // SAFETY: `UserRoute.server` is the owning `NewServer`, set at
         // construction and non-null while the route is registered.
-        let server = unsafe { &*this.server };
+        let server = this.on(unsafe { &*this.server });
         let index = this.id;
 
         let Some(server_js) = server.js_value_for_dispatch() else {
@@ -2716,7 +2732,7 @@ where
     /// wrong-typed `&mut Self` reference is ever materialized (which would be
     /// instant UB regardless of whether it is read).
     pub(crate) unsafe fn on_web_socket_upgrade(
-        this: *mut Self,
+        this: *mut Js<Self>,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
@@ -2729,7 +2745,7 @@ where
             // live for the request's duration. Raw-ptr cast only — no
             // intermediate `&mut Self` was ever created; shared suffices (the
             // route entry is only read).
-            let user_route = unsafe { &*this.cast::<UserRoute<SSL, DEBUG>>() };
+            let user_route = unsafe { &*this.cast::<Js<UserRoute<SSL, DEBUG>>>() };
             Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
             return;
         }
@@ -2766,10 +2782,10 @@ where
             None,
         );
         // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-        let ctx = Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
+        let ctx = Dispatch::new(this.on(unsafe { ctx_slot.assume_init().as_ref() }));
 
         // Pooled body slot, ref_count = 1.
-        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null, this.as_vm());
         // The ctx and Request each own a +1 on the same slot.
         ctx.request_body.set(Some(body_hive.clone()));
 
@@ -3012,8 +3028,8 @@ fn server_set_on_client_error(
                     ) {
                         // SAFETY: user_data is the `*mut Self` registered below; socket is a live
                         // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty)
-                        // buffer. Shared — the callback re-enters JS.
-                        let this = unsafe { &*user_data.cast::<$T>() };
+                        // buffer. Shared — the callback re-enters JS. Only uWS calls this.
+                        let this = unsafe { &*user_data.cast::<Js<$T>>() };
                         let packet: &[u8] = if raw_packet_len > 0 {
                             // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len`
                             // readable bytes when `raw_packet_len > 0`.
@@ -3022,11 +3038,14 @@ fn server_set_on_client_error(
                             &[]
                         };
                         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                        crate::dispatch::fold(this.on_client_error_callback(
-                            bun_opaque::opaque_deref_mut(socket),
-                            error_code,
-                            packet,
-                        ));
+                        crate::dispatch::fold(
+                            this.js(),
+                            this.on_client_error_callback(
+                                bun_opaque::opaque_deref_mut(socket),
+                                error_code,
+                                packet,
+                            ),
+                        );
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app)
@@ -3088,9 +3107,9 @@ fn server_set_on_connection(
                         }
                         // SAFETY: user_data is the `*mut Self` registered below;
                         // socket is a live uWS socket for this server's group.
-                        // Shared — the callback re-enters JS.
-                        let this = unsafe { &*user_data.cast::<$T>() };
-                        crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
+                        // Shared — the callback re-enters JS. Only uWS calls this.
+                        let this = unsafe { &*user_data.cast::<Js<$T>>() };
+                        crate::dispatch::fold(this.js(), this.on_connection_callback(socket.cast::<c_void>()));
                     }
                     if first {
                         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.

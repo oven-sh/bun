@@ -18,6 +18,10 @@
 //!
 //! All functions are `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
+//!
+//! The contract covers user data that is a [`Proof`](bun_core::proof::Proof). Only the loop of the thread that
+//! registered it polls the sockets, and no handle to them is `Send`. By the time the global object is destroyed they
+//! are closed, or (idle HTTP/3) polled no more. A server is finalized once it is drained.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -79,11 +83,16 @@ pub unsafe trait OpaqueHandle: Sized {
 /// trampoline site. The ZST invariant is enforced at compile time via the
 /// inline `const { assert!() }`, so a non-ZST `H` is a *compile* error at the
 /// monomorphisation site — which is what lets this be a *safe* fn (S016).
-/// Thin re-export of [`bun_core::ffi::conjure_zst`] kept for the shorter
-/// `thunk::zst::<H>()` spelling at the ~20 uWS trampoline call sites.
 #[inline(always)]
 pub(crate) fn zst<H>() -> H {
-    bun_core::ffi::conjure_zst::<H>()
+    const {
+        assert!(
+            core::mem::size_of::<H>() == 0,
+            "zst: H must be a ZST (fn item or capture-less closure)"
+        )
+    };
+    // SAFETY: no bytes. Each caller bounds `H: Fn*` and was handed a value of it.
+    unsafe { bun_core::ffi::zeroed_unchecked() }
 }
 
 /// Recover `&mut U` from a uWS user-data word, returning `None` for null.

@@ -154,8 +154,12 @@ and `&mut self` for its object, because nothing can invalidate either while it
 runs.
 
 The compiler holds a body to its capability as far as this API goes. The older API has
-other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`, a field of the struct), and a
-body that takes one of those to run JavaScript has stepped around the check.
+another way to a `&JSGlobalObject`, a field of the struct, and a body that takes it to run
+JavaScript has stepped around the check.
+
+A native method says `self: &Vm<Self>` if it reaches the thread's VM (`self.bun_vm()`), and `self: &Js<Self>` if it
+can run JavaScript. The bindings pass `&Vm<Self>` as every shared receiver, and `cx.on(self)` is a `&Js<Self>`.
+`passVm: true` adds `vm: Vm` after the arguments of a function that has neither a receiver nor a capability.
 
 Much of the older API takes a `&JSGlobalObject` only to allocate or to throw. A `"heap"`
 function calls it with `heap.global()`, which is `unsafe`: nothing the global object is passed

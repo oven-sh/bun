@@ -23,6 +23,8 @@ use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 use bun_io::IntrusiveUvFs as _;
 #[cfg(not(windows))]
 use bun_io::{self as io, FileAction};
+#[cfg(windows)]
+use bun_jsc::Js;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
@@ -777,7 +779,7 @@ impl ReadFile {
 #[cfg(windows)]
 pub(crate) struct ReadFileUV {
     pub(crate) loop_: *mut libuv::uv_loop_t,
-    _keep_alive: bun_io::JsKeepAlive,
+    _keep_alive: bun_jsc::JsKeepAlive,
     pub(crate) file_store: FileStore,
     pub(crate) store: RefPtr<Store>,
     pub offset: SizeType,
@@ -810,7 +812,7 @@ impl ReadFileUV {
         let file_store = store.data.as_file().clone();
         let mut this = Box::new(ReadFileUV {
             loop_: cx.global().bun_vm().event_loop().uv_loop().cast(),
-            _keep_alive: bun_io::JsKeepAlive::active(),
+            _keep_alive: bun_jsc::JsKeepAlive::active(cx.vm()),
             file_store,
             store, // store.ref() — Arc clone owned here
             offset: blob.offset.get(),
@@ -825,17 +827,16 @@ impl ReadFileUV {
             req: bun_core::ffi::zeroed(),
         });
         // A request that libuv refuses completes inside this call: the checkpoint is the caller's.
-        let _caller =
-            jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
+        let _caller = cx.vm().enter_event_loop_scope_without_checkpoint();
         if let PathOrFileDescriptor::Fd(fd) = this.file_store.pathlike {
             this.opened_fd = fd;
-            this.queue_stat();
+            this.queue_stat(cx.js());
         } else {
-            this.open();
+            this.open(cx.js());
         }
     }
 
-    fn open(self: Box<Self>) {
+    fn open(self: Box<Self>, js: Js) {
         let mut buf = bun_paths::path_buffer_pool::get();
         let path = self.file_store.pathlike.path().slice_z(&mut buf).as_ptr();
 
@@ -855,39 +856,40 @@ impl ReadFileUV {
         };
         if let Some(errno) = rc.errno() {
             // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.on_open_error(errno);
+            unsafe { bun_core::heap::take(this) }.on_open_error(errno, js);
         }
     }
 
     extern "C" fn on_open(req: *mut libuv::fs_t) {
-        // SAFETY: `req` is that of the box that `open` left to libuv.
-        let mut this = unsafe { Self::take_from_uv_fs(req) };
+        // SAFETY: `req` is that of the box that `open` left to libuv,
+        // which calls back from the VM's loop: a worker drains it before its VM goes.
+        let (mut this, js) = unsafe { (Self::take_from_uv_fs(req), Js::assume(&req)) };
 
         let result = this.req.result;
         if let Some(errno) = result.errno() {
-            this.on_open_error(errno);
+            this.on_open_error(errno, js);
             return;
         }
 
         this.opened_fd = Fd::from_uv(result.to_fd());
-        this.queue_stat();
+        this.queue_stat(js);
     }
 
-    fn on_open_error(mut self: Box<Self>, errno: bun_sys::E) {
+    fn on_open_error(mut self: Box<Self>, errno: bun_sys::E, js: Js) {
         let path = self.file_store.pathlike.path();
         let err = crate::node::fs::error_for_caller(
             [Some(path), None],
             bun_sys::Error::from_code(errno, bun_sys::Tag::open).with_path(path.slice()),
         );
         self.system_error = Some(err.to_system_error().into());
-        self.on_finish();
+        self.on_finish(js);
     }
 
-    fn finalize(mut self: Box<Self>) {
+    fn finalize(mut self: Box<Self>, js: Js) {
         log!("ReadFileUV.finalize");
 
         let completion = self.completion.take().expect("a ReadFileUV completes once");
-        let vm = jsc::virtual_machine::VirtualMachine::get();
+        let vm = js.bun_vm();
         let _context = vm.enter_context(self.context);
         let _scope = vm.enter_event_loop_scope();
 
@@ -901,29 +903,29 @@ impl ReadFileUV {
         // The completion must run BEFORE the cleanup below (store deref /
         // box drop / keep-alive) — it may inspect store. A libuv callback returns void: an
         // exception the JS side left pending is reported here (a termination just stands down).
-        crate::dispatch::fold(completion.complete(result));
+        crate::dispatch::fold(js, completion.complete(result));
 
         drop(self);
         log!("ReadFileUV.finalize destroy");
     }
 
-    fn on_finish(self: Box<Self>) {
+    fn on_finish(self: Box<Self>, js: Js) {
         log!("ReadFileUV.onFinish");
         let fd = self.opened_fd;
         if self.file_store.pathlike.is_path() && fd != Fd::INVALID && fd.stdio_tag().is_none() {
             bun_io::Closer::close(fd, self.loop_);
         }
 
-        self.finalize();
+        self.finalize(js);
     }
 
-    fn on_error(mut self: Box<Self>, errno: bun_sys::E, syscall: bun_sys::Tag) {
+    fn on_error(mut self: Box<Self>, errno: bun_sys::E, syscall: bun_sys::Tag, js: Js) {
         let err = bun_sys::Error::from_code(errno, syscall);
         self.system_error = Some(err.to_system_error().into());
-        self.on_finish();
+        self.on_finish(js);
     }
 
-    fn queue_stat(mut self: Box<Self>) {
+    fn queue_stat(mut self: Box<Self>, js: Js) {
         log!("ReadFileUV.queueStat");
         self.req.deinit();
 
@@ -941,17 +943,18 @@ impl ReadFileUV {
         };
         if let Some(errno) = rc.errno() {
             // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.on_error(errno, bun_sys::Tag::fstat);
+            unsafe { bun_core::heap::take(this) }.on_error(errno, bun_sys::Tag::fstat, js);
         }
     }
 
     extern "C" fn on_file_initial_stat(req: *mut libuv::fs_t) {
         log!("ReadFileUV.onFileInitialStat");
-        // SAFETY: `req` is that of the box that `queue_stat` left to libuv.
-        let mut this = unsafe { Self::take_from_uv_fs(req) };
+        // SAFETY: `req` is that of the box that `queue_stat` left to libuv,
+        // which calls back from the VM's loop: a worker drains it before its VM goes.
+        let (mut this, js) = unsafe { (Self::take_from_uv_fs(req), Js::assume(&req)) };
 
         if let Some(errno) = this.req.result.errno() {
-            this.on_error(errno, bun_sys::Tag::fstat);
+            this.on_error(errno, bun_sys::Tag::fstat, js);
             return;
         }
 
@@ -978,7 +981,7 @@ impl ReadFileUV {
                 syscall: BunString::static_("read").into(),
                 ..Default::default()
             });
-            this.on_finish();
+            this.on_finish(js);
             return;
         }
         // `uv_stat_t::st_size` is `u64` (never negative); clamp to MAX_SIZE
@@ -1009,24 +1012,24 @@ impl ReadFileUV {
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
         if size == 0 && this.is_regular_file {
-            this.on_finish();
+            this.on_finish(js);
             return;
         }
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
         if size as usize > bun_sys::windows::ULONG::MAX as usize {
-            this.on_error(bun_sys::E::NOMEM, bun_sys::Tag::read);
+            this.on_error(bun_sys::E::NOMEM, bun_sys::Tag::read, js);
             return;
         }
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
         let want = ((size as usize).saturating_add(16)).min(bun_sys::windows::ULONG::MAX as usize);
         if this.buffer.try_reserve_exact(want).is_err() {
-            this.on_error(bun_sys::E::NOMEM, bun_sys::Tag::read);
+            this.on_error(bun_sys::E::NOMEM, bun_sys::Tag::read, js);
             return;
         }
 
         this.req.deinit();
 
-        this.queue_read();
+        this.queue_read(js);
     }
 
     fn remaining_buffer(&mut self) -> &mut [MaybeUninit<u8>] {
@@ -1039,7 +1042,7 @@ impl ReadFileUV {
         &mut spare[..take]
     }
 
-    fn queue_read(mut self: Box<Self>) {
+    fn queue_read(mut self: Box<Self>, js: Js) {
         // if not a regular file, buffer capacity is arbitrary, and running out doesn't mean we're
         // at the end of the file
         if !self.remaining_buffer().is_empty() || !self.is_regular_file {
@@ -1053,7 +1056,7 @@ impl ReadFileUV {
                 // theres at least 4096 bytes of free space. there has already
                 // been an initial allocation done for us
                 if self.buffer.try_reserve(4096).is_err() {
-                    self.on_error(bun_sys::E::NOMEM, bun_sys::Tag::read);
+                    self.on_error(bun_sys::E::NOMEM, bun_sys::Tag::read, js);
                     return;
                 }
             }
@@ -1088,30 +1091,31 @@ impl ReadFileUV {
             };
             if let Some(errno) = rc.errno() {
                 // SAFETY: libuv keeps nothing of a request that it refuses.
-                unsafe { bun_core::heap::take(this) }.on_error(errno, bun_sys::Tag::read);
+                unsafe { bun_core::heap::take(this) }.on_error(errno, bun_sys::Tag::read, js);
             }
         } else {
             log!("ReadFileUV.queueRead done");
 
             // We are done reading.
-            self.on_finish();
+            self.on_finish(js);
         }
     }
 
     extern "C" fn on_read(req: *mut libuv::fs_t) {
-        // SAFETY: `req` is that of the box that `queue_read` left to libuv.
-        let mut this = unsafe { Self::take_from_uv_fs(req) };
+        // SAFETY: `req` is that of the box that `queue_read` left to libuv,
+        // which calls back from the VM's loop: a worker drains it before its VM goes.
+        let (mut this, js) = unsafe { (Self::take_from_uv_fs(req), Js::assume(&req)) };
 
         let result = this.req.result;
 
         if let Some(errno) = result.errno() {
-            this.on_error(errno, bun_sys::Tag::read);
+            this.on_error(errno, bun_sys::Tag::read, js);
             return;
         }
 
         if result.int() == 0 {
             // We are done reading.
-            this.on_finish();
+            this.on_finish(js);
             return;
         }
 
@@ -1123,6 +1127,6 @@ impl ReadFileUV {
         };
 
         this.req.deinit();
-        this.queue_read();
+        this.queue_read(js);
     }
 }

@@ -310,7 +310,7 @@ impl DevServer {
             .set(EventLoopTimerState::FIRED);
         dev.emit_memory_visualizer_message();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
-        crate::jsc_hooks::timer_all().update(timer, &next);
+        crate::jsc_hooks::timer_all(dev.vm()).update(timer, &next);
     }
 
     pub(crate) fn emit_memory_visualizer_message(&mut self) {

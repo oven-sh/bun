@@ -533,6 +533,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "a refCounted class has no mutates",
   );
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
+  expect(() => b.fn({ capability: "heap", passVm: true })).toThrow("passVm: a capability has the VM");
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.

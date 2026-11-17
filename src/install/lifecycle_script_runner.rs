@@ -734,7 +734,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         debug_assert!(self.process.is_none(), "forgot to call `reset_polls`");
         let this = bun_core::heap::into_raw(self);
         // SAFETY: `this` is live until the process has reported, which only the last statement can
-        // cause. Only fields are borrowed across it. The readers are fields of `this`.
+        // cause. Only fields are borrowed across it. The readers are fields of `this`. Auto-install
+        // has no install phase: a command gets here from `main`, on its thread.
         unsafe {
             for kind in [Kind::Stdout, Kind::Stderr] {
                 let owner = Owner::with_kind(PollTag::LifecycleScript, kind, this.cast());
@@ -749,6 +750,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 .process
                 .insert(spawned.to_process_handle(event_loop))
                 .this_ptr();
+            let process = bun_core::Loop::assume(&this).on(process);
             process.set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
 
             if let Err(err) = Process::watch_or_reap(process) {

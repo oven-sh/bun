@@ -13,6 +13,7 @@ pub(crate) fn get_public_path_with_asset_prefix(
     asset_prefix: &[u8],
     out: &mut Vec<u8>,
     platform: bun_paths::Platform,
+    vm: Vm,
 ) {
     use bun_core::strings;
     use bun_paths::{Platform, resolve_path};
@@ -43,7 +44,7 @@ pub(crate) fn get_public_path_with_asset_prefix(
         let abs_path = if bun_paths::is_absolute(to) {
             to
         } else {
-            VirtualMachine::get().fs().abs(&[to])
+            vm.bun_vm().fs().abs(&[to])
         };
         out.reserve(origin.origin.len() + b"/abs:".len() + abs_path.len());
         out.extend_from_slice(origin.origin);
@@ -65,7 +66,7 @@ use std::io::Write as _;
 use bun_core::Output;
 use bun_jsc::{
     self as jsc, ArrayBuffer, ConsoleObject, ErrorCode, JSArray, JSFunction, JSGlobalObject,
-    JSObject, JSPromise, JSString, JSValue, JsResult,
+    JSObject, JSPromise, JSString, JSValue, JsResult, Vm,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
@@ -294,7 +295,7 @@ pub(crate) fn which<'a>(
         return Err(heap.error(format_args!("bin path is too long")));
     }
 
-    let vm = VirtualMachine::get();
+    let vm = heap.bun_vm();
     let path = options
         .path
         .unwrap_or_else(|| vm.env_loader().get(b"PATH").unwrap_or(b""));
@@ -523,7 +524,8 @@ pub(crate) fn register_macro<'a>(
     if callback.as_callable().is_none() {
         return Err(heap.error(format_args!("Macro must be a function")));
     }
-    let vm = VirtualMachine::get();
+    // SAFETY: `Strong::create` only allocates a handle.
+    let vm = unsafe { heap.global() }.bun_vm();
     let callback = jsc::Strong::create(callback.to_js(), vm.global());
     vm.macros.with_mut(|macros| macros.insert(id, callback));
 
@@ -535,7 +537,7 @@ fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    EncodedSlice::from_bytes(VirtualMachine::get().origin.origin).to_js(global_this)
+    EncodedSlice::from_bytes(global_this.bun_vm().origin.origin).to_js(global_this)
 }
 
 fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -653,7 +655,7 @@ pub(crate) fn open_in_editor<'a>(
     path: &'a [u8],
     options: &EditorOptions<'a>,
 ) -> bindgen::Result<'a, ()> {
-    let vm = VirtualMachine::get();
+    let vm = heap.bun_vm();
     let editor_name = options.editor.filter(|name| !name.is_empty());
 
     EDITOR_CONTEXT.with(|cell| {
@@ -1566,7 +1568,7 @@ pub(crate) mod environment_variables {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
-    let vm = jsc::virtual_machine::VirtualMachine::get();
+    let vm = global_object.bun_vm();
     let _ = vm.uncaught_exception(global_object, err, false);
 }
 

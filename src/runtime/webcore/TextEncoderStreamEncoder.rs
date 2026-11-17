@@ -286,6 +286,7 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     }
     // The sink copies what it needs.
     let handle = controller.sink_handle();
+    let handle = global.on(&handle);
     if handle.is_none() {
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
@@ -311,6 +312,7 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     }
     const REPLACEMENT: [u8; 3] = [0xef, 0xbf, 0xbd];
     let handle = controller.sink_handle();
+    let handle = global.on(&handle);
     if handle.is_none() {
         return JSValue::UNDEFINED;
     }

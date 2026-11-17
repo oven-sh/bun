@@ -297,24 +297,23 @@ pub(crate) fn spawn_sync(
 
 /// The terminal a spawn made for its child, closed unless the spawn gets far enough to `take` it: the user never
 /// received it then.
-#[derive(Default)]
-struct SpawnedTerminal<'a>(Option<jsc::WrapperGuard<'a, Terminal>>);
+struct SpawnedTerminal<'a>(Option<jsc::WrapperGuard<'a, Terminal>>, jsc::Js<'a>);
 
 impl Drop for SpawnedTerminal<'_> {
     fn drop(&mut self) {
         if let Some(terminal) = &self.0 {
-            terminal.abandon_from_spawn();
+            self.1.on(&**terminal).abandon_from_spawn();
         }
     }
 }
 
 /// Reports the exit of a child that could not be watched, once the rest of its `Subprocess` is set up. That runs
 /// `onExit`, so not with an exception pending.
-struct ReportUnwatchedExit(bun_ptr::BackRef<SubprocessT<'static>>);
+struct ReportUnwatchedExit<'a>(bun_ptr::BackRef<jsc::Js<'a, SubprocessT<'static>>>);
 
-impl Drop for ReportUnwatchedExit {
+impl Drop for ReportUnwatchedExit<'_> {
     fn drop(&mut self) {
-        let process = self.0.process.this_ptr();
+        let process = self.0.as_loop().on(self.0.process.this_ptr());
         if let Some(status) = process.status() {
             // process has already exited, we called wait4(), but we did not call onProcessExit()
             Process::on_exit(process, status.clone(), &bun_core::ffi::zeroed::<Rusage>());
@@ -328,11 +327,11 @@ impl Drop for ReportUnwatchedExit {
 }
 
 /// Stands in for the JS wrapper, which a sync `Subprocess` does not get.
-struct SyncWrapper(bun_ptr::RefPtr<SubprocessT<'static>>);
+struct SyncWrapper<'a>(bun_ptr::RefPtr<SubprocessT<'static>>, jsc::Js<'a>);
 
-impl Drop for SyncWrapper {
+impl Drop for SyncWrapper<'_> {
     fn drop(&mut self) {
-        self.0.finalize();
+        self.1.on(&*self.0).finalize();
     }
 }
 
@@ -396,7 +395,7 @@ fn spawn_maybe_sync(
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
-    let mut terminal_info = SpawnedTerminal::default();
+    let mut terminal_info = SpawnedTerminal(None, cx.js());
     let terminal_slot;
     let mut existing_terminal = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
@@ -1196,7 +1195,7 @@ fn spawn_maybe_sync(
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
     // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
-    let subprocess = unsafe { &*subprocess_ptr };
+    let subprocess = cx.on(unsafe { &*subprocess_ptr });
     #[cfg(windows)]
     SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
     let subprocess_nn = subprocess_ref.as_non_null();
@@ -1220,6 +1219,7 @@ fn spawn_maybe_sync(
                 ipc_mode,
                 subprocess_ipc_owner(subprocess_ptr),
                 IPC::SocketUnion::Uninitialized,
+                jsc_vm.as_vm(),
             )));
         }
     }
@@ -1235,7 +1235,7 @@ fn spawn_maybe_sync(
     match unsafe {
         Writable::init(
             stdin,
-            event_loop,
+            cx.on(event_loop),
             &subprocess_ref,
             spawned_stdin,
             &mut promise_for_stream,
@@ -1260,7 +1260,7 @@ fn spawn_maybe_sync(
             subprocess.process().detach();
             if let Some(ipc_data) = subprocess.ipc_data.take() {
                 // Nothing else holds it yet (no socket wired, no task scheduled).
-                ipc_data.detach();
+                cx.on(&*ipc_data).detach();
             }
             return Err(err);
         }
@@ -1340,6 +1340,7 @@ fn spawn_maybe_sync(
                     mode,
                     subprocess_ipc_owner(subprocess_ptr),
                     IPC::SocketUnion::Uninitialized,
+                    jsc_vm.as_vm(),
                 )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }
@@ -1347,7 +1348,7 @@ fn spawn_maybe_sync(
     }
 
     let (out, _sync_wrapper) = if is_sync {
-        (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
+        (JSValue::ZERO, Some(SyncWrapper(subprocess_ref, cx.js())))
     } else {
         let out = Subprocess::js::to_js(subprocess_ref, cx.global());
         subprocess.this_value.with_mut(|v| v.set_weak(out));
@@ -1385,9 +1386,9 @@ fn spawn_maybe_sync(
             // for the pipe's lifetime, so it must be the allocation root
             // (write provenance), never one re-derived from `&SendQueue`.
             // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
-            if let Err(err) =
-                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
-            {
+            if let Err(err) = unsafe {
+                IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe, cx.js())
+            } {
                 return Err(cx.global().throw_value(err.to_js(cx.global())));
             }
         }
@@ -1460,8 +1461,8 @@ fn spawn_maybe_sync(
         }
     }
 
-    let report_exit =
-        send_exit_notification.then(|| ReportUnwatchedExit(bun_ptr::BackRef::from(subprocess_nn)));
+    let report_exit = send_exit_notification
+        .then(|| ReportUnwatchedExit(cx.on(bun_ptr::BackRef::from(subprocess_nn))));
 
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, on_process_exit drains started readers.
@@ -1520,7 +1521,7 @@ fn spawn_maybe_sync(
         unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
     }
 
-    let Some(sync_loop) = &sync_loop else {
+    let Some(sync_loop) = cx.on(sync_loop.as_ref()) else {
         if !subprocess.has_exited() {
             jsc_vm.on_subprocess_spawn(&subprocess.process);
             if let Some(context) = jsc_vm.as_graph_context(cx.context()) {
@@ -1531,7 +1532,7 @@ fn spawn_maybe_sync(
         return Ok(out);
     };
 
-    let process = subprocess.process.this_ptr();
+    let process = cx.js().as_loop().on(subprocess.process.this_ptr());
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
         jsc_vm
             .counters

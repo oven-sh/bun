@@ -1,6 +1,6 @@
 use bun_core::Utf8Bytes;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{JSPromise, JSStringView, JSValue, JsResult};
+use bun_jsc::{JSPromise, JSStringView, JSValue, JsResult, Vm};
 use bun_sys_jsc::ErrorJsc as _;
 
 use super::matcher::{Matcher, NO_PARAMS, Params, This, Verdict, fail, params};
@@ -144,7 +144,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_match_file_snapshot(
-        &self,
+        self: &Vm<Self>,
         this: This<'_>,
         cx: &mut JsScope<'_>,
         path: JsLocal<'_>,

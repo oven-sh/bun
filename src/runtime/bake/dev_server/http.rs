@@ -146,7 +146,10 @@ pub(super) fn origin_forbidden(resp: AnyResponse) {
 
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
-pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
+///
+/// # Safety
+/// uWS calls it for a route that `set_routes` registered.
+pub(super) unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     res: *mut bun_uws_sys::uws_res,
     req: *mut bun_uws_sys::Request,
     ud: *mut c_void,
@@ -155,7 +158,8 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
     // the routes before it drops it. uWS passes a non-null `Request*` that is valid
     // for the callback and that nothing else uses meanwhile. Every handler below takes
     // `&mut DevServer`, so this asks for no more exclusivity than they do.
-    let (dev, req) = unsafe { (&mut *ud.cast::<DevServer>(), &mut *req) };
+    // It calls from the loop of the server's VM.
+    let (dev, req, js) = unsafe { (&mut *ud.cast::<DevServer>(), &mut *req, Js::assume(&ud)) };
     let resp = if SSL {
         AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
     } else {
@@ -170,7 +174,7 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
         return origin_forbidden(resp);
     }
     match ID {
-        DevHandlerId::JsRequest => on_js_request(dev, req, resp),
+        DevHandlerId::JsRequest => on_js_request(dev, req, resp, js),
         DevHandlerId::AssetRequest => on_asset_request(dev, req, resp),
         DevHandlerId::SrcRequest => on_src_request(dev, req, resp),
         DevHandlerId::ReportError => on_report_error_request(dev, req, resp),
@@ -179,7 +183,7 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
         DevHandlerId::Request => {
             // The catch-all route can reach a framework request handler; this
             // trampoline folds what bundling for it left pending.
-            crate::dispatch::fold(on_request(dev, req, resp));
+            crate::dispatch::fold(js, on_request(dev, req, resp, js));
         }
     }
 }
@@ -253,7 +257,7 @@ pub(super) fn on_outdated_js_corked(resp: AnyResponse) {
     );
 }
 
-fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse, js: Js) {
     let route_id = req.parameter(0);
     let is_map = strings::has_suffix_comptime(route_id, b".js.map");
     if !is_map && !strings::has_suffix_comptime(route_id, b".js") {
@@ -287,7 +291,8 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
                 ..Default::default()
             },
         );
-        StaticRoute::on_request(response.this_ptr(), bun_uws::AnyRequest::H1(req), resp);
+        let route = js.on(response.this_ptr());
+        StaticRoute::on_request(route, bun_uws::AnyRequest::H1(req), resp);
         return;
     }
 
@@ -342,7 +347,12 @@ fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     resp.end(b"TODO", false);
 }
 
-fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> JsResult<()> {
+fn on_request(
+    dev: &mut DevServer,
+    req: &mut Request,
+    mut resp: AnyResponse,
+    js: Js,
+) -> JsResult<()> {
     let mut params: router::MatchedParams = Default::default();
     let pathname = extract_pathname_from_url(req.url());
     if let Some(route_index) = dev.router.match_slow(pathname, &mut params) {
@@ -354,6 +364,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
             resp,
             kind: deferred_request::HandlerKind::ServerHandler,
             route_bundle_index,
+            js,
         };
         let rbi = ctx.route_bundle_index;
         return match ensure_route_is_bundled(dev, rbi, &mut ctx) {
@@ -370,8 +381,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
         .on_request
         .is_empty()
     {
-        dev.server
-            .as_mut()
+        js.on(dev.server.as_ref())
             .expect("infallible: server bound")
             .on_request(req, resp);
         return Ok(());
@@ -394,7 +404,7 @@ struct UnrefSourceMapRequest {
 }
 
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
-    fn on_body(&self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
+    fn on_body(&self, body: &[u8], resp: AnyResponse, _: Loop) -> bun_uws_sys::Result<()> {
         self.run_with_body(body, resp).map_err(Into::into)
     }
 }

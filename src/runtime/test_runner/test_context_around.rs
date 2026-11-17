@@ -323,6 +323,7 @@ pub(crate) fn run(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSV
         generated::Bun__AroundHook__tearDown,
     )?;
     let async_context = capture_async_context(global);
+    let buntest = global.on(&**buntest);
     match this.around {
         Around::Each => {
             if let Some(context) = sequence.context.get() {

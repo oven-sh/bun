@@ -2,6 +2,7 @@
 
 use bstr::BStr;
 use bun_collections::VecExt;
+use bun_core::Loop;
 use bun_jsc::PinnedArrayBuffer;
 use bun_ptr::BackRef;
 use core::fmt;
@@ -75,7 +76,7 @@ macro_rules! shell_builtins {
         }
 
         impl Builtin {
-            pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+            pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
                 match Self::of(interp, cmd).kind { $( Kind::$kind => $start(interp, cmd), )* }
             }
         }
@@ -230,7 +231,7 @@ pub(crate) enum Sink<'a> {
 
 /// A write can complete, and free the builtin, before it returns: set the state first.
 pub(crate) struct FdSink<'a> {
-    writer: &'a IOWriter,
+    writer: &'a Loop<'a, IOWriter>,
     captured: Option<*mut Vec<u8>>,
     child: io_writer::ChildPtr,
 }
@@ -322,7 +323,7 @@ impl Builtin {
     /// `None` (meaning: caller should now call `Builtin::start`). A
     /// `Some(yield)` return means setup wrote a failing error (or threw) and
     /// the caller should propagate that yield instead.
-    pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    pub(crate) fn init(interp: &Loop<Interpreter>, cmd: NodeId, kind: Kind) -> Option<Yield> {
         let me = interp.as_cmd(cmd);
         let args = me.args.iter().skip(1);
         let args = args.map(|arg| BackRef::new(bun_core::ffi::slice_to_nul(arg)));
@@ -343,7 +344,7 @@ impl Builtin {
 
     /// Opens redirect files / wires ArrayBuffer & Blob targets / handles
     /// `2>&1` (`duplicate_out`).
-    fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    fn init_redirections(interp: &Loop<Interpreter>, cmd: NodeId, kind: Kind) -> Option<Yield> {
         // `node` points into the AST arena which outlives every state node (see Cmd::next).
         let node: &ast::Cmd = &*interp.as_cmd(cmd).node;
         let redirect = node.redirect;
@@ -532,7 +533,7 @@ impl Builtin {
                         ));
                         return Some(Yield::Failed(cmd));
                     }
-                    let original_blob = body.use_();
+                    let original_blob = body.use_(global.js());
                     if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
                         drop(original_blob);
                         return None;
@@ -600,7 +601,7 @@ impl Builtin {
     /// because `init_redirections` and `Cmd::transition_to_exec` (the
     /// "command not found" / spawn-error paths) are the only callers.
     pub(crate) fn cmd_write_failing_error(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         cmd: NodeId,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
@@ -611,7 +612,7 @@ impl Builtin {
         if let OutKind::Fd(fd) = &me.io.stderr {
             me.state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
-            return fd.writer.enqueue(child, fd.captured, &buf);
+            return interp.on(&*fd.writer).enqueue(child, fd.captured, &buf);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
@@ -663,7 +664,7 @@ impl Builtin {
         Self::shell(interp, cmd).cwd_fd.fd()
     }
 
-    pub(crate) fn sink(interp: &Interpreter, cmd: NodeId, to: IoKind) -> Sink<'_> {
+    pub(crate) fn sink<'a>(interp: &'a Loop<Interpreter>, cmd: NodeId, to: IoKind) -> Sink<'a> {
         let me = Self::of_mut(interp, cmd);
         let out = match to {
             IoKind::Stdout => &mut me.stdout,
@@ -672,7 +673,7 @@ impl Builtin {
         Sink::Memory(MemorySink(match out {
             BuiltinIO::Fd(fd) => {
                 return Sink::Fd(FdSink {
-                    writer: &fd.writer,
+                    writer: interp.on(&*fd.writer),
                     captured: fd.captured,
                     child: io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin),
                 });
@@ -691,7 +692,7 @@ impl Builtin {
 
     /// The last write. It drops the state, which must not own `buf` or what a task still uses.
     pub(crate) fn finish(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         cmd: NodeId,
         to: IoKind,
         buf: &[u8],
@@ -708,16 +709,16 @@ impl Builtin {
     }
 
     /// [`Self::finish`] with `"{kind}: {args}"` on stderr and exit code 1.
-    pub(crate) fn fail(interp: &Interpreter, cmd: NodeId, args: fmt::Arguments<'_>) -> Yield {
+    pub(crate) fn fail(interp: &Loop<Interpreter>, cmd: NodeId, args: fmt::Arguments<'_>) -> Yield {
         let message = Self::of(interp, cmd).kind.message(args);
         Self::finish(interp, cmd, IoKind::Stderr, &message, 1)
     }
 
-    pub(crate) fn fail_usage(interp: &Interpreter, cmd: NodeId, usage: &[u8]) -> Yield {
+    pub(crate) fn fail_usage(interp: &Loop<Interpreter>, cmd: NodeId, usage: &[u8]) -> Yield {
         Self::finish(interp, cmd, IoKind::Stderr, usage, 1)
     }
 
-    pub(crate) fn fail_flag(interp: &Interpreter, cmd: NodeId, flag: BadFlag<'_>) -> Yield {
+    pub(crate) fn fail_flag(interp: &Loop<Interpreter>, cmd: NodeId, flag: BadFlag<'_>) -> Yield {
         let (problem, flag) = match flag {
             BadFlag::Illegal(flag) => ("illegal option", flag),
             BadFlag::Unsupported(flag) => ("unsupported option, please open a GitHub issue", flag),
@@ -727,7 +728,7 @@ impl Builtin {
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {

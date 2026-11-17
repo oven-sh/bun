@@ -9,12 +9,11 @@
 //! once; after it fires the caller must not touch `resp` body methods again.
 
 use core::cell::Cell;
-use core::ffi::c_void;
 
 use bun_io::Closer;
 use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, FileType, IoEvent, Owner, PollTag, ReadResult, ReadState};
-use bun_jsc::JsCell;
+use bun_jsc::{Js, JsCell};
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, File};
 use bun_uws::{AnyResponse, WriteResult};
@@ -123,10 +122,10 @@ impl Drop for StreamFd {
     }
 }
 
-pub(crate) struct StartOptions {
+pub(crate) struct StartOptions<'a> {
     pub fd: StreamFd,
     pub resp: AnyResponse,
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
+    pub vm: &'a Js<'a, VirtualMachine>,
     pub file_type: FileType,
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
@@ -145,12 +144,12 @@ pub(crate) enum StreamOwner {
     FileRoute(PendingRequest<RefPtr<FileRoute>>),
     DirectoryRoute(PendingRequest<RefPtr<DirectoryRoute>>),
     Ctx {
-        ctx: *mut c_void,
-        on_complete: fn(*mut c_void, AnyResponse),
+        ctx: *mut Js<'static>,
+        on_complete: fn(*mut Js, AnyResponse),
         /// Fires instead of `on_complete` when the client disconnects
         /// mid-stream. If `None`, abort is reported via `on_complete`.
-        on_abort: Option<fn(*mut c_void, AnyResponse)>,
-        on_error: fn(*mut c_void, AnyResponse, sys::Error),
+        on_abort: Option<fn(*mut Js, AnyResponse)>,
+        on_error: fn(*mut Js, AnyResponse, sys::Error),
     },
 }
 
@@ -161,7 +160,7 @@ enum StreamEnd {
 }
 
 impl StreamOwner {
-    fn deliver(self, resp: AnyResponse, end: StreamEnd) {
+    fn deliver(self, resp: AnyResponse, end: StreamEnd, _: Js) {
         match self {
             StreamOwner::FileRoute(route) => drop(route),
             StreamOwner::DirectoryRoute(route) => drop(route),
@@ -204,20 +203,20 @@ impl FileResponseStream {
         });
         owned.self_ref.set(Some(owned.clone()));
         let this = owned.as_ptr();
-        let this_ref: &Self = &owned;
+        let this_ref = opts.vm.on(&*owned);
 
         let resp = this_ref.resp.get();
         resp.timeout(opts.idle_timeout);
         resp.on_aborted(
-            |p: *mut FileResponseStream, r| {
+            |p: *mut Js<Self>, r| {
                 // SAFETY: uWS hands back the userdata pointer set below; the
                 // guard keeps `*p` alive across the handler.
                 unsafe {
-                    let _guard = RefPtr::init_ref(p);
+                    let _guard = RefPtr::init_ref(p.cast::<Self>());
                     (*p).on_aborted(r);
                 }
             },
-            this,
+            this.cast::<Js<Self>>(),
         );
 
         bun_output::scoped_log!(
@@ -274,21 +273,21 @@ impl FileResponseStream {
         this_ref.read(None);
     }
 
-    fn arm_on_writable(&self) {
+    fn arm_on_writable(self: &Js<Self>) {
         // Not a pointer made from `self`: the callback's guard may free through it.
         let Some(this) = self.self_ref.get() else {
             return;
         };
         self.resp.get().on_writable(
-            |p: *mut FileResponseStream, off, r| {
+            |p: *mut Js<Self>, off, r| {
                 // SAFETY: uWS hands back the userdata pointer set below; the
                 // guard keeps `*p` alive across the handler.
                 unsafe {
-                    let _guard = RefPtr::init_ref(p);
+                    let _guard = RefPtr::init_ref(p.cast::<Self>());
                     (*p).on_writable(off, r)
                 }
             },
-            this.as_ptr(),
+            this.as_ptr().cast::<Js<Self>>(),
         );
     }
 
@@ -297,15 +296,15 @@ impl FileResponseStream {
         self.state.set(self.state.get() | flags);
     }
 
-    fn deliver(&self, resp: AnyResponse, end: StreamEnd) {
+    fn deliver(self: &Js<Self>, resp: AnyResponse, end: StreamEnd) {
         if let Some(owner) = self.owner.take() {
-            owner.deliver(resp, end);
+            owner.deliver(resp, end, self.js());
         }
     }
 
     // ───────────────────────── reader backend ─────────────────────────
 
-    pub(crate) fn read(&self, event: Option<IoEvent>) {
+    pub(crate) fn read(self: &Js<Self>, event: Option<IoEvent>) {
         let result = self
             .reader
             .read_chunks(self.event_loop, event, |chunk, state| {
@@ -314,7 +313,7 @@ impl FileResponseStream {
         self.on_read_result(result);
     }
 
-    fn on_read_chunk(&self, chunk: &[u8], state: ReadState) -> bool {
+    fn on_read_chunk(self: &Js<Self>, chunk: &[u8], state: ReadState) -> bool {
         if self.state.get().contains(State::RESPONSE_DONE) {
             return false;
         }
@@ -343,7 +342,7 @@ impl FileResponseStream {
         }
     }
 
-    fn on_read_result(&self, result: ReadResult) {
+    fn on_read_result(self: &Js<Self>, result: ReadResult) {
         match result {
             ReadResult::Pending => return,
             ReadResult::Done => self.finish(),
@@ -360,7 +359,7 @@ impl FileResponseStream {
         }
     }
 
-    fn on_writable(&self, _: u64, _: AnyResponse) -> bool {
+    fn on_writable(self: &Js<Self>, _: u64, _: AnyResponse) -> bool {
         bun_output::scoped_log!(FileResponseStream, "onWritable");
 
         if self.mode.get() == Mode::Sendfile {
@@ -382,7 +381,7 @@ impl FileResponseStream {
 
     // ───────────────────────── sendfile backend ─────────────────────────
 
-    fn on_sendfile(&self) -> bool {
+    fn on_sendfile(self: &Js<Self>) -> bool {
         bun_output::scoped_log!(
             FileResponseStream,
             "onSendfile remain={} offset={}",
@@ -455,7 +454,7 @@ impl FileResponseStream {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn arm_sendfile_writable(&self) -> bool {
+    fn arm_sendfile_writable(self: &Js<Self>) -> bool {
         bun_output::scoped_log!(FileResponseStream, "armSendfileWritable");
         if !self.sendfile.get().has_set_on_writable {
             self.sendfile.with_mut(|sf| sf.has_set_on_writable = true);
@@ -466,7 +465,7 @@ impl FileResponseStream {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn end_sendfile(&self) {
+    fn end_sendfile(self: &Js<Self>) {
         bun_output::scoped_log!(FileResponseStream, "endSendfile");
         if self.state.get().contains(State::RESPONSE_DONE) {
             return;
@@ -499,7 +498,7 @@ impl FileResponseStream {
 
     // ───────────────────────── lifecycle ─────────────────────────
 
-    fn on_aborted(&self, _: AnyResponse) {
+    fn on_aborted(self: &Js<Self>, _: AnyResponse) {
         bun_output::scoped_log!(FileResponseStream, "onAborted");
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE);
@@ -512,7 +511,7 @@ impl FileResponseStream {
         self.finish();
     }
 
-    fn fail_with(&self, err: sys::Error) {
+    fn fail_with(self: &Js<Self>, err: sys::Error) {
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE | State::ERRORED);
             self.detach_resp();
@@ -535,7 +534,7 @@ impl FileResponseStream {
         resp.clear_timeout();
     }
 
-    fn finish(&self) {
+    fn finish(self: &Js<Self>) {
         bun_output::scoped_log!(
             FileResponseStream,
             "finish (already={})",

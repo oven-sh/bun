@@ -2838,6 +2838,8 @@ export interface SignatureOptions extends SignatureColumns, EntryColumns {
   args?: Record<string, Type>;
   returns?: Type;
   capability?: Capability;
+  /** Without a `capability`: also pass `vm: Vm`, after the arguments. */
+  passVm?: boolean;
   /** The body returns `Result<T, E>` for any `E: bindgen::IntoError`. */
   throws?: boolean;
   /** The function returns a promise: what the body or the conversion of an argument throws rejects one, and nothing is thrown. */
@@ -2894,6 +2896,7 @@ export class Signature {
   readonly replacesBoundFunction: boolean;
   readonly returns: Type;
   readonly capability: Capability;
+  readonly passVm: boolean;
   readonly throws: boolean;
   readonly rejects: boolean;
   readonly requiredArguments: number;
@@ -2908,6 +2911,7 @@ export class Signature {
       "args",
       "returns",
       "capability",
+      "passVm",
       "throws",
       "rejects",
       "requiredArguments",
@@ -2970,6 +2974,8 @@ export class Signature {
     );
     this.returns = options.returns ?? new UnitType("undefined");
     this.capability = options.capability ?? "none";
+    this.passVm = options.passVm ?? false;
+    assert(!this.passVm || this.capability === "none", "passVm: a capability has the VM");
     this.throws = options.throws ?? false;
     this.rustPath = options.rustPath;
     this.cppSymbol = options.cppSymbol;

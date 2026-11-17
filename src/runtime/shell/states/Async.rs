@@ -8,6 +8,7 @@ use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::r#if::If;
 use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 pub(crate) struct Async {
     pub(crate) base: Base,
@@ -60,7 +61,7 @@ impl Async {
         id
     }
 
-    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         log!("Async {} start", this);
         Self::enqueue_self(interp, this);
         let parent = interp.as_async(this).base.parent;
@@ -69,7 +70,7 @@ impl Async {
         interp.child_done(parent, this, 0)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         log!(
             "Async {} next {}",
             this,
@@ -169,7 +170,7 @@ impl Async {
         }
     }
 
-    pub(crate) fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn run_from_main_thread(interp: &Loop<Interpreter>, this: NodeId) {
         Self::next(interp, this).run(interp);
     }
 }
@@ -197,11 +198,12 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
 fn run_from_main_thread_mini(
     task: *mut crate::shell::dispatch_tasks::ShellAsyncTask,
     _: *mut core::ffi::c_void,
+    loop_: Loop,
 ) {
     // SAFETY: `task` is owned by the Async node, which is freed at the tail of
     // this bounce chain, and `interp` outlives every node.
     unsafe {
-        let interp = &*(*task).interp;
+        let interp = loop_.on(&*(*task).interp);
         let node = (*task).node.get();
         Async::run_from_main_thread(interp, node);
     }

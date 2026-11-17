@@ -1,6 +1,7 @@
 use crate::shell::builtin::{Builtin, IoKind, Sink, State};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
@@ -10,7 +11,7 @@ pub(crate) struct Yes {
     task: YesTask,
 }
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     let mut line = Vec::new();
     for arg in Builtin::of(interp, cmd).args() {
         line.extend_from_slice(arg);
@@ -37,7 +38,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
 
 impl Yes {
     /// Four chunks to memory, then the event loop gets a turn.
-    pub(crate) fn write(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn write(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
         let State::Yes(yes) = &mut Builtin::of_mut(interp, cmd).state else {
             return Yield::suspended();
         };
@@ -112,14 +113,14 @@ impl YesTask {
 
     /// # Safety
     /// `this` was passed to [`enqueue`](Self::enqueue). The call can free it.
-    pub(crate) unsafe fn run_from_main_thread(this: *mut Self) {
+    pub(crate) unsafe fn run_from_main_thread(this: *mut Self, loop_: Loop) {
         // SAFETY: caller contract; `interp` was set in `start` and outlives the task.
-        let (interp, cmd) = unsafe { (&*(*this).interp, (*this).cmd) };
+        let (interp, cmd) = unsafe { (loop_.on(&*(*this).interp), (*this).cmd) };
         Yes::write(interp, cmd).run(interp);
     }
 
-    fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
+    fn run_from_main_thread_mini(this: *mut Self, _: *mut (), loop_: Loop) {
         // SAFETY: the callback `enqueue` installed.
-        unsafe { Self::run_from_main_thread(this) }
+        unsafe { Self::run_from_main_thread(this, loop_) }
     }
 }

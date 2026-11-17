@@ -89,8 +89,7 @@ mod posix {
     use bun_io::posix_event_loop::FlagsSet;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     use bun_io::posix_event_loop::{Flags, Owner, PollTag};
-    use bun_jsc::JSGlobalObject;
-    use bun_jsc::virtual_machine::VirtualMachine;
+    use bun_jsc::{JSGlobalObject, Vm};
 
     use super::slot;
 
@@ -221,7 +220,7 @@ mod posix {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
         {
             let owner = Owner::new(PollTag::MemoryPressure, core::ptr::null_mut());
-            // SAFETY: this tag has no pointee.
+            // SAFETY: this tag has no pointee, and the loop is that of the VM.
             let poll = unsafe { OwnedFilePoll::new(global.bun_vm().loop_ctx(), fd, owner) };
             poll.register(Flags::MemoryPressure, false).ok()?;
             Some(MemoryPressureWatcher {
@@ -256,8 +255,8 @@ mod posix {
 
     /// `__bun_run_io` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
-    pub(crate) fn on_poll(flags: FlagsSet, fflags: i64) {
-        let vm = VirtualMachine::get();
+    pub(crate) fn on_poll(flags: FlagsSet, fflags: i64, vm: Vm) {
+        let vm = vm.bun_vm();
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
         // the cgroup was removed). kernfs reports that permanently, so tear

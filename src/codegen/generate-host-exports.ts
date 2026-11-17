@@ -28,6 +28,9 @@
 //   generic      (T0, T1, …) -> R   where Tn ∈ {&X, &mut X, *T, scalar}
 //                  → unsafe extern "C" fn(<ptr-ified Tn>) -> R { path::name(<deref>) }
 //
+// The marker vouches for `Js` and `Vm` on behalf of every C++ caller. By value they
+// are not in the C signature: the thunk assumes them.
+//
 // Anything that doesn't fit `generic` (lifetimes, generics, `impl Trait`)
 // errors at codegen time with the offending file:line.
 //
@@ -106,6 +109,8 @@ interface Param {
   callExpr: string;
   /** `&[T]` param: the C signature carries a trailing `name_len: usize` */
   extraLen?: boolean;
+  /** made by the thunk, absent from the C signature */
+  isProof?: boolean;
 }
 
 interface Export {
@@ -126,8 +131,16 @@ const markerRe = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(
 // a small balanced-paren scanner because params routinely span lines.
 const fnHeadRe = /^\s*pub(?:\([^)]*\))?\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
-function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean } {
+function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean; isProof?: boolean } {
   ty = ty.trim();
+  if (/^(?:\w+::)*(Js|Vm)(?:<'_>)?$/.test(ty)) {
+    return {
+      cTy: ty,
+      isProof: true,
+      deref: () =>
+        `{\n        // SAFETY: C++ calls this only where it holds.\n        unsafe { ::bun_jsc::${/Js|Vm/.exec(ty)}::assume(&()) }\n    }`,
+    };
+  }
   // `&[T]` — C passes `(const T* name, size_t name_len)`; the thunk rebuilds
   // the slice (null/0 → empty).
   const slice = /^&\s*\[\s*([^;]+?)\s*\]$/.exec(ty);
@@ -193,8 +206,8 @@ function parseParams(list: string, where: string): Param[] {
       // and intentionally documentary — keep it.
       if (name === "_") name = `_a${i}`;
       const ty = raw.slice(colon + 1).trim();
-      const { cTy, deref, extraLen } = ptrify(ty);
-      return { raw, name, ty, cTy, callExpr: deref(name), extraLen };
+      const { cTy, deref, extraLen, isProof } = ptrify(ty);
+      return { raw, name, ty, cTy, callExpr: deref(name), extraLen, isProof };
     });
 }
 
@@ -360,11 +373,11 @@ const externTotal = Object.values(externBlocks).reduce((a, b) => a + b, 0);
 /// elsewhere) — same expansion as `#[bun_jsc::host_call]` /
 /// `bun_jsc::jsc_host_abi!`. Rust forbids macros in ABI position, so we emit
 /// both arms verbatim; the inactive one is compiled out.
-function emitNoMangle(abi: Export["abi"], symbol: string, sig: string, ret: string, body: string): string {
+function emitNoMangle(abi: Export["abi"], symbol: string, sig: string, ret: string, body: string, safety = ""): string {
   const item = (abiStr: string, cfg: string) =>
     `${cfg}#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
+pub ${safety}extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
 ${body}
 }`;
   if (abi === "jsc") {
@@ -433,7 +446,9 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
           throw new Error(
             `${loc}: slice param \`${p.name}\` needs a synthesized \`${p.name}_len\`, which collides with an existing param`,
           );
+      const makesProof = e.params.some(p => p.isProof || /^\*mut (?:\w+::)*(?:Js|Vm|Loop)</.test(p.cTy));
       const sig = e.params
+        .filter(p => !p.isProof)
         .map(p => (p.extraLen ? `${p.name}: ${p.cTy}, ${p.name}_len: usize` : `${p.name}: ${p.cTy}`))
         .join(", ");
       // Bind each ref-deref once so the call site is clean (and so a
@@ -459,7 +474,7 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
       const body = retIsJsResult && globalParam ? `host_fn::to_js_host_call(${globalParam.name}, || ${inner})` : inner;
       return `
 // ${loc}
-${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`)}`;
+${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`, makesProof ? "unsafe " : "")}`;
     }
   }
 }
@@ -496,6 +511,8 @@ const importCandidates: Array<[string, string]> = [
   ["bun_jsc", "JSObject"],
   ["bun_jsc", "JSPromise"],
   ["bun_jsc", "ZigStackFrame"],
+  ["bun_jsc", "Js"],
+  ["bun_jsc", "Vm"],
   ["bun_jsc::virtual_machine", "VirtualMachine"],
   ["crate::bake::dev_server::inspector_agent", "InspectorBunFrontendDevServerAgentHandle"],
   ["bun_jsc::debugger", "LifecycleHandle"],

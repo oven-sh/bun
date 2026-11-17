@@ -7,7 +7,7 @@ use bun_ptr::{BackRef, OptionCellExt as _};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
-    JSPromise, JSPromiseStrong, JSType, JSValue, JsResult, SysErrorJsc, VirtualMachine,
+    JSPromise, JSPromiseStrong, JSType, JSValue, Js, JsResult, SysErrorJsc, Vm,
 };
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
@@ -333,7 +333,7 @@ impl Writable {
             Writable::Done => promise.resolve(cx.global(), JSValue::FALSE),
             other => promise.resolve(cx.global(), other.to_js(cx)),
         };
-        crate::dispatch::fold(settled);
+        crate::dispatch::fold(cx.js(), settled);
     }
 
     pub fn to_js(self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
@@ -402,9 +402,9 @@ impl Pending {
         }
     }
 
-    pub(crate) fn close_on_next_tick(&self) {
+    pub(crate) fn close_on_next_tick(self: &Vm<Self>) {
         if let Some(read) = self.0.take() {
-            VirtualMachine::get()
+            self.bun_vm()
                 .event_loop()
                 .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(read)));
         }
@@ -491,7 +491,7 @@ impl StreamResult<'_> {
                 Err(err) => promise.reject(cx.global(), Err(err)),
             },
         };
-        crate::dispatch::fold(settled);
+        crate::dispatch::fold(cx.js(), settled);
     }
 
     pub fn to_js(self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
@@ -614,33 +614,33 @@ impl PipeCell {
 /// Static-dispatch signal set for a [`SourceHandle`] pointee. The match arms
 /// dispatch via [`BackRef`] deref and call these; defaults are no-ops so
 /// implementors override only the signals they actually handle.
-trait UpstreamSource {
+trait UpstreamSource: Sized {
     #[inline]
-    fn on_ready(&self) {}
+    fn on_ready(self: &Js<Self>) {}
     #[inline]
-    fn on_close(&self, _err: Option<SysError>) {}
+    fn on_close(self: &Js<Self>, _err: Option<SysError>) {}
     #[inline]
-    fn on_start(&self) {}
+    fn on_start(self: &Vm<Self>) {}
 }
 
 impl UpstreamSource for crate::webcore::ByteStream {
     #[inline]
-    fn on_ready(&self) {
+    fn on_ready(self: &Js<Self>) {
         self.resume();
     }
     #[inline]
-    fn on_close(&self, err: Option<SysError>) {
+    fn on_close(self: &Js<Self>, err: Option<SysError>) {
         self.cancel_from_sink(err);
     }
 }
 
 impl UpstreamSource for crate::webcore::FileReader {
     #[inline]
-    fn on_ready(&self) {
+    fn on_ready(self: &Js<Self>) {
         self.pull_into_sink();
     }
     #[inline]
-    fn on_close(&self, _err: Option<SysError>) {
+    fn on_close(self: &Js<Self>, _err: Option<SysError>) {
         self.unpipe_without_deref();
         self.on_cancel();
     }
@@ -648,29 +648,29 @@ impl UpstreamSource for crate::webcore::FileReader {
 
 impl UpstreamSource for crate::api::bun::subprocess::Subprocess<'static> {
     #[inline]
-    fn on_close(&self, err: Option<SysError>) {
+    fn on_close(self: &Js<Self>, err: Option<SysError>) {
         crate::api::bun::subprocess::Writable::on_close(self, err);
     }
 }
 
 impl UpstreamSource for crate::webcore::fetch::fetch_tasklet::FetchTasklet {
     #[inline]
-    fn on_ready(&self) {
+    fn on_ready(self: &Js<Self>) {
         self.on_stream_drained();
     }
     #[inline]
-    fn on_start(&self) {
+    fn on_start(self: &Vm<Self>) {
         self.on_consumer_attached();
     }
 }
 
 impl UpstreamSource for crate::api::html_rewriter::RewriterPipe {
     #[inline]
-    fn on_ready(&self) {
+    fn on_ready(self: &Js<Self>) {
         self.resume();
     }
     #[inline]
-    fn on_close(&self, err: Option<SysError>) {
+    fn on_close(self: &Js<Self>, err: Option<SysError>) {
         self.cancel_from_output(err);
     }
 }
@@ -711,7 +711,7 @@ impl SourceHandle {
         match *self {
             SourceHandle::JSController(value) => {
                 self.clear();
-                crate::dispatch::fold(ReadableSinkController::detach(value, global));
+                crate::dispatch::fold(global.js(), ReadableSinkController::detach(value, global));
             }
             SourceHandle::ByteStream(bs) => {
                 bs.unpipe_without_deref();
@@ -725,11 +725,11 @@ impl SourceHandle {
         }
     }
 
-    pub fn close(&mut self, err: Option<SysError>) {
+    pub fn close(&mut self, err: Option<SysError>, js: Js) {
         match *self {
             SourceHandle::None => {}
             SourceHandle::JSController(cpp) => {
-                let global = VirtualMachine::get().global();
+                let global = js.bun_vm().global();
                 // A frame above is unwinding with its exception: not ours to run
                 // over. Otherwise the controller's close is settled here like a
                 // parked promise (`Pending::run`).
@@ -743,9 +743,10 @@ impl SourceHandle {
                 };
                 Self::close_js_controller(global, cpp, reason);
             }
-            SourceHandle::ByteStream(p) => p.on_close(err),
-            SourceHandle::FileReader(p) => p.on_close(err),
+            SourceHandle::ByteStream(p) => js.on(p).on_close(err),
+            SourceHandle::FileReader(p) => js.on(p).on_close(err),
             SourceHandle::Subprocess(p) => {
+                let p = js.on(p);
                 bun_removable_features::removable_body!(Spawn, Abort, { p.on_close(err) })
             }
             SourceHandle::ShellWritable(mut p) => {
@@ -755,6 +756,7 @@ impl SourceHandle {
                 })
             }
             SourceHandle::FetchResponseBody(p) => {
+                let p = js.on(p);
                 bun_removable_features::removable_body!(HttpClient, Abort, {
                     p.on_stream_cancelled()
                 })
@@ -766,6 +768,7 @@ impl SourceHandle {
             }
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => {
+                let p = js.on(p);
                 bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_close(err) })
             }
             SourceHandle::TestingCancelOnDrain(_) => {}
@@ -773,63 +776,66 @@ impl SourceHandle {
     }
 
     /// [`close`](Self::close), with `reason` as the piped JS stream's cancel() argument.
-    pub fn abort(&mut self, reason: CommonAbortReason) {
+    pub fn abort(&mut self, reason: CommonAbortReason, js: Js) {
         match *self {
             SourceHandle::JSController(_) => {
-                let global = VirtualMachine::get().global();
+                let global = js.bun_vm().global();
                 if global.has_exception() {
                     return;
                 }
-                self.cancel(reason.to_js(global));
+                self.cancel(reason.to_js(global), js);
             }
-            _ => self.close(None),
+            _ => self.close(None, js),
         }
     }
 
     /// [`close`](Self::close), with an arbitrary JS `reason` for the piped JS stream's cancel().
-    pub fn cancel(&mut self, reason: JSValue) {
+    pub fn cancel(&mut self, reason: JSValue, js: Js) {
         match *self {
             SourceHandle::JSController(cpp) => {
-                let global = VirtualMachine::get().global();
+                let global = js.bun_vm().global();
                 if global.has_exception() {
                     return;
                 }
                 Self::close_js_controller(global, cpp, reason);
             }
-            _ => self.close(None),
+            _ => self.close(None, js),
         }
     }
 
     fn close_js_controller(global: &JSGlobalObject, cpp: JSValue, reason: JSValue) {
-        crate::dispatch::fold(ReadableSinkController::on_close(cpp, global, reason));
+        crate::dispatch::fold(
+            global.js(),
+            ReadableSinkController::on_close(cpp, global, reason),
+        );
     }
 
-    pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
+    pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>, js: Js) {
         match *self {
             SourceHandle::None => {}
             SourceHandle::JSController(cpp) => {
-                let global = VirtualMachine::get().global();
+                let global = js.bun_vm().global();
                 if global.has_exception() {
                     return;
                 }
-                crate::dispatch::fold(js::on_ready(cpp, global));
+                crate::dispatch::fold(js, js::on_ready(cpp, global));
             }
-            SourceHandle::ByteStream(p) => p.on_ready(),
-            SourceHandle::FileReader(p) => p.on_ready(),
+            SourceHandle::ByteStream(p) => js.on(p).on_ready(),
+            SourceHandle::FileReader(p) => js.on(p).on_ready(),
             SourceHandle::FetchResponseBody(p) => {
-                removable_body_behind_value!(HttpClient, { p.on_ready() })
+                removable_body_behind_value!(HttpClient, js, { js.on(p).on_ready() })
             }
             SourceHandle::ServerRequestBody(any) => {
                 removable_body_behind_value!(Serve, { any.on_request_body_stream_drained() })
             }
             SourceHandle::HTMLRewriter(p) => {
-                removable_body_behind_value!(HtmlRewriter, { p.on_ready() })
+                removable_body_behind_value!(HtmlRewriter, js, { js.on(p).on_ready() })
             }
             SourceHandle::S3DownloadBody(p) => {
-                removable_body_behind_value!(S3Client, { p.on_stream_drained() })
+                removable_body_behind_value!(S3Client, js, { js.on(p).on_stream_drained() })
             }
             SourceHandle::TestingCancelOnDrain(p) => {
-                p.on_cancel();
+                js.on(p).on_cancel();
             }
             // Remaining variants leave `on_ready` at the trait default (no-op).
             SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
@@ -839,9 +845,9 @@ impl SourceHandle {
     /// The source's JS wrapper was collected while this producer still held the
     /// source: nothing can read what it delivers from now on. Called from a GC
     /// sweep: arms must not run JS.
-    pub fn consumer_collected(self) {
+    pub fn consumer_collected(self, vm: Vm) {
         match self {
-            SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
+            SourceHandle::FetchResponseBody(p) => vm.on(p).on_body_stream_collected(),
             SourceHandle::S3DownloadBody(p) => p.on_stream_collected(),
             SourceHandle::None
             | SourceHandle::JSController(_)
@@ -855,10 +861,10 @@ impl SourceHandle {
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self, vm: Vm) {
         match *self {
-            SourceHandle::FetchResponseBody(p) => p.on_start(),
-            SourceHandle::S3DownloadBody(p) => p.on_consumer_attached(),
+            SourceHandle::FetchResponseBody(p) => vm.on(p).on_start(),
+            SourceHandle::S3DownloadBody(p) => vm.on(p).on_consumer_attached(),
             // Remaining variants leave `on_start` at the trait default (no-op).
             SourceHandle::None
             | SourceHandle::JSController(_)
@@ -935,7 +941,7 @@ pub struct HTTPServerWritable<const SSL: bool> {
     /// `on_abort` ends those requests when the transport frees the stream.
     pub(crate) ended_response: bool,
 
-    pub(crate) on_first_write: Option<fn(Option<*mut c_void>)>,
+    pub(crate) on_first_write: Option<fn(Option<*mut c_void>, Js)>,
     pub ctx: Option<*mut c_void>,
 
     pub(crate) auto_flusher: AutoFlusher,
@@ -956,7 +962,7 @@ impl<const SSL: bool> Drop for HTTPServerWritable<SSL> {
 impl<const SSL: bool> HTTPServerWritable<SSL> {
     pub(crate) fn new(
         res: uws::AnyResponse,
-        on_first_write: fn(Option<*mut c_void>),
+        on_first_write: fn(Option<*mut c_void>, Js),
         ctx: *mut c_void,
         global_this: &JSGlobalObject,
     ) -> Self {
@@ -1024,10 +1030,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         );
     }
 
-    fn handle_first_write_if_necessary(&mut self) {
+    fn handle_first_write_if_necessary(&mut self, js: Js) {
         if let Some(on_first_write) = self.on_first_write.take() {
             let ctx = self.ctx.take();
-            on_first_write(ctx);
+            on_first_write(ctx, js);
         }
     }
 
@@ -1086,7 +1092,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         Writable::Owned(len)
     }
 
-    fn send_without_auto_flusher(&mut self, buf: &[u8]) -> bool {
+    fn send_without_auto_flusher(&mut self, buf: &[u8], js: Js) -> bool {
         debug_assert!(!self.is_done());
 
         let Some(res) = self.any_res() else {
@@ -1105,7 +1111,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // `on_first_write` invocation cannot alias any Rust-visible memory.
 
         if self.requested_end && !res.state().is_http_write_called() {
-            self.handle_first_write_if_necessary();
+            self.handle_first_write_if_necessary(js);
             let success = res.try_end(buf, self.end_len, false);
             if success {
                 self.mark_response_ended(res);
@@ -1123,7 +1129,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
         // clean this so we know when its relevant or not
         self.end_len = 0;
-        self.handle_first_write_if_necessary();
+        self.handle_first_write_if_necessary(js);
         // uWS has no tryWrite(): write() always accepts the buffer (queuing the
         // unsent tail internally) and reports whether the socket is now backed
         // up. Track that so the JS writer can pause; the owning RequestContext
@@ -1145,9 +1151,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         true
     }
 
-    fn send(&mut self, buf: &[u8]) -> bool {
+    fn send(&mut self, buf: &[u8], js: Js) -> bool {
         self.unregister_auto_flusher();
-        self.send_without_auto_flusher(buf)
+        self.send_without_auto_flusher(buf, js)
     }
 
     /// `self.send(&self.readable_slice()[from..])` without laundering a slice
@@ -1157,12 +1163,12 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// `on_first_write` callback (RequestContext.renderMetadata) only touch
     /// uWS response state, never `self.buffer`/`self.offset`, so the re-slice
     /// observes the same bytes the laundered slice would have.
-    fn send_readable(&mut self, from: usize) -> bool {
+    fn send_readable(&mut self, from: usize, js: Js) -> bool {
         self.unregister_auto_flusher();
-        self.send_readable_without_auto_flusher(from)
+        self.send_readable_without_auto_flusher(from, js)
     }
 
-    fn send_readable_without_auto_flusher(&mut self, from: usize) -> bool {
+    fn send_readable_without_auto_flusher(&mut self, from: usize, js: Js) -> bool {
         debug_assert!(!self.is_done());
         let base = self.offset as usize + from;
 
@@ -1179,7 +1185,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // `send_without_auto_flusher` re: holding it across `on_first_write`.
 
         if self.requested_end && !res.state().is_http_write_called() {
-            self.handle_first_write_if_necessary();
+            self.handle_first_write_if_necessary(js);
             let end_len = self.end_len;
             let success = res.try_end(&self.buffer[base..], end_len, false);
             if success {
@@ -1198,7 +1204,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
         // clean this so we know when its relevant or not
         self.end_len = 0;
-        self.handle_first_write_if_necessary();
+        self.handle_first_write_if_necessary(js);
         let buf_len = self.buffer.len().saturating_sub(base);
         // See `send_without_auto_flusher`.
         if self.requested_end {
@@ -1226,15 +1232,20 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         &self.buffer[self.offset as usize..]
     }
 
-    pub(crate) fn on_writable(&mut self, write_offset: u64, _res: uws::AnyResponse) -> bool {
+    pub(crate) fn on_writable(
+        &mut self,
+        write_offset: u64,
+        _res: uws::AnyResponse,
+        js: Js,
+    ) -> bool {
         // write_offset is the amount of data that was written not how much we need to write
         bun_core::scoped_log!(HTTPServerWritableLog, "onWritable ({})", write_offset);
         // onWritable reset backpressure state to allow flushing
         self.has_backpressure = false;
         if self.is_aborted() {
-            self.source.close(None);
+            self.source.close(None, js);
             self.flush_promise();
-            self.finalize();
+            self.finalize(js);
             return false;
         }
 
@@ -1251,9 +1262,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         if self.readable_slice().is_empty() {
             if self.is_done() {
                 self.source_pending_pull = false;
-                self.source.close(None);
+                self.source.close(None, js);
                 self.flush_promise();
-                self.finalize();
+                self.finalize(js);
                 return true;
             }
             let had_flush_waiter = self.pending_flush().is_some();
@@ -1264,7 +1275,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 && !self.requested_end
                 && !self.has_backpressure()
             {
-                self.source.ready(None, None);
+                self.source.ready(None, None, js);
             }
             return true;
         }
@@ -1293,13 +1304,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // if we have nothing to write, we are done
         if chunk_len == 0 {
             if self.is_done() {
-                self.source.close(None);
+                self.source.close(None, js);
                 self.flush_promise();
-                self.finalize();
+                self.finalize(js);
                 return true;
             }
         } else {
-            if !self.send_readable(chunk_start) {
+            if !self.send_readable(chunk_start, js) {
                 // if we were unable to send it, retry
                 return false;
             }
@@ -1310,9 +1321,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 if let Some(res) = self.any_res() {
                     res.clear_on_writable();
                 }
-                self.source.close(None);
+                self.source.close(None, js);
                 self.flush_promise();
-                self.finalize();
+                self.finalize(js);
                 return true;
             }
         }
@@ -1328,17 +1339,18 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             if (total_written > 0 || (had_pending_pull && !had_flush_waiter))
                 && self.readable_slice().is_empty()
             {
-                self.source.ready(Some(total_written as BlobSizeType), None);
+                self.source
+                    .ready(Some(total_written as BlobSizeType), None, js);
             }
         }
 
         true
     }
 
-    pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
+    pub(crate) fn start(&mut self, stream_start: &Start, js: Js) -> bun_sys::Result<()> {
         if self.is_aborted() || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.mark_done();
-            self.source.close(None);
+            self.source.close(None, js);
             return bun_sys::Result::Ok(());
         }
 
@@ -1374,17 +1386,17 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
 
         self.state = HTTPServerWritableState::Writing;
-        self.source.start();
+        self.source.start(js.as_vm());
         bun_core::scoped_log!(HTTPServerWritableLog, "start({})", self.high_water_mark);
         bun_sys::Result::Ok(())
     }
 
-    fn flush_from_js_no_wait(&mut self) -> bun_sys::Result<JSValue> {
+    fn flush_from_js_no_wait(&mut self, js: Js) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJSNoWait");
-        bun_sys::Result::Ok(JSValue::from(self.flush_no_wait()))
+        bun_sys::Result::Ok(JSValue::from(self.flush_no_wait(js)))
     }
 
-    pub(crate) fn flush_no_wait(&mut self) -> usize {
+    pub(crate) fn flush_no_wait(&mut self, js: Js) -> usize {
         if self.has_backpressure_and_is_try_end() || self.is_done() {
             return 0;
         }
@@ -1394,7 +1406,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return 0;
         }
 
-        if self.send_readable(0) {
+        if self.send_readable(0, js) {
             return slice_len;
         }
 
@@ -1410,7 +1422,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.unregister_auto_flusher();
 
         if !wait {
-            return self.flush_from_js_no_wait();
+            return self.flush_from_js_no_wait(cx.js());
         }
 
         if let Some(prom) = self.pending_flush() {
@@ -1418,7 +1430,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             // data buffered since (below highWaterMark) so it reaches uWS now
             // rather than when `on_writable` fires.
             if self.end_len == 0 && !self.is_done() && !self.readable_slice().is_empty() {
-                let _ = self.send_readable(0);
+                let _ = self.send_readable(0, cx.js());
             }
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
             return bun_sys::Result::Ok(JSPromise::opaque_ref(prom).to_js());
@@ -1434,7 +1446,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         if !self.has_backpressure_and_is_try_end() {
             let slice_len = self.readable_slice().len();
             if slice_len > 0 {
-                let _ = self.send_readable(0);
+                let _ = self.send_readable(0, cx.js());
             }
             // Only resolve once the socket has actually accepted everything;
             // otherwise fall through and let on_writable resolve the promise.
@@ -1449,7 +1461,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(self.park_pending_flush(cx.global()))
     }
 
-    pub fn write(&mut self, data: &StreamResult<'_>) -> Writable {
+    pub fn write(&mut self, data: &StreamResult<'_>, js: Js) -> Writable {
         if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
@@ -1462,7 +1474,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             // fast path:
             // - large-ish chunk
             // - no backpressure
-            if self.send(bytes) {
+            if self.send(bytes, js) {
                 return self.writable_result(len);
             }
 
@@ -1474,7 +1486,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             if self.buffer.write(bytes).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
-            if self.send_readable(0) {
+            if self.send_readable(0, js) {
                 return self.writable_result(len);
             }
         } else {
@@ -1489,13 +1501,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.writable_result(len)
     }
 
-    pub(crate) fn write_latin1(&mut self, data: &StreamResult<'_>) -> Writable {
+    pub(crate) fn write_latin1(&mut self, data: &StreamResult<'_>, js: Js) -> Writable {
         if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
 
         if self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close(None);
+            self.source.close(None, js);
             self.mark_done();
             return Writable::Done;
         }
@@ -1511,7 +1523,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 // fast path:
                 // - large-ish chunk
                 // - no backpressure
-                if self.send(bytes) {
+                if self.send(bytes, js) {
                     return self.writable_result(len);
                 }
                 do_send = false;
@@ -1522,7 +1534,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             }
 
             if do_send {
-                if self.send_readable(0) {
+                if self.send_readable(0, js) {
                     return self.writable_result(len);
                 }
             }
@@ -1533,7 +1545,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             if self.buffer.write_latin1(bytes).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
-            if self.send_readable(0) {
+            if self.send_readable(0, js) {
                 return self.writable_result(len);
             }
         } else {
@@ -1547,13 +1559,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.writable_result(len)
     }
 
-    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
+    pub(crate) fn write_utf16(&mut self, text: &[u16], js: Js) -> Writable {
         if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
 
         if self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close(None);
+            self.source.close(None, js);
             self.mark_done();
             return Writable::Done;
         }
@@ -1569,7 +1581,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
         let readable_len = self.readable_slice().len();
         if readable_len >= self.high_water_mark as usize || self.has_backpressure() {
-            if self.send_readable(0) {
+            if self.send_readable(0, js) {
                 return self.writable_result(written as BlobSizeType);
             }
         }
@@ -1584,13 +1596,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 
     /// `controller.close()`: flush and end like `controller.end()`; the owner awaits any parked `pending_flush`.
-    pub(crate) fn end(&mut self, _err: Option<SysError>) -> bun_sys::Result<()> {
+    pub(crate) fn end(&mut self, _err: Option<SysError>, _: Js) -> bun_sys::Result<()> {
         let global_this = self.global_this;
         self.finish(&global_this).map(|_| ())
     }
 
     /// The source failed (`close(error)`, an errored pump): drop what is buffered and finish the sink; the owner closes the response as incomplete.
-    pub(crate) fn fail(&mut self) {
+    pub(crate) fn fail(&mut self, js: Js) {
         bun_core::scoped_log!(HTTPServerWritableLog, "fail()");
 
         if self.requested_end {
@@ -1599,9 +1611,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
         self.buffer.clear();
         self.offset = 0;
-        self.source.close(None);
+        self.source.close(None, js);
         self.mark_done();
-        self.finalize();
+        self.finalize(js);
     }
 
     pub(crate) fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
@@ -1617,9 +1629,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
         if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.requested_end = true;
-            self.source.close(None);
+            self.source.close(None, global_this.js());
             self.mark_done();
-            self.finalize();
+            self.finalize(global_this.js());
             return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
@@ -1628,7 +1640,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.end_len = readable_len;
 
         if readable_len > 0 {
-            if !self.send_readable(0) {
+            if !self.send_readable(0, global_this.js()) {
                 return bun_sys::Result::Ok(self.park_pending_flush(global_this));
             }
         } else if let Some(res) = self.any_res() {
@@ -1639,8 +1651,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         debug_assert!(self.ended_response);
         self.mark_done();
         self.flush_promise();
-        self.source.close(None);
-        self.finalize();
+        self.source.close(None, global_this.js());
+        self.finalize(global_this.js());
 
         bun_sys::Result::Ok(JSValue::from(self.wrote))
     }
@@ -1658,7 +1670,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     ///
     /// # Safety
     /// `this` must point at the live sink owned by the `RequestContext`.
-    pub(crate) unsafe fn abort(this: *mut Self) {
+    pub(crate) unsafe fn abort(this: *mut Self, js: Js) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
         // SAFETY: caller contract — `this` is live, and every access here is scoped
         // so no borrow spans the signal close below, which may free `*this`.
@@ -1667,14 +1679,14 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
         unsafe { (*this).flush_promise() };
         // SAFETY: as above.
-        unsafe { (*this).finalize() };
+        unsafe { (*this).finalize(js) };
 
         // Close the source last and through a stack copy: the close fires the JS
         // onClose callback, and the teardown it can re-enter frees this sink, so
         // no reference into the allocation may be live across the call.
         // SAFETY: as above; `source` is copied out before the close.
         let mut source = unsafe { (*this).source };
-        source.abort(CommonAbortReason::ConnectionClosed);
+        source.abort(CommonAbortReason::ConnectionClosed, js);
     }
 
     fn unregister_auto_flusher(&mut self) {
@@ -1696,7 +1708,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
     }
 
-    pub(crate) fn on_auto_flush(&mut self) -> bool {
+    pub(crate) fn on_auto_flush(&mut self, js: Js) -> bool {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAutoFlush()");
         if self.is_done() {
             self.auto_flusher.registered.set(false);
@@ -1710,7 +1722,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return false;
         }
 
-        if !self.send_readable_without_auto_flusher(0) {
+        if !self.send_readable_without_auto_flusher(0, js) {
             self.auto_flusher.registered.set(true);
             return true;
         }
@@ -1721,9 +1733,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             if let Some(res) = self.any_res() {
                 res.clear_on_writable();
             }
-            self.source.close(None);
+            self.source.close(None, js);
             self.flush_promise();
-            self.finalize();
+            self.finalize(js);
         }
         false
     }
@@ -1744,7 +1756,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
     /// This can be called _many_ times for the same instance
     /// so it must zero out state instead of make it
-    pub fn finalize(&mut self) {
+    pub fn finalize(&mut self, js: Js) {
         bun_core::scoped_log!(HTTPServerWritableLog, "finalize()");
         if !self.is_done() {
             self.unregister_auto_flusher();
@@ -1756,7 +1768,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 // stream is freed after FIN, leave it dangling).
                 res.clear_on_writable();
             }
-            let _ = self.flush_no_wait();
+            let _ = self.flush_no_wait(js);
             self.set_done();
 
             // When the sink already ended the response through uWS
@@ -1818,10 +1830,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         if let Some(prom) = self.take_pending_flush() {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
-            let global_this = self.global_this.get();
+            let global_this = self.global_this;
             let _keep = ::bun_jsc::EnsureStillAlive(JSPromise::opaque_ref(prom).to_js());
             let result = JSPromise::opaque_mut(prom).resolve(
-                global_this,
+                &global_this,
                 JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
             );
             // `this.wrote_at_start_of_flush = this.wrote` must read `this.wrote`
@@ -1841,7 +1853,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             // wrapper); momentary access only.
             unsafe { (*this).wrote_at_start_of_flush = (*this).wrote };
             // SAFETY: as above.
-            crate::dispatch::fold(result);
+            crate::dispatch::fold(global_this.js(), result);
         }
     }
 }
@@ -1871,17 +1883,18 @@ impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritabl
     unsafe fn controller_finalize(this: *mut Self) {
         // SAFETY: trait contract — `this` is live, and only the RequestContext
         // frees it (never the inherent `finalize`), so the `&mut`
-        // scoped to this call stays valid throughout.
-        unsafe { (*this).finalize() }
+        // scoped to this call stays valid throughout. The `Js` is for `on_first_write`, which finds the
+        // status written: `do_render_stream` writes it before it makes the controller.
+        unsafe { (*this).finalize(Js::assume(&this)) }
     }
 
     unsafe fn close_with_error(
         this: *mut Self,
-        _global: &JSGlobalObject,
+        global: &JSGlobalObject,
         _reason: JSValue,
     ) -> bun_sys::Result<()> {
         // SAFETY: caller contract; `fail` does not free the sink.
-        unsafe { (*this).fail() };
+        unsafe { (*this).fail(global.js()) };
         bun_sys::Result::Ok(())
     }
     fn controller_created(
@@ -1946,7 +1959,7 @@ impl BufferAction {
             &global.js_thread(entered.context()),
             self.tag(),
         );
-        crate::dispatch::fold(settled);
+        crate::dispatch::fold(global.js(), settled);
     }
 
     /// Terminal like [`fulfill`](Self::fulfill).
@@ -1954,7 +1967,7 @@ impl BufferAction {
         let _context = global.bun_vm().enter_context(self.context);
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         let settled = JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)));
-        crate::dispatch::fold(settled);
+        crate::dispatch::fold(global.js(), settled);
     }
 
     pub(crate) fn value(&self) -> JSValue {

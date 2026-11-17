@@ -6,7 +6,7 @@ use std::rc::{Rc, Weak};
 
 use bun_core::{Output, Timespec};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, StrongCell};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, Js, JsResult, Strong, StrongCell, Vm};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::{CellExt as _, RefPtr};
@@ -37,8 +37,8 @@ pub(crate) use group_begin;
 /// per-thread VM so `ExecutionEntry::create` (which has no global in scope)
 /// can box callbacks.
 #[inline]
-fn strong_create(value: JSValue) -> Strong {
-    let global = VirtualMachine::get().global();
+fn strong_create(value: JSValue, js: Js) -> Strong {
+    let global = js.bun_vm().global();
     Strong::create(value, global)
 }
 
@@ -239,7 +239,7 @@ pub(crate) mod js_fns {
                 bun_core::scoped_log!(bun_test_group, "genericHook in preload");
 
                 let preload = bun_test_root.preload();
-                preload.scope.append_hook(
+                global_this.on(&preload.scope).append_hook(
                     &preload.entries,
                     tag.as_hook_tag().unwrap(),
                     args.callback,
@@ -259,9 +259,9 @@ pub(crate) mod js_fns {
                         )));
                     }
                     if fixtures.is_some() {
-                        bun_test.expect_file_scoped_fixtures();
+                        global_this.on(&**bun_test).expect_file_scoped_fixtures();
                     }
-                    bun_test.active_scope().append_hook(
+                    global_this.on(bun_test.active_scope()).append_hook(
                         &bun_test.entries,
                         tag.as_hook_tag().unwrap(),
                         args.callback,
@@ -307,7 +307,7 @@ pub(crate) mod js_fns {
                             )));
                         }
                         sequence_ref.context(global_this, bun_test, group_index, entry_data.sequence_index);
-                        sequence_ref.defer(bun_test, when, callback, cfg.timeout);
+                        sequence_ref.defer(global_this.on(&**bun_test), when, callback, cfg.timeout);
                         return Ok(());
                     }
                     let append_point: SequenceEntryId = match tag {
@@ -340,7 +340,7 @@ pub(crate) mod js_fns {
                         }
                     };
 
-                    let new_item = bun_test.create_sequence_entry(args.callback, cfg, AddedInPhase::Execution);
+                    let new_item = global_this.on(&**bun_test).create_sequence_entry(args.callback, cfg, AddedInPhase::Execution);
                     bun_test.link_after(append_point, new_item);
 
                     Ok(())
@@ -740,12 +740,12 @@ impl BunTest {
 
     /// For a new `ExecutionEntry` that is in no scope.
     pub(crate) fn create_sequence_entry(
-        &self,
+        self: &Js<Self>,
         callback: Option<JSValue>,
         cfg: ExecutionEntryCfg,
         phase: AddedInPhase,
     ) -> SequenceEntryId {
-        let entry = ExecutionEntry::create(None, callback, cfg, None, None, BaseScopeCfg::default(), phase);
+        let entry = ExecutionEntry::create(None, callback, cfg, None, None, BaseScopeCfg::default(), phase, self.js());
         self.push_sequence_entry(entry.push_to(&self.entries))
     }
 
@@ -789,7 +789,7 @@ impl BunTest {
 
     /// Adds a test to the active scope.
     pub(crate) fn append_test(
-        &self,
+        self: &Js<Self>,
         name_not_owned: Option<&[u8]>,
         callback: Option<JSValue>,
         cfg: ExecutionEntryCfg,
@@ -798,7 +798,7 @@ impl BunTest {
     ) {
         let parent = self.active_scope();
         let entry =
-            ExecutionEntry::create(name_not_owned, callback, cfg, parameter, Some(parent), base, AddedInPhase::Collection);
+            ExecutionEntry::create(name_not_owned, callback, cfg, parameter, Some(parent), base, AddedInPhase::Collection, self.js());
         entry.base.has_callback.set(entry.callback.is_some());
         self.propagate(&entry.base);
         let id = entry.push_to(&self.entries);
@@ -806,14 +806,14 @@ impl BunTest {
     }
 
     /// Must be called before the order is generated, or `file_end` never runs.
-    pub(crate) fn expect_file_scoped_fixtures(&self) {
+    pub(crate) fn expect_file_scoped_fixtures(self: &Js<Self>) {
         self.file_end.get_or_init(|| {
             let cfg = ExecutionEntryCfg { calling: Calling::Vitest { context: false }, ..Default::default() };
             self.create_sequence_entry(None, cfg, AddedInPhase::Collection)
         });
     }
 
-    pub(crate) fn defer_to_file_end(&self, callback: JSValue, timeout: u32) -> bool {
+    pub(crate) fn defer_to_file_end(self: &Js<Self>, callback: JSValue, timeout: u32) -> bool {
         let Some(&file_end) = self.file_end.get() else {
             return false;
         };
@@ -827,7 +827,7 @@ impl BunTest {
         true
     }
 
-    pub(crate) fn create_vitest_entry(&self, callback: JSValue, timeout: u32) -> SequenceEntryId {
+    pub(crate) fn create_vitest_entry(self: &Js<Self>, callback: JSValue, timeout: u32) -> SequenceEntryId {
         let cfg = ExecutionEntryCfg { timeout, calling: Calling::Vitest { context: false }, ..Default::default() };
         self.create_sequence_entry(Some(callback), cfg, AddedInPhase::Execution)
     }
@@ -910,7 +910,7 @@ impl BunTest {
             return Ok(());
         }
         if !is_catch {
-            this.adopt_teardown(&refdata.phase, result);
+            global_this.on(&*this).adopt_teardown(&refdata.phase, result);
         }
 
         this.add_result(refdata.phase);
@@ -1011,7 +1011,7 @@ impl BunTest {
     pub(crate) fn bun_test_timeout_callback(
         this: &BunTestPtr,
         _ts: &Timespec,
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
     ) {
         let _g = group_begin!();
         let global = vm.global();
@@ -1101,11 +1101,11 @@ impl BunTest {
             }
         }
 
-        Self::update_min_timeout(this, &min_timeout);
+        Self::update_min_timeout(global_this.on(this), &min_timeout);
         Ok(())
     }
 
-    fn update_min_timeout(this: &BunTestPtr, min_timeout: &Timespec) {
+    fn update_min_timeout(this: &Vm<BunTestPtr>, min_timeout: &Timespec) {
         let _g = group_begin!();
         let timer: &EventLoopTimer = &this.timer;
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
@@ -1121,12 +1121,12 @@ impl BunTest {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
             if timer.next.get() != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                timer_all().remove(timer);
+                timer_all(this.bun_vm()).remove(timer);
             }
             timer.next.set(*min_timeout);
             if timer.next.get() != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                timer_all().insert(timer);
+                timer_all(this.bun_vm()).insert(timer);
                 if debug::group::get_log_enabled() {
                     let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
@@ -1136,15 +1136,15 @@ impl BunTest {
         }
     }
 
-    fn advance(&self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
+    fn advance(&self, global_this: &JSGlobalObject) -> JsResult<Advance> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase.get()));
-        let result = self.advance_inner();
+        let result = global_this.on(self).advance_inner();
         bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(self.phase.get()));
         result
     }
 
-    fn advance_inner(&self) -> JsResult<Advance> {
+    fn advance_inner(self: &Js<Self>) -> JsResult<Advance> {
         match self.phase.get() {
             Phase::Collection => {
                 self.phase.set(Phase::Execution);
@@ -1248,7 +1248,7 @@ impl BunTest {
             this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start);
         }
 
-        Self::update_min_timeout(this, timeout);
+        Self::update_min_timeout(global_this.on(this), timeout);
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         let on_stack = OnStack::enter(&this.execution.on_stack, &cfg_data);
         let result: JSValue = match vm
@@ -1338,7 +1338,7 @@ impl BunTest {
                     PromiseStatus::Fulfilled => {
                         // Do not register a then callback when it's already fulfilled.
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
-                        this.adopt_teardown(&cfg_data, value);
+                        global_this.on(&**this).adopt_teardown(&cfg_data, value);
                         return Some(cfg_data);
                     }
                     PromiseStatus::Rejected => {
@@ -1361,7 +1361,7 @@ impl BunTest {
 
         bun_core::scoped_log!(bun_test_group, "callTestCallback -> sync");
         if !result.is_empty() {
-            this.adopt_teardown(&cfg_data, result);
+            global_this.on(&**this).adopt_teardown(&cfg_data, result);
         }
         Some(cfg_data)
     }
@@ -1378,7 +1378,7 @@ impl BunTest {
     }
 
     /// Vitest runs a function returned by `beforeEach` / `beforeAll` after the matching after-hooks.
-    fn adopt_teardown(&self, data: &RefDataValue, returned: JSValue) {
+    fn adopt_teardown(self: &Js<Self>, data: &RefDataValue, returned: JSValue) {
         if !returned.is_callable() {
             return;
         }
@@ -1394,7 +1394,7 @@ impl BunTest {
         }
         if sequence.test_entry.is_none() {
             if let (Some(slot), None) = (hook.teardown, hook.around) {
-                self.entry(slot).callback.set(strong_create(returned));
+                self.entry(slot).callback.set(strong_create(returned, self.js()));
             }
         } else if sequence.test_follows(self, active_entry) {
             sequence.defer(self, Deferred::Teardown, returned, hook.timeout);
@@ -1402,10 +1402,10 @@ impl BunTest {
     }
 
     /// The `aroundAll` hook `hook` called `runSuite()`.
-    pub(crate) fn enter_around_all(&self, hook: &ExecutionEntry, tear_down: JSValue, async_context: JSValue) {
+    pub(crate) fn enter_around_all(self: &Js<Self>, hook: &ExecutionEntry, tear_down: JSValue, async_context: JSValue) {
         if let (Some(slot), Some(scope)) = (hook.teardown, hook.base.parent) {
-            self.entry(slot).callback.set(strong_create(tear_down));
-            self.scope(scope).async_context.set(strong_create(async_context));
+            self.entry(slot).callback.set(strong_create(tear_down, self.js()));
+            self.scope(scope).async_context.set(strong_create(async_context, self.js()));
         }
     }
 
@@ -1542,7 +1542,7 @@ impl Drop for OnStack<'_> {
 
 /// Prints `error`, then prints any exception the error's getters or `toString` threw during the print.
 pub(crate) fn print_error(
-    vm: &VirtualMachine,
+    vm: &Js<VirtualMachine>,
     global_this: &JSGlobalObject,
     error: JSValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
@@ -1951,7 +1951,7 @@ impl DescribeScope {
 
     /// `entries`: `Preload::entries` for the preload scope, else `BunTest::entries`.
     fn append_hook(
-        &self,
+        self: &Js<Self>,
         entries: &SmallLocalVec<ExecutionEntry>,
         tag: HookTag,
         callback: Option<JSValue>,
@@ -1959,7 +1959,7 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) {
-        let mut entry = ExecutionEntry::create(None, callback, cfg, None, Some(self), base, phase);
+        let mut entry = ExecutionEntry::create(None, callback, cfg, None, Some(self), base, phase, self.js());
         // `create` drops the callback in a skipped scope, and a hook entry without one would be reported as a test.
         if !entry.callback.is_some() {
             return;
@@ -1972,7 +1972,7 @@ impl DescribeScope {
                 around,
                 ..Default::default()
             };
-            ExecutionEntry::create(None, None, slot_cfg, None, Some(self), base, phase).push_to(entries)
+            ExecutionEntry::create(None, None, slot_cfg, None, Some(self), base, phase, self.js()).push_to(entries)
         };
         let mut hooks = self.hooks.take();
         let first_teardown_slot = hooks.after_all.len() - hooks.teardown_slots_in_after_all;
@@ -2059,6 +2059,7 @@ impl ExecutionEntry {
         parent: Option<&DescribeScope>,
         base: BaseScopeCfg,
         phase: AddedInPhase,
+        js: Js,
     ) -> ExecutionEntry {
         let base = BaseScope::init(base, name_not_owned, parent, cb.is_some());
         let callback = cb.filter(|_| match base.mode {
@@ -2068,11 +2069,11 @@ impl ExecutionEntry {
         });
         ExecutionEntry {
             base,
-            callback: callback.map(strong_create).into(),
+            callback: callback.map(move |it| strong_create(it, js)).into(),
             timeout: cfg.timeout,
             calling: cfg.calling,
             around: cfg.around,
-            fixtures: callback.and(cfg.fixtures).map(strong_create),
+            fixtures: callback.and(cfg.fixtures).map(move |it| strong_create(it, js)),
             parameter: parameter
                 .or_else(|| (cfg.calling.is_vitest() && phase != AddedInPhase::Execution).then(Default::default)),
             added_in_phase: phase,

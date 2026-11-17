@@ -10,8 +10,8 @@ use bun_lint::utils::eslint_utils::js_number::{parse_float, parse_int};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::{RESETS_BEFORE_EACH_TEST, TestEnvironment};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
-    StringJsc as _,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, Js, JsResult, RegularExpression,
+    StringJsc as _, Vm,
 };
 use bun_ptr::CellExt as _;
 
@@ -150,6 +150,10 @@ impl TestRunner {
         f(&mut self.snapshots.borrow_mut())
     }
 
+    pub(crate) fn write_inline_snapshots(&self, vm: Vm) -> crate::Result<bool> {
+        self.with_snapshots(move |snapshots| snapshots.write_inline_snapshots(vm))
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.clone_active_file() else {
             return bun_core::Timespec::EPOCH;
@@ -263,7 +267,7 @@ pub(crate) mod Jest {
 
     /// `None` outside `bun test` and on other threads: the runner belongs to the VM that runs the test files.
     pub(crate) fn runner() -> Option<&'static TestRunner> {
-        crate::jsc_hooks::try_runtime_state()?.test_runner.get()
+        crate::jsc_hooks::test_runner()
     }
 
     /// Computes `RuntimeFeatures::own_test_globals`. Call before the test file is loaded.
@@ -540,8 +544,8 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValu
     })
 }
 
-pub(crate) fn asked_by_compiled_test_file(own_globals: bool) -> u32 {
-    let vm = VirtualMachine::get();
+pub(crate) fn asked_by_compiled_test_file(own_globals: bool, vm: Vm) -> u32 {
+    let vm = vm.bun_vm();
     match own_globals {
         true => vm.transpiler.get().options.own_test_globals,
         false => u32::from(is_loading_under_vitest(vm)),
@@ -597,7 +601,7 @@ pub(crate) mod on_unhandled_rejection {
 
     #[optimize(size)]
     pub(crate) fn on_unhandled_rejection(
-        jsc_vm: &VirtualMachine,
+        jsc_vm: &Js<VirtualMachine>,
         global_object: &JSGlobalObject,
         rejection: JSValue,
     ) {

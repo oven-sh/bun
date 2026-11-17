@@ -316,7 +316,7 @@ impl Default for WebSocketBehavior {
 /// alias that re-entrant borrow (Stacked-Borrows UB) and let LLVM dead-store
 /// the re-entrant write. Implementors materialise short-lived `&mut *this`
 /// reborrows only — none spanning a JS callback.
-pub trait WebSocketHandler: Sized + 'static {
+pub trait WebSocketHandler: Sized {
     const HAS_ON_MESSAGE: bool = true;
     const HAS_ON_DRAIN: bool = true;
     const HAS_ON_PING: bool = true;
@@ -324,7 +324,7 @@ pub trait WebSocketHandler: Sized + 'static {
 
     /// # Safety
     /// `this` is the live `*mut Self` from the socket's user-data slot;
-    /// JS-thread only.
+    /// JS-thread only, under the uWS callback contract of [`thunk`].
     unsafe fn on_open(this: *mut Self, ws: AnyWebSocket);
     /// # Safety
     /// See `on_open`.
@@ -344,7 +344,7 @@ pub trait WebSocketHandler: Sized + 'static {
 }
 
 /// Server type that handles the HTTP→WS upgrade.
-pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
+pub trait WebSocketUpgradeServer<const SSL: bool>: Sized {
     /// # Safety
     /// `this` is the raw user-data pointer passed to `uws_ws()` at registration
     /// time, cast to `*mut Self`. **Its actual pointee type is discriminated by
@@ -353,7 +353,7 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     /// MUST dispatch on `id` *before* dereferencing `this`; the trampoline
     /// deliberately forwards the raw pointer (no `&mut Self` is ever
     /// materialized) so that the wrong-typed reference is never created when
-    /// `id != 0`.
+    /// `id != 0`. Called under the uWS callback contract of [`thunk`].
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
         res: *mut uws::NewAppResponse<SSL>,

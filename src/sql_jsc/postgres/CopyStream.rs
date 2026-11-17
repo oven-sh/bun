@@ -8,8 +8,8 @@ use crate::postgres::error_jsc::postgres_error_to_js;
 use crate::postgres::postgres_sql_query::{CopyStream, js};
 use bun_core::String as BunString;
 use bun_core::strings;
-use bun_jsc::JSUint8Array;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSUint8Array, Js, Vm};
 use bun_ptr::{ParentRef, RefPtr};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::frontend;
@@ -78,7 +78,7 @@ impl PostgresSQLConnection {
             .then(|| ParentRef::from(head.request.as_non_null()))
     }
 
-    fn call_copy(&self, request: &PostgresSQLQuery, chunk: JSValue) -> JSValue {
+    fn call_copy(self: &Js<Self>, request: &PostgresSQLQuery, chunk: JSValue) -> JSValue {
         let Some(callback) = request
             .this_value
             .get()
@@ -97,7 +97,7 @@ impl PostgresSQLConnection {
     }
 
     /// `false`: the head has no stream for that direction.
-    fn open_copy(&self, simple: bool, waiting: CopyStream, open: CopyStream) -> bool {
+    fn open_copy(self: &Js<Self>, simple: bool, waiting: CopyStream, open: CopyStream) -> bool {
         let Some(request) = self.copying(waiting).filter(|_| simple) else {
             return false;
         };
@@ -106,7 +106,10 @@ impl PostgresSQLConnection {
         true
     }
 
-    pub(super) fn on_copy_response(&self, writable: bool) -> Result<(), AnyPostgresError> {
+    pub(super) fn on_copy_response(
+        self: &Js<Self>,
+        writable: bool,
+    ) -> Result<(), AnyPostgresError> {
         let head = self.pipeline.get().head()?;
         let (request, simple) = (head.request.clone(), head.is_simple());
         if writable {
@@ -150,7 +153,7 @@ impl PostgresSQLConnection {
     }
 
     /// `false`: the stream has enough for now.
-    fn deliver_copy_out(&self) -> bool {
+    fn deliver_copy_out(self: &Js<Self>) -> bool {
         if self.copy_out.get().is_empty() {
             return true;
         }
@@ -168,20 +171,20 @@ impl PostgresSQLConnection {
     }
 
     /// What follows is the end of the reply: it is read however much the stream holds.
-    pub(super) fn on_copy_done(&self) {
+    pub(super) fn on_copy_done(self: &Js<Self>) {
         self.deliver_copy_out();
         if let Some(request) = self.copying(CopyStream::ReadableOpen) {
             request.copy.set(CopyStream::Readable);
         }
     }
 
-    pub(super) fn flush_copy_out(&self) {
+    pub(super) fn flush_copy_out(self: &Js<Self>) {
         if !self.deliver_copy_out() {
             self.set_reading(false);
         }
     }
 
-    fn set_reading(&self, reading: bool) {
+    fn set_reading(self: &Vm<Self>, reading: bool) {
         if self.flags.get().contains(ConnectionFlags::COPY_OUT_PAUSED) != reading {
             return;
         }
@@ -195,7 +198,7 @@ impl PostgresSQLConnection {
         self.update_poll_ref();
     }
 
-    pub(super) fn on_copy_drain(&self) {
+    pub(super) fn on_copy_drain(self: &Js<Self>) {
         if self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
             return;
         }
@@ -205,7 +208,7 @@ impl PostgresSQLConnection {
     }
 
     /// `false`: the socket is full, and the callback says when it has drained.
-    fn write_copy_chunk(&self, bytes: &[u8]) -> bool {
+    fn write_copy_chunk(self: &Js<Self>, bytes: &[u8]) -> bool {
         for data in bytes.chunks(MAX_COPY_DATA_LENGTH) {
             if let Err(err) = self.write(|out| frontend::copy_data(out, data)) {
                 return self.fail_write(err);
@@ -219,7 +222,7 @@ impl PostgresSQLConnection {
         !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
     }
 
-    fn write_copy_end(&self, failure: Option<&[u8]>) {
+    fn write_copy_end(self: &Js<Self>, failure: Option<&[u8]>) {
         if let Err(err) = self.write(|out| match failure {
             Some(message) => frontend::copy_fail(out, message),
             None => frontend::message(out, b'c', &[]),
@@ -243,17 +246,17 @@ impl PostgresSQLQuery {
         })
     }
 
-    fn end_copy_in(&self, failure: Option<&[u8]>) {
+    fn end_copy_in(self: &Js<Self>, failure: Option<&[u8]>) {
         if let Some(connection) = self.copy_connection(CopyStream::WritableOpen) {
             self.copy.set(CopyStream::None);
-            connection.write_copy_end(failure);
+            self.on(&*connection).write_copy_end(failure);
         }
     }
 
     /// A backend waiting for room in an unread socket ignores a CancelRequest.
-    pub(super) fn cancel_copy(&self) {
+    pub(super) fn cancel_copy(self: &Js<Self>) {
         if let Some(connection) = self.copy_connection(CopyStream::ReadableOpen) {
-            connection.set_reading(true);
+            self.on(&*connection).set_reading(true);
             connection.reject_in_flight(self, connection.cancelled_error(None));
         }
     }
@@ -297,20 +300,20 @@ impl PostgresSQLQuery {
         };
         Ok(self
             .copy_connection(CopyStream::WritableOpen)
-            .is_none_or(|connection| connection.write_copy_chunk(bytes)))
+            .is_none_or(|connection| global.on(&*connection).write_copy_chunk(bytes)))
     }
 
-    pub fn copy_done(&self, _: &mut JsScope<'_>) {
-        self.end_copy_in(None);
+    pub fn copy_done(&self, cx: &mut JsScope<'_>) {
+        cx.on(self).end_copy_in(None);
     }
 
-    pub fn copy_fail(&self, _: &mut JsScope<'_>, message: &[u8]) {
-        self.end_copy_in(Some(copy_fail_message(message)));
+    pub fn copy_fail(&self, cx: &mut JsScope<'_>, message: &[u8]) {
+        cx.on(self).end_copy_in(Some(copy_fail_message(message)));
     }
 
-    pub fn copy_resume(&self) {
+    pub fn copy_resume(self: &Vm<Self>) {
         if let Some(connection) = self.copy_connection(CopyStream::ReadableOpen) {
-            connection.set_reading(true);
+            self.on(&*connection).set_reading(true);
         }
     }
 }

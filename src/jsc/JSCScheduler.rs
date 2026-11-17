@@ -1,7 +1,6 @@
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 
-use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JsResult};
+use crate::{JSGlobalObject, JsResult, Vm};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a JSC deferred work task (constructed/owned on the C++ side).
@@ -55,13 +54,14 @@ unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
 
 /// # Safety
 /// `paused` must point to a live `bool`; C++ writes `true` through it from a
-/// callback inside `tick()`.
+/// callback inside `tick()`. The thread of a VM whose script is paused.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     crate::mark_binding!();
     // SAFETY: see fn contract.
     unsafe {
-        VirtualMachine::get()
+        Vm::assume(&paused)
+            .bun_vm()
             .event_loop()
             .tick_while_paused(paused.cast_const());
     }

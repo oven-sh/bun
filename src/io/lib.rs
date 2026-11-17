@@ -29,10 +29,10 @@ pub use error::Error;
 // crate, `EventLoopHandle` is `EventLoopCtx` (the by-value `{kind, owner}`
 // pair) and the seam is type-checked.
 
-// `posix_event_loop` also defines what Windows shares (`js_vm_ctx`, `Owner`, `FileType`).
+// `posix_event_loop` also defines what Windows shares (`Owner`, `FileType`).
 mod keep_alive;
 pub mod posix_event_loop;
-pub use keep_alive::{JsKeepAlive, KeepAlive};
+pub use keep_alive::KeepAlive;
 
 // ParentDeathWatchdog: POSIX uses `PR_SET_PDEATHSIG` / `EVFILT_PROC` plus an
 // exit-time descendant SIGKILL walk. Windows does both halves via Win32:
@@ -192,7 +192,7 @@ pub type LoopRef = &'static Loop;
 #[cfg(windows)]
 pub type LoopRef = *mut Loop;
 
-pub use posix_event_loop::{IoEvent, Owner, PollTag, js_vm_ctx};
+pub use posix_event_loop::{IoEvent, Owner, PollTag};
 
 #[cfg(not(windows))]
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);

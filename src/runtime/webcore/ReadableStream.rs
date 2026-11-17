@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{
-    self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
+    self as jsc, JSGlobalObject, JSValue, Js, JsCell, JsCellRefExt as _, JsResult, Vm,
 };
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
@@ -231,21 +231,22 @@ impl ReadableStream {
             Source::JavaScript | Source::Invalid => return None,
         };
 
-        self.done();
+        global_this.on(&*self).done();
         ReadableStream__closeConsumedAsBody(self.value, global_this);
         Some(blob)
     }
 
-    pub fn done(&self) {
+    pub fn done(self: &Js<Self>) {
         // done is called when we are done consuming the stream
         // this will resolve any pending promises to done: true
+        let js = self.js();
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::Blob(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
+            Source::Blob(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel(js) },
             // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::File(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
+            Source::File(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel(js) },
             // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::Bytes(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
+            Source::Bytes(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel(js) },
             _ => {}
         }
     }
@@ -254,7 +255,7 @@ impl ReadableStream {
     /// cancel failure is the cancel promise's (handled) rejection; `Err` is anything thrown synchronously.
     pub fn cancel(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__cancel(self.value, global_this);
-        self.done();
+        global_this.on(self).done();
         result
     }
 
@@ -269,7 +270,7 @@ impl ReadableStream {
     ) -> JsResult<()> {
         let result =
             bun_jsc::cpp::ReadableStream__cancelWithReason(self.value, global_this, reason);
-        self.done();
+        global_this.on(self).done();
         result
     }
 
@@ -281,12 +282,12 @@ impl ReadableStream {
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
-        if let Some(bytes) = self.ptr.bytes() {
+        if let Some(bytes) = global_this.on(self.ptr.bytes()) {
             bytes.error_native_consumer(reason);
         } else if let Some(file) = self.ptr.file() {
             file.error_native_consumer(reason);
         }
-        self.done();
+        global_this.on(self).done();
         result
     }
 
@@ -324,6 +325,7 @@ impl ReadableStream {
         set_source: impl FnOnce(streams::SourceHandle),
     ) -> NativeWireResult {
         use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
+        let js = global.js();
 
         if let Some(byte_stream) = self.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
@@ -334,7 +336,7 @@ impl ReadableStream {
                 byte_stream.parent_const().set_sink_owner(owner_cell);
                 byte_stream.sink.set(sink);
                 byte_stream.sink_paused.set(false);
-                byte_stream.signal_consumer_attached();
+                js.on(byte_stream).signal_consumer_attached();
 
                 if let Some(err) = byte_stream.take_pending_error() {
                     byte_stream.detach_sink(Some(&err));
@@ -349,7 +351,7 @@ impl ReadableStream {
                     } else {
                         StreamResult::Owned(buffered)
                     };
-                    match sink.write(&chunk) {
+                    match js.on(&sink).write(&chunk) {
                         Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
                         Writable::Done | Writable::Err(_) => {
                             byte_stream.detach_sink(None);
@@ -365,7 +367,7 @@ impl ReadableStream {
                 // Wake the producer after the older bytes are in the sink;
                 // any synchronous output routes through `on_data`.
                 if !byte_stream.sink_paused.get() {
-                    byte_stream.signal_drained();
+                    js.on(byte_stream).signal_drained();
                 }
                 return NativeWireResult::Wired;
             }
@@ -387,7 +389,7 @@ impl ReadableStream {
                         return NativeWireResult::EndedInline(Some(err));
                     }
                     Some(Start::OwnedAndDone(bytes)) => {
-                        let _ = sink.write(&StreamResult::OwnedAndDone(bytes));
+                        let _ = js.on(&sink).write(&StreamResult::OwnedAndDone(bytes));
                         file_reader.parent_const().end_locked_stream(None);
                         return NativeWireResult::EndedInline(None);
                     }
@@ -397,7 +399,7 @@ impl ReadableStream {
                 file_reader.parent_const().set_sink_owner(owner_cell);
                 file_reader.sink.set(sink);
                 file_reader.sink_paused.set(true);
-                file_reader.pull_into_sink();
+                js.on(file_reader).pull_into_sink();
                 return NativeWireResult::Wired;
             }
         }
@@ -783,26 +785,26 @@ pub trait SourceContext: Sized {
     /// `js_${NAME}InternalReadableStreamSource::sink_owner_set_cached`
     fn js_sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 
-    fn on_start(&self) -> streams::Start;
-    fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result<'_>;
-    fn on_cancel(&self);
+    fn on_start(self: &Js<Self>) -> streams::Start;
+    fn on_pull(self: &Js<Self>, buf: &mut [u8], view: JSValue) -> streams::Result<'_>;
+    fn on_cancel(self: &Js<Self>);
     /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
     /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
     /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
     /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
     /// here would deallocate the storage backing the live `&self` borrow (UAF).
-    fn deinit_fn(&self) {}
+    fn deinit_fn(self: &Vm<Self>) {}
 
     /// The JS wrapper was collected while native refs remain. Runs inside a GC
     /// sweep: no JS. `ByteStream` tells its producer nobody can read it now.
     /// `FileReader` releases its across-read ref.
-    fn wrapper_finalized(&self) {}
+    fn wrapper_finalized(self: &Vm<Self>) {}
 
     /// `setRefUnrefFn` — default no-op.
     fn set_ref_unref(&self, _enable: bool) {}
 
     /// `drainInternalBuffer` — default returns empty.
-    fn drain_internal_buffer(&self) -> Vec<u8> {
+    fn drain_internal_buffer(self: &Js<Self>) -> Vec<u8> {
         Vec::<u8>::default()
     }
 
@@ -875,13 +877,13 @@ jsc::impl_abort_handle_owner!(
     },
     |this, _cause| {
         // SAFETY: trait contract — `this` is live.
-        let wrapper = unsafe { (*this).this_jsvalue.get() };
+        let wrapper = unsafe { (*this.cast::<Self>()).this_jsvalue.get() };
         // Collected and not swept yet: so are those peers, and the finalizer releases this.
         if wrapper.try_get().is_none() && !wrapper.is_finalized() {
             return;
         }
         // SAFETY: as above; `wrapper` is not used again.
-        unsafe { (*this).cancel() }
+        unsafe { (*this).cancel((*this).js()) }
     }
 );
 
@@ -1033,14 +1035,14 @@ impl<C: SourceContext> NewSource<C> {
         self.context.set_ref_unref(enable);
     }
 
-    pub fn cancel(&self) {
+    pub fn cancel(&self, js: Js) {
         if self.cancelled.get() {
             return;
         }
         self.cancelled.set(true);
-        self.context.on_cancel();
+        js.on(&self.context).on_cancel();
         let mut p = self.producer.replace(streams::SourceHandle::None);
-        p.close(None);
+        p.close(None, js);
     }
 
     fn is_reader_live(&self) -> bool {
@@ -1079,11 +1081,14 @@ impl<C: SourceContext> NewSource<C> {
         };
         let global_this = self.global_this();
         let reason = err.map_or(JSValue::ZERO, |err| err.to_js(global_this));
-        crate::dispatch::fold(bun_jsc::cpp::Bun__NativeStreamSource__endLockedStream(
-            this_jsvalue,
-            global_this,
-            reason,
-        ));
+        crate::dispatch::fold(
+            global_this.js(),
+            bun_jsc::cpp::Bun__NativeStreamSource__endLockedStream(
+                this_jsvalue,
+                global_this,
+                reason,
+            ),
+        );
     }
 
     pub fn increment_count(&self) {
@@ -1148,9 +1153,10 @@ impl<C: SourceContext> NewSource<C> {
             unsafe { (*this).this_jsvalue.with_mut(jsc::JsRef::downgrade) };
         }
         if remaining == 0 {
-            // SAFETY: still live; run side-effect teardown while fields are valid.
+            // SAFETY: still live; run side-effect teardown while fields are valid. Made on a thread with a
+            // VM, and no ref leaves it or outlasts `~VM`: teardown has released the producers before it.
             unsafe {
-                (*this).context.deinit_fn();
+                Vm::assume(&this).on(&(*this).context).deinit_fn();
             }
             // SAFETY: `this` originated from `RefPtr::new`. No
             // `&mut` borrow of `*this` is live at this point — reclaim and drop,
@@ -1209,7 +1215,9 @@ impl<C: SourceContext> NewSource<C> {
         let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let result = self.context.on_pull(buffer.slice_mut(), view);
+        let result = global_this
+            .on(&self.context)
+            .on_pull(buffer.slice_mut(), view);
         Self::process_result(this_value.to_js(), &cx, flags.to_js(), result)
     }
 
@@ -1219,7 +1227,7 @@ impl<C: SourceContext> NewSource<C> {
         self.global_this
             .set(Some(bun_ptr::BackRef::new(global_this)));
         self.reader_context.set(Some(cx.context().id()));
-        match self.context.on_start() {
+        match global_this.on(&self.context).on_start() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
             streams::Start::ChunkSize(size) => Ok(JSValue::js_number(size as f64)),
@@ -1262,20 +1270,20 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn cancel_from_js(&self, _: &mut JsScope<'_>) {
-        self.cancel();
+    pub fn cancel_from_js(&self, cx: &mut JsScope<'_>) {
+        self.cancel(cx.js());
     }
 
-    pub fn finalize(&self) {
+    pub fn finalize(self: &Vm<Self>) {
         self.this_jsvalue.with_mut(|r| r.finalize());
         // The wrapper's ref, released after this, keeps the count > 0 across the refs this drops.
         if self.ref_count.get() > 1 {
-            self.context.wrapper_finalized();
+            self.on(&self.context).wrapper_finalized();
         }
     }
 
     pub fn drain(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let list = self.context.drain_internal_buffer();
+        let list = cx.on(&self.context).drain_internal_buffer();
         if list.len() > 0 {
             return jsc::ArrayBuffer::from_default_allocator(
                 cx.global(),

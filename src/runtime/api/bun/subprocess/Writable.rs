@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use bun_io::{Owner, PollTag};
 #[cfg(not(windows))]
 use bun_jsc::SysErrorJsc as _;
-use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, Js, JsCell, JsResult, event_loop::EventLoop};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 
@@ -113,7 +113,7 @@ impl Writable {
     /// The result becomes `subprocess.stdin`.
     pub(crate) unsafe fn init(
         mut stdio: Stdio,
-        event_loop: &EventLoop,
+        event_loop: &Js<EventLoop>,
         subprocess: &RefPtr<Subprocess<'_>>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
@@ -185,7 +185,8 @@ impl Writable {
                 let pipe_ref = FileSink::create(evtloop, file.fd());
 
                 let writer = &pipe_ref.writer;
-                match writer.start(&*pipe_ref, evtloop.as_event_loop_ctx(), file.fd(), true) {
+                let handler = event_loop.on(&*pipe_ref);
+                match writer.start(handler, evtloop.as_event_loop_ctx(), file.fd(), true) {
                     // The writer closes it from now on.
                     bun_sys::Result::Ok(()) => _ = file.into_raw(),
                     bun_sys::Result::Err(err) => {
@@ -260,7 +261,7 @@ impl Writable {
                     // writes were clobbered by the struct-literal reassignment
                     // in spawn_maybe_sync and this path asserted no ref change;
                     // see https://github.com/oven-sh/bun/pull/14092).
-                    pipe_ref.on_attached_process_exit(status);
+                    (global_this.on(&*pipe_ref)).on_attached_process_exit(status);
                     // The wrapper takes `pipe_ref`'s ref.
                     FileSink::to_js(pipe_ref, global_this)
                 } else {
@@ -320,10 +321,10 @@ impl Writable {
         }
     }
 
-    pub(crate) fn close(this: &JsCell<Self>) {
+    pub(crate) fn close(this: &Js<JsCell<Self>>) {
         match this.get() {
             Writable::Pipe(pipe) => {
-                let _ = pipe.clone().end(None);
+                let _ = this.on(&*pipe.clone()).end(None);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd { .. } => this.set(Writable::Ignore),

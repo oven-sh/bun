@@ -113,7 +113,7 @@ impl HmrSocket {
                                             bun_core::TimespecMockMode::ForceRealTime,
                                             1000,
                                         );
-                                        crate::jsc_hooks::timer_all().update(
+                                        crate::jsc_hooks::timer_all(dev.vm()).update(
                                             OwnedTimer::node(
                                                 &raw const dev.memory_visualizer_timer,
                                             ),

@@ -10,8 +10,8 @@ use bun_jsc::bindgen::{Callable, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
-    self as jsc, AbortHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject, JSValue, JsError,
-    JsResult, ScriptExecutionStatus, Strong, StrongCell,
+    self as jsc, AbortHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject, JSValue, Js,
+    JsError, JsResult, ScriptExecutionStatus, Strong, StrongCell, Vm,
 };
 use bun_removable_features::removable_body_behind_value;
 
@@ -153,31 +153,31 @@ impl CronJob {
         let vm = global.bun_vm();
         if vm.hot_reload.get() == HotReload::Hot
             && vm.worker.get().is_none()
-            && let Some(state) = try_runtime_state()
+            && let Some(state) = try_runtime_state(vm)
         {
             let entry = Strong::create(js_value, global);
             state.cron_jobs.with_mut(|jobs| jobs.push(entry));
         }
-        job.poll_ref.ref_(bun_io::js_vm_ctx());
+        job.poll_ref.ref_(vm.loop_ctx());
         // SAFETY: `stop_now` leaves the context before `root` lets go of the wrapper.
         unsafe { AbortHandle::arm_owner(job.as_ptr(), cx.context()) };
-        timer_all().update(&raw const job.event_loop_timer, &next_time);
+        timer_all(vm).update(&raw const job.event_loop_timer, &next_time);
         Ok(js_value)
     }
 
     /// Idempotent, and runs no script.
-    pub(crate) fn stop_now(&self) {
+    pub(crate) fn stop_now(self: &Vm<Self>) {
         let Some(js_this) = self.root.get() else {
             return;
         };
         self.event_loop_timer.disarm();
-        self.poll_ref.disable();
+        self.poll_ref.disable(self.bun_vm().loop_ctx());
         self.abort_handle.leave();
         js::callback_set_cached(js_this, &self.global, JSValue::ZERO);
         if let Some(tick) = js::pending_tick_take_cached(js_this, &self.global) {
             js_tick::job_set_cached(tick, &self.global, JSValue::ZERO);
         }
-        if let Some(state) = try_runtime_state() {
+        if let Some(state) = try_runtime_state(self.bun_vm()) {
             drop(state.cron_jobs.with_mut(|jobs| {
                 let i = jobs.iter().position(|job| job.get() == js_this)?;
                 Some(jobs.swap_remove(i))
@@ -186,31 +186,40 @@ impl CronJob {
         self.root.clear();
     }
 
-    pub(crate) fn stop_all_for_reload() {
-        let Some(state) = try_runtime_state() else {
+    pub(crate) fn stop_all_for_reload(vm: Vm) {
+        let Some(state) = try_runtime_state(vm.bun_vm()) else {
             return;
         };
         for job in state.cron_jobs.take() {
-            removable_body_behind_value!(Cron, {
+            removable_body_behind_value!(Cron, vm, {
                 if let Some(job) = js::from_js(&job.get()) {
-                    job.stop_now();
+                    vm.on(&*job).stop_now();
                 }
             });
         }
     }
 
-    pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
+    pub(crate) fn stop<'a>(
+        self: &Vm<Self>,
+        this_value: JsWrapper<'a, Self>,
+    ) -> JsWrapper<'a, Self> {
         self.stop_now();
         this_value
     }
 
-    pub(crate) fn r#ref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
-        self.poll_ref.ref_(bun_io::js_vm_ctx());
+    pub(crate) fn r#ref<'a>(
+        self: &Vm<Self>,
+        this_value: JsWrapper<'a, Self>,
+    ) -> JsWrapper<'a, Self> {
+        self.poll_ref.ref_(self.bun_vm().loop_ctx());
         this_value
     }
 
-    pub(crate) fn unref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
-        self.poll_ref.unref(bun_io::js_vm_ctx());
+    pub(crate) fn unref<'a>(
+        self: &Vm<Self>,
+        this_value: JsWrapper<'a, Self>,
+    ) -> JsWrapper<'a, Self> {
+        self.poll_ref.unref(self.bun_vm().loop_ctx());
         this_value
     }
 
@@ -234,9 +243,9 @@ impl CronJob {
             && vm.script_execution_status() == ScriptExecutionStatus::Running
             && let Some(next_time) = self.next_time()
         {
-            return timer_all().update(&raw const self.event_loop_timer, &next_time);
+            return timer_all(vm).update(&raw const self.event_loop_timer, &next_time);
         }
-        self.stop_now();
+        vm.as_vm().on(self).stop_now();
     }
 
     /// A root of its own for [`tick`](Self::tick), whose script can stop the job.
@@ -245,11 +254,12 @@ impl CronJob {
         Some(Strong::create(self.root.get()?, &self.global))
     }
 
-    pub(crate) fn tick(root: &Strong, vm: &VirtualMachine) {
+    pub(crate) fn tick(root: &Strong, vm: &Js<VirtualMachine>) {
         let js_this = root.get();
         let Some(job) = js::from_js(&js_this) else {
             return;
         };
+        let job = vm.on(&*job);
         let (ScriptExecutionStatus::Running, Some(callback)) = (
             vm.script_execution_status(),
             js::callback_get_cached(js_this),

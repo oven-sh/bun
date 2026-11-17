@@ -7,6 +7,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Sink, State};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 #[derive(Default)]
 pub(crate) struct Batch {
@@ -32,7 +33,7 @@ impl Batch {
     }
 
     pub(crate) fn report(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         cmd: NodeId,
         err: Option<Vec<u8>>,
         out: Vec<u8>,
@@ -45,7 +46,7 @@ impl Batch {
         Self::print(interp, cmd, err, out)
     }
 
-    fn print(interp: &Interpreter, cmd: NodeId, err: Option<Vec<u8>>, out: Vec<u8>) -> Yield {
+    fn print(interp: &Loop<Interpreter>, cmd: NodeId, err: Option<Vec<u8>>, out: Vec<u8>) -> Yield {
         if let Some(err) = err {
             match Builtin::sink(interp, cmd, IoKind::Stderr) {
                 Sink::Fd(fd) => {
@@ -74,14 +75,14 @@ impl Batch {
     }
 
     /// Whether the write failed makes no difference.
-    pub(crate) fn on_write(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn on_write(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
         match Self::of(interp, cmd).and_then(|batch| batch.writes.pop_front().flatten()) {
             Some(out) => Self::print(interp, cmd, None, out),
             None => Self::settle(interp, cmd),
         }
     }
 
-    pub(crate) fn settle(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn settle(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
         let me = Builtin::of_mut(interp, cmd);
         let State::Batch(batch) = &mut me.state else {
             return Yield::suspended();

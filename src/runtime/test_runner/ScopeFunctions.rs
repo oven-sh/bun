@@ -514,6 +514,7 @@ impl ScopeFunctions {
         line_no: u32,
     ) -> JsResult<()> {
         let _g = group_log::begin();
+        let bun_test = global.on(bun_test);
 
         // only allow in collection phase
         match bun_test.phase.get() {

@@ -4,6 +4,7 @@ use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 pub(crate) struct Binary {
     pub(crate) base: Base,
@@ -40,7 +41,7 @@ impl Binary {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         let (left_exit, right_exit, parent, shell, node) = {
             let me = interp.as_binary(this);
             (me.left, me.right, me.base.parent, me.shell, me.node)
@@ -73,7 +74,7 @@ impl Binary {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,

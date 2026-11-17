@@ -14,7 +14,7 @@ export const jest = b.fn({ args: { path: b.string.utf8.otherAsNull }, returns: b
  * `ownGlobals`: `RuntimeFeatures::own_test_globals` as `bun test` would transpile the file with now.
  * Otherwise 1 where `bun test` would take the file's globals from the module of Vitest if it transpiled the file now, else 0.
  */
-export const askedByCompiledTestFile = b.fn({ args: { ownGlobals: b.bool }, returns: b.u32 });
+export const askedByCompiledTestFile = b.fn({ passVm: true, args: { ownGlobals: b.bool }, returns: b.u32 });
 /** Also `jest.setTimeout`. */
 export const setDefaultTimeout = b.fn({
   export: "Bun__Jest__setDefaultTimeout",

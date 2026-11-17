@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
-use bun_jsc::JsCell;
+use bun_jsc::{Js, JsCell, Vm};
 use bun_ptr::RefPtr;
 
 use crate::json_line_buffer::JSONLineBuffer;
@@ -14,8 +14,6 @@ use bun_io::StreamBuffer;
 use bun_jsc as jsc;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::js_value::Protected;
-#[cfg(windows)]
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task,
 };
@@ -940,30 +938,28 @@ impl SendQueueOwner {
     }
 
     #[inline]
-    fn global_this(self) -> *const JSGlobalObject {
+    fn global_this(self, js: Js) -> *const JSGlobalObject {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.global_this.as_ptr(),
-            SendQueueOwner::Instance => {
-                core::ptr::from_ref(bun_jsc::virtual_machine::VirtualMachine::get().global())
-            }
+            SendQueueOwner::Instance => core::ptr::from_ref(js.bun_vm().global()),
         }
     }
 
-    fn handle_ipc_close(self) {
+    fn handle_ipc_close(self, js: Js) {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_close(),
-            SendQueueOwner::Instance => crate::ipc_host::IPCInstance::handle_ipc_close(),
+            SendQueueOwner::Instance => crate::ipc_host::IPCInstance::handle_ipc_close(js),
         }
     }
 
-    fn handle_ipc_message(self, msg: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
+    fn handle_ipc_message(self, msg: &DecodedIPCMessage, handle: JSValue, js: Js) -> JsResult<()> {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
             SendQueueOwner::Instance => {
-                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle)
+                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle, js)
             }
         }
     }
@@ -1004,7 +1000,7 @@ impl SendQueue {
         self.owner.get()
     }
 
-    pub(crate) fn detach(&self) {
+    pub(crate) fn detach(self: &Vm<Self>) {
         log!("SendQueue#detach");
         self.close_event_sent.set(true);
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
@@ -1015,6 +1011,7 @@ impl SendQueue {
         mode: Mode,
         owner: Option<SendQueueOwner>,
         socket: SocketUnion,
+        _: Vm,
     ) -> RefPtr<SendQueue> {
         log!("SendQueue#init");
         let this = RefPtr::new(Self {
@@ -1071,7 +1068,7 @@ impl SendQueue {
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
     }
 
-    fn close_socket(&self, reason: CloseReason, from: CloseFrom) {
+    fn close_socket(self: &Vm<Self>, reason: CloseReason, from: CloseFrom) {
         log!(
             "SendQueue#closeSocket {}",
             match from {
@@ -1100,11 +1097,11 @@ impl SendQueue {
         self.socket_closed_notify(from != CloseFrom::Deinit);
     }
 
-    fn socket_closed(&self) {
+    fn socket_closed(self: &Vm<Self>) {
         self.socket_closed_notify(true);
     }
 
-    fn socket_closed_notify(&self, notify: bool) {
+    fn socket_closed_notify(self: &Vm<Self>, notify: bool) {
         log!("SendQueue#_socketClosed");
         #[cfg(windows)]
         {
@@ -1117,7 +1114,7 @@ impl SendQueue {
             }
             self.windows.with_mut(|w| w.windows_write = None);
         }
-        self.keep_alive.disable();
+        self.keep_alive.disable(self.bun_vm().loop_ctx());
         let was_open = self.socket_is_open();
         self.socket.set(SocketUnion::Closed);
         // Only enqueue the close notification for the open→closed transition.
@@ -1131,20 +1128,19 @@ impl SendQueue {
         }
     }
 
-    fn schedule_deferred(&self) {
+    fn schedule_deferred(self: &Vm<Self>) {
         if self.deferred_scheduled.replace(true) {
             return;
         }
         // SAFETY: the root of the live allocation that holds `self`.
         let queue = unsafe { RefPtr::init_ref(self.root_ptr()) };
-        self.get_global_this()
-            .bun_vm()
+        self.bun_vm()
             .event_loop()
             .enqueue_task(Task::from_ref::<Self>(queue));
     }
 
     /// `task_tag::SendQueueDeferred` dispatch, under the task's ref: drain the pending flags.
-    pub(crate) fn run_deferred(&self) {
+    pub(crate) fn run_deferred(self: &Js<Self>) {
         self.deferred_scheduled.set(false);
         if self.pending_close.get() {
             log!("SendQueue#closeSocketTask");
@@ -1170,7 +1166,7 @@ impl SendQueue {
                     item.abort_unsent(&global);
                 }
                 if let Some(owner) = self.owner.get() {
-                    owner.handle_ipc_close();
+                    owner.handle_ipc_close(self.js());
                 }
             }
         }
@@ -1181,12 +1177,12 @@ impl SendQueue {
     /// observe the disconnect, rather than waiting for writes as a user close does.
     #[cfg(windows)]
     unsafe fn stop_for_vm_teardown(this: *mut c_void) {
-        // SAFETY: recorded at configure time by this live SendQueue; the pipe
+        // SAFETY: recorded at configure time, under a `Js`, by this live SendQueue; the pipe
         // leaves the list when it drops.
-        unsafe { &*this.cast::<SendQueue>() }.socket_closed();
+        unsafe { &*this.cast::<Vm<SendQueue>>() }.socket_closed();
     }
 
-    pub(crate) fn close_socket_next_tick(&self, next_tick: bool) {
+    pub(crate) fn close_socket_next_tick(self: &Vm<Self>, next_tick: bool) {
         log!("SendQueue#closeSocketNextTick");
         if !self.socket_is_open() {
             self.socket.set(SocketUnion::Closed);
@@ -1206,7 +1202,7 @@ impl SendQueue {
     }
 
     /// The peer's process has exited. Its last messages can still be in the socket.
-    pub(crate) fn close_after_exit(&self) {
+    pub(crate) fn close_after_exit(self: &Vm<Self>) {
         #[cfg(not(windows))]
         if !self.pending_close.get() {
             self.read_before_close.set(true);
@@ -1215,7 +1211,7 @@ impl SendQueue {
     }
 
     /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
-    pub(crate) fn disconnect(&self) {
+    pub(crate) fn disconnect(self: &Vm<Self>) {
         if self.socket_is_open()
             && !self.pending_close.get()
             && self.waiting_for_ack.get().is_some()
@@ -1395,9 +1391,8 @@ impl SendQueue {
     pub(crate) fn update_ref(&self, global: &JSGlobalObject) {
         let _ = global;
         // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
-        // break vtable), not `&VirtualMachine`; dispatch is
-        // routed through `bun_io::js_vm_ctx` which `bun_runtime` registers.
-        let ctx = bun_io::js_vm_ctx();
+        // break vtable), not `&VirtualMachine`.
+        let ctx = global.bun_vm().loop_ctx();
         let should_ref = self.should_ref();
         if should_ref {
             self.keep_alive.ref_(ctx);
@@ -1454,7 +1449,7 @@ impl SendQueue {
         match next {
             Next::Nothing => {
                 if self.close_after_flush.get() && !waiting_for_ack && self.queue.get().is_empty() {
-                    self.close_socket_next_tick(true);
+                    global.on(self).close_socket_next_tick(true);
                 }
                 self.update_ref(global);
             }
@@ -1466,14 +1461,14 @@ impl SendQueue {
             Next::Send(fd) => {
                 debug_assert!(!self.write_in_progress.get());
                 self.write_in_progress.set(true);
-                self.write(fd);
+                global.on(self).write(fd);
                 // the write is queued. this._onWriteComplete() will be called when the write completes.
                 self.update_ref(global);
             }
         }
     }
 
-    fn on_write_complete(&self, n: i32) {
+    fn on_write_complete(self: &Js<Self>, n: i32) {
         log!("SendQueue#_onWriteComplete {}", n);
         self.debug_log_message_queue();
         if !self.write_in_progress.get() || self.queue.get().is_empty() {
@@ -1658,7 +1653,7 @@ impl SendQueue {
     /// call _onWriteComplete later.
     ///
     /// The outbound bytes are read from `queue[0]` *inside* this method.
-    fn write(&self, fd: Option<Fd>) {
+    fn write(self: &Js<Self>, fd: Option<Fd>) {
         #[cfg(windows)]
         {
             let _ = fd;
@@ -1743,12 +1738,11 @@ impl SendQueue {
         let Some(this) = this else {
             return; // disconnected before the write completes
         };
-        let vm = VirtualMachine::get();
-        let _scope = vm.enter_event_loop_scope();
-
         // SAFETY: owner is a BACKREF into the live SendQueue (cleared in
-        // socket_closed if not); every method takes `&self`.
-        let this = unsafe { &*this };
+        // socket_closed if not); every method takes `&self`. `write` had a `Js`, and `uv_run` dispatches.
+        let this = unsafe { &*this.cast::<Js<SendQueue>>() };
+        let _scope = this.bun_vm().enter_event_loop_scope();
+
         this.windows.with_mut(|w| w.windows_write = None);
         this.with_pipe(|pipe| pipe.unref()); // write complete; unref
         let n = if status.to_error(bun_sys::Tag::write).is_some() {
@@ -1763,9 +1757,9 @@ impl SendQueue {
         }
         // The event-loop exit is handled by `_scope` drop.
     }
-    fn get_global_this(&self) -> bun_jsc::GlobalRef {
+    fn get_global_this(self: &Js<Self>) -> bun_jsc::GlobalRef {
         let owner = self.owner_ref().expect("SendQueue used after detach");
-        bun_jsc::GlobalRef::from(JSGlobalObject::opaque_ref(owner.global_this()))
+        bun_jsc::GlobalRef::from(JSGlobalObject::opaque_ref(owner.global_this(self.js())))
     }
 
     /// # Safety
@@ -1777,14 +1771,15 @@ impl SendQueue {
     pub(crate) unsafe fn windows_configure_server(
         this: *mut Self,
         mut ipc_pipe: uv::Owned<uv::Pipe>,
+        js: Js,
     ) -> bun_sys::Result<()> {
         log!("configureServer");
         ipc_pipe.unref();
         ipc_pipe.set_owner(this.cast(), Self::stop_for_vm_teardown);
         // Routes through the `StreamReader for SendQueue` impl below.
-        let result = ipc_pipe.read_start_ctx::<SendQueue>(this);
+        let result = ipc_pipe.read_start_ctx(this.cast::<Js<SendQueue>>());
         // SAFETY: caller contract — `this` is a live SendQueue.
-        let self_ = unsafe { &*this };
+        let self_ = js.on(unsafe { &*this });
         self_.socket.set(SocketUnion::Open(ipc_pipe));
         result
             .to_result(bun_sys::Tag::listen)
@@ -1796,6 +1791,7 @@ impl SendQueue {
     pub(crate) unsafe fn windows_configure_client(
         this: *mut Self,
         pipe_fd: Fd,
+        js: Js,
     ) -> bun_sys::Result<()> {
         log!("configureClient");
         let mut ipc_pipe = uv::Owned::<uv::Pipe>::zeroed();
@@ -1804,7 +1800,7 @@ impl SendQueue {
             .to_result(bun_sys::Tag::pipe)?;
         ipc_pipe.open(pipe_fd.uv()).to_result(bun_sys::Tag::open)?;
         // SAFETY: fn contract.
-        unsafe { Self::windows_configure_server(this, ipc_pipe) }
+        unsafe { Self::windows_configure_server(this, ipc_pipe, js) }
     }
 }
 
@@ -1814,7 +1810,7 @@ impl SendQueue {
 /// `SendQueue` with zero per-handle storage.
 // SAFETY: nothing touches `incoming` between `on_read_alloc` and the report of the read.
 #[cfg(windows)]
-unsafe impl uv::StreamReader for SendQueue {
+unsafe impl uv::StreamReader for Js<'_, SendQueue> {
     #[inline]
     fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8] {
         IPCHandlers::WindowsNamedPipe::on_read_alloc(this, suggested_size)
@@ -1846,7 +1842,10 @@ impl Drop for SendQueue {
     fn drop(&mut self) {
         log!("SendQueue#deinit");
         self.close_event_sent.set(true);
-        self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
+        // SAFETY: `new` took a `Vm`, and the refs are not `Send`. They go with a task or when the `Subprocess` is
+        // finalized, and `IPCInstance` is leaked.
+        let this = unsafe { Vm::assume(self) }.on(&*self);
+        this.close_socket(CloseReason::Failure, CloseFrom::Deinit);
     }
 }
 
@@ -2090,7 +2089,7 @@ fn handle_ipc_message(
         if let Some(owner) = send_queue.owner.get() {
             let handle_js =
                 received.map_or(JSValue::UNDEFINED, |fd| received_fd_to_js(fd.into_raw()));
-            owner.handle_ipc_message(&message, handle_js)?;
+            owner.handle_ipc_message(&message, handle_js, global_this.js())?;
         }
     }
     Ok(())
@@ -2102,7 +2101,7 @@ enum DecodeStep {
     Fail(IPCDecodeError),
 }
 
-fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
+fn finish_decode(send_queue: &Js<SendQueue>, step: &DecodeStep) {
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
         DecodeStep::Wait => {
@@ -2117,7 +2116,7 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         // a throwing listener, and the channel is closed as for any undecodable
         // input.
         DecodeStep::Fail(IPCDecodeError::Js(err)) => {
-            crate::dispatch::fold(Err(*err));
+            crate::dispatch::fold(send_queue.js(), Err(*err));
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         DecodeStep::Fail(_) => {
@@ -2181,7 +2180,7 @@ fn decode_next_advanced(
     })
 }
 
-fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
+fn on_data2(send_queue: &Js<SendQueue>, all_data: &[u8]) {
     let mut data = all_data;
 
     // In the VirtualMachine case, `globalThis` is an optional, in case
@@ -2202,11 +2201,10 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             loop {
                 match decode_next_json(&send_queue.incoming, &global_this) {
                     DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
+                        crate::dispatch::fold(
+                            send_queue.js(),
+                            handle_ipc_message(send_queue, result.message, &global_this),
+                        );
                     }
                     step => return finish_decode(send_queue, &step),
                 }
@@ -2226,11 +2224,10 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
                         Ok(result) => {
                             let consumed = result.bytes_consumed as usize;
-                            crate::dispatch::fold(handle_ipc_message(
-                                send_queue,
-                                result.message,
-                                &global_this,
-                            ));
+                            crate::dispatch::fold(
+                                send_queue.js(),
+                                handle_ipc_message(send_queue, result.message, &global_this),
+                            );
                             if consumed < data.len() {
                                 data = &data[consumed..];
                             } else {
@@ -2263,11 +2260,10 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             loop {
                 match decode_next_advanced(&send_queue.incoming, &global_this, &mut slice_start) {
                     DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
+                        crate::dispatch::fold(
+                            send_queue.js(),
+                            handle_ipc_message(send_queue, result.message, &global_this),
+                        );
                     }
                     step => return finish_decode(send_queue, &step),
                 }
@@ -2285,7 +2281,7 @@ pub(crate) mod IPCHandlers {
         use super::*;
 
         pub(crate) fn on_close(
-            send_queue: &SendQueue,
+            send_queue: &Js<SendQueue>,
             _: Socket,
             _: c_int,
             _: Option<*mut c_void>,
@@ -2295,7 +2291,7 @@ pub(crate) mod IPCHandlers {
             send_queue.socket_closed();
         }
 
-        pub(crate) fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
+        pub(crate) fn on_data(send_queue: &Js<SendQueue>, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             on_data2(send_queue, all_data);
@@ -2317,7 +2313,7 @@ pub(crate) mod IPCHandlers {
             }
         }
 
-        pub(crate) fn on_writable(send_queue: &SendQueue, _: Socket) {
+        pub(crate) fn on_writable(send_queue: &Js<SendQueue>, _: Socket) {
             log!("onWritable");
 
             let global_this = send_queue.get_global_this();
@@ -2331,7 +2327,7 @@ pub(crate) mod IPCHandlers {
             // unref if needed
         }
 
-        pub(crate) fn on_end(send_queue: &SendQueue, _: Socket) {
+        pub(crate) fn on_end(send_queue: &Js<SendQueue>, _: Socket) {
             log!("onEnd");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
@@ -2349,7 +2345,7 @@ pub(crate) mod IPCHandlers {
             })
         }
 
-        pub(crate) fn on_read_error(send_queue: &SendQueue, err: bun_sys::E) {
+        pub(crate) fn on_read_error(send_queue: &Js<SendQueue>, err: bun_sys::E) {
             log!("NewNamedPipeIPCHandler#onReadError {:?}", err);
             send_queue.close_socket_next_tick(true);
         }
@@ -2357,7 +2353,7 @@ pub(crate) mod IPCHandlers {
         /// `nread` is the byte count libuv reported into the slice handed out
         /// by `on_read_alloc` (i.e. the tail of `send_queue.incoming` past its
         /// current `len`).
-        pub(crate) fn on_read(send_queue: &SendQueue, nread: usize) {
+        pub(crate) fn on_read(send_queue: &Js<SendQueue>, nread: usize) {
             log!("NewNamedPipeIPCHandler#onRead {}", nread);
             let global_this = send_queue.get_global_this();
             let _scope = global_this.bun_vm().enter_event_loop_scope();
@@ -2380,11 +2376,10 @@ pub(crate) mod IPCHandlers {
                     loop {
                         match decode_next_json(&send_queue.incoming, &global_this) {
                             DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
+                                crate::dispatch::fold(
+                                    send_queue.js(),
+                                    handle_ipc_message(send_queue, result.message, &global_this),
+                                );
                             }
                             step => return finish_decode(send_queue, &step),
                         }
@@ -2406,11 +2401,10 @@ pub(crate) mod IPCHandlers {
                             &mut slice_start,
                         ) {
                             DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
+                                crate::dispatch::fold(
+                                    send_queue.js(),
+                                    handle_ipc_message(send_queue, result.message, &global_this),
+                                );
                             }
                             step => return finish_decode(send_queue, &step),
                         }

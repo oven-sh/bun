@@ -22,7 +22,7 @@
 //!   fn on_end(ext, *us_socket_t)
 //!   fn on_fd(ext, *us_socket_t, fd: c_int)
 //!   fn on_connect_error(ext, *us_socket_t, code: i32)
-//!   fn on_connecting_error(*ConnectingSocket, code: i32)
+//!   fn on_connecting_error(ext, *ConnectingSocket, code: i32)
 //!   fn on_handshake(ext, *us_socket_t, ok: bool, err: us_bun_verify_error_t)
 
 use core::ffi::{c_int, c_void};
@@ -34,8 +34,8 @@ use crate::{ConnectingSocket, us_bun_verify_error_t, us_socket_t};
 // Handlers implement this trait and set the `HAS_ON_*` associated consts for
 // each method they actually provide. Default impls are `unreachable!()` and
 // the corresponding vtable slot is left `None` when the const is `false`.
-pub trait Handler: 'static {
-    /// What `us_socket_ext` holds. Ignored when `HAS_EXT == false`.
+pub trait Handler {
+    /// What `us_socket_ext` holds. `()` when `HAS_EXT == false`.
     type Ext;
     /// When false, handlers take `(s, …)` instead
     /// of `(ext, s, …)` and recover their owner from `s`.
@@ -85,7 +85,7 @@ pub trait Handler: 'static {
     fn on_connect_error(_ext: &mut Self::Ext, _s: *mut us_socket_t, _code: i32) {
         unreachable!()
     }
-    fn on_connecting_error(_cs: *mut ConnectingSocket, _code: i32) {
+    fn on_connecting_error(_ext: &mut Self::Ext, _cs: *mut ConnectingSocket, _code: i32) {
         unreachable!()
     }
     fn on_handshake(
@@ -208,13 +208,18 @@ impl<H: Handler> Trampolines<H> {
     // Rust can't splat tuples into a call, so each trampoline inlines the
     // HAS_EXT branch.
     #[inline(always)]
-    fn ext(s: *mut us_socket_t) -> &'static mut H::Ext {
+    fn ext<'a>(s: *mut us_socket_t) -> &'a mut H::Ext {
         // S008: `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the
         // safe const-asserted ZST deref accessor. ext storage was sized for
         // `H::Ext` at context creation; lifetime is bounded by the trampoline
-        // call (we lie with 'static because the borrow never escapes the
-        // handler call).
-        us_socket_t::opaque_mut(s).ext::<H::Ext>()
+        // call. A proof in `H::Ext` is for the caller of the vtable's entry to uphold.
+        Self::empty_ext().unwrap_or_else(|| us_socket_t::opaque_mut(s).ext())
+    }
+
+    /// An `Ext` that has no size is not looked up.
+    fn empty_ext<'a>() -> Option<&'a mut H::Ext> {
+        // SAFETY: no bytes. The proof: as in `ext`.
+        (size_of::<H::Ext>() == 0).then(|| unsafe { core::ptr::NonNull::dangling().as_mut() })
     }
 
     extern "C" fn on_open(
@@ -317,7 +322,8 @@ impl<H: Handler> Trampolines<H> {
         cs: *mut ConnectingSocket,
         code: c_int,
     ) -> *mut ConnectingSocket {
-        H::on_connecting_error(cs, code);
+        let ext = Self::empty_ext().unwrap_or_else(|| ConnectingSocket::opaque_mut(cs).ext());
+        H::on_connecting_error(ext, cs, code);
         cs
     }
 

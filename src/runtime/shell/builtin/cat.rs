@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use bun_core::ZStr;
+use bun_core::{Loop, ZStr};
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{BadFlag, Builtin, BuiltinInput, IoKind, Kind, Sink, State};
@@ -19,7 +19,7 @@ pub(crate) struct Cat {
     ended: Option<ExitCode>,
 }
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     let bltn = Builtin::of(interp, cmd);
     let (flags, files) = bltn.split_flags();
     if let [flag, ..] = flags {
@@ -60,7 +60,7 @@ impl Cat {
         }
     }
 
-    fn open(interp: &Interpreter, cmd: NodeId, idx: usize) -> Yield {
+    fn open(interp: &Loop<Interpreter>, cmd: NodeId, idx: usize) -> Yield {
         // Closes the previous file first.
         Builtin::of_mut(interp, cmd).state = State::Idle;
         // The `args` of the Cmd still have the NUL, and argv[0].
@@ -75,7 +75,7 @@ impl Cat {
     }
 
     /// The caller owns a `reader` too: `start` can finish the command.
-    fn read(interp: &Interpreter, cmd: NodeId, reader: &Rc<IOReader>, next: usize) -> Yield {
+    fn read(interp: &Loop<Interpreter>, cmd: NodeId, reader: &Rc<IOReader>, next: usize) -> Yield {
         Builtin::of_mut(interp, cmd).state = State::Cat(Cat {
             reader: Rc::clone(reader),
             next,
@@ -84,22 +84,26 @@ impl Cat {
         });
         reader.set_interp(interp);
         reader.add_reader(listener(cmd));
-        reader.start()
+        interp.on(&**reader).start()
     }
 
-    fn step(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn step(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
         let Some(cat) = Self::of(interp, cmd) else {
             return Yield::suspended();
         };
         match cat.ended {
             _ if cat.pending > 0 => Yield::suspended(),
-            None => Rc::clone(&cat.reader).resume(),
+            None => interp.on(&*Rc::clone(&cat.reader)).resume(),
             Some(0) => Self::open(interp, cmd, cat.next),
             Some(errno) => Builtin::done(interp, cmd, errno),
         }
     }
 
-    pub(crate) fn on_write(interp: &Interpreter, cmd: NodeId, failed: Option<ExitCode>) -> Yield {
+    pub(crate) fn on_write(
+        interp: &Loop<Interpreter>,
+        cmd: NodeId,
+        failed: Option<ExitCode>,
+    ) -> Yield {
         let Some(exit_code) = failed else {
             if let Some(cat) = Self::of(interp, cmd) {
                 cat.pending = cat.pending.saturating_sub(1);
@@ -121,7 +125,7 @@ impl Cat {
     }
 
     pub(crate) fn on_io_reader_chunk(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         cmd: NodeId,
         chunk: &[u8],
         remove: &mut bool,
@@ -143,7 +147,7 @@ impl Cat {
     }
 
     pub(crate) fn on_io_reader_done(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {

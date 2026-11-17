@@ -5,6 +5,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 use std::collections::VecDeque;
 
+use bun_jsc::Js;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
@@ -664,9 +665,9 @@ impl QuicSession {
         // SAFETY: see doc comment.
         (!p.is_null()).then(|| unsafe { &*p })
     }
-    pub(super) fn schedule_process(&self) {
+    pub(super) fn schedule_process(self: &Js<Self>) {
         if let Some(ep) = self.endpoint_ref() {
-            ep.schedule_process();
+            self.on(ep).schedule_process();
         }
     }
     pub(super) fn note_stream_write(&self) {
@@ -803,7 +804,7 @@ impl QuicSession {
                 core::ptr::from_ref(qs).cast_mut()
             }
             Err(e) => {
-                crate::dispatch::fold(Err(e));
+                crate::dispatch::fold(global.js(), Err(e));
                 null_mut()
             }
         }
@@ -878,7 +879,7 @@ impl QuicSession {
             if !self.has_listener(LISTENER_FLAG_SESSION_TICKET) {
                 continue;
             }
-            let buf = ArrayBuffer::create_buffer(global, &blob).or_report();
+            let buf = ArrayBuffer::create_buffer(global, &blob).or_report(global.js());
             if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                 let vm = global.bun_vm();
                 vm.event_loop().run_callback(
@@ -891,7 +892,7 @@ impl QuicSession {
             }
         }
         if !self.pending_tickets.get().is_empty() {
-            self.schedule_process();
+            global.on(self).schedule_process();
         }
     }
 
@@ -923,7 +924,7 @@ impl QuicSession {
                 && matches!(event, SessionEvent::Closed | SessionEvent::GoawayReceived)
             {
                 self.events.with_mut(|e| e.insert(0, event));
-                self.schedule_process();
+                global.on(self).schedule_process();
                 break;
             }
             if !matches!(event, SessionEvent::PeerClose { .. } | SessionEvent::Closed) {
@@ -1097,7 +1098,7 @@ impl QuicSession {
                 if self.ticket_delivered.replace(true) {
                     self.pending_tickets
                         .with_mut(|q| q.push_back((now_ns() + TICKET_DELIVERY_DELAY_NS, blob)));
-                    self.schedule_process();
+                    global.on(self).schedule_process();
                     return Ok(());
                 }
                 let buf = ArrayBuffer::create_buffer(global, &blob)?;
@@ -1572,11 +1573,11 @@ impl QuicSession {
         let sni = opt_bytes_to_js(global, snap_sni.as_deref());
         let cipher = opt_bytes_to_js(global, snap_cipher.as_deref());
         let alpn = alpn_bytes
-            .map(|b| bun_string_jsc::create_utf8_for_js(global, &b).or_report())
+            .map(|b| bun_string_jsc::create_utf8_for_js(global, &b).or_report(global.js()))
             .unwrap_or(JSValue::UNDEFINED);
         let cipher_version = bun_core::String::static_("TLSv1.3")
             .to_js(global)
-            .or_report();
+            .or_report(global.js());
         // Node reports both fields only on failure -- the JS 'auto' rejection
         // gates on `validationErrorReason !== undefined` -- and a server with
         // no client certificate reports X509_V_ERR_UNSPECIFIED.
@@ -1591,10 +1592,10 @@ impl QuicSession {
             Some((code, reason)) => (
                 bun_core::String::static_(reason.as_bytes())
                     .to_js(global)
-                    .or_report(),
+                    .or_report(global.js()),
                 bun_core::String::static_(code.as_bytes())
                     .to_js(global)
-                    .or_report(),
+                    .or_report(global.js()),
             ),
             None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
         };
@@ -1658,7 +1659,7 @@ impl QuicSession {
                     c"peer did not provide a certificate",
                 );
             }
-            self.schedule_process();
+            global.on(self).schedule_process();
         }
     }
 
@@ -1713,7 +1714,8 @@ impl QuicSession {
         // `qlog_fin_sent` is latched above and also gates the guard at the top,
         // so bailing here would silently end the whole qlog stream, not just
         // drop this record.
-        let data_js = bun_string_jsc::create_utf8_for_js(global, data.as_bytes()).or_report();
+        let data_js =
+            bun_string_jsc::create_utf8_for_js(global, data.as_bytes()).or_report(global.js());
         if let Some(cb) = callbacks::get(global, "onSessionQlog") {
             let vm = global.bun_vm();
             vm.event_loop().run_callback(
@@ -1774,10 +1776,10 @@ impl QuicSession {
         // `close_reported` is already latched above, so returning here would
         // mark the close delivered without ever delivering it and `closed`
         // would never settle. Report and carry on with undefined.
-        let code_js = JSValue::from_uint64_no_truncate(global, code).or_report();
+        let code_js = JSValue::from_uint64_no_truncate(global, code).or_report(global.js());
         let reason_js = reason
             .filter(|r| !r.is_empty())
-            .map(|r| bun_string_jsc::create_utf8_for_js(global, &r).or_report())
+            .map(|r| bun_string_jsc::create_utf8_for_js(global, &r).or_report(global.js()))
             .unwrap_or(JSValue::UNDEFINED);
         let endpoint = self.endpoint.get();
         if !endpoint.is_null() {
@@ -1950,7 +1952,7 @@ impl QuicSession {
         })
     }
 
-    pub(super) fn maybe_finish_deferred_close(&self) {
+    pub(super) fn maybe_finish_deferred_close(self: &Js<Self>) {
         if self.deferred_close.get().is_none() || self.destroyed.get() {
             return;
         }
@@ -1994,7 +1996,7 @@ impl QuicSession {
                 } else {
                     self.apply_graceful_close(app, code, reason);
                 }
-                self.schedule_process();
+                global.on(self).schedule_process();
             }
         }
         Ok(())
@@ -2033,7 +2035,7 @@ impl QuicSession {
                     c.abort_silent();
                 }
             }
-            self.schedule_process();
+            global.on(self).schedule_process();
         }
         self.teardown(global);
         if let Some(err) = parse_error {
@@ -2078,7 +2080,7 @@ impl QuicSession {
                 conn.make_stream();
             }
         }
-        self.schedule_process();
+        global.on(self).schedule_process();
         Ok(handle)
     }
     pub(crate) fn send_datagram(
@@ -2141,7 +2143,7 @@ impl QuicSession {
         if let Some(c) = self.conn() {
             c.want_datagram_write(true);
         }
-        self.schedule_process();
+        global.on(self).schedule_process();
         JSValue::from_uint64_no_truncate(global, id)
     }
     /// Runs inside `sendDatagram`: what building the status left pending is
@@ -2317,7 +2319,7 @@ fn datagram_budget(tp: &lsquic::NqTransportParams) -> u16 {
 
 fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     match bytes {
-        Some(b) => bun_string_jsc::create_utf8_for_js(global, b).or_report(),
+        Some(b) => bun_string_jsc::create_utf8_for_js(global, b).or_report(global.js()),
         None => JSValue::UNDEFINED,
     }
 }
@@ -2571,7 +2573,7 @@ lsquic_callback! {
         });
     }
 
-    pub(super) fn on_early_data_failed(session: &QuicSession) {
+    pub(super) fn on_early_data_failed(session: &Js<QuicSession>) {
         // Front of the queue: lsquic resets the early streams before this
         // callback, so their clean closes are already queued and would settle
         // `closed` before the rejection node delivers could land.
@@ -2632,16 +2634,16 @@ lsquic_callback! {
 /// `undefined`, and the callback still runs (or is skipped by `run_callback`'s
 /// gate when it is the termination).
 trait OrReport {
-    fn or_report(self) -> JSValue;
+    fn or_report(self, js: Js) -> JSValue;
 }
 
 impl OrReport for JsResult<JSValue> {
     #[inline]
-    fn or_report(self) -> JSValue {
+    fn or_report(self, js: Js) -> JSValue {
         match self {
             Ok(v) => v,
             Err(e) => {
-                crate::dispatch::fold(Err(e));
+                crate::dispatch::fold(js, Err(e));
                 JSValue::UNDEFINED
             }
         }

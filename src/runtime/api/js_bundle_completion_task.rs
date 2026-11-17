@@ -13,11 +13,10 @@ use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
 use bun_core::env::OperatingSystem;
 use bun_event_loop::BoxedTask;
-use bun_io::JsKeepAlive;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::WorkPool;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsPtr, LogJsc as _};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsKeepAlive, JsPtr, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, platform};
@@ -126,7 +125,7 @@ jsc::impl_abort_handle_owner!(CallerOfTheBuild, handle, |this, _cause| {
 
 jsc::impl_abort_handle_owner!(BundleJs, abort_handle, |this, _cause| {
     // The VM does not wait behind other VMs' builds.
-    if let Some(queued) = bundle_thread::take_unstarted(this) {
+    if let Some(queued) = bundle_thread::take_unstarted(this.cast::<BundleJs>()) {
         return queued.task.release_unrun();
     }
     // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
@@ -161,7 +160,7 @@ impl JSBundleCompletionTask {
         let js = bun_core::heap::alloc_nn(BundleJs {
             global_this: BackRef::new(global_this),
             owner,
-            _keep_alive: JsKeepAlive::active(),
+            _keep_alive: JsKeepAlive::active(global_this.bun_vm()),
             cancelled: Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<BundleJs>(),
             caller: CallerOfTheBuild {

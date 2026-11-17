@@ -7,8 +7,8 @@ use bun_core::strings;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
-    JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
-    StringJsc as _, Strong, bun_string_jsc, js_promise,
+    JSInternalPromise, JSPromise, JSValue, Js, JsError, JsResult,
+    StringJsc as _, Strong, Vm, bun_string_jsc, js_promise,
 };
 use bun_options_types::context::TestEnvironment;
 
@@ -122,7 +122,7 @@ impl Environment {
 
     pub(crate) fn load_entry_point(
         &mut self,
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
         path: &[u8],
     ) -> crate::Result<*mut JSInternalPromise> {
         if !core::mem::replace(&mut self.is_entered, true) {
@@ -152,7 +152,7 @@ impl Environment {
     #[optimize(size)]
     fn enter(
         &mut self,
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
         path: &[u8],
     ) -> crate::Result<Option<*mut JSInternalPromise>> {
         let kind = match &self.comment {
@@ -203,18 +203,18 @@ impl Environment {
     }
 
     #[optimize(size)]
-    pub(crate) fn teardown(&mut self, vm: &VirtualMachine) {
+    pub(crate) fn teardown(&mut self, vm: &Js<VirtualMachine>) {
         if let Some(function) = self.teardown.take() {
             teardown(vm, &function);
         }
     }
 }
 
-pub(crate) fn is_in_preload() -> bool {
-    VirtualMachine::get().is_in_preload.get()
+pub(crate) fn is_in_preload(vm: Vm) -> bool {
+    vm.bun_vm().is_in_preload.get()
 }
 
-fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {
+fn rejected(vm: &Js<VirtualMachine>, err: JsError) -> crate::Result<*mut JSInternalPromise> {
     let promise = JSPromise::rejected_promise_with_caught_exception(vm.global(), err)?;
     promise.set_handled();
     Ok(std::ptr::from_mut(promise))
@@ -229,7 +229,7 @@ fn print_file_name() {
 
 #[optimize(size)]
 fn setup(
-    vm: &VirtualMachine,
+    vm: &Js<VirtualMachine>,
     kind: TestEnvironment,
     options: Option<&[u8]>,
     path: &[u8],
@@ -267,7 +267,7 @@ fn setup(
 }
 
 #[optimize(size)]
-fn teardown(vm: &VirtualMachine, function: &Strong) {
+fn teardown(vm: &Js<VirtualMachine>, function: &Strong) {
     let global = vm.global();
     let error = match function
         .get()

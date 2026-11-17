@@ -5,7 +5,7 @@
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output};
+use bun_core::{self as bun, Global, Loop, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
 
 // ─── compiling submodules ────────────────────────────────────────────────────
@@ -353,7 +353,7 @@ pub(crate) mod cli {
     /// crate-alphabetical order, scattering the cold-start path across pages
     /// shared with bundler/install/css/panic-format bodies.
     #[inline(never)]
-    pub(crate) fn start() {
+    pub(crate) fn start(loop_: Loop) {
         // `bun_crash_handler::cli_state::is_main_thread()` (used to print the
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
@@ -368,7 +368,7 @@ pub(crate) mod cli {
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
-        if let Err(err) = Command::start(log) {
+        if let Err(err) = Command::start(log, loop_) {
             // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
             // message. The bake production path returns `error.BuildFailed`
@@ -993,7 +993,7 @@ pub(crate) mod command {
     /// / `exec_auto_or_run` adjacent), instead of fat-LTO inlining it into
     /// `Cli::start` and re-scattering the per-tag tail calls.
     #[inline(never)]
-    pub(crate) fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
+    pub(crate) fn start(log: &mut bun_ast::Log, loop_: Loop) -> crate::Result<()> {
         use bun_removable_features::call_removable;
 
         crate::cli::startup_options::refuse_code_without_interpreter();
@@ -1116,7 +1116,14 @@ pub(crate) mod command {
                     .map(bun_core::ZStr::as_bytes)
                     .is_some_and(looks_like_run_entrypoint)
                 {
-                    return call_removable!(Tools, Abort, exec_auto_or_run, Tag::AutoCommand, log);
+                    return call_removable!(
+                        Tools,
+                        Abort,
+                        exec_auto_or_run,
+                        Tag::AutoCommand,
+                        log,
+                        loop_
+                    );
                 }
             }
         }
@@ -1132,7 +1139,7 @@ pub(crate) mod command {
 
         match tag {
             Tag::AutoCommand | Tag::RunCommand => {
-                call_removable!(Tools, Abort, exec_auto_or_run, tag, log)
+                call_removable!(Tools, Abort, exec_auto_or_run, tag, log, loop_)
             }
             Tag::HelpCommand => HelpCommand::exec(),
             Tag::ReservedCommand => ReservedCommand::exec(),
@@ -1143,7 +1150,7 @@ pub(crate) mod command {
             Tag::InstallCompletionsCommand => {
                 call_removable!(Tools, Abort, exec_install_completions)
             }
-            Tag::PackageManagerCommand => call_removable!(Install, Abort, exec_pm, log),
+            Tag::PackageManagerCommand => call_removable!(Install, Abort, exec_pm, log, loop_),
             Tag::RunAsNodeCommand => call_removable!(Tools, Abort, exec_run_as_node, log),
             Tag::InfoCommand => call_removable!(Install, Abort, bun_info, log),
             Tag::BuildCommand => call_removable!(BuildCommand, Abort, exec_build, log),
@@ -1157,7 +1164,7 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => {
                 call_removable!(Install, Abort, exec_update_interactive, log)
             }
-            Tag::PublishCommand => call_removable!(Install, Abort, exec_publish, log),
+            Tag::PublishCommand => call_removable!(Install, Abort, exec_publish, log, loop_),
             Tag::AuditCommand => call_removable!(Install, Abort, exec_audit, log),
             Tag::CheckCommand => call_removable!(Check, Abort, exec_check, log),
             Tag::LintCommand => call_removable!(Lint, Abort, exec_lint, log),
@@ -1172,9 +1179,9 @@ pub(crate) mod command {
             Tag::UnlinkCommand => call_removable!(Install, Abort, exec_unlink, log),
             Tag::TestCommand => call_removable!(TestCommand, Abort, exec_test, log),
             Tag::GetCompletionsCommand => call_removable!(Tools, Abort, bun_getcompletes, log),
-            Tag::CreateCommand => call_removable!(Create, Abort, bun_create, log),
+            Tag::CreateCommand => call_removable!(Create, Abort, bun_create, log, loop_),
             Tag::UpgradeCommand => call_removable!(Upgrade, Abort, exec_upgrade, log),
-            Tag::ExecCommand => call_removable!(Tools, Abort, exec_exec, log),
+            Tag::ExecCommand => call_removable!(Tools, Abort, exec_exec, log, loop_),
             Tag::FuzzilliCommand => call_removable!(Tools, Abort, exec_fuzzilli, log),
         }
     }
@@ -1281,7 +1288,7 @@ pub(crate) mod command {
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
-    fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log, loop_: Loop) -> CmdResult {
         // Bare `bun` help is served by the empty-positionals fallthrough.
         let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
@@ -1301,14 +1308,14 @@ pub(crate) mod command {
 
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
-            let Err(err) = super::multi_run::run(ctx);
+            let Err(err) = super::multi_run::run(ctx, loop_);
             pretty_errorln!("<r><red>error<r>: {}", err.name());
             Global::exit(1);
         }
 
         if !ctx.filters.is_empty() || ctx.workspaces {
             // Result<Infallible, _>: if this returns at all, it's Err.
-            let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
+            let Err(err) = super::filter_run::run_scripts_with_filter(ctx, loop_);
             pretty_errorln!("<r><red>error<r>: {}", err.name());
             Global::exit(1);
         }
@@ -1354,7 +1361,7 @@ pub(crate) mod command {
                 log_errors: tag != Tag::AutoCommand || !ctx.runtime_options.if_present,
                 allow_fast_run_for_extensions: tag == Tag::AutoCommand,
             };
-            if run_command::RunCommand::exec_with_cfg(ctx, cfg)? {
+            if run_command::RunCommand::exec_with_cfg(ctx, cfg, loop_)? {
                 return Ok(());
             }
             if tag == Tag::RunCommand {
@@ -1523,10 +1530,10 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_exec(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_exec(log: &mut bun_ast::Log, loop_: Loop) -> CmdResult {
         let ctx = init(Tag::ExecCommand, log)?;
         if ctx.positionals.len() > 1 {
-            super::exec_command::ExecCommand::exec(ctx)?;
+            super::exec_command::ExecCommand::exec(ctx, loop_)?;
         } else {
             tag_print_help(Tag::ExecCommand, true);
         }
@@ -1546,19 +1553,19 @@ pub(crate) mod command {
     /// Stamps out `#[cold] #[inline(never)] fn $name(log) { init($tag)?; $exec(ctx) }`
     /// for the trivial `init + exec` arms.
     macro_rules! cold_exec {
-        ($( $name:ident => ($tag:ident, $($path:tt)+) ),* $(,)?) => {
+        ($( $name:ident => ($tag:ident, $path:path $(, $loop_:ident)?) ),* $(,)?) => {
             $(
                 #[cold]
                 #[inline(never)]
-                fn $name(log: &mut bun_ast::Log) -> CmdResult {
+                fn $name(log: &mut bun_ast::Log $(, $loop_: Loop)?) -> CmdResult {
                     let ctx = init(Tag::$tag, log)?;
-                    $($path)+(ctx)
+                    $path(ctx $(, $loop_)?)
                 }
             )*
         };
     }
     cold_exec! {
-        exec_pm                 => (PackageManagerCommand, super::package_manager_command::PackageManagerCommand::exec),
+        exec_pm                 => (PackageManagerCommand, super::package_manager_command::PackageManagerCommand::exec, loop_),
         exec_install            => (InstallCommand,        super::install_command::InstallCommand::exec),
         exec_add                => (AddCommand,            super::add_command::AddCommand::exec),
         exec_update             => (UpdateCommand,         super::update_command::UpdateCommand::exec),
@@ -1566,7 +1573,7 @@ pub(crate) mod command {
         exec_patch_commit       => (PatchCommitCommand,    super::patch_commit_command::PatchCommitCommand::exec),
         exec_outdated           => (OutdatedCommand,       super::outdated_command::OutdatedCommand::exec),
         exec_update_interactive => (UpdateInteractiveCommand, super::update_interactive_command::UpdateInteractiveCommand::exec),
-        exec_publish            => (PublishCommand,        super::publish_command::PublishCommand::exec),
+        exec_publish            => (PublishCommand,        super::publish_command::PublishCommand::exec, loop_),
         exec_why                => (WhyCommand,            super::why_command::WhyCommand::exec),
         exec_dedupe             => (DedupeCommand,         super::dedupe_command::DedupeCommand::exec),
         exec_prune              => (PruneCommand,          super::prune_command::PruneCommand::exec),
@@ -1725,7 +1732,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_create(log: &mut bun_ast::Log, loop_: Loop) -> crate::Result<()> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_core::ZStr;
@@ -1852,7 +1859,7 @@ To create a project with the official Next.js scaffolding tool, run
             return BunxCommand::exec(ctx, &bunx_args);
         }
 
-        CreateCommand::exec(ctx, example_tag, template)
+        CreateCommand::exec(ctx, example_tag, template, loop_)
     }
 
     /// `bun ./bun.lockb` — print lockfile as yarn.lock (or its hash with `--hash`).

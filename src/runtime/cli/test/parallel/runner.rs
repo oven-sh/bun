@@ -7,6 +7,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_core::{CStrList, CStrRef, Global, Output};
+use bun_jsc::Js;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::context::MacroOptions;
@@ -55,7 +56,7 @@ pub(crate) fn set_ids_without_workers(env: &mut bun_dotenv::Loader) {
 #[optimize(size)]
 pub(crate) fn run_as_coordinator(
     reporter: &CommandLineReporter,
-    vm: &VirtualMachine,
+    vm: &Js<VirtualMachine>,
     files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
@@ -467,17 +468,17 @@ impl Commands {
     fn wait_for_run(
         &mut self,
         channel: &Channel,
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
     ) -> Option<frame::Reader<'_>> {
         self.run.clear();
         // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
-        let _waits_for_command = bun_io::JsKeepAlive::active();
+        let _waits_for_command = bun_jsc::JsKeepAlive::active(vm);
         tick_until(vm, || self.read(channel));
         (!self.run.is_empty()).then_some(frame::Reader { p: &self.run })
     }
 }
 
-fn tick_until(vm: &VirtualMachine, mut is_over: impl FnMut() -> bool) {
+fn tick_until(vm: &Js<VirtualMachine>, mut is_over: impl FnMut() -> bool) {
     while !is_over() {
         vm.event_loop().tick();
         if is_over() {
@@ -500,7 +501,7 @@ impl RunningFile {
         mut self,
         link: &CoordinatorLink,
         reporter: &CommandLineReporter,
-        vm: &VirtualMachine,
+        vm: &Js<VirtualMachine>,
     ) {
         let mut growth = self.resident_at_start.map(growth_since).unwrap_or_default();
         if self.resident_at_start.is_none() && crate::cli::run_compiled::logs_accounts() {
@@ -535,7 +536,7 @@ impl RunningFile {
 /// Returns how many files it ran.
 fn run_files(
     reporter: &'static CommandLineReporter,
-    vm: &VirtualMachine,
+    vm: &Js<VirtualMachine>,
     link: &CoordinatorLink,
 ) -> u32 {
     let end = bun_sys::File::from_fd(Fd::from_uv(3));
@@ -590,7 +591,8 @@ fn run_files(
         }
         if vm.test_isolation_enabled.get() {
             crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-            vm.swap_global_for_test_isolation();
+            // SAFETY: between two files; what follows asks the VM for its global object again.
+            unsafe { vm.swap_global_for_test_isolation() };
             reporter
                 .jest
                 .bun_test_root
@@ -606,7 +608,7 @@ fn run_files(
 }
 
 /// For each file of `compiled_program::for_each_first_load`: u32, 1 where the load was synchronous, and str path.
-fn first_loads(vm: &VirtualMachine) -> Vec<u8> {
+fn first_loads(vm: &Js<VirtualMachine>) -> Vec<u8> {
     let mut list = Vec::new();
     bun_jsc::compiled_program::for_each_first_load(vm.global(), &mut |path, was_synchronous| {
         list.extend_from_slice(&u32::from(was_synchronous).to_le_bytes());
@@ -616,7 +618,7 @@ fn first_loads(vm: &VirtualMachine) -> Vec<u8> {
     list
 }
 
-fn note_first_loads_of_earlier_process(vm: &VirtualMachine, list: &[u8]) {
+fn note_first_loads_of_earlier_process(vm: &Js<VirtualMachine>, list: &[u8]) {
     let mut rd = frame::Reader { p: list };
     while !rd.p.is_empty() {
         let was_synchronous = rd.u32() != 0;
@@ -721,7 +723,7 @@ fn growth_since(at_start: ResidentAtStart) -> Growth {
 #[optimize(size)]
 pub(crate) fn run_as_worker(
     reporter: &'static CommandLineReporter,
-    vm: &VirtualMachine,
+    vm: &Js<VirtualMachine>,
     ctx: Command::Context,
 ) -> ! {
     vm.test_isolation_enabled.set(ctx.test_options.isolate);
@@ -768,14 +770,14 @@ pub(crate) fn run_as_worker(
 #[optimize(size)]
 fn worker_flush_aggregates(
     reporter: &CommandLineReporter,
-    vm: &VirtualMachine,
+    vm: &Js<VirtualMachine>,
     coverage: &CodeCoverageOptions,
     link: &CoordinatorLink,
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
     let runner = &reporter.jest;
-    let _ = runner.with_snapshots(Snapshots::write_inline_snapshots);
+    let _ = runner.write_inline_snapshots(vm.as_vm());
     let _ = runner.with_snapshots(Snapshots::write_snapshot_file);
 
     link.emit(frame::Kind::RepeatBufs, |wf| {

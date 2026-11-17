@@ -11,7 +11,7 @@ use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{self, JsHeap};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _, Vm};
 use bun_uws::Loop as UwsLoop;
 
 use super::{
@@ -173,7 +173,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!promise.is_empty() && !countdown.is_empty());
-        let all = timer_all();
+        let all = timer_all(cx.vm());
         let id = all.next_id();
 
         let countdown_int = all.js_value_to_countdown(
@@ -203,7 +203,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty());
-        let all = timer_all();
+        let all = timer_all(cx.vm());
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -225,7 +225,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        let all = timer_all();
+        let all = timer_all(cx.vm());
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -267,7 +267,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        let all = timer_all();
+        let all = timer_all(cx.vm());
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -340,7 +340,7 @@ impl All {
         let vm = global_this.bun_vm();
         // `clearTimeout` / `clearInterval` / `clearImmediate`, C++ host functions, call this.
         let context = vm.context_of_caller();
-        let all = timer_all();
+        let all = timer_all(vm);
 
         let timer: &TimerObjectInternals = 'brk: {
             if timer_id_value.is_number() {
@@ -600,7 +600,7 @@ pub(crate) fn fake_request_animation_frame_export(
 ) -> JsResult<JSValue> {
     const NS_PER_MS: u64 = bun_core::time::NS_PER_MS as u64;
     let vm = global.bun_vm();
-    let all = timer_all();
+    let all = timer_all(vm);
     let id = all.next_id();
 
     let clock = if all.fake_timers.is_installed(function) {
@@ -625,7 +625,7 @@ pub(crate) fn fake_request_animation_frame_export(
     TimeoutObject::from_js(&timeout)
         .expect("TimeoutObject::init returns its wrapper")
         .internals
-        .to_primitive()
+        .to_primitive(vm.as_vm())
         .map(JSValue::js_number_from_uint64)
 }
 
@@ -635,19 +635,19 @@ pub(crate) fn fake_queue_tick_export(
     callback: JSValue,
     arguments: JSValue,
 ) {
-    timer_all()
+    timer_all(global.bun_vm())
         .fake_timers
         .queue_tick(global, callback, arguments);
 }
 
 // HOST_EXPORT(Bun__FakeTimers__isInstalled, c)
-pub(crate) fn fake_timers_is_installed_export(function: JSValue) -> bool {
-    timer_all().fake_timers.is_installed(function)
+pub(crate) fn fake_timers_is_installed_export(function: JSValue, vm: Vm) -> bool {
+    timer_all(vm.bun_vm()).fake_timers.is_installed(function)
 }
 
 // HOST_EXPORT(Bun__FakeTimers__fakes, c)
-pub(crate) fn fake_timers_fakes_export(api: u8) -> bool {
-    timer_all().fake_timers.fakes_api(api)
+pub(crate) fn fake_timers_fakes_export(api: u8, vm: Vm) -> bool {
+    timer_all(vm.bun_vm()).fake_timers.fakes_api(api)
 }
 
 // HOST_EXPORT(Bun__FakeTimers__runStep, c)
@@ -707,7 +707,7 @@ pub(crate) mod internal_bindings {
         id: Option<u64>,
     ) -> bindgen::Result<'a, ()> {
         let Some(id) = id else { return Ok(()) };
-        let current = timer_all().last_id.get();
+        let current = timer_all(heap.bun_vm()).last_id.get();
         if id < current {
             return Err(heap.error_with_code(
                 bun_jsc::ErrorCode::OUT_OF_RANGE,
@@ -725,7 +725,7 @@ pub(crate) mod internal_bindings {
                 ),
             ));
         }
-        timer_all().last_id.set(id);
+        timer_all(heap.bun_vm()).last_id.set(id);
         Ok(())
     }
 }

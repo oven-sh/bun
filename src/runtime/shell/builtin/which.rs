@@ -10,8 +10,9 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Sink, State};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     if Builtin::of(interp, cmd).args().is_empty() {
         return Builtin::finish(interp, cmd, IoKind::Stdout, b"\n", 1);
     }
@@ -19,7 +20,12 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
 }
 
 /// One write per argument, from `first` on.
-pub(crate) fn print(interp: &Interpreter, cmd: NodeId, first: usize, mut missing: bool) -> Yield {
+pub(crate) fn print(
+    interp: &Loop<Interpreter>,
+    cmd: NodeId,
+    first: usize,
+    mut missing: bool,
+) -> Yield {
     let shell = Builtin::shell(interp, cmd);
     let (path_env, cwd) = (shell.export_env.get(b"PATH"), shell.cwd());
     let mut path_buf = bun_paths::path_buffer_pool::get();

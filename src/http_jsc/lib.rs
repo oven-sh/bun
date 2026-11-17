@@ -1,3 +1,4 @@
+#![feature(arbitrary_self_types)]
 #![allow(non_snake_case)]
 #![warn(unused_must_use)]
 

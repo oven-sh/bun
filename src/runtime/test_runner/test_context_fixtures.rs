@@ -630,10 +630,10 @@ impl ActiveFixture {
         let tear_down = bound(global, this_value, "tearDown", generated::Bun__ActiveFixture__tearDown)?;
         let context = active::context_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
         let is_deferred = match TestContext::from_js(&context) {
-            Some(test_context) if definition.scope == Scope::Test => test_context.defer_fixture(context, tear_down, self.timeout),
+            Some(test_context) if definition.scope == Scope::Test => global.on(&*test_context).defer_fixture(context, tear_down, self.timeout),
             _ => {
                 self.generation == Jest::file_generation()
-                    && bun_test::clone_active_strong().is_some_and(|buntest| buntest.defer_to_file_end(tear_down, self.timeout))
+                    && bun_test::clone_active_strong().is_some_and(|buntest| global.on(&*buntest).defer_to_file_end(tear_down, self.timeout))
             }
         };
         self.state.set(State::Ready);

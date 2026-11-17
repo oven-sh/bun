@@ -18,6 +18,7 @@ use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
 #[cfg(windows)]
 use bun_jsc as jsc;
+use bun_jsc::Js;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_spawn::RusageFields as _;
 
@@ -53,7 +54,7 @@ pub(crate) struct Worker {
 
 /// What every `Worker::start` of a run needs.
 pub(crate) struct SpawnContext<'a> {
-    pub(crate) vm: &'a VirtualMachine,
+    pub(crate) vm: &'a Js<'a, VirtualMachine>,
     pub(crate) cwd: &'a [u8],
     pub(crate) argv: bun_core::CStrList<'a>,
     pub(crate) envps: &'a [bun_core::CStringList],
@@ -244,7 +245,7 @@ impl Worker {
                 &raw mut **this,
             )
         });
-        match Process::watch_or_reap(process) {
+        match Process::watch_or_reap(coord.vm.as_loop().on(process)) {
             Ok(_) => {}
             Err(e) => {
                 // Resource cleanup is handled by the function-scope errdefer.

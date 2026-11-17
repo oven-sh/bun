@@ -9,7 +9,7 @@ use core::ptr;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{String as BunString, ZStr};
 use bun_jsc as jsc;
-use bun_jsc::JsCell;
+use bun_jsc::{JsCell, Vm};
 use bun_sys as sys;
 use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
@@ -104,8 +104,9 @@ impl PathWatcher {
             return;
         }
         // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.
-        let this: *mut PathWatcher =
-            unsafe { bun_core::from_field_ptr!(PathWatcher, handle, event) };
+        // `init` started it on the loop of its VM, whose stop phase closes it.
+        let this = unsafe { bun_core::from_field_ptr!(PathWatcher, handle, event) }
+            .cast::<Vm<PathWatcher>>();
         // SAFETY: `this` was heap-allocated in `init` and is kept alive until
         // uv_close fires; only shared access is taken and `me` is not used past
         // any call that can free it.
@@ -175,7 +176,7 @@ impl PathWatcher {
     }
 
     fn emit(
-        this: *mut PathWatcher,
+        this: *mut Vm<PathWatcher>,
         path: &[u8],
         hash: bun_watcher::HashType,
         timestamp: u64,
@@ -258,7 +259,7 @@ impl PathWatcher {
             sys::Result::Ok(len) => ZStr::from_buf(outbuf.as_slice(), len),
         };
 
-        let watchers = &path_watchers()[usize::from(recursive)];
+        let watchers = &path_watchers(vm)[usize::from(recursive)];
         if let Some(existing) = watchers.get().get(event_path.as_bytes()) {
             return sys::Result::Ok(existing.as_ptr());
         }
@@ -307,25 +308,26 @@ impl PathWatcher {
     }
 
     /// JS-thread entry point from `FSWatcher.detach()`.
-    pub(crate) fn detach(this: Handle, handler: *mut c_void) {
+    pub(crate) fn detach(this: Handle, handler: *mut c_void, _: Vm) {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let removed = unsafe { &*this }
             .handlers
             .with_mut(|h| h.swap_remove(&handler));
         if removed {
-            Self::maybe_deinit(this);
+            Self::maybe_deinit(this.cast::<Vm<PathWatcher>>());
         }
     }
 
-    fn maybe_deinit(this: *mut PathWatcher) {
+    fn maybe_deinit(this: *mut Vm<PathWatcher>) {
         // SAFETY: `this` is the live heap pointer from `init`, not used once it is dropped.
         let me = unsafe { &*this };
+        let this = this.cast::<PathWatcher>();
         if me.handlers.get().len() != 0 || me.emit_in_progress.get() {
             return;
         }
         bun_output::scoped_log!(fs_watch, "deinit");
-        path_watchers()[usize::from(me.recursive)].with_mut(|watchers| {
+        path_watchers(me.bun_vm())[usize::from(me.recursive)].with_mut(|watchers| {
             if let Some(index) = watchers.values().iter().position(|w| w.as_ptr() == this) {
                 watchers.swap_remove_at(index);
             }

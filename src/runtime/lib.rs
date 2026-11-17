@@ -3,6 +3,7 @@
 // hard errors. Opaque-pointer round-trips (C++ stores `void*`, never derefs)
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
+#![feature(arbitrary_self_types)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
 #![feature(core_io_borrowed_buf)]

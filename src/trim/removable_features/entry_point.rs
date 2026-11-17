@@ -85,6 +85,14 @@ macro_rules! removed_feature_stub {
 
 #[macro_export]
 macro_rules! removable_body {
+    // A `Cell` is not `Copy`, so the closure captures it by value and a zero-sized `$proof` adds nothing to it.
+    ($feature:ident, $stub:ident, $proof:ident, $body:block) => {{
+        let proof = ::core::cell::Cell::new($proof);
+        $crate::removable_body!($feature, $stub, {
+            let $proof = proof.into_inner();
+            $body
+        })
+    }};
     ($feature:ident, $stub:ident, $body:block) => {
         $crate::entry_point::run_removable_body::<
             { $crate::Feature::$feature.index() },
@@ -100,6 +108,13 @@ macro_rules! removable_body {
 /// Its own definition writes the record, so the code around it does not need the feature.
 #[macro_export]
 macro_rules! removable_body_behind_value {
+    ($feature:ident, $proof:ident, $body:block) => {{
+        let proof = ::core::cell::Cell::new($proof);
+        $crate::removable_body_behind_value!($feature, {
+            let $proof = proof.into_inner();
+            $body
+        })
+    }};
     ($feature:ident, $body:block) => {
         $crate::entry_point::removable_body_definition::<{ $crate::Feature::$feature.index() }, _, _>(
             || $body,
@@ -109,6 +124,13 @@ macro_rules! removable_body_behind_value {
 
 #[macro_export]
 macro_rules! removable_body_of_either {
+    ($first:ident, $second:ident, $proof:ident, $body:block) => {{
+        let proof = ::core::cell::Cell::new($proof);
+        $crate::removable_body_of_either!($first, $second, {
+            let $proof = proof.into_inner();
+            $body
+        })
+    }};
     ($first:ident, $second:ident, $body:block) => {
         $crate::entry_point::run_body_of_either::<
             { $crate::Feature::$first.index() },

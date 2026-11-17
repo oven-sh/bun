@@ -6,12 +6,11 @@ use core::mem::ManuallyDrop;
 use bstr::BStr;
 use bun_core::{CStringList, EncodedSlice, ZBox, strings};
 use bun_cron::{Registration, Title};
-use bun_io::{BufferedReader, IoEvent, JsKeepAlive, Owner, PollTag, ReadResult};
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_jsc::bindgen::JsScope;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
-    JsCell, JsResult,
+    EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, Js,
+    JsCell, JsKeepAlive, JsResult, Vm,
 };
 use bun_paths::{platform, resolve_path};
 use bun_ptr::{RefPtr, ThisPtr};
@@ -178,7 +177,7 @@ pub(crate) struct OsJob {
 }
 
 bun_spawn::link_impl_ProcessExit! {
-    Cron for OsJob => |this| {
+    Cron for Js<'_, OsJob> => |this| {
         // SAFETY: a live job installed the handler, and its handle detaches it.
         on_process_exit(status, _rusage) => OsJob::on_process_exit(ThisPtr::new(this), status),
     }
@@ -190,7 +189,7 @@ impl OsJob {
             ref_count: Cell::new(1),
             promise: JsCell::new(JSPromiseStrong::init(global)),
             global: GlobalRef::from(global),
-            _keep_alive: JsKeepAlive::active(),
+            _keep_alive: JsKeepAlive::active(global.bun_vm()),
             step: Cell::new(None),
             process: Cell::new(None),
             output: BufferedReader::init(),
@@ -199,12 +198,12 @@ impl OsJob {
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { job.output.set_owner(owner) };
         let (this, promise) = (job.this_ptr(), job.promise.get().value());
-        (runtime_state().cron_os_jobs.0).with_mut(|jobs| jobs.push(job));
-        Self::run(this, first.map(Some));
+        (runtime_state(global.bun_vm()).cron_os_jobs.0).with_mut(|jobs| jobs.push(job));
+        Self::run(global.on(this), first.map(Some));
         promise
     }
 
-    fn run(this: ThisPtr<Self>, next: Next) {
+    fn run(this: ThisPtr<Js<Self>>, next: Next) {
         let process = match next.and_then(|next| next.map(|c| this.spawn(c)).transpose()) {
             Ok(Some(process)) => process,
             Ok(None) => return Self::finish(this, Ok(())),
@@ -212,19 +211,23 @@ impl OsJob {
         };
         process.set_exit_handler(this);
         // `this` may be freed on every path but `Ok(false)`.
-        match process.watch_or_reap() {
+        let watched = this.proof().as_loop().on(&process);
+        match watched.watch_or_reap() {
             Ok(false) => this.process.set(Some(process)),
             Ok(true) => {}
             Err(err) => {
                 if !process.has_exited() {
-                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed());
+                    watched.on_exit(Status::Err(err), &bun_core::ffi::zeroed());
                 }
             }
         }
     }
 
-    fn spawn(&self, Command { argv, stdout, step }: Command) -> Result<ProcessHandle, Failure> {
-        let vm = VirtualMachine::get();
+    fn spawn(
+        self: &Vm<Self>,
+        Command { argv, stdout, step }: Command,
+    ) -> Result<ProcessHandle, Failure> {
+        let vm = self.bun_vm();
         let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
         #[cfg(windows)]
         let (mut path_buf, envp) = (
@@ -266,7 +269,7 @@ impl OsJob {
         if let Some(stdout) = spawned.stdout.take().map(File::into_raw) {
             use bun_io::PosixFlags;
             (self.output).update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let read = (self.output.start(bun_io::js_vm_ctx(), stdout, true))
+            let read = (self.output.start(self.bun_vm().loop_ctx(), stdout, true))
                 .map_err(|_| "Failed to start reading stdout")?;
             child = (self.take_output(read)).map_or(Child::Running, Child::OutputEnded);
         }
@@ -292,8 +295,8 @@ impl OsJob {
         }
     }
 
-    pub(crate) fn on_io(this: ThisPtr<Self>, event: IoEvent) {
-        let read = this.output.read(bun_io::js_vm_ctx(), Some(event));
+    pub(crate) fn on_io(this: ThisPtr<Js<Self>>, event: IoEvent) {
+        let read = this.output.read(this.bun_vm().loop_ctx(), Some(event));
         let Some(output) = this.take_output(read) else {
             return;
         };
@@ -307,7 +310,7 @@ impl OsJob {
         }
     }
 
-    fn on_process_exit(this: ThisPtr<Self>, status: Status) {
+    fn on_process_exit(this: ThisPtr<Js<Self>>, status: Status) {
         let exit = match status {
             Status::Running => return,
             Status::Exited(exited) if exited.code == 0 => Ok(()),
@@ -326,7 +329,7 @@ impl OsJob {
     }
 
     fn end_step(
-        this: ThisPtr<Self>,
+        this: ThisPtr<Js<Self>>,
         step: Step,
         exit: Result<(), Failure>,
         output: sys::Result<Vec<u8>>,
@@ -335,10 +338,11 @@ impl OsJob {
         Self::run(this, after(step, exit, output));
     }
 
-    fn finish(this: ThisPtr<Self>, result: Result<(), Failure>) {
-        let _entered = VirtualMachine::get().enter_event_loop_scope();
+    fn finish(this: ThisPtr<Js<Self>>, result: Result<(), Failure>) {
+        let (vm, this) = (this.proof().bun_vm(), this.plain());
+        let _entered = vm.enter_event_loop_scope();
         // Dropped before the scope ends, which is where the reactions run.
-        let Some(job) = runtime_state().cron_os_jobs.0.with_mut(|jobs| {
+        let Some(job) = runtime_state(vm).cron_os_jobs.0.with_mut(|jobs| {
             let i = jobs.iter().position(|job| job.as_ptr() == this.as_ptr())?;
             Some(jobs.swap_remove(i))
         }) else {

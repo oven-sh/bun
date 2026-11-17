@@ -3,6 +3,7 @@
 use core::cell::Cell;
 use core::ffi::c_int;
 
+use crate::Vm;
 use bun_core::{Timespec, TimespecMockMode, env_var};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_uws as uws;
@@ -137,19 +138,19 @@ impl GarbageCollectionController {
 
     /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
     #[inline]
-    pub(crate) fn process_gc_timer(&self) {
+    pub(crate) fn process_gc_timer(self: &Vm<Self>) {
         if self.disabled.get() || self.gc_repeating_timer.state.get() != TimerState::PENDING {
             return;
         }
         let interval = self.repeat_interval();
-        Self::arm(VirtualMachine::get(), &self.gc_repeating_timer, interval);
+        Self::arm(self.bun_vm(), &self.gc_repeating_timer, interval);
     }
 
-    pub(crate) fn perform_gc(&self, idle_full: bool) {
+    pub(crate) fn perform_gc(self: &Vm<Self>, idle_full: bool) {
         if self.disabled.get() {
             return;
         }
-        let vm = VirtualMachine::get().jsc_vm();
+        let vm = self.bun_vm().jsc_vm();
         if idle_full {
             vm.collect_async_idle();
         } else {
@@ -177,7 +178,7 @@ impl GarbageCollectionController {
         let prev_heap_size = self.gc_last_heap_size.get();
         let grew = vm.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
         let (full, idle_gc_due_in) = self.idle_tick(vm, grew, interval);
-        self.perform_gc(full);
+        vm.as_vm().on(self).perform_gc(full);
         // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job. Where the
         // event loop cannot let an idle collection finish while parked (Windows: Bun__JSC_onBeforeWait), it proceeds at
         // this timer's ticks instead, fast ones for the next 30.

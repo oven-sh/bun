@@ -31,6 +31,7 @@
 //! set of call sites and of `unsafe impl Send/Sync` in the VM crates so a new
 //! path around the door needs a justification rather than a reviewer's luck.
 
+use crate::Vm;
 #[cfg(debug_assertions)]
 use core::panic::Location;
 use core::ptr::NonNull;
@@ -814,9 +815,13 @@ pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine) {
 }
 
 /// `Bun::EventLoopKeepAlive`.
+///
+/// # Safety
+/// The JS thread, until its `JSC::VM` is destroyed.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__eventLoop__setKeptAlive(kept_alive: bool) {
-    let event_loop = VirtualMachine::get().event_loop();
+pub unsafe extern "C" fn Bun__eventLoop__setKeptAlive(kept_alive: bool) {
+    // SAFETY: fn contract.
+    let event_loop = unsafe { Vm::assume(&kept_alive) }.bun_vm().event_loop();
     if kept_alive {
         event_loop.ref_keep_alive();
     } else {

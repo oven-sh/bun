@@ -1,7 +1,7 @@
 /// `JsCell<T>` is a `#[repr(transparent)]` wrapper over `UnsafeCell<T>` that
 /// hands out `&mut T` from `&self`. It is the load-bearing primitive that lets
-/// `VirtualMachine::get()` / `JSGlobalObject::bun_vm()` return a *safe*
-/// `&'static VirtualMachine` while still permitting field mutation.
+/// `JSGlobalObject::bun_vm()` return a *safe*
+/// `&VirtualMachine` while still permitting field mutation.
 ///
 /// ## Soundness model
 ///
@@ -11,13 +11,6 @@
 /// true concurrent aliasing — only stacked, same-thread reentrancy. `JsCell`
 /// is the Rust spelling of that contract.
 ///
-/// `get_mut()` is therefore *not* sound under arbitrary `Sync` semantics — the
-/// `unsafe impl Sync` below is a lie to the type system that we discharge by
-/// the thread-affinity invariant: a `JsCell` embedded in `VirtualMachine` (or
-/// any JS-heap-adjacent struct) is only ever touched from its owning JS
-/// thread. Cross-thread access goes through `ConcurrentTask` /
-/// `enqueueTaskConcurrent`, which never hands out a `&JsCell`.
-///
 /// This is morally `Cell<T>` with a `get_mut`-from-`&self` escape hatch and
 /// no `T: Copy` bound. [`Self::with_mut`] is the safe entry point (the
 /// `&mut T` is closure-scoped and cannot escape); [`Self::get_mut`] is
@@ -25,15 +18,6 @@
 /// explicitly.
 #[repr(transparent)]
 pub struct JsCell<T>(core::cell::UnsafeCell<T>);
-
-// SAFETY: see type-level docs — `JsCell` is only dereferenced on the owning
-// JS thread; the `Sync` impl exists so `&'static VirtualMachine` (which
-// contains `JsCell` fields) satisfies `'static`-bound trait objects and
-// `thread_local!` accessors without `T: Sync` cascading everywhere. It is NOT
-// a license for cross-thread `get_mut()`.
-unsafe impl<T> Sync for JsCell<T> {}
-// SAFETY: same single-thread-owner invariant as `Sync` above.
-unsafe impl<T> Send for JsCell<T> {}
 
 impl<T> JsCell<T> {
     #[inline(always)]

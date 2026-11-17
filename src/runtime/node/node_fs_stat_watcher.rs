@@ -6,12 +6,12 @@ use std::time::Instant;
 use bun_core::strings;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
 use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
-use bun_io::JsKeepAlive;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::node::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool, WorkPoolTask,
+    self as jsc, JSGlobalObject, JSValue, JsCell, JsKeepAlive, JsRef, JsResult, Vm, WorkPool,
+    WorkPoolTask,
 };
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{BackRef, RefPtr, ThisPtr, ThreadSafeRefCount};
@@ -146,7 +146,7 @@ impl StatWatcherScheduler {
         })
     }
 
-    fn append(watcher: RefPtr<StatWatcher>) {
+    fn append(watcher: RefPtr<StatWatcher>, vm: Vm) {
         log!(
             "append new watcher {}",
             bstr::BStr::new(watcher.path.as_bytes())
@@ -163,7 +163,7 @@ impl StatWatcherScheduler {
         if current == 0 || current > interval {
             // we are not running or the new watcher has a smaller interval
             this.current_interval.store(interval, Ordering::Relaxed);
-            Self::set_timer(this, interval);
+            Self::set_timer(vm.on(this), interval);
         }
     }
 
@@ -172,8 +172,8 @@ impl StatWatcherScheduler {
     }
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
-    fn set_timer(this: ThisPtr<Self>, interval: i32) {
-        let timer_all = crate::jsc_hooks::timer_all();
+    fn set_timer(this: ThisPtr<Vm<Self>>, interval: i32) {
+        let timer_all = crate::jsc_hooks::timer_all(this.proof().bun_vm());
 
         // if the interval is 0 means that we stop the timer
         if interval == 0 {
@@ -188,12 +188,12 @@ impl StatWatcherScheduler {
         // deadline lives in the real heap and must be in real-clock units.
         timer_all.update(
             // SAFETY: a field projection of the live scheduler.
-            unsafe { &raw mut (*this.as_ptr()).event_loop_timer },
+            unsafe { &raw mut (*this.plain().as_ptr()).event_loop_timer },
             &Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(interval)),
         );
     }
 
-    pub(crate) fn timer_callback(this: ThisPtr<Self>) {
+    pub(crate) fn timer_callback(this: ThisPtr<Vm<Self>>) {
         let has_been_cleared = this.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
             || this.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
 
@@ -228,11 +228,11 @@ impl StatWatcherScheduler {
         }
 
         this.pass.set(Some(StatPass {
-            scheduler: RefPtr::from_this(this),
+            scheduler: RefPtr::from_this(this.plain()),
             ticket: this.vm().ticket(),
         }));
         // SAFETY: a field projection of the live scheduler.
-        WorkPool::schedule(unsafe { &raw mut (*this.as_ptr()).task });
+        WorkPool::schedule(unsafe { &raw mut (*this.plain().as_ptr()).task });
     }
 
     /// Thread-pool callback (safe fn — coerces to the `WorkPoolTask.callback`
@@ -310,7 +310,7 @@ impl StatWatcherScheduler {
         this.is_shutdown.store(true, Ordering::Relaxed);
         // Disarm the event-loop timer so `timer_callback` cannot schedule a new
         // work-pool task after we've waited below.
-        Self::set_timer(this.this_ptr(), 0);
+        Self::set_timer(vm.as_vm().on(this.this_ptr()), 0);
 
         // Wait for any in-flight work-pool task to finish touching `watchers`.
         // The task is bounded (one stat per queued watcher) so this is a short
@@ -390,7 +390,7 @@ impl Drop for StatWatcher {
         // self-ref keeps the wrapper alive until `close()` downgrades it, so
         // `finalize` cannot drop the wrapper ref first).
         debug_assert!(
-            !self.poll_ref.is_active() || core::ptr::eq(VirtualMachine::get(), self.ctx.get())
+            !self.poll_ref.is_active() || self.scheduler.main_thread == thread::current().id()
         );
     }
 }
@@ -417,13 +417,13 @@ impl StatWatcher {
     }
 
     /// JS thread dispatch of a [`post_to_js_thread`](Self::post_to_js_thread) hop.
-    pub(crate) fn run_hop(this: RefPtr<Self>) -> bun_event_loop::JsResult<()> {
+    pub(crate) fn run_hop(this: RefPtr<Self>, vm: Vm) -> bun_event_loop::JsResult<()> {
         match this.pending_hop.get() {
             x if x == StatWatcherHop::InitialStatSuccess as u8 => {
-                Self::initial_stat_success_on_main_thread(this)
+                Self::initial_stat_success_on_main_thread(this, vm)
             }
             x if x == StatWatcherHop::InitialStatError as u8 => {
-                Self::initial_stat_error_on_main_thread(this)
+                Self::initial_stat_error_on_main_thread(this, vm)
             }
             _ => this.swap_and_call_listener_on_main_thread(),
         }
@@ -449,16 +449,14 @@ impl StatWatcher {
     pub(crate) fn do_ref(this: &Self) {
         if !this.closed.load(Ordering::Relaxed) && !this.persistent.get() {
             this.persistent.set(true);
-            let el_ctx = this.ctx.loop_ctx();
-            this.poll_ref.ref_(el_ctx);
+            this.poll_ref.ref_(&this.ctx);
         }
     }
 
     pub(crate) fn do_unref(this: &Self) {
         if this.persistent.get() {
             this.persistent.set(false);
-            let el_ctx = this.ctx.loop_ctx();
-            this.poll_ref.unref(el_ctx);
+            this.poll_ref.unref();
         }
     }
 
@@ -472,8 +470,7 @@ impl StatWatcher {
         if self.persistent.get() {
             self.persistent.set(false);
         }
-        let el_ctx = self.ctx.loop_ctx();
-        self.poll_ref.unref(el_ctx);
+        self.poll_ref.unref();
         self.closed.store(true, Ordering::Relaxed);
         self.this_value.with_mut(|r| r.downgrade());
     }
@@ -485,7 +482,10 @@ impl StatWatcher {
         self.closed.store(true, Ordering::Relaxed);
     }
 
-    fn initial_stat_success_on_main_thread(this: RefPtr<Self>) -> bun_event_loop::JsResult<()> {
+    fn initial_stat_success_on_main_thread(
+        this: RefPtr<Self>,
+        vm: Vm,
+    ) -> bun_event_loop::JsResult<()> {
         if this.closed.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -500,11 +500,14 @@ impl StatWatcher {
         let jsvalue = stat_to_js_stats(global_this, &this.get_last_stat(), this.bigint)?;
         js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
-        StatWatcherScheduler::append(this);
+        StatWatcherScheduler::append(this, vm);
         Ok(())
     }
 
-    fn initial_stat_error_on_main_thread(this: RefPtr<Self>) -> bun_event_loop::JsResult<()> {
+    fn initial_stat_error_on_main_thread(
+        this: RefPtr<Self>,
+        vm: Vm,
+    ) -> bun_event_loop::JsResult<()> {
         if this.closed.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -526,7 +529,7 @@ impl StatWatcher {
         // watcher keeps running after a throwing listener (Node semantics).
         // `append` does not enter JS, so it is safe with an exception pending.
         if !this.closed.load(Ordering::Relaxed) {
-            StatWatcherScheduler::append(this);
+            StatWatcherScheduler::append(this, vm);
         }
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a
@@ -647,7 +650,7 @@ impl StatWatcher {
         });
 
         if this.persistent.get() {
-            this.poll_ref.ref_(this.ctx.loop_ctx());
+            this.poll_ref.ref_(&this.ctx);
         }
 
         let js_this = js::to_js(this.clone(), &args.global_this);
@@ -824,11 +827,11 @@ pub(crate) struct StatWatcherTimerUpdate {
 
 impl StatWatcherTimerUpdate {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub(crate) fn run(self: Box<Self>) {
+    pub(crate) fn run(self: Box<Self>, vm: Vm) {
         // `bun test --isolate` retires a file's scheduler and goes on ticking.
         if !self.scheduler.is_shutdown.load(Ordering::Relaxed) {
             let interval = self.scheduler.get_interval();
-            StatWatcherScheduler::set_timer(self.scheduler.this_ptr(), interval);
+            StatWatcherScheduler::set_timer(vm.on(self.scheduler.this_ptr()), interval);
         }
     }
 }

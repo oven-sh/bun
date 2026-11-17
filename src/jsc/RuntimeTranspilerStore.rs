@@ -15,7 +15,6 @@ use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, 
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_io::JsKeepAlive;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
 use bun_paths;
 use bun_ptr::BackRef;
@@ -37,8 +36,8 @@ use crate::saved_source_map::SavedSourceMap;
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{RuntimeSourceMapHandler, VirtualMachine, process_fetch_log};
 use crate::{
-    ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult,
-    ResolvedSource,
+    ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError, JsKeepAlive,
+    JsResult, ResolvedSource,
 };
 
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
@@ -349,7 +348,7 @@ impl RuntimeTranspilerStore {
                 } else {
                     StrongOptional::create(module_loader, global_object)
                 },
-                _keep_alive: JsKeepAlive::active(),
+                _keep_alive: JsKeepAlive::active(global_object.bun_vm()),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 has_plugins: global_object.has_plugins(),

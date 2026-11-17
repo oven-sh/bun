@@ -13,7 +13,7 @@ use bun_ast::ImportRecord;
 use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
+use bun_core::{self, FeatureFlags, Loop, declare_scope, scoped_log};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::BoxedTask;
 use bun_sys::Fd;
@@ -2679,19 +2679,19 @@ pub mod parse_worker {
         }
     }
 
-    fn on_complete_mini(result: *mut Result<'static>, ctx: *mut BundleV2<'static>) {
+    fn on_complete_mini(result: *mut Result<'static>, ctx: *mut BundleV2<'static>, loop_: Loop) {
         // SAFETY: the box that `post_result` queued, and the bundle that is running the loop.
         let (bundle, result) = unsafe { (&mut *ctx, bun_core::heap::take(result)) };
-        BundleV2::on_parse_task_complete(result, bundle);
+        BundleV2::on_parse_task_complete(result, bundle, loop_);
     }
 
     /// # Safety
     /// On the bundle's thread, which uses no other borrow of the bundle during the call.
-    pub unsafe fn on_complete(result: Box<Result<'static>>) {
+    pub unsafe fn on_complete(result: Box<Result<'static>>, loop_: Loop) {
         let ctx = result.ctx;
         // SAFETY: `ctx` has write provenance (`from_ref_mut` in `ParseTask::init`) and outlives
         // the pass. Exclusive by the fn contract.
-        BundleV2::on_parse_task_complete(result, unsafe { ctx.assume_mut() });
+        BundleV2::on_parse_task_complete(result, unsafe { ctx.assume_mut() }, loop_);
     }
 } // end mod parse_worker
 

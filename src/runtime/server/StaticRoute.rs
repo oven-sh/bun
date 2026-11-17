@@ -11,7 +11,7 @@ use bun_http_types::ETag;
 use bun_ptr::{RefPtr, ThisPtr};
 
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::HTTPHeaderName;
+use bun_jsc::{HTTPHeaderName, Js};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
@@ -202,7 +202,7 @@ impl StaticRoute {
                                     .throw_todo(b"TODO: support Bun.file(path) in static routes"));
                             }
                         }
-                        let blob = body_value.use_();
+                        let blob = body_value.use_(global_this.js());
                         blob.global_this
                             .set(std::ptr::from_ref::<JSGlobalObject>(global_this));
                         debug_assert!(
@@ -251,7 +251,7 @@ impl StaticRoute {
     }
 
     // HEAD requests have no body.
-    pub(crate) fn on_head_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_head_request(this: ThisPtr<Js<Self>>, mut req: AnyRequest, resp: AnyResponse) {
         // Evaluate conditional request preconditions for HEAD with 200 status
         if this.status_code == 200 {
             if Self::render_precondition(this, &mut req, resp) {
@@ -261,7 +261,7 @@ impl StaticRoute {
 
         // Continue with normal HEAD request handling
         req.set_yield(false);
-        Self::on_head(this, resp);
+        Self::on_head(this.plain(), resp);
     }
 
     pub(crate) fn on_head(this: ThisPtr<Self>, resp: AnyResponse) {
@@ -288,7 +288,7 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
     }
 
-    pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(this: ThisPtr<Js<Self>>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         if method == Method::GET {
             Self::on_get(this, req, resp);
@@ -298,11 +298,11 @@ impl StaticRoute {
             // For other methods, use the original behavior
             let mut req = req;
             req.set_yield(false);
-            Self::on(this, resp);
+            Self::on(this.plain(), resp);
         }
     }
 
-    pub(crate) fn on_get(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_get(this: ThisPtr<Js<Self>>, mut req: AnyRequest, resp: AnyResponse) {
         // Evaluate conditional request preconditions for GET with 200 status
         if this.status_code == 200 {
             if Self::render_precondition(this, &mut req, resp) {
@@ -312,7 +312,7 @@ impl StaticRoute {
 
         // Continue with normal GET request handling
         req.set_yield(false);
-        Self::on(this, resp);
+        Self::on(this.plain(), resp);
     }
 
     pub(crate) fn on(this: ThisPtr<Self>, resp: AnyResponse) {
@@ -485,14 +485,18 @@ impl StaticRoute {
 
     /// RFC 9110 §13.2.2 precondition evaluation. Writes a 412 or 304 response
     /// and returns `true` when a precondition short-circuits the request.
-    fn render_precondition(this: ThisPtr<Self>, req: &mut AnyRequest, resp: AnyResponse) -> bool {
+    fn render_precondition(
+        this: ThisPtr<Js<Self>>,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+    ) -> bool {
         let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
         // Deferred: `parse_http_date` allocates + calls into WTF; only run it
         // when the client actually sent a date-based conditional header.
         let last_modified = || {
             this.headers
                 .get(b"last-modified")
-                .and_then(crate::jsc_hooks::parse_http_date)
+                .and_then(|date| crate::jsc_hooks::parse_http_date(date, this.proof()))
         };
 
         // Step 1: If-Match (strong comparison); step 2: If-Unmodified-Since
@@ -502,14 +506,14 @@ impl StaticRoute {
                 !ETag::if_match(etag, im)
             } else if let Some(ius) = req
                 .header(b"if-unmodified-since")
-                .and_then(crate::jsc_hooks::parse_http_date)
+                .and_then(|date| crate::jsc_hooks::parse_http_date(date, this.proof()))
             {
                 matches!(last_modified(), Some(lm) if lm / 1000 > ius / 1000)
             } else {
                 false
             };
         if precondition_failed {
-            return Self::render_bodiless(this, req, resp, 412);
+            return Self::render_bodiless(this.plain(), req, resp, 412);
         }
 
         // Step 3: If-None-Match (weak comparison). Presence suppresses step 4.
@@ -521,7 +525,7 @@ impl StaticRoute {
         // Step 4: If-Modified-Since (only when If-None-Match is absent).
         } else if let Some(ims) = req
             .header(b"if-modified-since")
-            .and_then(crate::jsc_hooks::parse_http_date)
+            .and_then(|date| crate::jsc_hooks::parse_http_date(date, this.proof()))
         {
             // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
             // is second-granular, so compare at second precision.
@@ -537,7 +541,7 @@ impl StaticRoute {
             return false;
         }
 
-        Self::render_bodiless(this, req, resp, 304)
+        Self::render_bodiless(this.plain(), req, resp, 304)
     }
 
     /// May free `this`.

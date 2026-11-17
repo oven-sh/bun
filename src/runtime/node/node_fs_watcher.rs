@@ -833,7 +833,7 @@ impl FSWatcher {
         self.abort_handle.leave();
 
         if let Some(watcher) = self.path_watcher.take() {
-            path_watcher::PathWatcher::detach(watcher, ctx_ptr);
+            path_watcher::PathWatcher::detach(watcher, ctx_ptr, self.ctx.as_vm());
         }
 
         if self.persistent.get() {

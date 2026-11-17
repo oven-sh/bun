@@ -224,7 +224,9 @@ impl WTFTimer {
 /// by the caller for the lifetime of the returned `WTFTimer`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
-    let Some(vm) = VirtualMachine::get_or_null() else {
+    // SAFETY: a VM's thread makes these from the creation of its global object to the end of `~VM`. No script runs here.
+    let loop_ = unsafe { bun_core::Loop::assume(&run_loop_timer) };
+    let Some(vm) = VirtualMachine::get_or_null(loop_) else {
         return ptr::null_mut();
     };
 
@@ -232,7 +234,7 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
     let this = unsafe {
         let el = vm.event_loop();
         Box::new(WTFTimer {
-            vm: NonNull::from(vm),
+            vm: NonNull::from_ref(vm),
             imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),
             event_loop_timer: EventLoopTimer {
                 next: Cell::new(ElTimespec {

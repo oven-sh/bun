@@ -1,3 +1,4 @@
+use bun_core::Loop;
 use bun_sys::File;
 
 use crate::shell::ExitCode;
@@ -84,7 +85,7 @@ impl Pipeline {
         )
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Loop<Interpreter>, this: NodeId) -> Yield {
         match interp.as_pipeline(this).state {
             PipelineState::StartingCmds { idx } => Self::next_starting(interp, this, idx),
             PipelineState::Pending | PipelineState::WaitingWriteErr => Yield::suspended(),
@@ -97,7 +98,7 @@ impl Pipeline {
 
     /// Starts ONE child per call; `drain_pipelines` (Yield.rs) re-enters
     /// `Pipeline::next` for the next one once the current child suspends.
-    fn next_starting(interp: &Interpreter, this: NodeId, idx: u32) -> Yield {
+    fn next_starting(interp: &Loop<Interpreter>, this: NodeId, idx: u32) -> Yield {
         if interp.failed() {
             // A nested pipeline's member failed while this one was still starting.
             if interp.as_pipeline(this).cmds.is_none() {
@@ -135,7 +136,7 @@ impl Pipeline {
     /// Creates the pipes and inits every child without starting any, so a
     /// failed pipe or dup finishes the pipeline (`Some(yield)`) while no child
     /// runs a subtree that `deinit` cannot reach.
-    fn setup_commands(interp: &Interpreter, this: NodeId) -> Option<Yield> {
+    fn setup_commands(interp: &Loop<Interpreter>, this: NodeId) -> Option<Yield> {
         let (node, evtloop) = (interp.as_pipeline(this).node, interp.event_loop);
         let items: &[ast::PipelineItem] = node.items;
         let cmd_count = items
@@ -265,7 +266,7 @@ impl Pipeline {
     /// `on_io_writer_chunk`); otherwise append to the captured stderr buffer
     /// and finish with exit 1.
     fn write_failing_error(
-        interp: &Interpreter,
+        interp: &Loop<Interpreter>,
         this: NodeId,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
@@ -280,7 +281,7 @@ impl Pipeline {
             // Only the fd arm transitions state.
             interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
-            return writer.enqueue(child, captured, &buf);
+            return interp.on(&*writer).enqueue(child, captured, &buf);
         }
         if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's

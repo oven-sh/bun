@@ -1,6 +1,8 @@
 use std::io::Write as _;
 
 use bun_core::ZBox;
+use bun_core::proof::Proof;
+use bun_jsc::Js;
 
 use bun_collections::StringHashMap;
 use bun_core::strings;
@@ -331,7 +333,7 @@ impl ServerConfig {
 pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
-    entry: ThisPtr<T>,
+    entry: ThisPtr<Js<T>>,
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
@@ -370,10 +372,11 @@ fn serves_head(method: &http_method::Optional) -> bool {
 /// The route-registration surface shared by `uws::h2::App` and
 /// `uws::h3::App`; both hand the handler type-erased `AnyRequest`/`AnyResponse`.
 pub(crate) trait MuxApp {
-    fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+    fn method_this<U, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
     where
+        U: Proof<Of: 'static>,
         H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
-    fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+    fn any_this<U: Proof<Of: 'static>, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
     where
         H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
 }
@@ -382,14 +385,15 @@ macro_rules! impl_mux_app {
     ($app:ty) => {
         impl MuxApp for $app {
             #[inline]
-            fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+            fn method_this<U, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
             where
+                U: Proof<Of: 'static>,
                 H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
             {
                 <$app>::method_this(self, m, p, h, this)
             }
             #[inline]
-            fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+            fn any_this<U: Proof<Of: 'static>, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
             where
                 H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
             {
@@ -404,7 +408,7 @@ impl_mux_app!(uws::h3::App);
 pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     server: AnyServer,
     app: &mut A,
-    entry: ThisPtr<T>,
+    entry: ThisPtr<Js<T>>,
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
@@ -431,18 +435,18 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
 /// it is registered.
 pub(crate) trait StaticRouteLike: Sized + 'static {
     fn set_server(&self, server: AnyServer);
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
+    fn on_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse);
+    fn on_head_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse);
 }
 
 impl StaticRouteLike for super::StaticRoute {
     fn set_server(&self, server: AnyServer) {
         self.server.set(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+    fn on_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_request(this, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+    fn on_head_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_head_request(this, req, resp)
     }
 }
@@ -451,10 +455,10 @@ impl StaticRouteLike for super::FileRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+    fn on_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_request(this, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+    fn on_head_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_head_request(this, req, resp)
     }
 }
@@ -463,10 +467,10 @@ impl StaticRouteLike for super::DirectoryRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+    fn on_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_request(this, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+    fn on_head_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_head_request(this, req, resp)
     }
 }
@@ -475,10 +479,10 @@ impl StaticRouteLike for super::html_bundle::Route {
     fn set_server(&self, server: AnyServer) {
         self.server.set(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+    fn on_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_request(this, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+    fn on_head_request(this: ThisPtr<Js<Self>>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_head_request(this, req, resp)
     }
 }

@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+use crate::Js;
 use bun_bundler::Transpiler;
 #[cfg(not(windows))]
 use bun_collections::StringHashMap;
@@ -183,7 +184,7 @@ impl bun_event_loop::BoxedTask for HotReloadTask {
 }
 
 impl HotReloadTask {
-    pub fn run(vm: &VirtualMachine) {
+    pub fn run(vm: &Js<VirtualMachine>) {
         // Since we rely on the event loop for hot reloads, there can be
         // a delay before the next reload begins. In the time between the
         // last reload and the next one, we shouldn't schedule any more

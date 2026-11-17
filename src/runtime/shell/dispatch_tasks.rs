@@ -10,6 +10,7 @@
 
 use crate::shell::interpreter::{Interpreter, NodeId, PoolTask, ShellTask, ShellWork};
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
 /// bounce back to the main thread. The state lives in `interp.nodes`, so
 /// the enqueued payload is `(interp, node)`.
@@ -56,7 +57,7 @@ impl ShellWork for ShellGlobTask {
             Err(e) => self.err = Some(ShellGlobErr::Unknown(e)),
         }
     }
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Loop<Interpreter>) -> Yield {
         crate::shell::states::expansion::Expansion::on_glob_walk_done(
             interp,
             self.expansion,

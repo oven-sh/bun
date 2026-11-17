@@ -24,7 +24,6 @@ use bun_js_parser::parser::ScanPassResult;
 use bun_js_printer as JSPrinter;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, JSArrayIterator, JSGlobalObject, JSPromise, JSPropertyIterator,
     JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc, StringJsc,
@@ -276,7 +275,7 @@ impl Config {
                 self.tsconfig_buf = out.to_owned_slice().into();
 
                 // TODO: JSC -> Ast conversion
-                let parsed = VirtualMachine::get().transpiler.with_mut(|t| {
+                let parsed = global.bun_vm().transpiler.with_mut(|t| {
                     TSConfigJSON::parse(
                         &mut self.log,
                         &bun_ast::Source::init_path_string(
@@ -325,7 +324,7 @@ impl Config {
                 self.macros_buf = out.to_owned_slice().into();
                 let source =
                     bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
-                let parsed = VirtualMachine::get().transpiler.with_mut(|t| {
+                let parsed = global.bun_vm().transpiler.with_mut(|t| {
                     t.resolver.caches.json.parse_json(
                         &mut self.log,
                         &source,
@@ -909,7 +908,7 @@ impl JSTranspiler {
             ));
         }
 
-        let vm = VirtualMachine::get();
+        let vm = global.bun_vm();
         let transpiler = match Transpiler::Transpiler::init(
             arena_ref,
             &raw mut config.log,

@@ -4,7 +4,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::{
-    CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine, WrapperGuard,
+    CommonAbortReason, JSGlobalObject, JSValue, Js, VirtualMachineRef as VirtualMachine, Vm,
+    WrapperGuard,
 };
 use bun_event_loop::EventLoopTimer::{
     OwnedTimer, State as TimerState, Tag as TimerTag, TimerFlags,
@@ -288,8 +289,8 @@ bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
     fn init(vm: &VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
-        let milliseconds = milliseconds.max(u64::from(VirtualMachine::timer_min_delay_ms()));
-        let deadline = bun_core::Timespec::now(VirtualMachine::abort_signal_timeout_clock())
+        let milliseconds = milliseconds.max(u64::from(vm.timer_min_delay_ms()));
+        let deadline = bun_core::Timespec::now(vm.abort_signal_timeout_clock())
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
         // `AbortSignal.timeout()`, a C++ host function, calls this.
@@ -359,7 +360,7 @@ impl Timeout {
     ///
     /// # Safety
     /// `this` is a live boxed `Timeout`.
-    pub unsafe fn run(this: *mut Timeout, vm: &VirtualMachine) {
+    pub unsafe fn run(this: *mut Timeout, vm: &Js<VirtualMachine>) {
         // SAFETY: caller passes a live Timeout; we stop touching `this` before
         // `dispatch`, which may free it.
         unsafe {
@@ -385,7 +386,7 @@ impl Timeout {
         }
     }
 
-    fn dispatch(vm: &VirtualMachine, signal_ptr: *mut AbortSignal) {
+    fn dispatch(vm: &Js<VirtualMachine>, signal_ptr: *mut AbortSignal) {
         let _guard = vm.enter_event_loop_scope();
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null deref proof. `signalAbort()` takes
@@ -397,8 +398,10 @@ impl Timeout {
 
 impl Drop for Timeout {
     fn drop(&mut self) {
+        // SAFETY: its signal frees it on the JS thread, and teardown discards what is left in step B.
+        let vm = unsafe { Vm::assume(&()) }.bun_vm();
         // Not through the signal: its context may be a dead global under --isolate.
-        if let Some(context) = VirtualMachine::get().timer_context(self.context) {
+        if let Some(context) = vm.timer_context(self.context) {
             context.untrack_timer(core::ptr::from_mut(self).cast());
         }
     }

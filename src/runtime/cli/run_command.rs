@@ -10,12 +10,12 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::{self as core, Global, Output, ZStr};
+use bun_core::{self as core, Global, Loop, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, VirtualMachine};
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, Js, Vm};
 use bun_md::root as md;
 use bun_options_types::schema::api;
 #[cfg(windows)]
@@ -240,6 +240,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
+        loop_: Loop,
     ) -> crate::Result<()> {
         Self::run_package_script_foreground_with_shell_path(
             ctx,
@@ -251,6 +252,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             silent,
             use_system_shell,
             None,
+            loop_,
         )
     }
 
@@ -263,6 +265,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         cwd: &[u8],
         env: &mut DotEnv::Loader,
         silent: bool,
+        loop_: Loop,
     ) -> crate::Result<()> {
         let mut original_path: Vec<u8> = Vec::new();
         let path = Self::path_for_run(
@@ -284,6 +287,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             silent,
             use_system_shell,
             Some(original_path.as_slice()),
+            loop_,
         );
         env.map.put(b"PATH", &original_path)?;
         result
@@ -301,6 +305,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         silent: bool,
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
+        loop_: Loop,
     ) -> crate::Result<()> {
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin =
@@ -363,6 +368,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 name,
                 &copy_script,
                 Some(cwd),
+                loop_,
             ) {
                 Ok(c) => c,
                 Err(err) => {
@@ -851,12 +857,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Kick off TCP preconnects for
     /// `--preconnect <url>` before the entry module loads.
-    fn do_preconnect(preconnect: &[&'static [u8]]) {
+    fn do_preconnect(preconnect: &[&'static [u8]], vm: Vm) {
         if preconnect.is_empty() {
             return;
         }
         // `--fetch-preconnect` is refused at start where `--trim` removed `fetch`.
-        bun_removable_features::removable_body!(Fetch, Abort, {
+        bun_removable_features::removable_body!(Fetch, Abort, vm, {
             bun_http::http_thread::init(&Default::default());
 
             for &url_str in preconnect {
@@ -885,11 +891,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
 
                 // A request to an origin the environment proxies never dials it.
-                if VirtualMachine::get()
-                    .env_loader()
-                    .get_http_proxy_for(&url)
-                    .is_some()
-                {
+                if vm.bun_vm().env_loader().get_http_proxy_for(&url).is_some() {
                     continue;
                 }
                 bun_http::async_http::preconnect(url_str.into());
@@ -909,6 +911,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn boot_bun_shell(
         ctx: &mut ContextData,
         entry_path: &[u8],
+        loop_: Loop,
     ) -> crate::Result<crate::shell::ExitCode> {
         // Dummy transpiler so we can load .env.
         let mut args = ctx.args.clone();
@@ -926,7 +929,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `initAndRunFromFile`: read source then hand off to the interpreter.
         let src = sys::File::read_from(Fd::cwd(), entry_path)?;
 
-        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
+        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src, loop_)
     }
 
     /// `VirtualMachine::init`,
@@ -946,6 +949,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     fn boot_main(ctx: &mut ContextData, main: BootMain) -> crate::Result<()> {
+        // SAFETY: the main thread, which has no VM yet and only tears it down on the way to `exit`.
+        let loop_ = unsafe { Loop::assume(&()) };
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
@@ -969,7 +974,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if ctx.runtime_options.check && !crate::cli::check_command::check_project_before(None) {
                 Global::exit(1);
             }
-            let exit_code = Self::boot_bun_shell(ctx, entry_path)?;
+            let exit_code = Self::boot_bun_shell(ctx, entry_path, loop_)?;
             Global::exit(exit_code as u32);
         }
 
@@ -1030,7 +1035,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: crate::cli::run_compiled::graph(),
             ..Default::default()
         };
-        let vm = VirtualMachine::init(ctx.log, options)?;
+        // SAFETY: the main thread runs one command, whose one VM this is. `ctx.log` is never freed.
+        let vm = unsafe { VirtualMachine::init(ctx.log, options, loop_) }?;
         crate::cli::run_compiled::decode_requested_crash_report();
 
         vm.preload.set(std::mem::take(&mut ctx.preloads));
@@ -1131,7 +1137,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx.runtime_options.experimental_http3_fetch,
             ::core::sync::atomic::Ordering::Relaxed,
         );
-        Self::do_preconnect(&ctx.runtime_options.preconnect);
+        Self::do_preconnect(&ctx.runtime_options.preconnect, vm.as_vm());
 
         // Only `bun bake` boots with no entry module.
         vm.main_entry_point.set(match entry {
@@ -1167,7 +1173,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// auto-detects the host zone the first time a `Date` is constructed —
     /// matching upstream Bun. `.env` files are loaded by
     /// `configure_defines`, so `$TZ` set in one is honored.
-    fn set_time_zone_from_env(vm: &VirtualMachine) {
+    fn set_time_zone_from_env(vm: &Js<VirtualMachine>) {
         if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
                 let _ = vm
@@ -1228,7 +1234,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ) as u8,
             ..Default::default()
         };
-        let vm = VirtualMachine::init_with_module_graph(ctx.log, options)?;
+        // SAFETY: the main thread runs one command, whose one VM this is until `exit`. `ctx.log` is never freed.
+        let vm = unsafe {
+            VirtualMachine::init_with_module_graph(ctx.log, options, Loop::assume(&graph))
+        }?;
         crate::cli::run_compiled::decode_requested_crash_report();
         if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()
@@ -1278,7 +1287,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx.runtime_options.experimental_http3_fetch,
             ::core::sync::atomic::Ordering::Relaxed,
         );
-        Self::do_preconnect(&ctx.runtime_options.preconnect);
+        Self::do_preconnect(&ctx.runtime_options.preconnect, vm.as_vm());
 
         Run {
             ctx,
@@ -1331,7 +1340,7 @@ pub(crate) fn start_profilers(vm: &VirtualMachine, ctx: &ContextData) {
 /// `RunCommand::boot` / `boot_standalone`.
 pub(crate) struct Run<'a> {
     ctx: &'a ContextData,
-    vm: &'a VirtualMachine,
+    vm: &'a Js<'a, VirtualMachine>,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// `cli_arena()`). `None` for `bun bake`, which has no entry module.
@@ -1359,7 +1368,7 @@ impl Run<'_> {
     /// `start()` sets a non-zero exit code, then route through the VM's
     /// default error printer.
     fn on_unhandled_rejection_before_close(
-        this: &VirtualMachine,
+        this: &Js<VirtualMachine>,
         _global: &JSGlobalObject,
         value: JSValue,
     ) {
@@ -1434,7 +1443,7 @@ impl Run<'_> {
             };
             // The process entry is the outermost frame: a preconnect that threw
             // is reported here, before the entry point loads.
-            crate::dispatch::fold(preconnect());
+            crate::dispatch::fold(vm.js(), preconnect());
         }
 
         // ── postgres/sql preconnect ───────────────────────────────────────
@@ -1463,7 +1472,7 @@ impl Run<'_> {
                 }
                 Ok(())
             };
-            crate::dispatch::fold(preconnect());
+            crate::dispatch::fold(vm.js(), preconnect());
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────
@@ -1720,7 +1729,7 @@ fn dump_build_error(vm: &VirtualMachine) {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely.exit_with_unhandled_note")
 )]
-fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
+fn exit_with_unhandled_note(vm: &Js<VirtualMachine>) -> ! {
     vm.exit_handler.exit_code.set(1);
     vm.exit_handler.requested.set(true);
     vm.on_exit();
@@ -1738,7 +1747,7 @@ fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely.entry_point_load_failed")
 )]
-fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error) -> ! {
+fn entry_point_load_failed(vm: &Js<VirtualMachine>, err: &crate::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);
@@ -2335,7 +2344,11 @@ impl RunCommand {
     }
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
-    pub(crate) fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
+    pub(crate) fn exec_with_cfg(
+        ctx: &mut ContextData,
+        cfg: ExecCfg,
+        loop_: Loop,
+    ) -> crate::Result<bool> {
         crate::cli::run_compiled::read_no_environment_file_again(ctx);
         let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
@@ -2511,6 +2524,7 @@ impl RunCommand {
                                 silent,
                                 use_system_shell,
                                 Some(original_path.as_slice()),
+                                loop_,
                             )?;
                         }
 
@@ -2524,6 +2538,7 @@ impl RunCommand {
                             silent,
                             use_system_shell,
                             Some(original_path.as_slice()),
+                            loop_,
                         )?;
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
@@ -2539,6 +2554,7 @@ impl RunCommand {
                                 silent,
                                 use_system_shell,
                                 Some(original_path.as_slice()),
+                                loop_,
                             )?;
                         }
 

@@ -3,6 +3,7 @@
 use super::*;
 use crate::timer::OwnedTimer;
 use bun_collections::index_sort;
+use bun_core::Loop;
 use bun_ptr::AliasableBox;
 use core::ops::DerefMut;
 use core::ptr::NonNull;
@@ -555,12 +556,12 @@ impl SharedConnection {
     }
 
     /// Socket readable: drain every buffered reply (callbacks fire inline), then finish complete queries.
-    pub(crate) fn on_readable() {
+    pub(crate) fn on_readable(loop_: Loop) {
         let Some(main_ref) = Self::current().map(|this| this.main_ref.0.as_ptr()) else {
             return;
         };
         // One scope across `finish()` so the microtask drain runs after the last one.
-        let _exit = event_loop_scope();
+        let _exit = event_loop_scope(loop_);
 
         // SAFETY: FFI; the only callback is `on_reply`, which leaves the connection open.
         let rc = unsafe { DNSServiceProcessResult(main_ref) };
@@ -579,7 +580,7 @@ impl SharedConnection {
             return;
         };
         let ready = this.take_ready(|q| q.is_ready());
-        this.arm_early_out();
+        this.arm_early_out(loop_);
         drop(this);
         for inf in ready {
             Self::finish(inf);
@@ -604,10 +605,10 @@ impl SharedConnection {
     }
 
     /// Arm the timer for the nearest early-out deadline (JS thread only; daemon timeout otherwise).
-    fn arm_early_out(&mut self) {
-        if !VirtualMachine::is_loaded() {
+    fn arm_early_out(&mut self, loop_: Loop) {
+        let Some(vm) = VirtualMachine::get_or_null(loop_) else {
             return;
-        }
+        };
         let mut min_deadline: Option<i64> = None;
         for inf in self.inflight.iter() {
             if let Some(d) = inf.query.early_out_deadline_ms() {
@@ -623,14 +624,14 @@ impl SharedConnection {
         }
         let now = bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
-        crate::jsc_hooks::timer_all()
+        crate::jsc_hooks::timer_all(vm)
             .update(OwnedTimer::node(&raw const self.early_out_timer), &next);
         self.early_out_armed_for.set(deadline);
     }
 
     /// Timer fire (via dispatch.rs): complete overdue queries. SAFETY: the heap has just popped `early_out_timer`.
-    pub(crate) unsafe fn on_early_out() {
-        let _exit = event_loop_scope();
+    pub(crate) unsafe fn on_early_out(loop_: Loop) {
+        let _exit = event_loop_scope(loop_);
         let Some(mut this) = Self::current() else {
             return;
         };
@@ -645,7 +646,7 @@ impl SharedConnection {
             }
             due
         });
-        this.arm_early_out();
+        this.arm_early_out(loop_);
         drop(this);
         for inf in ready {
             Self::finish(inf);
@@ -708,12 +709,16 @@ impl SharedConnection {
     }
 }
 
-fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static>> {
-    VirtualMachine::get_or_null().map(VirtualMachine::enter_event_loop_scope)
+fn event_loop_scope(loop_: Loop<'_>) -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'_>> {
+    VirtualMachine::get_or_null(loop_).map(VirtualMachine::enter_event_loop_scope)
 }
 
 /// Gives `pending` back if mDNSResponder cannot answer it.
-pub(crate) fn start(query: &GetAddrInfo, pending: PendingQuery) -> Result<(), PendingQuery> {
+pub(crate) fn start(
+    query: &GetAddrInfo,
+    pending: PendingQuery,
+    js: Js,
+) -> Result<(), PendingQuery> {
     bun_core::Environment::only_mac();
 
     // mDNSResponder answers names; numeric hosts are a parse and AI_V4MAPPED/AI_ALL need getaddrinfo's semantics.
@@ -723,7 +728,7 @@ pub(crate) fn start(query: &GetAddrInfo, pending: PendingQuery) -> Result<(), Pe
         return Err(pending);
     }
 
-    let Some(mut shared) = SharedConnection::get(bun_io::js_vm_ctx()) else {
+    let Some(mut shared) = SharedConnection::get(js.bun_vm().loop_ctx()) else {
         return Err(pending);
     };
 

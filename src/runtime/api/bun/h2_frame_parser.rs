@@ -23,10 +23,10 @@ use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::VmRef;
 use bun_jsc::{
     AbortSignal, AbortSignalRef, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    Strong, StrongCell, StrongOptional,
+    Strong, StrongCell, StrongOptional, Vm,
 };
 use bun_ptr::{AliasableBox, CellExt as _, RefPtr};
 use bun_uws_sys::UsIoVec;
@@ -625,7 +625,7 @@ fn single_value_headers_index_of(name: &[u8]) -> Option<usize> {
 
 struct Handlers {
     binary_type: Cell<BinaryType>,
-    vm: &'static VirtualMachine,
+    vm: VmRef,
     global_object: GlobalRef, // JSC_BORROW
 }
 
@@ -634,6 +634,10 @@ impl Handlers {
     #[inline]
     fn global(&self) -> GlobalRef {
         self.global_object
+    }
+
+    fn event_loop(&self) -> &bun_jsc::event_loop::EventLoop {
+        self.global_object.on(self.vm).event_loop()
     }
 
     /// A zero/empty arg means a value failed to materialize (e.g. a header
@@ -659,7 +663,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop().run_callback(
+        self.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -676,7 +680,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop().run_callback(
+        self.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -698,7 +702,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return JSValue::ZERO;
         }
-        self.vm.event_loop().run_callback_with_result(
+        self.event_loop().run_callback_with_result(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -710,8 +714,7 @@ impl Handlers {
     fn new(global_object: &JSGlobalObject) -> Handlers {
         Handlers {
             binary_type: Cell::new(BinaryType::Buffer),
-            // SAFETY: bun_vm() never returns null; VM outlives every JS object (effectively 'static).
-            vm: global_object.bun_vm(),
+            vm: VmRef::new(global_object.bun_vm()),
             global_object: GlobalRef::from(global_object),
         }
     }
@@ -1199,6 +1202,7 @@ pub(crate) struct SignalRef {
 
 bun_jsc::impl_abort_handle_owner!(SignalRef, abort_handle, |this, cause| {
     if let bun_jsc::AbortCause::Signal(reason) = cause {
+        let this = this.cast::<SignalRef>();
         // SAFETY: trait contract — `this` is live until aborting the stream frees it.
         let (parser, stream_id) = unsafe { ((*this).parser.clone(), (*this).stream_id) };
         parser.abort_stream_for_signal(stream_id, reason);
@@ -3081,7 +3085,7 @@ impl H2FrameParser {
         ) {
             Ok(v) => v,
             Err(err) => {
-                crate::dispatch::fold(Err(err));
+                crate::dispatch::fold(global.js(), Err(err));
                 JSValue::ZERO
             }
         };
@@ -5832,7 +5836,7 @@ impl H2FrameParser {
             let Some(value) = stream.js_context.get() else {
                 continue;
             };
-            self.handlers.vm.event_loop().run_callback(
+            self.handlers.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_object,
@@ -7043,7 +7047,7 @@ impl H2FrameParser {
 
 bun_jsc::impl_abort_handle_owner!(H2FrameParser, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not dropped).
-    let parser = unsafe { RefPtr::init_ref(this) };
+    let parser = unsafe { RefPtr::init_ref(this.cast::<H2FrameParser>()) };
     parser.release_from_js()
 });
 
@@ -7056,10 +7060,10 @@ impl Drop for H2FrameParser {
 }
 
 impl H2FrameParser {
-    pub(crate) fn finalize(&self) {
+    pub(crate) fn finalize(self: &Vm<Self>) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         self.strong_this.set(JsRef::empty());
-        if VirtualMachine::get().is_shutting_down() {
+        if self.bun_vm().is_shutting_down() {
             self.release_refs_stranded_by_exit();
         }
     }

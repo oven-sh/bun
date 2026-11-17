@@ -1,8 +1,9 @@
 use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     let args = Builtin::of(interp, cmd).args();
     if args.is_empty() {
         return Builtin::fail_usage(interp, cmd, b"usage: basename string\n");

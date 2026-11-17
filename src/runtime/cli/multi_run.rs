@@ -7,7 +7,7 @@ use std::time::Instant;
 use crate::Error;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output, UnwrapOrOom, ZStr};
+use bun_core::{self as bun, Global, Loop, Output, UnwrapOrOom, ZStr};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_install::lifecycle_script_runner::ScriptArgv;
@@ -178,7 +178,7 @@ struct ProcessSlot {
 
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
-    shared: &'a Shared,
+    shared: &'a Loop<'a, Shared>,
 
     stdout_reader: PipeReader<'a>,
     stderr_reader: PipeReader<'a>,
@@ -270,6 +270,7 @@ impl<'a> ProcessHandle<'a> {
         let self_ptr = std::ptr::from_mut::<Self>(self);
         // Not a borrow of the slot, which the exit handler borrows again.
         let process = self.process.as_ref().unwrap().process.this_ptr();
+        let process = self.shared.on(process);
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
         process.set_exit_handler(unsafe {
@@ -696,7 +697,10 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
 
 // Returns either an error or diverges:
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
-pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
+pub(crate) fn run(
+    ctx: &mut Command::ContextData,
+    loop_: Loop,
+) -> Result<core::convert::Infallible, Error> {
     // Validate flags
     if ctx.parallel && ctx.sequential {
         bun_core::pretty_errorln!(
@@ -966,7 +970,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let mut handles: Vec<ProcessHandle> = Vec::with_capacity(configs.len());
     for config in &configs {
         handles.push(ProcessHandle {
-            shared: &shared,
+            shared: loop_.on(&shared),
             config,
             stdout_reader: PipeReader::new(&shared, config, false),
             stderr_reader: PipeReader::new(&shared, config, true),

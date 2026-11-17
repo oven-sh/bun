@@ -7,7 +7,7 @@ use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, AbortSignal, CommonAbortReason, JSFunction, JSGlobalObject, JSHostFn,
-    JSPromise, JSValue, JsClass as _, JsResult, Strong, StringJsc as _, WrapperGuard, bun_string_jsc,
+    JSPromise, JSValue, Js, JsClass as _, JsResult, Strong, StringJsc as _, WrapperGuard, bun_string_jsc,
 };
 use bun_paths::resolve_path;
 use bun_ptr::CellExt as _;
@@ -139,10 +139,10 @@ impl TestContext {
     }
 
     /// Returns false if the test has finished.
-    pub(crate) fn defer_fixture(&self, this_value: JSValue, tear_down: JSValue, timeout: u32) -> bool {
+    pub(crate) fn defer_fixture(self: &Js<Self>, this_value: JSValue, tear_down: JSValue, timeout: u32) -> bool {
         self.with_running(this_value, |buntest, sequence| {
             let when = if sequence.is_before_run_test(buntest) { Deferred::AroundFixture } else { Deferred::Fixture };
-            sequence.defer(buntest, when, tear_down, timeout);
+            sequence.defer(self.on(buntest), when, tear_down, timeout);
         })
         .is_some()
     }
@@ -334,7 +334,7 @@ impl TestContext {
         let this = Self::of_call(global, this_value)?;
         this.with_running(this_value.to_js(), |buntest, sequence| {
             if let Some(callback) = args.callback {
-                sequence.defer(buntest, when, callback, args.options.timeout);
+                sequence.defer(global.on(buntest), when, callback, args.options.timeout);
             }
         })
         .ok_or_else(|| Self::throw_finished(global, name))

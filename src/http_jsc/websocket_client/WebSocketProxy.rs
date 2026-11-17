@@ -67,7 +67,8 @@ impl Drop for WebSocketProxy {
     fn drop(&mut self) {
         // target_host / websocket_request_buf: Box<[u8]> drops automatically.
         if let Some(tunnel) = self.tunnel.take() {
-            WebSocketProxyTunnel::shutdown(&tunnel);
+            // SAFETY: only `HTTPClient::clear_data`, which takes a `Js`, drops a proxy that has a tunnel.
+            WebSocketProxyTunnel::shutdown(unsafe { bun_jsc::Js::assume(self) }.on(&*tunnel));
         }
     }
 }

@@ -162,7 +162,7 @@ fn take_next() -> Option<Next> {
 /// Thread teardown's stop phase (VM alive, script forbidden): close every open pipe /
 /// tty / process handle and every reader mid file-read — through its owner when
 /// it has one, directly when nothing adopted it.
-pub fn stop_all_for_vm_teardown() {
+pub fn stop_all_for_vm_teardown(_: bun_core::Loop) {
     while let Some(next) = take_next() {
         let (handle, e) = match next {
             Next::File(

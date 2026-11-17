@@ -11,7 +11,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, Js, JsCell, JsCellRefExt as _, JsResult, Vm};
 use bun_ptr::AsCtxPtr;
 
 use crate::webcore::Request;
@@ -374,8 +374,8 @@ fn any_response_from<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>) -
 pub(crate) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     request_context::RequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 
-type ServerDispatch<const SSL: bool, const DEBUG: bool> =
-    request_context::Dispatch<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
+type ServerDispatch<'a, const SSL: bool, const DEBUG: bool> =
+    request_context::Dispatch<'a, NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 
 /// A `Request` while the uWS callback that lent it a `uws::Request` is on the stack.
 pub(crate) struct DispatchedRequest {
@@ -467,7 +467,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// `vm` is a STATIC backref (LIFETIMES.tsv) set in `init()` from
-    /// `VirtualMachine::get()`; non-null for the server's lifetime.
+    /// the global object; non-null for the server's lifetime.
     #[inline(always)]
     pub(crate) fn vm(&self) -> &jsc::VirtualMachine {
         self.vm.get()
@@ -789,11 +789,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// # Safety
     /// `resp` must be the live response handle for this uWS callback frame.
     fn prepare_js_request_context(
-        &self,
+        self: &Js<Self>,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
         method: Option<bun_http_types::Method::Method>,
-    ) -> Option<(bun_ptr::RefPtr<Request>, ServerDispatch<SSL, DEBUG>)> {
+    ) -> Option<(bun_ptr::RefPtr<Request>, ServerDispatch<'_, SSL, DEBUG>)> {
         jsc::mark_binding!();
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp_ref = bun_opaque::opaque_deref_mut(resp);
@@ -865,7 +865,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             method,
         );
         // SAFETY: fully initialized by `create()`.
-        let ctx_ref = request_context::Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
+        let ctx_ref =
+            request_context::Dispatch::new(self.on(unsafe { ctx_slot.assume_init().as_ref() }));
 
         self.vm()
             .jsc_vm()
@@ -874,7 +875,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
 
         // Allocate the pooled body slot (ref_count = 1).
-        let body_hive = crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null);
+        let body_hive =
+            crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null, self.as_vm());
         // Raw payload pointer for the deferred Locked write below.
         // SAFETY: slot stays live — both `ctx.request_body` and `Request.body` hold a +1.
         let body_value: *mut crate::webcore::body::Value =
@@ -945,13 +947,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ctx_ref.flags.set_is_waiting_for_request_body(true);
 
                 resp_ref.on_data(
-                    |u: *mut ServerRequestContext<SSL, DEBUG>,
+                    |u: *mut Js<ServerRequestContext<SSL, DEBUG>>,
                      _: &mut uws_sys::NewAppResponse<SSL>,
                      chunk: &[u8],
                      last: bool| {
                         ServerRequestContext::<SSL, DEBUG>::on_buffered_body_chunk(u, chunk, last)
                     },
-                    ctx,
+                    ctx.cast::<Js<ServerRequestContext<SSL, DEBUG>>>(),
                 );
             }
         }
@@ -985,7 +987,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // reshaped for borrowck — decouple the inner
                 // `&mut uws::Request` lifetime from the `req` match guard.
                 let r = std::ptr::from_ref::<uws::Request>(*r).cast_mut();
-                let Some((request, ctx)) = self.prepare_js_request_context(
+                let Some((request, ctx)) = global.on(self).prepare_js_request_context(
                     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                     bun_opaque::opaque_deref_mut(r),
                     resp,
@@ -1001,12 +1003,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     native: data.request,
                 },
                 // SAFETY: `data.ctx` holds a ref.
-                request_context::Dispatch::new(unsafe {
+                request_context::Dispatch::new(global.on(unsafe {
                     &*data
                         .ctx
                         .get::<ServerRequestContext<SSL, DEBUG>>()
                         .expect("ctx tag mismatch")
-                }),
+                })),
             ),
         };
 
@@ -1048,7 +1050,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `RequestContext`, then either tear down synchronously or transition to
     /// the async path.
     fn handle_request(
-        &self,
+        self: &Js<Self>,
         request: &DispatchedRequest,
         ctx: ServerDispatch<SSL, DEBUG>,
         req: &mut uws_sys::Request,
@@ -1071,7 +1073,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ///
     /// # Safety
     /// `resp` must be the live response handle for this request frame.
-    fn on_request(&self, req: &mut uws_sys::Request, resp: *mut uws_sys::NewAppResponse<SSL>) {
+    fn on_request(
+        self: &Js<Self>,
+        req: &mut uws_sys::Request,
+        resp: *mut uws_sys::NewAppResponse<SSL>,
+    ) {
         // Idle keep-alive sockets aren't counted in pending_requests, so the
         // wrapper can have been finalized before this fires. Refuse and close
         // rather than dispatching with a stale handler shadow.
@@ -1107,7 +1113,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// address registered as the uWS callback userdata); `resp` must be the
     /// live response handle for this request frame.
     fn on_user_route_request(
-        user_route: *const UserRoute<SSL, DEBUG>,
+        user_route: *const Js<UserRoute<SSL, DEBUG>>,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
@@ -1115,7 +1121,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // address was registered as the uws callback userdata.
         let user_route = unsafe { &*user_route };
         // SAFETY: `server` is the live backref stored in `user_route`.
-        let server = unsafe { &*user_route.server };
+        let server = user_route.on(unsafe { &*user_route.server });
         let index = user_route.id;
 
         let Some(server_js) = server.js_value_for_dispatch() else {
@@ -1177,6 +1183,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp.timeout(self.config.get().idle_timeout);
 
         let global = self.global_this();
+        let js = global.js();
         let this_object = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
 
         // Compute the JS method-name string up front so the FFI closure
@@ -1237,7 +1244,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // before the response object existed. Nothing adopted the response;
             // answer it natively as above.
             if !result.is_empty() && !result.is_termination_exception() {
-                let _ = self.vm().uncaught_exception(global, result, false);
+                let _ = js.on(self.vm()).uncaught_exception(global, result, false);
             }
             server_body::respond_stopped_503(resp);
             return;
@@ -1264,7 +1271,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if status == jsc::js_promise::Status::Pending {
                     strong_promise.set(global, result);
                     needs_to_drain = false;
-                    vm.drain_microtasks();
+                    js.on(vm).drain_microtasks();
                     // The drain ran script: an exception it left (a termination
                     // request landing in it) ends this dispatch like a throw
                     // from the handler; nothing below may enter script over it.
@@ -1319,9 +1326,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             HttpResult::Success
         };
 
+        let nhr = js.on(&*nhr);
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
-                let _ = self.vm().uncaught_exception(
+                let _ = js.on(self.vm()).uncaught_exception(
                     global,
                     *err,
                     matches!(http_result, HttpResult::Rejection(_)),
@@ -1396,7 +1404,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         drop(strong_promise);
         if needs_to_drain {
-            vm.drain_microtasks();
+            js.on(vm).drain_microtasks();
         }
     }
 
@@ -1909,7 +1917,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             method_name_cache: [const { core::cell::Cell::new(JSValue::ZERO) }; N_HTTP_METHODS],
             config: JsCell::new(core::mem::take(config)),
             base_url_string_for_joining: base_url,
-            vm: bun_ptr::BackRef::new(jsc::VirtualMachine::get()),
+            vm: bun_ptr::BackRef::new(global.bun_vm()),
             dev_server: JsCell::new(None),
             app: JsCell::new(None),
             listener: JsCell::new(None),
@@ -1963,8 +1971,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let dev = crate::bake::DevServer::init(crate::bake::DevServer::Options {
                 arena: &bake_options.arena,
                 root: bake_options.root.as_zstr(),
-                // SAFETY: per-thread VM singleton; STATIC lifetime.
-                vm: jsc::VirtualMachine::get(),
+                vm: global.bun_vm(),
                 framework: core::mem::take(&mut bake_options.framework),
                 bundler_options: core::mem::take(&mut bake_options.bundler_options),
                 broadcast_console_log_from_browser_to_server: broadcast,
@@ -1986,14 +1993,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Register HTTP routes on `self.app` (and `h2_app`/`h3_app` when present). Returns
     /// the JS `RouteList` value for codegen-backed user routes, or `.zero` when
     /// there are none.
-    fn set_routes(&self) -> JSValue {
+    fn set_routes(self: &Js<Self>) -> JSValue {
         use bun_http_types::Method as http_method;
         let mut route_list_value = JSValue::ZERO;
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // set_routes is only called after `self.app` is set in listen().
         let app = bun_opaque::opaque_deref_mut(self.app().unwrap());
-        let self_ptr: *mut Self = self.as_ctx_ptr();
-        let any_server = AnyServer::from(self_ptr.cast_const());
+        let self_ptr = self.as_ctx_ptr();
+        let any_server = AnyServer::from(self_ptr.cast_const().cast::<Self>());
         // Raw, so that each use below derives its own `&mut DevServer`.
         let dev_server: Option<*mut crate::bake::DevServer::DevServer> = self
             .dev_server
@@ -2022,7 +2029,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 callbacks.push(builder.callback.get());
                 user_routes.push(UserRoute {
                     id: i as u32,
-                    server: self_ptr,
+                    server: self_ptr.cast::<Self>(),
                     route: core::mem::take(&mut builder.route),
                 });
             }
@@ -2093,7 +2100,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     for_each_mux_app!(self, |mux| {
                         mux.any(
                             path,
-                            ud.cast::<UserRoute<SSL, DEBUG>>(),
+                            ud.cast::<Js<UserRoute<SSL, DEBUG>>>(),
                             Self::on_mux_user_route_request,
                         );
                     });
@@ -2124,7 +2131,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         mux.method(
                             method_val,
                             path,
-                            ud.cast::<UserRoute<SSL, DEBUG>>(),
+                            ud.cast::<Js<UserRoute<SSL, DEBUG>>>(),
                             Self::on_mux_user_route_request,
                         );
                     });
@@ -2211,7 +2218,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, StaticRoute>(
                         any_server,
                         app,
-                        r.this_ptr(),
+                        self.on(r.this_ptr()),
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2220,7 +2227,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         server_config::apply_static_route_mux::<StaticRoute, _>(
                             any_server,
                             mux,
-                            r.this_ptr(),
+                            self.on(r.this_ptr()),
                             &entry.path,
                             entry.method,
                             path_has_user_head_route,
@@ -2231,7 +2238,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, FileRoute>(
                         any_server,
                         app,
-                        r.this_ptr(),
+                        self.on(r.this_ptr()),
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2240,7 +2247,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         server_config::apply_static_route_mux::<FileRoute, _>(
                             any_server,
                             mux,
-                            r.this_ptr(),
+                            self.on(r.this_ptr()),
                             &entry.path,
                             entry.method,
                             path_has_user_head_route,
@@ -2251,7 +2258,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, DirectoryRoute>(
                         any_server,
                         app,
-                        r.this_ptr(),
+                        self.on(r.this_ptr()),
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2260,7 +2267,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         server_config::apply_static_route_mux::<DirectoryRoute, _>(
                             any_server,
                             mux,
-                            r.this_ptr(),
+                            self.on(r.this_ptr()),
                             &entry.path,
                             entry.method,
                             path_has_user_head_route,
@@ -2271,7 +2278,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, html_bundle::Route>(
                         any_server,
                         app,
-                        r.this_ptr(),
+                        self.on(r.this_ptr()),
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2280,7 +2287,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         server_config::apply_static_route_mux::<html_bundle::Route, _>(
                             any_server,
                             mux,
-                            r.this_ptr(),
+                            self.on(r.this_ptr()),
                             &entry.path,
                             entry.method,
                             path_has_user_head_route,
@@ -2307,7 +2314,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Cloning here (not `.take()`) so subsequent `Bun.serve()` calls in
             // the same process — and `DevServer`'s tailwind-hack probe of the
             // same field — still see the bunfig-configured plugin list.
-            let vm = jsc::VirtualMachine::get();
+            let vm = self.bun_vm();
             let names = vm
                 .transpiler
                 .get()
@@ -2499,7 +2506,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Stay registered while streams are still queued.
                 bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
             }
-            jsc::VirtualMachine::get()
+            // SAFETY: only uWS calls this, for a stream of this thread's VM, whose stop phase leaves none.
+            unsafe { Vm::assume(&app) }
+                .bun_vm()
                 .event_loop()
                 .deferred_tasks
                 .post_task(core::ptr::NonNull::new(app), drain);
@@ -2596,7 +2605,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 return None;
             }
 
-            route_list_value = this_ref.set_routes();
+            route_list_value = global.on(this_ref).set_routes();
 
             // add serverName to the SSL context using the default ssl options
             let server_name = this_ref
@@ -2685,7 +2694,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if !this_ref.attach_http2(app) {
                 return None;
             }
-            route_list_value = this_ref.set_routes();
+            route_list_value = global.on(this_ref).set_routes();
         }
 
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -2795,7 +2804,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 }
                             }
                             if !tcp {
-                                jsc::VirtualMachine::get()
+                                global
+                                    .bun_vm()
                                     .event_loop_handle
                                     .set(Some(bun_io::Loop::get()));
                             }
@@ -3051,18 +3061,22 @@ mod trampoline {
         resp.end(b"", false);
     }
 
-    pub(super) extern "C" fn on_request<const SSL: bool, const DEBUG: bool>(
+    /// # Safety
+    /// uWS calls it for a route that `set_routes` registered.
+    pub(super) unsafe extern "C" fn on_request<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         req: *mut UwsRequest,
         user_data: *mut c_void,
     ) {
-        // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
-        let server = unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() };
+        // SAFETY: the caller's; user_data is the `*mut Js<NewServer<..>>` registered in set_routes.
+        let server = unsafe { &*user_data.cast::<Js<NewServer<SSL, DEBUG>>>() };
         // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
         server.on_request(bun_opaque::opaque_deref_mut(req), res.cast());
     }
 
-    pub(super) extern "C" fn on_user_route_request<const SSL: bool, const DEBUG: bool>(
+    /// # Safety
+    /// As [`on_request`].
+    pub(super) unsafe extern "C" fn on_user_route_request<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         req: *mut UwsRequest,
         user_data: *mut c_void,
@@ -3070,7 +3084,7 @@ mod trampoline {
         // user_data is the `*mut UserRoute<..>` registered in set_routes.
         // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
         NewServer::<SSL, DEBUG>::on_user_route_request(
-            user_data.cast::<UserRoute<SSL, DEBUG>>(),
+            user_data.cast::<Js<UserRoute<SSL, DEBUG>>>(),
             bun_opaque::opaque_deref_mut(req),
             res.cast(),
         );
@@ -3090,7 +3104,9 @@ mod trampoline {
         );
     }
 
-    pub(super) extern "C" fn on_bun_info_request<const SSL: bool, const DEBUG: bool>(
+    /// # Safety
+    /// As [`on_request`].
+    pub(super) unsafe extern "C" fn on_bun_info_request<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         req: *mut UwsRequest,
         user_data: *mut c_void,
@@ -3103,7 +3119,7 @@ mod trampoline {
         // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
         // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
         unsafe {
-            (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_bun_info_request(
+            (*user_data.cast::<Vm<NewServer<SSL, DEBUG>>>()).on_bun_info_request(
                 bun_opaque::opaque_deref_mut(req),
                 bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
             )
@@ -3633,8 +3649,8 @@ impl AnyServer {
     /// Dispatch the user `fetch` handler:
     /// un-erase the SSL bool from the tag and downcast
     /// `AnyResponse` to the matching `NewAppResponse<SSL>` variant.
-    pub(crate) fn on_request(&self, req: &mut uws_sys::Request, resp: uws::AnyResponse) {
-        any_server_dispatch_resp!(self, resp, |s, r| s.on_request(req, r))
+    pub(crate) fn on_request(self: &Js<Self>, req: &mut uws_sys::Request, resp: uws::AnyResponse) {
+        any_server_dispatch_resp!(self, resp, |s, r| self.on(s).on_request(req, r))
     }
 
     fn on_request_complete(&self) {
@@ -3687,7 +3703,8 @@ impl AnyServer {
     ) -> jsc::JsResult<Option<SavedRequest>> {
         let req: &mut uws_sys::Request = req;
         Ok(any_server_dispatch_resp!(self, resp, |s, r| {
-            let Some((request, ctx)) = s.prepare_js_request_context(req, r, method) else {
+            let Some((request, ctx)) = global.on(s).prepare_js_request_context(req, r, method)
+            else {
                 return Ok(None);
             };
             Some(DispatchedRequest::for_bake(request, global).save(&ctx, global, req, r))
@@ -3738,8 +3755,8 @@ impl AnyServer {
             .with_mut(|config| config.append_static_route(path, route, method)))
     }
 
-    pub(crate) fn reload_static_routes(&self) -> Result<bool, crate::Error> {
-        any_server_dispatch!(self, |s| s.reload_static_routes())
+    pub(crate) fn reload_static_routes(self: &Js<Self>) -> Result<bool, crate::Error> {
+        any_server_dispatch!(self, |s| self.on(s).reload_static_routes())
     }
 
     pub(crate) fn get_url_as_string(&self) -> Result<bun_core::String, bun_alloc::AllocError> {

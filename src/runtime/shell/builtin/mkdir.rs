@@ -4,10 +4,11 @@ use crate::shell::builtin::{BadFlag, Builtin, Kind};
 use crate::shell::builtins::batch::Batch;
 use crate::shell::interpreter::{Interpreter, NodeId, PoolTask, ShellTask, ShellWork};
 use crate::shell::yield_::Yield;
+use bun_core::Loop;
 
 const USAGE: &[u8] = b"usage: mkdir [-pv] [-m mode] directory_name ...\n";
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     let (flags, dirs) = Builtin::of(interp, cmd).split_flags();
     let mut opts = Opts::default();
     if let Err(flag) = flags.iter().try_for_each(|flag| opts.parse(flag)) {
@@ -110,7 +111,7 @@ impl ShellWork for ShellMkdirTask {
         }
     }
 
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Loop<Interpreter>) -> Yield {
         let err = self.err.as_ref().map(|e| Kind::Mkdir.task_error(e));
         let out = core::mem::take(&mut self.created_directories);
         Batch::report(interp, self.cmd, err, out)

@@ -124,7 +124,7 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get();
+        let vm = global_object.bun_vm();
         let Some(function) = vm
             .sql_state()
             .postgresql_context
@@ -193,7 +193,7 @@ impl PostgresSQLQuery {
             return Ok(());
         };
 
-        let vm = crate::jsc::VirtualMachine::get();
+        let vm = global_object.bun_vm();
         let Some(function) = vm
             .sql_state()
             .postgresql_context
@@ -363,10 +363,11 @@ impl PostgresSQLQuery {
         connection.enqueue(self, &declared, protocol);
         self.place.set(Place::Queued(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.
-        connection.poll_ref.ref_(bun_io::js_vm_ctx());
+        connection.poll_ref.ref_(global_object.bun_vm().loop_ctx());
         self.this_value.with_mut(|r| r.upgrade(global_object));
         js::target_set_cached(this_value, global_object, query);
 
+        let connection = global_object.on(connection);
         connection.advance();
         connection.flush_data_and_reset_timeout();
         // advance() can reject this request with nothing sent: no reply releases the ref then.
@@ -374,9 +375,9 @@ impl PostgresSQLQuery {
         Ok(())
     }
 
-    pub fn cancel(&self, _: &mut JsScope<'_>) {
+    pub fn cancel(&self, cx: &mut JsScope<'_>) {
         match self.connection() {
-            Some(connection) => connection.cancel(self),
+            Some(connection) => cx.on(&*connection).cancel(self),
             // `run` refuses it from here on.
             None => self.place.set(Place::Ended),
         }

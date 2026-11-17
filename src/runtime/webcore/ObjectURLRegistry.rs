@@ -4,7 +4,7 @@ use bun_collections::HashMap;
 use bun_core::strings;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, UUID};
+use bun_jsc::{JSGlobalObject, JSValue, UUID, Vm};
 use bun_threading::Guarded;
 
 use crate::generated_bindgen::blob::BlobOrBuildArtifact;
@@ -107,9 +107,9 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
     UUID::parse(pathname).ok()
 }
 
-pub(crate) fn create_object_url(object: BlobOrBuildArtifact<'_>) -> bun_core::String {
+pub(crate) fn create_object_url(object: BlobOrBuildArtifact<'_>, vm: Vm) -> bun_core::String {
     let registry = ObjectURLRegistry::singleton();
-    let uuid = registry.register(VirtualMachine::get(), object.blob());
+    let uuid = registry.register(vm.bun_vm(), object.blob());
     bun_core::String::create_format(format_args!("blob:{}", uuid))
 }
 

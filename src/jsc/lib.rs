@@ -15,6 +15,8 @@
 // `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag`.
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
+#![feature(arbitrary_self_types)]
+#![feature(fundamental)]
 #![feature(adt_const_params)]
 #![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
@@ -1210,12 +1212,16 @@ pub use self::js_property_iterator::{
 pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
+mod keep_alive;
+pub use keep_alive::JsKeepAlive;
+mod proof;
 pub use self::event_loop::{
     AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue,
     EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,
     Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
+pub use proof::{Js, Vm};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]
@@ -1417,12 +1423,19 @@ pub trait JsClass: Sized {
 }
 
 /// Track whether an object should keep the event loop alive
-#[derive(Default)]
 pub struct Ref {
     pub has: core::cell::Cell<bool>,
+    _not_send: core::marker::PhantomData<*mut ()>,
 }
 
 impl Ref {
+    pub fn new(_: Vm) -> Self {
+        Self {
+            has: core::cell::Cell::new(false),
+            _not_send: core::marker::PhantomData,
+        }
+    }
+
     pub fn unref(&self, vm: &virtual_machine::VirtualMachine) {
         if !self.has.get() {
             return;
@@ -1442,7 +1455,8 @@ impl Ref {
 
 impl Drop for Ref {
     fn drop(&mut self) {
-        self.unref(virtual_machine::VirtualMachine::get());
+        // SAFETY: made on this thread, and what holds one is freed with its JS wrapper at the latest, before the VM is.
+        self.unref(unsafe { Vm::assume(self) }.bun_vm());
     }
 }
 

@@ -422,6 +422,7 @@ impl PosixStreamingWriter {
     /// # Safety
     /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until `self`
     /// is dropped. `self` does not move, and is not borrowed mutably, until then.
+    /// Where that arm says `Js` or `Vm`, only a thread that has a VM starts it.
     pub unsafe fn set_owner(&self, owner: Owner) {
         // SAFETY: caller contract.
         unsafe { self.base.handle.set_owner(owner) };
@@ -827,7 +828,7 @@ impl WindowsPipeWriter {
     /// The owner may free `self`.
     ///
     /// # Safety
-    /// `this` is `as_uv_data` of a live writer.
+    /// `this` is `as_uv_data` of a live writer. As `bun_core::Loop::assume`.
     unsafe fn dispatch(this: *mut Self, completion: Completion) {
         let event = IoEvent::Write(WriteEvent(completion));
         // SAFETY: fn contract, and `set_owner`'s.
@@ -839,7 +840,7 @@ impl WindowsPipeWriter {
     /// # Safety
     /// `this` is the pointer that `set_source` recorded.
     unsafe fn stop_for_vm_teardown(this: *mut c_void) {
-        // SAFETY: fn contract. Closing the source takes it off the list.
+        // SAFETY: fn contract. Closing the source takes it off the list. From the stop phase, which has a `Loop`.
         unsafe { Self::dispatch(this.cast(), Completion::VmTeardown) };
     }
 
@@ -849,6 +850,7 @@ impl WindowsPipeWriter {
             None => Completion::Wrote,
         };
         // SAFETY: set by `submit_buf`. `Drop` does not return while the write is in flight. `free` has `close_and_detach`'s contract.
+        // From `uv_run`.
         unsafe {
             (*this).has_inflight_write.set(false);
             match (*this).detached.get() {
@@ -870,7 +872,7 @@ impl WindowsPipeWriter {
             None => Completion::Wrote,
         };
         let this = this.cast::<Self>();
-        // SAFETY: set by `set_source`, and cleared by dropping the file.
+        // SAFETY: set by `set_source`, and cleared by dropping the file. From `uv_run`.
         unsafe {
             (*this).has_inflight_write.set(false);
             Self::dispatch(this, completion);

@@ -1,3 +1,4 @@
+#![feature(arbitrary_self_types)]
 #![allow(non_snake_case)]
 #![warn(unused_must_use)]
 pub mod AnyTaskWithExtraContext;
@@ -63,11 +64,12 @@ bun_dispatch::link_interface! {
 }
 
 impl JsEventLoop {
-    /// `jsc::VirtualMachine::get().event_loop()` for the current thread.
+    /// # Safety
+    /// This thread has a VM.
     #[inline]
-    pub(crate) fn current() -> Self {
+    pub(crate) unsafe fn current() -> Self {
         // SAFETY: `__bun_js_event_loop_current` returns the live per-thread
-        // `jsc::EventLoop` (panics if none), so the `link_interface!` owner
+        // `jsc::EventLoop`, so the `link_interface!` owner
         // invariant for `Self::new` is upheld for every dispatch on this handle.
         unsafe {
             Self::new(

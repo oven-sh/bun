@@ -75,14 +75,6 @@ use crate::OpaqueCallback;
 use crate::max_buf::Kind;
 pub use crate::{EventLoopCtx, EventLoopCtxKind};
 
-unsafe extern "Rust" {
-    /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
-    // safe: the `#[no_mangle] pub fn` body in
-    // `bun_runtime::jsc_hooks` is itself a safe fn (reads process globals) —
-    // no memory-safety preconditions.
-    safe fn __bun_get_vm_ctx() -> EventLoopCtx;
-}
-
 /// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
 /// `bun_io` (which now depends on this crate) and `FilePoll::file_type` share
 /// one definition; `bun_io::pipes` re-exports it for downstream callers.
@@ -101,12 +93,6 @@ impl FileType {
     pub(crate) fn is_blocking(self) -> bool {
         self == FileType::Pipe
     }
-}
-
-/// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
-#[inline]
-pub fn js_vm_ctx() -> EventLoopCtx {
-    __bun_get_vm_ctx()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -260,7 +246,8 @@ impl IoEvent {
 
 unsafe extern "Rust" {
     /// # Safety
-    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to.
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to. As `bun_core::Loop::assume`.
+    /// Where that arm says `Js` or `Vm`, the thread has a VM.
     pub(crate) fn __bun_run_io(owner: Owner, event: IoEvent);
 }
 
@@ -1233,6 +1220,7 @@ impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
     /// # Safety
     /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until the poll
     /// is dropped or has another owner.
+    /// Where that arm says `Js` or `Vm`, only a thread that has a VM starts it.
     pub unsafe fn new(event_loop: EventLoopCtx, fd: Fd, owner: Owner) -> Self {
         let poll = FilePoll {
             fd,
@@ -1368,7 +1356,8 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_poin
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let event = file_poll.on_epoll_event(&ev);
 
-    // SAFETY: the contract of `OwnedFilePoll::new` and `FilePoll::set_owner`.
+    // SAFETY: the contract of `OwnedFilePoll::new` and `FilePoll::set_owner`. Only a tick of `loop_`
+    // calls this, on its thread. No finalizer ticks, nor does teardown after `~VM`.
     unsafe { __bun_run_io(file_poll.owner.get(), event) };
 }
 

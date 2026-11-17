@@ -30,16 +30,15 @@ enum PathScratch<'a> {
     Spill(Box<[u8]>),
 }
 
-impl PathScratch<'_> {
+impl<'a> PathScratch<'a> {
     const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
 
     #[inline]
-    fn new(heap: &JsHeap<'_>, len: usize) -> Self {
+    fn new(heap: &JsHeap<'a>, len: usize) -> Self {
         if len > Self::POOL_MAX {
             return Self::Spill(vec![0; len].into_boxed_slice());
         }
-        // SAFETY: the global object is only asked for its VM.
-        let vm = unsafe { heap.global() }.bun_vm();
+        let vm = heap.bun_vm();
         // SAFETY: a path function makes one scratch and runs no script while it has it.
         let pool: &mut RarePathBuf = unsafe { vm.rare_data().path_buf.get_mut() };
         Self::Pooled(&mut pool.get(len)[..len])

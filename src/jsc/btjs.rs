@@ -3,7 +3,7 @@ use bun_io::Write as _;
 use core::ffi::c_char;
 
 #[cfg(debug_assertions)]
-use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
+use crate::{CallFrame, Js};
 #[cfg(debug_assertions)]
 use bun_core::strings;
 #[cfg(debug_assertions)]
@@ -226,9 +226,9 @@ fn print_source_at_address(
     // Single audited backref-deref hoisted for both LLInt branches below.
     let frame: Option<&CallFrame> = do_llint.then(|| unsafe { &*(fp as *const CallFrame) });
     if let Some(frame) = frame {
-        // VM singleton is process-lifetime; `global` is set before any
-        // JS frame can be on the stack to inspect.
-        let srcloc = frame.get_caller_src_loc(VirtualMachine::get().global());
+        // SAFETY: a JS frame is on this thread's stack, and looking up its location runs nothing.
+        let vm = unsafe { Js::assume(frame) }.bun_vm();
+        let srcloc = frame.get_caller_src_loc(vm.global());
         tty_config.set_color(out_stream, Color::Bold)?;
         write!(
             out_stream,

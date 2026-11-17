@@ -51,6 +51,7 @@ public:
     static void createPrototype() = delete;
     static void getConstructor() = delete;
     static void subspaceSlots() = delete;
+    void isReachableFromOpaqueRoots() = delete;
 
 protected:
     JSDOMInterface(JSC::Structure* structure, JSDOMGlobalObject& globalObject, Ref<Impl>&& impl)
@@ -63,6 +64,7 @@ protected:
 template<typename JSClass, typename Impl, typename Parent = JSDOMWrapper<Impl>>
 class JSDOMInterfaceWithAdditionalChildren : public JSDOMInterface<JSClass, Impl, Parent> {
 public:
+    // A JSClass with a visitChildren() of its own calls this one: `Base` names `Parent`.
     template<typename Visitor> static void visitChildren(JSC::JSCell* cell, Visitor& visitor)
     {
         typename Visitor::ReferrerContext context(visitor, cell);

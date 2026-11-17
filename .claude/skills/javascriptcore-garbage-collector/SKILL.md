@@ -187,7 +187,7 @@ bool JSBarOwner::isReachableFromOpaqueRoots(Handle<Unknown> h, void* ctx,
 }
 ```
 
-For DOM wrappers the owner is `JSDOMWrapperOwner<JSBar>` (`src/jsc/bindings/JSDOMWrapperCache.h`), which calls `JSBar::isReachableFromOpaqueRoots(visitor, reason)`.
+For DOM wrappers the owner is `JSDOMWrapperOwner<JSBar>` (`src/jsc/bindings/JSDOMWrapperCache.h`), which keeps an `ActiveDOMObject` with pending activity alive and then asks `JSBar::isReachableFromOpaqueRoots(visitor, reason)`.
 
 The opaque-root set is just a `HashSet<void*>` rebuilt each cycle. It's how DOM trees stay alive as a unit.
 

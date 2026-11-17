@@ -45,24 +45,8 @@ using JSWritableStreamPrototype = JSDOMPrototype<JSWritableStream>;
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamConstructor::construct(JSGlobalObject*, CallFrame*);
 template<> void JSWritableStreamConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSWritableStreamConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSWritableStreamConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSWritableStreamConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSWritableStreamConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSWritableStreamConstructor::s_info = { "WritableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamConstructor) };
-
-template<>
-template<typename Visitor>
-void JSWritableStreamConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSWritableStreamConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSWritableStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSWritableStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {

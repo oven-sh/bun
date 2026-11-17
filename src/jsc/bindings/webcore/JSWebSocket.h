@@ -35,10 +35,10 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+    using Base::isReachableFromOpaqueRoots;
 
     DECLARE_VISIT_CHILDREN;
     static size_t estimatedSize(JSCell*, JSC::VM&);
-    bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral*) const;
     // Only set for sockets created by the `ws` module. m_owner is the module's WebSocket object, passed as `this` to every handler.
     // m_handlers is the module's table of handler functions, shared by all of its sockets.
     JSC::WriteBarrier<JSC::JSObject> m_owner;

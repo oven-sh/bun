@@ -800,22 +800,6 @@ size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
     return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
 
-bool JSWebSocket::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral* reason) const
-{
-    auto& wrapped = this->wrapped();
-    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (reason) [[unlikely]]
-            *reason = "ActiveDOMObject with pending activity"_s;
-        return true;
-    }
-    if (wrapped.isFiringEventListeners()) {
-        if (reason) [[unlikely]]
-            *reason = "EventTarget firing event listeners"_s;
-        return true;
-    }
-    return false;
-}
-
 template<> NEVER_INLINE JSC::JSValue toJS<WebSocket>(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebSocket& impl)
 {
     BUN_REMOVABLE_DEFINITION(WebSocket, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, WebSocket&)>(toJS));

@@ -90,13 +90,9 @@ template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptio
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     StructuredSerializeOptions result;
-    if (value.isUndefinedOrNull())
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
         return result;
-    auto* object = value.getObject();
-    if (!object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     JSValue transferValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!transferValue.isUndefined()) {

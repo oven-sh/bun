@@ -34,24 +34,8 @@ using JSCountQueuingStrategyPrototype = JSDOMPrototype<JSCountQueuingStrategy>;
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCountQueuingStrategyConstructor::construct(JSGlobalObject*, CallFrame*);
 template<> void JSCountQueuingStrategyConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSCountQueuingStrategyConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSCountQueuingStrategyConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSCountQueuingStrategyConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSCountQueuingStrategyConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSCountQueuingStrategyConstructor::s_info = { "CountQueuingStrategy"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCountQueuingStrategyConstructor) };
-
-template<>
-template<typename Visitor>
-void JSCountQueuingStrategyConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSCountQueuingStrategyConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSCountQueuingStrategyConstructor);
 
 template<> GCClient::IsoSubspace* JSCountQueuingStrategyConstructor::subspaceForImpl(JSC::VM& vm)
 {

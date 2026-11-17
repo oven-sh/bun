@@ -911,17 +911,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObj
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapSnapshotBody>(*lexicalGlobalObject, *callFrame, "getHeapSnapshot");
 }
 
-bool JSWorker::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral* reason) const
-{
-    auto& wrapped = this->wrapped();
-    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (reason) [[unlikely]]
-            *reason = "ActiveDOMObject with pending activity"_s;
-        return true;
-    }
-    return false;
-}
-
 template<> NEVER_INLINE JSC::JSValue toJS<Worker>(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker& impl)
 {
     BUN_REMOVABLE_DEFINITION(Worker, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, Worker&)>(toJS));

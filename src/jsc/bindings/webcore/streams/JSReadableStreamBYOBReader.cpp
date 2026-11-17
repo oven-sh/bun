@@ -153,24 +153,8 @@ using JSReadableStreamBYOBReaderPrototype = JSDOMPrototype<JSReadableStreamBYOBR
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamBYOBReaderConstructor::construct(JSGlobalObject*, CallFrame*);
 template<> void JSReadableStreamBYOBReaderConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSReadableStreamBYOBReaderConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSReadableStreamBYOBReaderConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSReadableStreamBYOBReaderConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSReadableStreamBYOBReaderConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSReadableStreamBYOBReaderConstructor::s_info = { "ReadableStreamBYOBReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBReaderConstructor) };
-
-template<>
-template<typename Visitor>
-void JSReadableStreamBYOBReaderConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSReadableStreamBYOBReaderConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSReadableStreamBYOBReaderConstructor);
 
 template<> GCClient::IsoSubspace* JSReadableStreamBYOBReaderConstructor::subspaceForImpl(JSC::VM& vm)
 {

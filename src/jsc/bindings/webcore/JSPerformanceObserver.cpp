@@ -50,13 +50,9 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     PerformanceObserver::Init result;
-    if (value.isUndefinedOrNull())
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
         return result;
-    auto* object = value.getObject();
-    if (!object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "buffered"_s), result.buffered);
     RETURN_IF_EXCEPTION(throwScope, {});
     convertDictionaryMember<IDLSequence<IDLDOMString>>(lexicalGlobalObject, *object, Identifier::fromString(vm, "entryTypes"_s), result.entryTypes);

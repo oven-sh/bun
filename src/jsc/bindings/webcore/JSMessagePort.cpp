@@ -332,16 +332,10 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef, (JSGlobalObject 
 
 bool JSMessagePort::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) const
 {
-    auto& wrapped = this->wrapped();
-    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (reason) [[unlikely]]
-            *reason = "ActiveDOMObject with pending activity"_s;
-        return true;
-    }
     if (reason) [[unlikely]]
         *reason = "Reachable from MessagePort"_s;
 
-    return visitor.containsOpaqueRoot(&wrapped);
+    return visitor.containsOpaqueRoot(&wrapped());
 }
 
 template<> NEVER_INLINE JSC::JSValue toJS<MessagePort>(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort& impl)

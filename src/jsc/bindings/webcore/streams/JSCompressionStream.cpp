@@ -71,24 +71,8 @@ template<> void JSCompressionStreamPrototype::finishCreation(VM& vm)
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCompressionStreamConstructor::construct(JSGlobalObject*, CallFrame*);
 template<> void JSCompressionStreamConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSCompressionStreamConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSCompressionStreamConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSCompressionStreamConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSCompressionStreamConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSCompressionStreamConstructor::s_info = { "CompressionStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCompressionStreamConstructor) };
-
-template<>
-template<typename Visitor>
-void JSCompressionStreamConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSCompressionStreamConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSCompressionStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSCompressionStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {

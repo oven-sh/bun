@@ -36,6 +36,7 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+    using Base::isReachableFromOpaqueRoots;
     void finishCreation(JSC::VM&);
     static size_t estimatedSize(JSCell*, JSC::VM&);
 

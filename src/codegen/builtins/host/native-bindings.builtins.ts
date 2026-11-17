@@ -217,6 +217,32 @@ export default b.declarations(
   ["Script", "Module"].flatMap(name => b.class(`${vmBinding}.${name}`, { hasPrototype: false })),
   answers("native:Cpp:NodeVM.cpp:Bun::createNodeVMBinding", b.builtin(vmBinding)),
 
+  // create_constructor() in src/runtime/node/node_http_parser.rs. They are writable.
+  [
+    "REQUEST",
+    "RESPONSE",
+    "kOnMessageBegin",
+    "kOnHeaders",
+    "kOnHeadersComplete",
+    "kOnBody",
+    "kOnMessageComplete",
+    "kOnExecute",
+    "kOnTimeout",
+    "kLenientNone",
+    "kLenientHeaders",
+    "kLenientChunkedLength",
+    "kLenientKeepAlive",
+    "kLenientTransferEncoding",
+    "kLenientVersion",
+    "kLenientDataAfterClose",
+    "kLenientOptionalLFAfterCR",
+    "kLenientOptionalCRLFAfterChunk",
+    "kLenientOptionalCRBeforeLF",
+    "kLenientSpacesAfterChunkSize",
+    "kLenientHeaderValueRelaxed",
+    "kLenientAll",
+  ].flatMap(name => b.static(`%HTTPParser%.${name}`, b.property(b.any))),
+
   // Whether the process was started with --experimental-stream-iter.
   answers("native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag", b.bool),
   // binding() in src/runtime/node/node_fs_binding.rs makes an object for each module that asks. It is no function, and each of its methods has a row of its own: node_fs_binding.bind.ts.

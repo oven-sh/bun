@@ -2,7 +2,7 @@
 // every user-constructible Web Streams class (`using JSFooConstructor =
 // JSStreamConstructor<JSFoo>;` in each class header). Same shape as WebCore::JSDOMConstructor
 // plus the cached instance Structure. Each owner .cpp defines the specialization's s_info,
-// visitChildrenImpl, subspaceForImpl and `construct`.
+// subspaceForImpl, finishCreation and `construct`.
 #pragma once
 
 #include "JSDOMConstructorBase.h"
@@ -33,8 +33,14 @@ public:
     }
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_instanceStructure.
-    DECLARE_VISIT_CHILDREN;
+
+    template<typename Visitor> static void visitChildren(JSC::JSCell* cell, Visitor& visitor)
+    {
+        typename Visitor::ReferrerContext context(visitor, cell);
+        ASSERT_GC_OBJECT_INHERITS(cell, info());
+        Base::visitChildren(cell, visitor);
+        visitor.append(uncheckedDowncast<JSStreamConstructor>(cell)->m_instanceStructure);
+    }
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

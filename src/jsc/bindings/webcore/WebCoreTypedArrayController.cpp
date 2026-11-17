@@ -29,17 +29,10 @@
 
 #include "JSDOMConvertBufferSource.h"
 
-#include "JSDOMGlobalObject.h"
-
 #include <JavaScriptCore/ArrayBuffer.h>
 
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/WeakInlines.h>
-
-static inline WebCore::JSDOMGlobalObject* getDefaultGlobal(JSC::JSGlobalObject* lexicalGlobalObject)
-{
-    return defaultGlobalObject(lexicalGlobalObject);
-}
 
 namespace WebCore {
 
@@ -52,7 +45,7 @@ WebCoreTypedArrayController::~WebCoreTypedArrayController() = default;
 
 JSC::JSArrayBuffer* WebCoreTypedArrayController::toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& buffer)
 {
-    return uncheckedDowncast<JSC::JSArrayBuffer>(WebCore::toJS(lexicalGlobalObject, getDefaultGlobal(globalObject), buffer));
+    return uncheckedDowncast<JSC::JSArrayBuffer>(WebCore::toJS(lexicalGlobalObject, globalObject, buffer));
 }
 
 void WebCoreTypedArrayController::registerWrapper(JSC::JSGlobalObject*, JSC::ArrayBuffer& native, JSC::JSArrayBuffer& wrapper)

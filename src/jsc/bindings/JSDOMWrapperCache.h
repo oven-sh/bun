@@ -60,14 +60,19 @@ template<typename WrapperClass> inline JSC::JSObject* getDOMPrototype(JSC::VM& v
     return asObject(getDOMStructure<WrapperClass>(vm, globalObject)->storedPrototype());
 }
 
-// WrapperClass::isReachableFromOpaqueRoots() says whether a cached wrapper outlives the last reference to it. It runs on the GC's threads.
+// Decides on the GC's threads whether a cached wrapper outlives the last reference to it.
 template<typename WrapperClass> class JSDOMWrapperOwner final : public JSC::WeakHandleOwner {
-    static_assert(!std::is_base_of_v<ActiveDOMObject, typename WrapperClass::DOMWrapped> || std::is_same_v<decltype(&WrapperClass::isReachableFromOpaqueRoots), bool (WrapperClass::*)(JSC::AbstractSlotVisitor&, ASCIILiteral*) const>,
-        "the wrapper of an ActiveDOMObject has to check hasPendingActivity() itself");
-
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) final
     {
-        return uncheckedDowncast<WrapperClass>(handle.slot()->asCell())->isReachableFromOpaqueRoots(visitor, reason);
+        auto* wrapper = uncheckedDowncast<WrapperClass>(handle.slot()->asCell());
+        if constexpr (std::is_base_of_v<ActiveDOMObject, typename WrapperClass::DOMWrapped>) {
+            if (!wrapper->wrapped().isContextStopped() && wrapper->wrapped().hasPendingActivity()) {
+                if (reason) [[unlikely]]
+                    *reason = "ActiveDOMObject with pending activity"_s;
+                return true;
+            }
+        }
+        return wrapper->isReachableFromOpaqueRoots(visitor, reason);
     }
 
     FinalizeResult finalize(JSC::Handle<JSC::Unknown> handle, void*) final

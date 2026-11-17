@@ -13,6 +13,7 @@ public:
 
     static JSDOMPrototype* create(JSC::VM& vm, JSDOMGlobalObject& globalObject, JSC::JSObject* parentPrototype)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDOMPrototype, Base);
         auto* structure = Bun::createClassStructure(vm, &globalObject, parentPrototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         auto* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDOMPrototype))) JSDOMPrototype(vm, structure);
         prototype->finishCreation(vm);
@@ -21,7 +22,6 @@ public:
         return prototype;
     }
 
-    // Must be defined for each specialization class.
     DECLARE_INFO;
 
     static JSC::EncodedJSValue JIT_OPERATION_ATTRIBUTES constructorGetter(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName)

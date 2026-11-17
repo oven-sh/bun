@@ -35,6 +35,7 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+    using Base::isReachableFromOpaqueRoots;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_detail;
     DECLARE_VISIT_CHILDREN;

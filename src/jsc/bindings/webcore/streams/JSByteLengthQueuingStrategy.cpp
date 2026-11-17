@@ -34,24 +34,8 @@ using JSByteLengthQueuingStrategyPrototype = JSDOMPrototype<JSByteLengthQueuingS
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSByteLengthQueuingStrategyConstructor::construct(JSGlobalObject*, CallFrame*);
 template<> void JSByteLengthQueuingStrategyConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSByteLengthQueuingStrategyConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSByteLengthQueuingStrategyConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSByteLengthQueuingStrategyConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSByteLengthQueuingStrategyConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSByteLengthQueuingStrategyConstructor::s_info = { "ByteLengthQueuingStrategy"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSByteLengthQueuingStrategyConstructor) };
-
-template<>
-template<typename Visitor>
-void JSByteLengthQueuingStrategyConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSByteLengthQueuingStrategyConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSByteLengthQueuingStrategyConstructor);
 
 template<> GCClient::IsoSubspace* JSByteLengthQueuingStrategyConstructor::subspaceForImpl(JSC::VM& vm)
 {

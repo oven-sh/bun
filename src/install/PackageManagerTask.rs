@@ -144,7 +144,10 @@ impl Task {
                 source: TarballSource::Network(network),
                 ..
             } => Some(&raw mut **network),
-            _ => None,
+            Job::Extract { .. }
+            | Job::GitClone { .. }
+            | Job::GitCommit { .. }
+            | Job::GitCheckout { .. } => None,
         }
     }
 
@@ -279,7 +282,7 @@ fn read_and_extract(
     tarball.run(log, &bytes)
 }
 
-/// What to do. The last field of each variant is the result.
+/// What to do. The last field of each variant is the result, a failure until the task has run.
 pub(crate) enum Job {
     PackageManifest {
         name: StringOrTinyString,

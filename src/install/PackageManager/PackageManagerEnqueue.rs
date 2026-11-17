@@ -308,8 +308,8 @@ fn enqueue_tarball_for_reading(
         return Ok(());
     }
 
-    // A linker decides that when the task has failed.
-    let is_required = linker.is_some() || this.is_package_required(dependency_id, package_id);
+    // A linker works that out again when the task has failed.
+    let is_required = true;
     this.fetches.start(task_id, is_required, linker);
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
     let alias = this.lockfile.buffers.dependencies[dependency_id as usize].name;
@@ -359,12 +359,13 @@ fn enqueue_git_for_checkout(
         package_id,
     });
     match this.fetches.join(clone_id, &mut checkout) {
-        Join::Start => {
+        // Only an `--offline` miss is `Failed`, and the repository is in the cache now.
+        Join::Start | Join::Failed { .. } => {
             this.fetches.start(clone_id, is_required, checkout);
             enqueue_git_clone(this, clone_id, alias, &repository);
         }
-        Join::Running | Join::Failed { .. } if is_required => this.fetches.require(clone_id),
-        Join::Running | Join::Failed { .. } => {}
+        Join::Running if is_required => this.fetches.require(clone_id),
+        Join::Running => {}
     }
     Ok(())
 }
@@ -595,8 +596,7 @@ pub fn enqueue_dependency_to_root(
     };
 
     if this.lockfile.buffers.resolutions[dep_id as usize] == invalid_package_id {
-        let now = bun_core::time::timestamp;
-        (this.manifest_requests).forget_miss(manifest_task_id, turn, now);
+        this.manifest_requests.forget_miss(manifest_task_id, turn);
 
         // Copy to the stack: `bind_row` can call `Package::from_npm`, which grows
         // `buffers.dependencies` and would invalidate a pointer taken directly into it.
@@ -1576,23 +1576,18 @@ fn enqueue_resolved_task(
     task: ResolvedPackageTask,
 ) {
     use install::PreinstallState as State;
-    let state = this.get_preinstall_state(package_id);
     match task {
         ResolvedPackageTask::NetworkTask(network_task) => {
-            if state == State::Extract {
-                this.set_preinstall_state(package_id, State::Extracting);
-                enqueue_network_task(this, network_task);
-            }
+            this.set_preinstall_state(package_id, State::Extracting);
+            enqueue_network_task(this, network_task);
         }
         ResolvedPackageTask::PatchTask(patch_task) => {
-            let (ready, started) = match patch_task.callback {
-                PatchTaskCallback::CalcHash(_) => (State::CalcPatchHash, State::CalcingPatchHash),
-                PatchTaskCallback::Apply(_) => (State::ApplyPatch, State::ApplyingPatch),
+            let started = match patch_task.callback {
+                PatchTaskCallback::CalcHash(_) => State::CalcingPatchHash,
+                PatchTaskCallback::Apply(_) => State::ApplyingPatch,
             };
-            if state == ready {
-                this.set_preinstall_state(package_id, started);
-                enqueue_patch_task(this, patch_task);
-            }
+            this.set_preinstall_state(package_id, started);
+            enqueue_patch_task(this, patch_task);
         }
     }
 }
@@ -2555,7 +2550,7 @@ pub(crate) fn create_extract_task_for_streaming(
             ..*tarball
         },
         source: Task::TarballSource::Network(network),
-        data: Err(crate::Error::TarballFailedToExtract),
+        data: Err(crate::Error::Failed),
     };
     Task::Task::create(this, id, job).as_ptr()
 }
@@ -2696,7 +2691,7 @@ fn enqueue_local_tarball(
             path: tarball_path,
             normalize,
         },
-        data: Err(crate::Error::TarballFailedToExtract),
+        data: Err(crate::Error::Failed),
     };
     let task = Task::Task::create(this, task_id, job).as_ptr();
     // SAFETY: `task` points to a freshly initialized pool slot.

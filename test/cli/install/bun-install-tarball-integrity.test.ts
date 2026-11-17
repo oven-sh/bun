@@ -933,7 +933,7 @@ describe.concurrent.each(
     });
 
     it("bun add under another name still reads it for the package that bun.lock records", async () => {
-      const { box, requests } = await changed("tarball-added-under-another-name");
+      const { box, v1, requests } = await changed("tarball-added-under-another-name");
       using _ = box;
 
       await box.put("app", await tarball("v2", {}, "renamed"));
@@ -942,6 +942,8 @@ describe.concurrent.each(
       const { stderr, exitCode } = await box.run("app", "add", `second@${box.spec}`);
       expect(stderr).toContain("Integrity check failed for tarball: pkg");
       expect(box.requests.length - requests).toBe(kind === "URL" ? 2 : 0);
+      expect((Bun.JSONC.parse(await box.lockfile("app")) as any).packages.pkg.at(-1)).toBe(v1.integrity);
+      expect(await file(join(box.root, "app", "node_modules", "pkg", "index.js")).exists()).toBe(false);
       expect(exitCode).toBe(1);
     }, 30_000);
   });

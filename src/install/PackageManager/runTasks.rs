@@ -7,30 +7,29 @@ use bun_core::{Environment, Output};
 use bun_http::{self as http, AsyncHTTP};
 use bun_threading::thread_pool::Batch as ThreadPoolBatch;
 
-use crate::bun_fs::FileSystem;
-use crate::extract_tarball;
-use crate::network_task::Callback as NetworkTaskCallback;
-use crate::npm;
-use crate::patch_install::Callback as PatchTaskCallback;
-use crate::retry_timer;
-use crate::tarball_stream::TarballStream;
-use bun_install::{
-    DependencyID, ExtractData, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, Repository,
-    Resolution, ResolutionTag,
-};
-// Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::fetch_table::{self, Ended, Reader, Waiter, WaitingRow};
 use super::{INBOX, THREAD_POOL, directories, enqueue};
 use super::{
     ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn, Subcommand,
 };
+use crate::bun_fs::FileSystem;
+use crate::extract_tarball;
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess};
+use crate::network_task::Callback as NetworkTaskCallback;
 use crate::network_task::{Authorization, ForTarballError, add_error_or_warning, stored_string};
+use crate::npm;
+use crate::patch_install::Callback as PatchTaskCallback;
+use crate::retry_timer;
+use crate::tarball_stream::TarballStream;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::Package;
 use bun_install::package_manager_task as Task;
+use bun_install::{
+    DependencyID, ExtractData, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, Repository,
+    Resolution, ResolutionTag,
+};
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
@@ -122,11 +121,12 @@ const EXTRACT: &str = ProgressStrings::EXTRACT_EMOJI;
 pub(crate) fn resolve_waiters_of_appended_package(
     manager: &mut PackageManager,
     task_id: Task::Id,
+    waiters: &[Waiter],
     pkg: &Package,
     install_peer: bool,
 ) -> crate::Result<()> {
-    let waiters = manager.fetches.appended(task_id, pkg.meta.id);
-    for row in fetch_table::rows(&waiters) {
+    manager.fetches.appended(task_id, pkg.meta.id);
+    for row in fetch_table::rows(waiters) {
         enqueue::name_resolved_row(
             &mut manager.lockfile.buffers.dependencies[row.id as usize].version,
             pkg.name,
@@ -597,7 +597,7 @@ impl Pass<'_, '_, '_> {
         }
         if let Caller::IsolatedLinker(installer) = &mut self.caller {
             installer.on_package_download_error(&ended.waiters, ended.is_required, err, url);
-            if ended.is_required && !ended.waiters.is_empty() {
+            if ended.is_required {
                 return None;
             }
         }
@@ -742,7 +742,9 @@ impl Pass<'_, '_, '_> {
             &data,
             self.log_level,
         ) {
-            resolve_waiters_of_appended_package(manager, task_id, &pkg, self.install_peer)?;
+            let waiters = manager.fetches.release(task_id).waiters;
+            let install_peer = self.install_peer;
+            resolve_waiters_of_appended_package(manager, task_id, &waiters, &pkg, install_peer)?;
         } else {
             manager.fetches.release(task_id);
             // A peer that found no manifest of this name may take the package.
@@ -1364,7 +1366,7 @@ pub(crate) fn generate_network_task_for_tarball<'a>(
         // and the streaming extractor needs a stable `Task` pointer so
         // it can push the result onto `resolve_tasks` when it finishes.
         let extract_task = enqueue::create_extract_task_for_streaming(this, net_ptr);
-        // SAFETY: as above.
+        // SAFETY: the extract task does not run before the request is sent.
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr));

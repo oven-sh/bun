@@ -331,6 +331,7 @@ impl<'a> Installer<'a> {
         err: crate::Error,
         url: &[u8],
     ) {
+        debug_assert!(!waiters.is_empty());
         for waiter in waiters {
             let &Waiter::Isolated(entry_id) = waiter else {
                 continue;
@@ -926,7 +927,6 @@ fn download_error_reason(e: crate::Error) -> &'static [u8] {
         crate::Error::TarballHTTP404 => b"404 Not Found",
         crate::Error::TarballHTTP4xx => b"HTTP 4xx",
         crate::Error::TarballHTTP5xx => b"HTTP 5xx",
-        crate::Error::TarballFailedToExtract => b"failed to extract",
         crate::Error::TarballFailedToDownload => b"download failed",
         _ => e.name().as_bytes(),
     }

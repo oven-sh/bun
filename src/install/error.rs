@@ -28,8 +28,6 @@ pub enum Error {
     TarballHTTP4xx,
     #[error("TarballHTTP5xx")]
     TarballHTTP5xx,
-    #[error("TarballFailedToExtract")]
-    TarballFailedToExtract,
     #[error("TarballFailedToDownload")]
     TarballFailedToDownload,
     #[error("UnexpectedNotModified")]
@@ -245,7 +243,6 @@ impl Error {
             Self::TarballHTTP404 => "TarballHTTP404",
             Self::TarballHTTP4xx => "TarballHTTP4xx",
             Self::TarballHTTP5xx => "TarballHTTP5xx",
-            Self::TarballFailedToExtract => "TarballFailedToExtract",
             Self::TarballFailedToDownload => "TarballFailedToDownload",
             Self::UnexpectedNotModified => "UnexpectedNotModified",
             Self::PackageFailedToParse => "PackageFailedToParse",

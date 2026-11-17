@@ -39,14 +39,13 @@ pub(crate) enum ManifestState {
         from_registry: bool,
     },
     Failed(ManifestFailure),
-    /// There is no such package, and nothing is left to report.
+    /// An `--offline` miss that is reported, or a 404 for a workspace's name that nobody reports.
     Missing,
     /// A backfill has logged that it cannot build the URL.
     BadUrl,
 }
 
 impl ManifestState {
-    /// The registry, or with `--offline` the cache, has no package of this name.
     pub(crate) fn is_missing(&self) -> bool {
         match self {
             Self::Failed(failure) => failure.missing_until.is_some(),
@@ -64,6 +63,8 @@ struct ManifestRequest {
     /// The event loop iteration in which a runtime lookup found nothing.
     missed_in: Option<u64>,
 }
+
+const _: () = assert!(size_of::<ManifestRequest>() <= 96);
 
 #[derive(Default)]
 pub(crate) struct ManifestRequests(Table<ManifestRequest>);
@@ -163,7 +164,7 @@ impl ManifestRequests {
     }
 
     /// A miss is remembered for the rest of its turn, a 404 for as long as a manifest is cached.
-    pub(crate) fn forget_miss(&mut self, id: Id, turn: u64, now: impl FnOnce() -> i64) {
+    pub(crate) fn forget_miss(&mut self, id: Id, turn: u64) {
         let Some(request) = self.0.get_mut(&id) else {
             return;
         };
@@ -176,7 +177,7 @@ impl ManifestRequests {
             | ManifestState::BadUrl => 0,
         };
         if request.missed_in.is_some_and(|missed_in| missed_in != turn)
-            && i64::from(missing_until) <= now()
+            && i64::from(missing_until) <= bun_core::time::timestamp()
         {
             request.state = ManifestState::Idle;
             request.missed_in = None;
@@ -214,12 +215,12 @@ pub(crate) fn rows(waiters: &[Waiter]) -> impl Iterator<Item = WaitingRow> {
 enum Fetch {
     /// Only `ask` lists anybody here: a row that starts the task next, or cannot start it.
     Idle(Vec<Waiter>),
-    /// A checkout that waits for its clone counts as running.
+    /// Also a checkout that waits for its clone. Only the isolated linker ends it if that fails.
     Running {
         is_required: bool,
         waiters: Vec<Waiter>,
     },
-    /// Nobody tries again, except the runtime in a later iteration of its event loop.
+    /// Nobody tries again until `forget_failure`.
     Failed {
         is_required: bool,
         turn: u64,
@@ -372,7 +373,7 @@ impl Fetches {
                 is_required,
                 waiters,
             } => (is_required, waiters),
-            // An `--offline` miss, or the package from `take_next`.
+            // An `--offline` miss.
             Fetch::Idle(parked) => (true, parked),
             Fetch::Failed { .. } | Fetch::Arrived(_) | Fetch::Appended(_) => {
                 unreachable!("ended twice")
@@ -397,10 +398,9 @@ impl Fetches {
         ended
     }
 
-    pub(crate) fn appended(&mut self, id: Id, package_id: PackageID) -> Vec<Waiter> {
-        let (fetch, ended) = self.end(id);
-        *fetch = Fetch::Appended(package_id);
-        ended.waiters
+    /// After `release` or `take_next`.
+    pub(crate) fn appended(&mut self, id: Id, package_id: PackageID) {
+        *self.entry(id) = Fetch::Appended(package_id);
     }
 
     pub(crate) fn arrive(&mut self, id: Id, package: ArrivedPackage) {
@@ -461,11 +461,11 @@ impl Fetches {
         })
     }
 
-    /// The package whose turn it is, if it has arrived. `appended` returns who waits for it.
+    /// The package whose turn it is, if it has arrived.
     pub(crate) fn take_next(
         &mut self,
         turn: RemoteTurn,
-    ) -> Option<(DependencyID, Id, ArrivedPackage)> {
+    ) -> Option<(DependencyID, Id, Box<(ArrivedPackage, Vec<Waiter>)>)> {
         if !self.has_arrived() {
             return None;
         }
@@ -473,10 +473,8 @@ impl Fetches {
         let fetch = self.table.get_mut(&id)?;
         match core::mem::take(fetch) {
             Fetch::Arrived(arrived) => {
-                let (package, waiters) = *arrived;
-                *fetch = Fetch::Idle(waiters);
                 self.arrived -= 1;
-                Some((row, id, package))
+                Some((row, id, arrived))
             }
             running => {
                 *fetch = running;

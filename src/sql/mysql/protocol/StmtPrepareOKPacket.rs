@@ -17,9 +17,7 @@ impl StmtPrepareOKPacket {
         }
 
         self.statement_id = reader.int::<u32>()?;
-        // The server never issues statement_id 0, and the client keys its own
-        // "prepared" state on statement_id > 0 (see handle_prepared_statement),
-        // so a 0 here is a protocol violation.
+        // No server issues it.
         if self.statement_id == 0 {
             return Err(AnyMySQLError::InvalidPrepareOKPacket);
         }

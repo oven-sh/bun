@@ -70,8 +70,6 @@ pub enum Error {
     UnexpectedPacket,
     #[error("Malformed packet from the server")]
     MalformedPacket,
-    #[error("Short read")]
-    ShortRead,
     #[error("Unknown error")]
     UnknownError,
 }
@@ -80,16 +78,6 @@ pub enum Error {
 /// spelling as well so cross-crate `use` lines
 /// (`bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError`) resolve.
 pub type AnyMySQLError = Error;
-
-// Reverse of the above: `crate::Error` is just an interned name; recover the
-// matching variant by name (or `UnknownError` as a catch-all). Needed because
-// helpers like `decode_binary_value` were widened to `crate::Error` while
-// callers (e.g. `ResultSet::Row::decode_binary`) still propagate `AnyMySQLError`.
-impl From<crate::Error> for Error {
-    fn from(e: crate::Error) -> Self {
-        e.name().parse().unwrap_or(Error::UnknownError)
-    }
-}
 
 // NOTE: `mysql_error_to_js` lives in
 // `bun_sql_jsc::mysql::protocol::any_mysql_error_jsc` as an extension fn.

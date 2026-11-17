@@ -206,7 +206,6 @@
 "unsafe_send_covers_more_than_pointers:src/spawn/process.rs" = 1
 
 [bun_sql_jsc]
-"generic_body_not_generic:src/sql_jsc/mysql/MySQLConnection.rs" = 1
 "generic_body_not_generic:src/sql_jsc/postgres/PostgresSQLConnection.rs" = 1
 
 [bun_sys]

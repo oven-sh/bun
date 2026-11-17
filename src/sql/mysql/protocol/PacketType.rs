@@ -15,5 +15,5 @@ impl PacketType {
     // Client/server packets
     pub const MORE_DATA: Self = Self(0x01);
 
-    pub const AUTH_SWITCH: u8 = 0xfe;
+    pub const AUTH_SWITCH: Self = Self(0xfe);
 }

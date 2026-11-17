@@ -1644,6 +1644,38 @@ it("mkdtempSync() non-exist dir #2568", () => {
   }
 });
 
+it("mkdtempSync() names the template in its error", () => {
+  using dir = tempDir("mkdtemp-error-path", {});
+  const prefix = join(String(dir), "missing", "a-");
+  expect(() => mkdtempSync(prefix)).toThrow(
+    expect.objectContaining({
+      code: "ENOENT",
+      path: prefix + "XXXXXX",
+      message: `ENOENT: no such file or directory, mkdtemp '${prefix}XXXXXX'`,
+    }),
+  );
+});
+
+it.skipIf(!isGlibc)("mkdtemp() names what glibc tried in its error", async () => {
+  using dir = tempDir("mkdtemp-error-path", {});
+  const prefix = join(String(dir), "missing", "a-");
+  const errors = await Promise.all([promisify(mkdtemp)(prefix).catch(e => e), promises.mkdtemp(prefix).catch(e => e)]);
+  for (const error of errors) {
+    expect(error.path.slice(0, -6)).toBe(prefix);
+    expect(error.path).not.toEndWith("XXXXXX");
+  }
+});
+
+it.skipIf(isWindows)("mkdtemp does not cut a prefix that is too long", async () => {
+  using dir = tempDir("mkdtemp-long-prefix", {});
+  const longest = (isMacOS || isFreeBSD ? 1024 : 4096) - "XXXXXX\0".length;
+  const prefixOf = (length: number) => (String(dir) + "/").padEnd(length, "a/");
+  expect(() => mkdtempSync(prefixOf(longest))).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  const tooLong = { code: "ENAMETOOLONG", syscall: "mkdtemp", path: prefixOf(longest + 1) + "XXXXXX" };
+  expect(() => mkdtempSync(prefixOf(longest + 1))).toThrow(expect.objectContaining(tooLong));
+  await expect(promises.mkdtemp(prefixOf(longest + 1))).rejects.toMatchObject({ code: "ENAMETOOLONG" });
+});
+
 it("mkdtemp() non-exist dir #2568", done => {
   const path = join(tmpdirSync(), "does", "not", "exist");
   mkdtemp(path, (err, folder) => {
@@ -6668,7 +6700,6 @@ it.skipIf(!isGlibc || !cc)("calls that change files are made again after EINTR",
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -6694,12 +6725,6 @@ INTERRUPT(truncate, path, (const char *path, off_t length), (path, length))
 INTERRUPT(link, to, (const char *from, const char *to), (from, to))
 INTERRUPT(unlink, path, (const char *path), (path))
 INTERRUPT(rmdir, path, (const char *path), (path))
-
-int unlinkat(int folder, const char *path, int flags) {
-  static int calls;
-  if (is_interrupted(flags & AT_REMOVEDIR ? "rmdir" : "unlink", path, &calls)) return -1;
-  return ((int (*)(int, const char *, int)) dlsym(RTLD_NEXT, "unlinkat"))(folder, path, flags);
-}
 
 char *mkdtemp(char *name) {
   static int calls;

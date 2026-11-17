@@ -7445,6 +7445,18 @@ pub mod posix {
         Ok(())
     }
 
+    /// `rmdir` itself, as libuv calls it. [`crate::rmdir`] is `unlinkat`.
+    #[cfg(unix)]
+    pub fn rmdir(path: &bun_core::ZStr) -> super::Maybe<()> {
+        // SAFETY: `path` is NUL-terminated.
+        while unsafe { libc::rmdir(path.as_ptr()) } < 0 {
+            if super::last_errno() != libc::EINTR {
+                return Err(super::err_with_path(super::Tag::rmdir, path));
+            }
+        }
+        Ok(())
+    }
+
     /// For input and output.
     #[cfg(unix)]
     pub fn cfsetspeed(t: &mut Termios, speed: libc::speed_t) {
@@ -7789,6 +7801,15 @@ pub mod net {
                 return Err(err_with(Tag::socket));
             }
             Ok(Fd::from_native(fd))
+        }
+
+        /// Not even `FD_CLOEXEC`, unlike [`crate::socketpair`].
+        pub fn socketpair_without_flags(family: c_int, kind: c_int) -> Maybe<[Fd; 2]> {
+            let mut fds = [0; 2];
+            if safe_libc::socketpair(family, kind, 0, &mut fds) != 0 {
+                return Err(err_with(Tag::socketpair));
+            }
+            Ok(fds.map(Fd::from_native))
         }
 
         /// `address` is the bytes of a `sockaddr_*`.

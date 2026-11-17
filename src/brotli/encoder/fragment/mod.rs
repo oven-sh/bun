@@ -151,7 +151,7 @@ const MAX_ITEMS_PER_MATCH: usize = 1 + MAX_LITERAL_ITEMS + 4;
 
 static SHORT_INSERTS: [Item; MAX_LITERAL_ITEMS + 1] =
     Item::for_short_lengths(0, &INSERT_LENGTH_CODES);
-static SHORT_COPIES: [Item; 134] = Item::for_short_lengths(FIRST_COPY, &COPY_LENGTH_CODES);
+static SHORT_COPIES: [Item; 582] = Item::for_short_lengths(FIRST_COPY, &COPY_LENGTH_CODES);
 static COPIES_AT_LAST_DISTANCE: [Item; SHORT_COPY_END] =
     Item::for_short_lengths(FIRST_COPY_AT_LAST_DISTANCE, &COPY_LENGTH_CODES);
 

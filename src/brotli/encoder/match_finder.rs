@@ -84,11 +84,10 @@ impl MatchFinder {
             (10.., size) => Self::BinaryTree(BinaryTree::new(params.window_bits, size)?),
             _ if params.window_bits <= 16 => {
                 let max_hops = if quality > 6 { 7 } else { 8 } << (quality - 4);
-                if quality < 9 {
+                if quality < 9 || (first.is_last && first.end() <= ForgetfulChains::BANK_SIZE) {
                     Self::Chains(Chains::new(max_hops, recent_count)?)
                 } else {
-                    let input = is_small.then(|| first.padded());
-                    Self::ForgetfulChains(ForgetfulChains::new(input, max_hops, recent_count)?)
+                    Self::ForgetfulChains(ForgetfulChains::new(max_hops, recent_count)?)
                 }
             }
             _ if large_input && params.window_bits >= 19 => match quality {

@@ -165,61 +165,95 @@ impl Hasher for Chains {
 const BANKS: usize = 512;
 const BANK_BITS: u32 = 9;
 const BANK_SIZE: usize = 1 << BANK_BITS;
+const GROWTH: usize = 4;
+const FIRST_SIZE: usize = BANK_SIZE / GROWTH.pow(3);
 /// Banks fill up at the same pace, so without a gap they compete for the same cache sets.
-const BANK_STRIDE: u32 = BANK_SIZE as u32 + 16;
+const GAP: usize = 16;
+
+/// How many links a bank adds by growing, with what it leaves behind: in all, and at most for each position.
+const ADDED: (usize, usize) = {
+    let (mut size, mut total, mut each) = (FIRST_SIZE, 0, 0);
+    while size < BANK_SIZE {
+        total += GROWTH * size + GAP;
+        if total > each * size {
+            each = total.div_ceil(size);
+        }
+        size *= GROWTH;
+    }
+    (total, each)
+};
+
+/// Moves to the end of the links when it grows, so that there is little to clear for few positions.
+#[derive(Clone, Copy)]
+struct Bank {
+    start: u32,
+    size: u16,
+    next_free: u16,
+}
+
+impl Bank {
+    #[cold]
+    #[inline(never)]
+    fn make_room(&mut self, links: &mut Vec<u32>) {
+        let size = usize::from(self.size);
+        if size == BANK_SIZE {
+            self.next_free = 0;
+            return;
+        }
+        let (old, new) = (self.start as usize, links.len());
+        let end = new + GROWTH * size + GAP;
+        debug_assert!(end <= links.capacity());
+        links.extend_from_within(old..old + size);
+        memory::resize(links, end, 0);
+        (self.start, self.size) = (new as u32, GROWTH as u16 * self.size);
+    }
+}
 
 /// New links replace the oldest ones of their bank (quality 9).
 pub(in crate::encoder) struct ForgetfulChains {
     common: Common,
     /// The halves of the last entry, and the index of its link in the bank.
     heads: Box<[[u16; 3]; 1 << KEY_BITS]>,
-    next_free: Box<[u16; BANKS]>,
-    bank_starts: Box<[u32; BANKS]>,
+    banks: Box<[Bank; BANKS]>,
     /// The index of the link of the position before, and above it the distance to that position.
     links: Vec<u32>,
 }
 
 impl ForgetfulChains {
-    /// With `padded_input`, which is all there is, the banks are no larger than it needs.
-    pub(in crate::encoder) fn new(
-        padded_input: Option<&[u8]>,
-        max_hops: usize,
-        recent_count: usize,
-    ) -> Result<Self> {
-        // The sizes come first, and then turn into starts.
-        let size = if padded_input.is_some() {
-            0
-        } else {
-            BANK_STRIDE
-        };
-        let mut bank_starts = memory::filled_array(size)?;
-        for &eight in padded_input.unwrap_or_default().array_windows() {
-            bank_starts[key(u64::from_le_bytes(eight)) % BANKS] += 1;
-        }
-        let mut total = 0;
-        for start in &mut *bank_starts {
-            total += core::mem::replace(start, total).min(BANK_STRIDE);
+    /// With no more positions than that, it finds what [`Chains`] finds.
+    pub(in crate::encoder) const BANK_SIZE: usize = BANK_SIZE;
+
+    pub(in crate::encoder) fn new(max_hops: usize, recent_count: usize) -> Result<Self> {
+        let mut banks = memory::filled_array(Bank {
+            start: 0,
+            size: FIRST_SIZE as u16,
+            next_free: 0,
+        })?;
+        for (i, bank) in banks.iter_mut().enumerate() {
+            bank.start = (i * FIRST_SIZE) as u32;
         }
         Ok(Self {
             common: Common::new(max_hops, recent_count),
             heads: memory::zeroed_array()?,
-            next_free: memory::zeroed_array()?,
-            bank_starts,
-            links: memory::zeroed(total as usize)?,
+            banks,
+            links: Vec::new(),
         })
     }
 
     #[inline(always)]
     fn insert(&mut self, key: usize, position: usize) {
-        let next_free = &mut self.next_free[key % BANKS];
-        let index = *next_free % BANK_SIZE as u16;
-        *next_free = index + 1;
+        let bank = &mut self.banks[key % BANKS];
+        if bank.next_free == bank.size {
+            bank.make_room(&mut self.links);
+        }
+        let index = bank.next_free;
+        bank.next_free += 1;
         self.common.insert(key, position);
         let entry = entry(position) as u32;
         let new = [entry as u16, (entry >> 16) as u16, index];
         let [low, high, head] = core::mem::replace(&mut self.heads[key], new);
         let distance = entry - (u32::from(low) | (u32::from(high) << 16));
-        let at = self.bank_starts[key % BANKS] as usize + usize::from(index);
+        let at = bank.start as usize + usize::from(index);
         self.links[at] = (distance.min(u32::MAX >> BANK_BITS) << BANK_BITS) | u32::from(head);
     }
 }
@@ -234,10 +268,20 @@ impl Hasher for ForgetfulChains {
     fn clear(&mut self) {
         self.common.clear();
         self.heads.fill([0; 3]);
-        self.next_free.fill(0);
+        for bank in &mut *self.banks {
+            bank.next_free = 0;
+        }
     }
 
     fn try_reserve(&mut self, block: &InputBlock<'_>) -> Result<()> {
+        let mut added = BANKS * ADDED.0;
+        if block.may_be_all() {
+            added = added.min(block.length * ADDED.1);
+        }
+        memory::try_reserve_total(&mut self.links, BANKS * FIRST_SIZE + added)?;
+        if self.links.is_empty() {
+            memory::resize(&mut self.links, BANKS * FIRST_SIZE, 0);
+        }
         self.common.tiny_hashes.try_reserve(block)
     }
 
@@ -255,7 +299,7 @@ impl Hasher for ForgetfulChains {
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, _: usize) -> Match {
         let key = key(search.first_eight());
         let mut best = self.common.try_recent(search, recent, key);
-        let bank = &self.links[self.bank_starts[key % BANKS] as usize..];
+        let bank = &self.links[self.banks[key % BANKS].start as usize..];
         let [low, high, mut index] = self.heads[key].map(usize::from);
         let mut distance = entry(search.position) - (low | (high << 16));
         let length = search.raise(best.length.max(3), distance, &self.common.words, &mut best);

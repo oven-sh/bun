@@ -1,6 +1,6 @@
 //! Brotli (RFC 7932), with large windows and raw dictionaries (RFC 9841). Parts derive from google/brotli (LICENSE.md).
 #![forbid(unsafe_code)]
-#![feature(core_io_borrowed_buf, hint_prefetch)]
+#![feature(core_io_borrowed_buf, hint_prefetch, rust_cold_cc)]
 // Streams come from anywhere and a panic aborts the process.
 #![deny(
     clippy::indexing_slicing,

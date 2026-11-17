@@ -19,6 +19,7 @@ pub(super) use small::{MAX_SMALL_INPUT_SIZE, Small};
 use core::hint::{Locality, prefetch_read};
 
 use bun_highway::brotli::short_codes;
+use bun_highway::common_prefix_length;
 
 use super::input_block::InputBlock;
 use super::log2::log2_floor;
@@ -103,6 +104,16 @@ fn is_within(max_backward: usize, position: usize, earlier: usize) -> bool {
     max_backward.wrapping_sub(position).wrapping_add(earlier) < max_backward
 }
 
+/// From there on, comparing more bytes at a time makes up for a call.
+const LONG_MATCH: usize = 64;
+
+/// Of what has [`LONG_MATCH`] bytes in common. Its callers have no registers to spare.
+#[cold]
+#[inline(never)]
+extern "rust-cold" fn long_match_length(a: &[u8], b: &[u8]) -> usize {
+    LONG_MATCH + common_prefix_length(&a[LONG_MATCH..], &b[LONG_MATCH..])
+}
+
 impl<'a> Search<'a> {
     #[inline(always)]
     fn data(&self) -> &'a [u8] {
@@ -149,6 +160,9 @@ impl<'a> Search<'a> {
             let length = other.len().min(self.padded.len());
             let (a, b) = (&other[..length], &self.padded[..length]);
             while difference == 0 && matched + 16 <= length {
+                if matched == LONG_MATCH {
+                    return long_match_length(a, b).min(self.padded.len() - SLACK);
+                }
                 matched += 8;
                 difference = load64(a, matched) ^ load64(b, matched);
             }

@@ -210,7 +210,7 @@ impl<'a> InternalState<'a> {
         self.flags.decompress_output_pending
     }
 
-    /// A complete gzip body that only an unbudgeted pass can inflate in one libdeflate call.
+    /// A complete gzip body that only an unbudgeted pass can inflate in one `bun_deflate` call.
     pub(crate) fn wants_exact_size_inflate(&self) -> bool {
         bun_core::feature_flags::is_libdeflate_enabled()
             && self.encoding == Encoding::Gzip
@@ -273,10 +273,10 @@ impl<'a> InternalState<'a> {
         let mut consumed = buffer.len();
 
         if bun_core::feature_flags::is_libdeflate_enabled() {
-            // Fast-path: use libdeflate
+            // Fast-path: decode in one call
 
             'libdeflate: {
-                use bun_libdeflate_sys::libdeflate as bun_libdeflate;
+                use bun_deflate::Output;
                 if !(is_final_chunk
                     && !self.flags.is_libdeflate_fast_path_disabled
                     && matches!(self.decompressor, Decompressor::None)
@@ -285,11 +285,11 @@ impl<'a> InternalState<'a> {
                 {
                     break 'libdeflate;
                 }
-                let format = match self.encoding {
-                    Encoding::Gzip => bun_libdeflate::Encoding::Gzip,
-                    // zlib-ng alone judges a zlib-wrapped body: libdeflate accepts more streams.
+                let decompress = match self.encoding {
+                    Encoding::Gzip => bun_deflate::gunzip,
+                    // `bun_deflate` does not read zlib streams.
                     Encoding::Deflate if has_zlib_header(buffer) => break 'libdeflate,
-                    Encoding::Deflate => bun_libdeflate::Encoding::Deflate,
+                    Encoding::Deflate => bun_deflate::inflate,
                     _ => unreachable!(),
                 };
                 self.flags.is_libdeflate_fast_path_disabled = true;
@@ -319,35 +319,31 @@ impl<'a> InternalState<'a> {
                         {
                             break 'libdeflate;
                         }
-                        let result = deflater.decompressor().decompress_to_vec(
-                            buffer,
-                            &mut self.decoded_body.list,
-                            bun_libdeflate::Encoding::Gzip,
-                        );
-                        // libdeflate decodes a single gzip member; unconsumed
+                        let output = Output::Vec {
+                            vec: &mut self.decoded_body.list,
+                            limit: estimated_size,
+                        };
+                        // `gunzip` decodes a single gzip member; unconsumed
                         // input means this is a multi-member stream (RFC 1952
                         // §2.2). Let the zlib path handle it.
-                        if result.status == bun_libdeflate::Status::Success
-                            && result.read == buffer.len()
+                        if decompress(buffer, output)
+                            .is_ok_and(|result| result.read == buffer.len())
                         {
                             still_needs_to_decompress = false;
                         } else {
-                            self.decoded_body.list.clear();
+                            self.decoded_body.list = Vec::new();
                         }
 
                         break 'libdeflate;
                     }
                 }
 
-                let decompressor = deflater
-                    .decompressor
-                    .as_ref()
-                    .expect("set in HttpThread::deflater()");
-                let result = decompressor.decompress(buffer, &mut deflater.shared_buffer, format);
-
-                // libdeflate decodes a single member; unconsumed input means
+                // `gunzip` decodes a single member; unconsumed input means
                 // a multi-member gzip stream. Let the zlib path handle it.
-                if result.status == bun_libdeflate::Status::Success && result.read == buffer.len() {
+                if let Ok(result) =
+                    decompress(buffer, Output::Slice(&mut deflater.shared_buffer[..]))
+                    && result.read == buffer.len()
+                {
                     if self
                         .decoded_body
                         .list

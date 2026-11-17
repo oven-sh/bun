@@ -1415,7 +1415,7 @@ impl Run<'_> {
                     else {
                         return Ok(());
                     };
-                    client.do_connect(global, redis)?;
+                    client.do_connect(global, redis);
                     Ok(())
                 })
             };

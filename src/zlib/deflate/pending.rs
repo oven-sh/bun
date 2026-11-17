@@ -166,8 +166,9 @@ impl Pending {
         let mut put = |Bits(bits, count)| {
             held |= bits.wrapping_shl(held_count);
             held_count += count;
-            if let Some(word) = room.get_mut(written as usize..written as usize + WORD) {
-                word.copy_from_slice(&held.to_le_bytes());
+            let word = room.get_mut(written as usize..written as usize + WORD);
+            if let Some(word) = word.and_then(<[u8]>::as_mut_array) {
+                *word = held.to_le_bytes();
             }
             written += held_count / 8;
             held = held.wrapping_shr(held_count & !7);

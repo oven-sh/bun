@@ -483,7 +483,7 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     result
 }
 
-/// The frames of later callbacks have words that nothing writes, where the collector would find what the job had.
+/// A mitigation: frames of later callbacks have words that nothing writes, where the collector finds what a job left.
 #[inline(never)]
 fn clear_stack_below_caller() {
     // Those of an immediate reach 1.2 KB below the task queue's on Windows x64.

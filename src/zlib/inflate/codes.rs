@@ -10,6 +10,7 @@ use bun_highway::zlib::{MATCH_SPAN, repeat};
 use super::bits::{BitReader, REFILLED_BITS};
 use super::tables::{DISTANCE_BITS, Entry, LITERAL_LENGTH_BITS, Special, Tables};
 use super::window::{LAP, SLACK, Window};
+use crate::array::At;
 use crate::error::{Damage, Error, Result};
 
 /// How far back a match may start.
@@ -93,7 +94,10 @@ fn copy_match(from: &Span, to: &Span, distance: usize, len: usize, goal: Option<
     let copy_chunk = |at| {
         if let (Some(from), Some(to)) = (from.get(at..at + CHUNK), to.get(at..at + CHUNK)) {
             let bytes: [u8; CHUNK] = core::array::from_fn(|i| from.get(i).map_or(0, Cell::get));
-            to.iter().zip(bytes).for_each(|(to, byte)| to.set(byte));
+            // Not `zip()`, which takes LTO to be inlined.
+            for (i, to) in to.iter().enumerate() {
+                to.set(*bytes.at(i));
+            }
         }
     };
     copy_chunk(0);

@@ -44,8 +44,8 @@ impl Entry {
         Self((kind as u32) << Self::KIND_SHIFT | bits)
     }
 
-    const fn subtable(start: u32, index_bits: u32, root_bits: u32) -> Self {
-        let special = Self::special(Special::Subtable, root_bits);
+    const fn subtable(start: u32, index_bits: u32) -> Self {
+        let special = Self::special(Special::Subtable, 0);
         Self(special.0 | index_bits << Self::SMALL_SHIFT | start << Self::FIRST_SHIFT)
     }
 
@@ -324,7 +324,7 @@ impl<T: Copy + From<Entry>, const ROOT: usize, const SUBTABLES: usize> Table<T, 
         *self.root.at(stream as usize % ROOT)
     }
 
-    /// `stream` starts behind the bits of `link`.
+    /// `stream` starts behind the index that `link` was found with.
     #[inline(always)]
     pub(super) fn follow(&self, link: Entry, stream: u64) -> T {
         let start = usize::from((link.0 >> Entry::FIRST_SHIFT) as u16);
@@ -396,8 +396,7 @@ impl<T: Copy + From<Entry>, const ROOT: usize, const SUBTABLES: usize> Table<T, 
                         used = 2 * used + sorted.of_length(Self::ROOT_BITS + index_bits).len();
                     }
                     (start, end) = (end, end + (1 << index_bits));
-                    *self.root.at_mut(prefix) =
-                        Entry::subtable(start as u32, index_bits, Self::ROOT_BITS).into();
+                    *self.root.at_mut(prefix) = Entry::subtable(start as u32, index_bits).into();
                 }
                 let entry = entry_for(symbol.into(), bits_in_subtable);
                 for index in (start + reversed / ROOT..end).step_by(1 << bits_in_subtable) {

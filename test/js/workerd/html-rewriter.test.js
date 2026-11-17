@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "async_hooks";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
@@ -2863,6 +2864,60 @@ it("input that a handler writes or closes is not processed inside the outer writ
   expect(order).toEqual(["write returned 8", "transform returned", "b", "end"]);
 });
 
+describe("input that a handler writes waits for a late reader", () => {
+  async function unread(b) {
+    const { input, controller } = directInput();
+    const res = new HTMLRewriter()
+      .on("p", { element: () => void c.write("<b>") })
+      .on("b", { element: b })
+      .transform(input);
+    const c = await controller;
+    c.write("<p>");
+    await setImmediatePromise();
+    return { res, c };
+  }
+
+  it("its handlers run in the reader's async context", async () => {
+    const storage = new AsyncLocalStorage();
+    const seen = [];
+    const { res, c } = await unread(() => void seen.push(storage.getStore()));
+    const text = storage.run("reader", () => res.text());
+    c.close();
+    expect(await text).toBe("<p><b>");
+    expect(seen).toEqual(["reader"]);
+  });
+
+  it("earlier output comes before its error", async () => {
+    const { res } = await unread(() => new Error("failed"));
+    const reader = res.body.getReader();
+    expect(Buffer.from((await reader.read()).value).toString()).toBe("<p>");
+    await expect(reader.read()).rejects.toThrow("failed");
+  });
+});
+
+it("input that a handler of held input writes before close() is rewritten without a reader", async () => {
+  const { input, controller } = directInput();
+  const gate = Promise.withResolvers();
+  const ended = Promise.withResolvers();
+  const res = new HTMLRewriter()
+    .on("a", { element: () => gate.promise })
+    .on("p", {
+      async element() {
+        c.write("[inner]");
+        c.close();
+        await inputClosed();
+      },
+    })
+    .onDocument({ end: () => ended.resolve() })
+    .transform(input);
+  const c = await controller;
+  c.write("<a></a>");
+  c.write("<p>1</p>");
+  gate.resolve();
+  await ended.promise;
+  expect(await res.text()).toBe("<a></a><p>1</p>[inner]");
+});
+
 // The upstream stream is delivering the chunk, and only the downstream rewriter refers to it. ASAN reports the freed stream.
 it.concurrent.each([
   { it: "ends", action: "upstream.resolve()", prints: "complete" },
@@ -3009,7 +3064,38 @@ describe("a used output body stays used", () => {
       await settle();
       expect(res.bodyUsed).toBe(true);
     });
+
+    it("after the input failed under .text() of an existing .body", async () => {
+      const { handler, settle } = parked();
+      const { input, controller } = directInput();
+      const res = new HTMLRewriter().on("b", handler).transform(input);
+      const c = await controller;
+      expect(res.body).toBeInstanceOf(ReadableStream);
+      const text = res.text();
+      c.write("<b></b>");
+      c.close(new Error("input failed"));
+      await expect(text).rejects.toThrow("input failed");
+      await settle();
+      expect(res.bodyUsed).toBe(true);
+    });
   });
+});
+
+it.each([
+  { handler: "resolves", settle: gate => gate.resolve(), answer: "200 <p>1</p>" },
+  { handler: "rejects", settle: gate => gate.reject(new Error("failed")), answer: "500 failed" },
+])("Bun.serve answers a GET after a HEAD that came before the handler $handler", async ({ settle, answer }) => {
+  const gate = Promise.withResolvers();
+  const res = new HTMLRewriter().on("p", { element: () => gate.promise }).transform(new Response("<p>1</p>"));
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => res,
+    error: e => new Response(e.message, { status: 500 }),
+  });
+  await fetch(server.url, { method: "HEAD" });
+  settle(gate);
+  const get = await fetch(server.url);
+  expect(`${get.status} ${await get.text()}`).toBe(answer);
 });
 
 describe("a rewrite that is stopped during a handler", () => {

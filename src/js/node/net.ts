@@ -400,8 +400,12 @@ function endNT(self, socket, callback) {
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
   // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
   const current = self._handle;
+  // A destroy() at 'finish' drops what a stream under TLS still holds. Read before the close_notify joins it, which a peer that left never takes.
+  const transport = unadoptedTransport(self);
+  const holdsData = transport !== undefined && !(transport instanceof Socket) && transport.writableLength > 0;
   (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
-  callback();
+  if (holdsData && transport.writableEnded && !transport.writableFinished) transport.once("finish", callback);
+  else callback();
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);

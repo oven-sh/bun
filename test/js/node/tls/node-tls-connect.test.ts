@@ -2048,6 +2048,39 @@ describe("application data written over a Duplex transport before the handshake 
   });
 });
 
+it.each(["server", "client"])(
+  "destroySoon() on a TLS %s over a Duplex whose writes complete later loses nothing",
+  async side => {
+    const makeSide = (peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk, _, callback) {
+          setImmediate(() => {
+            if (this.destroyed) return;
+            peer().push(chunk);
+            callback();
+          });
+        },
+        destroy(err, callback) {
+          setImmediate(() => peer().destroy());
+          callback(err);
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide);
+    const serverSide: Duplex = makeSide(() => clientSide);
+    const server = new TLSSocket(serverSide, { isServer: true, ...COMMON_CERT_ });
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    await Promise.all([once(server, "secure"), once(client, "secureConnect")]);
+    const [writer, reader] = side === "server" ? [server, client] : [client, server];
+    let received = "";
+    reader.on("data", chunk => (received += chunk));
+    writer.write("last words");
+    writer.destroySoon();
+    await Promise.all([once(writer, "close"), once(reader, "close")]);
+    expect(received).toBe("last words");
+  },
+);
+
 describe("a TLS socket over a Duplex transport follows that transport's teardown", () => {
   // Node wraps a stream that has no fd in a JSStreamSocket and destroys the
   // TLS socket when that wrap closes:

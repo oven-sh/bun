@@ -130,7 +130,7 @@ impl FetchTaskletDelivered {
         // SAFETY: fn contract.
         let this = unsafe { RefPtr::from_raw(this.cast::<FetchTasklet>()) };
         let tasklet = FetchTasklet::from_raw_mut(this.as_ptr());
-        tasklet.set_body_unread(!tasklet.has_body_consumer());
+        tasklet.sync_body_unread();
         let lock = tasklet.mutex.lock_guard();
         let unread_bytes = tasklet.take_unread_bytes();
         drop(lock);
@@ -1620,20 +1620,23 @@ impl FetchTasklet {
     }
 
     pub(crate) fn on_stream_drained(&self) {
-        self.set_body_unread(false);
+        self.sync_body_unread();
         self.unpark_body_stream();
         self.resume_receive();
     }
 
-    fn has_body_consumer(&self) -> bool {
-        self.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll
-            || self.response_stream.has_consumer()
+    pub(crate) fn sync_body_unread(&self) {
+        self.set_body_unread(
+            self.signal_store.body_receive_mode() != BodyReceiveMode::BufferAll
+                && !self.response_stream.has_consumer(),
+        );
     }
 
     /// What a dropped `Response` keeps alive, so it counts toward the next collection. A consumer reports what it makes of the bytes.
     fn take_unread_bytes(&mut self) -> usize {
+        let bytes = core::mem::take(&mut self.unreported_body_bytes);
         if self.signal_store.body_unread.load(Ordering::Relaxed) {
-            core::mem::take(&mut self.unreported_body_bytes)
+            bytes
         } else {
             0
         }

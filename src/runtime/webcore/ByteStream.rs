@@ -32,6 +32,8 @@ pub struct ByteStream {
     pub(crate) sink_paused: Cell<bool>,
     pub(crate) size_hint: Cell<blob::SizeType>,
     pub(crate) buffer_action: JsCell<Option<BufferAction>>,
+    /// The last reader released its lock. The controller's own pull may still be pending.
+    reader_released: Cell<bool>,
 }
 
 impl Default for ByteStream {
@@ -48,6 +50,7 @@ impl Default for ByteStream {
             sink_paused: Cell::new(false),
             size_hint: Cell::new(0),
             buffer_action: JsCell::new(None),
+            reader_released: Cell::new(false),
         }
     }
 }
@@ -135,6 +138,12 @@ impl Buffered {
 /// ReadableStream source backed by a ByteStream.
 pub(crate) type Source = readable_stream::NewSource<ByteStream>;
 
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__ByteStream__onReaderLockChanged(source: &Source, locked: bool) {
+    source.context.reader_released.set(!locked);
+    source.producer.get().reader_lock_changed();
+}
+
 /// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
 /// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
 /// JS wrapper (which the VM's last sweep destroys in no particular order), plus the parked bit of
@@ -195,7 +204,7 @@ impl ProducerHold {
     /// Whether a reader, a native sink or a whole-body read has taken the held stream.
     pub(crate) fn has_consumer(&self) -> bool {
         self.source.get().as_ref().is_some_and(|source| {
-            source.reader_context.get().is_some()
+            (source.reader_context.get().is_some() && !source.context.reader_released.get())
                 || source.context.sink.get().is_some()
                 || source.context.buffer_action.get().is_some()
         })

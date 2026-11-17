@@ -855,6 +855,12 @@ impl SourceHandle {
         }
     }
 
+    pub(crate) fn reader_lock_changed(self) {
+        if let SourceHandle::FetchResponseBody(p) = self {
+            p.sync_body_unread();
+        }
+    }
+
     pub fn start(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),

@@ -185,6 +185,7 @@ static void setNativeSourceCloseAdapter(JSC::VM& vm, JSObject* handle, JSValue a
 }
 
 extern "C" void Bun__FileReader__resume(void* source);
+extern "C" void Bun__ByteStream__onReaderLockChanged(void* source, bool locked);
 
 void resumeNativeSource(JSReadableStream* stream)
 {
@@ -193,6 +194,14 @@ void resumeNativeSource(JSReadableStream* stream)
         return;
     if (auto* file = dynamicDowncast<JSFileInternalReadableStreamSource>(handle.asCell()))
         Bun__FileReader__resume(file->wrapped());
+    else if (auto* bytes = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle.asCell()))
+        Bun__ByteStream__onReaderLockChanged(bytes->wrapped(), true);
+}
+
+void nativeSourceReaderReleased(JSObject* handle)
+{
+    if (auto* bytes = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle))
+        Bun__ByteStream__onReaderLockChanged(bytes->wrapped(), false);
 }
 
 // object.<name>(...args) with a real [[Get]], as the replaced builtins did.

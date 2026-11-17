@@ -606,6 +606,7 @@ void pipeToReadRequestErrorSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*,
 void materializeNativeSource(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamSource.cpp
 // process.stdin pauses the file source it shares with Bun.stdin.stream(); the next reader makes it read again.
 void resumeNativeSource(JSReadableStream*); // userJS: no (a paused source reads at once; a pull that settles reacts in a microtask, as in nativeSourcePull) — BunStreamSource.cpp
+void nativeSourceReaderReleased(JSC::JSObject* handle); // userJS: no — BunStreamSource.cpp
 
 // The SourceKind::Native algorithm ARMS. The pull/cancel dispatch is a TOTAL
 // `switch (m_algorithms.kind)` in JSReadableStreamDefaultController.cpp (a Native source is

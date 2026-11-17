@@ -1535,6 +1535,50 @@ describe.concurrent("fetch() gives the request slot of an unread body to the nex
     expect(await run(STATUSES, url, { protocol: "http3", tls: { ca: tls.cert } })).toEqual(printed("18\n"));
   });
 
+  describe.each<[string, Buffer[]]>([
+    ["larger than the receive buffer", [Buffer.from(`Content-Length: ${big.length}\r\n\r\n`), big]],
+    ["cut off by an origin that went quiet", quiet],
+  ])("a body %s whose reader let go", (_, response) => {
+    test.each([
+      ["before it read", "res.body.getReader().releaseLock()"],
+      ["after a read", "const reader = res.body.getReader(); await reader.read(); reader.releaseLock()"],
+      ["by leaving a loop", "for await (const chunk of res.body.values({ preventCancel: true })) break"],
+    ])("%s", async (_, letGo) => {
+      using origin = await serveRaw(response);
+      const script = /* js */ `
+        let ok = 0;
+        for (let i = 0; i < 6; i++) {
+          const res = await fetch(url);
+          ${letGo};
+          ok++;
+        }
+        console.log(ok);
+        process.exit(0);
+      `;
+      expect(await run(script, origin.url)).toEqual(printed("6\n"));
+    });
+  });
+
+  test("the next reader gets the rest of a body whose first reader let go", async () => {
+    using origin = await serveRaw([Buffer.from(`Content-Length: ${big.length}\r\n\r\n`), big]);
+    const script = /* js */ `
+      let total = 0;
+      const responses = await Promise.all(
+        Array.from({ length: 9 }, async () => {
+          const res = await fetch(url);
+          const reader = res.body.getReader();
+          const { value } = await reader.read();
+          total += value.length;
+          reader.releaseLock();
+          return res;
+        }),
+      );
+      for (const res of responses) for await (const chunk of res.body) total += chunk.length;
+      console.log(total);
+    `;
+    expect(await run(script, origin.url)).toEqual(printed(`${9 * big.length}\n`));
+  });
+
   test("bodies that are read after all the heads are in arrive whole", async () => {
     using origin = await serveRaw([Buffer.from(`Content-Length: ${big.length}\r\n\r\n`), big]);
     const script = /* js */ `
@@ -1552,6 +1596,7 @@ describe.concurrent("fetch() gives the request slot of an unread body to the nex
     test.each([
       ["res.text()", "res.text().catch(() => {})"],
       ["a reader", "res.body.getReader().read()"],
+      ["a second reader", "res.body.getReader().releaseLock(), res.body.getReader().read()"],
       ["res.body.text()", "res.body.text().catch(() => {})"],
       ["Bun.write()", "Bun.write(opts.file + i, res).catch(() => {})"],
       ["Bun.serve()", "await forward(res)"],

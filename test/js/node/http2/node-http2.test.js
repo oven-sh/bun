@@ -7759,7 +7759,10 @@ describe("session teardown", () => {
       server.on("stream", () => streams++);
       await once(server.listen(0, "127.0.0.1"), "listening");
       try {
-        const serverSessionClosed = once(server, "session").then(([session]) => once(session, "close"));
+        // Not once(): a reset that overtakes the client's GOAWAY is an 'error' of the server's session first, as in Node.
+        const serverSessionClosed = new Promise(resolve =>
+          server.on("session", session => session.on("close", resolve)),
+        );
         const destroy = () => client.destroy();
         const client = http2.connect(
           `http://127.0.0.1:${server.address().port}`,
@@ -10410,7 +10413,7 @@ it("session.socket is undefined after the session is destroyed", async () => {
     const [session] = await accepted;
     // Read the getter while the socket is attached, so each session caches its proxy.
     const proxies = [client.socket, session.socket];
-    const closed = Promise.all([once(client, "close"), once(session, "close")]);
+    const closed = Promise.all([once(client, "close"), new Promise(resolve => session.on("close", resolve))]);
     client.destroy();
     await closed;
     expect([client.socket, session.socket]).toEqual([undefined, undefined]);

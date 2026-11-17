@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isCI, isDebug, isMacOS, tempDir } from "harness";
 import { availableParallelism, cpus } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 // The runner is `src/simd/conformance`. It is only compiled into debug and canary builds.
 const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
-async function run(target: string | undefined, ...args: (string | number)[]) {
+async function run(target: string | undefined, args: string[], build = bunExe(), cwd?: string) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--run-simd-tests", ...args.map(String)],
+    cmd: [build, "test", "--run-simd-tests", ...args],
+    cwd,
     env: { ...bunEnv, BUN_SIMD_TARGET: target },
     stdout: "pipe",
     stderr: "inherit",
@@ -19,7 +20,7 @@ async function run(target: string | undefined, ...args: (string | number)[]) {
   return { lines, values, exitCode };
 }
 
-const probe = hasRunner ? await run(undefined, "probe") : undefined;
+const probe = hasRunner ? await run(undefined, ["probe"]) : undefined;
 const baseline = isArm64 ? "neon" : "sse4";
 // A program that is compiled for a better target has no portable copies.
 const targets = probe?.values("target").filter(target => !target.startsWith("portable")) ?? [];
@@ -42,51 +43,57 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
     expect(probe!.values("feature").includes(feature)).toBe(stdout.toString().trim() === "1");
   });
 
-  test.concurrent.each(targets)("%s matches Highway", async target => {
-    const rounds = isDebug || isASAN ? 60 : 10_000;
-    const { lines, exitCode } = await run(target, "check", 1, rounds);
+  test.concurrent.each(targets)("%s returns what has been recorded", async target => {
+    const rounds = isDebug || isASAN ? "1200" : "10000";
+    const { lines, exitCode } = await run(target, ["check", rounds]);
     const byDefault = target === "avx512_skx" ? "avx2" : target;
     expect(lines).toEqual([`chosen: ${byDefault} ${target}`, `rounds: ${rounds}`]);
     expect(exitCode).toBe(0);
   });
 
   test.concurrent.each(["avx512_icl", "", "AVX2"])("%j is no limit", async target => {
-    const { values, exitCode } = await run(target, "check", 2, 1);
-    expect(values("chosen")).toEqual([`${targets.find(target => target !== "avx512_skx")} ${targets[0]}`]);
+    const { lines, exitCode } = await run(target, ["check", "3"]);
+    const byDefault = targets.find(target => target !== "avx512_skx");
+    expect(lines).toEqual([`chosen: ${byDefault} ${targets[0]}`, "rounds: 3"]);
     expect(exitCode).toBe(0);
   });
 
-  test("a limit below the build picks the baseline", async () => {
-    const { values, exitCode } = await run("portable", "check", 3, 1);
-    expect(values("chosen")).toEqual([`${baseline} ${baseline}`]);
+  test.concurrent("a limit below the build picks the baseline", async () => {
+    const { lines, exitCode } = await run("portable", ["check", "3"]);
+    expect(lines).toEqual([`chosen: ${baseline} ${baseline}`, "rounds: 3"]);
     expect(exitCode).toBe(0);
   });
 });
 
-// Prints tables and asserts nothing about them. `getSimdBenchmarkStep()` in .buildkite/ci.ts runs it.
+// Prints tables and asserts nothing about them.
 describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () => {
-  async function times(target: string, ...args: string[]) {
-    const { lines, exitCode } = await run(target, ...args);
+  const { BUN_SIMD_BENCHMARK_AGAINST: other, BUN_SIMD_BENCHMARK_FILTER: filter = "" } = process.env;
+
+  async function times(...args: Parameters<typeof run>) {
+    const { lines, exitCode } = await run(...args);
+    expect(lines[0]).toEndWith(` ${args[0]}`);
     expect(exitCode).toBe(0);
-    return lines.slice(1).map(line => {
-      const [name, first, second] = line.split("\t");
-      return { name, first: +first, second: +second };
-    });
+    const rows = lines.slice(1).map(line => line.split("\t"));
+    return new Map(rows.map(([name, ...times]) => [name, times.map(Number)]));
   }
 
-  function print(title: string, columns: [string, string], rows: Awaited<ReturnType<typeof times>>) {
-    const line = (name: string, ...cells: string[]) => name.padEnd(48) + cells.map(it => it.padStart(14)).join("");
-    const ratio = (row: (typeof rows)[number]) => row.second / row.first;
-    const mean = Math.exp(rows.reduce((sum, row) => sum + Math.log(ratio(row)), 0) / rows.length);
-    const body = rows.map(row => line(row.name, row.first.toFixed(2), row.second.toFixed(2), ratio(row).toFixed(3)));
-    console.log(
-      [line(title, ...columns, "ratio"), ...body, line("geometric mean", "", "", mean.toFixed(3)), ""].join("\n"),
-    );
+  function print(title: string, columns: string[], rows: Map<string, number[]>) {
+    const line = (name: string, ...cells: string[]) =>
+      (name.padEnd(64) + cells.map(it => it.padStart(14)).join("")).trimEnd();
+    const text = (value: number | undefined, digits: number) => (Number.isFinite(value) ? value!.toFixed(digits) : "");
+    const lines = Array.from(rows, ([name, [a, b]]) => line(name, text(a, 2), text(b, 2), text(b / a, 3)));
+    const logs = Array.from(rows.values(), ([a, b]) => Math.log(b / a)).filter(Number.isFinite);
+    const mean = Math.exp(logs.reduce((sum, it) => sum + it, 0) / logs.length);
+    if (logs.length) lines.push(line("geometric mean", "", "", text(mean, 3)));
+    console.log([line(title, ...columns), ...lines, ""].join("\n"));
   }
 
   test("machine", () => {
     console.log(`${availableParallelism()} x ${cpus()[0].model}\n${probe!.values("feature").join(" ")}\n`);
   });
+
+  const builds = other ? [resolve(other), bunExe()] : [bunExe()];
+  const turns = other ? 6 : 1;
 
   // Few kernels have a copy for avx512_skx.
   test.each(targets.filter(target => target !== "avx512_skx"))(
@@ -97,19 +104,30 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
       const entrypoint = join(import.meta.dir, "../../bench/react-hello-world/react-hello-world.workerd.js");
       const { outputs } = await Bun.build({ entrypoints: [entrypoint], sourcemap: "external", external: ["*"] });
       using dir = tempDir("simd", { mappings: (await outputs[0].sourcemap!.json()).mappings });
-      print(
-        `${target}, ns`,
-        ["Highway", "Rust"],
-        await times(target, "bench", js, json, join(String(dir), "mappings")),
-      );
-      print(`${target}, ns`, ["mid page", "end of page"], await times(target, "edges"));
+      const best = new Map<string, number[]>();
+      for (let turn = 0; turn < turns; turn++) {
+        const i = turn % builds.length;
+        // A build without the runner would run the tests in its working directory.
+        const rows = await times(target, ["bench", js, json, "mappings", filter], builds[i], String(dir));
+        expect(rows.size).toBeGreaterThan(0);
+        for (const [name, time] of rows) {
+          expect(time).toHaveLength(1);
+          const row = best.getOrInsert(name, []);
+          row[i] = Math.min(row[i] ?? Infinity, time[0]);
+        }
+      }
+      print(`${target}, ns`, other ? ["that build", "this build", "ratio"] : [], best);
     },
-    60_000,
+    60_000 * turns,
+  );
+
+  test.each(targets.filter(target => target !== "avx512_skx"))("end of a page on %s", async target =>
+    print(`${target}, ns`, ["mid page", "end of page", "ratio"], await times(target, ["edges"])),
   );
 
   test.each(targets.filter(target => target !== "avx512_skx"))(
     "first search after a pause on %s",
-    async target => print(`${target}, ns with the clock`, ["Highway", "Rust"], await times(target, "pauses")),
+    async target => print(`${target}, ns with the clock`, [], await times(target, ["pauses"])),
     60_000,
   );
 
@@ -117,11 +135,11 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
     "scalar code next to %s",
     async target => {
       for (const busy of [1, availableParallelism()]) {
-        const [rows, ...others] = await Promise.all(Array.from({ length: busy }, () => times(target, "clock")));
+        const [rows, ...others] = await Promise.all(Array.from({ length: busy }, () => times(target, ["clock"])));
         for (const other of others) {
-          other.forEach(({ first, second }, i) => ((rows[i].first += first), (rows[i].second += second)));
+          for (const [name, row] of other) row.forEach((time, i) => (rows.get(name)![i] += time));
         }
-        print(`${target}, ${busy} busy, sum of ns per step`, ["alone", "with searches"], rows);
+        print(`${target}, ${busy} busy, sum of ns per step`, ["alone", "with searches", "ratio"], rows);
       }
     },
     60_000,

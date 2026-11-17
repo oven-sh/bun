@@ -1,4 +1,4 @@
-//! Bun's kernels on `bun_simd`, checked against those on Highway.
+//! Bun's kernels on `bun_simd`.
 #![feature(loop_hints, trait_alias)]
 #![feature(const_array, const_closures, const_trait_impl)]
 #![forbid(unsafe_code)]
@@ -68,7 +68,7 @@ pub use search::simd::{
     last_index_of_char16,
 };
 pub use sourcemap::simd::{count_mapping_delims, parse_mappings};
-pub use sourcemap::{Columns, ColumnsFilled, ColumnsOut, MappingsState};
+pub use sourcemap::{Columns, ColumnsOut, MappingsState};
 pub use width::simd::{
     count_printable_ascii16, visible_latin1_width, visible_latin1_width_exclude_ansi,
     visible_utf16_width,

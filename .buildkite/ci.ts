@@ -893,18 +893,6 @@ function getSimdCargoTestStep(platform: Platform): CommandStep {
   };
 }
 
-/** Times the kernels of src/simd on an otherwise idle machine. The tables are in the log. */
-function getSimdBenchmarkStep(platform: Platform, options: PipelineOptions, buildId: string | undefined): CommandStep {
-  const step = getTestBunStep({ ...platform, tests: ["internal/simd.test.ts"] }, options, { buildId });
-  return {
-    ...step,
-    key: `${getPlatformKey(platform)}-simd-benchmark`,
-    label: `${getPlatformLabel(platform)} - simd-benchmark`,
-    env: { ...step.env, BUN_SIMD_BENCHMARK: "1" },
-    soft_fail: true,
-  };
-}
-
 interface TestOptions {
   buildId?: string | undefined;
   testFiles?: string[] | undefined;
@@ -1901,12 +1889,10 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   if (!options.skipTests && !isMergeQueue() && hasSimdChanges(options)) {
-    for (const platform of relevantTestPlatforms.filter(it => isInRelease(it) && it.tier !== "beta")) {
-      const simdSteps = [getSimdBenchmarkStep(platform, options, buildId)];
-      if (platform.distro === "debian") simdSteps.push(getSimdCargoTestStep(platform));
+    for (const platform of relevantTestPlatforms.filter(it => isInRelease(it) && it.distro === "debian")) {
       steps.push(
         getStepWithDependsOn(
-          { key: getPlatformKey(platform), group: getPlatformLabel(platform), steps: simdSteps },
+          { key: getPlatformKey(platform), group: getPlatformLabel(platform), steps: [getSimdCargoTestStep(platform)] },
           ...getImageDependsOn(platform, baking),
         ),
       );

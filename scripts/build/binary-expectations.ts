@@ -17,7 +17,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Config } from "./config.ts";
+import { linksWithLld, type Config } from "./config.ts";
 import {
   overridesDarwinAllocator,
   replacedLibcAllocationSymbols,
@@ -123,6 +123,7 @@ export interface BinaryExpectations {
    *
    * A match means that something reachable calls it: find the caller. In the
    * engine it belongs under `#if ASSERT_ENABLED`, in Rust behind the feature.
+   * It also has what LTO has to inline: see `inlinedSymbols()`.
    */
   forbiddenSymbols?: string[];
   elf?: {
@@ -406,6 +407,14 @@ function testOnlySymbols(cfg: Config): string[] | undefined {
 }
 
 /**
+ * An `always_inline` C++ function that only Rust calls. It stays behind if the CPU features of the two halves do not
+ * let LTO inline C++ into Rust at all: rustCpuTargetFlags() in rust.ts.
+ */
+function inlinedSymbols(cfg: Config): string[] {
+  return cfg.lto && linksWithLld(cfg) && !cfg.hardened ? ["*highway_brotli_short_codes"] : [];
+}
+
+/**
  * The Windows `.bin/` shim (src/install/windows-shim): `bun install` writes a copy of it next to every package
  * binary, and it runs on every `bun run` of one. It is freestanding: no CRT, no allocator, no formatting machinery,
  * raw NT calls. Everything here is that property stated as a check.
@@ -487,7 +496,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     ...(cfg.abi === "android" ? ["liblog.so"] : []),
   ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
-  const forbiddenSymbols = testOnlySymbols(cfg);
+  const forbiddenSymbols = testOnlySymbols(cfg)?.concat(inlinedSymbols(cfg));
 
   switch (format) {
     case "elf": {

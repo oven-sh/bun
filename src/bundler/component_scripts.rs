@@ -69,6 +69,10 @@ fn frontmatter<'a>(path: &[u8], contents: &'a [u8]) -> Option<&'a [u8]> {
     if !path.ends_with(b".astro") {
         return None;
     }
-    let code = contents.trim_ascii_start().strip_prefix(b"---")?;
+    // The file loader keeps a byte order mark.
+    let text = contents
+        .strip_prefix(&strings::BOM::UTF8_BYTES)
+        .unwrap_or(contents);
+    let code = text.trim_ascii_start().strip_prefix(b"---")?;
     Some(&code[..strings::index_of(code, b"\n---")?])
 }

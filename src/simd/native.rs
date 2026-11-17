@@ -43,11 +43,13 @@ macro_rules! x256_in_halves {
         crate::native::x256_in_halves! {
             $feature
             U8::lookup(self: U8, indices: U8) -> U8
+            U8::lookup2(self: U8, upper: U8, indices: U8) -> U8
             U8::pack(first: I16, second: I16) -> U8
             I8::pack(first: I16, second: I16) -> I8
             U16::sums_of_2(bytes: U8) -> U16
             I16::pack(first: I32, second: I32) -> I16
             I16::mul_q15(self: I16, other: I16) -> I16
+            I16::mul_high(self: I16, other: I16) -> I16
             I16::saturating_pairwise_dot(a: U8, b: I8) -> I16
             I32::pairwise_dot(a: I16, b: I16) -> I32
             U64::sums_of_8(bytes: U8) -> U64

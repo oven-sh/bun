@@ -836,6 +836,120 @@ fn conversions(js: &[u8]) {
 }
 
 #[optimize(size)]
+fn webp_decoder() {
+    const STRIDE: usize = 1088;
+    let random = &mut Random(13);
+    let blocks = &mut vec![[[1; 64]; 6]; 64];
+    for (name, mask) in [("all", 0xFF_FFFF), ("luma", 0xFFFF), ("few", 0x10_0401)] {
+        compare!("webp::inverse_dct of {name}", |k| {
+            (blocks.iter_mut()).for_each(|it| k::webp::inverse_dct(it, opaque(mask)))
+        });
+    }
+    let masks: &Vec<_> = &(0..4096)
+        .map(|_| (random.next() & random.next()) as u32)
+        .collect();
+    compare!("webp::inverse_dct of some", |k| {
+        (masks.iter()).for_each(|&mask| k::webp::inverse_dct(&mut blocks[0], mask))
+    });
+    let modes = random.bytes(16 * 256, b"\0\x01\x02\x03\x04\x05\x06\x07\x08\x09");
+    let (modes, samples) = (modes.as_chunks().0.as_chunks().0, &mut [[9; 16]; 16]);
+    macro_rules! reconstruct {
+        ($k:ident, $right:expr) => {
+            for modes in modes {
+                let (above, residuals) = (samples[15], &[[3; 64]; 4]);
+                $k::webp::reconstruct_subblocks(
+                    &above, $right, &[2; 20], modes, residuals, samples,
+                );
+            }
+        };
+    }
+    compare!(
+        "webp::reconstruct_subblocks",
+        reconstruct!(highway, &[1; 4]),
+        reconstruct!(rust, [1; 4])
+    );
+
+    let planes = &mut [(); 3].map(|()| random.bytes(24 * STRIDE + 16, b"abcdefgh"));
+    for (count, one_in) in [(1, 1), (4, 1), (64, 1), (64, 2), (64, 999)] {
+        let has_inner: &Vec<_> = &(0..count).map(|_| random.below(one_in) == 0).collect();
+        macro_rules! strengths {
+            ($k:ident) => {
+                &Vec::from_iter(has_inner.iter().map(|&it| $k::webp::FilterStrength {
+                    edge_limit: 30,
+                    interior_limit: 6,
+                    high_variance_threshold: 1,
+                    filters_inner_edges: it,
+                }))
+            };
+        }
+        macro_rules! planes {
+            ($k:ident) => {
+                planes.each_mut().map(|samples| $k::webp::Plane {
+                    samples,
+                    stride: opaque(STRIDE),
+                    start: 8 * STRIDE + 16,
+                })
+            };
+        }
+        let (theirs, ours) = (strengths!(highway), strengths!(rust));
+        compare!(
+            "webp::filter_normally {count}, inner edges in 1 of {one_in}",
+            highway::webp::filter_normally(planes!(highway), theirs, true),
+            rust::webp::filter_normally(planes!(rust), ours, true)
+        );
+        compare!(
+            "webp::filter_simply {count}, inner edges in 1 of {one_in}",
+            planes!(highway).map(|y| highway::webp::filter_simply(y, theirs, true)),
+            planes!(rust).map(|y| rust::webp::filter_simply(y, ours, true))
+        );
+    }
+
+    let ([from, upper, lower], pixels) = (planes, &mut Vec::with_capacity(STRIDE));
+    let [y, u, v, alpha] = [0, 1, 2, 3].map(|row| &from[row * STRIDE..][..STRIDE]);
+    for n in [9, 100, 1000] {
+        compare!("webp::upsample {n}", |k| {
+            k::webp::upsample([opaque(u), v], [upper, lower], n)
+        });
+        compare!("webp::yuv_to_rgba {n}", |k| {
+            pixels.clear();
+            k::webp::yuv_to_rgba([opaque(y), u, v, alpha], pixels, 0, n)
+        });
+    }
+
+    let (row, noise) = (upper.as_chunks_mut().0, from.as_chunks().0);
+    let (row, noise, flat) = (&mut row[..1000], &noise[..1000], &[[5; 4]; 1000][..]);
+    for mode in 0..14 {
+        for (name, above) in [("noise", noise), ("flat", flat)] {
+            if name == "noise" || matches!(mode, 11 | 12) {
+                compare!("webp::undo_prediction {mode} below {name}", |k| {
+                    k::webp::undo_prediction(row, opaque(above), &[[mode; 4]; 32], 5)
+                });
+            }
+        }
+    }
+    let tiles = random.bytes(4 * 250 * 64, b"");
+    for (n, bits) in [
+        (1000, 2),
+        (1000, 3),
+        (1000, 4),
+        (1000, 6),
+        (1000, 9),
+        (20, 4),
+        (2, 4),
+    ] {
+        let (row, noise, tiles) = (&mut row[..n], &noise[..n], tiles.as_chunks().0);
+        compare!("webp::undo_prediction {n} in tiles of {bits} bits", |k| {
+            for tiles in tiles.chunks(250) {
+                _ = k::webp::undo_prediction(row, noise, tiles, opaque(bits));
+            }
+        });
+        compare!("webp::undo_cross_color {n} in tiles of {bits} bits", |k| {
+            k::webp::undo_cross_color(row, tiles, opaque(bits))
+        });
+    }
+}
+
+#[optimize(size)]
 fn jpeg() {
     const STRIDE: usize = 2048;
     let random = &mut Random(11);
@@ -1132,6 +1246,7 @@ pub(crate) fn against_highway(js: &[u8], json: &[u8], map: &[u8]) {
     conversions(js);
     images();
     jpeg();
+    webp_decoder();
     from_shared(js);
     to_shared();
 }

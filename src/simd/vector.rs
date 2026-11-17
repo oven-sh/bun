@@ -325,17 +325,25 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
     }
 }
 
+macro_rules! impl_narrow {
+    ($($T:ty)*) => {$(
+        impl<const N: usize, I: Isa> Vector<$T, N, I> {
+            #[inline(always)]
+            pub fn saturating_add(self, other: impl Into<Self>) -> Self {
+                Self::new(self.0.saturating_add(other.into().0))
+            }
+
+            #[inline(always)]
+            pub fn saturating_sub(self, other: impl Into<Self>) -> Self {
+                Self::new(self.0.saturating_sub(other.into().0))
+            }
+        }
+    )*};
+}
+
+impl_narrow!(u8 i8 u16 i16);
+
 impl<const N: usize, I: Isa> Vector<u8, N, I> {
-    #[inline(always)]
-    pub fn saturating_add(self, other: impl Into<Self>) -> Self {
-        Self::new(self.0.saturating_add(other.into().0))
-    }
-
-    #[inline(always)]
-    pub fn saturating_sub(self, other: impl Into<Self>) -> Self {
-        Self::new(self.0.saturating_sub(other.into().0))
-    }
-
     #[inline(always)]
     pub fn abs_diff(self, other: Self) -> Self {
         Self::new(self.0.abs_diff(other.0))

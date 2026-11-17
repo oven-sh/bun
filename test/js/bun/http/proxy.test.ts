@@ -2458,6 +2458,36 @@ describe.concurrent("a CONNECT tunnel", () => {
     }).toEqual({ name: "Error", code: "ERR_PROXY_TUNNEL", status: 403, statusText: "Forbidden", headers: "policy" });
   });
 
+  test.each([
+    ["GET", "", "through", ["GET", "GET", "GET"]],
+    ["GET", "HTTP/1.1 200", "through", ["GET", "GET", "GET"]],
+    ["PUT", "", "through", ["GET", "PUT", "PUT"]],
+    ["POST", "", "ECONNRESET", ["GET", "POST"]],
+  ])("whose origin answers a reusing %s with %j and close_notify: %s", async (method, lastWords, outcome, seen) => {
+    const requests: string[] = [];
+    const origin = tls.createServer(tlsCert, socket => {
+      socket.on("error", () => {});
+      socket.on("data", data => {
+        if (requests.push(data.toString("latin1").split(" ")[0]) === 2) socket.end(lastWords);
+        else socket.write("HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nthrough");
+      });
+    });
+    await once(origin.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = origin.address() as net.AddressInfo;
+      using proxy = await tunnelingProxy(port);
+      using session = new Bun.FetchSession({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
+      const send = (method: string) =>
+        fetch(`https://localhost:${port}/`, { session, method }).then(
+          response => response.text(),
+          error => error.code,
+        );
+      expect([await send("GET"), await send(method), requests]).toEqual(["through", outcome, seen]);
+    } finally {
+      origin.close();
+    }
+  });
+
   test("is pooled per fetch session", async () => {
     using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
     await using proxy = await createAdversarialProxy();

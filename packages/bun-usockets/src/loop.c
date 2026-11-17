@@ -540,6 +540,22 @@ static int us_internal_defer_end(struct us_socket_t *s, struct us_loop_t *loop) 
     return 1;
 }
 
+/* A handler can tick the loop (waitForPromise) while its caller still parses the buffer, so the reads under it get another one. */
+static char *us_internal_take_recv_buf(struct us_loop_t *loop) {
+    char *recv_buf = loop->data.recv_buf;
+    loop->data.recv_buf = NULL;
+    if (UNLIKELY(!recv_buf)) {
+        recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+        if (!recv_buf) Bun__outOfMemory();
+    }
+    return recv_buf;
+}
+
+static void us_internal_put_recv_buf(struct us_loop_t *loop, char *recv_buf) {
+    if (UNLIKELY(loop->data.recv_buf)) us_free(loop->data.recv_buf);
+    loop->data.recv_buf = recv_buf;
+}
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -772,6 +788,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 size_t repeat_recv_count = 0;
+                char *recv_buf = us_internal_take_recv_buf(loop);
 
                 do {
                     #ifdef _WIN32
@@ -788,7 +805,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         /* The protocol sends one descriptor per message. The buffer has room for more, so that extra ones are received and can be closed. */
                         char cmsg_buf[CMSG_SPACE(64 * sizeof(int))];
 
-                        iov.iov_base = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
+                        iov.iov_base = recv_buf + LIBUS_RECV_BUFFER_PADDING;
                         iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
 
                         msg.msg_flags = 0;
@@ -845,7 +862,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
                     }else{
                     #endif
-                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                        length = bsd_recv(us_poll_fd(&s->p), recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
                     #if !defined(_WIN32)
                     }
                     #endif
@@ -854,8 +871,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if (UNLIKELY(s->lingering) && (s->lingered_bytes += length) >= LIBUS_LINGER_MAX_BYTES) {
                             us_socket_pause(s);
                         }
-                        s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
-                                   : s->lingering ? s : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        s = s->ssl ? us_internal_ssl_on_data(s, recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
+                                   : s->lingering ? s : us_dispatch_data(s, recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
                         s = us_internal_socket_follow_adopted(s);
                         // loop->num_ready_polls isn't accessible on Windows.
@@ -950,12 +967,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * surface as `tlsClientError` → uncaught in node:http2.
                          * main called us_socket_close(ssl=0, …) at every loop
                          * close site for exactly this reason. */
-                        s = us_internal_socket_close_raw(s, LIBUS_ERR, NULL);
+                        int read_error = LIBUS_ERR;
+                        us_internal_put_recv_buf(loop, recv_buf);
+                        s = us_internal_socket_close_raw(s, read_error, NULL);
                         return;
                     }
 
                     break;
                 } while (s);
+                us_internal_put_recv_buf(loop, recv_buf);
             }
 
             /* A peer that refuses our bytes may never send its FIN, so a plain socket closes once nothing is left to read. */
@@ -1171,9 +1191,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (run_recv && !u->closed) {
                 /* Return to the event loop after 32 reads, as libuv's uv__udp_recvmsg does, so timers and other polls run in between. The poll is level-triggered, so the next turn reads on. */
                 int reads_left = 32;
+                char *recv_buf = us_internal_take_recv_buf(u->loop);
                 do {
                     struct udp_recvbuf recvbuf;
-                    bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
+                    bsd_udp_setup_recvbuf(&recvbuf, recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT);
                     if (npackets > 0) {
                         u->on_data(u, &recvbuf, npackets);
@@ -1223,6 +1244,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         break;
                     }
                 } while (!u->closed && --reads_left);
+                us_internal_put_recv_buf(u->loop, recv_buf);
 #if defined(__linux__)
                 /* Datagrams are left, so a residual EPOLLERR is the next turn's to judge. */
                 if (reads_left == 0) {

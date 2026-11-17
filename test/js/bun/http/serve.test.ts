@@ -5390,6 +5390,49 @@ it("a direct stream survives a pull() that ends it and runs the event loop until
   expect(exitCode).toBe(0);
 });
 
+it.each(["http", "https"])(
+  "a request keeps its head and body while its handler runs the event loop (%s)",
+  async protocol => {
+    const message = (name: string) =>
+      `POST /${name} HTTP/1.1\r\nHost: a\r\nX-Name: ${name}\r\nContent-Length: 1\r\n\r\n${name}`;
+    const otherArrived = Promise.withResolvers<void>();
+    const seen = Promise.withResolvers<string[]>();
+    let requests = 0;
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: protocol === "https" ? tls : undefined,
+      async fetch(req) {
+        if (requests++) {
+          otherArrived.resolve();
+          return new Response();
+        }
+        other.write(message("b"));
+        Bun.build({
+          entrypoints: ["./none.js"],
+          plugins: [{ name: "nested tick", setup: () => otherArrived.promise }],
+        }).catch(() => {});
+        seen.resolve([`${requests} requests`, req.url, req.headers.get("x-name")!, await req.text()]);
+        return new Response();
+      },
+    });
+    async function open() {
+      const options = { port: server.port!, host: "127.0.0.1", rejectUnauthorized: false };
+      const socket = protocol === "https" ? nodeTls.connect(options) : net.connect(options);
+      await once(socket, protocol === "https" ? "secureConnect" : "connect");
+      return socket;
+    }
+    const [first, other] = await Promise.all([open(), open()]);
+    try {
+      first.write(message("a"));
+      expect(await seen.promise).toEqual(["2 requests", `${protocol}://a/a`, "a", "a"]);
+    } finally {
+      first.destroy();
+      other.destroy();
+    }
+  },
+);
+
 // https://github.com/oven-sh/bun/issues/32469
 it("type: direct stream awaiting flush(true) under backpressure does not re-enter pull", async () => {
   const CHUNK = Buffer.alloc(256 * 1024, 67);

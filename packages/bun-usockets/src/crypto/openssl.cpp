@@ -775,6 +775,21 @@ static char *ssl_alloc_read_output(void) {
   return (char *)us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
 }
 
+/* As us_internal_take_recv_buf (loop.c): the reads under a handler get another buffer. */
+struct ssl_read_output_scope {
+  struct loop_ssl_data *owner;
+  us_unique_ptr<char, us_free> buffer;
+
+  explicit ssl_read_output_scope(struct loop_ssl_data *owner) : owner(owner), buffer(std::move(owner->ssl_read_output)) {
+    if (!buffer) [[unlikely]] {
+      buffer.reset(ssl_alloc_read_output());
+      if (!buffer) Bun__outOfMemory();
+    }
+  }
+  ~ssl_read_output_scope() { owner->ssl_read_output = std::move(buffer); }
+  char *data() { return buffer.get() + LIBUS_RECV_BUFFER_PADDING; }
+};
+
 void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   if (!loop->data.ssl_data) {
     struct loop_ssl_data *loop_ssl_data = new struct loop_ssl_data();
@@ -2529,7 +2544,7 @@ static struct us_socket_t *ssl_report_finished_handshake(struct us_socket_t *s, 
 
 /* What came before the failure goes first, like node's ClearOut. Whatever the owner does with the report, the connection closes here. */
 static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data,
-                                                        int read) {
+                                                        char *output, int read) {
   /* Taken now: the JS below can change the thread's queue. */
   char reason[US_SSL_FATAL_ERROR_REASON_MAX];
   int has_reason = us_ssl_take_error_reason(reason, sizeof(reason));
@@ -2539,7 +2554,7 @@ static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, s
   ssl_flush_pending_events(s);
   if (ssl_gone(s)) return NULL;
   if (read) {
-    s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
+    s = us_dispatch_data(s, output, read);
     if (!s || ssl_gone(s)) return NULL;
   }
   s->ssl_fatal_error = 1;
@@ -2603,6 +2618,7 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *socket, char *da
    * ssl_write_wants_read, which on_open()'s update_handshake set) is what
    * pulls the server's handshake event through after each round-trip. */
 
+  ssl_read_output_scope output(loop_ssl_data);
   int read = 0;
 restart:
   while (1) {
@@ -2625,7 +2641,7 @@ restart:
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;
     int just_read = SSL_read(s_ssl(s),
-                             loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING + read,
+                             output.data() + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
     s->ssl_in_use = ssl_was_in_use;
     if (hs_batching) {
@@ -2669,7 +2685,7 @@ restart:
           }
           /* After our own close_notify or FIN the request has no answer: that is the end of our close. */
           if (us_internal_ssl_is_shut_down(s)) ERR_clear_error();
-          return ssl_fail_established_session(s, loop_ssl_data, read);
+          return ssl_fail_established_session(s, loop_ssl_data, output.data(), read);
         } else if (err == SSL_ERROR_ZERO_RETURN) {
           /* The close_notify can share a read with the peer's Finished: the owner hears of the handshake before the close below. */
           s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
@@ -2682,7 +2698,7 @@ restart:
           ssl_flush_pending_events(s);
           if (ssl_gone(s)) return NULL;
           if (read) {
-            s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
+            s = us_dispatch_data(s, output.data(), read);
             if (!s || ssl_gone(s)) return NULL;
           }
           /* close_notify only closed the PEER's write side; when it rides in
@@ -2718,7 +2734,7 @@ restart:
         }
 
         if (s->ssl_handshake_state != HANDSHAKE_PENDING || SSL_is_init_finished(s_ssl(s))) {
-          return ssl_fail_established_session(s, loop_ssl_data, read);
+          return ssl_fail_established_session(s, loop_ssl_data, output.data(), read);
         }
         /* SSL_read's name for a close_notify in place of a handshake message: https://github.com/oven-sh/bun/issues/44517 */
         if (ERR_peek_error() == ERR_PACK(ERR_LIB_SSL, SSL_R_SSL_HANDSHAKE_FAILURE)) {
@@ -2760,7 +2776,7 @@ restart:
          * clobber pending ciphertext. */
         ssl_flush_pending_events(s);
         if (ssl_gone(s)) return NULL;
-        s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
+        s = us_dispatch_data(s, output.data(), read);
         if (!s || ssl_gone(s)) return NULL;
         break;
       }
@@ -2785,7 +2801,7 @@ restart:
        * JS the session handler runs. */
       ssl_flush_pending_events(s);
       if (ssl_gone(s)) return NULL;
-      s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
+      s = us_dispatch_data(s, output.data(), read);
       if (!s || ssl_gone(s)) return NULL;
       loop_ssl_data->ssl_read_input = saved_input;
       loop_ssl_data->ssl_read_input_length = saved_length;

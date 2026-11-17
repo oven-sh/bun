@@ -31,29 +31,19 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 // ──────────────────────────────────────────────────────────────────────────
 // `Maybe(T)` shim — `crate::node::Maybe` is the same `Result<T, Error>` alias
 // as `bun_sys::Maybe<T>`, so this is just the file-local extension trait
-// surface that lets `Maybe::<T>::errno_sys*` / `.get_errno()` resolve.
+// surface that lets `Maybe::<T>::errno_sys_p` / `.get_errno()` resolve.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "freebsd")))]
 pub(crate) trait MaybeSysResultExt<R>: Sized {
-    #[cfg(not(target_os = "freebsd"))]
     fn get_errno(&self) -> E;
-    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
-    fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
         syscall: sys::Tag,
         path: impl AsRef<[u8]>,
     ) -> Option<Self>;
-    fn errno_sys_pd<Rc: sys::GetErrno>(
-        rc: Rc,
-        syscall: sys::Tag,
-        path: impl AsRef<[u8]>,
-        dest: impl AsRef<[u8]>,
-    ) -> Option<Self>;
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "freebsd")))]
 impl<R> MaybeSysResultExt<R> for Maybe<R> {
-    #[cfg(not(target_os = "freebsd"))]
     #[inline]
     fn get_errno(&self) -> E {
         match self {
@@ -62,29 +52,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
         }
     }
     #[inline]
-    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
-                syscall,
-                ..Default::default()
-            })),
-        }
-    }
-    #[inline]
-    fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
-                syscall,
-                fd,
-                ..Default::default()
-            })),
-        }
-    }
-    #[inline]
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
         syscall: sys::Tag,
@@ -96,24 +63,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
                 errno: (e as u16),
                 syscall,
                 path: path.as_ref().into(),
-                ..Default::default()
-            })),
-        }
-    }
-    #[inline]
-    fn errno_sys_pd<Rc: sys::GetErrno>(
-        rc: Rc,
-        syscall: sys::Tag,
-        path: impl AsRef<[u8]>,
-        dest: impl AsRef<[u8]>,
-    ) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
-                syscall,
-                path: path.as_ref().into(),
-                dest: dest.as_ref().into(),
                 ..Default::default()
             })),
         }
@@ -772,7 +721,7 @@ fn embedded_file_buffer(graph: &bun_standalone_graph::Graph, contents: &[u8]) ->
         && contents.len() >= sys::private_copy::MIN_MAPPED_BYTES
         && let Some(copy) = sys::private_copy::map(contents)
     {
-        return Buffer::from_private_copy(copy, contents.len());
+        return Buffer::from_private_copy(copy);
     }
     Buffer::from_bytes(
         contents.to_vec().into_boxed_slice(),
@@ -1493,17 +1442,16 @@ mod _async_tasks {
                 NodeFSFunctionEnum::Readv => {
                     let args: &args::Readv = args_as!(args::Readv);
                     let fd = args.fd.uv();
-                    let bufs = &args.buffers.buffers;
+                    let bufs = args.buffers.writable();
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
-                    let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
-                    // SAFETY: `bufs` (Vec<PlatformIoVec> == Vec<uv_buf_t>) lives in
-                    // the leaked task; libuv copies the array before return.
+                    let sum: usize = bufs.iter().map(sys::IoVecMut::size).sum();
+                    // SAFETY: the buffers live in the leaked task; libuv copies the array before return.
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
                             &mut task.req,
                             fd,
-                            bufs.as_ptr().cast(),
+                            sys::IoVecMut::as_raw(bufs),
                             c_uint::try_from(bufs.len()).expect("int cast"),
                             pos,
                             Some(Self::uv_callback),
@@ -1522,7 +1470,7 @@ mod _async_tasks {
                 NodeFSFunctionEnum::Writev => {
                     let args: &args::Writev = args_as!(args::Writev);
                     let fd = args.fd.uv();
-                    let bufs = &args.buffers.buffers;
+                    let bufs = args.buffers.readable();
                     if bufs.is_empty() {
                         // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
                         unsafe {
@@ -1539,14 +1487,14 @@ mod _async_tasks {
                         return task.completion.value();
                     }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
-                    let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
+                    let sum: usize = bufs.iter().map(sys::IoVec::size).sum();
                     // SAFETY: see Readv arm.
                     let rc = unsafe {
                         uv::uv_fs_write(
                             loop_,
                             &mut task.req,
                             fd,
-                            bufs.as_ptr().cast(),
+                            sys::IoVec::as_raw(bufs),
                             c_uint::try_from(bufs.len()).expect("int cast"),
                             pos,
                             Some(Self::uv_callback),
@@ -5988,26 +5936,7 @@ impl NodeFS {
     }
 
     pub(crate) fn fdatasync(&mut self, args: &args::FdataSync, _: Flavor) -> Maybe<ret::Fdatasync> {
-        #[cfg(windows)]
-        {
-            return Syscall::fdatasync(args.fd);
-        }
-        #[cfg(not(windows))]
-        {
-            // `fdatasync(int)` has no memory-safety preconditions (a bad fd just
-            // yields EBADF), so declare it `safe fn` for all unix instead of
-            // routing through `libc::fdatasync` (which is blanket-`unsafe`).
-            // `libc` also omits the Darwin binding (fdatasync exists since 10.7).
-            unsafe extern "C" {
-                safe fn fdatasync(fd: libc::c_int) -> libc::c_int;
-            }
-            Maybe::<ret::Fdatasync>::errno_sys_fd(
-                fdatasync(args.fd.native()),
-                sys::Tag::fdatasync,
-                args.fd,
-            )
-            .unwrap_or(Ok(()))
-        }
+        Syscall::fdatasync(args.fd)
     }
 
     #[inline]
@@ -6023,21 +5952,7 @@ impl NodeFS {
     }
 
     pub(crate) fn fsync(&mut self, args: &args::Fsync, _: Flavor) -> Maybe<ret::Fsync> {
-        #[cfg(windows)]
-        {
-            return Syscall::fsync(args.fd);
-        }
-        #[cfg(not(windows))]
-        {
-            // `fsync(int)` has no memory-safety preconditions (a bad fd just yields
-            // EBADF), so declare it `safe fn` instead of routing through
-            // `libc::fsync` (which is blanket-`unsafe`). Mirrors `fdatasync` above.
-            unsafe extern "C" {
-                safe fn fsync(fd: libc::c_int) -> libc::c_int;
-            }
-            Maybe::<ret::Fsync>::errno_sys(fsync(args.fd.native()), sys::Tag::fsync)
-                .unwrap_or(Ok(()))
-        }
+        Syscall::fsync(args.fd)
     }
 
     pub(crate) fn ftruncate(&mut self, args: &args::FTruncate, _: Flavor) -> Maybe<ret::Ftruncate> {
@@ -6134,22 +6049,8 @@ impl NodeFS {
         let mut to_buf = bun_paths::path_buffer_pool::get();
         let from = args.old_path.slice_z(&mut self.sync_error_buf);
         let to = args.new_path.slice_z(&mut to_buf);
-        #[cfg(windows)]
-        {
-            return match Syscall::link(from, to) {
-                Err(err) => Err(err.with_path_dest(args.old_path.slice(), args.new_path.slice())),
-                Ok(result) => Ok(result),
-            };
-        }
-        // SAFETY: `from`/`to` are NUL-terminated by `slice_z`; `link(2)` is the libc FFI.
-        #[cfg(not(windows))]
-        Maybe::<ret::Link>::errno_sys_pd(
-            unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) },
-            sys::Tag::link,
-            args.old_path.slice(),
-            args.new_path.slice(),
-        )
-        .unwrap_or(Ok(()))
+        Syscall::link(from, to)
+            .map_err(|err| err.with_path_dest(args.old_path.slice(), args.new_path.slice()))
     }
 
     pub(crate) fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
@@ -6482,10 +6383,6 @@ impl NodeFS {
         prefix_buf[len..len + 6].copy_from_slice(b"XXXXXX");
         prefix_buf[len + 6] = 0;
 
-        // The mkdtemp() function returns  a  pointer  to  the  modified  template
-        // string  on  success, and NULL on failure, in which case errno is set to
-        // indicate the error
-
         #[cfg(windows)]
         {
             let mut req = uv::fs_t::uninitialized();
@@ -6508,25 +6405,7 @@ impl NodeFS {
         }
 
         #[cfg(not(windows))]
-        {
-            // SAFETY: `prefix_buf` is NUL-terminated and writable; mkdtemp(3) writes the
-            // generated name back into the buffer in-place.
-            let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
-            if !rc.is_null() {
-                // SAFETY: `rc` is non-null and points back into `prefix_buf`, which is
-                // NUL-terminated and outlives this borrow.
-                let bytes = unsafe { bun_core::ffi::cstr(rc) }.to_bytes();
-                return Ok(encode_path_result(bytes, args.encoding));
-            }
-
-            let errno = sys::last_errno();
-            Err(sys::Error {
-                errno: errno as _,
-                syscall: sys::Tag::mkdtemp,
-                path: prefix_buf[..len + 6].into(),
-                ..Default::default()
-            })
-        }
+        sys::mkdtemp(&mut prefix_buf[..len + 7]).map(|name| encode_path_result(name, args.encoding))
     }
 
     pub(crate) fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
@@ -6672,7 +6551,7 @@ impl NodeFS {
     }
 
     pub(crate) fn readv(&mut self, args: &args::Readv, _: Flavor) -> Maybe<ret::Readv> {
-        if args.buffers.buffers.is_empty() {
+        if args.buffers.writable().is_empty() {
             return Ok(ret::Readv { bytes_read: 0 });
         }
         if args.position.is_some() {
@@ -6683,7 +6562,7 @@ impl NodeFS {
     }
 
     pub(crate) fn writev(&mut self, args: &args::Writev, _: Flavor) -> Maybe<ret::Writev> {
-        if args.buffers.buffers.is_empty() {
+        if args.buffers.readable().is_empty() {
             return Ok(ret::Writev { bytes_written: 0 });
         }
         if args.position.is_some() {
@@ -6765,7 +6644,7 @@ impl NodeFS {
 
     fn preadv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
         let position = args.position.unwrap();
-        let bufs = args.buffers.buffers.as_slice();
+        let bufs = args.buffers.writable();
         // libuv `uv__fs_read`: cap `nbufs` at IOV_MAX and issue one syscall.
         let bufs = &bufs[..bufs.len().min(IOV_MAX)];
         match Syscall::preadv(args.fd, bufs, position as i64) {
@@ -6777,7 +6656,7 @@ impl NodeFS {
     }
 
     fn readv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
-        let bufs = args.buffers.buffers.as_slice();
+        let bufs = args.buffers.writable();
         // libuv `uv__fs_read`: cap `nbufs` at IOV_MAX and issue one syscall.
         let bufs = &bufs[..bufs.len().min(IOV_MAX)];
         #[cfg(not(windows))]
@@ -6794,23 +6673,10 @@ impl NodeFS {
 
     fn pwritev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
         let mut position = args.position.unwrap() as i64;
-        // `PlatformIoVec`
-        // and `PlatformIoVecConst` are layout-identical (`{ *void, usize }`); the
-        // kernel never writes through `iov_base` for pwritev(2).
-        // SAFETY: layout-compatible reinterpretation, asserted in `bun_sys`.
-        let vecs: &[sys::PlatformIoVecConst] = unsafe {
-            core::slice::from_raw_parts(
-                args.buffers
-                    .buffers
-                    .as_ptr()
-                    .cast::<sys::PlatformIoVecConst>(),
-                args.buffers.buffers.len(),
-            )
-        };
         // libuv `uv__fs_write_all`: loop IOV_MAX-sized batches until every
         // buffer is written; an error after the first batch returns the
         // accumulated total instead of the error.
-        let mut remaining = vecs;
+        let mut remaining = args.buffers.readable();
         let mut total: u64 = 0;
         while !remaining.is_empty() {
             let chunk_len = remaining.len().min(IOV_MAX);
@@ -6822,7 +6688,7 @@ impl NodeFS {
                 Ok(amt) => {
                     total += amt as u64;
                     position = position.wrapping_add(amt as i64);
-                    let chunk_capacity: usize = chunk.iter().map(|b| b.len as usize).sum();
+                    let chunk_capacity: usize = chunk.iter().map(sys::IoVec::size).sum();
                     if amt < chunk_capacity {
                         break;
                     }
@@ -6836,14 +6702,10 @@ impl NodeFS {
     }
 
     fn writev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
-        // The mutable iovec slice doubles as `iovec_const` for writev(2); the kernel
-        // never writes through `iov_base`. `PlatformIoVec` and
-        // `PlatformIoVecConst` are layout-identical (`{ *void, usize }`), so
-        // pass the slice through `Syscall::writev` as-is.
         // libuv `uv__fs_write_all`: loop IOV_MAX-sized batches until every
         // buffer is written; an error after the first batch returns the
         // accumulated total instead of the error.
-        let mut remaining = args.buffers.buffers.as_slice();
+        let mut remaining = args.buffers.readable();
         let mut total: u64 = 0;
         while !remaining.is_empty() {
             let chunk_len = remaining.len().min(IOV_MAX);
@@ -6854,7 +6716,7 @@ impl NodeFS {
                 Ok(0) => break,
                 Ok(amt) => {
                     total += amt as u64;
-                    let chunk_capacity: usize = chunk.iter().map(sys::platform_iovec_len).sum();
+                    let chunk_capacity: usize = chunk.iter().map(sys::IoVec::size).sum();
                     if amt < chunk_capacity {
                         break;
                     }
@@ -8212,21 +8074,8 @@ impl NodeFS {
             }
             return Ok(());
         }
-        #[cfg(windows)]
-        {
-            return match Syscall::rmdir(args.path.slice_z(&mut self.sync_error_buf)) {
-                Err(err) => Err(err.with_path(args.path.slice())),
-                Ok(result) => Ok(result),
-            };
-        }
-        // SAFETY: path is NUL-terminated by slice_z; rmdir(2) is the libc FFI
-        #[cfg(not(windows))]
-        Maybe::<ret::Rmdir>::errno_sys_p(
-            unsafe { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
-            sys::Tag::rmdir,
-            args.path.slice(),
-        )
-        .unwrap_or(Ok(()))
+        Syscall::rmdir(args.path.slice_z(&mut self.sync_error_buf))
+            .map_err(|err| err.with_path_and_syscall(args.path.slice(), sys::Tag::rmdir))
     }
 
     pub(crate) fn rm(&mut self, args: &args::Rm, flavor: Flavor) -> Maybe<ret::Rm> {
@@ -8482,18 +8331,8 @@ impl NodeFS {
         #[cfg(not(windows))]
         {
             let _ = flags;
-            // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
-            Maybe::<ret::Truncate>::errno_sys_p(
-                unsafe {
-                    libc::truncate(
-                        path.slice_z(&mut self.sync_error_buf).as_ptr().cast(),
-                        len_i64,
-                    )
-                },
-                sys::Tag::truncate,
-                path.slice(),
-            )
-            .unwrap_or(Ok(()))
+            sys::truncate(path.slice_z(&mut self.sync_error_buf), len_i64)
+                .map_err(|err| err.with_path(path.slice()))
         }
     }
 
@@ -8525,21 +8364,8 @@ impl NodeFS {
         if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::unlink) {
             return Err(error);
         }
-        #[cfg(windows)]
-        {
-            return match Syscall::unlink(args.path.slice_z(&mut self.sync_error_buf)) {
-                Err(err) => Err(err.with_path(args.path.slice())),
-                Ok(result) => Ok(result),
-            };
-        }
-        // SAFETY: path is NUL-terminated by slice_z; unlink(2) is the libc FFI
-        #[cfg(not(windows))]
-        Maybe::<ret::Unlink>::errno_sys_p(
-            unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
-            sys::Tag::unlink,
-            args.path.slice(),
-        )
-        .unwrap_or(Ok(()))
+        Syscall::unlink(args.path.slice_z(&mut self.sync_error_buf))
+            .map_err(|err| err.with_path(args.path.slice()))
     }
 
     pub(crate) fn watch_file(
@@ -9993,7 +9819,7 @@ fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
 // `rm` non-recursive unlink/rmdir fallback — narrower table; anything not
 // listed here falls through to EFAULT.
 //
-// `bun_sys::unlink`/`libc::rmdir` yield a raw errno. Notably raw EPERM —
+// `bun_sys::unlink`/`rmdir` yield a raw errno. Notably raw EPERM —
 // like EISDIR/ENOTDIR/ENOTEMPTY — intentionally falls through to EFAULT here.
 fn map_rm_errno_narrow(e: E) -> E {
     match e {

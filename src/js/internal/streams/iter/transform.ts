@@ -39,7 +39,8 @@ interface CreatedHandle {
   chunkSize: number;
 }
 
-type CreateHandle = (processCallback: () => void, onError: OnError) => CreatedHandle;
+type WriteCallback = $Bindgen.CompressionWriteCallback;
+type CreateHandle = (processCallback: WriteCallback, onError: OnError) => CreatedHandle;
 type Batch = Uint8Array[] | null;
 
 const Uint8ArraySlice = Uint8Array.prototype.slice;
@@ -163,7 +164,7 @@ const zstdInitDParamsArray = new Uint32Array(kMaxZstdDParam + 1);
  * Create a bare Zlib handle (gzip, gunzip, deflate, inflate).
  * @returns {{ handle: object, writeState: Uint32Array, chunkSize: number }}
  */
-function createZlibHandle(mode: number, options, processCallback: () => void, onError: OnError): CreatedHandle {
+function createZlibHandle(mode: number, options, processCallback: WriteCallback, onError: OnError): CreatedHandle {
   // Validate all options before creating the native handle to avoid
   // "close before init" assertion if validation throws.
   const chunkSize = validateChunkSize(options);
@@ -203,7 +204,7 @@ function createZlibHandle(mode: number, options, processCallback: () => void, on
  * Create a bare Brotli handle.
  * @returns {{ handle: object, writeState: Uint32Array, chunkSize: number }}
  */
-function createBrotliHandle(mode: number, options, processCallback: () => void, onError: OnError): CreatedHandle {
+function createBrotliHandle(mode: number, options, processCallback: WriteCallback, onError: OnError): CreatedHandle {
   // Validate before creating native handle.
   const chunkSize = validateChunkSize(options);
   const dictionary = validateDictionary(options.dictionary);
@@ -244,7 +245,7 @@ function createBrotliHandle(mode: number, options, processCallback: () => void, 
  * Create a bare Zstd handle.
  * @returns {{ handle: object, writeState: Uint32Array, chunkSize: number }}
  */
-function createZstdHandle(mode: number, options, processCallback: () => void, onError: OnError): CreatedHandle {
+function createZstdHandle(mode: number, options, processCallback: WriteCallback, onError: OnError): CreatedHandle {
   const isCompress = mode === ZSTD_COMPRESS;
 
   // Validate before creating native handle.
@@ -317,7 +318,8 @@ function makeZlibTransform(createHandleFn: CreateHandle, processFlag: number, fi
       // compression completes. Collects output, loops if the engine
       // has more output to produce (availOut === 0), then resolves the
       // promise when all output for this input chunk is collected.
-      function onWriteComplete() {
+      // `unread` is what is left of an input that was detached during the write.
+      function onWriteComplete(unread?: Buffer) {
         const availOut = writeState[0];
         const availInAfter = writeState[1];
         const have = writeAvailOutBefore - availOut;
@@ -353,6 +355,10 @@ function makeZlibTransform(createHandleFn: CreateHandle, processFlag: number, fi
           writeInOff += consumed;
           writeAvailIn = availInAfter;
           writeAvailOutBefore = chunkSize - outOffset;
+          if (unread) {
+            writeInput = unread;
+            writeInOff = 0;
+          }
 
           handle.write(writeFlush, writeInput, writeInOff, writeAvailIn, outBuf, outOffset, writeAvailOutBefore);
           return; // Will call onWriteComplete again.

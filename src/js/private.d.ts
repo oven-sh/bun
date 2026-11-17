@@ -2091,6 +2091,8 @@ declare namespace $Bindgen {
 
 // src/runtime/node/node_zlib_binding.bind.ts, node_zlib_binding.rs, zlib/*.rs
 declare namespace $Bindgen {
+  /** `unread` is what is left of an input that was detached during the write, if it has to be sent again. */
+  type CompressionWriteCallback = (unread?: Buffer) => void;
   /** What `NativeZlib`, `NativeBrotli` and `NativeZstd` share. */
   interface CompressionStream {
     /** Called with the handle as `this`. */
@@ -2126,19 +2128,24 @@ declare namespace $Bindgen {
       memLevel: number,
       strategy: number,
       writeResult: Uint32Array,
-      writeCallback: () => void,
+      writeCallback: CompressionWriteCallback,
       dictionary: $Node.AnyView | undefined,
     ): void;
   }
   interface NativeBrotli extends CompressionStream {
-    init(params: Uint32Array, writeResult: Uint32Array, writeCallback: () => void, dictionary?: $Node.AnyView): boolean;
+    init(
+      params: Uint32Array,
+      writeResult: Uint32Array,
+      writeCallback: CompressionWriteCallback,
+      dictionary?: $Node.AnyView,
+    ): boolean;
   }
   interface NativeZstd extends CompressionStream {
     init(
       params: Uint32Array,
       pledgedSourceSize: number | undefined,
       writeResult: Uint32Array,
-      writeCallback: () => void,
+      writeCallback: CompressionWriteCallback,
       dictionary?: $Node.AnyView,
     ): void;
   }

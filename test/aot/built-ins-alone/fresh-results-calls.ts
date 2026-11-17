@@ -401,6 +401,7 @@ export const calls: Record<string, string[]> = {
     'import { createZstdCompress } from "node:zlib";\nnew (createZstdCompress()._handle.constructor)(10)',
   ],
   "%SecureContext%": ['import { createSecureContext } from "node:tls";\ncreateSecureContext().context'],
+  "%HTTPParser%": ['import { HTTPParser } from "node:_http_common";\nnew HTTPParser()'],
   CompressionStream: ['new CompressionStream("gzip")'],
   DecompressionStream: ['new DecompressionStream("gzip")'],
   FinalizationRegistry: ["new FinalizationRegistry(() => {})"],

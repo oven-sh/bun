@@ -1059,6 +1059,32 @@ describe("async write buffer lifetime", () => {
     });
   });
 
+  it("an input that is detached while a write is in flight is read to its end by zlib/iter", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--experimental-stream-iter",
+        "--no-warnings",
+        "-e",
+        `const zlib = require("node:zlib"), { compressGzip } = require("node:zlib/iter"), { bytes, pull } = require("node:stream/iter");
+         const original = crypto.getRandomValues(new Uint8Array(4096)), input = original.slice();
+         const { write } = zlib.createGzip()._handle.constructor.prototype;
+         zlib.createGzip()._handle.constructor.prototype.write = function (flush, chunk) {
+           write.apply(this, arguments);
+           if (chunk === input) input.buffer.transfer(0);
+         };
+         bytes(pull([input], compressGzip({ chunkSize: 64, level: 0, memLevel: 1 }))).then(output =>
+           console.log(input.length, zlib.gunzipSync(output).equals(original)),
+         );`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("0 true\n");
+    expect(exitCode).toBe(0);
+  });
+
   it("output is not dropped silently if its chunk is detached while a write is in flight", async () => {
     await using proc = Bun.spawn({
       cmd: [

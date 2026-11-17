@@ -1578,6 +1578,18 @@ impl JSValue {
         if self.has_nobody_to_call(global) {
             return Ok(JSValue::UNDEFINED);
         }
+        self.call_for_running_script(global, this_value, args)
+    }
+
+    /// As [`call`](Self::call), for a host function that calls back before it returns: its caller is listening.
+    #[inline]
+    #[track_caller]
+    pub fn call_for_running_script(
+        self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.

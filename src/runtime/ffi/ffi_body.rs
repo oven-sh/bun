@@ -366,13 +366,8 @@ mod stdarg {
         name: &core::ffi::CStr,
         linked: *const c_void,
     ) -> *const c_void {
-        // SAFETY: `name` is NUL-terminated.
-        let shared = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
-        if shared.is_null() {
-            linked
-        } else {
-            shared.cast_const()
-        }
+        let shared = bun_sys::DynLib::GLOBAL.lookup(bun_core::ZStr::from_cstr(name));
+        shared.map_or(linked, <*mut c_void>::cast_const)
     }
     #[cfg(not(unix))]
     fn find_shared_allocator_function(_: &core::ffi::CStr, linked: *const c_void) -> *const c_void {
@@ -1559,15 +1554,17 @@ impl FFI {
 
         throw_if_disabled(global)?;
         let dylib: bun_sys::DynLib = 'brk: {
+            // SAFETY: none to give. Whoever calls `dlopen` of `bun:ffi` answers for the library.
+            let open = |path: &[u8]| unsafe { bun_sys::DynLib::open(path) };
             // First try using the name directly
-            match bun_sys::DynLib::open(name) {
+            match open(name) {
                 Ok(d) => break 'brk d,
                 Err(_) => {
                     // if that fails, try resolving the filepath relative to the current working directory
                     let mut backup_buf = bun_paths::path_buffer_pool::get();
                     let backup_name =
                         Fs::FileSystem::get().abs_buf_checked(&[name], &mut backup_buf[..]);
-                    match backup_name.map(bun_sys::DynLib::open) {
+                    match backup_name.map(open) {
                         Some(Ok(d)) => break 'brk d,
                         Some(Err(_)) | None => {
                             // Then, if that fails, report an error with the library name and system error
@@ -1612,7 +1609,7 @@ impl FFI {
 
             // optional if the user passed "ptr"
             if function.symbol_from_dynamic_library.is_none() {
-                let Some(resolved_symbol) = dylib.lookup::<*mut c_void>(&function_name) else {
+                let Some(resolved_symbol) = dylib.lookup(&function_name) else {
                     let ret = global.to_invalid_arguments(format_args!(
                         "Symbol \"{}\" not found in \"{}\"",
                         BStr::new(function_name.as_bytes()),

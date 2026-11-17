@@ -358,14 +358,15 @@ impl PatchTask {
                             &pkg,
                             None,
                         ) {
+                            Ok(Some(network_task)) => network_task,
                             // --offline and not cached: already reported / skipped; nothing to patch
-                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
-                            other => other?,
+                            Ok(None) | Err(crate::network_task::ForTarballError::Offline) => {
+                                return Ok(());
+                            }
+                            Err(err) => return Err(err.into()),
                         };
-                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
-                        manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
-                        package_manager::enqueue_network_task(manager, network_task);
-                    }
+                    manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
+                    package_manager::enqueue_network_task(manager, network_task);
                 }
                 PreinstallState::ApplyPatch => {
                     let patch_task = PatchTask::new_apply_patch_hash(
@@ -374,10 +375,8 @@ impl PatchTask {
                         out_patchfile_hash.unwrap(),
                         name_and_version_hash,
                     );
-                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
-                        manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        package_manager::enqueue_patch_task(manager, patch_task);
-                    }
+                    manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
+                    package_manager::enqueue_patch_task(manager, patch_task);
                 }
                 _ => {}
             }

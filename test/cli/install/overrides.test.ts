@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { readdirSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { parsePackageName, TestRegistry } from "registry";
@@ -1435,4 +1435,47 @@ describe("an entry is resolved again after other packages of the same install", 
       expect(exitCode).toBe(saves ? 0 : 1);
     },
   );
+
+  // The second pass appends native-libc-musl for an optional dependency, which downloads nothing for another libc.
+  test.concurrent("a package that the clean dropped and that left the cache is downloaded again", async () => {
+    let dir = "";
+    let downloads = 0;
+    using own = new TestRegistry({
+      intercept: request => {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/native-libc-musl/-/native-libc-musl-1.0.0.tgz") downloads++;
+        // Only the second pass asks for it.
+        if (pathname === "/needs-musl") {
+          const cache = join(dir, ".bun-cache");
+          for (const name of readdirSync(cache).filter(name => name.startsWith("native-libc-musl@"))) {
+            rmSync(join(cache, name), { recursive: true });
+          }
+        }
+      },
+    }).start();
+    const musl = { "native-libc-musl": "1.0.0" };
+    await publish(own, [
+      ...family(
+        "remote-dep",
+        { dependencies: musl },
+        { optionalDependencies: musl, dependencies: { "needs-musl": "1.0.0" } },
+      ),
+      { name: "needs-musl", version: "1.0.0", dependencies: musl },
+    ]);
+    dir = await behindRules({ dependencies: { "remote-dep": "1.0.0" } }, { "remote-dep": "2.0.0" }, {}, own);
+    await editPackageJson(dir, pkg => void (pkg.dependencies = dropsMinor("remote-dep")));
+
+    const { stderr, exitCode } = await bun(dir, "install", "--libc=glibc");
+    expect(stderr).toBe("Saved lockfile");
+    expect(downloads).toBe(2);
+    expect(readdirSync(join(dir, "node_modules")).sort()).toEqual([
+      "native-libc-musl",
+      "needs-musl",
+      "remote-dep",
+      "remote-dep-caret",
+      "remote-dep-exact",
+      "remote-dep-minor",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });

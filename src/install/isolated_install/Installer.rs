@@ -328,9 +328,27 @@ impl<'a> Installer<'a> {
         &mut self,
         waiters: &[Waiter],
         is_required: bool,
+        name: &[u8],
+        resolution: &Resolution,
         err: crate::Error,
         url: &[u8],
     ) {
+        if is_required && waiters.is_empty() {
+            // No waiting entry — still surface the error so it isn't lost.
+            let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+            Output::err_generic(
+                "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
+                (
+                    bun_core::fmt::escape_control_chars(name),
+                    bun_core::fmt::for_terminal(
+                        resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                    ),
+                    bstr::BStr::new(download_error_reason(err)),
+                    EscapeControlChars(bun_core::fmt::redacted_npm_url(url)),
+                ),
+            );
+            Output::flush();
+        }
         for waiter in waiters {
             let &Waiter::Isolated(entry_id) = waiter else {
                 continue;
@@ -926,7 +944,6 @@ fn download_error_reason(e: crate::Error) -> &'static [u8] {
         crate::Error::TarballHTTP404 => b"404 Not Found",
         crate::Error::TarballHTTP4xx => b"HTTP 4xx",
         crate::Error::TarballHTTP5xx => b"HTTP 5xx",
-        crate::Error::TarballFailedToExtract => b"failed to extract",
         crate::Error::TarballFailedToDownload => b"download failed",
         _ => e.name().as_bytes(),
     }

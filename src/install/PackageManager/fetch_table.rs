@@ -39,14 +39,13 @@ pub(crate) enum ManifestState {
         from_registry: bool,
     },
     Failed(ManifestFailure),
-    /// There is no such package, and nothing is left to report.
+    /// An `--offline` miss that is reported, or a 404 for a workspace's name that nobody reports.
     Missing,
     /// A backfill has logged that it cannot build the URL.
     BadUrl,
 }
 
 impl ManifestState {
-    /// The registry, or with `--offline` the cache, has no package of this name.
     pub(crate) fn is_missing(&self) -> bool {
         match self {
             Self::Failed(failure) => failure.missing_until.is_some(),
@@ -65,12 +64,14 @@ struct ManifestRequest {
     missed_in: Option<u64>,
 }
 
+const _: () = assert!(size_of::<ManifestRequest>() <= 96);
+
 #[derive(Default)]
 pub(crate) struct ManifestRequests(Table<ManifestRequest>);
 
 impl ManifestRequests {
     fn entry(&mut self, id: Id) -> &mut ManifestRequest {
-        self.0.get_or_put(id).expect("unreachable").value_ptr
+        bun_core::handle_oom(self.0.get_or_put(id)).value_ptr
     }
 
     pub(crate) fn state(&self, id: Id) -> &ManifestState {
@@ -85,11 +86,12 @@ impl ManifestRequests {
         (self.0.get_mut(&id)).map_or(Vec::new(), |request| core::mem::take(&mut request.rows))
     }
 
+    /// Without a request on record, a failure is an error that stays in the log.
     pub(crate) fn reader(&self, id: Id) -> Reader {
-        let &ManifestState::InFlight { reader, .. } = self.state(id) else {
-            unreachable!("a response has a request");
-        };
-        reader
+        match *self.state(id) {
+            ManifestState::InFlight { reader, .. } => reader,
+            _ => Reader::RequiredBackfill,
+        }
     }
 
     pub(crate) fn sent(&mut self, id: Id, reader: Reader) {
@@ -122,10 +124,9 @@ impl ManifestRequests {
     ) -> (Option<Wanted>, Vec<WaitingRow>) {
         let request = self.entry(id);
         let arrived = ManifestState::Arrived { from_registry };
-        let ManifestState::InFlight { follow, .. } =
-            core::mem::replace(&mut request.state, arrived)
-        else {
-            unreachable!("a response has a request");
+        let follow = match core::mem::replace(&mut request.state, arrived) {
+            ManifestState::InFlight { follow, .. } => follow,
+            _ => None,
         };
         (follow, core::mem::take(&mut request.rows))
     }
@@ -145,13 +146,17 @@ impl ManifestRequests {
     }
 
     /// Lists `row`, for `log_held` and for a later request of the runtime.
-    pub(crate) fn run_into_failure(&mut self, id: Id, row: WaitingRow) -> &mut ManifestFailure {
+    pub(crate) fn run_into_failure(
+        &mut self,
+        id: Id,
+        row: WaitingRow,
+    ) -> Option<&mut ManifestFailure> {
         let request = self.entry(id);
         request.rows.push(row);
-        let ManifestState::Failed(failure) = &mut request.state else {
-            unreachable!("the caller saw the failure");
-        };
-        failure
+        match &mut request.state {
+            ManifestState::Failed(failure) => Some(failure),
+            _ => None,
+        }
     }
 
     pub(crate) fn missed(&mut self, id: Id, turn: u64) {
@@ -163,7 +168,7 @@ impl ManifestRequests {
     }
 
     /// A miss is remembered for the rest of its turn, a 404 for as long as a manifest is cached.
-    pub(crate) fn forget_miss(&mut self, id: Id, turn: u64, now: impl FnOnce() -> i64) {
+    pub(crate) fn forget_miss(&mut self, id: Id, turn: u64) {
         let Some(request) = self.0.get_mut(&id) else {
             return;
         };
@@ -176,7 +181,7 @@ impl ManifestRequests {
             | ManifestState::BadUrl => 0,
         };
         if request.missed_in.is_some_and(|missed_in| missed_in != turn)
-            && i64::from(missing_until) <= now()
+            && i64::from(missing_until) <= bun_core::time::timestamp()
         {
             request.state = ManifestState::Idle;
             request.missed_in = None;
@@ -214,19 +219,26 @@ pub(crate) fn rows(waiters: &[Waiter]) -> impl Iterator<Item = WaitingRow> {
 enum Fetch {
     /// Only `ask` lists anybody here: a row that starts the task next, or cannot start it.
     Idle(Vec<Waiter>),
-    /// A checkout that waits for its clone counts as running.
+    /// Also a checkout that waits for its clone. Only the isolated linker ends it if that fails.
     Running {
         is_required: bool,
         waiters: Vec<Waiter>,
     },
-    /// Nobody tries again, except the runtime in a later iteration of its event loop.
+    /// Nobody tries again until `forget_failure`.
     Failed {
         is_required: bool,
         turn: u64,
     },
-    Arrived(Box<(ArrivedPackage, Vec<Waiter>)>),
+    Arrived(Box<Arrived>),
     /// A row that comes later binds to this package.
     Appended(PackageID),
+    /// It has ended well, and there is no package that a row could bind to.
+    Done,
+}
+
+pub(crate) struct Arrived {
+    pub(crate) package: ArrivedPackage,
+    pub(crate) waiters: Vec<Waiter>,
 }
 
 const _: () = assert!(size_of::<Waiter>() == 32 && size_of::<Fetch>() == 32);
@@ -252,6 +264,8 @@ pub(crate) enum Join {
     Failed {
         is_required: bool,
     },
+    /// What it fetched is not the package that is missing.
+    Ended,
     /// The waiter goes to `start`.
     Start,
 }
@@ -274,7 +288,7 @@ pub(crate) struct Fetches {
 
 impl Fetches {
     fn entry(&mut self, id: Id) -> &mut Fetch {
-        self.table.get_or_put(id).expect("unreachable").value_ptr
+        bun_core::handle_oom(self.table.get_or_put(id)).value_ptr
     }
 
     pub(crate) fn is_optional_so_far(&self, id: Id) -> bool {
@@ -304,8 +318,12 @@ impl Fetches {
         if row.is_some() && !self.remote.contains(&id) {
             self.remote.push(id);
         }
-        let (waiters, starts) = match self.entry(id) {
-            Fetch::Appended(_) => return false,
+        let fetch = self.entry(id);
+        if let Fetch::Done = fetch {
+            *fetch = Fetch::default();
+        }
+        let (waiters, starts) = match fetch {
+            Fetch::Appended(_) | Fetch::Done => return false,
             Fetch::Failed { is_required, .. } => {
                 *is_required |= need == Need::Required;
                 return false;
@@ -317,7 +335,7 @@ impl Fetches {
                 *is_required |= need == Need::Required;
                 (waiters, false)
             }
-            Fetch::Arrived(arrived) => (&mut arrived.1, false),
+            Fetch::Arrived(arrived) => (&mut arrived.waiters, false),
             Fetch::Idle(parked) => (parked, need != Need::Deferred),
         };
         // It is listed already if it asked ahead of its turn, or waited for the peer pass.
@@ -336,70 +354,107 @@ impl Fetches {
                 waiters.extend(waiter.take());
                 Join::Running
             }
+            Some(Fetch::Arrived(arrived)) => {
+                arrived.waiters.extend(waiter.take());
+                Join::Running
+            }
             Some(&mut Fetch::Failed { is_required, .. }) => Join::Failed { is_required },
-            None | Some(Fetch::Idle(_) | Fetch::Appended(_)) => Join::Start,
-            Some(Fetch::Arrived(_)) => unreachable!("appended before anything is linked"),
+            Some(Fetch::Appended(_) | Fetch::Done) => Join::Ended,
+            None | Some(Fetch::Idle(_)) => Join::Start,
         }
     }
 
-    pub(crate) fn require(&mut self, id: Id) {
-        if let Some(Fetch::Running { is_required, .. } | Fetch::Failed { is_required, .. }) =
-            self.table.get_mut(&id)
-        {
+    pub(crate) fn require_failed(&mut self, id: Id) {
+        if let Some(Fetch::Failed { is_required, .. }) = self.table.get_mut(&id) {
             *is_required = true;
         }
     }
 
-    pub(crate) fn start(&mut self, id: Id, is_required: bool, waiter: Option<Waiter>) {
+    /// Returns false if another task has the record. The caller starts nothing then.
+    #[must_use]
+    pub(crate) fn start(&mut self, id: Id, required: bool, waiter: Option<Waiter>) -> bool {
         let fetch = self.entry(id);
-        let mut waiters = match core::mem::take(fetch) {
-            Fetch::Idle(parked) => parked,
-            Fetch::Failed { .. } | Fetch::Appended(_) => Vec::new(),
-            Fetch::Running { .. } | Fetch::Arrived(_) => unreachable!("started twice"),
+        let mut waiters = match fetch {
+            Fetch::Idle(parked) => core::mem::take(parked),
+            Fetch::Appended(_) | Fetch::Done => Vec::new(),
+            Fetch::Running {
+                is_required,
+                waiters,
+            } => {
+                *is_required |= required;
+                waiters.extend(waiter);
+                return false;
+            }
+            Fetch::Failed { is_required, .. } => {
+                *is_required |= required;
+                return false;
+            }
+            Fetch::Arrived(arrived) => {
+                arrived.waiters.extend(waiter);
+                return false;
+            }
         };
         waiters.extend(waiter);
         *fetch = Fetch::Running {
-            is_required,
+            is_required: required,
             waiters,
         };
+        true
     }
 
-    fn end(&mut self, id: Id, next: impl FnOnce(bool) -> Fetch) -> Ended {
-        let fetch = self.entry(id);
+    /// Leaves the record `Idle`.
+    fn end(&mut self, id: Id) -> (&mut Fetch, Ended) {
+        let fetch = bun_core::handle_oom(self.table.get_or_put(id)).value_ptr;
         let (is_required, waiters) = match core::mem::take(fetch) {
             Fetch::Running {
                 is_required,
                 waiters,
             } => (is_required, waiters),
-            // An `--offline` miss, or the package from `take_next`.
+            // An `--offline` miss.
             Fetch::Idle(parked) => (true, parked),
-            Fetch::Failed { .. } | Fetch::Arrived(_) | Fetch::Appended(_) => {
-                unreachable!("ended twice")
+            Fetch::Failed { is_required, .. } => (is_required, Vec::new()),
+            Fetch::Arrived(arrived) => {
+                self.arrived -= 1;
+                (true, arrived.waiters)
             }
+            Fetch::Appended(_) | Fetch::Done => (true, Vec::new()),
         };
-        *fetch = next(is_required);
-        Ended {
+        let ended = Ended {
             is_required,
             waiters,
-        }
+        };
+        (fetch, ended)
     }
 
     /// Whoever asks next starts the task again.
     pub(crate) fn release(&mut self, id: Id) -> Ended {
-        self.end(id, |_| Fetch::default())
+        self.end(id).1
+    }
+
+    pub(crate) fn done(&mut self, id: Id) -> Vec<Waiter> {
+        let (fetch, ended) = self.end(id);
+        *fetch = Fetch::Done;
+        ended.waiters
     }
 
     pub(crate) fn fail(&mut self, id: Id, turn: u64) -> Ended {
-        self.end(id, |is_required| Fetch::Failed { is_required, turn })
+        let (fetch, ended) = self.end(id);
+        let is_required = ended.is_required;
+        *fetch = Fetch::Failed { is_required, turn };
+        ended
     }
 
-    pub(crate) fn appended(&mut self, id: Id, package_id: PackageID) -> Vec<Waiter> {
-        self.end(id, |_| Fetch::Appended(package_id)).waiters
+    /// After `release` or `take_next`.
+    pub(crate) fn appended(&mut self, id: Id, package_id: PackageID) {
+        let fetch = self.entry(id);
+        debug_assert!(matches!(fetch, Fetch::Idle(parked) if parked.is_empty()));
+        *fetch = Fetch::Appended(package_id);
     }
 
     pub(crate) fn arrive(&mut self, id: Id, package: ArrivedPackage) {
-        let waiters = self.release(id).waiters;
-        *self.entry(id) = Fetch::Arrived(Box::new((package, waiters)));
+        let (fetch, ended) = self.end(id);
+        let waiters = ended.waiters;
+        *fetch = Fetch::Arrived(Box::new(Arrived { package, waiters }));
         self.arrived += 1;
     }
 
@@ -427,7 +482,7 @@ impl Fetches {
             if let Fetch::Appended(package_id) = fetch
                 && !moved(package_id)
             {
-                *fetch = Fetch::default();
+                *fetch = Fetch::Done;
             }
         }
     }
@@ -444,22 +499,23 @@ impl Fetches {
     pub(crate) fn lowest_rows(&self, turn: RemoteTurn) -> impl Iterator<Item = (DependencyID, Id)> {
         self.remote.iter().filter_map(move |&id| {
             let waiters = match self.table.get(&id)? {
-                Fetch::Arrived(arrived) => &arrived.1,
+                Fetch::Arrived(arrived) => &arrived.waiters,
                 Fetch::Running { waiters, .. } if turn == RemoteTurn::InOrder => waiters,
                 Fetch::Running { .. }
                 | Fetch::Idle(_)
                 | Fetch::Failed { .. }
-                | Fetch::Appended(_) => return None,
+                | Fetch::Appended(_)
+                | Fetch::Done => return None,
             };
             Some((rows(waiters).map(|row| row.id).min()?, id))
         })
     }
 
-    /// The package whose turn it is, if it has arrived. `appended` returns who waits for it.
+    /// The package whose turn it is, if it has arrived.
     pub(crate) fn take_next(
         &mut self,
         turn: RemoteTurn,
-    ) -> Option<(DependencyID, Id, ArrivedPackage)> {
+    ) -> Option<(DependencyID, Id, Box<Arrived>)> {
         if !self.has_arrived() {
             return None;
         }
@@ -467,10 +523,8 @@ impl Fetches {
         let fetch = self.table.get_mut(&id)?;
         match core::mem::take(fetch) {
             Fetch::Arrived(arrived) => {
-                let (package, waiters) = *arrived;
-                *fetch = Fetch::Idle(waiters);
                 self.arrived -= 1;
-                Some((row, id, package))
+                Some((row, id, arrived))
             }
             running => {
                 *fetch = running;

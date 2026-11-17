@@ -18,7 +18,7 @@ use bun_install::{
     DependencyID, ExtractData, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, Repository,
     Resolution, ResolutionTag,
 };
-// Import the *module* under the `Task` name so `Task::Id` resolves as a path.
+
 use super::fetch_table::{self, Ended, Reader, Waiter, WaitingRow};
 use super::{INBOX, THREAD_POOL, directories, enqueue};
 use super::{
@@ -109,7 +109,7 @@ enum Next {
     Retry,
     /// It has a new request.
     Resend,
-    Parse,
+    Parse(bun_core::StringOrTinyString),
     Extract,
     Free,
 }
@@ -122,11 +122,12 @@ const EXTRACT: &str = ProgressStrings::EXTRACT_EMOJI;
 pub(crate) fn resolve_waiters_of_appended_package(
     manager: &mut PackageManager,
     task_id: Task::Id,
+    waiters: &[Waiter],
     pkg: &Package,
     install_peer: bool,
 ) -> crate::Result<()> {
-    let waiters = manager.fetches.appended(task_id, pkg.meta.id);
-    for row in fetch_table::rows(&waiters) {
+    manager.fetches.appended(task_id, pkg.meta.id);
+    for row in fetch_table::rows(waiters) {
         enqueue::name_resolved_row(
             &mut manager.lockfile.buffers.dependencies[row.id as usize].version,
             pkg.name,
@@ -297,10 +298,14 @@ pub(crate) fn run_tasks(
         INBOX.decrement_pending_tasks();
         // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
+        let outcome = download_outcome(&task.response, pass.manager.options.runtime_auto_install);
+        if outcome.failed && task.retried > 0 {
+            throttle_after_network_error(pass.manager, &mut pass.has_network_error);
+        }
         let next = if let NetworkTaskCallback::Extract(_) = task.callback {
-            Ok(pass.on_tarball_response(task))
+            Ok(pass.on_tarball_response(task, outcome))
         } else {
-            pass.on_manifest_response(task)
+            pass.on_manifest_response(task, outcome)
         };
         let manager = &mut *pass.manager;
         match next {
@@ -313,9 +318,9 @@ pub(crate) fn run_tasks(
                 task.reset_for_retry();
             }
             Ok(Next::Resend) => enqueue::enqueue_network_task(manager, task_ptr),
-            Ok(Next::Parse) => {
+            Ok(Next::Parse(name)) => {
                 // SAFETY: the slot goes back to the pool with the resolve task.
-                let queued = unsafe { enqueue::enqueue_parse_npm_package(manager, task_ptr) };
+                let queued = unsafe { enqueue::enqueue_parse_npm_package(manager, name, task_ptr) };
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             Ok(Next::Extract) => {
@@ -364,23 +369,16 @@ impl Pass<'_, '_, '_> {
         }
     }
 
-    /// See `download_outcome`.
-    fn outcome(&mut self, task: &NetworkTask) -> (bool, bool) {
-        let blocking = self.manager.options.runtime_auto_install;
-        let (failed, retry) = download_outcome(&task.response, blocking);
-        if failed && task.retried > 0 {
-            throttle_after_network_error(self.manager, &mut self.has_network_error);
-        }
-        (failed, retry)
-    }
-
     fn resolve_rows(&mut self, rows: impl IntoIterator<Item = WaitingRow>) -> crate::Result<()> {
         (rows.into_iter())
             .try_for_each(|row| self.manager.resolve_waiting_row(row, self.install_peer))
     }
 
-    fn on_manifest_response(&mut self, task: &mut NetworkTask) -> crate::Result<Next> {
-        let (download_failed, retry) = self.outcome(task);
+    fn on_manifest_response(
+        &mut self,
+        task: &mut NetworkTask,
+        Outcome { failed, retry }: Outcome,
+    ) -> crate::Result<Next> {
         let NetworkTaskCallback::PackageManifest {
             loaded_manifest,
             name,
@@ -388,9 +386,10 @@ impl Pass<'_, '_, '_> {
             registry,
         } = &mut task.callback
         else {
-            unreachable!()
+            return Ok(Next::Free);
         };
-        let name = name.slice();
+        let stored_name = *name;
+        let name = stored_name.slice();
         self.name_progress(name, DOWNLOAD);
 
         let manager = &mut *self.manager;
@@ -412,14 +411,14 @@ impl Pass<'_, '_, '_> {
 
         let log_mark = manager.log_mut().msgs.len();
         let mut failure = ManifestFailure::default();
-        match task.response.metadata.as_ref().filter(|_| !download_failed) {
+        match task.response.metadata.as_ref().filter(|_| !failed) {
             None => {
                 add_error_or_warning_pretty!(
                     manager.log_mut(),
                     is_required,
                     "{} downloading package manifest <b>{}<r>",
                     DownloadFailure(request_error(task).name(), &task.response),
-                    bstr::BStr::new(task.manifest_name().slice()),
+                    bstr::BStr::new(name),
                 );
                 failure.is_unanswered = true;
             }
@@ -462,14 +461,13 @@ impl Pass<'_, '_, '_> {
                     self.on_manifest(task.task_id, manifest, false)?;
                     return Ok(Next::Free);
                 }
-                return Ok(Next::Parse);
+                return Ok(Next::Parse(stored_name));
             }
         }
 
         let is_unanswered = is_required && failure.is_unanswered;
         self.on_manifest_failure(task.task_id, reader, log_mark, failure)?;
         if reader != Reader::Rows {
-            let name = task.manifest_name().slice();
             fail_update_requests(self.manager, &[], name, None, is_unanswered);
         }
         Ok(Next::Free)
@@ -507,11 +505,14 @@ impl Pass<'_, '_, '_> {
         self.resolve_rows(rows)
     }
 
-    fn on_tarball_response(&mut self, task: &mut NetworkTask) -> Next {
+    fn on_tarball_response(
+        &mut self,
+        task: &mut NetworkTask,
+        Outcome { failed, retry }: Outcome,
+    ) -> Next {
         // `TarballStream::finish()` un-commits a stream whose connection failed mid-body.
         debug_assert!(!task.streaming_committed);
 
-        let (download_failed, retry) = self.outcome(task);
         if retry && task.retried < self.manager.options.max_retry_count {
             return Next::Retry;
         }
@@ -521,7 +522,7 @@ impl Pass<'_, '_, '_> {
         let extract = task.tarball();
         let name = extract.name.slice();
 
-        let metadata = task.response.metadata.as_ref().filter(|_| !download_failed);
+        let metadata = task.response.metadata.as_ref().filter(|_| !failed);
         let err = match metadata.map(|metadata| metadata.status_code()) {
             None => request_error(task),
             Some(400) => crate::Error::TarballHTTP400,
@@ -598,8 +599,15 @@ impl Pass<'_, '_, '_> {
             ended.is_required = manager.is_package_required(dependency_id, package_id);
         }
         if let Caller::IsolatedLinker(installer) = &mut self.caller {
-            installer.on_package_download_error(&ended.waiters, ended.is_required, err, url);
-            if ended.is_required && !ended.waiters.is_empty() {
+            installer.on_package_download_error(
+                &ended.waiters,
+                ended.is_required,
+                tarball.name.slice(),
+                &tarball.resolution,
+                err,
+                url,
+            );
+            if ended.is_required {
                 return None;
             }
         }
@@ -724,8 +732,15 @@ impl Pass<'_, '_, '_> {
         bun_core::analytics::Features::extracted_packages_inc();
 
         let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
+        let mut waiting_linker = || match resolution.tag {
+            // A file is read again, and a commit is checked out again.
+            ResolutionTag::LocalTarball | ResolutionTag::Git => {
+                manager.fetches.release(task_id).waiters
+            }
+            _ => manager.fetches.done(task_id),
+        };
         if let Caller::HoistedLinker(installer) = &mut self.caller {
-            let waiters = manager.fetches.release(task_id).waiters;
+            let waiters = waiting_linker();
             installer.fix_cached_lockfile_package_slices();
             installer.install_enqueued_packages_after_extraction(
                 waiters,
@@ -734,7 +749,7 @@ impl Pass<'_, '_, '_> {
                 self.log_level,
             );
         } else if let Caller::IsolatedLinker(installer) = &mut self.caller {
-            installer.on_package_extracted(&manager.fetches.release(task_id).waiters, &data);
+            installer.on_package_extracted(&waiting_linker(), &data);
         } else if manager.defers_remote_package(task_id, resolution) {
             manager.keep_arrived_package(task_id, resolution, data);
             return Ok(());
@@ -744,9 +759,11 @@ impl Pass<'_, '_, '_> {
             &data,
             self.log_level,
         ) {
-            resolve_waiters_of_appended_package(manager, task_id, &pkg, self.install_peer)?;
+            let waiters = manager.fetches.release(task_id).waiters;
+            let install_peer = self.install_peer;
+            resolve_waiters_of_appended_package(manager, task_id, &waiters, &pkg, install_peer)?;
         } else {
-            manager.fetches.release(task_id);
+            manager.fetches.done(task_id);
             // A peer that found no manifest of this name may take the package.
             let name = manager.lockfile.packages.items_name()[package_id as usize];
             let manifest_id = Task::Id::for_manifest(manager.lockfile.str(&name));
@@ -800,8 +817,16 @@ impl Pass<'_, '_, '_> {
                 if let &Waiter::Checkout { package_id, .. } = waiter {
                     let checkout_id = enqueue::locked_checkout_id(manager, package_id);
                     let entries = manager.fetches.release(checkout_id).waiters;
+                    let res = manager.lockfile.packages.items_resolution()[package_id as usize];
                     let url = clone.url.slice();
-                    installer.on_package_download_error(&entries, is_required, err, url);
+                    installer.on_package_download_error(
+                        &entries,
+                        is_required,
+                        name,
+                        &res,
+                        err,
+                        url,
+                    );
                 }
             }
         }
@@ -850,7 +875,9 @@ impl Pass<'_, '_, '_> {
         let manager = &mut *self.manager;
         let waiters = manager.fetches.release(task_id).waiters;
         if let Caller::IsolatedLinker(installer) = &mut self.caller {
-            installer.on_package_download_error(&waiters, true, err, checkout.url.slice());
+            let (name, url) = (checkout.name.slice(), checkout.url.slice());
+            let res = &checkout.resolution;
+            installer.on_package_download_error(&waiters, true, name, res, err, url);
             return;
         }
         bun_ast::add_error_pretty!(
@@ -898,14 +925,14 @@ fn log_retry(manager: &PackageManager, task: &NetworkTask, wait: core::time::Dur
             manager.options.max_retry_count,
             wait.as_millis(),
         );
-    } else {
+    } else if let NetworkTaskCallback::PackageManifest { name, .. } = &task.callback {
         bun_ast::add_warning_pretty!(
             manager.log_mut(),
             None,
             bun_ast::Loc::EMPTY,
             "{} downloading package manifest <b>{}<r>. Retry {}/{} in {}ms...",
             err,
-            bun_core::fmt::escape_control_chars(task.manifest_name().slice()),
+            bun_core::fmt::escape_control_chars(name.slice()),
             task.retried,
             manager.options.max_retry_count,
             wait.as_millis(),
@@ -947,13 +974,18 @@ fn log_error_status(
     }
 }
 
-/// Returns `(failed, retry)`. `failed` means the connection died before a response, or during a 2xx
-/// or 3xx response. `blocking` means the caller blocks on this one request, so it isn't retried
-/// after a timeout or a 501 (Not Implemented).
+#[derive(Clone, Copy)]
+pub(crate) struct Outcome {
+    /// The connection died before a response, or during a 2xx or 3xx response.
+    failed: bool,
+    pub(crate) retry: bool,
+}
+
+/// `blocking`: the caller blocks on this request, so a timeout or a 501 is not retried.
 pub(crate) fn download_outcome(
     response: &http::HTTPClientResult<'static>,
     blocking: bool,
-) -> (bool, bool) {
+) -> Outcome {
     let proxy_status = response
         .proxy_connect_response
         .as_ref()
@@ -987,7 +1019,7 @@ pub(crate) fn download_outcome(
     let retry = !is_final
         && !(blocking && (silence || status == Some(501)))
         && (failed || status.is_some_and(|status| status > 499 || status == 429 || status == 408));
-    (failed, retry)
+    Outcome { failed, retry }
 }
 
 /// `ProxyConnectFailed (407)`: a refused CONNECT is reported with the proxy's status.
@@ -1279,7 +1311,7 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
     }
 }
 
-/// Nothing is fetching `task_id`. The caller sends the request.
+/// The caller sends the request. Returns `None` if another task has `task_id`.
 pub(crate) fn generate_network_task_for_tarball<'a>(
     this: &'a mut PackageManager,
     task_id: Task::Id,
@@ -1288,13 +1320,15 @@ pub(crate) fn generate_network_task_for_tarball<'a>(
     dependency_id: DependencyID,
     package: &Package,
     linker: Option<Waiter>,
-) -> Result<&'a mut NetworkTask, ForTarballError> {
+) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
         enqueue::offline_miss(this, task_id, "", package.name, is_required);
         return Err(ForTarballError::Offline);
     }
-    this.fetches.start(task_id, is_required, linker);
+    if !this.fetches.start(task_id, is_required, linker) {
+        return Ok(None);
+    }
 
     let temp_dir = match directories::try_get_temporary_directory(this) {
         Ok(temp_dir) => temp_dir,
@@ -1366,7 +1400,7 @@ pub(crate) fn generate_network_task_for_tarball<'a>(
         // and the streaming extractor needs a stable `Task` pointer so
         // it can push the result onto `resolve_tasks` when it finishes.
         let extract_task = enqueue::create_extract_task_for_streaming(this, net_ptr);
-        // SAFETY: as above.
+        // SAFETY: the extract task does not run before the request is sent.
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr));
@@ -1375,7 +1409,7 @@ pub(crate) fn generate_network_task_for_tarball<'a>(
 
     // SAFETY: final reborrow of the pool slot for the caller; `net_ptr` is the
     // sole live handle (see above) and outlives nothing past this return.
-    Ok(unsafe { &mut *net_ptr })
+    Ok(Some(unsafe { &mut *net_ptr }))
 }
 
 impl PackageManager {

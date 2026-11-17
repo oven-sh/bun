@@ -1329,11 +1329,15 @@ describe.concurrent("auto-install throws when it can't do something instead of e
 
   test("the response to a failed tarball download is freed", async () => {
     const body = Buffer.alloc(2 * 1024 * 1024, "x");
+    let tarballs = 0;
     using registry = Bun.serve({
       port: 0,
       fetch(request) {
         const { origin, pathname } = new URL(request.url);
-        if (pathname.endsWith(".tgz")) return new Response(body, { status: 404 });
+        if (pathname.endsWith(".tgz")) {
+          tarballs++;
+          return new Response(body, { status: 404 });
+        }
         const name = pathname.slice(1);
         const version = { name, version: "1.0.0", dist: { tarball: `${origin}/${name}.tgz` } };
         return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
@@ -1359,6 +1363,7 @@ describe.concurrent("auto-install throws when it can't do something instead of e
     const { stdout, stderr, exitCode } = await runAutoInstallWithEnv(env, String(dir), "index.js");
 
     expect(stderr).toBe("");
+    expect(tarballs).toBe(70);
     // The 60 bodies are 120 MB.
     expect(Number.parseFloat(stdout)).toBeLessThan(isASAN || isDebug ? 70 : 40);
     expect(exitCode).toBe(0);

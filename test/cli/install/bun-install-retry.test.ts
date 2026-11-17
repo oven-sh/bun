@@ -1018,14 +1018,30 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
-  it.each(["hoisted", "isolated"])(
-    "the %s linker downloads a tarball URL that a skipped peer names too",
-    async linker => {
+  it.each([
+    { linker: "hoisted", status: 200, installed: true, errors: [] },
+    { linker: "hoisted", status: 404, installed: false, errors: ["error: GET /url.tgz - 404"] },
+    { linker: "isolated", status: 200, installed: true, errors: [] },
+    {
+      linker: "isolated",
+      status: 404,
+      installed: false,
+      errors: ["error: failed to download bar@/url.tgz: 404 Not Found", "  /url.tgz"],
+    },
+  ])(
+    "the $linker linker requests a tarball URL that a skipped peer names too ($status)",
+    async ({ linker, status, ...expected }) => {
+      let isLocked = false;
+      let requests = 0;
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
         fetch(request) {
           const { origin, pathname } = new URL(request.url);
+          if (isLocked && pathname === "/url.tgz") {
+            requests++;
+            if (status !== 200) return new Response(null, { status });
+          }
           if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
           const name = pathname.slice(1);
           const dependencies = name === "host" ? { bar: `${origin}/url.tgz` } : {};
@@ -1042,6 +1058,7 @@ describe.concurrent("backoff", () => {
         "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href, linker } }),
       });
       expect(await install(String(dir), {}, "--lockfile-only")).toMatchObject({ exitCode: 0 });
+      isLocked = true;
       rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
       writeFileSync(
         join(String(dir), "package.json"),
@@ -1055,11 +1072,52 @@ describe.concurrent("backoff", () => {
       const { lines, exitCode } = await install(String(dir), {}, "--force");
       expect(lines).toContain("error: InvalidURL");
       const parent = linker === "hoisted" ? "" : join(".bun", "host@1.0.0", "node_modules");
-      expect(existsSync(join(String(dir), "node_modules", parent, "bar", "package.json"))).toBe(true);
+      expect({
+        requests,
+        installed: existsSync(join(String(dir), "node_modules", parent, "bar", "package.json")),
+        errors: lines.filter(line => line.includes("/url.tgz")).map(line => line.replace(server.url.origin, "")),
+      }).toEqual({ requests: 1, ...expected });
       expect(exitCode).toBe(1);
     },
-    30_000,
   );
+
+  it("a peer that is bound to a tarball URL does not hold the next peers back", async () => {
+    const nextPeer = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname === "/next.tgz") nextPeer.resolve();
+        if (pathname === "/first.tgz") await nextPeer.promise;
+        if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+        const name = pathname.slice(1);
+        const peerDependencies = { host: { overridden: "1", first: "1" }, first: { next: "1" } }[name];
+        const dist = { tarball: `${origin}/${name}.tgz` };
+        return Response.json({ name, versions: { "1.0.0": { name, version: "1.0.0", peerDependencies, dist } } });
+      },
+    });
+    const url = `${server.url}url.tgz`;
+    using dir = tempDir("install-retry-bound-peer", {
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { host: "1.0.0", url },
+        overrides: { overridden: url },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href, linker: "hoisted" } }),
+    });
+    const { exitCode } = await install(String(dir), {}, "--force");
+    expect(await readdirSorted(join(String(dir), "node_modules"))).toEqual([
+      ".cache",
+      "first",
+      "host",
+      "next",
+      "overridden",
+      "url",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 
   it("reports the last attempt when the abbreviated manifest gets no answer", async () => {
     const accepts: string[] = [];

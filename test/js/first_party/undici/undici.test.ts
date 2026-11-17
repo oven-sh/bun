@@ -992,6 +992,29 @@ describe("undici dispatcher connect.lookup", () => {
     expect(seen).toEqual([UNRESOLVABLE]);
   });
 
+  it("a plain { url } input may carry the dispatcher itself", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("in-object") });
+    const { agent, seen } = pinningAgent();
+    const res = await undiciFetch({ url: `http://${UNRESOLVABLE}:${server.port}/`, dispatcher: agent } as any);
+    expect(await res.text()).toBe("in-object");
+    expect(seen).toEqual([UNRESOLVABLE]);
+  });
+
+  it("a 3xx with an empty Location is returned, not followed", async () => {
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits++;
+        return new Response(null, { status: 302, headers: { location: "" } });
+      },
+    });
+    const { agent } = pinningAgent();
+    const res = await undiciFetch(`http://${UNRESOLVABLE}:${server.port}/`, { dispatcher: agent });
+    expect(res.status).toBe(302);
+    expect(hits).toBe(1);
+  });
+
   it("a plain { url } input keeps its Bun-specific options such as tls", async () => {
     await using server = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("tls-ok") });
     const { agent } = pinningAgent();

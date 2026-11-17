@@ -233,7 +233,8 @@ async function followRedirectsWithConnect(url, init, connect, opts) {
     }
     const resp = await nativeFetch(target, { ...hopInit, method, headers: hopHeaders, body, redirect: "manual" });
     const { status } = resp;
-    const location = isRedirectStatus(status) ? resp.headers.get("location") : null;
+    // An empty Location is no redirect target, as in native following.
+    const location = isRedirectStatus(status) ? resp.headers.get("location") || null : null;
     if (location === null) {
       // The Response was fetched from the pinned IP with redirect: "manual";
       // report the logical URL and redirect state the caller asked about.
@@ -345,7 +346,18 @@ async function fetchWithConnect(input, init, connect) {
 
 function fetch(input, init) {
   try {
-    const connect = resolveConnect(init?.dispatcher);
+    let dispatcher = init?.dispatcher;
+    if (
+      dispatcher === undefined &&
+      input !== null &&
+      typeof input === "object" &&
+      !(input instanceof Request) &&
+      !(input instanceof URL)
+    ) {
+      // The plain { url, ...init } input form can carry the dispatcher itself.
+      dispatcher = input.dispatcher;
+    }
+    const connect = resolveConnect(dispatcher);
     // Take over only when there is connect behaviour to apply (a lookup hook,
     // or a custom connector to reject); otherwise stay on the native path.
     if (connect == null || (typeof connect !== "function" && typeof connect.lookup !== "function")) {

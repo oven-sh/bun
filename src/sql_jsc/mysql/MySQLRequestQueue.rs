@@ -10,7 +10,7 @@ use crate::mysql::js_my_sql_query::JSMySQLQuery;
 
 type Queue = VecDeque<RefPtr<JSMySQLQuery>>;
 
-/// Requests in the order they go on the wire. The server answers in that order: its next packet is for the oldest one that has not ended.
+/// Requests in the order they go on the wire. The server answers in that order: its next packet is for the head.
 pub struct MySQLRequestQueue {
     // `advance()` and `clean()` run JS, which comes back to the queue through `&self`.
     requests: JsCell<Queue>,
@@ -85,14 +85,9 @@ impl MySQLRequestQueue {
             .is_some_and(|head| head.is_in_flight())
     }
 
-    /// One that ended is still here while script hears of it, and that script can run the event loop.
     #[inline]
-    pub(crate) fn oldest_unfinished(&self) -> Option<RefPtr<JSMySQLQuery>> {
-        self.requests
-            .get()
-            .iter()
-            .find(|request| !request.is_completed())
-            .cloned()
+    pub(crate) fn current(&self) -> Option<RefPtr<JSMySQLQuery>> {
+        self.requests.get().front().cloned()
     }
 
     pub(crate) fn clean(&self, reason: JSValue) {

@@ -66,14 +66,20 @@ pub struct JSMySQLConnection {
     write_buffer: JsCell<OffsetByteList>,
     has_backpressure: Cell<bool>,
     read_buffer: JsCell<OffsetByteList>,
-    /// While set, a read from a nested event loop tick only appends to `read_buffer`.
-    defer_reads: Cell<bool>,
-    is_processing_data: Cell<bool>,
+    reading: Cell<Reading>,
     /// The handshake finished during this read; `onconnect` runs at the end of it.
     on_connect_pending: Cell<bool>,
 
     auto_flush_registered: Cell<bool>,
     timers: ConnectionTimers,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    Idle,
+    LastPacket,
+    /// A read from a nested event loop tick only appends to `read_buffer`.
+    Deferring,
 }
 
 bun_event_loop::impl_timer_owner!(JSMySQLConnection;
@@ -150,7 +156,7 @@ impl TimedConnection for JSMySQLConnection {
     }
 
     fn is_processing_data(&self) -> bool {
-        self.is_processing_data.get()
+        self.reading.get() != Reading::Idle
     }
 
     fn fail_timeout(&self, kind: ConnTimeoutKind, message: core::fmt::Arguments<'_>) {
@@ -436,8 +442,7 @@ impl JSMySQLConnection {
             write_buffer: JsCell::default(),
             has_backpressure: Cell::new(false),
             read_buffer: JsCell::default(),
-            defer_reads: Cell::new(false),
-            is_processing_data: Cell::new(false),
+            reading: Cell::new(Reading::Idle),
             on_connect_pending: Cell::new(false),
             socket_ref: Cell::new(None),
             auto_flush_registered: Cell::new(false),
@@ -663,22 +668,22 @@ impl JSMySQLConnection {
 
     fn read(&self, mut data: &[u8]) {
         SocketMonitor::read(data);
-        if self.defer_reads.get() {
+        if self.reading.get() == Reading::Deferring {
             self.read_buffer
                 .with_mut(|buffer| buffer.byte_list.extend_from_slice(data));
             return;
         }
-        self.is_processing_data.set(true);
+        self.reading.set(Reading::LastPacket);
 
         let mut buffer = self.read_buffer.take();
         loop {
             if buffer.is_empty() {
-                let handled = self.handle_packets(data);
-                buffer.byte_list.extend_from_slice(&data[handled..]);
+                let rest = self.handle_packets(data);
+                buffer.byte_list.extend_from_slice(rest);
             } else {
                 buffer.byte_list.extend_from_slice(data);
-                let handled = self.handle_packets(buffer.remaining());
-                buffer.consume(handled);
+                let rest = self.handle_packets(buffer.remaining());
+                buffer.consume(buffer.len() - rest.len());
             }
             let read_meanwhile = self.read_buffer.take();
             if read_meanwhile.is_empty() {
@@ -690,23 +695,24 @@ impl JSMySQLConnection {
             data = b"";
         }
         self.read_buffer.set(buffer);
-        self.defer_reads.set(false);
-        self.is_processing_data.set(false);
+        self.reading.set(Reading::Idle);
     }
 
-    /// Returns how many of `bytes` are done with.
-    fn handle_packets(&self, bytes: &[u8]) -> usize {
-        let mut rest = bytes;
+    /// Returns what has to wait for more bytes.
+    fn handle_packets<'a>(&self, mut rest: &'a [u8]) -> &'a [u8] {
         loop {
             let packet = match self.session.get().next_packet(&mut rest) {
                 Ok(Some(packet)) => packet,
-                Ok(None) => return bytes.len() - rest.len(),
+                Ok(None) => return rest,
                 Err(err) => {
                     self.on_error(err);
-                    return bytes.len();
+                    return b"";
                 }
             };
-            self.defer_reads.set(!rest.is_empty());
+            self.reading.set(match rest {
+                [] => Reading::LastPacket,
+                _ => Reading::Deferring,
+            });
             match self.handle_packet(&packet) {
                 Ok(()) => continue,
                 Err(Failure::Protocol(err)) => self.on_error(err),
@@ -716,13 +722,13 @@ impl JSMySQLConnection {
                     self.fail_fmt(err, format_args!("{err}: {}", bstr::BStr::new(name)));
                 }
             }
-            return bytes.len();
+            return b"";
         }
     }
 
     fn handle_packet<'p>(&self, packet: &'p Packet<'_>) -> Result<(), Failure<'p>> {
         // The refs are for script, which can end the request.
-        if let Some(request) = self.queue.oldest_unfinished()
+        if let Some(request) = self.queue.current()
             && let Some((command, statement)) = request.written_command()
         {
             return self.handle_reply(packet, &request, command, &statement);
@@ -757,7 +763,7 @@ impl JSMySQLConnection {
             ReplyEvent::ColumnRenamed(index) => {
                 statement.clear_structure();
                 // The column transform can run the event loop; rows must wait for it.
-                self.defer_reads.set(true);
+                self.reading.set(Reading::Deferring);
                 self.on_column_name(request, statement, index)?;
             }
             ReplyEvent::Result(result) => {
@@ -817,19 +823,19 @@ impl JSMySQLConnection {
         else {
             return Ok(());
         };
-        let forget_name = || statement.wire.with_mut(|w| w.columns[index].forget_name());
+        let forget_name = || statement.with_column(index, |column| column.forget_name());
         if request.is_discarding_response() {
             forget_name();
             return Ok(());
         }
-        let name = &statement.wire.get().columns[index].name_or_index;
-        let renamed = column_name_to_js(&self.global_object, name)
+        let Some(column) = statement.wire.get().columns.get(index) else {
+            return Ok(());
+        };
+        let renamed = column_name_to_js(&self.global_object, &column.name_or_index)
             .and_then(|name| transform_name(&self.global_object, transform, name));
         match renamed {
             Ok(renamed) => {
-                statement
-                    .wire
-                    .with_mut(|wire| wire.columns[index].name_or_index = renamed);
+                statement.with_column(index, |column| column.name_or_index = renamed);
                 Ok(())
             }
             Err(err) => {
@@ -839,6 +845,8 @@ impl JSMySQLConnection {
         }
     }
 
+    /// Inlined into `handle_reply`, the row decoder loses its own inlining.
+    #[inline(never)]
     fn on_result_row(
         &self,
         request: &JSMySQLQuery,
@@ -849,13 +857,14 @@ impl JSMySQLConnection {
             return Ok(());
         }
         let result_mode = request.result_mode.get();
-        let (structure, names, names_count) = match result_mode {
+        let cached_structure = match result_mode {
             ResultMode::Objects => {
                 let owner = self.js_value.get().try_get().unwrap_or_default();
-                statement.structure(owner, &self.global_object)
+                Some(statement.structure(owner, &self.global_object))
             }
-            ResultMode::Raw | ResultMode::Values => (JSValue::UNDEFINED, core::ptr::null_mut(), 0),
+            ResultMode::Raw | ResultMode::Values => None,
         };
+        let structure = cached_structure.and_then(|cached| cached.js_value());
         let row = ResultSet::Row {
             global_object: &self.global_object,
             columns: &statement.wire.get().columns,
@@ -868,16 +877,14 @@ impl JSMySQLConnection {
             Err(err) => return self.on_undecodable_row(request, err),
         };
         let pending_value = request.get_pending_value().unwrap_or(JSValue::UNDEFINED);
-        let Ok(row_value) = SQLDataCell::construct_object_from_data_cell(
+        let Ok(row_value) = SQLDataCell::to_js_object(
             &self.global_object,
             pending_value,
-            structure,
-            cells.as_mut_ptr(),
-            cells.len() as u32,
+            structure.unwrap_or(JSValue::UNDEFINED),
+            &mut cells,
             statement.fields_flags.get(),
             result_mode as u8,
-            names,
-            names_count,
+            cached_structure,
         ) else {
             return self.on_undecodable_row(request, AnyMySQLErrorT::JSError);
         };

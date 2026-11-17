@@ -185,14 +185,7 @@ impl<'a> Row<'a> {
             let mut value = if is_null {
                 SQLDataCell::null()
             } else {
-                decode_binary_value(self.global_object, column, self.raw, self.bigint, reader)
-                    .map_err(|e| match e {
-                        crate::Error::MySqlProtocol(e) => e,
-                        other => other
-                            .name()
-                            .parse()
-                            .unwrap_or(AnyMySQLError::InvalidBinaryValue),
-                    })?
+                decode_binary_value(self.global_object, column, self.raw, self.bigint, reader)?
             };
             value.set_column(u32::try_from(i).expect("int cast"), &column.name_or_index);
             cells.push(value);

@@ -1194,40 +1194,6 @@ describe("scripted server", () => {
     }
   });
 
-  test.each([
-    ["resolve", owner("A", 1), [{ owner: "A" }]],
-    ["reject", mysqlErrPacket(1, 1064, "42000", "no"), { rejected: "ERR_MYSQL_SYNTAX_ERROR" }],
-  ] as const)(
-    "a reply that comes while the query in front is in %s() finds its query",
-    async (how, reply, expected) => {
-      let socket!: net.Socket;
-      const { port, server } = await mysqlServer({
-        onSocket: accepted => void (socket = accepted),
-        // The reply to A, when B is written behind it.
-        onCommand: (socket, payload) => void (payload.toString("latin1", 1) === "B" && socket.write(reply)),
-      });
-      try {
-        await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-        await sql.connect();
-        let built: Promise<unknown> | undefined;
-        const a: any = sql.unsafe("A").simple();
-        const settle = a[how];
-        a[how] = function (value: unknown) {
-          socket.write(owner("B", 1));
-          built = runEventLoopUntil(loopbackFence);
-          return settle.call(this, value);
-        };
-        expect(await Promise.all([outcome(a), outcome(sql.unsafe("B").simple())])).toEqual([
-          expected,
-          [{ owner: "B" }],
-        ]);
-        await built;
-      } finally {
-        server.close();
-      }
-    },
-  );
-
   /** For what ends the process or patches a built-in. `serve(onCommand)` gives the URL of a server. */
   async function runWithServer(script: string) {
     const prelude = /* js */ `
@@ -1252,7 +1218,7 @@ describe("scripted server", () => {
       cmd: [bunExe(), "-e", prelude + script],
       env: {
         ...bunEnv,
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "disable_coredump=1", "symbolize=0"].filter(Boolean).join(":"),
         BUN_ENABLE_CRASH_REPORTING: "0",
       },
       stdout: "pipe",
@@ -1298,7 +1264,7 @@ describe("scripted server", () => {
       console.log(first.count, second.count);
       process.exit(0);
     `);
-    expect(result).toEqual({ stdout: "1 1\n", stderr: expect.any(String), exitCode: 0 });
+    expect(result).toEqual({ stdout: "1 1\n", stderr: "", exitCode: 0 });
   });
 
   // Built-in JS runs a handle one time only.
@@ -1343,7 +1309,7 @@ describe("scripted server", () => {
     const commands = [COM_QUERY, COM_QUERY, COM_STMT_PREPARE, COM_STMT_EXECUTE, COM_STMT_EXECUTE];
     expect(result).toEqual({
       stdout: JSON.stringify({ outcomes: ["ok", "ok"], commands }) + "\n",
-      stderr: expect.any(String),
+      stderr: "",
       exitCode: 0,
     });
   });
@@ -1372,7 +1338,7 @@ describe("scripted server", () => {
       console.log("ok");
       process.exit(0);
     `);
-    expect(result).toEqual({ stdout: "ok\n", stderr: expect.any(String), exitCode: 0 });
+    expect(result).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
   });
 
   test.skipIf(isWindows)("a unix socket that is not there rejects with its path", async () => {

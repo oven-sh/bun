@@ -1,8 +1,6 @@
 use core::cell::Cell;
 
-use crate::jsc::{
-    ExternColumnIdentifier, JSGlobalObject, JSValue, JsCell, JsResult, bun_string_jsc,
-};
+use crate::jsc::{JSGlobalObject, JSValue, JsCell, JsResult, bun_string_jsc};
 
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, describe_statement};
@@ -77,6 +75,11 @@ impl MySQLStatement {
         self.wire.get().params.len() == self.parameter_types.len()
     }
 
+    pub(crate) fn with_column(&self, index: usize, change: impl FnOnce(&mut ColumnDefinition41)) {
+        self.wire
+            .with_mut(|wire| wire.columns.get_mut(index).map(change));
+    }
+
     pub(crate) fn clear_structure(&self) {
         self.cached_structure.set(Default::default());
         self.fields_flags.set(Default::default());
@@ -86,12 +89,11 @@ impl MySQLStatement {
         self.cached_structure.with_mut(|c| c.clear_description());
     }
 
-    /// The `Structure` of a row, or the names when it has too many. Not a borrow: script runs before the row is delivered.
     pub(crate) fn structure(
         &self,
         owner: JSValue,
         global_object: &JSGlobalObject,
-    ) -> (JSValue, *mut ExternColumnIdentifier, u32) {
+    ) -> &CachedStructure {
         if !self.cached_structure.get().has() {
             self.fields_flags.set(self.wire.with_mut(|wire| {
                 dedupe_columns(wire.columns.iter_mut().rev().map(|c| &mut c.name_or_index))
@@ -100,12 +102,7 @@ impl MySQLStatement {
             self.cached_structure
                 .with_mut(|cached| cached.build_from_columns(global_object, owner, names));
         }
-        let cached = self.cached_structure.get();
-        let structure = cached.js_value().unwrap_or(JSValue::UNDEFINED);
-        match cached.fields.as_deref() {
-            Some(names) => (structure, names.as_ptr().cast_mut(), names.len() as u32),
-            None => (structure, core::ptr::null_mut(), 0),
-        }
+        self.cached_structure.get()
     }
 
     /// `result.statement`. Without `has_columns`, the columns are an earlier result set's.

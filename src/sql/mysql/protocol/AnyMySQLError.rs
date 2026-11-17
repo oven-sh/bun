@@ -1,7 +1,5 @@
 /// `Display` is the default `message` of the JS `MySQLError`.
-#[derive(
-    thiserror::Error, strum::IntoStaticStr, strum::EnumString, Debug, Copy, Clone, Eq, PartialEq,
-)]
+#[derive(thiserror::Error, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Error {
     #[error("Connection closed")]
     ConnectionClosed,

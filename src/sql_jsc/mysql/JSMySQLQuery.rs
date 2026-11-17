@@ -398,10 +398,12 @@ impl JSMySQLQuery {
             mut execute,
         } = self.state.replace(State::Binding)
         {
-            if !statement.parameter_count_matches() {
+            // With too many parameters, nothing was staged.
+            if !statement.parameter_count_matches()
+                || set_statement_id(&mut execute, statement.wire.get().id).is_none()
+            {
                 return Err(AnyMySQLError::Error::WrongNumberOfParametersProvided);
             }
-            set_statement_id(&mut execute, statement.wire.get().id);
             connection.write(|out| out.extend_from_slice(&execute));
             self.set_running(statement, false);
             return Ok(());

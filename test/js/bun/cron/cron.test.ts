@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
@@ -698,6 +698,139 @@ describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
     crontab = readCrontab();
     expect(crontab).toContain("# bun-cron: rm-reregister");
     expect(crontab).toContain("30 6 * * *");
+  });
+});
+
+describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
+  async function run(fixture: string, env: Record<string, string> = {}) {
+    using dir = tempDir("cron-stub", {
+      "bin/crontab": `#!/bin/sh
+        if [ "$1" = -l ]; then cat table; eval "$AFTER_LIST"; exit 0; fi
+        eval "$BEFORE_INSTALL"
+        cp "$1" table.new && mv table.new table
+      `,
+      "tmp/.keep": "",
+      "table": "0 1 * * * keep\n# bun-cron: t\n* * * * * old\n",
+      "job.ts": "",
+      "fixture.js": fixture,
+    });
+    chmodSync(`${dir}/bin/crontab`, 0o755);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, PATH: `${dir}/bin:${bunEnv.PATH}`, TMPDIR: `${dir}/tmp`, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const table = readFileSync(`${dir}/table`, "utf8")
+      .replace(/'[^']*' run/, "'bun' run")
+      .replace(String(dir), "");
+    return { stdout, stderr, table, tempFiles: readdirSync(`${dir}/tmp`).length - 1, exitCode };
+  }
+
+  const untouched = "0 1 * * * keep\n# bun-cron: t\n* * * * * old\n";
+  const entry = "# bun-cron: t\n0 0 * * * 'bun' run --cron-title=t --cron-period='0 0 * * *' '/job.ts'\n";
+
+  describe.each([
+    [`Bun.cron("./job.ts", "@daily", "t")`, entry],
+    [`Bun.cron.remove("t")`, ""],
+  ])("%s", (call, added) => {
+    test.each([
+      [{}, "undefined", "0 1 * * * keep\n" + added],
+      [{ AFTER_LIST: "exit 1" }, "undefined", "0 1 * * * keep\n" + added],
+      // The sleeps put the end of the output before the exit, then after it: the stub cannot see what bun has handled.
+      [{ AFTER_LIST: "exec >&-; sleep 0.05" }, "undefined", "0 1 * * * keep\n" + added],
+      [{ AFTER_LIST: "(sleep 0.05; echo late) &" }, "undefined", "0 1 * * * keep\nlate\n" + added],
+      [{ AFTER_LIST: "exit 2" }, "Process exited with code 2", untouched],
+      [{ AFTER_LIST: "kill -9 $$" }, "Process killed by signal 9", untouched],
+      [{ TMPDIR: "/dev/null" }, "Failed to create temp file", untouched],
+      [{ BEFORE_INSTALL: "exit 1" }, "Process exited with code 1", untouched],
+    ])("settles with %j", async (env, settled, table) => {
+      const fixture = `console.log(String(await ${call}.catch(e => e.message)));`;
+      expect(await run(fixture, env)).toEqual({ stdout: settled + "\n", stderr: "", table, tempFiles: 0, exitCode: 0 });
+    });
+
+    const inWorker = (main: string, afterCall: string) => `
+      const fs = require("node:fs");
+      const until = async condition => {
+        for (const deadline = Date.now() + 3000; !condition() && Date.now() < deadline; ) await Bun.sleep(5);
+      };
+      const open = () =>
+        fs.readdirSync("/proc/self/fd").filter(fd => {
+          try {
+            return /^socket:|pidfd/.test(fs.readlinkSync("/proc/self/fd/" + fd));
+          } catch {}
+        }).length;
+      if (Bun.isMainThread) {
+        const before = open();
+        const worker = new Worker(import.meta.url);
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        worker.postMessage(before);
+        ${main}
+        await until(() => open() === before);
+        console.log("leaked", open() - before);
+      } else {
+        onmessage = ({ data: before }) => {
+          ${call};
+          ${afterCall}
+        };
+      }
+    `;
+
+    test("a Worker that ends during `crontab -l` closes the pipe and the process handle", async () => {
+      expect(await run(inWorker("await closed;", `console.log("opened", open() > before); process.exit(0);`))).toEqual({
+        stdout: "opened true\nleaked 0\n",
+        stderr: "",
+        table: untouched,
+        tempFiles: 0,
+        exitCode: 0,
+      });
+    });
+
+    test("a Worker that ends during `crontab <file>` closes the process handle, and leaves the file to the child", async () => {
+      const main = `
+        await until(() => fs.existsSync("started"));
+        console.log("opened", open() > before);
+        worker.terminate();
+        await closed;
+        fs.writeFileSync("release", "");
+        await until(() => !fs.readFileSync("table", "utf8").includes("old"));
+      `;
+      const BEFORE_INSTALL = "touch started; while [ ! -e release ] && [ -e table ]; do sleep 0.01; done";
+      expect(await run(inWorker(main, ""), { BEFORE_INSTALL })).toEqual({
+        stdout: "opened true\nleaked 0\n",
+        stderr: "",
+        table: "0 1 * * * keep\n" + added,
+        tempFiles: 1,
+        exitCode: 0,
+      });
+    });
+  });
+});
+
+// Removing a title that does not exist needs neither a GUI session nor a SID, and changes nothing.
+describe.concurrent.skipIf(!isMacOS && !isWindows)("removing nothing (macOS, Windows)", () => {
+  test("resolves", async () => {
+    expect(await Bun.cron.remove("bun-test-no-such-job")).toBeUndefined();
+  });
+
+  test.each(["process.exit(0)", `postMessage("terminate")`])("a Worker ends with the call in flight: %s", async end => {
+    using dir = tempDir("cron-worker-end", {
+      "fixture.js": `
+        if (Bun.isMainThread) {
+          const worker = new Worker(import.meta.url);
+          worker.onmessage = () => worker.terminate();
+          worker.addEventListener("close", () => console.log("closed"));
+        } else {
+          Bun.cron.remove("bun-test-no-such-job");
+          ${end};
+        }
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed\n", stderr: "", exitCode: 0 });
   });
 });
 

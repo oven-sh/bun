@@ -195,6 +195,15 @@ fn and_so_do_some_that_few_sequences_are_like() {
     /// The arguments of `session()`, and the result with zlib-ng 2.3.3.
     #[rustfmt::skip]
     const RARE: &[(i32, i32, u64, u32)] = &[
+        (0, 0, 1153, 0xfa28_4898), (0, 0, 2998, 0xfcee_8f7c), (1, 0, 130, 0x3a3c_eed9), (1, 0, 1811, 0xa279_8d4d),
+        (2, 0, 91, 0x06ff_1791), (2, 0, 141, 0xee08_6067), (2, 0, 220, 0xe328_6ecb), (2, 0, 387, 0xf632_0ead),
+        (5, 0, 248, 0x5331_8687), (5, 0, 296, 0xa03a_5b17), (6, 0, 1774, 0x8a8d_ca38), (6, 2, 205, 0xeca6_fca0),
+        (6, 2, 2224, 0x2954_e4ca), (6, 3, 339, 0xdda6_19ed), (7, 0, 75, 0x5054_ab81), (7, 0, 236, 0x6eb7_f4a7),
+        (7, 0, 1446, 0x11d1_bf7a), (8, 0, 116, 0x44b9_e4a8), (8, 0, 420, 0x6661_01d5), (8, 0, 576, 0x6558_2ae1),
+        (8, 0, 1220, 0x98ca_b372), (8, 1, 51, 0xaaed_8204), (8, 1, 140, 0x5513_7fed), (8, 1, 1076, 0x7deb_17c4),
+        (9, 0, 182, 0xea16_3040), (9, 0, 270, 0x7c59_c9e1), (9, 0, 279, 0xf497_c3e6), (9, 0, 290, 0x0dee_141e),
+        (9, 0, 1958, 0x074c_9550), (9, 4, 665, 0x38c1_ccee), (9, 4, 1340, 0xa0af_8b43), (9, 4, 1474, 0xd885_d9ad),
+        (9, 4, 1861, 0xae28_b538), (9, 4, 2217, 0x127c_d0c4),
     ];
     for &(level, strategy, seed, expected) in RARE {
         assert_eq!(
@@ -202,6 +211,34 @@ fn and_so_do_some_that_few_sequences_are_like() {
             expected,
             "{level} {strategy} {seed}"
         );
+    }
+}
+
+#[test]
+fn level_9_takes_zeros_for_what_it_has_not_hashed() {
+    // So it finds the second position, which starts with one.
+    let input = b"1\0abcd2\0abcd345";
+    let set_level = |deflater: &mut Deflater, level: i32| {
+        let is_set = deflater.set_params(level.try_into().unwrap(), Strategy::Default);
+        assert_eq!(is_set, Ok(true));
+    };
+    for dictionary in [&b""[..], b"xyz"] {
+        let mut deflater = Deflater::new(Container::Raw, options(9, 0, 15, 8)).unwrap();
+        deflater
+            .deflate_to_vec(b"efghijklm", &mut Vec::new(), Flush::Sync)
+            .unwrap();
+        set_level(&mut deflater, 8);
+        deflater.reset();
+        deflater.set_dictionary(dictionary).unwrap();
+        let mut out = Vec::new();
+        deflater
+            .deflate_to_vec(input, &mut out, Flush::None)
+            .unwrap();
+        set_level(&mut deflater, 9);
+        deflater
+            .deflate_to_vec(b"", &mut out, Flush::Finish)
+            .unwrap();
+        assert_eq!(out, raw(input, 9, 8));
     }
 }
 

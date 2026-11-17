@@ -6,7 +6,7 @@ import { join } from "node:path";
 test("diagnose", async () => {
   const root = join(import.meta.dir, "../../../..");
   const file = join(root, "test/js/node/test/parallel/test-http-client-leaky-with-double-response.js");
-  for (const mode of ["control", "log", "quiet", "zero"]) {
+  for (const mode of ["log", "quiet"]) {
     const preload = mode === "control" ? [] : ["--preload", join(import.meta.dir, "zz-diagnose-preload.js")];
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "--config=" + join(root, "bunfig.node-test.toml"), ...preload, file],

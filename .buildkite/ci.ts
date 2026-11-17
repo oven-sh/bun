@@ -1539,7 +1539,7 @@ function getPipelineOptions(): PipelineOptions | undefined {
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()).filter(p => p.os === "windows" && p.arch === "x64"),
-    testFiles: ["zz-diagnose.test", "leaky-with-double-response"],
+    testFiles: ["zz-diagnose.test"],
   };
 }
 

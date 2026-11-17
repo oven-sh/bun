@@ -15,6 +15,7 @@ if (win) {
   k = dlopen("kernel32.dll", {
     RtlCaptureContext: { args: u(1), returns: "void" },
     RtlMoveMemory: { args: u(3), returns: "void" },
+    ReadProcessMemory: { args: u(5), returns: "i32" },
     GetCurrentThreadStackLimits: { args: u(2), returns: "void" },
     VirtualQuery: { args: u(3), returns: "u64" },
     GetModuleHandleW: { args: u(1), returns: "u64" },
@@ -100,6 +101,40 @@ function snapshot() {
 }
 const show = n => `${n.cls}${n.label ? `(${n.label.slice(0, 50)})` : ""}#${n.id}@${n.cell}/${n.size}${n.root ? ` ROOT ${n.root}` : ""}`;
 
+function scanProcess(candidates) {
+  const wanted = new Map();
+  for (const n of candidates) {
+    const digits = n.cell.slice(2).padStart(16, "0");
+    wanted.set(parseInt(digits.slice(8), 16), [parseInt(digits.slice(0, 8), 16), n]);
+  }
+  const chunk = buf(1 << 20);
+  const halves = new Uint32Array(chunk.bytes, chunk.pad, 1 << 18);
+  const found = [];
+  let scanned = 0;
+  for (let at = 0x10000n; at < 0x7ffffffe0000n; ) {
+    if (!k.VirtualQuery(at, scratch.at, 48n)) break;
+    const v = scratch.view;
+    const allocation = v.getBigUint64(8, true), size = v.getBigUint64(24, true);
+    const state = v.getUint32(32, true), protect = v.getUint32(36, true), type = v.getUint32(40, true);
+    if (state === 0x1000 && !(protect & 0x100) && protect & 0xcc) {
+      for (let o = 0n; o < size; o += 1n << 20n) {
+        const from = at + o, length = size - o < 1n << 20n ? size - o : 1n << 20n;
+        if (from < chunk.at + (1n << 20n) && chunk.at < from + length) continue;
+        k.ReadProcessMemory(0xffffffffffffffffn, from, chunk.at, length, scratch.at + 64n);
+        const count = Number(scratch.view.getBigUint64(64, true)) / 4;
+        scanned += count * 4;
+        for (let i = 0; i < count; i += 2) {
+          const entry = wanted.get(halves[i]);
+          if (entry !== undefined && entry[0] === halves[i + 1]) found.push([from + BigInt(i * 4), entry[1], allocation, size, type]);
+        }
+      }
+    }
+    at += size;
+  }
+  out("scanned", scanned, "bytes, found", found.length);
+  return found;
+}
+
 function diagnose() {
   out("round 6 reached: not collected");
   const nodes = snapshot();
@@ -125,6 +160,7 @@ function diagnose() {
   for (const n of candidates.slice(0, 60)) out("    ", show(n), "in:", n.from.length);
   if (!win) return;
 
+  const found = scanProcess(candidates);
   rsp = ctx.view.getBigUint64(0x98, true);
   out("stack", hex(low), hex(high), "rsp", hex(rsp), "depth", hex(high - rsp));
   const words = new BigUint64Array(copy.bytes, copy.pad, Number((high - low) / 8n));
@@ -133,7 +169,7 @@ function diagnose() {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (w < 0x10000n || w > 0x7fffffffffffn) continue;
-    for (const [at, size, n] of cells) if (w >= at && w <= at + size) hits.push([low + BigInt(i) * 8n, w - at, n]);
+    for (const [at, size, n] of cells) if (w >= at && w < at + (n.cls === "Timeout" ? 80n : size)) hits.push([low + BigInt(i) * 8n, w - at, n]);
   }
   const chain = n => {
     let s = "";
@@ -174,9 +210,47 @@ function diagnose() {
   const isCode = w => w > base && w < base + imageSize && entryOf(w) !== 0n;
   const index = at => Number((at - low) / 8n);
 
-  out("--- code addresses above rsp");
-  for (let i = index(rsp); i < words.length; i++)
-    if (isCode(words[i])) out("   high-" + hex(high - low - BigInt(i) * 8n), symbol(words[i]));
+  const read = (at, count) => {
+    k.ReadProcessMemory(me, at, scratch.at, BigInt(count * 8), scratch.at + 4000n);
+    return Array.from({ length: count }, (_, i) => scratch.view.getBigUint64(i * 8, true));
+  };
+  const sorted = [...nodes.values()].filter(n => n.id).map(n => [BigInt(n.cell), n]).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const butterflies = sorted.map(([at, n]) => [read(at + 8n, 1)[0], n]).filter(([b]) => b > 0x10000n).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const below = (list, at) => {
+    let a = 0, b = list.length;
+    while (a < b) {
+      const m = (a + b) >> 1;
+      if (list[m][0] <= at) a = m + 1;
+      else b = m;
+    }
+    return a - 1;
+  };
+  const pathTo = n => {
+    let s = "";
+    for (let id = n.id, i = 0; parent.get(id) && i < 14; id = parent.get(id)[0], i++) {
+      const p = nodes.get(id);
+      s += `${p.cls}${p.label ? `(${p.label.slice(0, 40)})` : ""}${p.root ? " ROOT " + p.root : ""} <-${parent.get(id)[1]}- `;
+    }
+    return s || "(not reachable from a reported root, in: " + n.from.length + ")";
+  };
+  out("--- every word of the process that holds one of them");
+  let shown = 0;
+  for (const [at, n, allocation, size, type] of found) {
+    const [cell, owner] = sorted[below(sorted, at)] ?? [];
+    const i = below(butterflies, at);
+    const near = [butterflies[i], butterflies[i + 1]].filter(b => b && (b[0] > at ? b[0] - at : at - b[0]) < 0x400n);
+    const inCell = owner && at < cell + BigInt(owner.size);
+    if (inCell && reach.has(owner.id)) continue;
+    if (!inCell && near.some(b => reach.has(b[1].id))) continue;
+    if (++shown > 120) break;
+    out("WORD", hex(at), "->", n.cls, n.label.slice(0, 20), "#" + n.id, "region", hex(allocation), hex(size), hex(type));
+    if (inCell) out("       in", show(owner), "+" + (at - cell), pathTo(owner));
+    else for (const [b, o] of near) out("       butterfly", at - b, "of", show(o), pathTo(o));
+    if (at >= base && at < base + imageSize) out("       static", symbol(at));
+    if (!inCell) out("       around", read(at - 48n, 13).map(w => (w > base && w < base + imageSize ? `<${symbol(w).slice(0, 90)}>` : hex(w))).join(" "));
+  }
+  out("--- cells that nothing reported reaches, without an incoming edge");
+  for (const n of nodes.values()) if (n.id && !parent.has(n.id) && !n.from.length) out("    ", show(n), "out:", n.to.length);
 
   const c = buf(1232);
   const reg = (n, v) => (v === undefined ? c.view.getBigUint64(0x78 + 8 * n, true) : c.view.setBigUint64(0x78 + 8 * n, v, true));

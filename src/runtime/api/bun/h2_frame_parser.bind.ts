@@ -35,10 +35,17 @@ export const H2FrameParserOptions = b.dictionary({
   type: { type: b.u32.default(1), rustName: "session_type" },
 });
 
-/** The session of `node:http2`. */
 /** `entry` is pushed onto `pending`. */
-const queuesEntry = { pending: [table.everything], entry: [table.everything] };
+const queuesEntry = {
+  pending: [
+    ...table.retainedByNativeCode,
+    table.writesContents(),
+    table.storedByKey(table.indexKeys, table.operand("entry")),
+    table.storedByKey(table.keysNamed("length"), table.f64),
+  ],
+};
 
+/** The session of `node:http2`. */
 export const H2FrameParser = b.class({
   rustPath: "crate::api::H2FrameParser",
   refCounted: true,

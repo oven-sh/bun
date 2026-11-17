@@ -94,9 +94,9 @@ fn noise(letters: &[u8], len: usize) -> Vec<u8> {
     (0..len).map(letter).collect()
 }
 
-/// Runs that are too short for a needle of `len`.
+/// Runs that are too short for a needle of `len`. What ends them has the bit of `a`.
 fn broken(period: &[u8], len: usize, total: usize) -> Vec<u8> {
-    cycle(&put(cycle(period, len), len - 1, b'#'), total)
+    cycle(&put(cycle(period, len), len - 1, b'!'), total)
 }
 
 #[test]
@@ -259,6 +259,8 @@ fn when_it_falls_back() {
             each(&[&b"a"[..], b"ab"], lengths).into_iter().map(case),
         );
     }
+    let jumps = |len| [broken(b"b", len, 20_000), cycle(b"b", len)];
+    reads_at_most(142_000, [9, 33, 150].map(jumps));
     let text = [broken(b"a", 27, 20_000), cycle(b".", 20_000)].concat();
     reads_at_most(60_500, [[text, cycle(b"a", 35)]]);
     for (most, [dense, calm, times]) in

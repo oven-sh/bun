@@ -274,18 +274,25 @@ if (values["simd-cpus"] && !values["skip-emulation"]) {
     ? [{ nhm: "sse4", hsw: "avx2", skx: "avx512_skx", icx: "avx512_icl" }, "snb tnt cnl adl arl spr gnr dmr"]
     : isAarch64
       ? [{ "cortex-a53": "neon", "neoverse-v1": "neon", "neoverse-n2": "sve2", max: "sve2" }, "cortex-a76 a64fx"]
-      : [{ Nehalem: "sse4", Haswell: "avx2" }, "SandyBridge Opteron_G5,+bmi1 EPYC-Rome max"];
+      : [{ Nehalem: "sse4", Haswell: "avx2" }, "Westmere SandyBridge Opteron_G5,+bmi1 EPYC-Rome max"];
   const runner = ["test", "--run-simd-tests"];
   for (const cpu of [...Object.keys(bestTargets), ...others.split(" ")]) {
     await runTest(`bun_simd on ${cpu}: features`, [...runner, "probe"], { cpu });
   }
   for (const [cpu, target] of Object.entries(bestTargets)) {
-    const expected = ` ${target}\nrounds: 200`;
-    await runTest(`bun_simd on ${cpu}: kernels`, [...runner, "check", "1", "200"], { cpu, expected });
+    const expected = ` ${target}\nrounds: 1200`;
+    await runTest(`bun_simd on ${cpu}: kernels`, [...runner, "check", "1200"], { cpu, expected });
+  }
+  // The checksums have copies for features beyond a target.
+  for (const cpu of others.split(" ")) {
+    await runTest(`bun_simd on ${cpu}: checksums`, [...runner, "check-only", "checksums", "1200"], {
+      cpu,
+      expected: "rounds: 1200",
+    });
   }
   if (isAarch64) {
-    const options = { cpu: "neoverse-n2", release: "6.1.0", expected: " neon\nrounds: 1" };
-    await runTest("bun_simd on Linux 6.1", [...runner, "check", "1", "1"], options);
+    const options = { cpu: "neoverse-n2", release: "6.1.0", expected: " neon\nrounds: 3" };
+    await runTest("bun_simd on Linux 6.1", [...runner, "check", "3"], options);
   }
 }
 

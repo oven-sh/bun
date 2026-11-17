@@ -563,6 +563,10 @@ opt-level = 3
 opt-level = 3
 codegen-units = 1
 
+# Its checks of the kernels run in debug builds too.
+[profile.dev.package.bun_simd_conformance]
+opt-level = 3
+
 # scripts/build/rust.ts raises the number for this profile in ASan builds.
 [profile.release.package.bun_simd_kernels]
 codegen-units = 1

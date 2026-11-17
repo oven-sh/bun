@@ -65,7 +65,7 @@ pub struct Columns<Pairs, Indices> {
 }
 
 pub type ColumnsOut<'a> = Columns<Out<'a, [i32; 2]>, Out<'a, i32>>;
-pub type ColumnsFilled<'a> = Columns<&'a mut [[i32; 2]], &'a mut [i32]>;
+type ColumnsFilled<'a> = Columns<&'a mut [[i32; 2]], &'a mut [i32]>;
 type Rows<'a> = Columns<Writer<'a, [i32; 2]>, Writer<'a, i32>>;
 
 impl<'a> Rows<'a> {

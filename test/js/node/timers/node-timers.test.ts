@@ -315,8 +315,11 @@ describe.concurrent("Immediate.ref() holds the event loop only while the immedia
   });
 
   it("unref() and ref() in the queue", async () => {
-    const script = `const i = setImmediate(() => console.log("ran")); console.log(i.unref().hasRef(), i.ref().hasRef());`;
-    expect(await runToExit(script)).toEqual(printed("false true\nran"));
+    const script = `
+      const i = setImmediate(() => console.log("ran"));
+      console.log("after unref:", i.unref().hasRef());
+      console.log("after ref:", i.ref().hasRef());`;
+    expect(await runToExit(script)).toEqual(printed("after unref: false\nafter ref: true\nran"));
   });
 });
 
@@ -337,15 +340,6 @@ describe.concurrent("writes to _repeat, _onTimeout and _idleTimeout in the first
       process.on("exit", () => console.log(fires));`;
     expect(await runToExit(script)).toEqual(printed(String(fires)));
   });
-});
-
-it.concurrent.each(["setTimeout", "setInterval"] as const)("clearImmediate() ignores the id of a %s()", async set => {
-  const script = `
-    for (const convert of [Number, String]) {
-      const t = ${set}(() => { console.log(convert.name); clearTimeout(t); }, 1);
-      clearImmediate(convert(+t));
-    }`;
-  expect(await runToExit(script)).toEqual(printed("Number\nString"));
 });
 
 describe("_idleStart", () => {

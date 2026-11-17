@@ -481,7 +481,7 @@ declare function clearInterval(id?: number | Timer): void;
 declare function clearTimeout(id?: number | Timer): void;
 /**
  * Cancel an immediate function call.
- * @param id the immediate returned by {@link setImmediate}
+ * @param id the immediate returned by {@link setImmediate}, or its numeric id
  */
 declare function clearImmediate(id?: number | Timer): void;
 /**

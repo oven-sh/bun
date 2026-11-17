@@ -938,7 +938,11 @@ describe("timer controls called from inside a timer callback", () => {
       vi.advanceTimersByTime(10);
     }, 10);
     vi.advanceTimersByTime(10);
-    expect([vi.getTimerCount(), interval.hasRef(), interval._destroyed]).toEqual([0, false, true]);
+    expect({ timers: vi.getTimerCount(), hasRef: interval.hasRef(), destroyed: interval._destroyed }).toEqual({
+      timers: 0,
+      hasRef: false,
+      destroyed: true,
+    });
   });
 
   test("an interval that a nested run ended and the outer run arms again survives a collection", () => {
@@ -954,7 +958,8 @@ describe("timer controls called from inside a timer callback", () => {
     const rooted = heapStats().protectedObjectTypeCounts.Timeout;
     vi.advanceTimersByTime(10);
     Bun.gc(true);
-    expect([vi.getTimerCount(), heapStats().protectedObjectTypeCounts.Timeout]).toEqual([1, rooted]);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(heapStats().protectedObjectTypeCounts.Timeout).toBe(rooted);
     vi.advanceTimersToNextTimer();
     expect(fires).toBe(3);
   });
@@ -967,9 +972,10 @@ describe("timer controls called from inside a timer callback", () => {
       const t = setTimeout(() => { if (++fires === 1) { t.refresh(); jest.advanceTimersByTime(10); } }, 10);
       t._repeat = 10;
       jest.advanceTimersByTime(10);
-      console.log(fires, jest.getTimerCount(), t._destroyed);
+      console.log("fires:", fires, "timers:", jest.getTimerCount(), "destroyed:", t._destroyed);
       jest.useRealTimers();`;
-    expect(await run(["-e", script])).toEqual({ stdout: "2 1 false\n", stderr: "", exitCode: 0, signalCode: null });
+    const stdout = "fires: 2 timers: 1 destroyed: false\n";
+    expect(await run(["-e", script])).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });
 });
 
@@ -2586,10 +2592,13 @@ describe("a faked setImmediate", () => {
 
   test("ref() in its callback takes the ref", () => {
     vi.useFakeTimers({ toFake: ["setImmediate"] });
-    const seen: boolean[] = [];
-    const immediate = setImmediate(() => seen.push(immediate.unref().hasRef(), immediate.ref().hasRef()));
+    let hasRef;
+    const immediate = setImmediate(() => {
+      hasRef = { afterUnref: immediate.unref().hasRef(), afterRef: immediate.ref().hasRef() };
+    });
     vi.runAllTimers();
-    expect([...seen, immediate.hasRef()]).toEqual([false, true, false]);
+    expect(hasRef).toEqual({ afterUnref: false, afterRef: true });
+    expect(immediate.hasRef()).toBe(false);
   });
 
   test("useRealTimers() and clearAllTimers() drop it", () => {

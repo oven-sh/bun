@@ -694,6 +694,10 @@ impl<'a> Coordinator<'a> {
                     shuffled,
                     unhandled,
                 ] = nums;
+                // fd 3 is writable from test JS, so count only the file that this worker runs.
+                if self.workers[slot].inflight != Some(idx) {
+                    return;
+                }
                 let elapsed_ns = rd.u64();
                 let rd_growth = rd.u32();
                 let largest_child = rd.u32();
@@ -713,11 +717,7 @@ impl<'a> Coordinator<'a> {
                     self.end_group();
                 }
 
-                // fd 3 is writable from test JS, so count only the file that this worker runs.
                 let w = &mut self.workers[slot];
-                if w.inflight != Some(idx) {
-                    return;
-                }
                 w.inflight = None;
                 w.first_loads.clear();
                 w.first_loads.extend_from_slice(first_loads);

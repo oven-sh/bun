@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -1358,6 +1358,24 @@ describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () 
       results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
       exitCode: 0,
     });
+  });
+
+  test.concurrent("FileDone does not change the report of another file", async () => {
+    using dir = tempDir("parallel-forged-file-done", {
+      "a.test.js": `import {test} from "bun:test"; test("a", () => {});`,
+      "b.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+        test("b", () => {
+          // For file 0. Wherever the elapsed time is, it says two years.
+          const payload = Buffer.concat([Buffer.alloc(4), Buffer.alloc(124, 1)]);
+          writeSync(3, Buffer.concat([Buffer.from([payload.length, 0, 0, 0, /* FileDone */ 3]), payload]));
+        });`,
+    });
+    expect(await runOnOneWorker(String(dir), bunEnv, "--reporter=junit", "--reporter-outfile=out.xml")).toEqual({
+      results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
+    const xml = readFileSync(path.join(String(dir), "out.xml"), "utf8");
+    expect(Number(/<testsuite name="a\.test\.js".* time="([^"]+)"/.exec(xml)![1])).toBeLessThan(1000);
   });
 });
 

@@ -66,6 +66,17 @@ fn inverse_dct() {
     }
 }
 
+#[test]
+fn inverse_dct_saturates_when_it_rounds() {
+    for first in [32763, 32764, 32767] {
+        check([[4095; 64]; 6], || {
+            let mut got = [from_fn(|i| if i < 16 && i % 4 == 0 { first } else { 0 }); 6];
+            webp::inverse_dct(&mut got, u32::MAX);
+            got
+        });
+    }
+}
+
 /// `edge` goes up the column to the left, through the corner and along the row above.
 fn predicted(mode: u8, edge: [i32; 13], y: usize, x: usize) -> i32 {
     let two = |a: usize, b: usize| (edge[a] + edge[b] + 1) >> 1;
@@ -131,9 +142,10 @@ fn reconstruct_subblocks() {
 fn filter_across(v: &mut [i32; 8], is_simple: bool, is_inner: bool, strength: FilterStrength) {
     let c = |it: i32| it.clamp(-128, 127);
     let step = |i: usize| (v[i] - v[i + 1]).abs();
-    let limit = i32::from(strength.edge_limit) + if is_inner { 0 } else { 4 };
+    let limit = (i32::from(strength.edge_limit) + if is_inner { 0 } else { 4 }) % 256;
     let is_inside = [0, 1, 2, 4, 5, 6].map(|i| step(i) <= strength.interior_limit.into());
-    if 2 * step(3) + (v[2] - v[5]).abs() / 2 > limit || !is_simple && is_inside != [true; 6] {
+    let is_steep = (2 * step(3) + (v[2] - v[5]).abs() / 2).min(255) > limit;
+    if is_steep || !is_simple && is_inside != [true; 6] {
         return;
     }
     let is_high = is_simple || step(2).max(step(4)) > strength.high_variance_threshold.into();
@@ -189,6 +201,8 @@ fn filters() {
     let mut below = random();
     for round in sample(0..1500, 501) {
         let (count, has_above, range) = (below(5), below(4) != 0, 256 >> (round % 6));
+        // The widest picture has so many.
+        let count = if round % 500 == 499 { 1024 } else { count };
         let strength = |_| FilterStrength {
             edge_limit: below(251.min(2 * range)) as u8,
             interior_limit: below(range) as u8,
@@ -241,7 +255,20 @@ fn limits_that_no_file_has() {
             filters_inner_edges: true,
         };
         let given: Vec<_> = (0..20 * 40).map(|_| below(256) as u8).collect();
-        check_against_portable(|| {
+        let mut want = [(); 4].map(|()| given.clone());
+        for (it, (size, is_simple)) in
+            want.iter_mut()
+                .zip([(16, false), (8, false), (8, false), (16, true)])
+        {
+            filter(
+                plane(it, 40, 4 * 40 + 4),
+                size,
+                is_simple,
+                &[strength; 2],
+                true,
+            );
+        }
+        check(Some(want), || {
             let mut got = [(); 4].map(|()| given.clone());
             let [y, u, v, alone] = got.each_mut().map(|it| plane(it, 40, 4 * 40 + 4));
             webp::filter_normally([y, u, v], &[strength; 2], true)?;
@@ -425,6 +452,10 @@ fn rows_are_padded_to_whole_steps() {
         let [upper, lower, mut to_upper, mut to_lower] = lens.map(|len| vec![0; len]);
         webp::upsample([&upper, &lower], [&mut to_upper, &mut to_lower], 33)
     });
+    needs([33, 33, 64, 64], |lens| {
+        let [upper, lower, mut to_upper, mut to_lower] = lens.map(|len| vec![0; len]);
+        webp::upsample([&upper, &lower], [&mut to_upper, &mut to_lower], 1)
+    });
     for endless in [usize::MAX, usize::MAX - 32] {
         check(None, || {
             webp::upsample([&[0]; 2], [&mut [], &mut []], endless)
@@ -464,4 +495,53 @@ fn every_pixel_has_a_tile() {
         webp::undo_cross_color(&mut [[0; 4]], one, usize::BITS - spare as u32)
     });
     check(Some(()), || webp::undo_cross_color(&mut [], &[], 2));
+}
+
+#[test]
+fn any_arguments_are_taken_or_refused() {
+    let lens = [0, 1, 4, 16, 24, 31, 32, 33, 52, 64, 68, 100, 192, 432, 480];
+    let absurd = [
+        1 << 16,
+        usize::MAX / 20,
+        usize::MAX / 2,
+        usize::MAX - 31,
+        usize::MAX,
+    ];
+    let (any, mut below) = ([&lens[..], &absurd].concat(), random());
+    let strength = FilterStrength {
+        edge_limit: 99,
+        interior_limit: 30,
+        high_variance_threshold: 2,
+        filters_inner_edges: true,
+    };
+    for _ in sample(0..30_000, 10_000) {
+        let [a, b, c, d] = from_fn(|_| any[below(any.len())]);
+        let given: [_; 3] = from_fn(|_| {
+            let len = lens[below(lens.len())];
+            samples(&mut below, len)
+        });
+        let ([x, y, z], strengths) = (given.each_ref(), &[strength][..below(2)]);
+        check_against_portable(|| {
+            let [mut p, mut q, mut r] = given.clone();
+            let mut rgba = Vec::with_capacity(z.len());
+            rgba.extend_from_slice(z.as_chunks().0);
+            let results = [
+                webp::filter_simply(plane(&mut p, a, b), strengths, true),
+                webp::filter_normally(
+                    [
+                        plane(&mut p, a, b),
+                        plane(&mut q, c, d),
+                        plane(&mut r, c, d),
+                    ],
+                    strengths,
+                    true,
+                ),
+                webp::undo_prediction(p.as_chunks_mut().0, y.as_chunks().0, &rgba, c as u32),
+                webp::undo_cross_color(q.as_chunks_mut().0, &rgba, d as u32),
+                webp::yuv_to_rgba([x, y, x, y], &mut rgba, a, b),
+                webp::upsample([x, y], [&mut z.clone(), &mut z.clone()], c),
+            ];
+            (results, [p, q, r], rgba)
+        });
+    }
 }

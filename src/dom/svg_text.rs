@@ -7,8 +7,9 @@ use std::rc::Rc;
 use crate::abi::{self, Matrix, Rect, TextRun};
 use crate::document::Document;
 use crate::geometry::translation;
-use crate::name::{Name, is_name, name};
-use crate::path::{Numbers, Path, Piece, at_distance};
+use crate::name::{Map, Name, is_name, name};
+use crate::order::Order as _;
+use crate::path::{Numbers, Path, Piece, Point, at_distance};
 use crate::platform::Shaped;
 use crate::svg::{Node, href, passes_tests, rotation, scaling, unite};
 use crate::svg_values::*;
@@ -36,6 +37,8 @@ struct Character {
     degrees: Option<f32>,
     /// In UTF-16.
     length: u8,
+    /// The text node, and where it is in that.
+    source: (NodeId, u32),
 }
 
 /// A typographic character.
@@ -54,9 +57,66 @@ pub(crate) struct Placed {
     starts_chunk: bool,
 }
 
-struct TextPath {
+/// A path that text is laid out along.
+pub(crate) struct Track {
     pieces: Vec<Piece>,
+    /// How far along each of the pieces ends.
+    ends: Vec<f64>,
     length: f32,
+}
+
+impl Track {
+    fn new(path: &Path, is_reversed: bool) -> Track {
+        let mut pieces = path.pieces();
+        if is_reversed {
+            pieces = pieces
+                .into_iter()
+                .rev()
+                .map(|it| Piece {
+                    from: it.to,
+                    to: it.from,
+                    tangents: it.tangents.map(|[a, b]| [b, a].map(|it| it.map(|it| -it))),
+                })
+                .collect();
+        }
+        let add = |sum: &mut f64, it: &Piece| {
+            Some(*sum + f64::from(it.length())).inspect(|it| *sum = *it)
+        };
+        Track {
+            ends: pieces.iter().scan(0.0, add).collect(),
+            pieces,
+            length: path.length(),
+        }
+    }
+
+    fn at(&self, distance: f32) -> Option<(Point, f32)> {
+        let last_drawn = self
+            .ends
+            .last()
+            .map_or(0, |all| self.ends.partition_point(|it| it < all));
+        let first = self
+            .ends
+            .partition_point(|it| *it < f64::from(distance))
+            .min(last_drawn);
+        at_distance(
+            &self.pieces[first..],
+            (f64::from(distance) - first.checked_sub(1).map_or(0.0, |it| self.ends[it])) as f32,
+        )
+    }
+}
+
+/// The one of the element that was referred to last.
+pub(crate) struct LastTrack {
+    path: Path,
+    is_reversed: bool,
+    track: Rc<Track>,
+}
+
+/// By the `path` element and whether it is reversed, with what `pathLength` multiplies lengths with.
+type Tracks = Map<(NodeId, bool), (f32, Rc<Track>)>;
+
+struct TextPath {
+    track: Rc<Track>,
     offset: f32,
 }
 
@@ -69,6 +129,7 @@ pub(crate) struct TextLayout<'a> {
     pub(crate) scale: f32,
     characters: Vec<Character>,
     is_vertical: bool,
+    goes_up: bool,
 }
 
 #[derive(Default)]
@@ -76,6 +137,7 @@ struct Collector<'a> {
     text: String,
     text_runs: Vec<TextRun>,
     paths: Vec<Option<TextPath>>,
+    tracks: Tracks,
     is_after_space: bool,
     layout: TextLayout<'a>,
 }
@@ -83,12 +145,32 @@ struct Collector<'a> {
 impl<'a> TextLayout<'a> {
     /// From a space with the origin on the baseline, in which the text goes to the right.
     pub(crate) fn matrix(&self, it: &Placed) -> Matrix {
-        let turn = rotation(it.radians + if self.is_vertical { FRAC_PI_2 } else { 0.0 });
-        let placed = multiply(
-            &multiply(&translation(it.at), &turn),
+        multiply(
+            &self.unshifted(it),
             &translation([0.0, -self.runs[it.run].shift]),
-        );
-        multiply(&placed, &scaling(it.stretch, 1.0))
+        )
+    }
+
+    fn unshifted(&self, it: &Placed) -> Matrix {
+        multiply(
+            &multiply(&translation(it.at), &rotation(it.radians + self.turn())),
+            &scaling(it.stretch, 1.0),
+        )
+    }
+
+    fn turn(&self) -> f32 {
+        match (self.is_vertical, self.goes_up) {
+            (false, _) => 0.0,
+            (true, false) => FRAC_PI_2,
+            (true, true) => -FRAC_PI_2,
+        }
+    }
+
+    /// Text that goes up is positioned as if it went down from the other side of the origin.
+    fn flip(&mut self) {
+        self.characters
+            .iter_mut()
+            .for_each(|it| (it.at[1], it.delta[1]) = (it.at[1].map(|it| -it), -it.delta[1]));
     }
 
     fn extent(&self, it: &Placed) -> Rect {
@@ -168,13 +250,13 @@ impl<'a> TextLayout<'a> {
             .clone()
             .map(|it| (it, unit(&self.placed[it])))
             .collect();
-        order.sort_by(|a, b| self.placed[a.0].at[axis].total_cmp(&self.placed[b.0].at[axis]));
+        order.order_by(|a, b| self.placed[a.0].at[axis].total_cmp(&self.placed[b.0].at[axis]));
         let gaps = order
             .iter()
             .zip(&order[1..])
             .filter(|(a, b)| a.1.is_none() || a.1 != b.1)
             .count();
-        let (step, mut shift, mut previous) = ((wanted - length) / (gaps + 1) as f32, 0.0, None);
+        let (step, mut shift, mut previous) = ((wanted - length) / gaps.max(1) as f32, 0.0, None);
         for (index, unit) in order {
             let it = &mut self.placed[index];
             if stretches {
@@ -204,6 +286,9 @@ impl<'a> TextLayout<'a> {
         let (axis, mut shift) = (usize::from(self.is_vertical), [0.0; 2]);
         let path_of = |runs: &[Run], it: &Placed| runs[it.run].path;
         let mut previous = None;
+        if self.goes_up {
+            self.flip();
+        }
         for it in &mut self.placed {
             let (path, delta) = (
                 path_of(&self.runs, it),
@@ -266,7 +351,15 @@ impl<'a> TextLayout<'a> {
             };
             chunk.iter_mut().for_each(|it| it.at[axis] += start - edge);
         }
-        let (mut end, mut after): (Option<[f32; 2]>, [Option<f32>; 2]) = (None, [None; 2]);
+        if self.goes_up {
+            self.flip();
+            self.placed
+                .iter_mut()
+                .filter(|it| path_of(&self.runs, it).is_none())
+                .for_each(|it| it.at[1] = -it.at[1]);
+        }
+        let (mut end, mut after, turn): (Option<[f32; 2]>, [Option<f32>; 2], _) =
+            (None, [None; 2], self.turn());
         for it in &mut self.placed {
             let Some(path) = path_of(&self.runs, it) else {
                 if let Some(end) = end.take() {
@@ -289,8 +382,8 @@ impl<'a> TextLayout<'a> {
                 continue;
             };
             let middle = it.at[axis] + it.advance / 2.0 + path.offset;
-            it.is_hidden = !(0.0..=path.length).contains(&middle);
-            let Some((point, radians)) = at_distance(&path.pieces, middle) else {
+            it.is_hidden = !(0.0..=path.track.length).contains(&middle);
+            let Some((point, radians)) = path.track.at(middle) else {
                 continue;
             };
             let across = if self.is_vertical {
@@ -302,48 +395,58 @@ impl<'a> TextLayout<'a> {
                 &multiply(&translation(point), &rotation(radians)),
                 [-it.advance / 2.0, across],
             );
-            it.radians += radians - if self.is_vertical { FRAC_PI_2 } else { 0.0 };
-            end = path.pieces.last().map(|it| it.to);
+            it.radians += radians - turn;
+            end = path.track.pieces.last().map(|it| it.to);
         }
     }
 }
 
 impl Document {
-    fn text_path(&self, node: &Node) -> Option<TextPath> {
-        let element = node.element;
-        let (scale, path) = match element
+    fn track(&self, path: Path, is_reversed: bool) -> Rc<Track> {
+        let mut last = self.last_track.borrow_mut();
+        last.take_if(|it| it.is_reversed != is_reversed || it.path != path);
+        Rc::clone(
+            &last
+                .get_or_insert_with(|| LastTrack {
+                    track: Rc::new(Track::new(&path, is_reversed)),
+                    path,
+                    is_reversed,
+                })
+                .track,
+        )
+    }
+
+    fn text_path(&self, node: &Node, known: &mut Tracks) -> Option<TextPath> {
+        let (element, is_reversed) = (
+            node.element,
+            node.element.attribute(name!("side")) == Some("right"),
+        );
+        let (scale, track) = match element
             .attribute(name!("path"))
             .map(Path::parse)
             .filter(|it| !it.verbs.is_empty())
         {
-            Some(path) => (1.0, path),
+            Some(path) => (1.0, self.track(path, is_reversed)),
             None => {
                 let target = href(element)
                     .filter(|it| self.fragment_of(it).is_some())
-                    .and_then(|it| self.svg_reference(node.id, it))?;
-                let path = self
-                    .svg_path(&target)
-                    .filter(|_| target.tag == name!("path"))?;
-                (
-                    self.path_scale(target.id, &path),
-                    path.transformed(&self.svg_transform(&target)),
-                )
+                    .and_then(|it| self.svg_reference(node.id, it));
+                let target = target.filter(|it| it.tag == name!("path"))?;
+                let make = || {
+                    let path = self.svg_path(&target).unwrap_or_default();
+                    (
+                        self.path_scale(target.id, &path),
+                        self.track(path.transformed(&self.svg_transform(&target)), is_reversed),
+                    )
+                };
+                known
+                    .entry((target.id, is_reversed))
+                    .or_insert_with(make)
+                    .clone()
             }
         };
-        let mut pieces = path.pieces();
-        if element.attribute(name!("side")) == Some("right") {
-            pieces = pieces
-                .into_iter()
-                .rev()
-                .map(|it| Piece {
-                    from: it.to,
-                    to: it.from,
-                    tangents: it.tangents.map(|[a, b]| [b, a].map(|it| it.map(|it| -it))),
-                })
-                .collect();
-        }
         let (length, offset) = (
-            path.length(),
+            track.length,
             element
                 .attribute(name!("startOffset"))
                 .and_then(|it| self.parse_svg_length(node, it)),
@@ -351,11 +454,7 @@ impl Document {
         let offset = offset.map_or(0.0, |it| {
             it.resolve(0.0) / node.style.zoom * scale + it.resolve(length) - it.resolve(0.0)
         });
-        Some(TextPath {
-            pieces,
-            length,
-            offset,
-        })
+        Some(TextPath { track, offset })
     }
 
     fn collect_text<'a>(&'a self, node: &Node<'a>, parent: Option<usize>, to: &mut Collector<'a>) {
@@ -411,7 +510,7 @@ impl Document {
         let mut path = above.and_then(|it| it.path);
         if node.tag == name!("textPath") {
             path = Some(to.paths.len());
-            to.paths.push(self.text_path(node));
+            to.paths.push(self.text_path(node, &mut to.tracks));
         }
         let (index, first) = (to.layout.runs.len(), to.layout.characters.len());
         to.layout.runs.push(Run {
@@ -444,7 +543,7 @@ impl Document {
                 continue;
             };
             let keeps_spaces = style.text.collapse.preserves_spaces();
-            for character in crate::values::text(text).chars() {
+            for (offset, character) in crate::values::text(text).char_indices() {
                 let is_space = matches!(character, ' ' | '\t' | '\n' | '\r');
                 if is_space && !keeps_spaces && to.is_after_space {
                     continue;
@@ -455,6 +554,7 @@ impl Document {
                     byte: to.text.len(),
                     run: index,
                     length,
+                    source: (child, offset as u32),
                     ..Character::default()
                 });
                 match style.text.transform {
@@ -544,6 +644,7 @@ impl Document {
             scale
         };
         to.layout.is_vertical = text.style.text.writing_mode.is_vertical();
+        to.layout.goes_up = text.style.text.writing_mode == WritingMode::SidewaysLr;
         self.collect_text(text, None, &mut to);
         let Collector {
             text: mut source,
@@ -551,6 +652,7 @@ impl Document {
             paths,
             mut layout,
             is_after_space,
+            ..
         } = to;
         if let Some(space) = layout.characters.pop_if(|_| is_after_space) {
             source.remove(space.byte);
@@ -582,7 +684,7 @@ impl Document {
                 abi::DIRECTION_LTR
             },
         );
-        let (clusters, mut next) = (&layout.shaped.clusters, 0);
+        let (clusters, mut next) = (layout.shaped.clusters(), 0);
         for (index, cluster) in clusters.iter().enumerate() {
             let end = clusters
                 .get(index + 1)
@@ -616,11 +718,9 @@ impl Document {
             let has_glyphs = cluster.glyphs.start < cluster.glyphs.end
                 || cluster.flags != 0
                 || cluster.advance == 0.0;
-            match layout
-                .placed
-                .last_mut()
-                .filter(|it| !has_glyphs && it.run == first.run && !layout.shaped.glyphs.is_empty())
-            {
+            match layout.placed.last_mut().filter(|it| {
+                !has_glyphs && it.run == first.run && !layout.shaped.glyphs().is_empty()
+            }) {
                 Some(ligature) => {
                     (ligature.advance, ligature.characters.end) =
                         (ligature.advance + advance, characters.end)
@@ -706,7 +806,42 @@ impl Document {
                     && invert(&layout.matrix(it))
                         .is_some_and(|inverse| layout.extent(it).contains(apply(&inverse, point)))
             });
+        let has_box = || {
+            node.style.ink.pointer_events == P::BoundingBox
+                && layout.bounds(node.id).is_some_and(|it| it.contains(point))
+        };
         hit.map(|it| layout.runs[it.run].node.id)
+            .or_else(|| has_box().then_some(node.id))
+    }
+
+    /// In the viewport: one for each chunk that has something of these bytes of the text node.
+    pub(crate) fn svg_text_rects(&self, text: NodeId, bytes: &Range<u32>) -> Option<Vec<Rect>> {
+        let parent = self.rendered_node(self.tree[text].parent)?;
+        let (layout, to_viewport) = (
+            self.text_layout_of(&parent)?,
+            self.svg_screen_matrix(parent.id)?,
+        );
+        let is_wanted = |it: &&Placed| {
+            !it.is_hidden
+                && layout.characters[it.characters.clone()]
+                    .iter()
+                    .any(|it| it.source.0 == text && bytes.contains(&it.source.1))
+        };
+        let chunks = layout.placed.chunk_by(|_, next| !next.starts_chunk);
+        Some(
+            chunks
+                .filter_map(|it| {
+                    it.iter()
+                        .filter(is_wanted)
+                        .map(|it| {
+                            layout
+                                .extent(it)
+                                .transformed(&multiply(&to_viewport, &layout.matrix(it)))
+                        })
+                        .reduce(unite)
+                })
+                .collect(),
+        )
     }
 
     /// For each UTF-16 code unit: the start, the end, the extent, the rotation in degrees, and the advance.
@@ -728,21 +863,19 @@ impl Document {
                 .sum();
             for unit in 0..units {
                 out.extend(
-                    [apply(&matrix, [near, 0.0]), apply(&matrix, [far, 0.0])].as_flattened(),
+                    [near, far]
+                        .map(|x| apply(&layout.unshifted(it), [x, 0.0]))
+                        .as_flattened(),
                 );
                 out.extend(extent.transformed(&matrix).to_array());
-                let turn = if layout.is_vertical && !it.is_upright {
-                    90.0
-                } else {
+                let turn = if it.is_upright {
                     0.0
+                } else {
+                    layout.turn().to_degrees().round()
                 };
                 out.extend([
                     it.radians.to_degrees() + turn,
-                    if unit == 0 {
-                        it.advance / it.stretch
-                    } else {
-                        0.0
-                    },
+                    if unit == 0 { it.advance } else { 0.0 },
                 ]);
             }
         }

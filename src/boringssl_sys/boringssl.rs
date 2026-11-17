@@ -804,7 +804,7 @@ impl SSL {
     }
 
     /// Client side: the SNI host name to send, set before the handshake. `false` if BoringSSL rejects it.
-    pub fn set_servername(&mut self, hostname: &core::ffi::CStr) -> bool {
+    pub fn set_servername(&mut self, hostname: &bun_core::ZStr) -> bool {
         // SAFETY: `self` is a live SSL; BoringSSL copies `hostname`.
         unsafe { SSL_set_tlsext_host_name(self, hostname.as_ptr()) == 1 }
     }
@@ -1031,6 +1031,7 @@ pub const SSL_ERROR_WANT_READ: c_int = 2;
 pub const SSL_ERROR_WANT_WRITE: c_int = 3;
 pub const SSL_ERROR_SYSCALL: c_int = 5;
 pub const SSL_ERROR_ZERO_RETURN: c_int = 6;
+pub const SSL_ERROR_WANT_PRIVATE_KEY_OPERATION: c_int = 13;
 pub const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
 
 pub const SSL_VERIFY_NONE: c_int = 0x00;

@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "DesktopICU.h"
 #include "BunClientData.h"
 
 #if ENABLE(AOT)
@@ -13,15 +14,6 @@
 #include <JavaScriptCore/HeapObserver.h>
 #include <JavaScriptCore/IncrementalSweeper.h>
 #include <JavaScriptCore/IntlObject.h>
-#if __has_include(<unicode/ucal.h>)
-#include <unicode/ucal.h>
-#else
-// macOS: libicucore has these, and the SDK has no header for them.
-#include <unicode/utypes.h>
-enum UCalendarType { UCAL_DEFAULT };
-extern "C" void** ucal_open(const UChar*, int32_t, const char*, UCalendarType, UErrorCode*);
-extern "C" void ucal_close(void**);
-#endif
 #include <wtf/MonotonicTime.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
@@ -358,11 +350,16 @@ extern "C" void JSC__useOptionsForDesktopProgram(const char* envp[], size_t envc
 #if ENABLE(AOT)
     JSC::AOT::relaxTimingOfModuleLoads();
 #endif
+#if USE(MIMALLOC)
+    // What a frame frees, one of the next few allocates again.
+    mi_option_set_default(mi_option_purge_delay, 1000);
+#endif
     JSC::Options::warmUpMarkedBlockStartAfterBlocks() = 64;
     JSC::Options::warmUpMarkedBlockCount() = 64;
     JSC::Options::releaseIdleRegExpCodeWhenShrinkingFootprint() = true;
     JSC::Options::numberOfGCMarkers() = std::min(JSC::Options::numberOfGCMarkers(), 4u);
     JSC::Options::largeHeapSize() = 32 * MB;
+    JSC::Options::smallHeapSize() = 4 * MB;
     JSC::Options::heapGrowthMaxIncrease() = 0.5;
     JSC::Options::smallHeapGrowthFactor() = 1.5;
     JSC::Options::minEdenToOldGenerationRatio() = 0.18;

@@ -47,22 +47,34 @@ pub(crate) fn is_on() -> bool {
 
 /// `None` if `look_up` is for the pool, or says so.
 pub(crate) fn try_now<R>(path: &[u8], look_up: impl FnOnce() -> Option<R>) -> Option<R> {
+    let start = begin(path)?;
+    let result = look_up();
+    pause_if_slow(start);
+    result
+}
+
+fn begin(path: &[u8]) -> Option<Instant> {
     let start = Instant::now();
-    let last_pause = LAST_PAUSE.get();
-    if last_pause.is_some_and(|(at, length)| start - at < length) || !is_local(path, start) {
+    if LAST_PAUSE
+        .get()
+        .is_some_and(|(at, length)| start - at < length)
+        || !is_local(path, start)
+    {
         return None;
     }
     LEFT.set(LEFT.get() - 1);
-    let result = look_up();
+    Some(start)
+}
+
+fn pause_if_slow(start: Instant) {
     let end = Instant::now();
     if end - start > SLOW {
-        let length = match last_pause {
+        let length = match LAST_PAUSE.get() {
             Some((at, length)) if end - at < length * 4 => LONGEST_PAUSE.min(length * 4),
             _ => FIRST_PAUSE,
         };
         LAST_PAUSE.set(Some((end, length)));
     }
-    result
 }
 
 fn is_local(path: &[u8], now: Instant) -> bool {

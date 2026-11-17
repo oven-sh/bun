@@ -573,6 +573,18 @@ impl Font {
             .unwrap_or_default()
     }
 
+    /// Of the default script, in horizontal text.
+    pub fn baseline(&self, tag: &Tag) -> Option<f32> {
+        let axis = self.table(b"BASE")?.at16(4)?;
+        let (tags, scripts) = (axis.at16(0)?, axis.at16(2)?);
+        let index = (0..usize::from(tags.u16(0)?)).find(|it| tags.tag(2 + it * 4) == Some(*tag))?;
+        let script = (0..usize::from(scripts.u16(0)?))
+            .find(|it| scripts.tag(2 + it * 6) == Some(*b"DFLT"))?;
+        let values = scripts.at16(6 + script * 6)?.at16(0)?;
+        (index < usize::from(values.u16(2)?)).then_some(())?;
+        values.at16(4 + index * 2)?.i16(2).map(f32::from)
+    }
+
     pub fn metrics(&self, coords: &Coords) -> Metrics {
         let number =
             |table: Option<Data>, at: usize| table.and_then(|it| it.i16(at)).map(f32::from);

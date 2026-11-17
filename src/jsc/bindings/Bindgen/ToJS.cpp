@@ -1,4 +1,7 @@
 #include "root.h"
+#include "Bindgen/IDLConvert.h"
+#include "DOMException.h"
+#include "JSDOMExceptionHandling.h"
 #include "Bindgen/ExternTraits.h"
 #include "Bindgen/SchemaStrings.h"
 #include "BunClientData.h"
@@ -9,6 +12,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "streams/JSReadableStream.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -199,4 +203,143 @@ extern "C" bool Bun__Bindgen__isURL(EncodedJSValue value)
     return !!dynamicDowncast<WebCore::JSDOMURL>(JSValue::decode(value));
 }
 
+}
+
+namespace Bun::Bindgen {
+
+JSC::JSString* toWebStringSlow(JSC::JSGlobalObject& globalObject, JSC::JSValue value, WebString kind, bool nullToEmpty)
+{
+    auto& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (nullToEmpty && value.isNull())
+        return JSC::jsEmptyString(vm);
+    JSC::JSString* string = value.toStringOrNull(&globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (kind == WebString::DOMString || string->is8Bit())
+        return string;
+    auto characters = string->value(&globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (kind == WebString::USVString) {
+        if (!WTF::hasUnpairedSurrogate(characters.data))
+            return string;
+        return JSC::jsString(vm, WTF::replaceUnpairedSurrogatesWithReplacementCharacter(WTF::String(characters.data)));
+    }
+    if (!characters->containsOnlyLatin1()) {
+        JSC::throwTypeError(&globalObject, scope, "Cannot convert a string with a character above U+00FF to a ByteString"_s);
+        return nullptr;
+    }
+    return JSC::jsString(vm, WTF::String::make8Bit(characters->span16()));
+}
+
+JSC::JSValue iteratorMethodOf(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+{
+    if (!value.isObject())
+        return {};
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+    JSC::JSValue method = JSC::iteratorMethod(&globalObject, JSC::asObject(value));
+    RETURN_IF_EXCEPTION(scope, {});
+    return method.isUndefined() ? JSC::JSValue() : method;
+}
+
+// JsList::of_cell() in bindgen/interface.rs
+static_assert(JSC::JSCellButterfly::offsetOfPublicLength() == 8 && JSC::JSCellButterfly::offsetOfData() == 16);
+
+JSC::JSCellButterfly* createList(JSC::JSGlobalObject& globalObject, JSC::MarkedArgumentBuffer& elements)
+{
+    auto& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* list = elements.hasOverflowed() ? nullptr : JSC::JSCellButterfly::tryCreateFromArgList(vm, elements);
+    if (!list) [[unlikely]]
+        JSC::throwOutOfMemoryError(&globalObject, scope);
+    return list;
+}
+
+void forEachInIterable(JSC::JSGlobalObject& globalObject, JSC::JSObject* iterable, JSC::JSValue method, const WTF::ScopedLambda<void(JSC::JSValue)>& callback)
+{
+    JSC::forEachInIterable(globalObject, iterable, method, [&](JSC::VM&, JSC::JSGlobalObject&, JSC::JSValue next) { callback(next); });
+}
+
+WTF::String describeInstanceOf(WTF::ASCIILiteral className)
+{
+    return WTF::makeString("an instance of "_s, className);
+}
+
+JSC::JSCellButterfly* listFromIterable(JSC::JSGlobalObject& globalObject, JSC::JSObject* iterable, JSC::JSValue method, ConvertElement convert)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+    JSC::MarkedArgumentBuffer elements;
+    JSC::forEachInIterable(globalObject, iterable, method, [&](JSC::VM&, JSC::JSGlobalObject& globalObject, JSC::JSValue next) {
+        if (JSC::JSValue converted = convert(globalObject, next))
+            elements.append(converted);
+    });
+    RETURN_IF_EXCEPTION(scope, (elements.overflowCheckNotNeeded(), nullptr));
+    RELEASE_AND_RETURN(scope, createList(globalObject, elements));
+}
+
+JSC::JSCellButterfly* listFromRecord(JSC::JSGlobalObject& globalObject, JSC::JSObject* object, ConvertElement convertKey, ConvertElement convertValue)
+{
+    auto& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, &globalObject, names, JSC::DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSC::MarkedArgumentBuffer elements;
+    for (auto& name : names) {
+        JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+        bool hasProperty = object->methodTable()->getOwnPropertySlot(object, &globalObject, name, slot);
+        RETURN_IF_EXCEPTION(scope, (elements.overflowCheckNotNeeded(), nullptr));
+        if (!hasProperty || (slot.attributes() & JSC::PropertyAttribute::DontEnum))
+            continue;
+        elements.append(convertKey(globalObject, JSC::identifierToJSValue(vm, name)));
+        RETURN_IF_EXCEPTION(scope, (elements.overflowCheckNotNeeded(), nullptr));
+        JSC::JSValue value = object->get(&globalObject, name);
+        RETURN_IF_EXCEPTION(scope, (elements.overflowCheckNotNeeded(), nullptr));
+        elements.append(convertValue(globalObject, value));
+        RETURN_IF_EXCEPTION(scope, (elements.overflowCheckNotNeeded(), nullptr));
+    }
+    RELEASE_AND_RETURN(scope, createList(globalObject, elements));
+}
+
+JSStringAndImpl resolveString(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+    auto characters = string->value(&globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { string, characters.data.impl() };
+}
+
+JSStringAndImpl atomizeString(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+    auto atom = string->toAtomString(&globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { string, atom.data };
+}
+
+JSStringAndImpl atomLiteral(JSC::JSGlobalObject& globalObject, WTF::ASCIILiteral literal)
+{
+    auto* string = JSC::jsString(JSC::getVM(&globalObject), WTF::AtomString(literal).string());
+    return { string, string->tryGetValueImpl() };
+}
+
+}
+
+extern "C" WebCore::DOMException* Bun__Bindgen__newDOMException(WTF::StringImpl* message, const Latin1Character* name, size_t length)
+{
+    return &WebCore::DOMException::create(WTF::String(message), WTF::String({ name, length })).leakRef();
+}
+
+extern "C" void Bun__Bindgen__derefDOMException(WebCore::DOMException* exception)
+{
+    exception->deref();
+}
+
+extern "C" JSC::EncodedJSValue Bun__Bindgen__createDOMException(JSC::JSGlobalObject* globalObject, WebCore::ExceptionCode code, const uint8_t* message, size_t length)
+{
+    return JSC::JSValue::encode(WebCore::createDOMExceptionObject(globalObject, code, WTF::String::fromUTF8ReplacingInvalidSequences({ message, length })));
+}
+
+extern "C" void Bun__Bindgen__freezeArray(JSC::JSGlobalObject* globalObject, JSC::JSObject* array)
+{
+    JSC::objectConstructorFreeze(globalObject, array);
 }

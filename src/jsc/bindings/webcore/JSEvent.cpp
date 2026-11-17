@@ -21,6 +21,7 @@
 #include "root.h"
 #include "JSEvent.h"
 
+#include "DesktopRealm.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -251,7 +252,7 @@ void JSEvent::finishCreation(VM& vm)
 
 JSObject* JSEvent::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSEventPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    auto* structure = JSEventPrototype::createStructure(vm, &globalObject, Bun::desktopRealmPrototypeAbove(&globalObject, "Event"_s));
     structure->setMayBePrototype(true);
     return JSEventPrototype::create(vm, &globalObject, structure);
 }

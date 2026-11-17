@@ -359,8 +359,14 @@ fn find_partings(cells: &[String]) -> (usize, Vec<String>) {
             ..FoldOptions::default()
         };
         let platform = Platforms::LINUX;
-        let fold =
-            create_application_fold_inputs(&provided, arena, &atoms, platform, runs_in_place);
+        let fold = create_application_fold_inputs(
+            &provided,
+            arena,
+            &atoms,
+            platform,
+            runs_in_place,
+            false,
+        );
         (name, fold)
     });
     let (mut refused, mut partings) = (0, Vec::new());

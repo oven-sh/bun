@@ -1,13 +1,13 @@
 //! Executes what JavaScript asks for.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
-use crate::abi::Rect;
-use crate::bridge::{self, blob};
+use crate::bridge;
 use crate::error::{Context as _, Result};
-use crate::json::{Deserialize as _, Value, json};
-use crate::platform::{self, Display};
-use crate::{canvas, frame, host, images, input, surface, text, window};
+use crate::platform::{self, Display, Window};
+use crate::protocol::{Command, Overlay, Request, SystemState, Theme, WindowCommand};
+use crate::{cover, frame, host, input, surface, text, webview, window};
 
 thread_local! {
     static AFTER_COMMAND: RefCell<Vec<Box<dyn FnOnce()>>> = RefCell::default();
@@ -20,17 +20,15 @@ pub fn after_command(f: impl FnOnce() + 'static) {
     AFTER_COMMAND.with_borrow_mut(|deferred| deferred.push(Box::new(f)));
 }
 
-/// open-urls, suspend, resume, thermal-state-change, display-added, -removed and -metrics-changed, and so on.
-#[cfg(not(target_os = "macos"))]
-pub fn event(name: &str, value: Value) {
-    bridge::emit(json!({ "t": "app", "e": name, "v": value }));
+pub fn finish_command() {
+    AFTER_COMMAND.take().into_iter().for_each(|f| f());
 }
 
 /// The display server is gone. JavaScript exits the process.
 #[cfg(not(target_os = "macos"))]
 pub fn session_ended() {
     if !IS_EXITING.get() {
-        event("session-end", Value::Null);
+        bridge::emit_system(crate::protocol::SystemEvent::SessionEnded);
     }
 }
 
@@ -54,58 +52,82 @@ fn shut_down(is_exiting: bool) -> Result<()> {
     Ok(())
 }
 
-/// A command with a `reply` id answers through `bridge::reply`, unless it returns an error.
-pub fn execute(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-    crate::diagnostics::log!("<- {name} {:.200}", arguments.to_string());
-    run(name, arguments, reply)
-        .inspect_err(|error| crate::diagnostics::log!("{name} failed: {error:#}"))
+fn start(without_display: bool, is_accessory: bool) -> Result<()> {
+    if host::platform().is_err() {
+        host::start(platform::start(without_display, is_accessory)?);
+    }
+    // A launch cover does not wait.
+    #[cfg(target_os = "macos")]
+    if host::thread::is_answering() && !is_headless() {
+        platform::macos::finish_launching();
+    }
+    Ok(())
 }
 
-fn run(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-    match name.split_once('.') {
-        Some(("surface", name)) => return surface::command(name, arguments),
-        Some(("canvas", name)) => return canvas::command(name, arguments, reply),
-        Some(("font", name)) => return text::command(name, arguments, reply),
-        Some(("image", name)) => return images::command(name, arguments, reply),
-        Some(("webview", name)) => return crate::webview::command(name, arguments),
-        #[cfg(target_os = "macos")]
-        Some(("defaults" | "keychain", _)) => {
-            return platform::macos::command(name, arguments, reply);
-        }
-        _ => {}
+/// `edits` is what `bridge::edits_taken` was when it was sent.
+pub fn execute(command: Command, edits: u32) -> Result<()> {
+    if let Command::Surface { id, command } = command {
+        return surface::command(id, command, edits);
     }
-    match name {
-        "prewarm" => {}
-        "start" => {
-            if host::platform().is_err() {
-                host::start(platform::start(
-                    arguments["headless"] == true,
-                    arguments["accessory"] == true,
-                )?);
-            }
-            // A launch cover does not wait.
-            #[cfg(target_os = "macos")]
-            if host::thread::is_answering() && !is_headless() {
-                platform::macos::finish_launching();
-            }
+    crate::diagnostics::log!("<- {:.200}", format!("{command:?}"));
+    let result = match command {
+        Command::Start {
+            is_headless,
+            is_accessory,
+        } => start(is_headless, is_accessory),
+        Command::ShutDown { is_exiting } => shut_down(is_exiting),
+        Command::CreateWindow { options, icon } => {
+            window::create(options, icon.as_ref().map(|it| &**it), None)
         }
-        "shutdown" => shut_down(arguments == true)?,
-        "image" => return convert_image(arguments),
-        "window.input" => {
-            let state = window::state(arguments["id"].as_u64().unwrap_or(0) as u32)?;
-            input::synthesize(&state, &arguments["value"])?;
+        Command::Window { id, command } => window_command(id, command),
+        Command::Synthesize {
+            window,
+            modifiers,
+            input,
+        } => window::state(window).map(|state| input::synthesize(&state, modifiers, input)),
+        Command::Surface { .. } => unreachable!(),
+        Command::KeyWasHandled => {
+            input::key_was_handled();
+            Ok(())
         }
-        _ => {
-            let result = command(name, arguments, reply);
-            AFTER_COMMAND.take().into_iter().for_each(|f| f());
-            return result;
+        Command::WebView { id, command } => webview::command(id, command),
+        Command::ShowCover {
+            description,
+            window,
+            surface,
+        } => {
+            cover::show(&description, window, surface);
+            Ok(())
         }
+        Command::DiscardCover => {
+            cover::discard();
+            Ok(())
+        }
+        Command::AssumeScreenReader(is_on) => {
+            crate::accessibility::assume_clients(is_on);
+            Ok(())
+        }
+        Command::System(command) => host::platform().and_then(|platform| platform.command(command)),
+    };
+    finish_command();
+    result.inspect_err(|error| crate::diagnostics::log!("that failed: {error:#}"))
+}
+
+/// Answers through `bridge::reply`, unless it returns an error.
+pub fn request(id: u32, request: Request) -> Result<()> {
+    crate::diagnostics::log!("<- {id}");
+    match request {
+        Request::DecodeFont(bytes) => {
+            text::decode_font_later(id, bytes.into_vec());
+            Ok(())
+        }
+        Request::SaveCover(details) => cover::save(details, id),
+        Request::System(request) => host::platform()?.request(id, request),
     }
-    Ok(Value::Null)
 }
 
 pub fn is_headless() -> bool {
-    host::platform().is_ok_and(|platform| platform.name() == "headless")
+    host::platform().is_ok_and(|platform| !platform.has_display())
 }
 
 pub fn is_dark() -> bool {
@@ -126,21 +148,18 @@ pub fn displays() -> Vec<Display> {
         .unwrap_or_default()
 }
 
-pub fn rectangle(rect: Rect) -> Value {
-    json!({ "x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height })
-}
-
-fn string(value: &Value) -> &str {
-    value.as_str().unwrap_or("")
-}
-
-fn number(value: &Value) -> f32 {
-    value.as_f64().unwrap_or(0.) as f32
+pub fn system_state() -> Result<SystemState> {
+    let platform = host::platform()?;
+    Ok(SystemState {
+        has_display: platform.has_display(),
+        is_dark: is_dark(),
+        ..platform.state()
+    })
 }
 
 /// Returns whether windows are dark now.
-pub fn set_theme_source(source: &str) -> bool {
-    IS_DARK.set(matches!(source, "dark" | "light").then_some(source == "dark"));
+pub fn set_theme(theme: Theme) -> bool {
+    IS_DARK.set((theme != Theme::System).then_some(theme == Theme::Dark));
     if let Ok(platform) = host::platform() {
         platform.set_dark(IS_DARK.get());
     }
@@ -149,119 +168,60 @@ pub fn set_theme_source(source: &str) -> bool {
     is_dark()
 }
 
-fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-    let platform = host::platform()?;
-    if let Some(name) = name.strip_prefix("cover.") {
-        return crate::cover::command(name, arguments, reply);
-    }
-    if let Some(name) = name.strip_prefix("window.") {
-        return window_command(name, arguments);
-    }
-    match name {
-        "info" => {
-            let mut info = platform.command(name, arguments, reply)?;
-            info["compositor"] = platform.name().into();
-            info["dark"] = is_dark().into();
-            Ok(info)
-        }
-        "themeSource" => {
-            crate::cover::HAS_SET_THEME.set(false);
-            Ok(set_theme_source(string(arguments)).into())
-        }
-        "displays" => {
-            let describe = |(index, display): (usize, Display)| {
-                json!({
-                    "id": display.id,
-                    "primary": index == 0,
-                    "bounds": rectangle(display.bounds),
-                    "workArea": rectangle(display.work_area),
-                    "scaleFactor": display.scale,
-                    "displayFrequency": display.frequency.round(),
-                })
-            };
-            Ok(Value::Array(
-                displays().into_iter().enumerate().map(describe).collect(),
-            ))
-        }
-        _ => platform.command(name, arguments, reply),
-    }
+pub fn open_window(id: u32) -> Result<Rc<dyn Window>> {
+    window::state(id)?;
+    window::platform_window(id).context("the window is not open")
 }
 
-fn convert_image(arguments: &Value) -> Result<Value> {
-    let mut image = images::decode_still(&blob(&arguments["blob"])?)?;
-    let side = |value: &Value| value.as_u64().unwrap_or(0).min(16384) as u32;
-    if let Some([x, y, width, height]) = arguments["crop"].as_array().map(Vec::as_slice) {
-        image = image.cropped([x, y, width, height].map(side));
+pub fn set_overlay(id: u32, overlay: Option<Overlay>) -> Result<[f32; 2]> {
+    let state = window::state(id)?;
+    match state.cover.get() {
+        Some(_) => cover::NEXT_OVERLAY.set(Some(overlay)),
+        None => state.options.borrow_mut().overlay = overlay.into(),
     }
-    if let Some([width, height]) = arguments["resize"].as_array().map(Vec::as_slice) {
-        image = image
-            .resized(side(width).max(1), side(height).max(1))
-            .context("the image is empty")?;
-    }
-    let encoded = match string(&arguments["format"]) {
-        "png" => image.to_png(),
-        "rgba" => Some(image.data),
-        "jpeg" => image.to_jpeg(number(&arguments["quality"]).clamp(1., 100.) as u8),
-        _ => return Ok(json!({ "width": image.width, "height": image.height })),
-    };
-    Ok(bridge::put_blob(encoded.context("the image is empty")?).into())
+    window::refresh(id);
+    Ok(frame::overlay_insets(&state.options.borrow()))
 }
 
-fn window_command(name: &str, arguments: &Value) -> Result<Value> {
-    if name == "create" {
-        window::create(window::Options::deserialize(arguments)?)?;
-        return Ok(Value::Null);
+fn window_command(id: u32, command: WindowCommand) -> Result<()> {
+    if let WindowCommand::Background(_) | WindowCommand::BackgroundColor(_) = command {
+        open_window(id)?.claim_background();
+        if window::state(id)?.cover.get().is_some() {
+            cover::postpone(command);
+            return Ok(());
+        }
     }
-    let id = arguments["id"].as_u64().unwrap_or(0) as u32;
-    let value = &arguments["value"];
-    let (state, window) = (
-        window::state(id)?,
-        window::platform_window(id).context("the window is not open")?,
-    );
-    match name {
-        "destroy" => return window::destroy(id).map(|()| Value::Null),
-        "show" | "hide" => {
-            window::set_visible(id, name == "show", value == true);
-            return Ok(Value::Null);
+    obey(id, command)
+}
+
+pub fn obey(id: u32, command: WindowCommand) -> Result<()> {
+    let (state, window) = (window::state(id)?, open_window(id)?);
+    match &command {
+        WindowCommand::Destroy => return window::destroy(id),
+        WindowCommand::Show { takes_focus } => {
+            window::set_visible(id, true, *takes_focus);
+            return Ok(());
         }
-        "geometry" => return Ok(window::describe(&window.geometry())),
-        "mouse" => {
-            return Ok(json!([
-                window.mouse_position().x,
-                window.mouse_position().y
-            ]));
+        WindowCommand::Hide => {
+            window::set_visible(id, false, false);
+            return Ok(());
         }
-        "isFocused" => return Ok(window.is_active().into()),
-        "handle" => return Ok(window.handle().to_string().into()),
-        "isMinimized" | "windowNumber" => return window.command(name, value, None),
-        "overlay" => {
-            let overlay = Option::deserialize(value)?;
-            match state.cover.get() {
-                Some(_) => crate::cover::NEXT_OVERLAY.set(Some(overlay)),
-                None => state.options.borrow_mut().overlay = overlay,
-            }
-            window::refresh(id);
-            return Ok(json!(frame::overlay_insets(&state.options.borrow())));
+        WindowCommand::Title(title) => state.options.borrow_mut().title = title.clone(),
+        WindowCommand::BackgroundColor(color) => {
+            state.options.borrow_mut().background_color = *color
         }
-        "title" => state.options.borrow_mut().title = string(value).to_owned(),
-        "backgroundColor" => {
-            state.options.borrow_mut().background_color = value.as_u64().map(|color| color as u32)
+        WindowCommand::Background(background) => {
+            state.options.borrow_mut().background = *background
         }
-        "background" => state.options.borrow_mut().background = string(value).to_owned(),
-        "limits" => {
+        WindowCommand::Limits(limits) => {
             let mut options = state.options.borrow_mut();
-            (options.min_width, options.min_height) =
-                (number(&value["min"][0]), number(&value["min"][1]));
-            options.resizable = value["resizable"] == true;
+            (options.min_width, options.min_height) = (limits.min.width, limits.min.height);
+            options.resizable = limits.is_resizable;
         }
-        "sheet" => window::draw_before_showing(id),
+        WindowCommand::ShowAsSheet(_) => window::draw_before_showing(id),
         _ => {}
     }
-    let other = value
-        .as_u64()
-        .filter(|_| matches!(name, "parent" | "sheet"));
-    let other = other.and_then(|id| window::platform_window(id as u32));
-    let result = window.command(name, value, other.as_deref());
+    let result = window.command(&command);
     window::refresh(id);
     result
 }

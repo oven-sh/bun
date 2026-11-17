@@ -401,6 +401,7 @@ export const calls: Record<string, string[]> = {
     'import { createZstdCompress } from "node:zlib";\nnew (createZstdCompress()._handle.constructor)(10)',
   ],
   "%SecureContext%": ['import { createSecureContext } from "node:tls";\ncreateSecureContext().context'],
+  "%HTTPParser%": ['import { HTTPParser } from "node:_http_common";\nnew HTTPParser()'],
   CompressionStream: ['new CompressionStream("gzip")'],
   DecompressionStream: ['new DecompressionStream("gzip")'],
   FinalizationRegistry: ["new FinalizationRegistry(() => {})"],
@@ -429,6 +430,7 @@ export const calls: Record<string, string[]> = {
   "Bun.Archive": ['new Bun.Archive({ "a.txt": "a" })'],
   "Bun.CryptoHasher": ['new Bun.CryptoHasher("sha256")', 'new Bun.CryptoHasher("sha256", "key")'],
   "Bun.FileSystemRouter": [`${temporary}\nnew Bun.FileSystemRouter({ style: "nextjs", dir: folder })`],
+  "Bun.RedisClient": ["new Bun.RedisClient()", 'new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false })'],
   "Bun.S3Client": ["new Bun.S3Client({})"],
   "Bun.Transpiler": ["new Bun.Transpiler()"],
   "Bun.Transpiler.prototype.scan": ['new Bun.Transpiler().scan(`import a from "b"; export const c = a;`)'],
@@ -545,39 +547,6 @@ export const families: { rows: RegExp; callee(path: string, mode: string): strin
       "2020, 1, 1",
       "2020, 1",
       "1, 1",
-    ],
-  },
-  {
-    rows: /^%DesktopEngine%|^native:Bindgen:dom\.bind\.ts:|^%NativeFunctions%\.DomBindTs/,
-    callee(path) {
-      const engine = 'load("bun:internal-for-testing").desktopInternals.engine';
-      if (path === "%DesktopEngine%") return `new (${engine}.Engine)`;
-      const name = /(?:prototype\.|ts:|BindTs)(\w+)$/.exec(path)![1];
-      return path.startsWith("%DesktopEngine%")
-        ? `new (${engine}.Engine)(0, "https://example.com/").${name}`
-        : `${engine}.${name[0].toLowerCase()}${name.slice(1)}`;
-    },
-    operands: [
-      "",
-      "1",
-      "1, 1",
-      "1, 1, 1",
-      "1, 1, 0, 1",
-      "1, 1, 0, 1, 0",
-      "1, true",
-      "1, 0, true",
-      "1, 0, 1, 0, true",
-      "1, 1, 0, true, 0, 0, 0",
-      "1, 1, []",
-      '1, "a"',
-      '"top"',
-      '"a", true',
-      '"a{top:0}", false, false',
-      '"style", "inset", "0", false',
-      '"media", "all", null, ""',
-      "new Float64Array([1, 0, 1, 1]), 1",
-      "new Float64Array([0, 0, 1, 0, 0]), new Float64Array(16)",
-      'new Uint8Array(1), "a.svg", 0',
     ],
   },
 ];

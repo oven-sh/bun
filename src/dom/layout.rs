@@ -107,9 +107,11 @@ pub(crate) fn set_scale_of_units(scale: f32) {
     );
 }
 
+#[inline]
 pub(crate) fn unit(value: f32) -> f32 {
     let units = units_per_pixel();
-    (value.clamp(-33_554_428.0, 33_554_428.0) * units).trunc() / units
+    let reciprocal = f32::from_bits((254 << 23) - units.to_bits());
+    (value.clamp(-33_554_428.0, 33_554_428.0) * units).trunc() * reciprocal
 }
 
 pub(crate) fn ceil_to_unit(value: f32) -> f32 {
@@ -117,8 +119,12 @@ pub(crate) fn ceil_to_unit(value: f32) -> f32 {
     (value * units - 0.01).ceil() / units
 }
 
+#[inline(always)]
 pub(crate) fn resolve(length: &Lp, basis: f32) -> f32 {
-    unit(length.resolve(basis))
+    match *length {
+        Lp::Px(px) => unit(px),
+        _ => unit(length.resolve(basis)),
+    }
 }
 
 pub(crate) fn resolve_if_definite(length: &Lp, basis: Option<f32>) -> Option<f32> {
@@ -129,8 +135,20 @@ pub(crate) fn resolve_if_definite(length: &Lp, basis: Option<f32>) -> Option<f32
 }
 
 /// The minimum wins.
+#[inline]
 pub(crate) fn clamp(value: f32, [min, max]: [f32; 2]) -> f32 {
-    value.min(max).max(min)
+    at_least(min, at_most(max, value))
+}
+
+/// `limit` is a number.
+#[inline(always)]
+pub(crate) fn at_least(limit: f32, value: f32) -> f32 {
+    if value > limit { value } else { limit }
+}
+
+#[inline(always)]
+pub(crate) fn at_most(limit: f32, value: f32) -> f32 {
+    if value < limit { value } else { limit }
 }
 
 pub(crate) fn gap(gap: &Normal<PositiveLp>, basis: Option<f32>) -> f32 {
@@ -149,13 +167,16 @@ pub(crate) struct Strut {
 impl Strut {
     pub(crate) fn with(self, margin: f32) -> Strut {
         Strut {
-            positive: self.positive.max(margin),
-            negative: self.negative.min(margin),
+            positive: at_least(self.positive, margin),
+            negative: at_most(self.negative, margin),
         }
     }
 
     pub(crate) fn and(self, other: Strut) -> Strut {
-        self.with(other.positive).with(other.negative)
+        Strut {
+            positive: at_least(self.positive, other.positive),
+            negative: at_most(self.negative, other.negative),
+        }
     }
 
     pub(crate) fn sum(self) -> f32 {
@@ -189,6 +210,8 @@ pub(crate) struct Input {
     pub(crate) is_restricted: bool,
     /// Quirks: nothing separates it from the start of the body or of a cell.
     pub(crate) is_at_quirky_start: bool,
+    /// Only the height is asked for, and a layout for another one is likely to follow.
+    pub(crate) is_probe: bool,
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -227,45 +250,279 @@ pub(crate) struct Widths {
     pub(crate) uses_height: bool,
 }
 
+const NONE: u32 = 0x7fc0_0001;
+
+fn pack(value: Option<f32>) -> u32 {
+    value.map_or(NONE, f32::to_bits)
+}
+
+fn unpack(bits: u32) -> Option<f32> {
+    (bits != NONE).then(|| f32::from_bits(bits))
+}
+
+/// An `Input` in little space.
+#[derive(Clone, Copy)]
+struct Key {
+    width: u32,
+    height: u32,
+    basis: [u32; 2],
+    stretch: u32,
+    row_baseline: u32,
+    room_for_annotations: u32,
+    flags: u8,
+}
+
+impl PartialEq for Key {
+    #[inline(always)]
+    fn eq(&self, other: &Key) -> bool {
+        self.width == other.width
+            && self.height == other.height
+            && self.flags == other.flags
+            && self.basis[1] == other.basis[1]
+            && self.basis[0] == other.basis[0]
+            && self.stretch == other.stretch
+            && self.row_baseline == other.row_baseline
+            && self.room_for_annotations == other.room_for_annotations
+    }
+}
+
+impl Key {
+    const IS_INDEFINITE: u8 = 1;
+    const IGNORES_HEIGHT: u8 = 4;
+    const IS_PROBE: u8 = 128;
+
+    fn new(it: &Input) -> Key {
+        let flags = [
+            it.is_indefinite,
+            it.has_definite_width,
+            it.ignores_height,
+            it.trim[0],
+            it.trim[1],
+            it.is_restricted,
+            it.is_at_quirky_start,
+            it.is_probe,
+        ];
+        Key {
+            width: it.width.to_bits(),
+            height: pack(it.height),
+            basis: [it.basis.0.to_bits(), pack(it.basis.1)],
+            stretch: pack(it.stretch),
+            row_baseline: pack(it.row_baseline),
+            room_for_annotations: it.room_for_annotations.to_bits(),
+            flags: flags
+                .into_iter()
+                .rfold(0, |all, it| all << 1 | u8::from(it)),
+        }
+    }
+
+    fn input(&self) -> Input {
+        let flag = |index: u8| self.flags >> index & 1 != 0;
+        Input {
+            width: f32::from_bits(self.width),
+            height: unpack(self.height),
+            is_indefinite: flag(0),
+            has_definite_width: flag(1),
+            ignores_height: flag(2),
+            basis: (f32::from_bits(self.basis[0]), unpack(self.basis[1])),
+            stretch: unpack(self.stretch),
+            row_baseline: unpack(self.row_baseline),
+            trim: [flag(3), flag(4)],
+            room_for_annotations: f32::from_bits(self.room_for_annotations),
+            is_restricted: flag(5),
+            is_at_quirky_start: flag(6),
+            is_probe: flag(7),
+        }
+    }
+}
+
+enum Found {
+    /// It comes first.
+    Measured,
+    Performed,
+    ForOtherHeight,
+}
+
+/// With its `Output`.
+#[derive(Clone, Copy)]
+struct Memo {
+    key: Key,
+    height: f32,
+    intrinsic: f32,
+    baselines: [u32; 3],
+    room_for_annotations: f32,
+    margins: [Strut; 2],
+    collapses_through: bool,
+    uses_height: bool,
+    has_floats: bool,
+    escapes: Claims,
+}
+
+impl Memo {
+    fn new(key: Key, output: &Output) -> Memo {
+        let Output {
+            height,
+            intrinsic,
+            baselines: [first, second],
+            last_baseline,
+            room_for_annotations,
+            margins,
+            collapses_through,
+            uses_height,
+            has_floats,
+            escapes,
+        } = *output;
+        Memo {
+            key,
+            height,
+            intrinsic,
+            baselines: [pack(first), pack(second), pack(last_baseline)],
+            room_for_annotations,
+            margins,
+            collapses_through,
+            uses_height,
+            has_floats,
+            escapes,
+        }
+    }
+
+    #[inline(always)]
+    fn output(&self) -> Output {
+        let Memo {
+            height,
+            intrinsic,
+            baselines: [first, second, last],
+            room_for_annotations,
+            margins,
+            collapses_through,
+            uses_height,
+            has_floats,
+            escapes,
+            ..
+        } = *self;
+        Output {
+            height,
+            intrinsic,
+            baselines: [unpack(first), unpack(second)],
+            last_baseline: unpack(last),
+            room_for_annotations,
+            margins,
+            collapses_through,
+            uses_height,
+            has_floats,
+            escapes,
+        }
+    }
+}
+
 #[derive(Default)]
+#[repr(C)]
 pub(crate) struct Cache {
-    /// What the boxes inside are laid out for.
-    performed: Option<(Input, Output)>,
-    /// With the pass that has last asked.
-    measured: SmallVec<[(Input, Output, u32); 1]>,
+    /// The one that is in use comes first. Each has the pass that has last asked for it.
+    measured: Option<Box<SmallVec<[(Memo, u32); 1]>>>,
+    performed: Option<Memo>,
+    /// `performed` belongs to `measured`, where it goes when it is replaced.
+    was_measured: Option<core::num::NonZeroU32>,
     /// The one that has last asked for `performed`.
     pass: u32,
+    /// With the height that they are for.
+    widths: Option<(u32, Widths)>,
+    /// What a block has made of it to get `performed`, and its offset from the content edge.
+    pub(crate) settled: Option<(Setting, f32)>,
     /// A pass has laid it out for more than one width.
     had_other_width: bool,
-    widths: Option<(Option<f32>, Widths)>,
     /// The contents have changed, and the rest is only there to be compared with.
     is_stale: bool,
 }
 
+/// All that the width and the offset of a child depend on, in a block that has neither floats nor breaks.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct Setting([u32; 2], u8, TextAlign, Align);
+
+impl Setting {
+    pub(crate) fn new(
+        basis: (f32, Option<f32>),
+        flags: [bool; 4],
+        align: TextAlign,
+        justify: Align,
+    ) -> Setting {
+        Setting(
+            [basis.0.to_bits(), pack(basis.1)],
+            flags.into_iter().fold(0, |all, it| all << 1 | u8::from(it)),
+            align,
+            justify,
+        )
+    }
+}
+
 impl Cache {
     pub(crate) fn clear(&mut self) {
-        (self.performed, self.widths, self.is_stale) = (None, None, false);
-        self.measured.clear();
+        (self.widths, self.is_stale) = (None, false);
+        self.forget_layout();
     }
 
-    fn remember(&mut self, input: Input, output: Output, pass: u32) {
-        if !self.measured.iter().any(|it| it.0 == input) {
-            self.measured.truncate(3);
-            self.measured.insert(0, (input, output, pass));
+    fn measured(&mut self) -> &mut [(Memo, u32)] {
+        if let Some(measured) = &mut self.measured {
+            measured
+        } else {
+            &mut []
         }
+    }
+
+    fn remember(&mut self, memo: &Memo, pass: u32) {
+        let measured = self.measured.get_or_insert_default();
+        if !measured.iter().any(|it| it.0.key == memo.key) {
+            measured.truncate(3);
+            measured.insert(0, (*memo, pass));
+        }
+    }
+
+    /// It is about to be replaced by one for that width.
+    #[inline]
+    fn retire(&mut self, width: Option<u32>) -> &mut Option<Memo> {
+        if let Some(pass) = self.was_measured.take()
+            && let Some(old) = self.performed.filter(|it| {
+                pass.get() - 1 == self.pass || width.is_none_or(|width| width == it.key.width)
+            })
+        {
+            self.remember(&old, pass.get() - 1);
+        }
+        &mut self.performed
     }
 
     /// Whether some are still in use.
     fn forget_other_widths(&mut self) -> bool {
-        let (width, pass) = (self.performed.as_ref().map(|it| it.0.width), self.pass);
-        self.measured
-            .retain(|it| Some(it.0.width) == width || it.2 == pass);
-        self.measured.iter().any(|it| Some(it.0.width) != width)
+        let (Some(measured), width, pass) = (
+            &mut self.measured,
+            self.performed.as_ref().map(|it| it.key.width),
+            self.pass,
+        ) else {
+            return false;
+        };
+        measured.retain(|it| Some(it.0.key.width) == width || it.1 == pass);
+        measured.iter().any(|it| Some(it.0.key.width) != width)
+    }
+
+    pub(crate) fn has_widths(&self) -> bool {
+        self.widths.is_some() && !self.is_stale
+    }
+
+    pub(crate) fn note_widths(&mut self, [min, max]: [f32; 2]) {
+        self.widths = Some((
+            NONE,
+            Widths {
+                sizes: [min, max.max(min)],
+                uses_height: false,
+            },
+        ));
+    }
+
+    pub(crate) fn unsettle(&mut self) {
+        self.settled = None;
     }
 
     pub(crate) fn forget_layout(&mut self) {
-        self.performed = None;
-        self.measured.clear();
+        (self.performed, self.was_measured, self.settled) = (None, None, None);
+        self.measured.iter_mut().for_each(|it| it.clear());
     }
 
     /// Whether it was not yet.
@@ -280,30 +537,31 @@ impl Cache {
     pub(crate) fn collapsed_bottom_margin(&self) -> Strut {
         self.performed
             .as_ref()
-            .map_or_else(Strut::default, |it| it.1.margins[1])
+            .map_or_else(Strut::default, |it| it.margins[1])
     }
 
     /// Whether an out-of-flow box in it has its containing block outside.
     pub(crate) fn has_escapees(&self) -> bool {
         self.performed
             .as_ref()
-            .is_none_or(|it| !it.1.escapes.is_empty())
+            .is_none_or(|it| !it.escapes.is_empty())
     }
 
     pub(crate) fn performed(&self) -> (Input, Output) {
-        self.performed.unwrap_or_default()
+        self.performed
+            .map_or_else(Default::default, |it| (it.key.input(), it.output()))
     }
 
     pub(crate) fn collapses_through(&self) -> bool {
         self.performed
             .as_ref()
-            .is_some_and(|it| it.1.collapses_through)
+            .is_some_and(|it| it.collapses_through)
     }
 
     pub(crate) fn escapes(&self) -> Claims {
         self.performed
             .as_ref()
-            .map_or(Claims::empty(), |it| it.1.escapes)
+            .map_or(Claims::empty(), |it| it.escapes)
     }
 }
 
@@ -387,9 +645,197 @@ pub(crate) fn margins(style: &Style) -> [&Auto<Lp>; 4] {
     ]
 }
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Default)]
+    pub(crate) struct Traits: u8 {
+        const HAS_FIXED_PADDING = 1;
+        const HAS_FIXED_MARGIN = 1 << 1;
+        const HAS_AUTO_MARGIN = 1 << 2;
+        /// As a child of a block, for its width and its offset.
+        const IS_PLAIN_OUTSIDE = 1 << 3;
+        /// As a block, for its height and its children.
+        const IS_PLAIN_INSIDE = 1 << 4;
+        /// It is painted where it is laid out, along with its parent.
+        const IS_QUIET = 1 << 5;
+        /// All sizes and edges are lengths or `auto`.
+        const HAS_FIXED_SIZES = 1 << 6;
+    }
+}
+
+/// What a style comes to in any containing block.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Fixed {
+    units: f32,
+    pub(crate) traits: Traits,
+    pub(crate) border: Edges,
+    pub(crate) padding: Edges,
+    pub(crate) margin: Edges,
+    /// Of the width and of the height of the border box.
+    pub(crate) limits: [[f32; 2]; 2],
+    pub(crate) height: Option<f32>,
+    /// Without the limits, and only if it is no percentage.
+    pub(crate) width: Option<f32>,
+    /// What `box-sizing` leaves out of the width.
+    pub(crate) beside: f32,
+    /// How far the decorations reach out of the border box.
+    pub(crate) outset: f32,
+}
+
+impl Fixed {
+    /// Of a plain block.
+    #[inline(always)]
+    pub(crate) fn height_for(&self, input: &Input, intrinsic: f32) -> f32 {
+        match input.height.or(self.height) {
+            _ if input.ignores_height && input.height.is_none() => intrinsic,
+            Some(height) => height,
+            None => clamp(
+                intrinsic.max((self.border + self.padding).sums()[1]),
+                self.limits[1],
+            ),
+        }
+    }
+}
+
+impl Style {
+    #[inline(always)]
+    pub(crate) fn fixed(&self) -> Fixed {
+        if self.plainness.4.get().units != units_per_pixel() {
+            self.find_fixed();
+        }
+        self.plainness.4.get()
+    }
+
+    #[cold]
+    fn find_fixed(&self) {
+        let (l, is_px) = (&self.layout, |it: &Lp| matches!(it, Lp::Px(_)));
+        let (border, padding) = (Edges::new(self.border()), resolve_padding(self, 0.0));
+        let edges = (border + padding).sums();
+        let outside = if l.box_sizing == BoxSizing::ContentBox {
+            edges
+        } else {
+            [0.0; 2]
+        };
+        let is_fixed = |it: &Size| matches!(it, Size::Auto | Size::Length(Lp::Px(_)));
+        let size = |it: &Size, axis: usize| {
+            if let Size::Length(it) = it {
+                Some((resolve(it, 0.0) + outside[axis]).max(edges[axis]))
+            } else {
+                None
+            }
+        };
+        let limits = [
+            (&l.min_width, &l.max_width.0, 0),
+            (&l.min_height, &l.max_height.0, 1),
+        ]
+        .map(|(min, max, axis)| {
+            [
+                size(min, axis).unwrap_or(edges[axis]),
+                size(max, axis).unwrap_or(f32::INFINITY),
+            ]
+        });
+        let has_fixed_padding = [
+            &l.padding_top,
+            &l.padding_right,
+            &l.padding_bottom,
+            &l.padding_left,
+        ]
+        .iter()
+        .all(|it| is_px(&it.0));
+        let has_fixed_margin = margins(self)
+            .iter()
+            .all(|it| it.0.as_ref().is_none_or(is_px));
+        let heights = [&l.height, &l.min_height, &l.max_height.0];
+        let is_plain_outside = has_fixed_padding
+            && has_fixed_margin
+            && is_fixed(&l.min_width)
+            && is_fixed(&l.max_width.0)
+            && matches!(l.width, Size::Auto | Size::Length(_))
+            && heights
+                .iter()
+                .all(|it| matches!(it, Size::Auto | Size::Length(_)))
+            && l.justify_self == Align::AUTO;
+        let is_plain_inside = has_fixed_padding
+            && heights.iter().all(|it| is_fixed(it))
+            && matches!(
+                self.display(),
+                Display::Block
+                    | Display::ListItem
+                    | Display::FlowRoot
+                    | Display::InlineBlock
+                    | Display::TableCell
+            )
+            && (self.display() != Display::TableCell
+                || heights.iter().all(|it| matches!(it, Size::Auto)))
+            && self.contain().is_empty()
+            && l.align_content == Align::NORMAL
+            && self.rare.box_trim == TextBoxTrim::None
+            && self.rare.margin_trim.0 == [false; 2]
+            && !self.clamps_lines();
+        let mut traits = Traits::empty();
+        traits.set(Traits::HAS_FIXED_PADDING, has_fixed_padding);
+        traits.set(Traits::HAS_FIXED_MARGIN, has_fixed_margin);
+        traits.set(
+            Traits::HAS_AUTO_MARGIN,
+            margins(self).iter().any(|it| it.0.is_none()),
+        );
+        traits.set(Traits::IS_PLAIN_OUTSIDE, is_plain_outside);
+        traits.set(Traits::IS_PLAIN_INSIDE, is_plain_inside);
+        traits.set(Traits::IS_QUIET, self.is_quiet());
+        traits.set(
+            Traits::HAS_FIXED_SIZES,
+            has_fixed_padding && has_fixed_margin && sizes(self).into_iter().all(is_fixed),
+        );
+        let height = size(&l.height, 1).map(|it| clamp(it, limits[1]));
+        let (margin, outset) = (
+            resolve_margin(self, 0.0),
+            crate::paint::decoration_extent(self),
+        );
+        self.plainness.4.set(Fixed {
+            units: units_per_pixel(),
+            traits,
+            border,
+            padding,
+            margin,
+            limits,
+            height,
+            width: size(&l.width, 0),
+            beside: outside[0],
+            outset,
+        });
+    }
+}
+
+fn resolve_padding(style: &Style, basis: f32) -> Edges {
+    let l = &style.layout;
+    Edges {
+        top: resolve(&l.padding_top.0, basis),
+        right: resolve(&l.padding_right.0, basis),
+        bottom: resolve(&l.padding_bottom.0, basis),
+        left: resolve(&l.padding_left.0, basis),
+    }
+}
+
 /// `auto` is zero.
+#[inline]
 pub(crate) fn margin(style: &Style, basis: f32) -> Edges {
-    Edges::new(margins(style).map(|it| it.0.as_ref().map_or(0.0, |it| resolve(it, basis))))
+    let fixed = style.fixed();
+    if fixed.traits.contains(Traits::HAS_FIXED_MARGIN) {
+        fixed.margin
+    } else {
+        resolve_margin(style, basis)
+    }
+}
+
+fn resolve_margin(style: &Style, basis: f32) -> Edges {
+    let (l, used) = (&style.layout, |it: &Auto<Lp>| {
+        it.0.as_ref().map_or(0.0, |it| resolve(it, basis))
+    });
+    Edges {
+        top: used(&l.margin_top),
+        right: used(&l.margin_right),
+        bottom: used(&l.margin_bottom),
+        left: used(&l.margin_left),
+    }
 }
 
 pub(crate) fn auto_margins(style: &Style, axis: usize) -> [bool; 2] {
@@ -420,28 +866,48 @@ pub(crate) enum AutoSize {
 }
 
 impl LayoutBox {
+    #[inline]
     pub(crate) fn padding(&self, basis: f32) -> Edges {
-        let l = &self.style.layout;
+        let fixed = self.style.fixed();
         match self.kind {
             Kind::Table if self.collapsed.is_some() => Edges::default(),
-            Kind::Row | Kind::RowGroup => Edges::default(),
-            _ => Edges::new(
-                [
-                    &l.padding_top,
-                    &l.padding_right,
-                    &l.padding_bottom,
-                    &l.padding_left,
-                ]
-                .map(|it| resolve(&it.0, basis)),
-            ),
+            Kind::Row | Kind::RowGroup | Kind::Lines => Edges::default(),
+            _ if fixed.traits.contains(Traits::HAS_FIXED_PADDING) => fixed.padding,
+            _ => resolve_padding(&self.style, basis),
         }
     }
 
+    #[inline]
     pub(crate) fn border_and_padding(&self, basis: f32) -> Edges {
         Edges::new(self.border()) + self.padding(basis)
     }
 
+    /// Whether a plain block that is no child of a block has the same contents.
+    fn holds_for_height(&self, known: &Memo, key: &Key) -> bool {
+        let without = |it: &Key| Key {
+            height: NONE,
+            flags: it.flags & !(Key::IS_INDEFINITE | Key::IGNORES_HEIGHT),
+            ..*it
+        };
+        !known.uses_height
+            && !matches!(self.parent_kind, Kind::Block | Kind::Row)
+            && self.outside_marker == 0
+            && without(key) == without(&known.key)
+    }
+
+    #[inline(always)]
+    pub(crate) fn fixed_sizes(&self) -> Option<Fixed> {
+        let fixed = self.style.fixed();
+        (self.is_ordinary
+            && self.turned == self.mode
+            && self.collapsed.is_none()
+            && !self.has_legend
+            && fixed.traits.contains(Traits::HAS_FIXED_SIZES))
+        .then_some(fixed)
+    }
+
     /// What the scrollbars take from the padding box.
+    #[inline]
     pub(crate) fn gutters(&self) -> Edges {
         if self.scrollbars == [false; 2] {
             return Edges::default();
@@ -598,6 +1064,9 @@ impl LayoutBox {
             Size::Calc(calc) => {
                 let basis = match &calc.0 {
                     Size::Length(length) => resolve_if_definite(length, room.basis[axis])?,
+                    Size::Auto if matches!(index, 2 | 3) => {
+                        content(&Size::Auto).unwrap_or(border_and_padding[axis]) - outside
+                    }
                     basis => {
                         self.resolve_size(basis, index, room, border_and_padding, content)?
                             - outside
@@ -621,7 +1090,10 @@ impl LayoutBox {
         intrinsic: Option<f32>,
     ) -> [f32; 2] {
         let l = &self.style.layout;
-        let mut content = |size: &Size| intrinsic.filter(|_| *size != Size::Auto);
+        if let (Size::Auto, Size::Auto) = (&l.min_height, &l.max_height.0) {
+            return [border_and_padding[1], f32::INFINITY];
+        }
+        let mut content = |size: &Size| intrinsic.filter(|_| !matches!(size, Size::Auto));
         let min = match &l.min_height {
             Size::Auto => None,
             Size::Length(_) if room.basis[1].is_none() => self.resolve_size(
@@ -647,7 +1119,7 @@ impl LayoutBox {
     }
 
     pub(crate) fn has_auto_size(&self, axis: usize) -> bool {
-        *sizes(&self.style)[axis].basis() == Size::Auto
+        matches!(sizes(&self.style)[axis].basis(), Size::Auto)
     }
 
     /// From the style alone. `auto` is `for_auto`, and the other keywords are `intrinsic`.
@@ -659,20 +1131,18 @@ impl LayoutBox {
         intrinsic: Option<f32>,
     ) -> Option<f32> {
         let mut content = |size: &Size| {
-            if *size == Size::Auto {
+            if let Size::Auto = size {
                 for_auto
             } else {
                 intrinsic
             }
         };
-        let height = (self.resolve_size(
-            &self.style.layout.height,
-            1,
-            room,
-            border_and_padding,
-            &mut content,
-        ))
-        .or(for_auto)?;
+        let height = match &self.style.layout.height {
+            Size::Auto => for_auto?.max(border_and_padding[1]),
+            height => self
+                .resolve_size(height, 1, room, border_and_padding, &mut content)
+                .or(for_auto)?,
+        };
         Some(clamp(
             height,
             self.height_limits(room, border_and_padding, intrinsic),
@@ -688,6 +1158,17 @@ impl LayoutBox {
         }
         if input.ignores_height {
             return intrinsic;
+        }
+        if let (Size::Auto, None, None) = (&self.style.layout.height, self.ratio, intrinsic) {
+            return None;
+        }
+        if let Some(fixed) = self.fixed_sizes().filter(|_| !self.is_cell()) {
+            return fixed.height.or_else(|| {
+                Some(clamp(
+                    intrinsic?.max((fixed.border + fixed.padding).sums()[1]),
+                    fixed.limits[1],
+                ))
+            });
         }
         let edges = self.border_and_padding(input.basis.0).sums();
         let room = Room {
@@ -769,14 +1250,43 @@ impl Document {
             it.cache.clear();
         }
         if let Some((known, widths)) = it.cache.widths
-            && (!widths.uses_height || known == height)
+            && (!widths.uses_height || known == pack(height) || self.layout_fuel == 0)
         {
             return widths;
         }
+        crate::recovery::need_stack();
+        self.layout_fuel = self.layout_fuel.saturating_sub(1);
+        let it = &self.boxes[id];
         let (inset, turns) = (
             it.inset(0.0).sums()[0],
             it.turned.is_vertical() && !it.has_turned_children,
         );
+        if let ([only], Kind::Block, true) = (
+            &it.children[..],
+            it.kind,
+            it.is_ordinary
+                && !it.is_skipped
+                && it.style.fixed().traits.contains(Traits::IS_PLAIN_INSIDE),
+        ) && let lines = &self.boxes[*only]
+            && let (
+                Kind::Lines,
+                false,
+                Some((
+                    _,
+                    Widths {
+                        sizes,
+                        uses_height: false,
+                    },
+                )),
+            ) = (lines.kind, lines.cache.is_stale, lines.cache.widths)
+        {
+            let sizes = sizes.map(|it| it + inset);
+            self.boxes[id].cache.note_widths(sizes);
+            return Widths {
+                sizes,
+                uses_height: false,
+            };
+        }
         if turns {
             self.turn_children(id, self.boxes[id].mode);
         }
@@ -817,7 +1327,7 @@ impl Document {
             widths.sizes = widths.sizes.map(|it| it.max(0.0) + inset);
         }
         widths.sizes[1] = widths.sizes[1].max(widths.sizes[0]);
-        self.boxes[id].cache.widths = Some((height, widths));
+        self.boxes[id].cache.widths = Some((pack(height), widths));
         widths
     }
 
@@ -867,6 +1377,25 @@ impl Document {
         widths
     }
 
+    /// `content_widths` of a box with `fixed_sizes`.
+    #[inline]
+    pub(crate) fn fixed_content_widths(
+        &mut self,
+        id: BoxId,
+        fixed: &Fixed,
+        height: Option<f32>,
+    ) -> Widths {
+        let inner = height
+            .or(fixed.height)
+            .map(|it| (it - (fixed.border + fixed.padding).sums()[1]).max(0.0));
+        let widths = self.intrinsic_widths(id, inner);
+        Widths {
+            uses_height: widths.uses_height
+                && (self.boxes[id].uses_parent[1] || fixed.height.is_none()),
+            ..widths
+        }
+    }
+
     pub(crate) fn transferred_width_limits(
         &self,
         id: BoxId,
@@ -890,7 +1419,7 @@ impl Document {
         edges: [f32; 2],
         for_auto: &Size,
     ) -> Option<f32> {
-        let keyword = if *size.basis() == Size::Auto {
+        let keyword = if let Size::Auto = size.basis() {
             for_auto
         } else {
             size.basis()
@@ -912,7 +1441,7 @@ impl Document {
 
     pub(crate) fn width_limits(&mut self, id: BoxId, room: &Room, edges: [f32; 2]) -> [f32; 2] {
         let l = &self.boxes[id].style.layout;
-        if (&l.min_width, &l.max_width.0) == (&Size::Auto, &Size::Auto) {
+        if let (Size::Auto, Size::Auto) = (&l.min_width, &l.max_width.0) {
             return [edges[0], f32::INFINITY];
         }
         let l = Rc::clone(l);
@@ -948,8 +1477,19 @@ impl Document {
         }
         let (edges, l) = (
             it.border_and_padding(room.basis[0].unwrap_or(0.0)).sums(),
-            Rc::clone(&it.style.layout),
+            &it.style.layout,
         );
+        if let (Size::Auto, Size::Auto, Size::Auto, None, Some(available)) = (
+            &l.width,
+            &l.min_width,
+            &l.max_width.0,
+            it.ratio,
+            room.available[0],
+        ) && auto != AutoSize::Fit
+        {
+            return available.max(edges[0]);
+        }
+        let l = Rc::clone(l);
         let is_auto = it.has_auto_size(0);
         let transfers = it.ratio.is_some()
             && !(is_auto && auto == AutoSize::Stretch)
@@ -988,6 +1528,24 @@ impl Document {
         height: Option<f32>,
         stretched: Option<f32>,
     ) -> Widths {
+        if self.boxes[id].kind == Kind::Lines {
+            return self.intrinsic_widths(id, stretched.or(height));
+        }
+        if let Some(fixed) = self.boxes[id].fixed_sizes() {
+            let widths = match fixed.width {
+                Some(width) => Widths {
+                    sizes: [width; 2],
+                    uses_height: false,
+                },
+                None => self.fixed_content_widths(id, &fixed, stretched),
+            };
+            return Widths {
+                sizes: widths
+                    .sizes
+                    .map(|it| clamp(it, fixed.limits[0]) + fixed.margin.sums()[0]),
+                ..widths
+            };
+        }
         let least = if self.boxes[id].kind == Kind::Table {
             self.table_min_width(id)
         } else {
@@ -1077,11 +1635,12 @@ impl Document {
 
     /// For a child whose height is up to its style.
     pub(crate) fn input_for(&self, id: BoxId, width: f32, room: &Room) -> Input {
-        let stretches = sizes(&self.boxes[id].style)
-            .iter()
-            .skip(1)
-            .step_by(2)
-            .any(|it| matches!(it, Size::Stretch | Size::Calc(_)))
+        let (l, fills) = (&self.boxes[id].style.layout, |it: &Size| {
+            matches!(it, Size::Stretch | Size::Calc(_))
+        });
+        let stretches = fills(&l.height)
+            || fills(&l.min_height)
+            || fills(&l.max_height.0)
             || self.boxes[id].is_orthogonal();
         Input {
             width,
@@ -1094,6 +1653,14 @@ impl Document {
 
     /// For a box with `height: auto` that is stretched.
     pub(crate) fn clamp_height(&mut self, id: BoxId, height: f32, width: f32, room: &Room) -> f32 {
+        if let Some(fixed) = self.boxes[id].fixed_sizes() {
+            return fixed.height.unwrap_or_else(|| {
+                clamp(
+                    height.max((fixed.border + fixed.padding).sums()[1]),
+                    fixed.limits[1],
+                )
+            });
+        }
         let l = &self.boxes[id].style.layout;
         let is_keyword = |it: &Size| {
             !matches!(
@@ -1134,7 +1701,8 @@ impl Document {
         .intrinsic
     }
 
-    fn normalized(&self, id: BoxId, mut input: Input) -> Input {
+    #[inline]
+    fn normalize(&self, id: BoxId, input: &mut Input) {
         let it = &self.boxes[id];
         if !it.uses_parent[0] && !it.fills_parent {
             input.basis.0 = 0.0;
@@ -1143,106 +1711,341 @@ impl Document {
             input.basis.1 = None;
         }
         input.is_indefinite &= input.height.is_some();
-        input
+        input.is_probe = input.is_probe
+            && it.kind == Kind::Flex
+            && it.is_ordinary
+            && it.turned == it.mode
+            && !(it.has_legend || it.is_skipped || it.is_parking)
+            && self.boxes.is_unbroken(id);
     }
 
     /// Like `lay_out`, which has to follow.
-    pub(crate) fn measure(&mut self, id: BoxId, input: Input) -> Output {
+    #[inline(always)]
+    pub(crate) fn measure(&mut self, id: BoxId, mut input: Input) -> Output {
         if self.boxes[id].is_foreign() {
             return self.lay_out_foreign(id, input);
         }
-        let input = self.normalized(id, input);
-        let cache = &mut self.boxes[id].cache;
-        if !cache.is_stale
-            && let Some(index) = cache.measured.iter().position(|it| it.0 == input)
-        {
-            cache.measured[..=index].rotate_right(1);
-            cache.measured[0].2 = self.layout_pass;
-            return cache.measured[0].1;
+        let how = self.find_measurement(id, &mut input);
+        let it = &self.boxes[id];
+        let known = match how {
+            Found::Measured => it
+                .cache
+                .measured
+                .as_ref()
+                .and_then(|it| it.first())
+                .map(|it| &it.0),
+            _ => it.cache.performed.as_ref(),
+        };
+        let output = known.map_or_else(Output::default, Memo::output);
+        if let Found::ForOtherHeight = how {
+            Output {
+                height: it.style.fixed().height_for(&input, output.intrinsic),
+                ..output
+            }
+        } else {
+            output
         }
-        let output = self.lay_out(id, input, None);
-        self.boxes[id]
-            .cache
-            .remember(input, output, self.layout_pass);
-        output
     }
 
+    #[inline(never)]
+    fn find_measurement(&mut self, id: BoxId, input: &mut Input) -> Found {
+        self.normalize(id, input);
+        let (cache, key) = (&mut self.boxes[id].cache, Key::new(input));
+        if !cache.is_stale
+            && let Some(index) = cache.measured().iter().position(|it| it.0.key == key)
+        {
+            let measured = cache.measured();
+            if index > 0 {
+                measured[..=index].rotate_right(1);
+            }
+            measured[0].1 = self.layout_pass;
+            return Found::Measured;
+        }
+        let it = &self.boxes[id];
+        if it.cache.performed.as_ref().is_some_and(|known| {
+            !it.cache.is_stale && !known.has_floats && it.holds_for_height(known, &key)
+        }) && self.is_plain_block(id, input, None)
+        {
+            return Found::ForOtherHeight;
+        }
+        self.perform(id, input, None);
+        let cache = &mut self.boxes[id].cache;
+        match cache.performed {
+            Some(known) if known.key != key => {
+                cache.remember(&Memo { key, ..known }, self.layout_pass)
+            }
+            _ => cache.was_measured = core::num::NonZeroU32::new(self.layout_pass.wrapping_add(1)),
+        }
+        Found::Performed
+    }
+
+    #[inline(always)]
     pub(crate) fn lay_out(
         &mut self,
         id: BoxId,
-        input: Input,
-        mut floats: Option<&mut Floats>,
+        mut input: Input,
+        floats: Option<&mut Floats>,
     ) -> Output {
         if self.boxes[id].is_foreign() {
             return self.lay_out_foreign(id, input);
         }
-        let input = self.normalized(id, input);
+        self.perform(id, &mut input, floats);
+        self.boxes[id]
+            .cache
+            .performed
+            .as_ref()
+            .map_or_else(Output::default, Memo::output)
+    }
+
+    /// The result is in the cache.
+    #[inline(never)]
+    fn perform(&mut self, id: BoxId, input: &mut Input, mut floats: Option<&mut Floats>) {
+        self.normalize(id, input);
+        let input = &*input;
         let it = &mut self.boxes[id];
         if it.cache.is_stale {
             it.cache.clear();
+        }
+        if self.layout_fuel == 0
+            && it.cache.pass == self.layout_pass
+            && let Some(known) = it
+                .cache
+                .performed
+                .as_ref()
+                .filter(|it| input.is_probe || it.key.flags & Key::IS_PROBE == 0)
+        {
+            it.layout.size.height = known.height;
+            return;
         }
         it.cache.had_other_width |=
             it.cache.pass == self.layout_pass && it.layout.size.width != input.width;
         it.cache.pass = self.layout_pass;
         let is_affected = floats.as_ref().is_some_and(|it| it.are_in_the_way());
-        if let Some((known, output)) = &mut it.cache.performed
-            && !is_affected
-            && !output.has_floats
+        let (key, is_resized, mut differs_in_width, mut differs_in_size) =
+            (Key::new(input), it.cache.performed.is_some(), false, false);
+        if let Some(known) = it
+            .cache
+            .performed
+            .as_ref()
+            .filter(|it| !is_affected && !it.has_floats)
         {
-            let gets_own_height = || {
-                input.height == Some(output.height)
-                    && Input {
-                        height: None,
-                        is_indefinite: false,
-                        stretch: known.stretch,
-                        ..input
-                    } == *known
-                    && (!output.uses_height
-                        || input.is_indefinite
-                            && it.style.layout.height == Size::Auto
-                            && it.ratio.is_none())
-            };
-            if *known == input || gets_own_height() {
-                it.layout.size.height = output.height;
-                return *output;
-            }
-            // An ancestor may have been measured with the old result.
-            if known.width == input.width && known.basis.1.is_none() && input.basis.1.is_some() {
-                let (known, output) = (*known, *output);
-                it.cache.remember(known, output, self.layout_pass);
+            if known.key.width != key.width {
+                let key = Key {
+                    width: known.key.width,
+                    ..key
+                };
+                differs_in_width = it.kind == Kind::Lines && key == known.key;
+                differs_in_size = it.kind == Kind::Block
+                    && it.children.len() == 1
+                    && (it.outside_marker == 0 || !it.style.is_rtl())
+                    && (key == known.key || floats.is_none() && it.holds_for_height(known, &key));
+            } else {
+                let gets_own_height = || {
+                    input.height == Some(known.height)
+                        && Key {
+                            height: NONE,
+                            flags: key.flags & !Key::IS_INDEFINITE,
+                            stretch: known.key.stretch,
+                            ..key
+                        } == known.key
+                        && (!known.uses_height
+                            || input.is_indefinite
+                                && matches!(it.style.layout.height, Size::Auto)
+                                && it.ratio.is_none())
+                };
+                if known.key == key || gets_own_height() {
+                    it.layout.size.height = known.height;
+                    return;
+                }
+                differs_in_size =
+                    floats.is_none() && it.holds_for_height(known, &key) && it.hoisted.is_empty();
+                // An ancestor may have been measured with the old result.
+                if known.key.basis[1] == NONE && input.basis.1.is_some() {
+                    let known = *known;
+                    it.cache.remember(&known, self.layout_pass);
+                }
             }
         }
+        self.layout_fuel = self.layout_fuel.saturating_sub(1);
         if self.measuring > 0 {
-            let mut ancestor = it.parent;
-            while ancestor != 0 {
-                self.boxes[ancestor].cache.performed = None;
-                ancestor = self.boxes[ancestor].parent;
+            let mut at = id;
+            while at != VIEWPORT && at != 0 {
+                let it = &self.boxes[at];
+                at = if self.boxes[it.container].depth < it.depth {
+                    it.container
+                } else {
+                    it.parent
+                };
+                *self.boxes[at].cache.retire(None) = None;
             }
         }
+        self.boxes.prefetch_after(id);
         let count = floats.as_ref().map_or(0, |it| it.len());
-        let mut output = self.compute(id, &input, floats.as_deref_mut());
-        output.has_floats = is_affected || floats.is_some_and(|it| it.len() != count);
+        if differs_in_width
+            && self.resize_lines(id, input.width)
+            && let Some(known) = self.boxes[id].cache.performed
+        {
+            self.boxes[id].layout.size.height = known.height;
+            self.record(id, Memo { key, ..known }, is_resized);
+            let it = &self.boxes[id];
+            if [it.mode, it.turned] == [WritingMode::HorizontalTb; 2]
+                && it.children.is_empty()
+                && it.hoisted.is_empty()
+                && self.boxes.is_unbroken(id)
+            {
+                self.note_extents_of_lines(id, None);
+            }
+        } else if differs_in_size
+            && self.is_plain_block(id, input, floats.as_deref())
+            && let Some(known) = self.boxes[id].cache.performed
+            && (known.key.width == key.width || self.resize_only_lines(id, input.width))
+        {
+            let it = &mut self.boxes[id];
+            let height = if key.height == known.key.height && key.flags == known.key.flags {
+                known.height
+            } else {
+                it.style.fixed().height_for(input, known.intrinsic)
+            };
+            (it.layout.size.width, it.layout.size.height) = (input.width, height);
+            it.cache.was_measured = it
+                .cache
+                .was_measured
+                .filter(|_| known.key.width != key.width);
+            self.record(
+                id,
+                Memo {
+                    key,
+                    height,
+                    ..known
+                },
+                is_resized,
+            );
+            self.note_extents(id);
+        } else if !is_affected && let Some(output) = self.lay_out_label(id, input) {
+            self.record(id, Memo::new(key, &output), is_resized);
+            self.note_extents_of_lines(id, None);
+        } else if !is_affected
+            && self.boxes[id].kind == Kind::Lines
+            && let Some((output, painted)) = self.lay_out_prose(id, input)
+        {
+            self.record(id, Memo::new(key, &output), is_resized);
+            self.note_extents_of_lines(id, Some(painted));
+        } else if self.is_plain_block(id, input, floats.as_deref()) {
+            let output = self.lay_out_plain_block(id, input, floats);
+            self.record(id, Memo::new(key, &output), is_resized);
+            self.note_extents(id);
+        } else if input.is_probe {
+            self.boxes[id].layout.size.width = input.width;
+            let output = self.lay_out_flex(id, input, None);
+            self.record(id, Memo::new(key, &output), is_resized);
+        } else {
+            let output = self.compute(id, input, floats.as_deref_mut());
+            self.record(
+                id,
+                Memo {
+                    has_floats: is_affected || floats.is_some_and(|it| it.len() != count),
+                    ..Memo::new(key, &output)
+                },
+                is_resized,
+            );
+            if matches!(self.boxes[id].kind, Kind::Flex | Kind::Grid) && self.boxes.is_unbroken(id)
+            {
+                self.note_extents(id);
+            }
+        }
+    }
+
+    /// Whether all that is in the block is lines that could stay as they are.
+    #[inline(always)]
+    fn resize_only_lines(&mut self, id: BoxId, width: f32) -> bool {
+        let it = &self.boxes[id];
+        let (child, width) = (
+            it.children[0],
+            at_least(
+                0.0,
+                width - (it.layout.border + it.layout.padding).sums()[0],
+            ),
+        );
+        let it = &self.boxes[child];
+        let had_other_width = it.cache.pass == self.layout_pass && it.layout.size.width != width;
+        if !(it.kind == Kind::Lines
+            && it.uses_parent == [false; 2]
+            && it.children.is_empty()
+            && it.cache.is_current()
+            && it.cache.was_measured.is_none()
+            && self.resize_lines(child, width))
+        {
+            return false;
+        }
+        let it = &mut self.boxes[child];
+        (it.cache.had_other_width, it.cache.pass) = (
+            it.cache.had_other_width || had_other_width,
+            self.layout_pass,
+        );
+        it.cache
+            .performed
+            .iter_mut()
+            .for_each(|it| it.key.width = width.to_bits());
+        self.note_layout(child, true);
+        self.note_extents_of_lines(child, None);
+        true
+    }
+
+    #[inline(always)]
+    #[expect(clippy::large_types_passed_by_value, reason = "it is never in memory")]
+    fn record(&mut self, id: BoxId, memo: Memo, is_resized: bool) {
         let it = &mut self.boxes[id];
-        it.cache.performed = Some((input, output));
+        *it.cache.retire(Some(memo.key.width)) = Some(memo);
+        self.note_layout(id, is_resized);
+    }
+
+    #[inline(always)]
+    fn note_layout(&mut self, id: BoxId, is_resized: bool) {
+        let it = &mut self.boxes[id];
+        it.cache.settled = None;
+        let layers = it.painted.layers.get();
         it.forget_extents();
+        if is_resized {
+            it.painted.layers.set(layers);
+        }
         if it.scrolls() {
             self.resized_scrollers.push(it.node);
         }
-        output
+    }
+
+    /// The offset, the margins, and what `lay_out` would return.
+    #[inline]
+    pub(crate) fn settled(&mut self, id: BoxId, setting: Setting) -> Option<(f32, Edges, Output)> {
+        let it = &mut self.boxes[id];
+        let (_, x) = it
+            .cache
+            .settled
+            .filter(|settled| settled.0 == setting && !it.cache.is_stale)?;
+        let known = it.cache.performed.as_ref().filter(|known| {
+            it.layout.size.width.to_bits() == known.key.width && !known.has_floats
+        })?;
+        (it.layout.size.height, it.cache.pass) = (known.height, self.layout_pass);
+        Some((x, it.layout.margin, known.output()))
+    }
+
+    pub(crate) fn note_settled(&mut self, id: BoxId, setting: Setting, x: f32) {
+        let it = &mut self.boxes[id];
+        it.cache.settled = ([it.turned, it.mode] == [WritingMode::HorizontalTb; 2]
+            && it.tag != crate::name::name!("legend"))
+        .then_some((setting, x));
     }
 
     /// For a box that may be split.
     pub(crate) fn lay_out_uncached(
         &mut self,
         id: BoxId,
-        input: Input,
+        mut input: Input,
         floats: Option<&mut Floats>,
         breaks: &mut Breaks,
     ) -> Output {
-        let (input, keeps_turned) = (
-            self.normalized(id, input),
-            self.boxes[id].has_turned_children,
-        );
+        self.layout_fuel = self.layout_fuel.saturating_sub(1);
+        self.normalize(id, &mut input);
+        let keeps_turned = self.boxes[id].has_turned_children;
         if self.boxes[id].cache.is_stale {
             self.boxes[id].cache.clear();
         }
@@ -1253,7 +2056,8 @@ impl Document {
         if keeps_turned {
             self.turn_children(id, self.boxes[id].mode);
         }
-        self.boxes[id].cache.performed = Some((input, output));
+        *self.boxes[id].cache.retire(None) = Some(Memo::new(Key::new(&input), &output));
+        self.boxes[id].cache.settled = None;
         self.boxes[id].forget_extents();
         output
     }
@@ -1287,6 +2091,7 @@ impl Document {
         floats: Option<&mut Floats>,
         mut breaks: Option<&mut Breaks>,
     ) -> Output {
+        crate::recovery::need_stack();
         if !self.boxes.pieces.is_empty() {
             self.boxes.pieces.remove(&id);
         }
@@ -1399,6 +2204,7 @@ impl Document {
     }
 
     /// `at` is without the relative offset.
+    #[inline]
     pub(crate) fn place_child(
         &mut self,
         id: BoxId,
@@ -1418,6 +2224,7 @@ impl Document {
     }
 
     /// Adds what a child in flow passes on to its parent.
+    #[inline(always)]
     pub(crate) fn absorb(&self, child: BoxId, own: &Output, output: &mut Output) {
         let it = &self.boxes[child];
         let has_offset = || {
@@ -1443,10 +2250,13 @@ impl Document {
 
     /// Whether the parent has to be laid out again.
     fn refresh(&mut self, id: BoxId) -> bool {
+        if let Some(escapes) = self.refresh_out_of_flow(id) {
+            return !escapes.is_empty();
+        }
         let it = &mut self.boxes[id];
         it.cache.forget_other_widths();
-        let old = core::mem::take(&mut it.cache);
-        let Some((input, output)) = old.performed else {
+        let (mut old, covered) = (core::mem::take(&mut it.cache), it.covered());
+        let Some((input, output)) = old.performed.map(|it| (it.key.input(), it.output())) else {
             return true;
         };
         let it = &self.boxes[id];
@@ -1466,6 +2276,7 @@ impl Document {
             )
             || self.boxes[parent].cache.is_stale
             || self.boxes[parent].mode.is_vertical()
+            || self.boxes[parent].splits_layers
             || !self.boxes.pieces.is_empty() && self.is_in_columns(id)
             || self
                 .boxes
@@ -1479,17 +2290,17 @@ impl Document {
         }
         let has_changed = old
             .widths
-            .is_some_and(|(height, widths)| self.intrinsic_widths(id, height) != widths)
+            .is_some_and(|(height, widths)| self.intrinsic_widths(id, unpack(height)) != widths)
             || old
-                .measured
+                .measured()
                 .iter()
                 .rev()
-                .any(|(input, output, _)| self.measure(id, *input) != *output);
+                .any(|it| self.measure(id, it.0.key.input()) != it.0.output());
         self.boxes[id]
             .cache
-            .measured
+            .measured()
             .iter_mut()
-            .for_each(|it| it.2 = old.pass);
+            .for_each(|it| it.1 = old.pass);
         if has_changed {
             return true;
         }
@@ -1503,8 +2314,17 @@ impl Document {
             return true;
         }
         let cache = &mut self.boxes[id].cache;
-        (cache.measured, cache.pass, cache.had_other_width) =
-            (old.measured, old.pass, old.had_other_width);
+        (
+            cache.measured,
+            cache.was_measured,
+            cache.pass,
+            cache.had_other_width,
+        ) = (
+            old.measured,
+            old.was_measured,
+            old.pass,
+            old.had_other_width,
+        );
         let (mut ancestor, mut matters) = (
             parent,
             old.had_other_width && !self.boxes[id].ignores_contents(),
@@ -1517,8 +2337,12 @@ impl Document {
             }
             ancestor = it.parent;
         }
-        self.boxes.mark_ink(id);
-        self.moved_boxes_in_scrollers.push(id);
+        if covered.is_some() && covered == self.boxes[id].covered() {
+            self.repaint_eventually(id);
+        } else {
+            self.boxes.mark_ink_around(id);
+            self.moved_boxes_in_scrollers.push(id);
+        }
         false
     }
 
@@ -1535,9 +2359,13 @@ impl Document {
             self.boxes.turned_styles.get_mut().clear();
         }
         for _ in 0..3 {
-            self.layout_pass = self.layout_pass.wrapping_add(1);
+            (self.layout_pass, self.layout_fuel) = (
+                self.layout_pass.wrapping_add(1),
+                50_000 + 100 * self.boxes.most_so_far(),
+            );
             let (parked, stale): (Vec<_>, Vec<_>) = (core::mem::take(&mut self.boxes.stale)
                 .into_iter())
+            .filter(|it| self.boxes.is_alive(*it))
             .partition(|it| self.boxes.is_parked(*it));
             self.boxes.parked_stale.extend(parked);
             let mut stale: std::collections::BinaryHeap<_> = stale
@@ -1546,8 +2374,7 @@ impl Document {
                 .collect();
             while let Some((_, id)) = stale.pop() {
                 let it = &self.boxes[id];
-                if id != VIEWPORT && it.cache.is_stale && it.kind != Kind::Free && self.refresh(id)
-                {
+                if id != VIEWPORT && it.cache.is_stale && self.refresh(id) {
                     let parent = self.boxes[id].parent;
                     if self.boxes[parent].cache.make_stale() {
                         stale.push((self.boxes[parent].depth, parent));
@@ -1574,6 +2401,7 @@ impl Document {
                 break;
             }
         }
+        self.layout_fuel = usize::MAX;
     }
 
     /// Of the content box, where it does not depend on the contents.
@@ -1640,7 +2468,14 @@ impl Document {
                     Some([Some(253.0 * style.zoom), None])
                 }
                 tag if tag == name!("select")
-                    && (element.has(name!("multiple")) || count(name!("size"), 1.0) > 1.0) =>
+                    && count(
+                        name!("size"),
+                        if element.has(name!("multiple")) {
+                            4.0
+                        } else {
+                            1.0
+                        },
+                    ) > 1.0 =>
                 {
                     let row =
                         (style.font.size.0 * 1.2).round().max(style.line_height()) + style.zoom;
@@ -1718,6 +2553,7 @@ impl Document {
         if !self.boxes[id].overflow.contains(&Overflow::Auto) {
             return false;
         }
+        let may_remove = may_remove && !self.queries.with_new_scrollbars.contains(&id);
         let turned = self.turn(id, WritingMode::HorizontalTb);
         self.boxes[id].forget_extents();
         let range = self.scroll_range(id);
@@ -1745,6 +2581,12 @@ impl Document {
             it.scrollbars = [false; 2];
         }
         let changed = it.scrollbars != before && it.scrollbar_size > 0.0;
+        if changed
+            && (0..2).any(|axis| it.scrollbars[axis] && !before[axis])
+            && self.queries.are_settling
+        {
+            self.queries.with_new_scrollbars.insert(id);
+        }
         it.forget_extents();
         if changed
             && may_remove
@@ -1881,6 +2723,33 @@ impl Document {
         }
         for index in 0..self.boxes[id].children.len() {
             let child = self.boxes[id].children[index];
+            if self.boxes[id].kind == Kind::Replaced {
+                let (inset, turned) = (self.boxes[id].inset(input.basis.0), self.boxes[id].turned);
+                let size = turned.turn_axes([
+                    (input.width - inset.sums()[0]).max(0.0),
+                    (height - inset.sums()[1]).max(0.0),
+                ]);
+                self.lay_out(
+                    child,
+                    self.input_for(
+                        child,
+                        size[0],
+                        &Room {
+                            basis: size.map(Some),
+                            height: Some(size[1]),
+                            ..Room::default()
+                        },
+                    ),
+                    None,
+                );
+                self.place_child(
+                    child,
+                    turned.turn_axes([inset.left, inset.top]),
+                    Edges::default(),
+                    (0.0, None),
+                );
+                continue;
+            }
             let [at, basis] = self.foreign_placement(self.boxes[child].node, [input.width, height]);
             let room = Room {
                 basis: basis.map(Some),
@@ -1977,20 +2846,32 @@ impl Document {
         }
     }
 
-    fn place_outside_marker(&mut self, id: BoxId, input: &Input, output: &mut Output) {
+    pub(crate) fn place_outside_marker(&mut self, id: BoxId, input: &Input, output: &mut Output) {
         let marker = self.boxes[id].outside_marker;
         if marker == 0 {
             return;
         }
-        let width = self.resolve_width(marker, &Room::default(), AutoSize::Fit);
-        let own = self.lay_out(
-            marker,
-            Input {
-                width,
-                ..Input::default()
-            },
-            None,
-        );
+        let it = &self.boxes[marker];
+        let (width, own) = match it.cache.performed.as_ref().filter(|_| {
+            !it.cache.is_stale
+                && [it.mode, it.turned, self.boxes[id].mode] == [WritingMode::HorizontalTb; 3]
+        }) {
+            Some(known) => (it.layout.size.width, known.output()),
+            None => {
+                let width = self.resolve_width(marker, &Room::default(), AutoSize::Fit);
+                (
+                    width,
+                    self.lay_out(
+                        marker,
+                        Input {
+                            width,
+                            ..Input::default()
+                        },
+                        None,
+                    ),
+                )
+            }
+        };
         let inset = self.boxes[id].inset(input.basis.0);
         let ascent = own.baselines[0].unwrap_or(own.height);
         let baseline = match output.baselines[0] {
@@ -2068,7 +2949,11 @@ impl Document {
 
 /// How much of the free space goes before a box, or before the first of `count`, and how much between them.
 /// Part `index` of equal parts, which add up to whole units.
+#[inline]
 pub(crate) fn diffused(part: f32, index: usize) -> f32 {
+    if index == 0 {
+        return ((f64::from(part) * 64.0).round() / 64.0) as f32;
+    }
     let until = |count: usize| (f64::from(part) * count as f64 * 64.0).round() / 64.0;
     (until(index + 1) - until(index)) as f32
 }

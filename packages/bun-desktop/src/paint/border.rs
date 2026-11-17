@@ -1,8 +1,8 @@
 //! Borders and text decorations, after Blink's `BoxBorderPainter` and `StyledStrokeData`.
 
 use super::raster::{
-    Clip, Coverage, IntRect, Layer, Paint, Path, add_rounded_rect, has_radii, premultiply,
-    rounded_rect_path,
+    Clip, Coverage, IntRect, Layer, Paint, Path, add_rounded_rect, has_radii, map_rect,
+    premultiply, rounded_rect_path,
 };
 use crate::abi::{LineStyle, Rect, RoundedRect};
 use crate::gfx::{self, Cap, Fill, PathBuilder as _, Stroke, Transform};
@@ -349,10 +349,17 @@ pub fn decoration(
     let thickness = (rect.height * scale).max(1.);
     let reach = (0.5 + (3. * thickness + 0.5).round()) / scale;
     let step = (0.5 + (2. * thickness + 0.5).round()) / scale;
-    let (mut x, y) = (rect.x - step * 2., rect.y + 0.5 / scale);
+    let shown = matrix
+        .invert()
+        .map_or(rect, |back| map_rect(&back, area.to_rect()));
+    let hidden = ((shown.x - rect.height - rect.x) / (step * 2.))
+        .floor()
+        .max(0.);
+    let right = (rect.x + rect.width).min(shown.x + shown.width + rect.height);
+    let (mut x, y) = (rect.x + (hidden - 1.) * step * 2., rect.y + 0.5 / scale);
     let mut wave = Path::new();
     wave.move_to([x, y]);
-    while x < rect.x + rect.width + step * 2. && wave.len() < 1 << 16 {
+    while x < right + step * 2. && wave.len() < 1 << 16 {
         wave.curve_to(
             [x + step, y + reach],
             [x + step, y - reach],

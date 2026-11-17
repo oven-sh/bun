@@ -10,9 +10,11 @@ use super::sfnt::{self, Metrics, Tag, bitmap, color};
 use super::shaper::{Feature, Plan, Tables};
 use crate::abi::{self, FontMetrics};
 use crate::bridge;
-use crate::error::{Context as _, Result, bail};
+use crate::error::{Context as _, Result};
 use crate::hash::{FastHasher, FastMap};
-use crate::json::{Deserialize as _, Value, json, record};
+use crate::host::thread;
+use crate::json::record;
+use crate::protocol::{FontFace, FontFaceStyle, FontSource, List, Maybe, Reply, Text};
 use crate::small_vec::SmallVec;
 use crate::sync::{Mutex, RwLock};
 use crate::unicode::{self, Script};
@@ -154,6 +156,7 @@ pub struct Face {
     pub file: &'static File,
     pub embolden: bool,
     pub skew: bool,
+    pub is_smoothed: bool,
     palette: Palette,
     pub coords: &'static [i16],
     metrics: Metrics,
@@ -222,10 +225,6 @@ pub struct Capabilities {
     pub slope: Range,
 }
 
-fn setting_tag(name: &str) -> Option<Tag> {
-    name.as_bytes().try_into().ok()
-}
-
 record! {
     default
     #[derive(Clone, Default)]
@@ -235,7 +234,7 @@ record! {
         local: Option<String>,
         weight: Option<Range>,
         stretch: Option<Range>,
-        style: Option<String>,
+        is_slanted: Option<bool>,
         slope: Option<Range>,
         /// Among faces that match as well, the highest wins.
         order: u32,
@@ -244,8 +243,8 @@ record! {
         ascent_override: Option<f32>,
         descent_override: Option<f32>,
         line_gap_override: Option<f32>,
-        features: Vec<(String, f32)>,
-        variations: Vec<(String, f32)>,
+        features: Vec<(Tag, f32)>,
+        variations: Vec<(Tag, f32)>,
     }
 }
 
@@ -349,6 +348,7 @@ pub struct Candidate {
     is_taller: bool,
     embolden: bool,
     skew: bool,
+    is_smoothed: bool,
     faces: SmallVec<(u32, &'static Face), 1>,
 }
 
@@ -414,10 +414,12 @@ pub enum Presentation {
 pub struct Resolved {
     pub candidates: Vec<Candidate>,
     /// The ones after these were added as fallbacks.
-    listed: usize,
+    pub listed: usize,
     primary: usize,
     /// The candidate for each ASCII character, plus one, once it is known.
     ascii: [u16; 128],
+    /// What itemizing has found out about characters.
+    pub known: Vec<u64>,
     fallbacks: FastMap<(char, Presentation), u16>,
     pub language: Vec<u8>,
     pub device_scale: f32,
@@ -436,8 +438,10 @@ struct System {
     fallbacks: FastMap<(char, bool, u64), Option<FamilyId>>,
 }
 
+type InstanceKey = (usize, Vec<i16>, [bool; 3], Palette);
+
 #[derive(Default)]
-struct Instances(FastMap<(usize, Vec<i16>, bool, bool, Palette), &'static Face>);
+struct Instances(FastMap<InstanceKey, &'static Face>);
 
 pub struct Fonts {
     system: System,
@@ -494,8 +498,10 @@ fn distance(wanted: &Description, offered: &Capabilities) -> (f32, f32, f32) {
     (
         directed(wanted.stretch, offered.stretch, wanted.stretch <= 100.),
         match slope < 0. {
-            true => directed(slope, offered.slope, slope <= -11.),
-            false => directed(slope, offered.slope, slope < 11.),
+            true if offered.slope.0 > 0. => offered.slope.0 + OTHER_DIRECTION * 2.,
+            true => directed(slope, offered.slope, slope <= -DEFAULT_OBLIQUE_ANGLE),
+            false if offered.slope.1 < 0. => OTHER_DIRECTION * 2. - offered.slope.1,
+            false => directed(slope, offered.slope, slope < DEFAULT_OBLIQUE_ANGLE),
         },
         weight,
     )
@@ -700,14 +706,8 @@ fn candidate(
         features.push((*b"kern", 0.));
     }
     if let Some(web) = &web {
-        let settings = |settings: &[(String, f32)]| {
-            let settings = settings
-                .iter()
-                .filter_map(|(name, value)| Some((setting_tag(name)?, *value)));
-            settings.collect::<Vec<_>>()
-        };
-        variations.extend(settings(&web.descriptors.variations));
-        features.extend(settings(&web.descriptors.features));
+        variations.extend(&web.descriptors.variations);
+        features.extend(&web.descriptors.features);
     }
     variations.extend(
         wanted
@@ -765,7 +765,8 @@ fn candidate(
         },
         size_adjust: size_adjust
             .or(web.as_ref().and_then(|web| web.descriptors.size_adjust))
-            .unwrap_or(1.),
+            .unwrap_or(1.)
+            .min(10_000.),
         features: features
             .iter()
             .map(|(tag, value)| Feature {
@@ -790,6 +791,9 @@ fn candidate(
         skew: wanted.synthesis & abi::SYNTHESIZE_STYLE != 0
             && wanted.slope() > 0.
             && offered.slope.1 <= 0.,
+        is_smoothed: cfg!(target_os = "macos")
+            && wanted.synthesis & abi::SYNTHESIZE_SMOOTHING != 0
+            && !file.has_color,
         web,
         faces: SmallVec::new(),
     }
@@ -804,8 +808,7 @@ impl Instances {
         let key = (
             std::ptr::from_ref(file).addr(),
             coords,
-            candidate.embolden,
-            candidate.skew,
+            [candidate.embolden, candidate.skew, candidate.is_smoothed],
             candidate.palette.clone(),
         );
         self.0.entry(key).or_insert_with_key(|(_, coords, ..)| {
@@ -815,6 +818,7 @@ impl Instances {
                 file,
                 embolden: candidate.embolden,
                 skew: candidate.skew,
+                is_smoothed: candidate.is_smoothed,
                 palette: candidate.palette.clone(),
                 coords: coords.clone().leak(),
                 metrics: file.font.metrics(coords),
@@ -897,6 +901,7 @@ fn resolve(wanted: &Description, system: &mut System, web: &[Arc<WebFont>]) -> R
             .unwrap_or(0),
         candidates,
         ascii: [0; 128],
+        known: Vec::new(),
         fallbacks: FastMap::default(),
         language,
         emoji: wanted.emoji,
@@ -905,7 +910,8 @@ fn resolve(wanted: &Description, system: &mut System, web: &[Arc<WebFont>]) -> R
 }
 
 pub fn is_default_ignorable(character: char) -> bool {
-    matches!(character as u32,
+    !matches!(character as u32, ..0xAD | 0x61D..0x115F | 0x3165..0xFE00)
+        && matches!(character as u32,
         0xAD | 0x34F | 0x61C | 0x115F..=0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x200B..=0x200F
         | 0x202A..=0x202E | 0x2060..=0x206F | 0x3164 | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xFFF0..=0xFFF8
         | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0xE0000..=0xE0FFF)
@@ -1083,23 +1089,46 @@ impl Fonts {
         }
     }
 
-    fn register(&mut self, arguments: &Value) -> Result<u32> {
-        let descriptors = Descriptors::deserialize(arguments)?;
-        let file = match &descriptors.local {
-            Some(name) => self
-                .system
-                .local(name)
-                .context("there is no such local font")?,
-            None => {
-                let data = decoded::decode(bridge::blob(&arguments["blob"])?, true);
-                let file = data.and_then(|data| {
+    fn register(&mut self, face: FontFace, source: FontSource) -> Result<u32> {
+        let (file, local) = match source {
+            FontSource::Local(name) => (
+                self.system
+                    .local(&name)
+                    .context("there is no such local font")?,
+                Some(name.into_string()),
+            ),
+            FontSource::Bytes(bytes) => {
+                let file = decoded::decode(bytes.into_vec(), true).and_then(|data| {
                     *self
                         .web_files
                         .entry(data.as_ptr() as usize)
                         .or_insert_with(|| File::load(data, 0))
                 });
-                file.context("the font could not be decoded")?
+                (file.context("the font could not be decoded")?, None)
             }
+        };
+        let range = |it: Maybe<[f32; 2]>| it.get().map(Range::from);
+        let settings = |all: &[abi::FontSetting]| all.iter().map(|it| (it.tag, it.value)).collect();
+        let descriptors = Descriptors {
+            scope: face.scope,
+            family: face.family.into_string(),
+            local,
+            weight: range(face.weight),
+            stretch: range(face.stretch),
+            is_slanted: (face.style != FontFaceStyle::Auto)
+                .then_some(face.style == FontFaceStyle::Slanted),
+            slope: range(face.slope),
+            order: face.order,
+            unicode_range: face
+                .unicode_range
+                .get()
+                .map(|all| all.iter().map(|it| (*it).into()).collect()),
+            size_adjust: face.size_adjust.get(),
+            ascent_override: face.ascent_override.get(),
+            descent_override: face.descent_override.get(),
+            line_gap_override: face.line_gap_override.get(),
+            features: settings(&face.features),
+            variations: settings(&face.variations),
         };
         Ok(self.add_web_font(file, descriptors))
     }
@@ -1117,11 +1146,11 @@ impl Fonts {
             stretch: descriptors
                 .stretch
                 .map_or_else(|| axis(b"wdth", 100.), ordered),
-            slope: match descriptors.style.as_deref() {
-                Some("italic" | "oblique") => descriptors
+            slope: match descriptors.is_slanted {
+                Some(true) => descriptors
                     .slope
                     .map_or((DEFAULT_OBLIQUE_ANGLE, DEFAULT_OBLIQUE_ANGLE), ordered),
-                Some(_) => (0., 0.),
+                Some(false) => (0., 0.),
                 None => file
                     .axis(b"slnt")
                     .map_or((0., 0.), |axis| (-axis.max, -axis.min)),
@@ -1142,7 +1171,8 @@ impl Fonts {
 
 /// Lists the system's fonts and opens the one that most interfaces use, on another thread.
 pub fn prewarm() {
-    let work = || {
+    fn work() {
+        thread::set_name(c"fonts");
         let candidate = {
             let system = &mut FONTS.lock().system;
             let family = system.generic("system-ui");
@@ -1154,11 +1184,8 @@ pub fn prewarm() {
                 candidate.file.styles();
             }
         }
-    };
-    std::thread::Builder::new()
-        .name("fonts".into())
-        .spawn(work)
-        .ok();
+    }
+    thread::detach(2 << 20, || drop(std::panic::catch_unwind(work)));
 }
 
 pub fn describe(description: Description) -> u32 {
@@ -1365,67 +1392,79 @@ pub fn em_box(font: u32, size: f32) -> (f32, f32) {
     (ascent, size - ascent)
 }
 
-pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-    if name == "decode" {
-        let bytes = bridge::blob(arguments)?;
-        let Some(reply) = reply else {
-            return Ok(decoded::decode(bytes, false).is_some().into());
-        };
-        bridge::in_background(reply, move || {
-            Ok(decoded::decode(bytes, true).is_some().into())
-        });
-        return Ok(Value::Null);
-    }
+/// Those that the font has a position for.
+pub fn baselines(font: u32, size: f32, tags: [&[u8; 4]; 3]) -> [Option<f32>; 3] {
     let fonts = &mut *FONTS.lock();
-    let number = |key: &str| arguments[key].as_u64().unwrap_or(0) as u32;
-    match name {
-        "register" => return Ok(fonts.register(arguments)?.into()),
-        "unregister" => {
-            if let Some(index) = fonts.web.iter().position(|font| font.id == number("id")) {
-                let font = fonts.web.remove(index);
-                fonts.invalidate(font.descriptors.scope);
-            }
-        }
-        "order" => {
-            let Some(font) = fonts.web.iter_mut().find(|font| font.id == number("id")) else {
-                return Ok(false.into());
-            };
-            let descriptors = Descriptors {
-                order: number("order"),
-                ..font.descriptors.clone()
-            };
-            *font = Arc::new(WebFont {
-                id: font.id,
-                file: font.file,
-                capabilities: font.capabilities,
-                descriptors,
-            });
-            let font = font.clone();
-            let is_rival = |it: &Arc<WebFont>| {
-                let (a, b) = (&it.descriptors, &font.descriptors);
-                it.id != font.id
-                    && a.scope == b.scope
-                    && it.capabilities == font.capabilities
-                    && a.family.eq_ignore_ascii_case(&b.family)
-            };
-            let matters = fonts.web.iter().any(is_rival);
-            if matters {
-                fonts.invalidate(font.descriptors.scope);
-            }
-            return Ok(matters.into());
-        }
-        "dropScope" => {
-            fonts
-                .web
-                .retain(|font| font.descriptors.scope != number("scope"));
-            fonts.invalidate(number("scope"));
-        }
-        "families" => {
-            let mut names: Vec<&str> = fonts.system.catalog.family_names().collect();
-            names.sort_unstable();
-            return Ok(json!(names));
-        }
-        _ => bail!("unknown command font.{name}"),
+    let Some(primary) = fonts.primary(font) else {
+        return [None; 3];
+    };
+    let (resolved, face) = fonts.instance(font, primary, size);
+    let scale = size * resolved.candidates[primary].size_adjust / face.units_per_em();
+    tags.map(|it| Some(face.file.font.baseline(it)? * scale))
+}
+
+pub fn decode_font(bytes: Vec<u8>) -> bool {
+    decoded::decode(bytes, false).is_some()
+}
+
+pub fn decode_font_later(reply: u32, bytes: Vec<u8>) {
+    bridge::reply_later(reply, move || {
+        decoded::decode(bytes, true);
+        Ok(Reply::Done)
+    });
+}
+
+pub fn register_font(face: FontFace, source: FontSource) -> Result<u32> {
+    FONTS.lock().register(face, source)
+}
+
+pub fn unregister_font(id: u32) {
+    let fonts = &mut *FONTS.lock();
+    if let Some(index) = fonts.web.iter().position(|font| font.id == id) {
+        let font = fonts.web.remove(index);
+        fonts.invalidate(font.descriptors.scope);
     }
-    Ok(Value::Null)
+}
+
+pub fn order_font(id: u32, order: u32) -> bool {
+    let fonts = &mut *FONTS.lock();
+    let Some(font) = fonts.web.iter_mut().find(|font| font.id == id) else {
+        return false;
+    };
+    let descriptors = Descriptors {
+        order,
+        ..font.descriptors.clone()
+    };
+    *font = Arc::new(WebFont {
+        id,
+        file: font.file,
+        capabilities: font.capabilities,
+        descriptors,
+    });
+    let font = font.clone();
+    let is_rival = |it: &Arc<WebFont>| {
+        let (a, b) = (&it.descriptors, &font.descriptors);
+        it.id != font.id
+            && a.scope == b.scope
+            && it.capabilities == font.capabilities
+            && a.family.eq_ignore_ascii_case(&b.family)
+    };
+    let matters = fonts.web.iter().any(is_rival);
+    if matters {
+        fonts.invalidate(font.descriptors.scope);
+    }
+    matters
+}
+
+pub fn drop_font_scope(scope: u32) {
+    let fonts = &mut *FONTS.lock();
+    fonts.web.retain(|font| font.descriptors.scope != scope);
+    fonts.invalidate(scope);
+}
+
+pub fn font_families() -> List<Text> {
+    let fonts = &mut *FONTS.lock();
+    let mut names: Vec<&str> = fonts.system.catalog.family_names().collect();
+    names.sort_unstable();
+    names.into_iter().map(Text::from).collect()
 }

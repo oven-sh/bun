@@ -1,5 +1,6 @@
 //! Anchor positioning. What `anchor()`, `anchor-size()` and the fallbacks come to is found by layout, and becomes the computed style.
 
+use core::cell::RefCell;
 use std::rc::Rc;
 
 use crate::abi::Rect;
@@ -8,7 +9,8 @@ use crate::calc::{Anchor, AnchorSide, AnchorSize, Measure, Node, Unit};
 use crate::document::Document;
 use crate::fragment::Piece;
 use crate::layout::{margins, sizes};
-use crate::name::Map;
+use crate::name::{Map, keyed_hash};
+use crate::order::Order as _;
 use crate::positioned::Edge;
 use crate::properties::{Id, Style, Value};
 use crate::sheet::{AtKind, Block, Defined};
@@ -50,6 +52,14 @@ pub(crate) struct Anchoring {
     /// The size of the inset-modified containing block, and what is left of it around the margin box.
     pub(crate) room: [f32; 2],
     pub(crate) free: [f32; 4],
+}
+
+/// While many boxes are being positioned.
+#[derive(Default)]
+pub(crate) struct Index {
+    by_name: Map<u64, Vec<NodeId>>,
+    /// Among the rendered children of their parents.
+    places: RefCell<Map<NodeId, usize>>,
 }
 
 struct Resolved {
@@ -600,9 +610,15 @@ impl Document {
     /// Compares in tree order.
     fn flat_path(&self, node: NodeId) -> Vec<usize> {
         let index = |it| {
-            self.rendered_children(self.tree.flat_parent(it))
-                .take_while(|child| *child != it)
-                .count()
+            let siblings = || self.rendered_children(self.tree.flat_parent(it));
+            let Some(mut known) = self.anchor_index.as_ref().map(|it| it.places.borrow_mut())
+            else {
+                return siblings().take_while(|child| *child != it).count();
+            };
+            if !known.contains_key(&it) {
+                known.extend(siblings().zip(0..));
+            }
+            *known.entry(it).or_insert(usize::MAX)
         };
         let mut path: Vec<_> = [node]
             .into_iter()
@@ -674,7 +690,16 @@ impl Document {
     fn find_named_anchor(&self, name: &str, positioned: NodeId, property: Id) -> Option<NodeId> {
         let tree = self.tree_of_value(positioned, property);
         let scope = self.scope_of_name(name, tree, self.tree.flat_parent(positioned));
-        let named = self.anchors.iter().copied().filter(|id| {
+        let indexed = self
+            .anchor_index
+            .as_ref()
+            .map(|it| it.by_name.get(&keyed_hash(name)).map_or(&[][..], |it| it));
+        let all = self
+            .anchors
+            .iter()
+            .take_while(|_| indexed.is_none())
+            .chain(indexed.unwrap_or_default());
+        let named = all.copied().filter(|id| {
             self.tree
                 .style(*id)
                 .is_some_and(|it| it.rare.anchor_name.iter().any(|it| &**it == name))
@@ -984,7 +1009,9 @@ impl Document {
                 Rc::new(resolved.style),
             );
             self.boxes.mark_layout(id);
-            self.lay_out_viewport();
+            if self.anchor_index.is_none() || !self.lay_out_alone(id) {
+                self.lay_out_viewport();
+            }
         };
         let (free, [x, y]) = (self.anchored[&self.boxes[id].node].free, resolved.shift);
         let fits = (0..4).all(|side| {
@@ -1096,6 +1123,8 @@ impl Document {
         let known = self
             .anchors
             .iter()
+            .take_while(|_| self.anchor_index.is_none())
+            .chain(&resolved.anchors)
             .copied()
             .chain(resolved.default)
             .filter(|it| is_fresh || !self.anchored[&node].scrolled.contains_key(it));
@@ -1144,8 +1173,26 @@ impl Document {
             .filter_map(|it| self.own_box(*it))
             .filter(|it| !self.boxes.is_parked(*it))
             .collect();
+        if ids.len().saturating_mul(self.anchors.len()) > 1 << 12 {
+            let mut index = Index::default();
+            for id in &self.anchors {
+                let names = self
+                    .tree
+                    .style(*id)
+                    .into_iter()
+                    .flat_map(|it| it.rare.anchor_name.iter());
+                names.for_each(|it| {
+                    index
+                        .by_name
+                        .entry(keyed_hash(&**it))
+                        .or_default()
+                        .push(*id)
+                });
+            }
+            self.anchor_index = Some(index);
+        }
         if ids.len() > 1 {
-            ids.sort_by_cached_key(|it| {
+            ids.order_by_cached_key(|it| {
                 (
                     self.layer_of(self.boxes[*it].node),
                     self.flat_path(self.boxes[*it].node),
@@ -1154,5 +1201,8 @@ impl Document {
         }
         ids.into_iter()
             .for_each(|it| self.position_anchored_box(it));
+        if self.anchor_index.take().is_some() {
+            self.lay_out_viewport();
+        }
     }
 }

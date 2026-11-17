@@ -1,4 +1,5 @@
 #include "root.h"
+#include "SyntheticModuleType.h"
 #include "JSNextTickQueue.h"
 
 #include "BunCompiledModules.h"
@@ -2436,9 +2437,11 @@ const AOT::ModuleHost compiledModuleHost = {
     &evictOriginal,
     &requiresPatch,
     &isESModuleInNode,
+    nullptr,
+    nullptr,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 67 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 69 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

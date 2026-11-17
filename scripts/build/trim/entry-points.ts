@@ -105,6 +105,7 @@ function decodeRecordSection(
   reading: GraphReading,
   modelFeatures: Set<number>,
   namedByEngine: readonly number[],
+  idsByKey: ReadonlyMap<number, number>,
   decoded: DecodedRecords,
 ): void {
   const { object, bytes, references } = section;
@@ -124,7 +125,7 @@ function decodeRecordSection(
     const recordedNumber = bytes.readUInt32LE(at + builtinOffset);
     const isNamedByEngine = recordedOrigin === "BuiltinNamedByEngine";
     const origin = isNamedByEngine ? "Builtin" : recordedOrigin;
-    const builtin = isNamedByEngine ? namedByEngine[recordedNumber] : recordedNumber;
+    const builtin = isNamedByEngine ? namedByEngine[recordedNumber] : (idsByKey.get(recordedNumber) ?? recordedNumber);
     const isMalformed =
       stub === undefined ||
       origin === undefined ||
@@ -217,6 +218,7 @@ export function readEntryPoints(
   reading: GraphReading,
   model: FeatureModel,
   namedByEngine: readonly number[] = [],
+  idsByKey: ReadonlyMap<number, number> = new Map(),
 ): EntryPointReading {
   const modelFeatures = new Set(model.features.map(feature => feature.index));
   const decoded: DecodedRecords = {
@@ -227,7 +229,7 @@ export function readEntryPoints(
     statistics: { records: 0, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 0, guardsOfEmptyEntryPoints: 0 },
   };
   for (const section of reading.recordSections)
-    decodeRecordSection(section, reading, modelFeatures, namedByEngine, decoded);
+    decodeRecordSection(section, reading, modelFeatures, namedByEngine, idsByKey, decoded);
   return {
     entryPoints: sortedUnique(
       [...decoded.entryPoints, ...guardEveryReference(reading.graph, decoded.definitions)],

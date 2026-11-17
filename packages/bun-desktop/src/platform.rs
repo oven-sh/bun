@@ -2,7 +2,7 @@
 //!
 //! A backend reports what happens by calling `window::{frame_is_due, bounds_changed, activation_changed,
 //! visibility_changed, close_requested, was_closed, appearance_changed}`, `input::{raw_key, key, handle}`, the methods
-//! of `input::TextInput`, `accessibility::{set_active, perform}`, `app::event` and `bridge::{emit, reply}`. They may be
+//! of `input::TextInput`, `accessibility` and `bridge::{emit, reply}`. They may be
 //! called from inside of any method here.
 
 mod headless;
@@ -20,9 +20,16 @@ use std::time::Duration;
 use crate::abi::Rect;
 use crate::accessibility;
 use crate::error::Result;
-use crate::json::Value;
+use crate::gfx::Pixmap;
 #[cfg(any(test, not(target_os = "macos")))]
 use crate::paint::raster::IntRect;
+use crate::protocol::{
+    Application, BackdropPart, Clipboard, ClipboardPart, Dragged, SystemCommand, SystemRequest,
+    SystemSettings, SystemState, WindowCommand,
+};
+pub use crate::protocol::{Cursor, Display, Geometry, Point};
+#[cfg(not(target_os = "macos"))]
+use crate::protocol::{Maybe, PreferenceCommand, PreferenceValue, Text};
 use crate::window::Options;
 
 #[cfg(not(target_os = "macos"))]
@@ -38,9 +45,36 @@ pub fn start(is_headless: bool, is_accessory: bool) -> Result<Box<dyn Platform>>
     x11::start(is_accessory)
 }
 
+#[cfg(target_os = "macos")]
+pub use macos::{answer, change_preference, preference, run_as_root};
+
+#[cfg(not(target_os = "macos"))]
+pub fn preference(_key: &Text) -> Maybe<PreferenceValue> {
+    Maybe::No
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn change_preference(_: &PreferenceCommand) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn answer(_: &crate::protocol::Question) -> Maybe<u32> {
+    Maybe::No
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn run_as_root(
+    _: &Text,
+    _: &crate::protocol::List<crate::protocol::List<Text>>,
+) -> Result<Text> {
+    crate::error::bail!("there is nobody to ask")
+}
+
 pub trait Platform {
-    /// "headless", "X11", and "" where there is only one.
-    fn name(&self) -> &'static str;
+    fn has_display(&self) -> bool {
+        true
+    }
     /// It is not shown, whatever the options say.
     fn open_window(&self, options: &Options, icon: Option<&Icon>) -> Result<Rc<dyn Window>>;
     /// The primary one is first.
@@ -53,8 +87,42 @@ pub trait Platform {
     fn button_layout(&self) -> Option<[Vec<WindowButton>; 2]> {
         None
     }
-    /// What `app::command` does not know. With `reply`, the answer goes to `bridge::reply` unless this fails.
-    fn command(&self, name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value>;
+    fn command(&self, command: SystemCommand) -> Result<()>;
+    /// The answer goes to `bridge::reply` unless this fails.
+    fn request(&self, id: u32, request: SystemRequest) -> Result<()>;
+    /// But for the display and the appearance.
+    fn state(&self) -> SystemState;
+    fn cursor_position(&self) -> Result<Point>;
+    fn idle_seconds(&self) -> Result<f64>;
+    fn is_on_battery(&self) -> bool;
+    fn read_clipboard(&self, part: ClipboardPart) -> Clipboard;
+    fn settings(&self) -> SystemSettings {
+        SystemSettings::default()
+    }
+    fn is_hidden(&self) -> bool {
+        false
+    }
+    fn opens_at_login(&self) -> bool {
+        false
+    }
+    fn is_trusted_for_accessibility(&self, _prompts: bool) -> bool {
+        true
+    }
+    fn bounce(&self, _is_critical: bool) -> i32 {
+        -1
+    }
+    fn tray_bounds(&self, _tray: u32) -> Rect {
+        Rect::default()
+    }
+    fn application_for(&self, _url: &str) -> Option<Application> {
+        None
+    }
+    fn file_icon(&self, _path: &str, _side: u32) -> Vec<u8> {
+        Vec::new()
+    }
+    fn named_image(&self, _name: &str) -> Vec<u8> {
+        Vec::new()
+    }
     /// To wait for. `dispatch` is called when one is readable.
     #[cfg(not(target_os = "macos"))]
     fn descriptors(&self) -> Vec<i32>;
@@ -64,6 +132,8 @@ pub trait Platform {
     /// Handles what has happened, without blocking.
     #[cfg(not(target_os = "macos"))]
     fn dispatch(&self, readable: &[i32]);
+    fn has_screen_reader(&self) -> bool;
+    fn accessibility_changed(&self, events: &[accessibility::Event]);
     /// Removes what would be left behind: tray icons, hot keys, inhibitors. The clipboard is handed over if `is_exiting`.
     fn shut_down(&self, is_exiting: bool);
 }
@@ -99,53 +169,28 @@ pub trait Window {
         [0.; 2]
     }
     fn set_cursor(&self, cursor: Cursor);
+    fn begin_drag(&self, _dragged: &Dragged, _image: Option<&Pixmap>) {}
     /// Whether a field has the focus, or where its caret is, has changed. See `input::TextInput`.
     fn text_input_changed(&self);
     fn start_move(&self);
     fn start_resize(&self, edge: Edge);
     fn show_window_menu(&self, at: Point);
     fn title_was_double_clicked(&self);
-    fn set_accessibility_tree(&self, tree: &accessibility::Update);
-    /// The `window.*` commands that `app::window_command` does not answer. Unknown ones do nothing. `other` is the
-    /// window whose id is `value`.
-    fn command(&self, name: &str, value: &Value, other: Option<&dyn Window>) -> Result<Value>;
+    /// What it cannot do, it ignores.
+    fn command(&self, command: &WindowCommand) -> Result<()>;
+    fn is_minimized(&self) -> bool;
+    fn number(&self) -> u64 {
+        self.handle()
+    }
+    /// What native addons have put there.
+    fn describe_backdrop(&self) -> Vec<BackdropPart> {
+        Vec::new()
+    }
+    fn imitate_backdrop(&self, _parts: &[BackdropPart]) {}
+    /// The next background replaces what addons have set until now, and not what they set later.
+    fn claim_background(&self) {}
     /// `NSView*` or the XID.
     fn handle(&self) -> u64;
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Debug)]
-pub struct Point {
-    pub x: f32,
-    pub y: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default, PartialEq)]
-pub struct Geometry {
-    /// Of the frame, on the screen.
-    pub x: f32,
-    pub y: f32,
-    /// How far below `y` the content begins.
-    pub top: f32,
-    /// Of the content.
-    pub width: f32,
-    pub height: f32,
-    pub scale: f32,
-    pub is_maximized: bool,
-    pub is_fullscreen: bool,
-    /// Nobody else draws a title bar or lets the user resize it.
-    pub is_client_decorated: bool,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct Display {
-    pub id: u64,
-    pub bounds: Rect,
-    pub work_area: Rect,
-    pub scale: f32,
-    /// 0 if unknown.
-    pub frequency: f32,
 }
 
 /// RGBA, not premultiplied.
@@ -157,34 +202,6 @@ pub struct Icon {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
-pub enum Cursor {
-    #[default]
-    Arrow,
-    IBeam,
-    VerticalIBeam,
-    Crosshair,
-    OpenHand,
-    ClosedHand,
-    PointingHand,
-    ResizeLeft,
-    ResizeRight,
-    ResizeLeftRight,
-    ResizeUp,
-    ResizeDown,
-    ResizeUpDown,
-    ResizeUpLeftDownRight,
-    ResizeUpRightDownLeft,
-    ResizeColumn,
-    ResizeRow,
-    NotAllowed,
-    DragLink,
-    DragCopy,
-    ContextMenu,
-    Hidden,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -267,7 +284,6 @@ pub enum Input {
     Pinch {
         at: Point,
         delta: f32,
-        phase: Phase,
         modifiers: Modifiers,
     },
     DragEnter {

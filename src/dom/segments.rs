@@ -8,7 +8,7 @@ use crate::abi::{self, Item, Matrix, PathVerb, Rect, Source, Span};
 use crate::boxes::{BoxId, Kind, VIEWPORT};
 use crate::document::Document;
 use crate::name::Map;
-use crate::paint::{Hit, Link, Painter, Picture, Space};
+use crate::paint::{Hit, Link, Painter, Picture, Space, alpha};
 use crate::tree::NodeId;
 use crate::types::multiply;
 
@@ -90,11 +90,42 @@ bitflags::bitflags! {
     }
 }
 
+bitflags::bitflags! {
+    /// What can change without a change to the shape of the picture.
+    #[derive(Clone, Copy)]
+    pub(crate) struct Retouch: u8 {
+        const DECORATIONS = 1;
+        const OPACITY = 1 << 1;
+        const COLOR = 1 << 2;
+        /// The colors in an `svg`.
+        const SHAPES = 1 << 3;
+    }
+}
+
+/// Where what `Retouch` is about is in a segment.
+#[derive(Clone, Copy, Default)]
+struct Own {
+    decorations: Option<Decorations>,
+    layer: Option<u16>,
+    recording: Option<u16>,
+    /// All of it has the color of the element that the lines are in.
+    is_plain_text: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Decorations {
+    offset: [f32; 2],
+    /// The first one and how many.
+    items: [u16; 2],
+    stops: [u16; 2],
+}
+
 /// The second of each is for `Painted::Inside`.
 #[derive(Default)]
 pub(crate) struct Remembered {
     segments: [Cell<u32>; 2],
-    is_unchanged: [Cell<bool>; 2],
+    /// The last two are for the accessibility tree.
+    is_unchanged: [Cell<bool>; 4],
     has_sticky: Cell<bool>,
     /// Only means something for the viewport.
     pub(crate) was_laid_out: Cell<bool>,
@@ -106,12 +137,28 @@ impl Remembered {
         self.is_unchanged.iter().for_each(|it| it.set(false));
     }
 
-    /// Of the box that had the same id.
-    pub(crate) fn reuse_segments(&self, old: &Remembered) {
-        self.segments
-            .iter()
-            .zip(&old.segments)
-            .for_each(|it| it.0.set(it.1.get()));
+    pub(crate) fn is_described(&self) -> bool {
+        self.is_unchanged[2].get()
+    }
+
+    pub(crate) fn set_described(&self, is_described: bool) {
+        self.is_unchanged[2].set(is_described);
+    }
+
+    pub(crate) fn is_checked(&self) -> bool {
+        self.is_unchanged[3].get()
+    }
+
+    pub(crate) fn set_checked(&self) {
+        self.is_unchanged[3].set(true);
+    }
+
+    /// For the next box that has the same id.
+    pub(crate) fn reused(&self) -> Remembered {
+        Remembered {
+            segments: self.segments.clone(),
+            ..Remembered::default()
+        }
     }
 
     pub(crate) fn forget_layers(&self) {
@@ -152,6 +199,8 @@ struct Segment {
     is_independent: bool,
     /// And so can the ones in it.
     are_contents_independent: bool,
+    has_children: bool,
+    own: Own,
 }
 
 #[derive(Clone, Copy)]
@@ -217,6 +266,7 @@ pub(crate) struct Segments {
     new: Position,
     next_order: u32,
     reads_contents: bool,
+    own: Own,
     growths: Vec<Growth>,
     /// Where the tables of the old picture begin. What was before is in the new one.
     base: Lengths,
@@ -262,6 +312,46 @@ impl Segments {
     }
 }
 
+impl Segments {
+    /// Whether the last picture has it.
+    fn shows(&self, id: BoxId, index: u32) -> bool {
+        let Some(mut it) = self.all.get(index as usize).filter(|it| it.id == id) else {
+            return false;
+        };
+        while let Some(parent) = self.all.get(it.parent_index as usize) {
+            if parent.serial != core::mem::replace(&mut it, parent).parent {
+                return false;
+            }
+        }
+        it.parent == self.new.serial
+    }
+
+    /// In the last picture. `path` leads to the one that was located before.
+    fn locate(&self, index: u32, path: &mut Vec<Position>) -> Option<Position> {
+        if let Some(at) = path.iter().rposition(|it| it.index == index) {
+            path.truncate(at + 1);
+            return Some(path[at]);
+        }
+        let it = self
+            .all
+            .get(index as usize)
+            .filter(|it| it.are_contents_independent && !matches!(it.link, Anchor::Unknown))?;
+        let outer = self
+            .locate(it.parent_index, path)
+            .filter(|outer| outer.serial == it.parent)?;
+        Some(*path.push_mut(self.position(index, &outer, NONE, &self.growths)))
+    }
+}
+
+/// An empty one can be past the end, as the empty layers around it are dropped.
+fn part<T>(all: &mut [T], start: usize, length: usize) -> &mut [T] {
+    if length == 0 {
+        &mut []
+    } else {
+        &mut all[start..][..length]
+    }
+}
+
 struct Patch {
     index: u32,
     outer: Position,
@@ -288,6 +378,9 @@ pub(crate) struct Pictures {
     spare: Picture,
     segments: Segments,
     changes: u32,
+    retouched: Vec<(BoxId, Retouch)>,
+    /// The boxes may not know that they have changed.
+    pub(crate) were_discarded: bool,
 }
 
 impl Pictures {
@@ -308,6 +401,11 @@ impl Pictures {
     }
 
     pub(crate) fn discard(&mut self) {
+        self.were_discarded = true;
+        self.start_over();
+    }
+
+    fn start_over(&mut self) {
         (self.links_are_for, *self.last_hit.get_mut()) = (None, None);
         let outdated = self.outdated.take();
         if let Some(picture) = self.current.take().or(outdated) {
@@ -343,7 +441,7 @@ impl Document {
                 .as_ref()
                 .is_some_and(|it| it.canvas_source != canvas_source)
         {
-            pictures.discard();
+            pictures.start_over();
         }
         let (mut old, mut spare) = (
             pictures.outdated.take(),
@@ -351,6 +449,17 @@ impl Document {
         );
         spare.clear();
         pictures.changes = 0;
+        let retouched = core::mem::take(&mut pictures.retouched);
+        match old.as_mut() {
+            _ if retouched.is_empty() => {}
+            Some(picture) => {
+                spare = Painter::retouch_all(self, &retouched, &segments, picture, spare)
+            }
+            None => retouched
+                .iter()
+                .for_each(|it| _ = self.boxes.recordings.get_mut().remove(&it.0)),
+        }
+        let pictures = &mut self.pictures;
         let changed = core::mem::take(self.boxes.changed.get_mut());
         let locks = core::mem::take(&mut pictures.just_locked);
         segments.keeps_as = (0..)
@@ -486,7 +595,7 @@ impl Document {
         let mut id = changed
             .iter()
             .copied()
-            .filter(|it| boxes[*it].kind != Kind::Free)
+            .filter(|it| boxes.is_alive(*it))
             .reduce(|mut a, mut b| {
                 while a != b {
                     let deeper = if boxes[a].depth >= boxes[b].depth {
@@ -587,17 +696,43 @@ impl Document {
         self.repaint_eventually(id);
     }
 
+    pub(crate) fn retouch(&mut self, id: BoxId, what: Retouch) {
+        if self.boxes.is_parked(id) || what.contains(Retouch::COLOR) && self.accessibility.is_some()
+        {
+            self.boxes.recordings.get_mut().remove(&id);
+            self.forget_segments_in(id, false);
+            return self.repaint_box(id);
+        }
+        self.pictures.outdate();
+        if self.pictures.retouched.len() > 8192 {
+            self.pictures.discard();
+            self.pictures.retouched.clear();
+            self.boxes.recordings.get_mut().clear();
+        }
+        match self.pictures.retouched.last_mut() {
+            Some(last) if last.0 == id => last.1 |= what,
+            _ if self.pictures.outdated.is_some() => self.pictures.retouched.push((id, what)),
+            _ => _ = self.boxes.recordings.get_mut().remove(&id),
+        }
+    }
+
     /// Together with the next change.
     pub(crate) fn repaint_eventually(&self, id: BoxId) {
-        let mut at = id;
+        if self.forget_segments_around(id) {
+            self.boxes.note_change(id);
+        }
+    }
+
+    /// Whether it is not parked.
+    fn forget_segments_around(&self, mut at: BoxId) -> bool {
         while at != 0 {
             self.boxes[at].painted.forget();
             at = self.boxes[at].parent;
             if self.boxes[at].is_parking {
-                return;
+                return false;
             }
         }
-        self.boxes.note_change(id);
+        true
     }
 
     pub(crate) fn repaint(&mut self, node: NodeId) {
@@ -609,7 +744,7 @@ impl Document {
     }
 
     fn repaint_with(&mut self, node: NodeId, descendants: bool) {
-        self.pictures.changes += u32::from(!self.is_locked(node));
+        self.pictures.changes += u32::from(self.pictures.changes <= 500 && !self.is_locked(node));
         if self.pictures.changes > 500 {
             return self.pictures.discard();
         }
@@ -620,6 +755,9 @@ impl Document {
 
     /// Of the anonymous boxes, unless `all`.
     fn forget_segments_in(&self, id: BoxId, all: bool) {
+        if !all && !self.boxes[id].has_anonymous_children {
+            return;
+        }
         for child in self.boxes[id]
             .children
             .iter()
@@ -858,6 +996,255 @@ impl Painter<'_> {
         self.segments.reads_contents = true;
     }
 
+    /// If they are at the beginning of the segment of the box.
+    pub(crate) fn note_decorations(
+        &mut self,
+        id: BoxId,
+        space: &Space,
+        paint: impl FnOnce(&mut Self),
+    ) {
+        let (at, others) = (self.segments.new.index as usize, |it: &Picture| {
+            it.links.len() + it.filters.len() + it.verbs.len() + it.glyphs.len() + it.bytes.len()
+        });
+        if self.is_hidden || self.segments.all.get(at).is_none_or(|it| it.id != id) {
+            return paint(self);
+        }
+        self.enter(space.link);
+        let before = (
+            self.out.items.len(),
+            self.out.stops.len(),
+            others(&self.out),
+        );
+        paint(self);
+        let (segment, out) = (&self.segments.new, &self.out);
+        let range = |start: u32, first: usize, end: usize| {
+            Some([
+                (first - start as usize).try_into().ok()?,
+                (end - first).try_into().ok()?,
+            ])
+        };
+        let ranges = range(segment.start.items, before.0, out.items.len()).zip(range(
+            segment.start.stops,
+            before.1,
+            out.stops.len(),
+        ));
+        let offset = [0, 1].map(|it| space.origin[it] - segment.origin[it]);
+        self.segments.own.decorations =
+            ranges
+                .filter(|_| others(out) == before.2)
+                .map(|(items, stops)| Decorations {
+                    offset,
+                    items,
+                    stops,
+                });
+    }
+
+    /// The last item has the opacity of the box.
+    pub(crate) fn note_layer(&mut self, id: BoxId) {
+        if !self.is_hidden
+            && self
+                .segments
+                .all
+                .get(self.segments.new.index as usize)
+                .is_some_and(|it| it.id == id)
+        {
+            self.segments.own.layer = (self.out.items.len() as u32 - self.segments.new.start.items)
+                .checked_sub(1)
+                .and_then(|it| it.try_into().ok());
+        }
+    }
+
+    /// That of the `svg` follows.
+    pub(crate) fn note_recording(&mut self, id: BoxId) {
+        if self
+            .segments
+            .all
+            .get(self.segments.new.index as usize)
+            .is_some_and(|it| it.id == id)
+        {
+            self.segments.own.recording = (self.out.items.len() as u32
+                - self.segments.new.start.items)
+                .try_into()
+                .ok();
+        }
+    }
+
+    pub(crate) fn note_plain_text(&mut self) {
+        self.segments.own.is_plain_text = true;
+    }
+
+    /// What cannot be changed in `picture` is painted again. Returns `scratch`.
+    fn retouch_all(
+        document: &Document,
+        retouched: &[(BoxId, Retouch)],
+        segments: &Segments,
+        picture: &mut Picture,
+        scratch: Picture,
+    ) -> Picture {
+        let boxes = &document.boxes;
+        let is_possible = boxes.pieces.is_empty()
+            && boxes.copies.is_empty()
+            && !document.has_depth.get()
+            && document.view_transitions.is_empty()
+            && !segments.reads_contents;
+        let (mut painter, mut path) = (
+            Painter::new(document, None, scratch, Segments::default()),
+            vec![segments.new],
+        );
+        picture.is_submitted = false;
+        for (id, what) in retouched.iter().copied().filter(|it| boxes.is_alive(it.0)) {
+            let mut locate = |id: BoxId| {
+                let (painted, index) = (&boxes[id].painted, boxes[id].painted.segments[0].get());
+                let segment = segments.all.get(index as usize).filter(|it| {
+                    is_possible
+                        && painted.is_unchanged[0].get()
+                        && it.id == id
+                        && it.kind != Painted::Inside
+                })?;
+                Some((segment, segments.locate(index, &mut path)?))
+            };
+            let (style, is_animated) = (&boxes[id].style, || {
+                document.compositor.sampled.contains_key(&boxes[id].node)
+            });
+            let mut is_done = !what.contains(Retouch::COLOR)
+                || !document.uses_color_elsewhere(id) && picture.caret.is_none_or(|it| it.0 != id);
+            if is_done && what.intersects(Retouch::DECORATIONS | Retouch::OPACITY) {
+                is_done = locate(id).is_some_and(|(segment, at)| {
+                    (!what.contains(Retouch::DECORATIONS)
+                        || segment
+                            .own
+                            .decorations
+                            .is_some_and(|it| painter.decorate_again(id, it, &at, picture)))
+                        && (!what.contains(Retouch::OPACITY)
+                            || style.effects.backdrop_filter.0.is_empty() && !is_animated() && {
+                                let layer = segment
+                                    .own
+                                    .layer
+                                    .map(u32::from)
+                                    .filter(|it| *it < segment.lengths.items);
+                                match layer
+                                    .map(|it| &mut picture.items[(at.start.items + it) as usize])
+                                {
+                                    Some(Item::PushLayer { opacity, .. }) => {
+                                        *opacity = style.effects.opacity.0
+                                    }
+                                    _ => return false,
+                                }
+                                true
+                            })
+                });
+            }
+            if what.contains(Retouch::SHAPES) {
+                let shown = locate(id).and_then(|(segment, at)| {
+                    Some(
+                        &mut picture.items
+                            [(at.start.items + u32::from(segment.own.recording?)) as usize..],
+                    )
+                });
+                let (is_shown, mut recordings) = (shown.is_some(), boxes.recordings.borrow_mut());
+                let is_tinted = recordings
+                    .get_mut(&id)
+                    .is_some_and(|it| it.tint(document, shown));
+                if !is_tinted {
+                    recordings.remove(&id);
+                }
+                is_done = is_shown && is_tinted;
+            }
+            if !is_done {
+                document.repaint_eventually(id);
+            }
+            let new = style.ink.text_fill_color.resolve(style.color());
+            let mut anonymous: SmallVec<[BoxId; 8]> = what
+                .contains(Retouch::COLOR)
+                .then_some(id)
+                .into_iter()
+                .collect();
+            while let Some(parent) = anonymous.pop() {
+                for child in boxes[parent]
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|it| boxes[*it].node == 0)
+                {
+                    if boxes[child].kind == Kind::Block && !boxes[child].style.is_floating() {
+                        anonymous.push(child);
+                    } else if let Some((segment, at)) = locate(child).filter(|it| {
+                        it.0.own.is_plain_text
+                            && alpha(new) > 0
+                            && picture.caret.is_none_or(|it| it.0 != child)
+                    }) {
+                        for item in part(
+                            &mut picture.items,
+                            at.start.items as usize,
+                            segment.lengths.items as usize,
+                        ) {
+                            if let Item::Text { color, .. } = item {
+                                *color = new;
+                            }
+                        }
+                    } else {
+                        document.forget_segments_in(child, false);
+                        match is_possible
+                            && boxes[child]
+                                .inline
+                                .as_ref()
+                                .is_some_and(|it| !it.has_layers)
+                            && !segments.shows(child, boxes[child].painted.segments[0].get())
+                        {
+                            true => _ = document.forget_segments_around(child),
+                            false => document.repaint_eventually(child),
+                        }
+                    }
+                }
+            }
+        }
+        painter.out.clear();
+        painter.out
+    }
+
+    fn decorate_again(
+        &mut self,
+        id: BoxId,
+        known: Decorations,
+        at: &Position,
+        picture: &mut Picture,
+    ) -> bool {
+        let origin = [0, 1].map(|it| at.origin[it] + known.offset[it]);
+        self.out.items.clear();
+        self.out.stops.clear();
+        let is_plain = self.decorate_plainly(
+            id,
+            &Space {
+                origin,
+                link: 0,
+                scroller: abi::NO_SCROLLER,
+                visible: Rect::default(),
+            },
+        );
+        let out = &mut self.out;
+        if !is_plain
+            || [out.items.len(), out.stops.len()]
+                != [known.items[1], known.stops[1]].map(usize::from)
+        {
+            return false;
+        }
+        let (item, stop) = (
+            (at.start.items + u32::from(known.items[0])) as usize,
+            at.start.stops + u32::from(known.stops[0]),
+        );
+        let shift = Shift {
+            tables: Lengths {
+                stops: stop,
+                ..Lengths::default()
+            },
+            by: [0.0; 2],
+        };
+        out.items.iter_mut().for_each(|it| shift.relocate(it));
+        part(&mut picture.items, item, out.items.len()).copy_from_slice(&out.items);
+        part(&mut picture.stops, stop as usize, out.stops.len()).copy_from_slice(&out.stops);
+        true
+    }
+
     /// Of `picture`, what was before the segment is left. The rest is in `old`.
     fn patch(
         document: &Document,
@@ -1034,6 +1421,8 @@ impl Painter<'_> {
             looks,
             is_independent: false,
             are_contents_independent: true,
+            has_children: false,
+            own: Own::default(),
         };
         self.segments.next_order += 1;
         let is_own = |it: &&Segment| it.id == id && (it.kind == Painted::Inside) == (slot == 1);
@@ -1092,12 +1481,14 @@ impl Painter<'_> {
                     scroll_state: known.scroll_state,
                     is_independent: known.is_independent,
                     are_contents_independent: known.are_contents_independent,
+                    has_children: known.has_children,
+                    own: known.own,
                     ..new
                 };
                 return;
             }
         }
-        if let Some(old) = moved {
+        if let Some(old) = moved.filter(|_| known.is_some_and(|it| it.has_children)) {
             self.segments.replace(&old);
         }
         self.segments.last_serial += 1;
@@ -1120,8 +1511,13 @@ impl Painter<'_> {
             self.outside,
             core::mem::take(&mut self.segments.reads_contents),
         );
+        let outer_own = core::mem::take(&mut self.segments.own);
         is_unchanged.set(true);
         paint(self);
+        (new.own, new.has_children) = (
+            core::mem::replace(&mut self.segments.own, outer_own),
+            self.segments.next_order != new.order + 1,
+        );
         self.enter(space.link);
         if self.outside != outside {
             is_unchanged.set(false);

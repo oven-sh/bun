@@ -10,6 +10,7 @@ use crate::document::Document;
 use crate::fragment::{Band, Breaks, Flow, Member};
 use crate::layout::{AutoSize, Edges, Input, Layout, Output, Room, Widths, clamp, margin, unit};
 use crate::name::name;
+use crate::order::Order as _;
 use crate::properties::Style;
 use crate::types::*;
 use crate::values::{Lp, Size};
@@ -192,6 +193,10 @@ struct Cell {
     column: usize,
     rows: usize,
     columns: usize,
+    /// In pixels, or as a fraction.
+    height: (Option<f32>, Option<f32>),
+    /// To the baseline of the row.
+    is_aligned: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -203,6 +208,14 @@ struct Column {
     /// No cell starts in it, and nothing gives it a width.
     is_merged: bool,
     is_collapsed: bool,
+}
+
+/// What was found when the parts of tables were in that version.
+pub(crate) struct Prepared {
+    version: u32,
+    grid: Rc<Grid>,
+    /// Before the cells are measured.
+    columns: Vec<Column>,
 }
 
 #[derive(Default)]
@@ -451,12 +464,23 @@ impl Document {
                     };
                     occupied_until.resize(occupied_until.len().max(column + columns), 0);
                     occupied_until[column..column + columns].fill(index + rows);
+                    let it = &self.boxes[cell];
+                    let is_aligned = !matches!(
+                        it.style.layout.vertical_align,
+                        VerticalAlign::Keyword(
+                            VerticalAlignName::Top
+                                | VerticalAlignName::Middle
+                                | VerticalAlignName::Bottom
+                        )
+                    );
                     grid.cells.push(Cell {
                         id: cell,
                         row: index,
                         column,
                         rows,
                         columns,
+                        height: specified_height(it),
+                        is_aligned,
                     });
                     column += columns;
                 }
@@ -619,21 +643,23 @@ impl Document {
             .iter()
             .filter(|cell| !is_fixed || cell.row == 0)
             .collect();
-        cells.sort_by_key(|cell| cell.columns);
+        if !cells.is_sorted_by_key(|cell| cell.columns) {
+            cells.order_by_key(|cell| cell.columns);
+        }
         for cell in cells {
             let it = &self.boxes[cell.id];
             let (l, edges, mut own) = (
-                Rc::clone(&it.style.layout),
+                &it.style.layout,
                 it.border_and_padding(0.0).sums(),
                 Column::default(),
             );
-            let [width, min, max] =
-                [&l.width, &l.min_width, &l.max_width.0].map(|size| match size {
-                    Size::Length(Lp::Px(_)) => {
-                        it.resolve_size(size, 0, &Room::default(), edges, &mut |_| None)
-                    }
-                    _ => None,
-                });
+            let fixed = |size: &Size| match size {
+                Size::Length(Lp::Px(_)) => {
+                    it.resolve_size(size, 0, &Room::default(), edges, &mut |_| None)
+                }
+                _ => None,
+            };
+            let (width, min, max) = (fixed(&l.width), fixed(&l.min_width), fixed(&l.max_width.0));
             if let Size::Length(Lp::Fraction(fraction)) = l.width {
                 own.fraction = Some(match l.max_width.0 {
                     Size::Length(Lp::Fraction(max)) => fraction.min(max),
@@ -729,26 +755,69 @@ impl Document {
     }
 
     /// Also returns `border-spacing`, and whether the layout is fixed.
-    fn prepare_table(&mut self, id: BoxId) -> (Grid, [f32; 2], bool) {
-        let style = Rc::clone(&self.boxes[id].style);
-        let mut grid = self.table_grid(id);
-        let mut spacing = [style.text.spacing_x.0, style.text.spacing_y.0].map(f32::floor);
-        if style.text.border_collapse == BorderCollapse::Collapse {
-            spacing = [0.0; 2];
-            self.collapse_borders(id, &grid);
+    fn prepare_table(&mut self, id: BoxId) -> (Rc<Grid>, [f32; 2], bool) {
+        let (style, version) = (
+            Rc::clone(&self.boxes[id].style),
+            self.boxes.table_parts_version,
+        );
+        let collapses = style.text.border_collapse == BorderCollapse::Collapse;
+        let spacing = if collapses {
+            [0.0; 2]
         } else {
-            self.boxes[id].collapsed = None;
-            self.boxes.lattices.remove(&id);
-            grid.cells
-                .iter()
-                .for_each(|cell| self.set_collapsed(cell.id, None));
-        }
+            [style.text.spacing_x.0, style.text.spacing_y.0].map(f32::floor)
+        };
         let is_fixed = style.rare.table_layout == TableLayout::Fixed
             && !matches!(style.layout.width, Size::Auto | Size::MaxContent);
-        if is_fixed {
-            grid.columns.iter_mut().for_each(|it| it.is_merged = false);
+        if let Some(known) = self
+            .boxes
+            .tables
+            .get(&id)
+            .filter(|it| it.version == version && self.boxes[id].cache.has_widths())
+        {
+            return (Rc::clone(&known.grid), spacing, is_fixed);
         }
+        let known = self
+            .boxes
+            .tables
+            .remove(&id)
+            .filter(|it| it.version == version);
+        let mut grid = match known.and_then(|it| {
+            Some(Grid {
+                columns: it.columns,
+                ..Rc::into_inner(it.grid)?
+            })
+        }) {
+            Some(known) => known,
+            None => {
+                let mut grid = self.table_grid(id);
+                if collapses {
+                    self.collapse_borders(id, &grid);
+                } else {
+                    self.boxes[id].collapsed = None;
+                    self.boxes.lattices.remove(&id);
+                    grid.cells
+                        .iter()
+                        .for_each(|cell| self.set_collapsed(cell.id, None));
+                }
+                grid.columns
+                    .iter_mut()
+                    .for_each(|it| it.is_merged &= !is_fixed);
+                grid
+            }
+        };
+        let columns = grid.columns.clone();
         self.measure_columns(&mut grid, spacing[0], is_fixed);
+        let (grid, it) = (Rc::new(grid), &self.boxes[id]);
+        if [it.mode, it.turned] == [WritingMode::HorizontalTb; 2] && !it.is_parking {
+            self.boxes.tables.insert(
+                id,
+                Prepared {
+                    version,
+                    grid: Rc::clone(&grid),
+                    columns,
+                },
+            );
+        }
         (grid, spacing, is_fixed)
     }
 
@@ -784,7 +853,7 @@ impl Document {
     }
 
     pub(crate) fn height_of_captions(&mut self, id: BoxId, width: f32) -> f32 {
-        let captions = self.prepare_table(id).0.captions;
+        let grid = self.prepare_table(id).0;
         let height = |caption: BoxId| {
             let margins = margin(&self.boxes[caption].style, width).sums();
             let room = Room {
@@ -797,7 +866,7 @@ impl Document {
                 .height
                 + margins[1]
         };
-        captions.into_iter().map(height).sum()
+        grid.captions.iter().copied().map(height).sum()
     }
 
     pub(crate) fn table_widths(&mut self, id: BoxId, is_for_layout: bool) -> Widths {
@@ -850,6 +919,7 @@ impl Document {
         }
     }
 
+    #[inline(never)]
     pub(crate) fn lay_out_table(
         &mut self,
         id: BoxId,
@@ -891,10 +961,10 @@ impl Document {
         let (mut starts, mut row_width) =
             (place(&widths, false), (inner - 2.0 * spacing[0]).max(0.0));
         let (basis, has_height) = ((row_width, None), !it.has_auto_size(1));
-        let cell_input = |document: &Document, cell: &Cell, starts: &[f32], widths: &[f32]| {
+        let cell_input = |cell: &Cell, starts: &[f32], widths: &[f32]| {
             let (last, is_restricted) = (
                 cell.column + cell.columns - 1,
-                has_height || fixed_height(&document.boxes[cell.id].style).is_some(),
+                has_height || cell.height.0.is_some(),
             );
             Input {
                 width: starts[last] + widths[last] - starts[cell.column],
@@ -903,11 +973,7 @@ impl Document {
                 ..Input::default()
             }
         };
-        let uncollapsed: Vec<_> = grid
-            .cells
-            .iter()
-            .map(|it| cell_input(self, it, &starts, &widths))
-            .collect();
+        let uncollapsed = (starts.clone(), widths.clone());
         if grid.columns.iter().any(|it| it.is_collapsed) {
             let collapsed = widths
                 .iter_mut()
@@ -961,14 +1027,9 @@ impl Document {
         }
         let [above, below] = caption_heights;
 
-        let specified = |it: &LayoutBox| match it.style.layout.height {
-            Size::Length(Lp::Px(px)) => (Some(unit(px)), None),
-            Size::Length(Lp::Fraction(fraction)) => (None, Some(fraction)),
-            _ => (None, None),
-        };
         let mut rows: Vec<Row> = (grid.rows.iter())
             .map(|(row, group)| {
-                let (height, fraction) = specified(&self.boxes[*row]);
+                let (height, fraction) = specified_height(&self.boxes[*row]);
                 let is_collapsed = [row, group]
                     .iter()
                     .any(|it| self.boxes[**it].style.ink.visibility.0 == Visibility::Collapse);
@@ -982,7 +1043,7 @@ impl Document {
             })
             .collect();
         for cell in &grid.cells {
-            let ((height, fraction), row) = (specified(&self.boxes[cell.id]), &mut rows[cell.row]);
+            let ((height, fraction), row) = (cell.height, &mut rows[cell.row]);
             row.starts_span |= cell.rows > 1;
             if cell.rows == 1 {
                 row.is_fixed |= height.is_some();
@@ -990,24 +1051,18 @@ impl Document {
             }
         }
         let mut measured = Vec::with_capacity(grid.cells.len());
-        for (cell, input) in grid.cells.iter().zip(uncollapsed) {
-            let own = self.measure(cell.id, input);
+        for cell in &grid.cells {
+            let own = self.measure(cell.id, cell_input(cell, &uncollapsed.0, &uncollapsed.1));
             let it = &self.boxes[cell.id];
-            let is_aligned = !matches!(
-                it.style.layout.vertical_align,
-                VerticalAlign::Keyword(
-                    VerticalAlignName::Top | VerticalAlignName::Middle | VerticalAlignName::Bottom
-                )
-            );
             let (baseline, row) = (
-                (is_aligned && !it.children.is_empty())
+                (cell.is_aligned && !it.children.is_empty())
                     .then_some(own.baselines[0].unwrap_or(own.intrinsic)),
                 &mut rows[cell.row],
             );
             row.baseline = row.baseline.into_iter().chain(baseline).reduce(f32::max);
             let below = it.border_and_padding(row_width).bottom;
             row.below_content = Some(row.below_content.map_or(below, |it| it.min(below)));
-            measured.push((own, baseline));
+            measured.push(([own.height, own.intrinsic], baseline));
         }
         let extent = |rows: &[Row]| {
             let shown = || rows.iter().filter(|it| !it.is_collapsed);
@@ -1015,12 +1070,12 @@ impl Document {
                 + spacing[1] * shown().count().saturating_sub(1) as f32
         };
         let mut spanning = Vec::new();
-        for (cell, (own, baseline)) in grid.cells.iter().zip(&measured) {
+        for (cell, &([height, intrinsic], baseline)) in grid.cells.iter().zip(&measured) {
             let row = &mut rows[cell.row];
             match cell.rows {
                 1 => {
-                    row.height = row.height.max(own.height).max(
-                        own.intrinsic
+                    row.height = row.height.max(height).max(
+                        intrinsic
                             + baseline
                                 .zip(row.baseline)
                                 .map_or(0.0, |(own, row)| row - own),
@@ -1028,7 +1083,7 @@ impl Document {
                 }
                 _ => {
                     row.height = row.height.max(baseline.and(row.baseline).unwrap_or(0.0));
-                    spanning.push((cell.row..cell.row + cell.rows, own.height));
+                    spanning.push((cell.row..cell.row + cell.rows, height));
                 }
             }
         }
@@ -1053,7 +1108,7 @@ impl Document {
                     .take_while(|it| it.1 == *group)
                     .count();
                 let ((height, fraction), is_body) = (
-                    specified(&self.boxes[*group]),
+                    specified_height(&self.boxes[*group]),
                     self.boxes[*group].style.display() == Display::TableRowGroup,
                 );
                 first += count;
@@ -1195,12 +1250,12 @@ impl Document {
                     };
                     let input = Input {
                         height: Some(cell_height),
-                        is_indefinite: fixed_height(&self.boxes[cell.id].style).is_none()
-                            && !(has_height && cell_height > own.height),
+                        is_indefinite: cell.height.0.is_none()
+                            && !(has_height && cell_height > own[0]),
                         row_baseline: rows[index]
                             .baseline
                             .filter(|it| baseline.is_some_and(|own| own != *it)),
-                        ..cell_input(self, cell, &starts, &widths)
+                        ..cell_input(cell, &starts, &widths)
                     };
                     row_output.escapes |= self.lay_out(cell.id, input, None).escapes;
                     let x = if style.is_rtl() {
@@ -1345,7 +1400,10 @@ impl Document {
                         height: flow.place_over(*row, &rows[index..=index]),
                         ..Output::default()
                     };
-                    for cell in members.iter().filter(|it| it.bands[0] == first + index) {
+                    for cell in members[members.partition_point(|it| it.bands[0] < first + index)..]
+                        .iter()
+                        .take_while(|it| it.bands[0] == first + index)
+                    {
                         self.boxes[cell.id].layout.location.y -= band.top;
                         own.escapes |= self.boxes[cell.id].cache.escapes();
                     }
@@ -1492,8 +1550,10 @@ impl Document {
         for index in 0..self.boxes[id].children.len() {
             let child = self.boxes[id].children[index];
             let it = &mut self.boxes[child];
-            output.escapes |= it.out_of_flow();
-            it.static_position = at.map(|it| (it, Default::default()));
+            if it.style.is_out_of_flow() {
+                output.escapes |= it.out_of_flow();
+                it.static_position = at.map(|it| (it, Default::default()));
+            }
         }
     }
 }
@@ -1516,6 +1576,14 @@ struct Section {
     fraction: Option<f32>,
     is_fixed: bool,
     is_body: bool,
+}
+
+fn specified_height(it: &LayoutBox) -> (Option<f32>, Option<f32>) {
+    match it.style.layout.height {
+        Size::Length(Lp::Px(px)) => (Some(unit(px)), None),
+        Size::Length(Lp::Fraction(fraction)) => (None, Some(fraction)),
+        _ => (None, None),
+    }
 }
 
 fn fixed_height(style: &Style) -> Option<f32> {

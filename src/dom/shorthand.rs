@@ -1,12 +1,15 @@
 //! Splits the value of a shorthand into those of its longhands, and joins them again.
 
+use core::cell::RefCell;
 use std::borrow::Cow;
 use std::sync::{LazyLock, OnceLock};
 
 use bun_core::strings;
+use smallvec::SmallVec;
 
 use crate::grammar::{self, Captured, Definition, Term, Writer, definition, split_list};
 use crate::hooks::words;
+use crate::name::Map;
 use crate::properties::{Id, Prop};
 use crate::values::*;
 
@@ -30,6 +33,7 @@ struct Longhand {
 pub(crate) struct Shorthand {
     definition: &'static Definition,
     longhands: Vec<Longhand>,
+    props: Box<[Prop]>,
     ids: [Box<[Id]>; Flow::COUNT],
 }
 
@@ -118,6 +122,7 @@ impl Shorthand {
         });
         Shorthand {
             definition,
+            props: longhands.iter().map(|it| it.prop).collect(),
             longhands,
             ids,
         }
@@ -127,12 +132,12 @@ impl Shorthand {
         &self.ids[flow.index()]
     }
 
-    pub(crate) fn longhands(&self) -> impl Iterator<Item = Prop> {
-        self.longhands.iter().map(|it| it.prop)
+    pub(crate) fn longhands(&self) -> &[Prop] {
+        &self.props
     }
 
     fn index(&self, prop: Prop) -> Option<usize> {
-        self.longhands().position(|it| it == prop)
+        self.props.iter().position(|it| *it == prop)
     }
 
     /// One after the other, or in any order.
@@ -332,7 +337,28 @@ impl Shorthand {
 
     /// Empty if it cannot stand for these values. `initial` is `None` if they are as they are specified.
     pub(crate) fn join(&self, values: &[&[u8]], initial: Option<&dyn Fn(Id) -> Out>) -> Out {
-        self.try_join(values, initial).unwrap_or_default()
+        thread_local! {
+            static JOINED: RefCell<Map<Out, Out>> = RefCell::default();
+        }
+        if initial.is_some() || values.iter().any(|it| it.len() > 64) {
+            return self.try_join(values, initial).unwrap_or_default();
+        }
+        let mut key = SmallVec::<[u8; 128]>::from_slice(self.definition.name.as_bytes());
+        for value in values {
+            key.push(0xff);
+            key.extend_from_slice(value);
+        }
+        if let Some(known) = JOINED.with_borrow(|it| it.get(&key[..]).cloned()) {
+            return known;
+        }
+        let joined = self.try_join(values, None).unwrap_or_default();
+        JOINED.with_borrow_mut(|known| {
+            if known.len() >= 128 {
+                known.clear();
+            }
+            known.insert(key.to_vec(), joined.clone());
+        });
+        joined
     }
 
     fn try_join(&self, values: &[&[u8]], initial: Option<&dyn Fn(Id) -> Out>) -> Option<Out> {
@@ -341,7 +367,7 @@ impl Shorthand {
             self.definition.source(),
             initial.is_some(),
         );
-        let initials: Vec<Part> = (self.longhands())
+        let initials: Vec<Part> = (self.longhands().iter().copied())
             .map(|prop| {
                 initial.zip(prop.id(Flow::DEFAULT)).map_or_else(
                     || initial_source(prop).into(),
@@ -397,9 +423,6 @@ impl Shorthand {
             {
                 return None;
             }
-            ("animation", _) if is_computed && values[0] == b"0s" => {
-                return self.try_join(&[&[&b"auto"[..]], &values[1..]].concat(), initial);
-            }
             ("grid", _) if is_computed => return Some(slashes(values)),
             ("grid", _) => return join_grid(values),
             ("grid-template", _) => return join_template(values),
@@ -433,7 +456,7 @@ impl Shorthand {
         } else {
             lengths().max()?
         };
-        (is_computed
+        (is_computed && !name.ends_with("-timeline")
             || lengths().all(|it| it == count)
             || matches!(
                 name,
@@ -466,6 +489,18 @@ impl Shorthand {
                         .concat(),
                     )
                 }
+                "animation" if is_computed && values[0] == b"0s" => {
+                    let all = self.join_layer(
+                        term,
+                        &[&[&b"auto"[..]], &values[1..]].concat(),
+                        &initials,
+                        true,
+                    )?;
+                    Some(
+                        all.strip_prefix(b"auto ")
+                            .map_or_else(|| all.clone(), |rest| [b"0s ", rest].concat()),
+                    )
+                }
                 _ => self.join_layer(term, &values, &initials, is_computed),
             }
         });
@@ -483,10 +518,15 @@ impl Shorthand {
         let of = |prop| self.index(prop).map(|it| values[it]);
         let value = |prop| match prop {
             Prop::Short(index) => get(index).try_join(
-                &get(index).longhands().map(of).collect::<Option<Vec<_>>>()?,
+                &get(index)
+                    .longhands()
+                    .iter()
+                    .copied()
+                    .map(of)
+                    .collect::<Option<Vec<_>>>()?,
                 None,
             ),
-            Prop::Long(Id::FontStretch) if is_computed => {
+            Prop::Long(Id::FontStretch) if of(prop)?.ends_with(b"%") => {
                 const NAMES: &str = "50% ultra-condensed 62.5% extra-condensed 75% condensed 87.5% semi-condensed 100% normal \
                     112.5% semi-expanded 125% expanded 150% extra-expanded 200% ultra-expanded";
                 NAMES
@@ -506,6 +546,16 @@ impl Shorthand {
                 || part == b"normal"
                     && values[index] == b"100%"
                     && prop_name(index).ends_with("range-end")
+                || part == b"auto"
+                    && values[index]
+                        .strip_prefix(b"auto 0")
+                        .is_some_and(|it| it.iter().all(u8::is_ascii_alphabetic))
+                || prop_name(index) == "font-stretch"
+                    && Id::FontStretch
+                        .syntax()
+                        .write(part, grammar::Mode::Computed(&cx))
+                        .as_deref()
+                        == Some(values[index])
                 || self.ids[0][index]
                     .syntax()
                     .write(
@@ -605,7 +655,7 @@ impl Shorthand {
     fn join_rules(&self, values: &[&[u8]], is_computed: bool) -> Option<Out> {
         let rule = |parts: [&[u8]; 3]| {
             let kept: Vec<_> = (parts.iter().zip(self.longhands()))
-                .filter(|it| *it.0 != initial_source(it.1) || is_computed && *it.0 != b"none")
+                .filter(|it| *it.0 != initial_source(*it.1) || is_computed && *it.0 != b"none")
                 .map(|it| *it.0)
                 .collect();
             if kept.is_empty() {

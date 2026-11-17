@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { isBitcode } from "./binary-reader.ts";
-import { checkBuiltinUses, readBuiltinUses } from "./builtin-uses.ts";
+import { checkBuiltinUses, idsByKey, readBuiltinUses } from "./builtin-uses.ts";
 import {
   checkDeclaredUses,
   findFeaturesThatEntryPointsNeed,
@@ -275,7 +275,7 @@ function analyze(link: Link, session: LinkSession): Analysis {
   stopwatch.lap(`graph of the ${link.name} link`);
   const unpartitioned: ReportContext = { graph: reading.graph, model, uses, demangler, partition: undefined };
   ensureNoFailures(reading.failures, unpartitioned);
-  const recorded = readEntryPoints(reading, model, uses.namedByEngine);
+  const recorded = readEntryPoints(reading, model, uses.namedByEngine, idsByKey(uses));
   ensureNoFailures(recorded.failures, unpartitioned);
   const symbolNames = new Demangler(demangler);
   const listedInTables = findStaticTableEntryPoints({

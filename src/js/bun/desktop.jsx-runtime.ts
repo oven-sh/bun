@@ -1,3 +1,3 @@
-const { jsx, api } = require("internal/desktop/render");
+const jsx = $bindgen("render.bind.ts", "jsx");
 
-export default { Fragment: api.Fragment, jsx, jsxs: jsx };
+export default { Fragment: Symbol.for("react.fragment"), jsx, jsxs: jsx };

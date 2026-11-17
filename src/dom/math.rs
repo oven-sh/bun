@@ -7,6 +7,7 @@ use crate::boxes::{BoxId, Kind};
 use crate::document::Document;
 use crate::layout::{Edges, Input, Output, Widths};
 use crate::name::{Name, is_name, name};
+use crate::order::Order as _;
 use crate::platform::{font_table, glyph_extent, word};
 use crate::positioned::Edge;
 use crate::properties::{Id, Style};
@@ -670,7 +671,7 @@ pub(crate) fn hints(element: &Element, declare: &mut dyn FnMut(&str, &str)) {
     for attribute in &element.attributes {
         let value = &*attribute.value;
         let is = |known: &str| value.eq_ignore_ascii_case(known);
-        match &*attribute.qualified {
+        match &*attribute.qualified() {
             "dir" if is("ltr") || is("rtl") => declare("direction", value),
             "mathcolor" => declare("color", value),
             "mathbackground" => declare("background-color", value),
@@ -726,7 +727,10 @@ fn is_display(style: &Style) -> bool {
 impl Document {
     fn math_font(&self, style: &Style) -> MathFont {
         let shaped = self.shape_plain(" ", style);
-        let face = shaped.faces[shaped.clusters.first().map_or(0, |it| usize::from(it.face))];
+        let face = shaped.faces[shaped
+            .clusters()
+            .first()
+            .map_or(0, |it| usize::from(it.face))];
         let units = word(font_table(&face, *b"head"), 18).unwrap_or(1000).max(1) as f32;
         let (x_height, rule) = (style.metrics.x_height, style.metrics.underline_thickness);
         MathFont {
@@ -922,7 +926,7 @@ impl Document {
                 abi::DIRECTION_LTR
             },
         );
-        match (&shaped.glyphs[..], shaped.faces.first()) {
+        match (shaped.glyphs(), shaped.faces.first()) {
             ([glyph], Some(face)) if face.id == font.face.id && glyph.id != 0 => Some(glyph.id),
             _ => None,
         }
@@ -983,7 +987,9 @@ impl Document {
         match () {
             () if tag == name!("mspace") => Schema::Space,
             () if tag == name!("mpadded") && !self.in_flow(id).is_empty() => Schema::Padded,
-            () if tag == name!("msqrt") || tag == name!("mroot") && self.in_flow(id).len() == 2 => {
+            () if tag == name!("msqrt") && !self.in_flow(id).is_empty()
+                || tag == name!("mroot") && self.in_flow(id).len() == 2 =>
+            {
                 Schema::Radical
             }
             () if tag == name!("mfrac") && self.in_flow(id).len() == 2 => Schema::Fraction,
@@ -1207,7 +1213,7 @@ impl Document {
                 (false, _) => Stretch::Width(most(|it| it.width)),
             });
         }
-        stretchy.sort_unstable();
+        stretchy.order_by(Ord::cmp);
         let stretch = |it: BoxId| {
             if stretchy.binary_search(&it).is_ok() {
                 target
@@ -1221,6 +1227,7 @@ impl Document {
             .collect()
     }
 
+    #[inline(never)]
     pub(crate) fn lay_out_math(&mut self, id: BoxId, input: &Input) -> Output {
         let it = &self.boxes[id];
         let (style, inset) = (Rc::clone(&it.style), it.inset(input.basis.0));
@@ -1656,11 +1663,11 @@ impl Document {
             let paragraphs = self.boxes[*lines]
                 .inline
                 .iter()
-                .flat_map(|it| &it.paragraphs)
+                .flat_map(|it| &it.clusters.paragraphs)
                 .map(|it| &it.shaped);
             let glyphs = paragraphs.flat_map(|it| {
-                it.clusters.iter().flat_map(move |cluster| {
-                    it.glyphs[cluster.glyphs.range()]
+                it.clusters().iter().flat_map(move |cluster| {
+                    it.glyphs()[cluster.glyphs.range()]
                         .iter()
                         .map(move |glyph| (it, cluster, glyph))
                 })
@@ -1712,6 +1719,7 @@ impl Document {
 
     pub(crate) fn forget_math_layout(&mut self, id: BoxId) {
         self.boxes[id].cache.clear();
+        self.boxes.note_new_part(id);
         self.repaint_box(id);
         for index in 0..self.boxes[id].children.len() {
             self.forget_math_layout(self.boxes[id].children[index]);

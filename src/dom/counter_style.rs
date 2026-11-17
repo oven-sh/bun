@@ -32,7 +32,7 @@ pub(crate) struct CounterStyle {
 const MAX_LENGTH: usize = 120;
 
 thread_local! {
-    static PREDEFINED: Sheet = Sheet::parse(include_bytes!("counter_styles.css"), b"", b"", 0, Default::default());
+    static PREDEFINED: Sheet = Sheet::parse(include_bytes!("counter_styles.css"), b"", Default::default());
 }
 
 fn symbol(p: &mut P) -> Option<Str> {
@@ -316,6 +316,9 @@ impl CounterStyle {
 pub(crate) fn canonical_name(name: &Str) -> Str {
     if !name.bytes().any(|it| it.is_ascii_uppercase()) {
         return Rc::clone(name);
+    }
+    if name.eq_ignore_ascii_case("decimal") {
+        return "decimal".into();
     }
     PREDEFINED.with(|sheet| {
         Rc::clone(

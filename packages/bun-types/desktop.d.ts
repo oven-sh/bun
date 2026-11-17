@@ -178,7 +178,7 @@ declare module "bun:desktop" {
 
     readonly id: number;
     /**
-     * After `import "bun:desktop/dom"`, the `window` of the first `Window` is `globalThis`. That of any other is an object
+     * With `--preload=bun:desktop/dom`, the `window` of the first `Window` is `globalThis`. That of any other is an object
      * of its own in the same realm, so nodes can move between windows.
      */
     readonly window: DomWindow;
@@ -1108,8 +1108,9 @@ declare module "bun:desktop" {
 }
 
 /**
- * Makes `globalThis` a `window`, for libraries that are written for browsers, such as `react-dom`. Import it before them.
- * The first `Window` of `bun:desktop` shows the global `document`.
+ * With `--preload=bun:desktop/dom`, or `"desktop": { "dom": true }` in the `package.json` of an app that is built with
+ * `--desktop`, `globalThis` is a `window`, for libraries that are written for browsers, such as `react-dom`.
+ * The first `Window` of `bun:desktop` shows the `document` of this module.
  *
  * @example
  * ```tsx

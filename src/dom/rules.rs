@@ -1,21 +1,25 @@
 //! Which rules apply to an element, and which elements a change can affect.
 
 use core::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
+use crate::api::core::StoredText;
+
+use bun_core::strings;
 use smallvec::SmallVec;
 
 use crate::carousel::{BUTTON_RULES, COLUMN_MARKER_RULES, COLUMN_RULES, MARKER_RULES};
+use crate::cascade::RuleList;
 use crate::condition::Subject;
-use crate::name::{Map, Name, Set, name};
+use crate::font_face::FontFace;
+use crate::name::{Map, Name, Set, keyed_hash, keyed_hash_of_words, name};
+use crate::order::Order as _;
 use crate::properties::Only;
 use crate::selector::{
     Bloom, Combinator, HasResult, HasResults, List, Matcher, Pseudo, Relation, ScrollPart, Simple,
     key,
 };
-use crate::sheet::{
-    AtKind, AtRule, Block, ContainerQuery, Defined, FontFace, Rule, ScopeRule, Sheet,
-};
+use crate::sheet::{AtKind, AtRule, Block, ContainerQuery, Defined, Rule, ScopeRule, Sheet};
 use crate::tree::{AFTER, BEFORE, Element, Flags, MARKER, NodeId, State, Tree};
 use crate::values::Str;
 
@@ -34,18 +38,47 @@ struct Entry {
 
 /// What a rule set has for the elements with the same signature.
 #[derive(Default)]
-struct Memo {
-    matched: Vec<(u128, Matched)>,
-    /// `RuleSet::generated`
-    generated: u8,
+#[repr(C)]
+pub(crate) struct Memo {
+    /// What sheets have given an element, by the version of the memos of the user agent and by what `decide` has returned for both.
+    lists: RefCell<SmallVec<[((u32, u32, u32), Weak<RuleList>); 1]>>,
+    /// The version of the memos of the user agent, if the one for the same signature has no undecided rules.
+    pub(crate) is_alone_in_deciding: Cell<Option<u32>>,
+    /// What `generated` finds, in both, as of that version, if it follows from the signature.
+    pub(crate) always_generates: Cell<Option<(u32, u8)>>,
     undecided: Vec<Entry>,
     /// How far away they are.
     roots: Vec<(*const ScopeRule, SmallVec<[u16; 2]>)>,
+    matched: Vec<(u128, Matched)>,
+    /// `RuleSet::generated`
+    generated: u8,
 }
 
 impl Entry {
     fn is_decided(&self) -> bool {
         self.follows_from_signature && self.rule.context.container.is_none()
+    }
+}
+
+impl Memo {
+    pub(crate) fn is_decided(&self) -> bool {
+        self.undecided.is_empty()
+    }
+
+    pub(crate) fn keep(&self, key: (u32, u32, u32), list: &Rc<RuleList>) {
+        let mut lists = self.lists.borrow_mut();
+        lists.retain(|it| it.0 != key);
+        lists.truncate(3);
+        lists.insert(0, (key, Rc::downgrade(list)));
+    }
+
+    pub(crate) fn list(&self, key: (u32, u32, u32)) -> Option<Rc<RuleList>> {
+        self.lists
+            .borrow()
+            .iter()
+            .find(|it| it.0 == key)?
+            .1
+            .upgrade()
     }
 }
 
@@ -119,18 +152,35 @@ struct Candidates {
 
 /// The same object for all elements with the same `class` attribute.
 #[derive(Default)]
+#[repr(C)]
 pub(crate) struct Classes {
-    pub(crate) source: Str,
-    hash: Name,
-    names: Box<[Name]>,
     pub(crate) filter: u64,
+    hash: u64,
+    names: Box<[Name]>,
+    /// The hash of those that are in `Dependencies::of_others`, as of its version.
+    seen_by_others: Cell<(u32, u64)>,
     /// The version of the rule set that has last seen them.
     activated: Cell<u32>,
+    pub(crate) source: StoredText,
+    /// The newest first.
+    pub(crate) decided: RefCell<[Decided; 2]>,
     candidates: RefCell<SmallVec<[(u32, Rc<Candidates>); 1]>>,
+    /// Of the elements that have been given no other.
+    pub(crate) attributes: core::cell::OnceCell<Rc<[crate::tree::Attribute]>>,
+}
+
+/// What memos that have no undecided rules have given an element.
+#[derive(Default)]
+pub(crate) struct Decided {
+    pub(crate) signature: Name,
+    /// Of the memos of the user agent and of the scope.
+    pub(crate) versions: [u32; 2],
+    pub(crate) list: Weak<RuleList>,
+    pub(crate) generates: u8,
 }
 
 impl Classes {
-    pub(crate) fn new(source: &str, ignores_case: bool) -> Classes {
+    pub(crate) fn new(source: &StoredText, ignores_case: bool) -> Classes {
         let name = if ignores_case {
             Name::lowercase
         } else {
@@ -142,8 +192,8 @@ impl Classes {
             .collect();
         let filter = crate::selector::filter(names.iter().map(|it| key::class(*it)));
         Classes {
-            source: source.into(),
-            hash: Name::new(source.as_bytes()),
+            source: source.clone(),
+            hash: keyed_hash(&**source),
             names,
             filter,
             ..Classes::default()
@@ -160,6 +210,19 @@ impl core::ops::Deref for Classes {
 
 thread_local! {
     static LAST_VERSION: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Of the signature that memos are kept by.
+fn salt_of(pseudo: Pseudo) -> Option<u64> {
+    [Pseudo::None, Pseudo::Before, Pseudo::After, Pseudo::Marker]
+        .iter()
+        .position(|it| *it == pseudo)
+        .map(|it| it as u64)
+}
+
+/// Changes with the rules that apply.
+pub(crate) fn last_version() -> u32 {
+    LAST_VERSION.get()
 }
 
 fn next_version() -> u32 {
@@ -207,6 +270,7 @@ pub(crate) struct Subjects {
     parent_keys: Set<Name>,
     others: Vec<Rc<Rule>>,
     pub(crate) is_everything: bool,
+    pub(crate) definitions: Vec<AtKind>,
 }
 
 impl Subjects {
@@ -244,16 +308,20 @@ pub(crate) const INLINE: u16 = u16::MAX;
 /// The rules of the style sheets of a document or of a shadow root.
 #[derive(Default)]
 pub(crate) struct RuleSet {
+    /// By the last `set_sheets`.
+    pub(crate) was_reordered: bool,
     slots: Vec<Slot>,
     index: Index,
     /// The first of the rules that wait for an element to have the key.
     waiting_for: Map<Name, u32>,
     waiting: Vec<Waiting>,
+    /// Some keys that nothing waits for, by their lowest bits.
+    settled_keys: [Name; 32],
     /// Changes with the sheets.
     sheets_version: u32,
     /// Changes with what `Candidates` are made from.
     version: u32,
-    layer_order: Vec<Vec<u8>>,
+    layer_order: Vec<u64>,
     pseudos: Set<Pseudo>,
     has_starting: bool,
     /// Whose sheet does not select by class.
@@ -262,6 +330,7 @@ pub(crate) struct RuleSet {
     slotted: Vec<Entry>,
     parts: Vec<Entry>,
     memos: RefCell<Map<Name, Rc<Memo>>>,
+    pub(crate) version_of_memos: Cell<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -281,6 +350,12 @@ pub(crate) struct Matched {
     pub(crate) level: Level,
     pub(crate) layer: u16,
     pub(crate) only: Only,
+}
+
+impl Matched {
+    pub(crate) fn is_inline(&self) -> bool {
+        (self.level, self.layer) == (Level::Own, INLINE)
+    }
 }
 
 /// For each `@scope` rule, the roots of the scopes that the element is in, with how far away they are.
@@ -372,13 +447,13 @@ impl RuleSet {
         }
         let layers_are_in_order = self.rank_layers();
         (self.sheets_version, self.version) = (next_version(), next_version());
-        self.memos.get_mut().clear();
-        subjects.filter(|_| is_in_order && layers_are_in_order)
+        self.forget_memos();
+        self.was_reordered = !(is_in_order && layers_are_in_order);
+        subjects.filter(|_| !self.was_reordered)
     }
 
     /// Whether those that were there before are in the same order.
     fn rank_layers(&mut self) -> bool {
-        let mut order: Vec<Vec<u8>> = Vec::new();
         let mut mentioned = Vec::new();
         for slot in self.slots.iter().filter(|it| !it.is_removed) {
             let names = slot
@@ -398,38 +473,42 @@ impl RuleSet {
                 )
             }));
         }
-        mentioned.sort_by_key(|it| it.0);
+        mentioned.order_by_key(|it| it.0);
+        let inner = |outer: u64, name: &[u8]| keyed_hash((outer, name));
+        let mut layers_in: Map<u64, Vec<u64>> = Map::default();
         for (_, name) in mentioned {
-            let ends = (0..name.len())
-                .filter(|end| name[*end] == b'.')
-                .chain([name.len()]);
-            for prefix in ends.map(|end| &name[..end]) {
-                if !order.iter().any(|it| it == prefix) {
-                    order.push(prefix.to_vec());
+            strings::split(name, b".").fold(0, |outer, name| {
+                let layer = inner(outer, name);
+                if !layers_in.contains_key(&layer) {
+                    layers_in.insert(layer, Vec::new());
+                    layers_in.entry(outer).or_default().push(layer);
                 }
-            }
+                layer
+            });
         }
         // A layer comes after the layers in it.
-        let path = |name: &[u8]| -> Vec<usize> {
-            let ends = (0..name.len())
-                .filter(|end| name[*end] == b'.')
-                .chain([name.len()]);
-            (ends.filter_map(|end| order.iter().position(|it| *it == name[..end])))
-                .chain([usize::MAX])
-                .collect()
-        };
-        let mut sorted = order.clone();
-        sorted.sort_by_cached_key(|name| path(name));
+        let (mut sorted, mut pending) = (Vec::new(), layers_in.remove(&0).unwrap_or_default());
+        while let Some(layer) = pending.pop() {
+            sorted.push(layer);
+            pending.extend(layers_in.remove(&layer).unwrap_or_default());
+        }
+        sorted.reverse();
+        let ranks: Map<u64, usize> = sorted.iter().copied().zip(0..).collect();
         for slot in &mut self.slots {
-            let rank = |name: &Vec<u8>| sorted.iter().position(|it| it == name);
-            slot.layer_ranks = (slot.sheet.layers.iter())
-                .map(|name| rank(name).map_or(UNLAYERED, |rank| rank as u16))
+            let rank = |name: &Vec<u8>| ranks.get(&strings::split(name, b".").fold(0, inner));
+            slot.layer_ranks = slot
+                .sheet
+                .layers
+                .iter()
+                .map(|name| {
+                    rank(name).map_or(UNLAYERED, |it| (*it).min(usize::from(UNLAYERED) - 1) as u16)
+                })
                 .collect();
         }
         let is_in_order = self
             .layer_order
             .iter()
-            .filter_map(|name| sorted.iter().position(|it| it == name))
+            .filter_map(|it| ranks.get(it))
             .is_sorted();
         self.layer_order = sorted;
         is_in_order
@@ -477,6 +556,7 @@ impl RuleSet {
         for rule in &sheet.rules {
             self.insert(Rc::clone(rule), slot, None, false, dependencies);
         }
+        self.settled_keys = Default::default();
         self.waiting.reserve(sheet.deferred.len());
         self.waiting_for.reserve(sheet.deferred.len() / 2);
         for (deferred, it) in (0..).zip(&sheet.deferred) {
@@ -575,7 +655,11 @@ impl RuleSet {
     }
 
     /// Whether any rule has been waiting for the key, and if so whether one applies to descendants.
-    fn activate_key(&mut self, key: Name, dependencies: &mut Dependencies) -> Option<bool> {
+    pub(crate) fn activate_key(
+        &mut self,
+        key: Name,
+        dependencies: &mut Dependencies,
+    ) -> Option<bool> {
         let (mut at, mut found) = (
             core::mem::replace(self.waiting_for.get_mut(&key)?, SEEN),
             None,
@@ -627,8 +711,23 @@ impl RuleSet {
         element: &Element,
         dependencies: &mut Dependencies,
     ) {
-        for key in key::besides_classes(element) {
-            self.activate_key(key, dependencies);
+        let mut settle = |key: Name| {
+            if core::mem::replace(&mut self.settled_keys[(key.bits() >> 8) as usize % 32], key)
+                != key
+            {
+                self.activate_key(key, dependencies);
+            }
+        };
+        settle(key::tag(element.tag));
+        match element.has_only_classes() {
+            true => element.classes.iter().for_each(|_| settle(CLASS_ATTRIBUTE)),
+            false => {
+                (element.id != Name::NONE).then(|| settle(key::id(element.id)));
+                for it in &element.attributes {
+                    settle(key::attribute(it.name));
+                    (it.key != Name::NONE).then(|| settle(it.key));
+                }
+            }
         }
         if let Some(classes) = element.classes.as_ref().filter(|_| !self.is_of_user_agent)
             && classes.activated.replace(self.sheets_version) != self.sheets_version
@@ -678,6 +777,11 @@ impl RuleSet {
         let Some(element) = query.tree.element(query.id) else {
             return;
         };
+        query
+            .bloom
+            .filter(|_| part != STARTING)
+            .into_iter()
+            .for_each(|it| it.count(query.tree));
         let (parent, state) = (
             query.tree.element(query.tree[query.id].parent),
             element.state,
@@ -732,15 +836,13 @@ impl RuleSet {
         {
             return;
         }
-        self.memos.get_mut().clear();
+        self.forget_memos();
         self.version = next_version();
-        if self
+        let is_reordered = self
             .slots
             .iter()
             .any(|it| it.sheet.mentions.iter().any(|it| it.1 != 0))
-        {
-            affected.is_everything |= !self.rank_layers();
-        }
+            && !self.rank_layers();
         let flips = |slot: usize, media: u16| {
             before[slot].get(usize::from(media))
                 != self.slots[slot].active_media.get(usize::from(media))
@@ -764,20 +866,25 @@ impl RuleSet {
                 .filter(has_flipped)
                 .map(|it| Rc::clone(&it.rule)),
         );
-        affected.is_everything |= [&self.host, &self.slotted, &self.parts]
-            .into_iter()
-            .flatten()
-            .any(|it| has_flipped(&it))
-            || self
-                .slots
-                .iter()
-                .enumerate()
-                .any(|(slot, it)| it.sheet.at_rules.iter().any(|it| flips(slot, it.media)));
+        affected.is_everything |= is_reordered
+            || [&self.host, &self.slotted, &self.parts]
+                .into_iter()
+                .flatten()
+                .any(|it| has_flipped(&it));
+        for (slot, it) in self.slots.iter().enumerate() {
+            affected.definitions.extend(
+                it.sheet
+                    .at_rules
+                    .iter()
+                    .filter(|it| is_reordered || flips(slot, it.media))
+                    .map(|it| it.kind),
+            );
+        }
     }
 
     fn by_rank(&self) -> impl DoubleEndedIterator<Item = &Slot> {
         let mut slots: Vec<_> = self.slots.iter().filter(|it| !it.is_removed).collect();
-        slots.sort_by_key(|slot| slot.rank);
+        slots.order_by_key(|slot| slot.rank);
         slots.into_iter()
     }
 
@@ -800,7 +907,7 @@ impl RuleSet {
             }));
         }
         all.retain(|it| !matches!(it.2, Defined::Invalid));
-        all.sort_by_key(|it| it.0);
+        all.order_by_key(|it| it.0);
         all.into_iter().map(|it| (it.1, it.2)).collect()
     }
 
@@ -821,12 +928,42 @@ impl RuleSet {
         self.has_starting
     }
 
+    pub(crate) fn has_starting_style(&self, query: &Query, host: NodeId) -> bool {
+        let mut found = false;
+        if self.has_starting {
+            self.visit_candidates(query, STARTING, |it| {
+                found = found || self.matches(it, query, host).is_some()
+            });
+        }
+        found
+    }
+
     pub(crate) fn has_rules_for(&self, pseudo: Pseudo) -> bool {
         self.pseudos.contains(&pseudo)
     }
 
     pub(crate) fn count_pseudos(&self) -> usize {
         self.pseudos.len()
+    }
+
+    pub(crate) fn forget_memos(&mut self) {
+        self.memos.get_mut().clear();
+        self.version_of_memos.set(next_version());
+    }
+
+    fn known_memo(&self, key: Name, query: &Query) -> Option<Rc<Memo>> {
+        let known = Rc::clone(self.memos.borrow().get(&key)?);
+        if !known.roots.is_empty() {
+            let up =
+                |distance: u16| (0..distance).fold(query.id, |id, _| query.tree.parent_or_host(id));
+            query.roots.borrow_mut().extend(
+                known
+                    .roots
+                    .iter()
+                    .map(|(scope, all)| (*scope, all.iter().map(|it| (*it, up(*it))).collect())),
+            );
+        }
+        Some(known)
     }
 
     /// The proximity of the scope, if it matches.
@@ -839,16 +976,7 @@ impl RuleSet {
         host: NodeId,
         decide: impl Fn(&Entry, &mut Memo, &dyn Fn(&Query) -> Option<u16>),
     ) -> Rc<Memo> {
-        let known = self.memos.borrow().get(&key).cloned();
-        if let Some(known) = known {
-            let up =
-                |distance: u16| (0..distance).fold(query.id, |id, _| query.tree.parent_or_host(id));
-            query.roots.borrow_mut().extend(
-                known
-                    .roots
-                    .iter()
-                    .map(|(scope, all)| (*scope, all.iter().map(|it| (*it, up(*it))).collect())),
-            );
+        if let Some(known) = self.known_memo(key, query) {
             return known;
         }
         let mut memo = Memo::default();
@@ -867,14 +995,21 @@ impl RuleSet {
                         host,
                     ),
                     false => {
-                        let scope = entry
-                            .rule
-                            .context
-                            .scope
-                            .as_ref()
-                            .filter(|_| entry.has_known_roots);
+                        let may_match = |scope| {
+                            query
+                                .matcher(host, scope)
+                                .may_match(&entry.rule.selector.compounds, query.id)
+                        };
                         (query.bloom.is_none_or(|it| it.may_have(&entry.ancestors))
-                            && scope.is_none_or(|it| !scope_roots(it, query, host).is_empty()))
+                            && match &entry.rule.context.scope {
+                                None => may_match(None),
+                                Some(scope) => {
+                                    !entry.has_known_roots
+                                        || scope_roots(scope, query, host)
+                                            .iter()
+                                            .any(|it| may_match(Some(it.1)))
+                                }
+                            })
                         .then_some(0)
                     }
                 },
@@ -897,8 +1032,9 @@ impl RuleSet {
             }
         }
         let (memo, mut memos) = (Rc::new(memo), self.memos.borrow_mut());
-        if memos.len() >= 2048 {
+        if memos.len() >= 8192 {
             memos.clear();
+            self.version_of_memos.set(next_version());
         }
         memos.insert(key, Rc::clone(&memo));
         memo
@@ -920,19 +1056,19 @@ impl RuleSet {
         if entry.always_matches {
             return Some(u16::MAX);
         }
-        let matcher = |scope| {
-            let mut matcher = Matcher::new(query.tree, host, scope, Some(query.has_results));
-            matcher.bloom = query.bloom;
-            matcher
-        };
         let proximity = match &rule.context.scope {
-            None => matcher(if host == 0 { 0 } else { NodeId::MAX })
+            None => query
+                .matcher(host, None)
                 .matches(&rule.selector, query.id)
                 .then_some(u16::MAX)?,
             Some(scope) => {
                 scope_roots(scope, query, host)
                     .iter()
-                    .find(|it| matcher(it.1).matches(&rule.selector, query.id))?
+                    .find(|it| {
+                        query
+                            .matcher(host, Some(it.1))
+                            .matches(&rule.selector, query.id)
+                    })?
                     .0
             }
         };
@@ -1004,6 +1140,45 @@ impl RuleSet {
     }
 
     /// Appends in ascending priority.
+    /// With those of the undecided rules that match, as bits. Together they tell what `collect` would add.
+    pub(crate) fn decide(&self, query: &Query, host: NodeId) -> Option<(Rc<Memo>, u32)> {
+        let memo = self.known_memo(query.signature.salted(salt_of(query.pseudo)?), query)?;
+        let has_known_proximity =
+            |it: &Entry| it.rule.context.scope.is_none() || it.has_known_roots;
+        if memo.undecided.len() > 32
+            || !memo.undecided.iter().all(has_known_proximity)
+            || memo.roots.iter().any(|it| it.1.len() > 1)
+        {
+            return None;
+        }
+        let matching = memo
+            .undecided
+            .iter()
+            .enumerate()
+            .filter(|it| self.matches(it.1, query, host).is_some())
+            .fold(0, |all, it| all | 1 << it.0);
+        Some((memo, matching))
+    }
+
+    /// Whether what `generated` finds follows from the signature.
+    pub(crate) fn always_generates_the_same(&self, signature: Name) -> bool {
+        self.memos
+            .borrow()
+            .get(&signature.salted(4))
+            .is_some_and(|it| it.is_decided())
+    }
+
+    pub(crate) fn note_generated(&self, signature: Name, version: u32, found: u8) {
+        if let Some(memo) = self
+            .memos
+            .borrow()
+            .get(&signature.salted(0))
+            .filter(|_| self.always_generates_the_same(signature))
+        {
+            memo.always_generates.set(Some((version, found)));
+        }
+    }
+
     pub(crate) fn collect(
         &self,
         query: &Query,
@@ -1043,17 +1218,14 @@ impl RuleSet {
         } else {
             PSEUDOS
         };
-        let salt = [Pseudo::None, Pseudo::Before, Pseudo::After, Pseudo::Marker]
-            .iter()
-            .position(|it| *it == query.pseudo);
-        let salt = salt.filter(|_| {
+        let salt = salt_of(query.pseudo).filter(|_| {
             matches!(kind, Kind::Normal)
                 && query.signature != Name::NONE
                 && query.pseudo_state.is_empty()
         });
         let memo = salt.map(|salt| {
             self.memo(
-                query.signature.salted(salt as u64),
+                query.signature.salted(salt),
                 query,
                 part,
                 host,
@@ -1095,7 +1267,20 @@ impl RuleSet {
                 }
             }
         }
-        out[start..].sort_unstable_by_key(|it| it.0);
+        out[start..].order_by_key(|it| it.0);
+    }
+}
+
+impl<'a> Query<'a> {
+    fn matcher(&self, host: NodeId, scope: Option<NodeId>) -> Matcher<'a> {
+        let mut matcher = Matcher::new(
+            self.tree,
+            host,
+            scope.unwrap_or(if host == 0 { 0 } else { NodeId::MAX }),
+            Some(self.has_results),
+        );
+        matcher.bloom = self.bloom;
+        matcher
     }
 }
 
@@ -1109,6 +1294,7 @@ fn scope_roots(scope: &Rc<ScopeRule>, query: &Query, host: NodeId) -> SmallVec<[
     {
         return known.1.clone();
     }
+    query.bloom.into_iter().for_each(|it| it.count(query.tree));
     let outer = scope.outer.as_ref().map(|it| scope_roots(it, query, host));
     let matcher = |root| Matcher::new(query.tree, host, root, Some(query.has_results));
     let is_near =
@@ -1158,14 +1344,38 @@ struct Affected {
     filter: u64,
 }
 
+struct Mentioned([u64; 128]);
+
+impl Default for Mentioned {
+    fn default() -> Mentioned {
+        Mentioned([0; 128])
+    }
+}
+
+impl Mentioned {
+    fn add(&mut self, key: Name) {
+        self.0[(key.bits() >> 16) as usize % 128] |= 1 << (key.bits() >> 8 & 63);
+    }
+
+    fn may_have(&self, key: Name) -> bool {
+        self.0[(key.bits() >> 16) as usize % 128] >> (key.bits() >> 8 & 63) & 1 != 0
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Dependencies {
     /// Whether it matters for every element.
     of_subject: Map<Name, bool>,
+    /// All the features that matter.
+    mentioned: Mentioned,
     of_subject_with: Set<(Name, Name)>,
     of_pseudo_elements: Set<Name>,
     of_others: Set<Name>,
+    version_of_others: u32,
     in_has: Set<Name>,
+    /// `selector::filter` of them.
+    in_has_filter: u64,
+    states_in_has: State,
     outside_has: Set<Name>,
     compared_attributes: Set<Name>,
     has_looks_at_siblings: bool,
@@ -1182,6 +1392,7 @@ impl Dependencies {
         {
             let (subjects, base) = (rule.selector.compounds[0].keys(), Relation::empty());
             let mut report = |key, relation: Relation, required| {
+                self.mentioned.add(key);
                 if relation.is_empty() {
                     let always = self.of_subject.entry(key).or_default();
                     match &subjects {
@@ -1195,7 +1406,9 @@ impl Dependencies {
                     }
                     return;
                 }
-                self.of_others.insert(key);
+                if self.of_others.insert(key) {
+                    self.version_of_others = next_version();
+                }
                 let next = self.affected.len() as u32;
                 let index = *self.by_pair.entry((key, required)).or_insert(next);
                 if index == next {
@@ -1227,11 +1440,22 @@ impl Dependencies {
                 limit.features(Relation::DESCENDANT, &mut report, false);
             }
             (rule.selector.pseudo_state.iter())
-                .for_each(|bit| _ = self.of_pseudo_elements.insert(key::state(bit)));
+                .map(key::state)
+                .for_each(|key| {
+                    self.mentioned.add(key);
+                    self.of_pseudo_elements.insert(key);
+                });
             for selector in limits.chain([&rule.selector]) {
                 selector.compared_attributes(&mut self.compared_attributes);
                 selector.visit_has(&mut |has| {
+                    has.keys.iter().for_each(|it| self.mentioned.add(*it));
                     self.in_has.extend(has.keys.iter().copied());
+                    self.in_has_filter |= crate::selector::filter(has.keys.iter().copied());
+                    self.states_in_has.extend(
+                        State::all()
+                            .iter()
+                            .filter(|it| has.keys.contains(&key::state(*it))),
+                    );
                     self.outside_has.extend(has.outer_keys.iter().copied());
                     self.has_looks_at_siblings |= has.looks_at_siblings;
                 });
@@ -1241,69 +1465,132 @@ impl Dependencies {
 
     /// Of what selectors can see of the element and of its ancestors, but not of their siblings and descendants.
     pub(crate) fn signature(&self, tree: &Tree, id: NodeId, bloom: &Bloom) -> Name {
-        let version = self.of_others.len() + self.compared_attributes.len();
         let (last, this) = (
             bloom.last_signature.get(),
-            (id, version + self.of_subject.len()),
+            (
+                id,
+                self.of_others.len() + self.compared_attributes.len() + self.of_subject.len(),
+            ),
         );
         if last.0 == this {
             return last.1;
         }
-        let sign = |outer: Name, id: NodeId, matters: &dyn Fn(Name) -> bool| {
-            let Some(element) = tree.element(id) else {
-                return outer;
-            };
-            let place = u64::from(tree[id].slot != 0)
-                | u64::from(tree.element(tree[id].parent).is_some()) << 1
-                | (element.namespace as u64) << 2;
-            let mut features = element.custom_states.iter().fold(0_u64, |all, it| {
-                all.wrapping_add(key::custom_state(*it).bits())
-            });
-            for it in &element.attributes {
-                if matters(key::attribute(it.name)) {
-                    let has_value = !crate::name::is_name!(it.name, "style" | "id" | "class")
-                        && self.compared_attributes.contains(&it.name);
-                    features = features.wrapping_add(
-                        if has_value {
-                            it.name.paired(Name::new(it.value.as_bytes()))
-                        } else {
-                            it.name
-                        }
-                        .bits(),
-                    );
-                }
-                if it.key != Name::NONE && matters(it.key) {
-                    features = features.wrapping_add(it.key.bits());
-                }
-            }
-            if element.id != Name::NONE && matters(key::id(element.id)) {
-                features = features.wrapping_add(key::id(element.id).bits());
-            }
-            if element.namespace == crate::tree::Namespace::Other {
-                features =
-                    features.wrapping_add(Name::new(element.namespace_uri().as_bytes()).bits());
-            }
-            let classes = element.classes.as_ref().map_or(0, |it| it.hash.bits());
-            let words = [
-                outer.bits(),
-                element.tag.bits(),
-                classes,
-                features,
-                u64::from(element.state.bits()),
-                place,
-            ];
-            Name::new(bun_core::slice_as_bytes(&words))
-        };
-        let outer = bloom.signature_of_path(version, |outer, id| {
-            sign(outer, id, &|key| self.of_others.contains(&key))
-        });
-        let own = sign(outer, id, &|key| self.of_subject.contains_key(&key));
+        let own = self.sign(
+            tree,
+            self.signature_of_path(tree, bloom),
+            id,
+            true,
+            &|key| self.of_subject.contains_key(&key),
+        );
         bloom.last_signature.set((this, own));
         own
     }
 
+    #[inline]
+    pub(crate) fn signature_of_path(&self, tree: &Tree, bloom: &Bloom) -> Name {
+        let sign = |outer, id| {
+            self.sign(
+                tree,
+                outer,
+                id,
+                self.of_others.contains(&CLASS_ATTRIBUTE),
+                &|key| self.of_others.contains(&key),
+            )
+        };
+        bloom.signature_of_path(self.of_others.len() + self.compared_attributes.len(), sign)
+    }
+
+    fn seen_by_others(&self, classes: &Classes) -> u64 {
+        if classes.seen_by_others.get().0 != self.version_of_others {
+            let keys: SmallVec<[_; 4]> = classes
+                .iter()
+                .map(|it| key::class(*it))
+                .filter(|it| self.of_others.contains(it))
+                .collect();
+            classes.seen_by_others.set((
+                self.version_of_others,
+                if keys.is_empty() {
+                    0
+                } else {
+                    keyed_hash(&keys[..])
+                },
+            ));
+        }
+        classes.seen_by_others.get().1
+    }
+
+    fn sign(
+        &self,
+        tree: &Tree,
+        outer: Name,
+        id: NodeId,
+        has_all_classes: bool,
+        matters: &dyn Fn(Name) -> bool,
+    ) -> Name {
+        let Some(element) = tree.element(id) else {
+            return outer;
+        };
+        let place = u64::from(tree[id].slot != 0)
+            | u64::from(tree.element(tree[id].parent).is_some()) << 1
+            | (element.namespace as u64) << 2;
+        let classes = element.classes.as_ref().map_or(0, |it| {
+            if has_all_classes {
+                it.hash
+            } else {
+                self.seen_by_others(it)
+            }
+        });
+        let words = [
+            outer.bits(),
+            element.tag.bits(),
+            classes,
+            u64::from(element.state.bits()) << 8 | place,
+        ];
+        if element.has_only_classes()
+            && element.custom_states.is_empty()
+            && element.namespace != crate::tree::Namespace::Other
+        {
+            return Name::stand_in(keyed_hash_of_words(&words));
+        }
+        let mut words = SmallVec::<[u64; 10]>::from_slice(&words);
+        words.extend(
+            element
+                .custom_states
+                .iter()
+                .map(|it| key::custom_state(*it).bits()),
+        );
+        for it in element.attributes_besides_class() {
+            if matters(key::attribute(it.name)) {
+                words.push(key::attribute(it.name).bits());
+                if !crate::name::is_name!(it.name, "style" | "id")
+                    && self.compared_attributes.contains(&it.name)
+                {
+                    words.push(keyed_hash(&*it.value));
+                }
+            }
+            if it.key != Name::NONE && matters(it.key) {
+                words.push(it.key.bits());
+            }
+        }
+        if element.id != Name::NONE && matters(key::id(element.id)) {
+            words.push(key::id(element.id).bits());
+        }
+        if element.namespace == crate::tree::Namespace::Other {
+            words.push(keyed_hash(element.namespace_uri()));
+        }
+        Name::stand_in(keyed_hash_of_words(&words))
+    }
+
+    #[inline]
+    pub(crate) fn may_mention(&self, feature: Name) -> bool {
+        self.mentioned.may_have(feature)
+    }
+
+    #[inline]
     pub(crate) fn feature_changed(&mut self, tree: &Tree, id: NodeId, feature: Name) {
-        self.feature_changed_along_with(tree, id, feature, &[]);
+        if self.mentioned.may_have(feature) {
+            self.feature_changed_along_with(tree, id, feature, &[]);
+        }
     }
 
     /// A rule is indexed by a pair of names, so the classes that were removed at the same time count.
@@ -1314,6 +1601,9 @@ impl Dependencies {
         feature: Name,
         removed: &[Name],
     ) {
+        if !self.mentioned.may_have(feature) {
+            return;
+        }
         let Some(element) = tree.element(id) else {
             return;
         };
@@ -1348,6 +1638,12 @@ impl Dependencies {
         if tree[child].element().is_none() {
             return;
         }
+        if !flags.intersects(
+            Flags::CHILD_INDEX | Flags::LATER_SIBLINGS | Flags::NEXT_SIBLING | Flags::EDGE_CHILDREN,
+        ) && self.in_has.is_empty()
+        {
+            return;
+        }
         let (previous, next) = (
             tree.previous_elements(child).next(),
             tree.next_elements(child).next(),
@@ -1371,18 +1667,48 @@ impl Dependencies {
                     .for_each(&mut changed);
             }
         }
+        self.changed_for_has(tree, child, previous);
+    }
+
+    /// All of them have come, or are about to go.
+    pub(crate) fn children_replaced(&mut self, tree: &Tree, parent: NodeId) {
+        if tree[parent].has(Flags::EMPTINESS) {
+            self.feature_changed(tree, parent, key::STRUCTURE);
+        }
+        if self.looks_for_descendants() {
+            tree.element_children(parent)
+                .for_each(|it| self.changed_for_has(tree, it, None));
+        }
+    }
+
+    pub(crate) fn looks_for_descendants(&self) -> bool {
+        !self.in_has.is_empty()
+    }
+
+    fn changed_for_has(&mut self, tree: &Tree, child: NodeId, previous: Option<NodeId>) {
         if !self.in_has.is_empty() {
             self.changed_in_has.insert(key::STRUCTURE);
-            for id in core::iter::once(child).chain(tree.descendants(child)) {
-                let Some(element) = tree.element(id) else {
-                    continue;
-                };
-                let states = element.state.iter().map(key::state);
-                let keys = key::of_element(element).chain(states);
+            let this = (tree[child].keys & self.in_has_filter != 0).then_some(child);
+            for element in this
+                .into_iter()
+                .chain(tree.descendants_with(child, self.in_has_filter))
+                .filter_map(|it| tree.element(it))
+            {
                 self.changed_in_has
-                    .extend(keys.filter(|key| self.in_has.contains(key)));
+                    .extend(key::of_element(element).filter(|key| self.in_has.contains(key)));
             }
-            self.has_origins.push(tree.parent_or_host(child));
+            if !self.states_in_has.is_empty() {
+                let all = core::iter::once(child)
+                    .chain(tree.descendants(child))
+                    .filter_map(|it| tree.element(it));
+                let states = all.fold(State::empty(), |states, it| states | it.state);
+                self.changed_in_has
+                    .extend((states & self.states_in_has).iter().map(key::state));
+            }
+            let parent = tree.parent_or_host(child);
+            if self.has_origins.last() != Some(&parent) {
+                self.has_origins.push(parent);
+            }
             self.has_origins.extend(previous);
         }
     }
@@ -1402,8 +1728,7 @@ impl Dependencies {
             }
             let (affected, mut known) = (&self.affected[index as usize], Map::default());
             let mut visit = |id, element: &Element| {
-                if tree[id].keys & affected.filter != 0
-                    && let Some(subjects) = &affected.subjects
+                if let Some(subjects) = &affected.subjects
                     && (element.classes.as_ref().is_some_and(|it| {
                         *known.entry(Rc::as_ptr(it)).or_insert_with(|| {
                             it.names
@@ -1416,7 +1741,7 @@ impl Dependencies {
                 }
             };
             let mut subtree = |root| match affected.subjects {
-                Some(_) => tree.visit_styled(root, &mut visit),
+                Some(_) => tree.visit_styled(root, affected.filter, &mut visit),
                 None => tree.mark_style(root, Flags::REMATCH_SUBTREE),
             };
             if affected.relation.contains(Relation::DESCENDANT)
@@ -1446,6 +1771,7 @@ impl Dependencies {
     }
 
     fn flush_has(&mut self, tree: &Tree, has_results: &HasResults) {
+        tree.forget_found();
         let mut visited = Vec::new();
         for origin in core::mem::take(&mut self.has_origins) {
             let mut at = if tree.contains(origin) { origin } else { 0 };

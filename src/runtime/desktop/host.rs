@@ -70,6 +70,51 @@ pub(super) static ALLOCATOR: host_abi::Allocator = {
     }
 };
 
+/// The library does not see the interceptors.
+#[cfg(all(unix, bun_asan))]
+pub(super) static ALLOCATOR: host_abi::Allocator = {
+    extern "C" fn allocate(size: usize, alignment: usize) -> *mut c_void {
+        let mut start = core::ptr::null_mut();
+        // SAFETY: the alignment is a power of two and a multiple of the size of a pointer.
+        unsafe { libc::posix_memalign(&raw mut start, alignment.max(size_of::<usize>()), size) };
+        start
+    }
+    extern "C" fn allocate_zeroed(size: usize, alignment: usize) -> *mut c_void {
+        let start = allocate(size, alignment);
+        if !start.is_null() {
+            // SAFETY: it has `size` bytes.
+            unsafe { start.write_bytes(0, size) };
+        }
+        start
+    }
+    unsafe extern "C" fn reallocate(
+        old: *mut c_void,
+        size: usize,
+        alignment: usize,
+    ) -> *mut c_void {
+        unsafe extern "C" {
+            fn __sanitizer_get_allocated_size(start: *const c_void) -> usize;
+        }
+        let start = allocate(size, alignment);
+        if !start.is_null() {
+            // SAFETY: `old` came from `allocate`.
+            unsafe {
+                start.copy_from_nonoverlapping(old, size.min(__sanitizer_get_allocated_size(old)));
+                libc::free(old);
+            }
+        }
+        start
+    }
+    extern "C" fn release() {}
+    host_abi::Allocator {
+        allocate,
+        allocate_zeroed,
+        reallocate,
+        free: libc::free,
+        release,
+    }
+};
+
 /// # Safety
 /// `rgba` has 4 bytes for each pixel.
 unsafe fn pixels<'a>(rgba: *const u8, [width, height]: [u32; 2]) -> &'a [u8] {

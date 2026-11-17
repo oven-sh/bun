@@ -14,6 +14,7 @@ use crate::error::{Context as _, Result, bail, failure};
 pub enum Value {
     Byte(u8),
     Bool(bool),
+    I16(i16),
     I32(i32),
     U32(u32),
     I64(i64),
@@ -120,6 +121,7 @@ impl Value {
         let last = match self {
             Value::Byte(_) => 'y',
             Value::Bool(_) => 'b',
+            Value::I16(_) => 'n',
             Value::I32(_) => 'i',
             Value::U32(_) => 'u',
             Value::I64(_) => 'x',
@@ -155,6 +157,7 @@ impl Value {
         match self {
             Value::Byte(it) => out.push(*it),
             Value::Bool(it) => number(out, &u32::from(*it).to_le_bytes()),
+            Value::I16(it) => number(out, &it.to_le_bytes()),
             Value::I32(it) => number(out, &it.to_le_bytes()),
             Value::U32(it) | Value::Fd(it) => number(out, &it.to_le_bytes()),
             Value::I64(it) => number(out, &it.to_le_bytes()),
@@ -367,6 +370,7 @@ impl Message {
             (5, Value::U32(self.replies_to)),
             (6, self.peer.as_str().into()),
             (8, Value::Signature(signature)),
+            (9, Value::U32(self.descriptors.len() as u32)),
         ];
         let fields = fields
             .into_iter()
@@ -682,6 +686,61 @@ impl Bus {
         ));
         self.wait_for(Some(patience), |it| it.replies_to == serial)?
             .into_result()
+    }
+
+    /// `Value::Fd(0)` stands for the file.
+    pub fn call_with_file(
+        &self,
+        [peer, path, interface]: [&str; 3],
+        member: &str,
+        body: Vec<Value>,
+        file: OwnedFd,
+    ) -> Result<Message> {
+        self.unique_name()?;
+        let mut message = Message::new(Kind::Call, [peer, path, interface, member], body);
+        message.descriptors.push(file);
+        let serial = self.send(&message);
+        let sent = wire::send(
+            self.socket.as_raw_fd(),
+            &self.outgoing.borrow(),
+            &message.descriptors,
+        )?;
+        self.outgoing.borrow_mut().drain(..sent);
+        self.wait_for(Some(Duration::from_secs(10)), |it| it.replies_to == serial)?
+            .into_result()
+    }
+
+    /// Answers the calls that come while it waits.
+    pub fn call_serving(
+        &self,
+        patience: Duration,
+        [peer, path, interface]: [&str; 3],
+        member: &str,
+        body: Vec<Value>,
+    ) -> Result<Message> {
+        let (serial, deadline) = (
+            self.send(&Message::new(
+                Kind::Call,
+                [peer, path, interface, member],
+                body,
+            )),
+            Instant::now() + patience,
+        );
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let message = self.wait_for(Some(left), |it| {
+                it.replies_to == serial || it.kind == Kind::Call
+            })?;
+            match self
+                .listener
+                .borrow()
+                .clone()
+                .filter(|_| message.kind == Kind::Call)
+            {
+                Some(listener) => listener(self, &message),
+                None => return message.into_result(),
+            }
+        }
     }
 
     pub fn call_then(

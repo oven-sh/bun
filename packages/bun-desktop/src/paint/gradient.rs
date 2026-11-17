@@ -118,7 +118,7 @@ impl Gradient {
                 let c = px * px + py * py - from[2] * from[2];
                 let is_valid = |offset: &f32| from[2] + offset * dr >= 0.;
                 if a.abs() < 1e-9 {
-                    return (b != 0.).then(|| c / (2. * b)).filter(is_valid);
+                    return (b != 0.).then_some(c / (2. * b)).filter(is_valid);
                 }
                 let root = (b * b - a * c).sqrt();
                 let (one, other) = ((b + root) / a, (b - root) / a);

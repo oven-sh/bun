@@ -58,6 +58,7 @@ pub(crate) fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
         &atoms,
         host_platform(),
         runs_in_place,
+        false,
     );
     let bind_options = BindOptions {
         runtime: Some(RuntimeBindOptions::default()),

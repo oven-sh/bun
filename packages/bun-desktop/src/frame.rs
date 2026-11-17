@@ -4,7 +4,6 @@
 use crate::abi::{
     self, Item, LineStyle, Outline, PathVerb, Rect, RoundedRect, Span, Stroke, TextRun,
 };
-use crate::json::record;
 use crate::paint::scene::Scene;
 use crate::platform::{Cursor, Edge, Geometry, WindowButton};
 use crate::surface::contains;
@@ -19,16 +18,6 @@ const BUTTON: f32 = if IS_WINDOWS { 46. } else { 24. };
 const GAP: f32 = if IS_WINDOWS { 0. } else { 13. };
 const OUTER_MARGIN: f32 = if IS_WINDOWS { 0. } else { 10. };
 const INNER_MARGIN: f32 = if IS_WINDOWS { 0. } else { 5. };
-
-record! {
-    required
-    #[derive(Clone, Copy)]
-    pub struct Overlay {
-        height: f32,
-        color: Option<u32>,
-        symbol_color: Option<u32>,
-    }
-}
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Part {
@@ -299,9 +288,9 @@ pub fn build(state: &WindowState, geometry: &Geometry) -> (Scene, Buttons) {
             },
             text,
         );
-    } else if let Some(overlay) = options.overlay.filter(|_| !geometry.is_fullscreen) {
+    } else if let Some(overlay) = options.overlay.get().filter(|_| !geometry.is_fullscreen) {
         buttons = place_buttons(metrics.width, overlay.height, &options);
-        text = overlay.symbol_color.unwrap_or(text);
+        text = overlay.symbol_color.get().unwrap_or(text);
         let [left, right] = taken_by(&buttons, metrics.width);
         for (x, width) in [(0., left), (metrics.width - right, right)] {
             let shape = RoundedRect {
@@ -315,7 +304,7 @@ pub fn build(state: &WindowState, geometry: &Geometry) -> (Scene, Buttons) {
             };
             scene.items.push(Item::Fill {
                 shape,
-                color: overlay.color.unwrap_or(surface),
+                color: overlay.color.get().unwrap_or(surface),
             });
         }
     }

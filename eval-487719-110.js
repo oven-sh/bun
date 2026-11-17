@@ -1,1 +1,0 @@
-process.argv.splice(1, 1);console.log(JSON.stringify(await import('./abcd.js?raw')));

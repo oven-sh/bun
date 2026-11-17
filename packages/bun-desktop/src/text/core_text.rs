@@ -39,6 +39,17 @@ unsafe extern "C" {
     ) -> Option<Object>;
     fn bd_font_outline(font: &c_void, glyph: u16, scale: f64, pen: *mut c_void, add: AddToPath);
     safe fn bd_glyph_bounds(font: &c_void, glyph: u16) -> Rect;
+    safe fn bd_font_glyph(font: &c_void, character: u16) -> u16;
+    fn bd_glyph_draw_black(
+        font: &c_void,
+        glyph: u16,
+        x: f64,
+        y: f64,
+        pixels: *mut u32,
+        width: usize,
+        height: usize,
+        is_smoothed: bool,
+    );
     fn bd_glyph_draw(
         font: &c_void,
         glyph: u16,
@@ -157,6 +168,65 @@ impl NativeFont {
             .any(|pixel| pixel[3] != 0)
             .then_some(layer)
     }
+}
+
+/// How far Core Graphics moves the left, upper, right and lower edges of a glyph outwards, in pixels, unless the user has turned that off.
+pub fn smoothing(size: f32) -> Option<[f32; 4]> {
+    static KNOWN: LazyLock<Mutex<FastMap<u32, Option<[f32; 4]>>>> = LazyLock::new(Mutex::default);
+    let halves = (size.clamp(6., 256.) * 2.).round() as u32;
+    *KNOWN
+        .lock()
+        .entry(halves)
+        .or_insert_with(|| measure_smoothing(halves as f32 / 2.))
+}
+
+fn measure_smoothing(size: f32) -> Option<[f32; 4]> {
+    const MARGIN: f32 = 4.;
+    const SHIFTS: [f32; 4] = [0., 0.25, 0.5, 0.75];
+    let font = bd_font_sized(&named("Menlo-Regular"), size.into());
+    let block = Some(bd_font_glyph(&font, 0x2588)).filter(|it| *it != 0)?;
+    let Rect {
+        x,
+        y,
+        width,
+        height,
+    } = bd_glyph_bounds(&font, block);
+    let [columns, rows] = [width, height].map(|it| (it + MARGIN * 2.).ceil() as usize + 1);
+    let origin = [x, y].map(|it| (MARGIN - it).round());
+    let draw = |shift: f32, is_smoothed| {
+        let mut pixels = vec![u32::MAX; columns * rows];
+        // SAFETY: a bitmap of that size.
+        unsafe {
+            bd_glyph_draw_black(
+                &font,
+                block,
+                (origin[0] + shift).into(),
+                origin[1].into(),
+                pixels.as_mut_ptr(),
+                columns,
+                rows,
+                is_smoothed,
+            )
+        };
+        pixels
+    };
+    (draw(0.5, true) != draw(0.5, false)).then_some(())?;
+    let mut growth = [0.; 4];
+    for shift in SHIFTS {
+        let exact = Rect {
+            x: origin[0] + shift + x,
+            y: rows as f32 - origin[1] - y - height,
+            width,
+            height,
+        };
+        let measured = super::raster::growth_of_block(&draw(shift, true), columns, exact);
+        growth
+            .iter_mut()
+            .zip(measured)
+            .for_each(|(all, it)| *all += it / SHIFTS.len() as f32);
+    }
+    crate::diagnostics::log!("font smoothing at {size}: {growth:?}");
+    Some(growth.map(|it| it.clamp(0., 0.75)))
 }
 
 fn terminated(text: impl Into<Vec<u8>>) -> CString {

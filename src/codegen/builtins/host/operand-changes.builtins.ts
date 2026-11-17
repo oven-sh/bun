@@ -115,7 +115,6 @@ const bindingAnswering = (path: b.BuiltinPath, answers: b.TableType, uses: reado
 // Called without `new` they throw and look at no operand.
 const constructorsRequiringNew = [
   "%BlockList%",
-  "%DesktopEngine%",
   "%FrameworkFileSystemRouter%",
   "%H2FrameParser%",
   "%Immediate%",

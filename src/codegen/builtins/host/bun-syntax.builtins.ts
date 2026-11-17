@@ -12,7 +12,6 @@ const directive = (name: string, kind: b.DirectiveKind) =>
   b.intrinsic(name, "Value", { intrinsic: "Directive", directive: kind });
 
 const privateGlobalFunctions = [
-  "addAbortAlgorithmToSignal",
   "createCommonJSModule",
   "createFIFO",
   "esmLoadSync",
@@ -23,7 +22,6 @@ const privateGlobalFunctions = [
   "evaluateCommonJSModule",
   "evictIsolationSourceProviderCache",
   "internalRequire",
-  "isAbortSignal",
   "isHiddenFromRequireCache",
   "requireCacheCompiledEntry",
   "requireCacheDidDelete",
@@ -32,7 +30,6 @@ const privateGlobalFunctions = [
   "peekPromiseSettledValue",
   "peekPromiseStatus",
   "pokePromiseAsHandled",
-  "removeAbortAlgorithmFromSignal",
   "requireCacheWillSet",
   "requireCommonJS",
   "requireESM",

@@ -17,7 +17,8 @@ import { runWorkers, type Report, type Results } from "./native-contract/run-wor
 import { isDescribedByNobody } from "./native-contract/targets";
 
 const filter = process.env.AOT_BUILTINS_FILTER ?? ".";
-const undeclared = aotBuiltinEntries().entries.flatMap(entry =>
+const dump = aotBuiltinEntries();
+const undeclared = dump.entries.flatMap(entry =>
   new RegExp(filter).test(entry.path)
     ? entry.overloads.filter(isDescribedByNobody).map(overload => overload.token)
     : [],
@@ -44,6 +45,7 @@ function defineTests() {
     using folder = tempDir("aot-native-contract", {});
     results = await runWorkers({
       executable: bunExe(),
+      table: JSON.stringify(dump),
       environment: bunEnv,
       folder: String(folder),
       filter,

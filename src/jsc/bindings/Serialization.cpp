@@ -52,6 +52,37 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     };
 }
 
+extern "C" SerializedScriptValue* Bun__SerializedScriptValue__create(JSGlobalObject* globalObject, EncodedJSValue value, const EncodedJSValue* buffers, size_t bufferCount, const EncodedJSValue* objects, size_t objectCount)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto transferList = WTF::map(std::span { buffers, bufferCount }, [&](auto buffer) { return JSC::Strong<JSC::JSObject> { vm, asObject(JSValue::decode(buffer)) }; });
+    auto serialized = SerializedScriptValue::createWithHostObjects(*globalObject, JSValue::decode(value), WTF::move(transferList), { objects, objectCount });
+    EXCEPTION_ASSERT(!scope.exception() || serialized.hasException());
+    if (serialized.hasException()) {
+        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        return nullptr;
+    }
+    return &serialized.releaseReturnValue().leakRef();
+}
+
+extern "C" EncodedJSValue Bun__SerializedScriptValue__deserialize(SerializedScriptValue* value, JSGlobalObject* globalObject, const EncodedJSValue* objects, size_t objectCount)
+{
+    return JSValue::encode(value->deserializeWithHostObjects(*globalObject, { objects, objectCount }));
+}
+
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__structuredClone(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue copy = SerializedScriptValue::tryCopyPlainData(*globalObject, JSValue::decode(value));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (copy)
+        return JSValue::encode(copy);
+    RefPtr serialized = adoptRef(Bun__SerializedScriptValue__create(globalObject, value, nullptr, 0, nullptr, 0));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(serialized->deserializeWithHostObjects(*globalObject, {})));
+}
+
 extern "C" void Bun__SerializedScriptSlice__free(SerializedScriptValue* value)
 {
     // Use deref() instead of delete to properly handle CHECK_REF_COUNTED_LIFECYCLE.

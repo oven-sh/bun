@@ -215,6 +215,9 @@ pub enum Tag {
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
     UvTimer,
     WorkerWaitsForRoom,
+    WebAlarm,
+    /// `bun_ui::later`
+    Ui,
 }
 
 impl Tag {
@@ -243,6 +246,7 @@ impl Tag {
             Tag::TimeoutObject
             | Tag::ImmediateObject
             | Tag::StatWatcherScheduler
+            | Tag::WebAlarm
             | Tag::UpgradedDuplex
             | Tag::DNSResolver
             | Tag::DnsSdConnection
@@ -257,6 +261,7 @@ impl Tag {
             | Tag::AbortSignalTimeout
             | Tag::CronJob
             | Tag::QuicEndpoint
+            | Tag::Ui
             | Tag::FakeTimersTick
             | Tag::ViWait
             | Tag::UvTimer
@@ -278,9 +283,9 @@ impl Tag {
 /// a field of a field (`timers.timer`).
 ///
 /// ```ignore
-/// bun_event_loop::impl_timer_owner!(JSValkeyClient;
-///     from_timer_ptr => timer,
-///     from_reconnect_timer_ptr => reconnect_timer,
+/// bun_event_loop::impl_timer_owner!(JSMySQLConnection;
+///     from_timer_ptr => timers.timer,
+///     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 /// );
 /// ```
 #[macro_export]

@@ -10,16 +10,17 @@ use crate::cascade::RuleList;
 use crate::compositor::{Sampled, simplify};
 use crate::custom::{Text, spelling};
 use crate::document::Document;
+use crate::engine_event::{CssEvent, EngineEvent, ForNode, Playback, Stage};
 use crate::name::{Map, Name, Set};
 use crate::paint::Picture;
-use crate::properties::{Id, Only, Style, TransitionProperty, Value, WillChange};
+use crate::properties::{Id, Only, Prop, Style, TransitionProperty, Value, WillChange};
 use crate::selector::Pseudo;
-use crate::sheet::{AtKind, Defined, Keyframe};
+use crate::sheet::{AtKind, Declaration, Declared, Defined, Keyframe, Wide};
 use crate::timeline::{Snapshot, Watched, trigger_ranges};
 use crate::tree::{Flags, NodeId};
 use crate::types::*;
 use crate::values::{
-    ALLOWS_KEYWORDS, Composite, Css, Ctx, Deps, Lp, Mixing, Out, Str, mix, parse_all,
+    ALLOWS_KEYWORDS, Composite, Css, Ctx, Deps, Lp, Mixing, Out, Str, keywords, mix, parse_all,
     with_current_color,
 };
 
@@ -57,6 +58,21 @@ impl Target {
 }
 
 impl Animated {
+    fn written(&self, style: &Style) -> Option<(Prop, Out)> {
+        match self {
+            Animated::Property(value) => Some((
+                Prop::Long(value.id()),
+                crate::values::with_zoom(style.zoom, || {
+                    crate::prelude::written(|out| value.write(out))
+                }),
+            )),
+            Animated::Custom(name, value) => Some((
+                Prop::Custom(*name),
+                crate::custom::untainted(value.as_ref()?).to_vec(),
+            )),
+        }
+    }
+
     fn target(&self) -> Target {
         match self {
             Animated::Property(value) => Target::Property(value.id()),
@@ -81,6 +97,16 @@ struct Track {
     stops: Vec<Stop>,
     /// Up to the first stop.
     easing: Easing,
+    /// It stays at what the style has anyway.
+    is_idle: bool,
+}
+
+/// What `Document::animate` has last made of a style with a single animation.
+struct LastAnimated {
+    base: Rc<Style>,
+    keyframes: Rc<[Keyframe]>,
+    how: (Easing, Composite, Option<Sample>),
+    style: Rc<Style>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -117,7 +143,7 @@ struct Sample {
 }
 
 impl Timing {
-    fn active_duration(&self) -> f64 {
+    pub(crate) fn active_duration(&self) -> f64 {
         if self.duration == 0.0 || self.iterations == 0.0 {
             0.0
         } else {
@@ -125,12 +151,12 @@ impl Timing {
         }
     }
 
-    fn end(&self) -> f64 {
+    pub(crate) fn end(&self) -> f64 {
         (self.delay + self.active_duration() + self.end_delay).max(0.0)
     }
 
     /// `length` is how much of a timeline that ends it is to fill.
-    fn normalized(&self, length: Option<f64>) -> Timing {
+    pub(crate) fn normalized(&self, length: Option<f64>) -> Timing {
         let known = Timing {
             duration: self.duration.max(0.0),
             ..self.clone()
@@ -322,10 +348,15 @@ enum TriggeredBy {
     Timeline(u32, [RangeEdge; 4]),
 }
 
+keywords! {
+    Behavior { Play = "play", Pause = "pause", Reset = "reset", PlayOnce = "play-once", PlayForwards = "play-forwards",
+        PlayBackwards = "play-backwards", Replay = "replay", None = "none" }
+}
+
 struct Trigger {
     by: TriggeredBy,
     /// When it is activated and when it is deactivated.
-    behaviors: [Str; 2],
+    behaviors: [Behavior; 2],
     /// The element that declares it.
     source: NodeId,
     is_active: bool,
@@ -368,14 +399,121 @@ struct Animation {
     aligns: bool,
     is_finished: bool,
     overridden: Overridden,
-    /// 0 active, 1 removed, 2 persisted
-    replace_state: u8,
+    replace_state: ReplaceState,
     phase: Phase,
     sample: Option<Sample>,
     /// What the last events were about.
     reported: (Phase, Option<f64>),
     throttle: Throttle,
     trigger: Option<Box<Trigger>>,
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(crate) enum ReplaceState {
+    #[default]
+    Active,
+    Removed,
+    Persisted,
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(crate) enum Playing {
+    #[default]
+    Idle,
+    Running,
+    Paused,
+    Finished,
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(crate) enum TimelineId {
+    #[default]
+    None,
+    /// With the time of the document at which it is 0.
+    Document(f64),
+    Progress(u32),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct State {
+    pub(crate) play_state: Playing,
+    pub(crate) current_time: Option<f64>,
+    pub(crate) start_time: Option<f64>,
+    pub(crate) playback_rate: f64,
+    pub(crate) is_pending: bool,
+    pub(crate) replace_state: ReplaceState,
+    pub(crate) progress: Option<f64>,
+    pub(crate) iteration: Option<f64>,
+    pub(crate) end_time: f64,
+    pub(crate) active_duration: f64,
+    pub(crate) duration: f64,
+    pub(crate) timeline: TimelineId,
+    pub(crate) timeline_time: Option<f64>,
+    pub(crate) has_keyframes_from_script: bool,
+}
+
+impl Default for State {
+    fn default() -> State {
+        State {
+            play_state: Playing::Idle,
+            current_time: None,
+            start_time: None,
+            playback_rate: 1.0,
+            is_pending: false,
+            replace_state: ReplaceState::Active,
+            progress: None,
+            iteration: None,
+            end_time: 0.0,
+            active_duration: 0.0,
+            duration: 0.0,
+            timeline: TimelineId::None,
+            timeline_time: None,
+            has_keyframes_from_script: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Control {
+    Play,
+    Pause,
+    Cancel,
+    Finish,
+    Reverse,
+    Seek(f64),
+    SetStart(Option<f64>),
+    SetRate(f64),
+    UpdateRate(f64),
+    Persist,
+    /// Scripts have let go of it.
+    Release,
+}
+
+/// Of one that a style has started.
+pub(crate) struct Origin {
+    pub(crate) is_transition: bool,
+    pub(crate) name: Str,
+    pub(crate) node: NodeId,
+    pub(crate) pseudo: Cow<'static, str>,
+}
+
+pub(crate) struct ComputedKeyframe {
+    pub(crate) range: Option<RangeName>,
+    pub(crate) offset: f32,
+    pub(crate) computed_offset: Option<f32>,
+    pub(crate) easing: Easing,
+    pub(crate) adds: Option<Composite>,
+    pub(crate) values: Vec<(Prop, Out)>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TimelineState {
+    pub(crate) time: Option<f64>,
+    pub(crate) source: NodeId,
+    pub(crate) subject: NodeId,
+    pub(crate) axis: Axis,
+    pub(crate) is_view: bool,
+    pub(crate) offsets: [f64; 2],
 }
 
 struct Progress {
@@ -402,19 +540,30 @@ pub(crate) struct Animations {
     last_id: u32,
     generation: u32,
     timelines: Map<u32, Progress>,
+    /// By the node that they watch or have watched.
+    watchers: Map<NodeId, SmallVec<[u32; 2]>>,
     /// Those that may have events for the next frame.
     changed: Vec<u32>,
+    /// Those in skipped contents, whose events wait.
+    silenced: Vec<u32>,
     /// The nodes whose animations may have been replaced.
     filled: Vec<NodeId>,
     /// Since the last frame, and before that.
     retired: [Vec<u32>; 2],
     pub(crate) names_are_stale: bool,
-    has_throttled: bool,
+    pub(crate) has_throttled: bool,
     has_triggers: bool,
     /// The boxes without which running animations have no effect.
     /// The nodes that may have `Flags::LAGS`.
-    lagging: Vec<NodeId>,
+    pub(crate) lagging: Vec<NodeId>,
+    last_sampled: Option<LastAnimated>,
     pub(crate) watched: Set<BoxId>,
+}
+
+impl Animations {
+    pub(crate) fn last_id(&self) -> u32 {
+        self.last_id
+    }
 }
 
 impl Animation {
@@ -451,7 +600,7 @@ impl Animation {
             aligns: false,
             is_finished: false,
             overridden: Overridden::empty(),
-            replace_state: 0,
+            replace_state: ReplaceState::Active,
             phase: Phase::Idle,
             sample: None,
             reported: (Phase::Idle, None),
@@ -512,6 +661,11 @@ impl Animation {
         time.is_some_and(|it| {
             rate > 0.0 && it >= self.timing.end() - EPSILON || rate < 0.0 && it <= EPSILON
         })
+    }
+
+    /// Whether the active phase is still to come.
+    fn is_ahead(&self, phase: Phase) -> bool {
+        phase == Phase::Before && self.rate > 0.0 || phase == Phase::After && self.rate < 0.0
     }
 
     fn is_running(&self, now: f64) -> bool {
@@ -718,17 +872,17 @@ impl Animation {
     }
 
     /// https://drafts.csswg.org/animation-triggers-1/#animation-trigger-behavior
-    fn perform(&mut self, behavior: &str, now: f64) {
+    fn perform(&mut self, behavior: Behavior, now: f64) {
         let rate = self.effective_rate();
-        let turns =
-            behavior == "play-forwards" && rate < 0.0 || behavior == "play-backwards" && rate > 0.0;
+        let turns = behavior == Behavior::PlayForwards && rate < 0.0
+            || behavior == Behavior::PlayBackwards && rate > 0.0;
         match behavior {
-            "none" => {}
-            "pause" => _ = self.pause(now),
-            "reset" | "replay" => {
+            Behavior::None => {}
+            Behavior::Pause => _ = self.pause(now),
+            Behavior::Reset | Behavior::Replay => {
                 self.pause(now);
                 self.seek(if rate < 0.0 { self.timing.end() } else { 0.0 }, now);
-                if behavior == "replay" {
+                if behavior == Behavior::Replay {
                     self.play(now, false);
                 }
             }
@@ -1075,7 +1229,7 @@ impl Document {
             return if t < from.0 { from.1 } else { to.1 };
         }
         let t = easing.apply(
-            (sample.progress - f64::from(from.0)) / f64::from(to.0 - from.0),
+            (sample.progress - f64::from(from.0)) / (f64::from(to.0) - f64::from(from.0)),
             sample.is_before,
         ) as f32;
         self.interpolate(&from.1, &to.1, Mixing::Lerp(t))
@@ -1102,7 +1256,7 @@ impl Document {
             .zip(&*animation.keyframes)
             .filter_map(|(at, it)| Some((animation.offset_of(it)?, at, it)))
             .collect();
-        frames.sort_by(|a, b| a.0.total_cmp(&b.0));
+        bun_collections::index_sort::sort_slice_by(&mut frames, |a, b| a.0.total_cmp(&b.0));
         for (offset, at, frame) in frames {
             let (values, customs, deps) =
                 self.compute_block(animation.node, &frame.block, style, parent);
@@ -1121,6 +1275,7 @@ impl Document {
                             target,
                             stops: Vec::new(),
                             easing: animation.default_easing.clone(),
+                            is_idle: false,
                         });
                         tracks.len() - 1
                     });
@@ -1133,14 +1288,30 @@ impl Document {
                     .as_ref()
                     .unwrap_or(&animation.default_easing)
                     .clone();
+                let reverts = |it: &Rc<Declaration>| matches!((it.prop, target, &it.value), (Prop::Custom(a), Target::Custom(b), Declared::Wide(Wide::RevertLayer | Wide::RevertRule)) if a == b);
+                let adds = if frame.block.declarations().list.iter().any(reverts) {
+                    Some(Mixing::Lerp(0.0))
+                } else {
+                    frame.adds.unwrap_or(animation.composite).mixing()
+                };
                 stops.push(Stop {
                     offset,
                     value,
                     easing,
-                    adds: frame.adds.unwrap_or(animation.composite).mixing(),
+                    adds,
                     frame: at,
                 });
             }
+        }
+        for track in tracks
+            .iter_mut()
+            .filter(|it| it.target.id().is_some_and(|it| !it.affects_others()))
+        {
+            let under = self.value_in(style, track.target);
+            track.is_idle = track
+                .stops
+                .iter()
+                .all(|it| it.adds.is_none() && it.value == under);
         }
         (tracks, all_deps)
     }
@@ -1153,6 +1324,7 @@ impl Document {
             .is_some_and(|it| Rc::ptr_eq(it, style))
             && !animation.deps.intersects(
                 !(Deps::INHERITED
+                    | Deps::INK
                     | Deps::FONT_UNITS
                     | Deps::ABSOLUTE_FONT_SIZE
                     | Deps::FONT_SIZE_KEYWORD),
@@ -1181,8 +1353,7 @@ impl Document {
                 .animations
                 .by_node
                 .get(&node)
-                .cloned()
-                .unwrap_or_default(),
+                .map_or_else(SmallVec::new, |it| SmallVec::from_slice(it)),
             false => SmallVec::new(),
         }
     }
@@ -1191,6 +1362,7 @@ impl Document {
         &self,
         ids: &[u32],
         base: &Style,
+        skips_idle: bool,
         progress: impl Fn(&Animation) -> Option<Sample>,
     ) -> Vec<Animated> {
         let mut values: Vec<Animated> = Vec::new();
@@ -1200,6 +1372,9 @@ impl Document {
             };
             for track in &animation.tracks {
                 let known = values.iter().position(|it| it.target() == track.target);
+                if skips_idle && track.is_idle && known.is_none() {
+                    continue;
+                }
                 let under = known.map_or_else(
                     || self.value_in(base, track.target),
                     |it| values.swap_remove(it),
@@ -1221,12 +1396,16 @@ impl Document {
         ids.retain(|it| {
             self.animations.all[it].node == node && includes(*it, &self.animations.all[it])
         });
-        ids.sort_by_key(|it| self.animations.all[it].rank());
+        bun_collections::index_sort::sort_slice_by_key(&mut ids, |it| {
+            self.animations.all[it].rank()
+        });
         ids
     }
 
     fn effective_animations(&self, node: NodeId) -> SmallVec<[u32; 2]> {
-        self.stack_of(node, |_, it| it.sample.is_some() && it.replace_state != 1)
+        self.stack_of(node, |_, it| {
+            it.sample.is_some() && it.replace_state != ReplaceState::Removed
+        })
     }
 
     /// The style with the animations that are in effect.
@@ -1237,48 +1416,98 @@ impl Document {
         parent: &Style,
         base: &Rc<Style>,
     ) -> Rc<Style> {
-        let ids = self.effective_animations(id);
+        if !self.tree[id].has(Flags::ANIMATED) {
+            return Rc::clone(base);
+        }
+        let ids = self.stack_of(id, |_, it| {
+            (it.sample.is_some() || it.is_ahead(it.phase))
+                && it.replace_state != ReplaceState::Removed
+        });
         if ids.is_empty() {
             return Rc::clone(base);
         }
         ALLOWS_KEYWORDS.set(base.ink.interpolate_size == InterpolateSize::AllowKeywords);
         ids.iter()
             .for_each(|it| self.update_tracks(*it, base, parent));
+        let only = Some(&self.animations.all[&ids[0]]).filter(|it| {
+            ids.len() == 1
+                && !matches!(it.kind, Kind::Transition { .. })
+                && matches!(it.clock, Clock::Document(_))
+                && !it
+                    .deps
+                    .intersects(!(Deps::INHERITED | Deps::INK | Deps::FONT_UNITS))
+                && it
+                    .tracks
+                    .iter()
+                    .all(|it| it.is_idle || it.target.id().is_some_and(Id::stands_alone))
+                && self
+                    .tree
+                    .element(id)
+                    .is_some_and(|it| it.pseudo == Pseudo::None)
+        });
+        let only = only.map(|it| {
+            (
+                Rc::clone(&it.keyframes),
+                (it.default_easing.clone(), it.composite, it.sample),
+            )
+        });
+        if let (Some((keyframes, how)), Some(last)) = (&only, &self.animations.last_sampled)
+            && Rc::ptr_eq(&last.base, base)
+            && Rc::ptr_eq(&last.keyframes, keyframes)
+            && last.how == *how
+        {
+            return Rc::clone(&last.style);
+        }
         let important = rules.important(base.flow());
         let values_on = |document: &Document, base: &Style| {
-            let mut values = document.animated_values(&ids, base, |it| it.sample);
+            let mut values = document.animated_values(&ids, base, true, |it| it.sample);
             let animations = || ids.iter().map(|it| &document.animations.all[it]);
             let in_transition = |target| {
                 animations()
                     .any(|it| it.order() == 0 && it.tracks.iter().any(|it| it.target == target))
             };
-            values.retain(|it| {
-                !it.target()
-                    .id()
-                    .is_some_and(|id| important.contains(&id) || id == Id::Overlay)
-                    || in_transition(it.target())
-            });
+            let is_overridden = |target| match target {
+                Target::Property(id) => important.contains(&id) || id == Id::Overlay,
+                Target::Custom(name) => rules.is_important_custom(name),
+            };
+            values.retain(|it| !is_overridden(it.target()) || in_transition(it.target()));
             values
         };
         let mut values = values_on(self, base);
         let mut style = Style::clone(base);
-        if values
+        let affects_others = values
             .iter()
-            .any(|it| it.target().id().is_none_or(Id::affects_others))
-        {
-            let (mut properties, mut customs) = (Vec::new(), Vec::new());
-            let mut rest = 0;
-            for value in values.iter().cloned() {
-                match value {
-                    Animated::Custom(name, value) => customs.push((name, value)),
-                    Animated::Property(value) if value.id().affects_others() => {
-                        properties.push(value)
+            .any(|it| it.target().id().is_none_or(Id::affects_others));
+        if affects_others {
+            let cascade = |document: &Document, values: &[Animated]| {
+                let (mut properties, mut customs) = (Vec::new(), Vec::new());
+                for value in values {
+                    match value {
+                        Animated::Custom(name, value) => customs.push((*name, value.clone())),
+                        Animated::Property(value) if value.id().affects_others() => {
+                            properties.push(value.clone())
+                        }
+                        Animated::Property(_) => {}
                     }
-                    Animated::Property(_) => rest += 1,
                 }
+                document.compute_animated_style(id, rules, parent, &customs, &properties)
+            };
+            style = cascade(self, &values);
+            let may_use_each_other = values.len() > 1
+                && values.iter().any(|it| it.target().id().is_none())
+                && ids
+                    .iter()
+                    .any(|it| !self.animations.all[it].deps.is_empty());
+            if may_use_each_other {
+                let under = Rc::new(style);
+                ids.iter()
+                    .for_each(|it| self.update_tracks(*it, &under, parent));
+                style = cascade(self, &values_on(self, base));
             }
-            style = self.compute_animated_style(id, rules, parent, &customs, &properties);
-            if rest > 0 {
+            if values
+                .iter()
+                .any(|it| it.target().id().is_some_and(|it| !it.affects_others()))
+            {
                 let under = Rc::new(style.clone());
                 ids.iter()
                     .for_each(|it| self.update_tracks(*it, &under, parent));
@@ -1297,10 +1526,25 @@ impl Document {
             .flat_map(|it| &self.animations.all[it].tracks)
             .map(|it| it.target.counts_as())
             .collect();
-        if !Rc::ptr_eq(&style.layout, &base.layout) || !Rc::ptr_eq(&style.paint, &base.paint) {
+        let stand_alone = !affects_others
+            && values
+                .iter()
+                .all(|it| it.target().id().is_some_and(Id::stands_alone));
+        if !stand_alone
+            && (!Rc::ptr_eq(&style.layout, &base.layout) || !Rc::ptr_eq(&style.paint, &base.paint))
+        {
             self.adjust_animated(id, &mut style, parent);
         }
-        Rc::new(style)
+        let style = Rc::new(style);
+        if let Some((keyframes, how)) = only {
+            self.animations.last_sampled = Some(LastAnimated {
+                base: Rc::clone(base),
+                keyframes,
+                how,
+                style: Rc::clone(&style),
+            });
+        }
+        style
     }
 
     pub(crate) fn reserve_animation(&mut self) -> u32 {
@@ -1376,15 +1620,17 @@ impl Document {
         core::mem::take(&mut self.compositor.is_on)
     }
 
-    fn emit_css_event(&mut self, id: u32, kind: &str, elapsed: f64) {
+    fn emit_css_event(&mut self, id: u32, stage: Stage, elapsed: f64) {
         let (animation, now) = (&self.animations.all[&id], self.animations.now);
-        let (prefix, name) = match &animation.kind {
-            Kind::Transition { name, .. } if kind != "iteration" => ("transition", name),
-            Kind::Css(name, _) if kind != "run" => ("animation", name),
+        let (is_transition, name) = match &animation.kind {
+            Kind::Transition { name, .. } if stage != Stage::Iteration => (true, Rc::clone(name)),
+            Kind::Css(name, _) if stage != Stage::Run => (false, Rc::clone(name)),
             _ => return,
         };
         let scheduled = match (&animation.clock, animation.start) {
-            (Clock::Document(origin), Some(start)) if animation.rate != 0.0 && kind != "cancel" => {
+            (Clock::Document(origin), Some(start))
+                if animation.rate != 0.0 && stage != Stage::Cancel =>
+            {
                 origin + start + (animation.timing.delay + elapsed) / animation.rate
             }
             _ => now,
@@ -1393,27 +1639,35 @@ impl Document {
             true => elapsed / animation.timing.duration * animation.specified.duration.max(0.0),
             false => elapsed,
         } / 1000.0;
-        let ((node, pseudo), mut rest) = (self.event_target(animation.owner), vec![b',']);
-        crate::json_string(name.as_bytes(), &mut rest);
+        let (node, pseudo) = self.event_target(animation.owner);
         let finite = |it: f64| if it.is_finite() { it } else { 0.0 };
-        rest.extend(
-            format!(
-                ",{},\"{pseudo}\",{id},{}",
-                finite(seconds),
-                finite(scheduled).min(now)
-            )
-            .bytes(),
+        self.emit(
+            node,
+            ForNode::Css(CssEvent {
+                is_transition,
+                stage,
+                name,
+                elapsed_seconds: finite(seconds),
+                pseudo,
+                animation: id,
+                scheduled: finite(scheduled).min(now),
+            }),
         );
-        self.emit(&format!("{prefix}{kind}"), node, crate::values::text(&rest));
     }
 
     /// Brings what depends on the current time of the animation up to date.
     fn update_animation(&mut self, id: u32, did_seek: bool) {
+        self.update_animation_that(id, did_seek, true);
+    }
+
+    fn update_animation_that(&mut self, id: u32, did_seek: bool, may_finish: bool) {
         let now = self.animations.now;
         let Some(animation) = self.animations.all.get_mut(&id) else {
             return;
         };
-        animation.update_hold(now, did_seek);
+        if may_finish {
+            animation.update_hold(now, did_seek);
+        }
         let (time, excludes) = (animation.time(now), animation.excludes());
         let (phase, sample) = (
             animation.timing.phase(time, excludes),
@@ -1421,22 +1675,29 @@ impl Document {
         );
         let old_phase = core::mem::replace(&mut animation.phase, phase);
         let old_sample = core::mem::replace(&mut animation.sample, sample);
-        let finishes = animation.has_reached_end(now) && !animation.is_paused();
+        let is_at_end = animation.has_reached_end(now) && !animation.is_paused();
+        let finishes = is_at_end && may_finish;
         let has_finished = finishes && !animation.is_finished;
         let is_unfinished = !finishes && animation.is_finished;
         animation.is_finished = finishes;
         if animation.owner != 0
-            && (animation.reported != (phase, sample.map(|it| it.iteration)) || has_finished)
+            && (animation.reported != (phase, sample.map(|it| it.iteration))
+                || is_at_end != animation.is_finished
+                || has_finished)
         {
             self.animations.changed.push(id);
         }
         let (node, is_exposed) = (animation.node, animation.is_exposed);
-        let (throttle, looks_the_same) = (
-            animation.throttle,
-            old_sample.and(sample).is_some() && animation.is_constant(),
-        );
-        let is_stale =
-            sample.is_some() && animation.computed_for.is_none() && !animation.keyframes.is_empty();
+        let throttle = animation.throttle;
+        let is_ahead = animation.is_ahead(phase);
+        let is_stale = (sample.is_some() || is_ahead)
+            && animation.computed_for.is_none()
+            && !animation.keyframes.is_empty()
+            || is_ahead != animation.is_ahead(old_phase);
+        let may_lag =
+            throttle != Throttle::None && old_phase == phase && !has_finished && !is_stale;
+        let looks_the_same = may_lag && self.tree[node].has(Flags::LAGS)
+            || old_sample.and(sample).is_some() && animation.is_constant();
         if finishes && sample.is_some() && animation.order() == 2 {
             self.animations.filled.push(node);
         }
@@ -1448,7 +1709,7 @@ impl Document {
             || has_finished && throttle != Throttle::None)
             && node != 0
         {
-            if throttle == Throttle::None || old_phase != phase || has_finished || is_stale {
+            if !may_lag {
                 self.tree.mark_style(node, Flags::REANIMATE);
                 self.tree[node].unset(Flags::CATCHES_UP);
             } else if !self.tree[node].has(Flags::LAGS) {
@@ -1457,18 +1718,37 @@ impl Document {
             }
         }
         if is_exposed && (has_finished || is_unfinished) {
-            self.emit(
-                if finishes { "finish" } else { "unfinish" },
-                0,
-                &format!(",{id}"),
-            );
+            self.events.push(EngineEvent::Playback(
+                id,
+                if finishes {
+                    Playback::Finish
+                } else {
+                    Playback::Unfinish
+                },
+            ));
         }
+    }
+
+    fn is_silenced(&self, id: u32) -> bool {
+        self.has_skipped_contents()
+            && self
+                .animations
+                .all
+                .get(&id)
+                .is_some_and(|it| self.tree.is_in_skipped_contents(it.owner))
     }
 
     fn report_changes(&mut self) {
         let mut ids = core::mem::take(&mut self.animations.changed);
+        ids.append(&mut self.animations.silenced);
+        let mut silenced: Vec<_> = ids.extract_if(.., |it| self.is_silenced(*it)).collect();
+        silenced.sort_unstable();
+        silenced.dedup();
+        self.animations.silenced = silenced;
         ids.retain(|it| self.animations.all.get(it).is_some_and(|it| it.owner != 0));
-        ids.sort_unstable_by_key(|it| (self.animations.all[it].order(), *it));
+        bun_collections::index_sort::sort_slice_unstable_by_key(&mut ids, |it| {
+            (self.animations.all[it].order(), *it)
+        });
         ids.dedup();
         for id in ids {
             let Some(animation) = self.animations.all.get_mut(&id) else {
@@ -1487,19 +1767,23 @@ impl Document {
             let boundary = iteration
                 .zip(old_iteration)
                 .map_or(0.0, |(new, old)| if old > new { new + 1.0 } else { new });
-            let events: &[(&str, f64)] = match (old_phase, phase) {
-                (Phase::Idle, Phase::Before) => &[("run", start)],
-                (Phase::Idle, Phase::Active) => &[("run", start), ("start", start)],
-                (Phase::Idle, Phase::After) => &[("run", start), ("start", start), ("end", end)],
-                (Phase::Before, Phase::Active) => &[("start", start)],
-                (Phase::Before, Phase::After) => &[("start", start), ("end", end)],
-                (Phase::Active, Phase::After) => &[("end", end)],
-                (Phase::Active, Phase::Before) => &[("end", start)],
-                (Phase::After, Phase::Active) => &[("start", end)],
-                (Phase::After, Phase::Before) => &[("start", end), ("end", start)],
-                (Phase::Before | Phase::Active, Phase::Idle) => &[("cancel", start)],
+            let events: &[(Stage, f64)] = match (old_phase, phase) {
+                (Phase::Idle, Phase::Before) => &[(Stage::Run, start)],
+                (Phase::Idle, Phase::Active) => &[(Stage::Run, start), (Stage::Start, start)],
+                (Phase::Idle, Phase::After) => &[
+                    (Stage::Run, start),
+                    (Stage::Start, start),
+                    (Stage::End, end),
+                ],
+                (Phase::Before, Phase::Active) => &[(Stage::Start, start)],
+                (Phase::Before, Phase::After) => &[(Stage::Start, start), (Stage::End, end)],
+                (Phase::Active, Phase::After) => &[(Stage::End, end)],
+                (Phase::Active, Phase::Before) => &[(Stage::End, start)],
+                (Phase::After, Phase::Active) => &[(Stage::Start, end)],
+                (Phase::After, Phase::Before) => &[(Stage::Start, end), (Stage::End, start)],
+                (Phase::Before | Phase::Active, Phase::Idle) => &[(Stage::Cancel, start)],
                 (Phase::Active, Phase::Active) if iteration != old_iteration => &[(
-                    "iteration",
+                    Stage::Iteration,
                     (boundary - timing.iteration_start) * timing.duration,
                 )],
                 _ => &[],
@@ -1507,7 +1791,7 @@ impl Document {
             let is_over = animation.order() == 0 && animation.is_finished && !animation.is_exposed;
             events
                 .iter()
-                .for_each(|(kind, elapsed)| self.emit_css_event(id, kind, *elapsed));
+                .for_each(|(kind, elapsed)| self.emit_css_event(id, *kind, *elapsed));
             if is_over {
                 self.retire(id);
             }
@@ -1522,7 +1806,7 @@ impl Document {
             it.order() == 2
                 && it.is_finished
                 && it.sample.is_some()
-                && it.replace_state != 1
+                && it.replace_state != ReplaceState::Removed
                 && matches!(it.clock, Clock::Document(_))
         };
         nodes.retain(|it| self.tree.contains(*it) && self.stack_of(*it, is_replaceable).len() > 1);
@@ -1536,24 +1820,26 @@ impl Document {
                 let Some(animation) = self.animations.all.get_mut(&id) else {
                     continue;
                 };
-                if animation.replace_state == 0
+                if animation.replace_state == ReplaceState::Active
                     && animation
                         .tracks
                         .iter()
                         .all(|it| covered.contains(&it.target))
                     && !covered.is_empty()
                 {
-                    animation.replace_state = 1;
+                    animation.replace_state = ReplaceState::Removed;
                     self.tree.mark_style(node, Flags::REANIMATE);
                     removed.push(id);
                 } else {
                     covered.extend(animation.tracks.iter().map(|it| it.target));
                 }
             }
-            removed
-                .into_iter()
-                .rev()
-                .for_each(|id| self.emit("remove", 0, &format!(",{id}")));
+            self.events.extend(
+                removed
+                    .into_iter()
+                    .rev()
+                    .map(|id| EngineEvent::Playback(id, Playback::Remove)),
+            );
         }
     }
 
@@ -1575,9 +1861,13 @@ impl Document {
         let Some(animation) = self.animations.all.get_mut(&id) else {
             return;
         };
-        let node = core::mem::take(&mut animation.node);
-        animation.owner = 0;
-        self.unlink_animation(id, node);
+        let linked = [
+            core::mem::take(&mut animation.node),
+            core::mem::take(&mut animation.owner),
+        ];
+        linked
+            .into_iter()
+            .for_each(|it| self.unlink_animation(id, it));
         self.animations.retired[0].push(id);
     }
 
@@ -1603,19 +1893,21 @@ impl Document {
             animation.previous,
             animation.is_finished,
         ) = (None, None, None, false);
+        let was_ahead = animation.is_ahead(animation.phase);
         animation.phase = Phase::Idle;
         let (phase, _) = core::mem::replace(&mut animation.reported, (Phase::Idle, None));
         let (node, is_exposed, is_owned) =
             (animation.node, animation.is_exposed, animation.owner != 0);
-        if animation.sample.take().is_some() && node != 0 {
+        if (animation.sample.take().is_some() || was_ahead) && node != 0 {
             self.tree.mark_style(node, Flags::REANIMATE);
         }
         self.forget_samples(node);
         if is_owned && matches!(phase, Phase::Before | Phase::Active) {
-            self.emit_css_event(id, "cancel", elapsed);
+            self.emit_css_event(id, Stage::Cancel, elapsed);
         }
         if is_exposed {
-            self.emit("cancel", 0, &format!(",{id},{was_pending}"));
+            self.events
+                .push(EngineEvent::Playback(id, Playback::Cancel { was_pending }));
         }
     }
 
@@ -1650,11 +1942,14 @@ impl Document {
                 animation.node
             };
         }
-        self.animations
-            .timelines
-            .values_mut()
-            .filter(|it| it.watched.node == node)
-            .for_each(|it| it.watched.node = 0);
+        for id in self.animations.watchers.remove(&node).unwrap_or_default() {
+            self.animations
+                .timelines
+                .get_mut(&id)
+                .into_iter()
+                .filter(|it| it.watched.node == node)
+                .for_each(|it| it.watched.node = 0);
+        }
     }
 
     pub(crate) fn pseudo_element_created(
@@ -1678,6 +1973,14 @@ impl Document {
 
     pub(crate) fn start_pending_animations(&mut self) {
         let now = self.animations.now;
+        if !self
+            .animations
+            .all
+            .values()
+            .any(|it| it.pending != Pending::None)
+        {
+            return;
+        }
         let mut ready: Vec<u32> = self
             .animations
             .all
@@ -1695,13 +1998,17 @@ impl Document {
                 self.pictures.outdate();
             }
             if animation.is_exposed {
-                self.emit("ready", 0, &format!(",{id}"));
+                self.events.push(EngineEvent::Playback(id, Playback::Ready));
             }
             self.update_animation(id, false);
         }
     }
 
     /// Between frames.
+    pub(crate) fn clock(&self) -> f64 {
+        self.animations.now
+    }
+
     pub(crate) fn advance_clock(&mut self, now: f64) {
         self.animations.now = now;
         let all = self
@@ -1709,34 +2016,42 @@ impl Document {
             .all
             .iter()
             .filter(|it| it.1.start.is_some() && !it.1.is_finished && !it.1.follows_scroll());
-        let mut ids: Vec<u32> = all.map(|it| *it.0).collect();
+        let mut ids: SmallVec<[u32; 16]> = all.map(|it| *it.0).collect();
         ids.sort_unstable();
         ids.into_iter()
-            .for_each(|id| self.update_animation(id, false));
+            .for_each(|id| self.update_animation_that(id, false, !self.is_silenced(id)));
     }
 
     pub(crate) fn set_time(&mut self, now: f64) {
         if self.compositor.sampled.is_empty() {
             self.compositor.clock_offset = crate::platform::now() - now;
         }
-        self.animations.retired.reverse();
-        for id in core::mem::take(&mut self.animations.retired[0]) {
-            if self
-                .animations
-                .all
-                .get(&id)
-                .is_some_and(|it| !it.is_exposed)
-            {
-                self.drop_animation(id);
+        if self.animations.retired.iter().any(|it| !it.is_empty()) {
+            self.animations.retired.reverse();
+            for id in core::mem::take(&mut self.animations.retired[0]) {
+                if self
+                    .animations
+                    .all
+                    .get(&id)
+                    .is_some_and(|it| !it.is_exposed)
+                {
+                    self.drop_animation(id);
+                }
             }
         }
         self.advance_clock(now.max(self.animations.now));
         self.start_pending_animations();
         self.advance_smooth_scrolls(now);
         self.update_scroll_timelines();
-        self.remove_replaced_animations();
-        self.report_changes();
-        self.advance_vectors(now);
+        if !self.animations.filled.is_empty() {
+            self.remove_replaced_animations();
+        }
+        if !self.animations.changed.is_empty() {
+            self.report_changes();
+        }
+        if !self.animated_vectors.get_mut().is_empty() {
+            self.advance_vectors(now);
+        }
         self.smil.set_time(now);
     }
 
@@ -1744,7 +2059,7 @@ impl Document {
 
     fn add_timeline(&mut self, watched: Watched, is_from_script: bool) -> u32 {
         let id = self.reserve_animation();
-        self.watch(watched.node);
+        self.watch(id, watched.node);
         self.animations.timelines.insert(
             id,
             Progress {
@@ -1758,7 +2073,12 @@ impl Document {
     }
 
     /// For `orphan_animations` to be called.
-    fn watch(&mut self, node: NodeId) {
+    fn watch(&mut self, timeline: u32, node: NodeId) {
+        self.animations
+            .watchers
+            .entry(node)
+            .or_default()
+            .push(timeline);
         if node != 0 {
             self.tree[node].set(Flags::WATCHED_BY_TIMELINE);
         }
@@ -1769,10 +2089,14 @@ impl Document {
             (Timeline::Auto, _) => Clock::Document(0.0),
             (_, None) => Clock::None,
             (_, Some(watched)) => {
-                let known = self
+                let watchers = self
                     .animations
-                    .timelines
-                    .iter()
+                    .watchers
+                    .get(&watched.node)
+                    .into_iter()
+                    .flatten();
+                let known = watchers
+                    .filter_map(|id| Some((id, self.animations.timelines.get(id)?)))
                     .find(|it| !it.1.is_from_script && it.1.watched == watched);
                 match known.map(|it| (*it.0, it.1.snapshot)) {
                     Some((id, snapshot)) => Clock::Progress(id, snapshot),
@@ -1819,9 +2143,10 @@ impl Document {
         if self.animations.has_triggers {
             self.update_triggers(false);
         }
+        self.scrolling.declarers.take();
     }
 
-    fn set_trigger(&mut self, id: u32, by: Option<TriggeredBy>, behaviors: &[u8]) {
+    fn set_trigger(&mut self, id: u32, by: Option<TriggeredBy>, behaviors: [Behavior; 2]) {
         let Some(animation) = self.animations.all.get_mut(&id) else {
             return;
         };
@@ -1830,8 +2155,6 @@ impl Document {
             && by.is_some()
             && animation.is_idle(self.animations.now)
             && animation.pause(self.animations.now);
-        let mut words = crate::values::text(behaviors).split_ascii_whitespace();
-        let behaviors = [(); 2].map(|()| words.next().unwrap_or("none").into());
         animation.trigger = by.map(
             |by| match animation.trigger.take().filter(|it| it.by == by) {
                 Some(old) => Box::new(Trigger { behaviors, ..*old }),
@@ -1884,8 +2207,9 @@ impl Document {
             ))
         });
         let mut states: Vec<_> = all.collect();
+        self.scrolling.declarers.take();
         self.animations.has_triggers = !states.is_empty();
-        states.sort_unstable_by_key(|it| it.0);
+        bun_collections::index_sort::sort_slice_unstable_by_key(&mut states, |it| it.0);
         for (id, (source, state)) in states {
             let Some(animation) = self.animations.all.get_mut(&id) else {
                 continue;
@@ -1897,19 +2221,19 @@ impl Document {
             if state.is_none_or(|it| it[usize::from(trigger.is_active)] == trigger.is_active) {
                 continue;
             }
-            let behavior = Rc::clone(&trigger.behaviors[usize::from(trigger.is_active)]);
+            let behavior = trigger.behaviors[usize::from(trigger.is_active)];
             trigger.is_active = !trigger.is_active;
             if trigger.is_paused_by_style || animation.is_idle(now) {
                 continue;
             }
             animation.trigger.iter_mut().for_each(|it| {
-                it.is_awaited =
-                    *behavior == *"reset" || it.is_awaited && matches!(&*behavior, "none" | "pause")
+                it.is_awaited = behavior == Behavior::Reset
+                    || it.is_awaited && matches!(behavior, Behavior::None | Behavior::Pause)
             });
-            animation.perform(&behavior, now);
+            animation.perform(behavior, now);
             let node = animation.node;
             self.forget_samples(node);
-            self.update_animation(id, matches!(&*behavior, "reset" | "replay"));
+            self.update_animation(id, matches!(behavior, Behavior::Reset | Behavior::Replay));
             self.needs_frame = true;
         }
     }
@@ -1948,9 +2272,21 @@ impl Document {
                 followers.push(*id);
             }
         }
-        self.animations
-            .timelines
-            .retain(|id, it| it.is_exposed || used.contains(id));
+        let (
+            count,
+            Animations {
+                timelines,
+                watchers,
+                ..
+            },
+        ) = (self.animations.timelines.len(), &mut self.animations);
+        timelines.retain(|id, it| it.is_exposed || used.contains(id));
+        if timelines.len() < count {
+            watchers.retain(|_, it| {
+                it.retain(|id| timelines.contains_key(id));
+                !it.is_empty()
+            });
+        }
         followers.sort_unstable();
         followers
             .into_iter()
@@ -1962,22 +2298,35 @@ impl Document {
         !self.animations.changed.is_empty()
             || !self.animations.filled.is_empty()
             || !self.animated_vectors.borrow().is_empty()
-            || self.smil.next_wake() < 17.0
+            || (self.smil.needs_update || !self.smil.is_empty()) && self.smil.next_wake() < 17.0
             || self
                 .animations
-                .all
-                .values()
-                .any(|it| it.is_ready(now) || it.is_running(now) && it.next_wake(now, false) < 17.0)
+                .silenced
+                .iter()
+                .any(|it| !self.is_silenced(*it))
+            || self.animations.all.values().any(|it| {
+                it.is_ready(now)
+                    || it.is_running(now)
+                        && it.next_wake(now, false) < 17.0
+                        && !self.is_in_skipped_contents(it.owner)
+            })
     }
 
     pub(crate) fn next_wake(&self, for_iterations: bool) -> f64 {
         let now = self.animations.now;
-        let running = self.animations.all.values().filter(|it| it.is_running(now));
+        let running = self
+            .animations
+            .all
+            .values()
+            .filter(|it| it.is_running(now) && !self.is_in_skipped_contents(it.owner));
         let scrollbars = self.scrolling.wakes(now);
         running
             .map(|it| it.next_wake(now, for_iterations))
             .chain(scrollbars)
-            .fold(self.smil.next_wake(), f64::min)
+            .fold(
+                self.smil.next_wake().min(self.boxes.next_sweep(now)),
+                f64::min,
+            )
             .max(0.0)
     }
 
@@ -2032,7 +2381,7 @@ impl Document {
     fn has_animated_inline_box_in(&self, node: NodeId) -> bool {
         let mut inline = self
             .rendered_children(node)
-            .filter(|it| self.tree.element(*it).is_some() && self.own_box(*it).is_none());
+            .filter(|it| self.tree.style(*it).is_some() && self.own_box(*it).is_none());
         inline.any(|it| self.tree[it].has(Flags::ANIMATED) || self.has_animated_inline_box_in(it))
     }
 
@@ -2153,7 +2502,7 @@ impl Document {
                 true => positions.extend(corners.iter().flat_map(|it| [it / 2.0, 0.5 + it / 2.0])),
                 false => positions.extend(corners),
             }
-            positions.sort_by(f32::total_cmp);
+            bun_collections::index_sort::sort_slice_by(&mut positions, f32::total_cmp);
             time_at = Box::new(move |it, at| {
                 (start + length * f64::from(at) - it.start.unwrap_or(now)) * it.rate
             });
@@ -2183,7 +2532,7 @@ impl Document {
                             .or(it.sample),
                         false => it.sample,
                     };
-                for value in self.animated_values(&ids, base, progress) {
+                for value in self.animated_values(&ids, base, false, progress) {
                     if let (Animated::Property(value), false) =
                         (&value, value.target().counts_as().is_empty())
                     {
@@ -2354,7 +2703,9 @@ impl Document {
         old.retain(|id| {
             self.animations.all[id].order() == 1 && self.animations.all[id].owner == node
         });
-        old.sort_by_key(|id| self.animations.all[id].rank().1);
+        bun_collections::index_sort::sort_slice_by_key(&mut old, |id| {
+            self.animations.all[id].rank().1
+        });
         let composites =
             crate::grammar::split_list(style.other(Id::AnimationComposition).as_bytes());
         let triggers = crate::grammar::split_list(style.other(Id::AnimationTrigger).as_bytes());
@@ -2424,10 +2775,14 @@ impl Document {
             if !overridden.contains(Overridden::TRIGGER) {
                 let trigger =
                     bun_core::strings::split_once_char(triggers[index % triggers.len()], b' ');
+                let mut words = crate::hooks::words(trigger.unwrap_or_default().1)
+                    .into_iter()
+                    .map(Behavior::from_name);
+                let behaviors = [(); 2].map(|()| words.next().flatten().unwrap_or(Behavior::None));
                 self.set_trigger(
                     id,
                     trigger.map(|it| TriggeredBy::Name(crate::values::text(it.0).into())),
-                    trigger.unwrap_or_default().1,
+                    behaviors,
                 );
             }
             let Some(animation) = self.animations.all.get_mut(&id) else {
@@ -2461,10 +2816,16 @@ impl Document {
     /// If an ancestor is in a transition: what `node` inherits when they are over.
     pub(crate) fn inherited_after_transitions(&self, node: NodeId) -> Option<Rc<Style>> {
         let is_in_transition = |id| {
-            self.effective_animations(id)
-                .iter()
-                .any(|it| self.animations.all[it].order() == 0)
+            self.tree[id].has(Flags::ANIMATED)
+                && self
+                    .effective_animations(id)
+                    .iter()
+                    .any(|it| self.animations.all[it].order() == 0)
         };
+        self.tree
+            .flat_ancestors(node)
+            .any(is_in_transition)
+            .then_some(())?;
         let ancestors: SmallVec<[NodeId; 32]> = self.tree.flat_ancestors(node).collect();
         let outermost = ancestors.iter().rposition(|it| is_in_transition(*it))?;
         let base = Rc::clone(
@@ -2476,6 +2837,22 @@ impl Document {
         ancestors[..outermost].iter().try_rfold(base, |parent, it| {
             Some(self.compute_style(*it, self.tree.element(*it)?.rules.as_ref()?, &parent))
         })
+    }
+
+    /// Those that nobody has seen, which are later than the animation `last`.
+    pub(crate) fn take_back_transitions(&mut self, node: NodeId, last: u32) {
+        for id in self.animations_of(node) {
+            let it = &self.animations.all[&id];
+            if id > last
+                && it.order() == 0
+                && it.owner == node
+                && !it.is_exposed
+                && it.reported.0 == Phase::Idle
+            {
+                self.drop_animation(id);
+                self.tree[node].set(Flags::REANIMATE);
+            }
+        }
     }
 
     pub(crate) fn update_transitions(
@@ -2519,10 +2896,20 @@ impl Document {
                 let differs = |name: &Name| {
                     before.customs.get(*name, registry) != after.customs.get(*name, registry)
                 };
-                let registered = registry
-                    .iter()
-                    .filter(|it| it.1.interpolates())
-                    .map(|it| *it.0);
+                let named = |it: &TransitionProperty| {
+                    if let TransitionProperty::Other(name) = it {
+                        Some(Name::new(name.as_bytes()))
+                    } else {
+                        None
+                    }
+                };
+                let candidates: Set<_> = match t.property.contains(&TransitionProperty::All) {
+                    true => registry.keys().copied().collect(),
+                    false => t.property.iter().filter_map(named).collect(),
+                };
+                let registered = candidates
+                    .into_iter()
+                    .filter(|it| registry.get(it).is_some_and(|it| it.interpolates()));
                 changed.extend(registered.filter(differs).map(Target::Custom));
                 if t.behavior.contains(&TransitionBehavior::AllowDiscrete) {
                     let others = before
@@ -2577,7 +2964,7 @@ impl Document {
         }
         self.animations.generation += u32::from(!changed.is_empty());
         let animated = self.stack_of(node, |_, it| {
-            it.order() != 0 && it.sample.is_some() && it.replace_state != 1
+            it.order() != 0 && it.sample.is_some() && it.replace_state != ReplaceState::Removed
         });
         for id in animated.iter().filter(|_| !changed.is_empty()) {
             if self.animations.all[id].computed_for.is_none() {
@@ -2666,6 +3053,7 @@ impl Document {
                 target,
                 stops: vec![stop(0.0, from), stop(1.0, to)],
                 easing: Easing::linear(),
+                is_idle: false,
             });
             animation.play(self.animations.now, true);
             let id = self.reserve_animation();
@@ -2683,6 +3071,7 @@ impl Document {
         pseudo: Pseudo,
         timing: Timing,
     ) {
+        self.drop_animation(id);
         self.add_animation(id, Animation::new(0, Kind::Script, timing));
         self.set_target(id, node, pseudo);
     }
@@ -2722,6 +3111,13 @@ impl Document {
             self.tree.mark_style(it, Flags::REANIMATE);
             self.animations.filled.push(it);
         }
+    }
+
+    pub(crate) fn has_lost_target(&self, id: u32) -> bool {
+        self.animations
+            .all
+            .get(&id)
+            .is_some_and(|it| it.node == 0 && it.wanted.is_none())
     }
 
     /// `None` keeps them.
@@ -2787,46 +3183,67 @@ impl Document {
     pub(crate) fn set_script_trigger(
         &mut self,
         id: u32,
-        timeline: u32,
-        ranges: &[u8],
-        behaviors: &[u8],
+        timeline: TimelineId,
+        ranges: [&[u8]; 4],
+        behaviors: Option<[Behavior; 2]>,
     ) {
-        let (ranges, zoom) = (
-            crate::grammar::split_list(ranges),
-            self.animations
-                .timelines
-                .get(&timeline)
-                .map_or(1.0, |it| self.zoom_of(it.watched.node)),
-        );
-        let by = TriggeredBy::Timeline(
-            timeline,
-            trigger_ranges(|index| ranges.get(index).copied().unwrap_or_default(), zoom),
-        );
+        let timeline = match timeline {
+            TimelineId::None => 0,
+            TimelineId::Document(_) => u32::MAX,
+            TimelineId::Progress(id) => id,
+        };
+        let zoom = self
+            .animations
+            .timelines
+            .get(&timeline)
+            .map_or(1.0, |it| self.zoom_of(it.watched.node));
+        let by = TriggeredBy::Timeline(timeline, trigger_ranges(|index| ranges[index], zoom));
         self.animations
             .all
             .get_mut(&id)
             .into_iter()
             .for_each(|it| it.overridden |= Overridden::TRIGGER);
-        self.set_trigger(id, (!behaviors.is_empty()).then_some(by), behaviors);
+        self.set_trigger(
+            id,
+            behaviors.is_some().then_some(by),
+            behaviors.unwrap_or([Behavior::None; 2]),
+        );
     }
 
-    /// 0 is none, and `u32::MAX` one of the document.
-    pub(crate) fn set_timeline(&mut self, id: u32, timeline: u32, origin: f64) {
+    pub(crate) fn set_timeline(&mut self, id: u32, timeline: TimelineId) {
         self.animations
             .all
             .get_mut(&id)
             .into_iter()
             .for_each(|it| it.overridden |= Overridden::TIMELINE);
-        let clock = match self.animations.timelines.get(&timeline) {
-            Some(it) => Clock::Progress(timeline, it.snapshot),
-            None if timeline == u32::MAX => Clock::Document(origin),
-            None => Clock::None,
+        let clock = match timeline {
+            TimelineId::Progress(timeline) => self
+                .animations
+                .timelines
+                .get(&timeline)
+                .map_or(Clock::None, |it| Clock::Progress(timeline, it.snapshot)),
+            TimelineId::Document(origin) => Clock::Document(origin),
+            TimelineId::None => Clock::None,
         };
         self.change_clock(id, clock);
     }
 
-    pub(crate) fn create_timeline(&mut self, watched: Watched) -> u32 {
+    /// A view timeline if it has `insets`.
+    pub(crate) fn create_timeline(
+        &mut self,
+        node: NodeId,
+        axis: Axis,
+        insets: Option<&[u8]>,
+    ) -> u32 {
         self.update_layout();
+        let cx = Ctx {
+            zoom: self.zoom_of(node),
+            ..Ctx::dummy()
+        };
+        let how = insets
+            .and_then(|it| parse_all(it, |p| view_insets(p, &cx)))
+            .map_or(Watch::Scroller(Scroller::Itself), Watch::View);
+        let watched = Watched { node, how, axis };
         let snapshot = self.snapshot(&watched);
         let id = self.add_timeline(watched, true);
         self.animations
@@ -2843,35 +3260,48 @@ impl Document {
             return;
         };
         (it.watched.node, it.is_exposed) = (node.unwrap_or(it.watched.node), node.is_some());
-        self.watch(node.unwrap_or(0));
+        if let Some(node) = node.filter(|it| {
+            !self.tree[*it].has(Flags::WATCHED_BY_TIMELINE)
+                || !self
+                    .animations
+                    .watchers
+                    .get(it)
+                    .is_some_and(|it| it.contains(&timeline))
+        }) {
+            self.watch(timeline, node);
+        }
     }
 
-    pub(crate) fn timeline_state(&mut self, timeline: u32) -> Vec<f64> {
-        let Some(it) = self.animations.timelines.get_mut(&timeline) else {
-            return vec![self.animations.now];
-        };
-        it.is_exposed = true;
+    pub(crate) fn watch_again(&mut self, timeline: u32, node: NodeId) {
+        if self
+            .animations
+            .timelines
+            .get(&timeline)
+            .is_some_and(|it| it.is_exposed)
+        {
+            self.set_watched_node(timeline, Some(node));
+        }
+    }
+
+    pub(crate) fn timeline_state(&mut self, timeline: u32) -> Option<TimelineState> {
+        self.animations.timelines.get_mut(&timeline)?.is_exposed = true;
         let it = &self.animations.timelines[&timeline];
-        let [start, end] = it.snapshot.map_or([f64::NAN; 2], |it| {
-            it.range().map(|offset| (offset / it.zoom).into())
-        });
-        let is_view = matches!(it.watched.how, Watch::View(_));
-        let time = it.snapshot.map_or(f64::NAN, |it| it.time());
         let [source, subject] = [self.timeline_source(&it.watched).0, it.watched.node]
-            .map(|it| f64::from(self.event_target(it).0));
-        vec![
-            time,
+            .map(|it| self.event_target(it).0);
+        Some(TimelineState {
+            time: it.snapshot.map(|it| it.time()),
             source,
             subject,
-            (it.watched.axis as u8).into(),
-            is_view.into(),
-            start,
-            end,
-        ]
+            axis: it.watched.axis,
+            is_view: matches!(it.watched.how, Watch::View(_)),
+            offsets: it.snapshot.map_or([0.0; 2], |it| {
+                it.range().map(|offset| (offset / it.zoom).into())
+            }),
+        })
     }
 
     /// `false` if it cannot be done in this state.
-    pub(crate) fn control_animation(&mut self, id: u32, operation: u8, value: f64) -> bool {
+    pub(crate) fn control_animation(&mut self, id: u32, control: Control) -> bool {
         self.catch_up_with_compositor();
         if self.animations.all.get(&id).is_some_and(|it| it.owner != 0) {
             self.update_style();
@@ -2881,27 +3311,23 @@ impl Document {
         let Some(animation) = self.animations.all.get_mut(&id) else {
             return true;
         };
-        let (was_pending, was_paused, value_or_null) = (
-            animation.pending != Pending::None,
-            animation.is_paused(),
-            Some(value).filter(|it| !it.is_nan()),
-        );
+        let (was_pending, was_paused) = (animation.pending != Pending::None, animation.is_paused());
         let mut is_done = true;
-        match operation {
-            0 => is_done = animation.play(now, true),
-            1 => is_done = animation.pause(now),
-            2 => {
+        match control {
+            Control::Play => is_done = animation.play(now, true),
+            Control::Pause => is_done = animation.pause(now),
+            Control::Cancel => {
                 self.cancel(id);
                 return true;
             }
-            3 => is_done = animation.finish(now),
-            4 => is_done = animation.reverse(now),
-            5 => animation.seek(value, now),
-            6 => animation.set_start(value_or_null, now),
-            7 => animation.set_rate(value, now),
-            8 => animation.update_rate(value, now),
-            9 => {
-                animation.replace_state = 2;
+            Control::Finish => is_done = animation.finish(now),
+            Control::Reverse => is_done = animation.reverse(now),
+            Control::Seek(time) => animation.seek(time, now),
+            Control::SetStart(time) => animation.set_start(time, now),
+            Control::SetRate(rate) => animation.set_rate(rate, now),
+            Control::UpdateRate(rate) => animation.update_rate(rate, now),
+            Control::Persist => {
+                animation.replace_state = ReplaceState::Persisted;
                 let node = animation.node;
                 if node != 0 {
                     self.tree.mark_style(node, Flags::REANIMATE);
@@ -2909,9 +3335,10 @@ impl Document {
                 self.update_animation(id, false);
                 return true;
             }
-            _ => {
+            Control::Release => {
                 animation.is_exposed = false;
-                let is_relevant = animation.sample.is_some() && animation.replace_state != 1
+                let is_relevant = animation.sample.is_some()
+                    && animation.replace_state != ReplaceState::Removed
                     || animation.is_running(now);
                 if animation.order() != 1
                     && (animation.node == 0
@@ -2924,7 +3351,9 @@ impl Document {
             }
         }
         if is_done
-            && (operation < 2 || matches!(operation, 4 | 6) && was_paused != animation.is_paused())
+            && (matches!(control, Control::Play | Control::Pause)
+                || matches!(control, Control::Reverse | Control::SetStart(_))
+                    && was_paused != animation.is_paused())
         {
             animation.overridden |= Overridden::PLAY_STATE;
         }
@@ -2934,121 +3363,113 @@ impl Document {
         }
         self.needs_frame |= animation.follows_scroll();
         if was_pending && animation.pending == Pending::None {
-            self.emit("ready", 0, &format!(",{id}"));
+            self.events.push(EngineEvent::Playback(id, Playback::Ready));
         }
-        self.update_animation(id, matches!(operation, 3 | 5 | 6 | 7));
+        self.update_animation(
+            id,
+            matches!(
+                control,
+                Control::Finish | Control::Seek(_) | Control::SetStart(_) | Control::SetRate(_)
+            ),
+        );
         is_done
     }
 
-    /// One that is neither running nor pending, from what `animation_state` has returned.
-    pub(crate) fn restore_animation(&mut self, id: u32, state: &[f64]) {
-        let (Some(it), &[play_state, time, start, rate, _, replace_state, ..]) =
-            (self.animations.all.get_mut(&id), state)
-        else {
+    /// One that is neither running nor pending.
+    pub(crate) fn restore_animation(&mut self, id: u32, state: &State) {
+        let Some(it) = self.animations.all.get_mut(&id) else {
             return;
         };
-        [it.hold, it.start] = [time, start].map(|it| Some(it).filter(|it| !it.is_nan()));
-        (it.previous, it.rate, it.replace_state, it.is_finished) =
-            (it.hold, rate, replace_state as u8, play_state == 3.0);
+        (it.hold, it.start, it.previous, it.rate) = (
+            state.current_time,
+            state.start_time,
+            state.current_time,
+            state.playback_rate,
+        );
+        (it.replace_state, it.is_finished) =
+            (state.replace_state, state.play_state == Playing::Finished);
         self.update_animation(id, false);
     }
 
-    pub(crate) fn timing_depends_on_style(&self, id: u32) -> bool {
-        self.animations
+    pub(crate) fn animation_state(&mut self, id: u32) -> Option<State> {
+        if self
+            .animations
             .all
             .get(&id)
             .is_some_and(|it| !matches!(it.kind, Kind::Script) || it.follows_scroll())
+        {
+            self.update_style();
+        }
+        let (it, now) = (self.animations.all.get(&id)?, self.animations.now);
+        Some(State {
+            play_state: match () {
+                () if it.is_idle(now) => Playing::Idle,
+                () if it.is_paused() => Playing::Paused,
+                () if it.has_reached_end(now) => Playing::Finished,
+                () => Playing::Running,
+            },
+            current_time: it.time(now),
+            start_time: it.start,
+            playback_rate: it.rate,
+            is_pending: it.pending != Pending::None,
+            replace_state: it.replace_state,
+            progress: it.sample.map(|it| it.progress),
+            iteration: it.sample.map(|it| it.iteration),
+            end_time: it.timing.end(),
+            active_duration: it.timing.active_duration(),
+            duration: it.timing.duration,
+            timeline: match it.clock {
+                Clock::None => TimelineId::None,
+                Clock::Document(origin) => TimelineId::Document(origin),
+                Clock::Progress(timeline, _) => TimelineId::Progress(timeline),
+            },
+            timeline_time: it.timeline_time(now),
+            has_keyframes_from_script: it.overridden.contains(Overridden::KEYFRAMES),
+        })
     }
 
-    pub(crate) fn animation_state(&self, id: u32) -> Vec<f64> {
-        let (Some(it), now) = (self.animations.all.get(&id), self.animations.now) else {
-            return Vec::new();
-        };
-        let play_state = match () {
-            () if it.is_idle(now) => 0.0,
-            () if it.is_paused() => 2.0,
-            () if it.has_reached_end(now) => 3.0,
-            () => 1.0,
-        };
-        let or_null = |it: Option<f64>| it.unwrap_or(f64::NAN);
-        let numbers = |it: &Timing| {
-            [
-                it.delay,
-                it.end_delay,
-                it.duration,
-                it.iterations,
-                it.iteration_start,
-            ]
-        };
-        let mut state = vec![
-            play_state,
-            or_null(it.time(now)),
-            or_null(it.start),
-            it.rate,
-            (it.pending != Pending::None).into(),
-            it.replace_state.into(),
-            or_null(it.sample.map(|it| it.progress)),
-            or_null(it.sample.map(|it| it.iteration)),
-            it.timing.end(),
-            it.timing.active_duration(),
-            match it.clock {
-                Clock::None => 0,
-                Clock::Document(_) => u32::MAX,
-                Clock::Progress(timeline, _) => timeline,
-            }
-            .into(),
-            or_null(it.timeline_time(now)),
-            it.timing.duration,
-            it.overridden.bits().into(),
-            (it.composite as u8).into(),
-        ];
-        state.extend(
-            numbers(&it.specified)
-                .into_iter()
-                .chain([it.specified.fill as u8, it.specified.direction as u8].map(f64::from)),
-        );
-        state
-    }
-
-    pub(crate) fn animation_info(&mut self, id: u32) -> Vec<Out> {
+    pub(crate) fn specified_effect(&self, id: u32) -> Option<(Timing, Composite)> {
         self.animations
             .all
-            .get_mut(&id)
-            .into_iter()
-            .for_each(|it| it.is_exposed = true);
-        let Some(animation) = self.animations.all.get(&id) else {
-            return Vec::new();
-        };
-        let (kind, name) = match &animation.kind {
-            Kind::Transition { name, .. } => ("transition", &**name),
-            Kind::Css(name, _) => ("animation", &**name),
-            Kind::Script => ("script", ""),
-        };
-        let (node, pseudo) = self.event_target(animation.node);
-        let mut info: Vec<Out> = [kind, name, &node.to_string(), &pseudo]
-            .map(|it| it.as_bytes().to_vec())
-            .into();
-        info.extend([
-            animation.specified.easing.written(),
-            animation.range[0].written(),
-            animation.range[1].written(),
-        ]);
-        info
+            .get(&id)
+            .map(|it| (it.specified.clone(), it.composite))
     }
 
-    pub(crate) fn computed_offsets(&self, id: u32) -> Vec<f64> {
-        let animation = self.animations.all.get(&id);
-        animation.map_or(Vec::new(), |it| {
+    pub(crate) fn animation_range(&mut self, id: u32, edge: usize) -> Option<Out> {
+        self.update_style();
+        Some(self.animations.all.get(&id)?.range[edge].written())
+    }
+
+    pub(crate) fn expose_animation(&mut self, id: u32) -> Option<Origin> {
+        self.update_style();
+        self.animations.all.get_mut(&id)?.is_exposed = true;
+        let animation = &self.animations.all[&id];
+        let (is_transition, name) = match &animation.kind {
+            Kind::Transition { name, .. } => (true, Rc::clone(name)),
+            Kind::Css(name, _) => (false, Rc::clone(name)),
+            Kind::Script => return None,
+        };
+        let (node, pseudo) = self.event_target(animation.node);
+        Some(Origin {
+            is_transition,
+            name,
+            node,
+            pseudo,
+        })
+    }
+
+    pub(crate) fn computed_offsets(&self, id: u32) -> Vec<Option<f32>> {
+        self.animations.all.get(&id).map_or(Vec::new(), |it| {
             it.keyframes
                 .iter()
-                .map(|frame| it.offset_of(frame).map_or(f64::NAN, f64::from))
+                .map(|frame| it.offset_of(frame))
                 .collect()
         })
     }
 
-    /// Of an animation that a style has started. For each keyframe its selector, computed offset, easing, composite operation, and
-    /// pairs of a property and its value, which "" ends.
-    pub(crate) fn computed_keyframes(&self, id: u32) -> Vec<Out> {
+    /// Of an animation that a style has started.
+    pub(crate) fn computed_keyframes(&mut self, id: u32) -> Vec<ComputedKeyframe> {
+        self.update_style();
         let Some(animation) = self.animations.all.get(&id) else {
             return Vec::new();
         };
@@ -3147,50 +3568,33 @@ impl Document {
                 );
             }
         }
-        frames.sort_by(|a, b| {
+        bun_collections::index_sort::sort_slice_by(&mut frames, |a, b| {
             (a.0.is_some().cmp(&b.0.is_some())).then(if a.0.is_some() {
                 core::cmp::Ordering::Equal
             } else {
                 a.1.total_cmp(&b.1)
             })
         });
-        let mut out = Vec::new();
-        for (range, offset, easing, adds, values, computed) in frames {
-            out.push(RangeEdge(range, Some(Lp::Fraction(offset))).written());
-            out.push(computed.map_or(Out::new(), |it| it.to_string().into_bytes()));
-            out.extend([
-                easing.written(),
-                adds.map_or("auto", Composite::name).into(),
-            ]);
-            let is_listed = |it: &&Animated| {
-                animation.keyframes.is_empty() || !matches!(it, Animated::Custom(..))
+        let is_listed =
+            |it: &&Animated| animation.keyframes.is_empty() || !matches!(it, Animated::Custom(..));
+        let finish =
+            |(range, offset, easing, adds, values, computed_offset): Frame| ComputedKeyframe {
+                range,
+                offset,
+                computed_offset,
+                easing,
+                adds,
+                values: values
+                    .iter()
+                    .filter(is_listed)
+                    .filter_map(|it| it.written(style))
+                    .collect(),
             };
-            values
-                .iter()
-                .filter(is_listed)
-                .for_each(|it| self.write_animated(style, it, &mut out));
-            out.push(Out::new());
-        }
-        out
+        frames.into_iter().map(finish).collect()
     }
 
-    fn write_animated(&self, style: &Style, animated: &Animated, out: &mut Vec<Out>) {
-        match animated {
-            Animated::Property(value) => {
-                let mut text = Out::new();
-                crate::values::with_zoom(style.zoom, || value.write(&mut text));
-                out.extend([value.id().name().into(), text]);
-            }
-            Animated::Custom(name, Some(value)) => out.extend([
-                spelling(*name).as_bytes().to_vec(),
-                crate::custom::untainted(value).to_vec(),
-            ]),
-            Animated::Custom(..) => {}
-        }
-    }
-
-    /// Pairs of a property and its value, for `commitStyles()`.
-    pub(crate) fn committed_styles(&mut self, id: u32) -> Vec<Out> {
+    pub(crate) fn committed_styles(&mut self, id: u32) -> Vec<(Prop, Out)> {
+        self.update_style();
         let Some(node) = self.animations.all.get(&id).map(|it| it.node) else {
             return Vec::new();
         };
@@ -3209,22 +3613,22 @@ impl Document {
         );
         let (animation, mut out) = (&self.animations.all[&id], Vec::new());
         let ids = self.stack_of(node, |other, it| {
-            other == id || it.replace_state != 1 && it.rank() < animation.rank()
+            other == id || it.replace_state != ReplaceState::Removed && it.rank() < animation.rank()
         });
         let sample = |it: &Animation| match core::ptr::eq(it, animation) {
             true => it.timing.sample(it.time(self.animations.now), [false; 2]),
             false => it.sample,
         };
-        let values = self.animated_values(&ids, &base, sample);
+        let values = self.animated_values(&ids, &base, false, sample);
         for track in &animation.tracks {
             let value = values
                 .iter()
                 .find(|it| it.target() == track.target)
                 .cloned();
-            self.write_animated(
-                &base,
-                &value.unwrap_or_else(|| self.value_in(&base, track.target)),
-                &mut out,
+            out.extend(
+                value
+                    .unwrap_or_else(|| self.value_in(&base, track.target))
+                    .written(&base),
             );
         }
         self.animations
@@ -3236,6 +3640,7 @@ impl Document {
     }
 
     pub(crate) fn relevant_animations(&mut self, node: NodeId, subtree: bool) -> Vec<u32> {
+        self.update_layout_for(node);
         let is_target = |it: &Animation| {
             let originator = it
                 .wanted
@@ -3257,7 +3662,7 @@ impl Document {
                     } else {
                         Phase::Before
                     };
-            it.replace_state != 1
+            it.replace_state != ReplaceState::Removed
                 && (it.sample.is_some()
                     || is_ahead
                     || it.follows_scroll() && !it.is_idle(self.animations.now))
@@ -3267,7 +3672,7 @@ impl Document {
             .filter(|(_, it)| is_relevant(it) && is_target(it))
             .map(|it| *it.0)
             .collect();
-        ids.sort_by_cached_key(|id| {
+        bun_collections::index_sort::sort_slice_by_cached_key(&mut ids, |id| {
             let it = &self.animations.all[id];
             (it.order(), self.tree.path(it.owner), it.rank())
         });

@@ -62,7 +62,9 @@ struct node_module;
 #include "DOMStructureSlot.h"
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
-#include "InternalModuleRegistry.h"
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
+#include "BunClientData.h"
+#include "_NativeModule.h"
 #include "headers-handwritten.h"
 #include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
@@ -114,6 +116,8 @@ public:
     }
 
     static const JSC::ClassInfo s_info;
+    // Adds the names in ZigGlobalObject.lut.txt, which the global objects of the web do not have.
+    static const JSC::ClassInfo s_infoWithBunGlobals;
     // The one write hook that is not JSGlobalObject's own, GlobalScope::setPrototype(), leaves the decision to JSGlobalObject's.
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::WriteHooksHonorImmutableProperties;
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
@@ -401,6 +405,8 @@ public:
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
     V(public, Bun::Bindgen::AdditionsToGlobalObject, m_bindgenAdditions)                                     \
                                                                                                              \
+    V(private, WriteBarrier<JSObject>, m_natives)                                                            \
+                                                                                                             \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleResolveFilenameFunction)                       \
@@ -509,7 +515,6 @@ public:
     V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
                                                                                                              \
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
-    V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
@@ -665,6 +670,10 @@ public:
 
     void finishCreation(JSC::VM&);
 
+    void extendConsole(JSC::VM&, JSC::JSObject* console);
+    JSC::JSObject* natives() const { return m_natives.get(); }
+    static bool isNameOfNative(JSC::VM&, UniquedStringImpl*);
+
 private:
     void addBuiltinGlobals(JSC::VM&);
 
@@ -797,7 +806,7 @@ inline Zig::GlobalObject* getDefaultGlobalObject()
 Zig::GlobalObject* defaultGlobalObjectSlow(JSC::JSGlobalObject*);
 inline Zig::GlobalObject* defaultGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    if (lexicalGlobalObject && lexicalGlobalObject->classInfo() == Zig::GlobalObject::info()) [[likely]]
+    if (lexicalGlobalObject && lexicalGlobalObject->classInfo() == &Zig::GlobalObject::s_infoWithBunGlobals) [[likely]]
         return uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     return defaultGlobalObjectSlow(lexicalGlobalObject);
 }

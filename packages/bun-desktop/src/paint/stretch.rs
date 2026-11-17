@@ -1,15 +1,19 @@
 //! A box without most of its middle, along which nothing changes.
 
+use super::blur::MAX_SIGMA_OF_SHADOWS;
 use super::border::inset;
 use super::cpu::{Painter, snap_shadow};
-use super::raster::{Clip, IntRect, Layer, Paint, Pixel, map_rect};
-use super::scene::intersect;
+use super::raster::{Clip, IntRect, Layer, Paint, Pixel, average_scale, map_rect};
+use super::scene::{intersect, outset};
 use crate::abi::{Item, LineStyle, RoundedRect};
 use crate::gfx::Transform;
 use crate::small_vec::SmallVec;
 
 /// What is stretched is the middle one of three equal pixels, because the GPU interpolates.
 pub const STRETCHED: i32 = 3;
+
+const WORTH_REMOVING: i32 = 12;
+const MAX_AREA: i64 = 1 << 22;
 
 pub struct Stretch {
     pub item: Item,
@@ -21,13 +25,20 @@ pub struct Stretch {
 }
 
 impl Stretch {
-    pub fn of(painter: &Painter, index: usize, matrix: &Transform) -> Option<Stretch> {
+    /// To be rendered with `matrix`, and shown with `shown_with`.
+    pub fn of(
+        painter: &Painter,
+        index: usize,
+        matrix: &Transform,
+        shown_with: &Transform,
+    ) -> Option<Stretch> {
         if matrix.has_skew() || matrix.sx <= 0. || matrix.sy <= 0. {
             return None;
         }
         let (frame, mut item) = (painter.frame, painter.scene.items[index]);
         let mut shapes: SmallVec<&mut RoundedRect, 2> = SmallVec::new();
-        let (mut margins, mut has_center) = ([0.; 4], false);
+        let (mut margins, mut has_center, mut bounds) =
+            ([0.; 4], false, painter.scene.bounds(index));
         match &mut item {
             Item::Fill { shape, .. } => {
                 *shape = frame.snap_shape(shape);
@@ -55,17 +66,19 @@ impl Stretch {
                 shadow,
                 blur,
                 inset,
-                covered,
                 ..
             } => {
+                *blur = blur.min(MAX_SIGMA_OF_SHADOWS * 2. / average_scale(shown_with));
+                if !*inset {
+                    bounds = intersect(bounds, outset(shadow.rect, *blur * 1.5 + 1.));
+                }
                 (*shape, *shadow) = snap_shadow(frame, shape, shadow);
                 shapes.extend([shape, shadow]);
                 margins = [*blur * 1.5 + 1.; 4];
-                has_center = *covered && !*inset;
             }
             _ => return None,
         }
-        let bounds = IntRect::around(map_rect(matrix, painter.scene.bounds(index)));
+        let bounds = IntRect::around(map_rect(matrix, bounds));
         let uniform = shapes.iter().fold(bounds.to_rect(), |uniform, shape| {
             let [tl, tr, br, bl] = shape.radii;
             let insets = [
@@ -78,7 +91,11 @@ impl Stretch {
             intersect(uniform, map_rect(matrix, inset(shape, insets).rect))
         });
         let (left, top) = (uniform.x.ceil() as i32 + 1, uniform.y.ceil() as i32 + 1);
-        let removable = |start: i32, end: f32| (end.floor() as i32 - 1 - start - STRETCHED).max(0);
+        let removable = |start: i32, end: f32| {
+            Some(end.floor() as i32 - 1 - start - STRETCHED)
+                .filter(|it| *it >= WORTH_REMOVING)
+                .unwrap_or(0)
+        };
         let (dx, dy) = (
             removable(left, uniform.x + uniform.width),
             removable(top, uniform.y + uniform.height),
@@ -95,7 +112,7 @@ impl Stretch {
             bottom: bounds.bottom - dy,
             ..bounds
         };
-        Some(Stretch {
+        (area.area() <= MAX_AREA).then_some(Stretch {
             item,
             area,
             middle: [left, top],

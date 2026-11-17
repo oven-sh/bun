@@ -210,8 +210,11 @@ const _: () = {
     unsafe extern "C" {
         safe fn Bun__Bindgen__Blob__fromJS(value: JSValue) -> *mut c_void;
         fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
-        fn Bun__Bindgen__Blob__create(global: *mut JSGlobalObject, wrapped: *mut c_void)
-        -> JSValue;
+        #[allow(improper_ctypes)]
+        safe fn Bun__Bindgen__Blob__create(
+            global: &JSGlobalObject,
+            wrapped: RefPtr<Blob>,
+        ) -> JSValue;
     }
 
     // `JSValue::as(Blob)` special-case: a `BuildArtifact`
@@ -246,19 +249,17 @@ const _: () = {
             // ownership to the codegen wrapper. The S3File fast-path (different
             // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::into_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
-            let ptr = Blob::new(self);
-            // SAFETY: the new object takes the one ref `Blob::new` made.
-            unsafe { Bun__Bindgen__Blob__create(global.as_mut_ptr(), ptr.cast()) }
+            Bun__Bindgen__Blob__create(global, Blob::new(self))
         }
     }
 };
 
 impl Blob {
-    /// Heap-promote, with the one ref that the caller owns.
+    /// Heap-promote.
     #[inline]
-    pub fn new(mut blob: Blob) -> *mut Blob {
+    pub fn new(mut blob: Blob) -> RefPtr<Blob> {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
-        bun_core::heap::into_raw(Box::new(blob))
+        RefPtr::new(blob)
     }
 
     #[inline]
@@ -444,6 +445,13 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
+    pub fn snapshot(&self) -> Option<store::Snapshot> {
+        match &self.store.get().as_deref()?.data {
+            store::Data::File(file) => file.snapshot,
+            _ => None,
+        }
+    }
+
     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
     /// itself may be `""`; that is not a filename.)
     ///
@@ -457,7 +465,7 @@ impl Blob {
     }
 
     /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
-    /// `None` for fd-backed or unnamed stores.
+    /// `None` for fd-backed or unnamed stores, and for a snapshot.
     pub fn store_path(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
@@ -465,7 +473,7 @@ impl Blob {
                 if n.is_empty() { None } else { Some(n) }
             }
             store::Data::File(file) => match &file.pathlike {
-                PathOrFileDescriptor::Path(path) => Some(path.slice()),
+                PathOrFileDescriptor::Path(path) => file.snapshot.is_none().then(|| path.slice()),
                 PathOrFileDescriptor::Fd(_) => None,
             },
             // Use `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
@@ -646,20 +654,7 @@ pub mod store {
         Heap(Vec<u8>),
         Static(&'static [u8]),
         #[cfg(unix)]
-        Mapped(Mapping),
-    }
-
-    /// An `mmap` region.
-    #[cfg(unix)]
-    struct Mapping(*mut [u8]);
-
-    #[cfg(unix)]
-    impl Drop for Mapping {
-        fn drop(&mut self) {
-            if let Err(err) = bun_sys::munmap(self.0.cast(), self.0.len()) {
-                bun_core::debug_warn!("Blob store munmap failed: {:?}", err);
-            }
-        }
+        Mapped(bun_sys::Mmap),
     }
 
     impl Bytes {
@@ -681,19 +676,19 @@ pub mod store {
         }
 
         /// # Safety
-        /// `mapping` is a whole read-write `mmap` region, and nothing else unmaps it.
+        /// As [`bun_sys::Mmap::as_mut_slice`], until `mapping` is dropped.
         #[cfg(unix)]
-        pub unsafe fn from_mapping(mapping: *mut [u8]) -> Bytes {
-            Self::new(Storage::Mapped(Mapping(mapping)))
+        pub unsafe fn from_mapping(mapping: bun_sys::Mmap) -> Bytes {
+            Self::new(Storage::Mapped(mapping))
         }
 
         /// # Safety
         /// As [`Self::from_mapping`], and `mapping` maps `memfd` from its start.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub unsafe fn from_memfd_mapping(mapping: *mut [u8], memfd: bun_sys::File) -> Bytes {
+        pub unsafe fn from_memfd_mapping(mapping: bun_sys::Mmap, memfd: bun_sys::File) -> Bytes {
             Bytes {
                 memfd: Some(memfd),
-                ..Self::new(Storage::Mapped(Mapping(mapping)))
+                ..Self::new(Storage::Mapped(mapping))
             }
         }
 
@@ -711,9 +706,9 @@ pub mod store {
             match &self.storage {
                 Storage::Heap(bytes) => bytes,
                 Storage::Static(bytes) => bytes,
-                // SAFETY: mapped until it is dropped.
+                // SAFETY: the contract of `from_mapping`.
                 #[cfg(unix)]
-                Storage::Mapped(mapping) => unsafe { &*mapping.0 },
+                Storage::Mapped(mapping) => unsafe { mapping.as_slice() },
             }
         }
 
@@ -725,7 +720,9 @@ pub mod store {
                 }
                 Storage::Static(bytes) => core::ptr::from_ref(*bytes).cast_mut(),
                 #[cfg(unix)]
-                Storage::Mapped(mapping) => mapping.0,
+                Storage::Mapped(mapping) => {
+                    core::ptr::slice_from_raw_parts_mut(mapping.as_ptr(), mapping.size())
+                }
             }
         }
 
@@ -755,6 +752,15 @@ pub mod store {
         pub last_modified: crate::JSTimeType,
         /// `st_mode` as a body's `clone()` saw it, kept apart from what the `Bun.file()` sharing this store answers from.
         pub mode_seen_by_clone: Option<bun_sys::Mode>,
+        pub snapshot: Option<Snapshot>,
+    }
+
+    /// <https://w3c.github.io/FileAPI/#snapshot-state>: the file is read-only, and cannot be read once it has changed.
+    #[derive(Clone, Copy)]
+    pub struct Snapshot {
+        /// Nanoseconds since the epoch.
+        pub modified: i64,
+        pub was_chosen_by_user: bool,
     }
 
     impl Default for File {
@@ -768,6 +774,7 @@ pub mod store {
                 max_size: MAX_SIZE,
                 last_modified: crate::INIT_TIMESTAMP,
                 mode_seen_by_clone: None,
+                snapshot: None,
             }
         }
     }

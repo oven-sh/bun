@@ -2,14 +2,15 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
+use super::blur::{self, mirror};
 use super::border::{self, Border};
 use super::gradient::{Geometry, Gradient, Spread};
 use super::raster::{
-    Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, average_scale, blend_row, blur_extent,
-    has_radii, inner_band, map_point, map_rect, premultiply, scale, transform,
+    Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, average_scale, blend_row, has_radii,
+    inner_band, map_point, map_rect, premultiply, scale, transform,
 };
 use super::scene::{
-    Frame, Scene, erases, filtered_bounds, has_graph, intersect, tile_bounds, union,
+    Frame, Scene, erases, filtered_bounds, has_graph, intersect, outset, tile_bounds, union,
 };
 use super::stretch::Stretch;
 use super::warp::{self, Projection};
@@ -100,11 +101,7 @@ impl GlyphPlacer {
                 && frame.scale < 1.5
                 && size <= LARGEST_HINTED
                 && !cfg!(target_os = "macos"),
-            color: if text::face(face)?.file.has_color {
-                color | 0xFF
-            } else {
-                text::shade_for(color)
-            },
+            color: text::ink_for(text::face(face)?, color),
         };
         Some(GlyphPlacer { key, matrix })
     }
@@ -489,7 +486,7 @@ impl Painter<'_> {
                 ..
             } => {
                 let Some(mut group) = layer.copy(
-                    area.outset(self.reach_of_backdrops(index, matrix))
+                    area.outset(self.reach_of_backdrops(scene.content(index), matrix))
                         .intersect(layer.rect),
                 ) else {
                     return;
@@ -517,10 +514,12 @@ impl Painter<'_> {
                     (_, None) => {}
                 }
             }
-            Item::Shadow { .. } | Item::Border { .. } => match Stretch::of(self, index, matrix) {
-                Some(stretch) => stretch.paint(self, layer, matrix, &clip.within_rect(area)),
-                None => self.paint_leaf(&scene.items[index], layer, matrix, clip, area),
-            },
+            Item::Shadow { .. } | Item::Border { .. } => {
+                match Stretch::of(self, index, matrix, matrix) {
+                    Some(stretch) => stretch.paint(self, layer, matrix, &clip.within_rect(area)),
+                    None => self.paint_leaf(&scene.items[index], layer, matrix, clip, area),
+                }
+            }
             item => self.paint_leaf(item, layer, matrix, clip, area),
         }
     }
@@ -743,10 +742,7 @@ impl Painter<'_> {
                 let behind = IntRect::nearest(map_rect(matrix, frame.snap_shape(shape).rect))
                     .intersect(area.outset(reach));
                 if let Some(mut backdrop) = layer.copy(behind.intersect(layer.rect)) {
-                    if reach > 0 {
-                        backdrop = mirror_edges(&backdrop, reach).unwrap_or(backdrop);
-                    }
-                    self.filter(&mut backdrop, filters, matrix, usize::MAX);
+                    self.filter_backdrop(&mut backdrop, filters, matrix);
                     backdrop.scale_alpha(*opacity);
                     layer.draw(
                         &backdrop,
@@ -785,17 +781,22 @@ impl Painter<'_> {
                 covered,
             } => {
                 let (shape, shadow) = snap_shadow(frame, shape, shadow);
-                let sigma = blur / 2. * average_scale(matrix);
-                let mut coverage =
-                    Coverage::of_shape(&shadow, matrix, area.outset(blur_extent(sigma)));
-                coverage.blur(sigma);
+                let sigma = (blur / 2. * average_scale(matrix)).min(blur::MAX_SIGMA_OF_SHADOWS);
+                let casts = IntRect::around(map_rect(matrix, shadow.rect))
+                    .outset(1)
+                    .intersect(area.outset(blur::extent(sigma)));
+                let mut coverage = match sigma > 0. {
+                    true => Coverage::of_shape(&shadow, matrix, casts).blurred(sigma, area),
+                    false => Coverage::of_shape(&shadow, matrix, area),
+                };
                 let paint = Paint::Solid(premultiply(*color));
                 if *inset {
                     coverage.invert();
                     layer.fill_coverage(&coverage, &self.clip_to(&shape, matrix, clip), &paint);
                 } else {
-                    if !covered {
-                        coverage.subtract(&Coverage::of_shape(&shape, matrix, area));
+                    match covered {
+                        true => coverage.clear(inner_band(&shape, matrix).outset(-2)),
+                        false => coverage.subtract(&Coverage::of_shape(&shape, matrix, area)),
                     }
                     layer.fill_coverage(&coverage, &clip.within_rect(area), &paint);
                 }
@@ -896,15 +897,19 @@ impl Painter<'_> {
                 layer.draw(&drawn, None, &clip);
             }
             Item::Svg { .. } => {}
-            Item::Text { blur, .. } if *blur > 0. => {
-                let sigma = blur / 2. * average_scale(matrix);
-                let Some(mut shadow) = Layer::new(area.outset(blur_extent(sigma))) else {
+            Item::Text {
+                blur, bounds, size, ..
+            } if *blur > 0. => {
+                let sigma = (blur / 2. * average_scale(matrix)).min(blur::MAX_SIGMA_OF_SHADOWS);
+                let casts = IntRect::around(map_rect(matrix, outset(*bounds, size * 0.5)))
+                    .intersect(area.outset(blur::extent(sigma)));
+                let Some(mut text) = Layer::new(casts) else {
                     return;
                 };
-                let everything = Clip::new(shadow.rect);
-                self.draw_text(item, &mut shadow, matrix, &everything);
-                shadow.blur(sigma);
-                layer.draw(&shadow, None, clip);
+                self.draw_text(item, &mut text, matrix, &Clip::new(casts));
+                text.blurred([sigma; 2], area)
+                    .iter()
+                    .for_each(|shadow| layer.draw(shadow, None, clip));
             }
             Item::Text { .. } => self.draw_text(item, layer, matrix, clip),
             Item::Line { rect, color, style } => {
@@ -954,7 +959,7 @@ impl Painter<'_> {
             return None;
         };
         let filters = self.scene.filters(filters);
-        let render = |group: &mut Layer, matrix: &Transform| {
+        let render = |group: &mut Layer, matrix: &Transform, wanted: IntRect| {
             let content = layer_clip(bounds, matrix).intersect(group.rect);
             self.paint(
                 self.scene.content(index),
@@ -962,14 +967,28 @@ impl Painter<'_> {
                 matrix,
                 &Clip::new(content),
             );
-            self.filter(group, filters, matrix, index);
+            self.filter(group, filters, matrix, index, wanted);
         };
+        let render_all = |group: &mut Layer, matrix: &Transform| render(group, matrix, group.rect);
         let mut group;
         if !has_graph(filters) {
-            group = Layer::new(
-                area.outset(filter_reach(filters, matrix) + self.reach_of_backdrops(index, matrix)),
-            )?;
-            render(&mut group, matrix);
+            let reach = filter_reach(filters, matrix)
+                + self.reach_of_backdrops(self.scene.content(index), matrix);
+            let mut needed = area.outset(reach);
+            if filters
+                .iter()
+                .any(|filter| matches!(filter, Filter::Blur(_) | Filter::DropShadow { .. }))
+            {
+                needed = needed.intersect(layer_clip(
+                    intersect(bounds, self.scene.content_bounds(index)),
+                    matrix,
+                ));
+            }
+            group = Layer::new(needed).or_else(|| Layer::new(area))?;
+            render(&mut group, matrix, area);
+            if !group.rect.contains(area) {
+                group = group.copy(area)?;
+            }
         } else if matrix.has_skew() {
             group = Layer::new(area)?;
             warp::project(
@@ -977,7 +996,7 @@ impl Painter<'_> {
                 &Clip::new(area),
                 &Projection::from(matrix),
                 self.scene.bounds(index),
-                render,
+                render_all,
             );
         } else {
             let content = intersect(bounds, self.scene.content_bounds(index));
@@ -986,7 +1005,7 @@ impl Painter<'_> {
             let everything =
                 IntRect::around(map_rect(matrix, regions.fold(Rect::default(), union)));
             group = Layer::new(everything.intersect(area.outset(GRAPH_REACH)).union(area))?;
-            render(&mut group, matrix);
+            render_all(&mut group, matrix);
         }
         self.mask(&mut group, index, matrix, area)?;
         Some(group)
@@ -1011,8 +1030,8 @@ impl Painter<'_> {
         Some(())
     }
 
-    pub fn reach_of_backdrops(&self, index: usize, matrix: &Transform) -> i32 {
-        let items = self.scene.items[index..self.scene.end(index)]
+    pub fn reach_of_backdrops(&self, range: Range<usize>, matrix: &Transform) -> i32 {
+        let items = self.scene.items[range]
             .iter()
             .filter(|_| self.scene.has_backdrops);
         let reach = |item: &Item| match item {
@@ -1022,12 +1041,43 @@ impl Painter<'_> {
         items.map(reach).max().unwrap_or(0)
     }
 
+    /// It may grow.
+    pub fn filter_backdrop(&self, backdrop: &mut Layer, filters: &[Filter], matrix: &Transform) {
+        let side = backdrop.rect.width().max(backdrop.rect.height()) as i32;
+        if filters
+            .iter()
+            .any(|filter| matches!(filter, Filter::DropShadow { .. } | Filter::Graph(_)))
+            && let Some(extended) = mirror_edges(backdrop, filter_reach(filters, matrix).min(side))
+        {
+            *backdrop = extended;
+        }
+        for run in filters.split_inclusive(|filter| matches!(filter, Filter::Blur(_))) {
+            match run {
+                [before @ .., Filter::Blur(sigma)] => {
+                    self.filter(backdrop, before, matrix, usize::MAX, backdrop.rect);
+                    backdrop.blur_mirrored(sigma * average_scale(matrix));
+                }
+                _ => self.filter(backdrop, run, matrix, usize::MAX, backdrop.rect),
+            }
+        }
+    }
+
     /// `index` is that of the layer.
-    fn filter(&self, layer: &mut Layer, mut filters: &[Filter], matrix: &Transform, index: usize) {
+    fn filter(
+        &self,
+        layer: &mut Layer,
+        mut filters: &[Filter],
+        matrix: &Transform,
+        index: usize,
+        wanted: IntRect,
+    ) {
+        if !has_graph(filters) {
+            return filter::apply(layer, filters, matrix, wanted);
+        }
         while let Some((first, rest)) = filters.split_first() {
             filters = rest;
             let Filter::Graph(region) = first else {
-                filter::apply(layer, std::slice::from_ref(first), matrix);
+                filter::apply(layer, std::slice::from_ref(first), matrix, layer.rect);
                 continue;
             };
             let count = rest
@@ -1215,8 +1265,14 @@ pub fn draw_glyphs(
                     (matrix.ty * 4. + 0.5).floor() / 4.,
                 );
             }
-            if let Some(image) = text::rasterize(face, glyph.id, size, &matrix, hints, color | 0xFF)
-            {
+            if let Some(image) = text::rasterize(
+                face,
+                glyph.id,
+                size,
+                &matrix,
+                hints,
+                text::ink_for(face, color),
+            ) {
                 draw_glyph(layer, &image, 0, 0, clip, color);
             }
         }
@@ -1228,29 +1284,29 @@ pub fn layer_clip(bounds: Rect, matrix: &Transform) -> IntRect {
 }
 
 const GRAPH_REACH: i32 = 1024;
+const MAX_REACH: i32 = 4096;
 
 pub fn filter_reach(filters: &[Filter], matrix: &Transform) -> i32 {
     let scale = average_scale(matrix);
     let reach = |filter: &Filter| match *filter {
-        Filter::Blur(sigma) => blur_extent(sigma * scale),
+        Filter::Blur(sigma) => blur::extent(sigma * scale),
         Filter::DropShadow {
             offset: [x, y],
             blur,
             ..
-        } => blur_extent(blur * scale) + (x.abs().max(y.abs()) * scale).ceil().min(4096.) as i32,
+        } => blur::extent(blur * scale) + (x.abs().max(y.abs()) * scale).ceil().min(4096.) as i32,
         Filter::Graph(_) => GRAPH_REACH,
         _ => 0,
     };
-    filters.iter().map(reach).sum()
+    filters
+        .iter()
+        .map(reach)
+        .fold(0, |all, it| (all + it).min(MAX_REACH))
 }
 
 /// `source` covers `rect`.
 pub fn mirror_edges(source: &Layer, by: i32) -> Option<Layer> {
     let (rect, mut extended) = (source.rect, Layer::new(source.rect.outset(by))?);
-    let mirror = |at: i32, length: usize| {
-        let at = at.rem_euclid(length as i32 * 2) as usize;
-        at.min(length * 2 - 1 - at)
-    };
     let columns: Vec<_> = (-by..rect.width() as i32 + by)
         .map(|x| mirror(x, rect.width()))
         .collect();

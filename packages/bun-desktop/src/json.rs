@@ -560,21 +560,22 @@ tuples! {
     4: A 0, B 1, C 2, D 3;
 }
 
-/// A struct that is an object. With `default`, members may be missing. Fields after `..` are not members.
+/// A struct that is an object. With `default`, members may be missing. With `for`, it is declared elsewhere.
 macro_rules! record {
     (@read default, $type:ty, $value:expr) => { Option::<$type>::from_json($value).map(Option::unwrap_or_default) };
     (@read required, $type:ty, $value:expr) => { <$type>::from_json($value) };
     (
         $mode:ident $(#[$meta:meta])* $visibility:vis struct $name:ident {
             $($(#[$field_meta:meta])* $field_visibility:vis $field:ident: $type:ty,)+
-            $(.. $($other_visibility:vis $other:ident: $other_type:ty,)+)?
         }
     ) => {
         $(#[$meta])* $visibility struct $name {
             $($(#[$field_meta])* $field_visibility $field: $type,)+
-            $($($other_visibility $other: $other_type,)+)?
         }
 
+        $crate::json::record!(for $mode $name { $($field: $type,)+ });
+    };
+    (for $mode:ident $name:ident { $($field:ident: $type:ty,)+ }) => {
         impl $crate::json::Serialize for $name {
             fn to_json(&self) -> $crate::json::Value {
                 $crate::json::Value::Object(vec![$(($crate::json::camel_case(stringify!($field)).collect(), self.$field.to_json())),+])
@@ -586,32 +587,10 @@ macro_rules! record {
                 use $crate::error::Context as _;
                 Ok($name {
                     $($field: $crate::json::record!(@read $mode, $type, value.field(stringify!($field))).context(stringify!($field))?,)+
-                    $($($other: Default::default(),)+)?
                 })
             }
         }
     };
 }
 
-macro_rules! json {
-    (@array [$($done:expr,)*] []) => { vec![$($done),*] };
-    (@array [$($done:expr,)*] [$($item:tt)+]) => { vec![$($done,)* $crate::json::json!($($item)+)] };
-    (@array [$($done:expr,)*] [$($item:tt)+] , $($rest:tt)*) => {
-        $crate::json::json!(@array [$($done,)* $crate::json::json!($($item)+),] [] $($rest)*)
-    };
-    (@array $done:tt [$($item:tt)*] $next:tt $($rest:tt)*) => { $crate::json::json!(@array $done [$($item)* $next] $($rest)*) };
-    (@object [$($done:expr,)*]) => { vec![$($done),*] };
-    (@object $done:tt $key:tt : $($rest:tt)+) => { $crate::json::json!(@member $done $key [] $($rest)+) };
-    (@member [$($done:expr,)*] $key:tt [$($value:tt)+] $(, $($rest:tt)*)?) => {
-        $crate::json::json!(@object [$($done,)* (String::from($key), $crate::json::json!($($value)+)),] $($($rest)*)?)
-    };
-    (@member $done:tt $key:tt [$($value:tt)*] $next:tt $($rest:tt)*) => {
-        $crate::json::json!(@member $done $key [$($value)* $next] $($rest)*)
-    };
-    (null) => { $crate::json::Value::Null };
-    ([$($items:tt)*]) => { $crate::json::Value::Array($crate::json::json!(@array [] [] $($items)*)) };
-    ({$($members:tt)*}) => { $crate::json::Value::Object($crate::json::json!(@object [] $($members)*)) };
-    ($value:expr) => { $crate::json::Serialize::to_json(&$value) };
-}
-
-pub(crate) use {json, record};
+pub(crate) use record;

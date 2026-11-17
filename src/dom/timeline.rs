@@ -3,6 +3,7 @@
 use crate::boxes::{BoxId, VIEWPORT};
 use crate::document::Document;
 use crate::grammar::split_list;
+use crate::name::{Map, Name};
 use crate::properties::{Id, Style};
 use crate::tree::{DOCUMENT, NodeId};
 use crate::types::*;
@@ -94,6 +95,9 @@ pub(crate) fn trigger_ranges<'a>(edge: impl Fn(usize) -> &'a [u8], zoom: f32) ->
     })
 }
 
+/// The last element that declares a name, by the property that limits the scope of the name, the name, and the element that does so.
+pub(crate) type Declarers = Map<(Id, Name, NodeId), NodeId>;
+
 impl Document {
     fn named_timeline(&self, node: NodeId, name: &str) -> Option<Watched> {
         let style = self.tree.style(node)?;
@@ -165,31 +169,71 @@ impl Document {
         scope: Id,
         declared: impl Fn(NodeId) -> Option<T>,
     ) -> Result<T, bool> {
-        let scopes = |id: NodeId| {
-            let scope = self.tree.style(id).and_then(|it| it.other_if_set(scope));
-            scope.is_some_and(|it| {
-                it == "all" || split_list(it.as_bytes()).contains(&name.as_bytes())
-            })
-        };
-        let up = |id: NodeId| core::iter::once(id).chain(self.tree.flat_ancestors(id));
-        let scope = match up(node).find_map(|id| {
+        let mut up = core::iter::once(node).chain(self.tree.flat_ancestors(node));
+        let limit = match up.find_map(|id| {
             declared(id)
                 .map(Ok)
-                .or_else(|| scopes(id).then_some(Err(id)))
+                .or_else(|| self.limits(id, scope, name.as_bytes()).then_some(Err(id)))
         }) {
             Some(Ok(found)) => return Ok(found),
-            Some(Err(scope)) => Some(scope),
-            None => None,
+            Some(Err(limit)) => limit,
+            None => 0,
         };
-        let sources = self
-            .scrolling
-            .timeline_sources
+        let mut known = self.scrolling.declarers.borrow_mut();
+        let all = known.get_or_insert_with(|| {
+            let mut all = Declarers::default();
+            self.scrolling
+                .timeline_sources
+                .iter()
+                .for_each(|it| self.add_declarer(*it, &mut all));
+            all
+        });
+        all.get(&(scope, Name::new(name.as_bytes()), limit))
+            .and_then(|it| declared(*it))
+            .ok_or(limit != 0)
+    }
+
+    fn limits(&self, id: NodeId, scope: Id, name: &[u8]) -> bool {
+        let scope = self.tree.style(id).and_then(|it| it.other_if_set(scope));
+        scope.is_some_and(|it| {
+            it == "all" || it.as_bytes() == name || split_list(it.as_bytes()).contains(&name)
+        })
+    }
+
+    pub(crate) fn add_declarer(&self, node: NodeId, all: &mut Declarers) {
+        let Some(style) = self.tree.style(node) else {
+            return;
+        };
+        let mut add = |scope: Id, name: &[u8]| {
+            let limit = core::iter::once(node)
+                .chain(self.tree.flat_ancestors(node))
+                .find(|it| self.limits(*it, scope, name));
+            let last = all
+                .entry((scope, Name::new(name), limit.unwrap_or(0)))
+                .or_insert(node);
+            if *last != node && self.tree.path(*last) < self.tree.path(node) {
+                *last = node;
+            }
+        };
+        style
+            .scroll
+            .timeline_name
             .iter()
-            .filter(|it| up(**it).find(|it| scopes(*it)) == scope);
-        let last = sources
-            .filter_map(|it| Some((*it, declared(*it)?)))
-            .max_by_key(|it| self.tree.path(it.0));
-        last.map(|it| it.1).ok_or_else(|| scope.is_some())
+            .for_each(|it| add(Id::TimelineScope, it.as_bytes()));
+        let of_views = style
+            .other_if_set(Id::ViewTimelineName)
+            .and_then(|it| parse_all(it.as_bytes(), |p| Commas::<Str>::parse(p, &Ctx::dummy())));
+        of_views
+            .iter()
+            .flat_map(|it| it.iter())
+            .for_each(|it| add(Id::TimelineScope, it.as_bytes()));
+        let of_triggers = style
+            .other_if_set(Id::TimelineTriggerName)
+            .map(|it| split_list(it.as_bytes()));
+        of_triggers
+            .into_iter()
+            .flatten()
+            .for_each(|it| add(Id::TriggerScope, it));
     }
 
     pub(crate) fn find_trigger(

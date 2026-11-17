@@ -39,14 +39,6 @@ pub(crate) const LEAVES: &[(&str, Leaf)] = &[
         m.write(|out| out.extend_from_slice(b"0deg"));
         Some(())
     }),
-    ("alpha", |m, p| {
-        let start = m.out.len();
-        m.named("<factor>", p).then_some(())?;
-        if m.is_computed() {
-            rewrite::<Alpha>(m, start);
-        }
-        Some(())
-    }),
     ("url", |m, p| {
         let (url, modifiers) = link(p)?;
         write_link(m, url)?;
@@ -154,7 +146,7 @@ pub(crate) const LEAVES: &[(&str, Leaf)] = &[
     ("position-area", position_area),
 ];
 
-fn unicode_range(source: &[u8]) -> Option<[u32; 2]> {
+pub(crate) fn unicode_range(source: &[u8]) -> Option<[u32; 2]> {
     let [b'u' | b'U', b'+', digits @ ..] = crate::scan::trim(source) else {
         return None;
     };
@@ -598,6 +590,13 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
             literal(&it).map_or(it, |value| written(|out| write_double(value / 100.0, out)))
         })
     }),
+    ("alpha", |m, start, _| {
+        if m.is_computed() {
+            rewrite::<Alpha>(m, start)
+        } else {
+            Some(())
+        }
+    }),
     ("snap", |m, start, _| {
         replace_computed(m, start, |it, _| {
             let px: f32 = text(it.strip_suffix(b"px")?).parse().ok()?;
@@ -798,14 +797,15 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
     ("absolute", |_, _, source| {
         let cx = Ctx::dummy();
         parse_all(source, |p| Color::parse(p, &cx))
-            .filter(|it| !it.uses_current() && !cx.deps.get().contains(Deps::VIEWPORT))
+            .filter(|it| {
+                !it.uses_current()
+                    && !cx.deps.get().contains(Deps::VIEWPORT)
+                    && !bun_core::strings::contains_case_insensitive_ascii(source, b"light-dark(")
+            })
             .map(|_| ())
     }),
     ("not-ua", |_, _, source| {
-        (!words(source)
-            .iter()
-            .any(|it| it.len() > 3 && eq(&it[..4], "-ua-")))
-        .then_some(())
+        (!words(source).iter().any(|it| it.starts_with(b"-ua-"))).then_some(())
     }),
     ("not-zero", |_, _, source| {
         (literal(source) != Some(0.0)).then_some(())
@@ -816,7 +816,7 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
     ("as-written", |m, start, source| {
         replace(m, start, |_| words(source).join(&b' ').to_ascii_lowercase())
     }),
-    ("palette-mix", |m, start, source| {
+    ("palette-mix", |m, start, _| {
         let shares = |it: &[u8]| {
             split_list(it)
                 .iter()
@@ -826,7 +826,6 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
                 .collect::<Vec<_>>()
         };
         let inner = |it: &[u8]| it[12..it.len() - 1].to_vec();
-        (shares(&inner(source)) != [Some(0.0); 2]).then_some(())?;
         replace(m, start, |it| {
             let inner = inner(&it);
             let (items, [b, a]) = (split_list(&inner), [shares(&inner)[0], shares(&inner)[1]]);
@@ -934,10 +933,13 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
         })
     }),
     ("language", |m, start, source| {
-        let tag = with_parser(source, |p| string(p).map(|it| it.trim_ascii_end().to_vec()));
-        let tag = tag.filter(|it| {
-            (1..=4).contains(&it.len()) && it.iter().all(|it| (0x20..0x7f).contains(it))
-        })?;
+        let tag = with_parser(source, |p| {
+            string(p)
+                .filter(|it| it.len() <= 4)
+                .map(|it| it.trim_ascii_end().to_vec())
+        });
+        let tag =
+            tag.filter(|it| !it.is_empty() && it.iter().all(|it| (0x20..0x7f).contains(it)))?;
         replace(m, start, |_| written(|out| write_string(&tag, out)))
     }),
     ("from-font", |m, start, source| {

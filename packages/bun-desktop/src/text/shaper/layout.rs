@@ -271,9 +271,71 @@ impl Table {
         self.lookups.get(index)?.get_or_init(read).as_deref()
     }
 
+    /// Other than by moving `first`. Both are bases.
+    pub fn may_act_on(&self, index: u16, first: u32, second: Option<u32>) -> bool {
+        let (Some(lookup), [context, chain, _]) = (self.lookup(index.into()), self.special_kinds())
+        else {
+            return false;
+        };
+        let continues = |wanted: Option<(u16, Matcher)>| {
+            wanted
+                .is_none_or(|(value, matcher)| second.is_some_and(|it| matcher.matches(it, value)))
+        };
+        lookup
+            .subtables
+            .iter()
+            .filter(|it| it.digest.may_have(first))
+            .any(|&Subtable { kind, data, .. }| {
+                if kind == context || kind == chain {
+                    let wanted = |rule: &Rule, matchers: [Matcher; 3]| {
+                        [1, 2]
+                            .into_iter()
+                            .find_map(|it| Some((rule.parts[it].u16(0)?, matchers[it])))
+                    };
+                    let acts = |(matchers, mut rules): ([Matcher; 3], _)| {
+                        Iterator::any(&mut rules, |it: Rule| continues(wanted(&it, matchers)))
+                    };
+                    return rules_for(data, kind == chain, first)
+                        .is_some_and(|it| lookup.flags & u32::from(buffer::BASE) != 0 || acts(it));
+                }
+                let Some(at) = data.at16(2).and_then(|it| coverage(it, first)) else {
+                    return false;
+                };
+                match (self.positions, kind) {
+                    _ if lookup.flags & u32::from(buffer::BASE) != 0 => true,
+                    (true, 1) => false,
+                    (true, 2) => data.u16(6) != Some(0),
+                    (false, 4) => data.at16(6 + at * 2).is_none_or(|set| {
+                        substitute::ligatures(set)
+                            .any(|it| continues(it.1.u16(0).map(|it| (it, Matcher::Glyphs))))
+                    }),
+                    _ => true,
+                }
+            })
+    }
+
     fn records(list: Data, at: usize) -> impl Iterator<Item = (Tag, Option<Data>)> {
         (0..usize::from(list.u16(at).unwrap_or(0)))
             .map_while(move |it| Some((list.tag(at + 2 + it * 6)?, list.at16(at + 6 + it * 6))))
+    }
+
+    /// Whether what it does at `glyph` may depend on others.
+    pub fn may_look_around(&self, index: u16, glyph: u32) -> bool {
+        let (Some(lookup), [context, chain, _]) = (self.lookup(index.into()), self.special_kinds())
+        else {
+            return false;
+        };
+        lookup
+            .subtables
+            .iter()
+            .filter(|it| it.kind != 1 && it.digest.may_have(glyph))
+            .any(
+                |&Subtable { kind, data, .. }| match kind == context || kind == chain {
+                    true => rules_for(data, kind == chain, glyph)
+                        .is_some_and(|mut it| it.1.next().is_some()),
+                    false => data.at16(2).and_then(|it| coverage(it, glyph)).is_some(),
+                },
+            )
     }
 
     /// The script that was chosen, whether it was asked for, and the language system.

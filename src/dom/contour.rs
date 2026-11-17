@@ -9,7 +9,7 @@ use crate::document::Document;
 use crate::geometry::translation;
 use crate::paint::{Painter, Space, alpha, square};
 use crate::path::{Path, Point};
-use crate::properties::{Id, Style};
+use crate::properties::{Id, Paints, Style};
 use crate::segments::Layers;
 use crate::shapes::Resolved;
 use crate::types::*;
@@ -318,9 +318,25 @@ pub(crate) fn rounded_border_shape(style: &Style, frame: &Frame) -> Option<Round
     })
 }
 
+/// Unless they are all round.
+pub(crate) fn shaped_corners(style: &Style, shape: RoundedRect, insets: [f32; 4]) -> Option<Path> {
+    let frame = Frame {
+        shape,
+        border: [0.0; 4],
+        padding: [0.0; 4],
+        scrolled: None,
+        whole: None,
+    };
+    let Contour::Corners(shape, shapes) = Contour::of(style, &frame)? else {
+        return None;
+    };
+    Some(corners(&shape, &shapes, insets))
+}
+
 impl Contour {
     pub(crate) fn of(style: &Style, frame: &Frame) -> Option<Contour> {
-        if style.other_if_set(Id::BorderShape).is_some() {
+        let has_shapes = style.paints().contains(Paints::SHAPES);
+        if has_shapes && style.other_if_set(Id::BorderShape).is_some() {
             let (outer, inner) = border_shapes(style, frame)?;
             let (path, rule) = outer.into_path();
             return Some(match inner {
@@ -335,8 +351,11 @@ impl Contour {
             Id::CornerBottomLeftShape,
         ];
         (frame.shape.radii != Radii::default()).then_some(())?;
-        if ids.iter().all(|it| style.other_if_set(*it).is_none()) {
-            let has_padding = style.background.clip.contains(&BoxArea::ContentBox);
+        if !has_shapes {
+            let has_padding = style
+                .background
+                .clip
+                .contains(&ClipArea(BoxArea::ContentBox));
             let insets = [0, 1, 2, 3]
                 .map(|it| frame.border[it] + if has_padding { frame.padding[it] } else { 0.0 });
             return curves_cross(&frame.shape, insets)
@@ -599,7 +618,7 @@ impl Painter<'_> {
         &mut self,
         contour: &Contour,
         frame: &Frame,
-        at: impl Fn(f32) -> Edge,
+        at: &dyn Fn(f32) -> Edge,
         width: f32,
         style: LineStyle,
         color: u32,
@@ -647,7 +666,7 @@ impl Painter<'_> {
             &[[0.0, 1.0]]
         };
         for band in bands {
-            let inside = self.band(contour, frame, band.map(&at), space);
+            let inside = self.band(contour, frame, band.map(at), space);
             self.fill(square(inside.visible), color, &inside);
         }
     }
@@ -665,7 +684,7 @@ impl Painter<'_> {
         self.uniform_line(
             contour,
             frame,
-            |at| Edge::Outer(offset + width * (1.0 - at)),
+            &|at| Edge::Outer(offset + width * (1.0 - at)),
             width,
             style,
             color,
@@ -722,7 +741,7 @@ impl Painter<'_> {
                     return self.uniform_line(
                         contour,
                         frame,
-                        Edge::Within,
+                        &Edge::Within,
                         widths[first],
                         styles[first],
                         colors[first],

@@ -7,7 +7,8 @@ use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
-use bun_js_parser::ParserOptions;
+use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
+use bun_js_printer::analyze_transpiled_module::ModuleInfo;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::fs::FileSystem;
@@ -348,37 +349,20 @@ impl Entry {
             };
             let metadata_bytes: &[u8] = &metadata_buf[0..metadata_bytes_len];
 
-            let mut vecs_buf: [sys::PlatformIoVecConst; 4] = bun_core::ffi::zeroed();
-            let mut vecs_i: usize = 0;
-            vecs_buf[vecs_i] = sys::platform_iovec_const_create(metadata_bytes);
-            vecs_i += 1;
-            if !output_bytes.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(output_bytes);
-                vecs_i += 1;
+            let mut vecs_buf = [sys::IoVec::new(metadata_bytes); 4];
+            let mut vecs_i: usize = 1;
+            for part in [output_bytes, sourcemap, esm_record] {
+                if !part.is_empty() {
+                    vecs_buf[vecs_i] = sys::IoVec::new(part);
+                    vecs_i += 1;
+                }
             }
-            if !sourcemap.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(sourcemap);
-                vecs_i += 1;
-            }
-            if !esm_record.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(esm_record);
-                vecs_i += 1;
-            }
-            let vecs: &[sys::PlatformIoVecConst] = &vecs_buf[0..vecs_i];
+            let vecs = &vecs_buf[0..vecs_i];
 
             let mut position: i64 = 0;
             let file_len = Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
 
-            #[cfg(debug_assertions)]
-            {
-                let mut total: usize = 0;
-                for v in vecs {
-                    debug_assert!(v.len > 0);
-                    // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
-                    total += v.len as usize;
-                }
-                debug_assert!(file_len == total);
-            }
+            debug_assert!(file_len == vecs.iter().map(sys::IoVec::size).sum());
 
             let end_position = i64::try_from(file_len).expect("int cast");
             let _ = sys::preallocate_file(tmpfile.file.fd().cast(), 0, end_position);
@@ -392,15 +376,9 @@ impl Entry {
             }
         }
 
-        // The basename of a NUL-terminated
-        // path is itself NUL-terminated (it's a suffix), so we can hand it to
-        // `Tmpfile::finish` as a `&ZStr` without copying.
-        let dest_slice = destination_path.as_bytes();
-        let base = paths::basename(dest_slice);
-        // SAFETY: `base` is a suffix of `destination_path`, which the caller
-        // built via `get_cache_file_path` and is NUL-terminated at `dest_slice.len()`.
-        let base_z = unsafe { ZStr::from_raw(base.as_ptr(), base.len()) };
-        tmpfile.finish(base_z).map_err(|(err, _)| err)?;
+        let base_len = paths::basename(destination_path).len();
+        let base = destination_path.substring(destination_path.len() - base_len);
+        tmpfile.finish(base).map_err(|(err, _)| err)?;
         Ok(())
     }
 
@@ -555,19 +533,24 @@ impl Entry {
     }
 }
 
+#[derive(Default)]
 pub struct RuntimeTranspilerCache {
-    pub(crate) input_hash: Option<u64>,
-    pub(crate) input_byte_length: Option<u64>,
-    pub(crate) features_hash: Option<u64>,
-    pub(crate) test_features_hash: Option<u64>,
-    pub(crate) vitest_features_hash: Option<u64>,
-    pub(crate) imports_vitest: bool,
-    pub(crate) exports_kind: ExportsKind,
-    pub(crate) entry: Option<Entry>,
-    // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
-    // The per-call arena that once backed the output code is gone: the UTF-8
-    // load arm preads straight into WTF storage (see `Entry::load`), so no
-    // arena scratch is needed at all.
+    key: Key,
+    /// `None` if the output is not to be saved.
+    parsed: Option<ParsedForCache>,
+    pub entry: Option<Entry>,
+}
+
+#[derive(Default)]
+struct Key {
+    input_hash: u64,
+    input_byte_length: u64,
+    /// For a file that transpiles the same with and without `bun test`.
+    features_hash: u64,
+    /// For a file with `uses_test_api`. Also hashes the parser features `bun test` sets.
+    test_features_hash: u64,
+    /// For a file with `imports_vitest`.
+    vitest_features_hash: u64,
 }
 
 pub(crate) fn hash(bytes: &[u8]) -> u64 {
@@ -614,10 +597,8 @@ impl RuntimeTranspilerCache {
         let cache_filename_len =
             Self::write_cache_filename(&mut buf[cache_dir_len + 1..], input_hash)?;
         let total = cache_dir_len + 1 + cache_filename_len;
-        buf[total] = 0;
 
-        // SAFETY: we wrote a NUL at buf[total] above.
-        Ok(ZStr::from_buf(&buf[..], total))
+        Ok(ZStr::nul_terminate(buf, total))
     }
 
     /// Writes the resolved cache directory into `buf` (NUL-terminated) and
@@ -634,7 +615,7 @@ impl RuntimeTranspilerCache {
         }
 
         if let Some(dir) = env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH.get() {
-            if dir.is_empty() || (dir.len() == 1 && dir[0] == b'0') {
+            if Self::is_disabled_by_env() {
                 return 0;
             }
 
@@ -844,39 +825,98 @@ impl RuntimeTranspilerCache {
         IS_DISABLED.load(Ordering::Relaxed)
     }
 
-    pub fn get(
-        &mut self,
-        source: &Source,
-        parser_options: &ParserOptions<'_>,
-        used_jsx: bool,
-    ) -> bool {
-        if !FeatureFlags::RUNTIME_TRANSPILER_CACHE {
-            return false;
+    pub fn is_disabled_by_env() -> bool {
+        env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
+            .get()
+            .is_some_and(|v| v.is_empty() || v == b"0")
+    }
+
+    /// `false` on a miss.
+    pub fn imports_vitest(&self) -> bool {
+        (self.entry.as_ref())
+            .is_some_and(|entry| entry.metadata.features_hash == self.key.vitest_features_hash)
+    }
+
+    pub(crate) fn put(
+        &self,
+        output_code: &[u8],
+        sourcemap: &[u8],
+        module_info: Option<&ModuleInfo>,
+    ) -> bun_js_printer::Result<()> {
+        let Some(parsed) = &self.parsed else {
+            return Ok(());
+        };
+        // `Entry::load` rejects an entry with no sourcemap.
+        if Self::is_disabled() || sourcemap.is_empty() {
+            return Ok(());
         }
 
-        if self.entry.is_some() {
-            return true;
+        let mut esm_record: Vec<u8> = Vec::new();
+        if let Some(module_info) = module_info {
+            module_info
+                .as_deserialized()
+                .serialize(&mut esm_record)
+                .map_err(|_| bun_js_printer::Error::WriteFailed)?;
+        }
+        let result = Self::to_file(
+            self.key.input_byte_length,
+            self.key.input_hash,
+            if parsed.imports_vitest {
+                self.key.vitest_features_hash
+            } else if parsed.uses_test_api {
+                self.key.test_features_hash
+            } else {
+                self.key.features_hash
+            },
+            sourcemap,
+            &esm_record,
+            &StringView::ascii(output_code),
+            parsed.exports_kind,
+        );
+        if let Err(err) = result {
+            bun_core::scoped_log!(cache, "put() = {}", err.name());
+        }
+        Ok(())
+    }
+
+    fn miss(&mut self) -> CacheLookup<'_> {
+        self.parsed = Some(ParsedForCache {
+            exports_kind: ExportsKind::None,
+            uses_test_api: false,
+            imports_vitest: false,
+        });
+        CacheLookup::Miss(&mut self.parsed)
+    }
+}
+
+impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
+    fn get(
+        &mut self,
+        source: &Source<'_>,
+        parser_options: &ParserOptions<'_>,
+        used_jsx: bool,
+    ) -> CacheLookup<'_> {
+        if !FeatureFlags::RUNTIME_TRANSPILER_CACHE {
+            return CacheLookup::Skipped;
         }
 
         // The React Compiler costs several times more than the rest of transpiling, even for a small file.
         if source.contents.len() < MINIMUM_CACHE_SIZE && !parser_options.runs_react_compiler() {
-            return false;
+            return CacheLookup::Skipped;
         }
 
         if IS_DISABLED.load(Ordering::Relaxed) {
-            return false;
+            return CacheLookup::Skipped;
         }
 
         // `bun_paths::fs::Path<'static>` is the trimmed TYPE_ONLY mirror and
         // doesn't carry `is_file()`; inline the same check the resolver
         // `Path::is_file` performs (`namespace == "" || namespace == "file"`).
         if !(source.path.namespace.is_empty() || source.path.namespace == b"file") {
-            return false;
+            return CacheLookup::Skipped;
         }
 
-        let input_hash = self.input_hash.unwrap_or_else(|| hash(&source.contents));
-        self.input_hash = Some(input_hash);
-        self.input_byte_length = Some(source.contents.len() as u64);
+        let input_hash = hash(&source.contents);
 
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
@@ -885,19 +925,20 @@ impl RuntimeTranspilerCache {
         let test_features_hash = features_hasher.final_();
         features_hasher.update(b"vitest");
         let vitest_features_hash = features_hasher.final_();
-        self.features_hash = Some(features_hash);
-        self.test_features_hash = Some(test_features_hash);
-        self.vitest_features_hash = Some(vitest_features_hash);
+        self.key = Key {
+            input_hash,
+            input_byte_length: source.contents.len() as u64,
+            features_hash,
+            test_features_hash,
+            vitest_features_hash,
+        };
 
         self.entry = match Self::from_file(
             input_hash,
             [features_hash, test_features_hash, vitest_features_hash],
             source.contents.len() as u64,
         ) {
-            Ok(e) => {
-                self.imports_vitest = e.metadata.features_hash == vitest_features_hash;
-                Some(e)
-            }
+            Ok(e) => Some(e),
             Err(err) => {
                 bun_core::scoped_log!(
                     cache,
@@ -905,7 +946,7 @@ impl RuntimeTranspilerCache {
                     bstr::BStr::new(source.path.text),
                     err.name()
                 );
-                return false;
+                return self.miss();
             }
         };
         #[cfg(bun_debug)]
@@ -932,90 +973,12 @@ impl RuntimeTranspilerCache {
         {
             if !BUN_DEBUG_RESTORE_FROM_CACHE.load(Ordering::Relaxed) {
                 self.entry = None;
+                return self.miss();
             }
         }
 
-        self.entry.is_some()
+        CacheLookup::Hit
     }
 }
 
 pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
-
-// ──────────────────────────────────────────────────────────────────────────
-// VTable bridge for the canonical (lower-tier) `bun_ast::RuntimeTranspilerCache`.
-//
-// LAYERING: `ParseOptions.runtime_transpiler_cache` carries the lower-tier
-// type so the parser crate names no `bun_jsc` types. `RuntimeTranspilerStore::run`
-// constructs that lower-tier cache with this vtable so the parser's
-// `cache.get()` reaches the disk-backed `RuntimeTranspilerCache::get()` above.
-// On a hit the concrete `Entry` is boxed and stored type-erased in
-// `bun_ast::RuntimeTranspilerCache.entry`; the store casts it back via
-// `heap::take(ptr.cast::<Entry>())`.
-// ──────────────────────────────────────────────────────────────────────────
-
-bun_ast::link_impl_TranspilerCacheImpl! {
-    Jsc for extern bun_ast::RuntimeTranspilerCache => |this| {
-        get(source, parser_options, used_jsx) => {
-            let this = &mut *this;
-            let parser_options = parser_options.cast::<ParserOptions<'_>>().as_ref();
-
-            let mut jsc = RuntimeTranspilerCache {
-                input_hash: this.input_hash,
-                input_byte_length: this.input_byte_length,
-                features_hash: this.features_hash,
-                test_features_hash: this.test_features_hash,
-                vitest_features_hash: this.vitest_features_hash,
-                imports_vitest: false,
-                exports_kind: this.exports_kind,
-                entry: None,
-            };
-            let hit = jsc.get(source, parser_options, used_jsx);
-            this.input_hash = jsc.input_hash;
-            this.input_byte_length = jsc.input_byte_length;
-            this.features_hash = jsc.features_hash;
-            this.test_features_hash = jsc.test_features_hash;
-            this.vitest_features_hash = jsc.vitest_features_hash;
-            this.imports_vitest = jsc.imports_vitest;
-            this.exports_kind = jsc.exports_kind;
-            if let Some(entry) = jsc.entry {
-                this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
-            }
-            hit
-        },
-        put(output_code_bytes, sourcemap, esm_record) => {
-            let this = &mut *this;
-            if this.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
-                return;
-            }
-            // `Entry::load` rejects an entry with no sourcemap.
-            if sourcemap.is_empty() {
-                return;
-            }
-            debug_assert!(this.entry.is_none());
-
-            // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
-            // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
-            // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = StringView::ascii(output_code_bytes);
-            let result = RuntimeTranspilerCache::to_file(
-                this.input_byte_length.unwrap(),
-                this.input_hash.unwrap(),
-                if this.imports_vitest {
-                    this.vitest_features_hash.unwrap()
-                } else if this.uses_test_api {
-                    this.test_features_hash.unwrap()
-                } else {
-                    this.features_hash.unwrap()
-                },
-                sourcemap,
-                esm_record,
-                &output_code,
-                this.exports_kind,
-            );
-            if let Err(err) = result {
-                bun_core::scoped_log!(cache, "put() = {}", err.name());
-            }
-        },
-        is_disabled() => RuntimeTranspilerCache::is_disabled(),
-    }
-}

@@ -777,7 +777,8 @@ ${builtinModuleKeyList.map((k, i) => `    b"${k}" => ${i},`).join("\n")}
 // This is a generated enum for c++ code (headers-handwritten.h)
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "SyntheticModuleType.h"),
-  `enum SyntheticModuleType : uint32_t {
+  `#pragma once
+enum SyntheticModuleType : uint32_t {
     JavaScript = 0,
     PackageJSONTypeModule = 1,
     PackageJSONTypeCommonJS = 2,

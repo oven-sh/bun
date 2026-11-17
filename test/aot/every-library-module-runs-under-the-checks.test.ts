@@ -59,13 +59,11 @@ test("every module of the library runs with each read of a variable that is stor
     if (name.startsWith("node:") || name.startsWith("bun:")) named.add(name);
     if (name.startsWith("thirdparty:")) named.add(packages[name] ?? name.slice("thirdparty:".length));
   }
-  const program = `import { aotRunEveryLibraryModule, desktopInternals } from "bun:internal-for-testing";
+  const program = `import { aotRunEveryLibraryModule } from "bun:internal-for-testing";
 function name() {
 ${[...named].map(name => `  require(${JSON.stringify(name)});`).join("\n")}
 }
 if (process.argv.length > 9) name();
-// What the realm of a page is handed before internal:desktop/web/* load in it.
-desktopInternals.webScope.env = { languages: [], userAgent: "", transfers: new WeakMap(), fs: () => require("node:fs"), watchResourceTimings() {} };
 for (const line of aotRunEveryLibraryModule()) console.log(line);
 `;
   using dir = tempDir("aot-every-library-module", { "app.js": program });

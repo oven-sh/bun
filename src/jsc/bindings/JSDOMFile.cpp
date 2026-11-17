@@ -5,6 +5,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include "Bindgen/JSInterface.h"
 #include "DesktopRealm.h"
 #include "JSDOMFile.h"
 
@@ -13,6 +14,27 @@ using namespace JSC;
 
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, EncodedJSValue bits, EncodedJSValue name, EncodedJSValue options);
 extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
+
+extern "C" BunString Bun__Desktop__nameOfFile(void*);
+extern "C" double Bun__Desktop__lastModifiedOfFile(void*);
+
+template<JSValue get(JSGlobalObject*, void*)>
+static EncodedJSValue JIT_OPERATION_ATTRIBUTES getOfFile(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName)
+{
+    if (!JSDOMFile__hasInstance({}, globalObject, thisValue))
+        return Bun::Bindgen::throwIllegalInvocation(globalObject);
+    return JSValue::encode(get(globalObject, uncheckedDowncast<JSBlob>(JSValue::decode(thisValue))->wrapped()));
+}
+
+static JSValue nameOfFile(JSGlobalObject* globalObject, void* file) { return Bun__Desktop__nameOfFile(file).transferToJS(globalObject); }
+static JSValue lastModifiedOfFile(JSGlobalObject*, void* file) { return jsNumber(Bun__Desktop__lastModifiedOfFile(file)); }
+static JSValue relativePathOfFile(JSGlobalObject* globalObject, void*) { return jsEmptyString(globalObject->vm()); }
+
+static const HashTableValue JSDOMFileInPagesPrototypeTableValues[] = {
+    { "name"_s, PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, getOfFile<nameOfFile>, nullptr } },
+    { "lastModified"_s, PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, getOfFile<lastModifiedOfFile>, nullptr } },
+    { "webkitRelativePath"_s, PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, getOfFile<relativePathOfFile>, nullptr } },
+};
 
 // TODO: make this inehrit from JSBlob instead of InternalFunction
 // That will let us remove this hack for [Symbol.hasInstance] and fix the prototype chain.
@@ -47,6 +69,16 @@ public:
     static JSDOMFile* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
         auto* zigGlobal = defaultGlobalObject(globalObject);
+        if (Bun::isDesktopRealm(globalObject)) {
+            auto* prototype = Bun::Bindgen::createClassPrototype(vm, globalObject, Bun::Bindgen::prototypeForClass<JSBlob>(zigGlobal), info(), JSDOMFileInPagesPrototypeTableValues);
+            Bun::putToStringTagWithoutTransition(vm, prototype, info());
+            auto* structure = Bun::createClassStructure(vm, globalObject, Bun::Bindgen::constructorForClass<JSBlob>(zigGlobal), JSC::TypeInfo(InternalFunctionType, Base::StructureFlags), info());
+            auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
+            object->finishCreation(vm);
+            object->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+            prototype->putDirect(vm, vm.propertyNames->constructor, object, static_cast<unsigned>(PropertyAttribute::DontEnum));
+            return object;
+        }
         auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm);

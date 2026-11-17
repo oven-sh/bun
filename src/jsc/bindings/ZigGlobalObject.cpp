@@ -1,6 +1,10 @@
 #include "root.h"
+#include "InternalModuleRegistry.h"
 
 #include "ZigGlobalObject.h"
+#include "DesktopRealm.h"
+#include "WebGlobalObject.h"
+#include <JavaScriptCore/AOTModuleHost.h>
 #include "CodeGenerationFromStrings.h"
 #include "BunModuleRegistry.h"
 #include "BuiltinModuleKeys.h"
@@ -223,7 +227,6 @@
 #include "ProcessBindingHTTPParser.h"
 #include "node/NodeTimers.h"
 #include "JSConnectionsList.h"
-#include "JSHTTPParser.h"
 #include <exception>
 #include <mutex>
 #include "JSBunRequest.h"
@@ -628,7 +631,7 @@ GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint3
 
 JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 {
-    auto* structure = JSC::Structure::create(vm, nullptr, jsNull(), JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
+    auto* structure = JSC::Structure::create(vm, nullptr, jsNull(), JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), &s_infoWithBunGlobals);
     structure->setTransitionWatchpointIsLikelyToBeFired(true);
     return structure;
 }
@@ -737,6 +740,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(int32_t executionConte
                 structure,
                 static_cast<ScriptExecutionContextIdentifier>(executionContextId),
                 &methodTableOfProgram(executionContextId));
+        } else if (Bun::WebGlobalObject::programStartsInWindow()) [[unlikely]] {
+            return Bun::WebGlobalObject::createForProgram(vm, 1, evalMode ? Zig::EvalGlobalObject::globalObjectMethodTable() : methodTableOfProgram(executionContextId));
         } else if (evalMode) {
             auto* structure = Zig::EvalGlobalObject::createStructure(vm);
             if (!structure) [[unlikely]] {
@@ -889,7 +894,9 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     if (!structure) [[unlikely]] {
         BUN_PANIC("Failed to allocate global object structure for test isolation");
     }
-    auto* globalObject = Zig::GlobalObject::create(vm, structure, inheritedId, &methodTableOfProgram(inheritedId));
+    auto* globalObject = Bun::WebGlobalObject::programStartsInWindow()
+        ? Bun::WebGlobalObject::createForProgram(vm, inheritedId, methodTableOfProgram(inheritedId))
+        : Zig::GlobalObject::create(vm, structure, inheritedId, &methodTableOfProgram(inheritedId));
     if (!globalObject) [[unlikely]] {
         BUN_PANIC("Failed to allocate global object for test isolation");
     }
@@ -2704,11 +2711,6 @@ void GlobalObject::finishCreation(VM& vm)
              setupConnectionsListClassStructure(init);
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPParserClassStructure), [](LazyClassStructure::Initializer& init) {
-             BUN_BEGIN_REMOVABLE_ENTRY_POINT(HttpParser, Abort, void)
-             setupHTTPParserClassStructure(init);
-             BUN_END_REMOVABLE_ENTRY_POINT
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatsClassStructure), [](LazyClassStructure::Initializer& init) {
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(FsStats, Abort, void)
              Bun::initJSStatsClassStructure(init);
@@ -2988,7 +2990,7 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_NativePromiseContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              // One feature for each kind of context the cell holds (NativePromiseContext::Tag).
-             runBodySharedByFeatures<Bun::Feature::Serve, Bun::Feature::HtmlRewriter, Bun::Feature::S3Client, Bun::Feature::Cron>([&]() ALWAYS_INLINE_LAMBDA {
+             runBodySharedByFeatures<Bun::Feature::Serve, Bun::Feature::HtmlRewriter, Bun::Feature::S3Client>([&]() ALWAYS_INLINE_LAMBDA {
                  init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
              });
          } },
@@ -3570,7 +3572,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     m_builtinInternalFunctions->initialize(*this);
 
-    auto clientData = WebCore::clientData(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
 
     // ----- Private/Static Properties -----
@@ -3617,7 +3618,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     staticGlobals.append(GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));
-    staticGlobals.append(GlobalPropertyInfo(builtinNames.nativesPrivateName(), NativeGlobals::create(vm, this), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    m_natives.set(vm, this, NativeGlobals::create(vm, this));
+    staticGlobals.append(GlobalPropertyInfo(builtinNames.nativesPrivateName(), m_natives.get(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     addStaticGlobals(staticGlobals.mutableSpan());
 
     // TODO: most/all of these private properties can be made as static globals.
@@ -3678,20 +3680,23 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
-    putDirectAccessor(
-        this,
-        builtinNames.selfPublicName(),
-        JSC::GetterSetter::create(
-            vm,
+    bool isOfTheWeb = inherits<Bun::WebGlobalObject>();
+    if (!isOfTheWeb) [[likely]] {
+        // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
+        putDirectAccessor(
             this,
-            JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
-            JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
-        PropertyAttribute::Accessor | 0);
+            builtinNames.selfPublicName(),
+            JSC::GetterSetter::create(
+                vm,
+                this,
+                JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
+                JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
+            PropertyAttribute::Accessor | 0);
 
-    // TODO: this should be usable on the lookup table. it crashed las time i tried it
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
+        // TODO: this should be usable on the lookup table. it crashed las time i tried it
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
+    }
 
     // ----- Extensions to Built-in objects -----
 
@@ -3700,19 +3705,27 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     errorConstructor->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "prepareStackTrace"_s), JSC::CustomGetterSetter::create(vm, errorConstructorPrepareStackTraceGetter, errorConstructorPrepareStackTraceSetter), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
 
+    if (isOfTheWeb && Bun::isDesktopRealm(this)) [[unlikely]]
+        return;
+
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     scope.assertNoExceptionExceptTermination();
     RETURN_IF_EXCEPTION(scope, );
-    consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
-    consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
+    extendConsole(vm, consoleObject);
     // A test's console in Jest and Vitest has none. Where there is one, React's development build reads into the props of what it renders.
     if (isBunTest) {
         consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
         RETURN_IF_EXCEPTION(scope, );
     }
+}
+
+void GlobalObject::extendConsole(JSC::VM& vm, JSC::JSObject* consoleObject)
+{
+    consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+    consoleObject->putDirectBuiltinFunction(vm, this, WebCore::builtinNames(vm).writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
 }
 
 // ===================== start conditional builtin globals =====================
@@ -5441,8 +5454,16 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
 #include "ZigGlobalObject.lut.h"
 
-const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &bunGlobalObjectTable, nullptr,
+const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(GlobalObject) };
+
+const JSC::ClassInfo GlobalObject::s_infoWithBunGlobals = { "GlobalObject"_s, &s_info, &bunGlobalObjectTable, nullptr,
+    CREATE_METHOD_TABLE(GlobalObject) };
+
+bool GlobalObject::isNameOfNative(JSC::VM& vm, UniquedStringImpl* name)
+{
+    return bunGlobalObjectTable.entry(PropertyName(name)) || name == vm.propertyNames->SharedArrayBuffer.impl() || WTF::equal(name, "console"_s);
+}
 
 const JSC::ClassInfo NativeGlobals::s_info = { "NativeGlobals"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NativeGlobals) };
 
@@ -5451,15 +5472,20 @@ bool NativeGlobals::getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObjec
     if (Base::getOwnPropertySlot(object, lexicalGlobalObject, propertyName, slot))
         return true;
 
-    const JSC::HashTableValue* entry = bunGlobalObjectTable.entry(propertyName);
-    if (!entry)
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    if (propertyName.isSymbol() || !GlobalObject::isNameOfNative(vm, propertyName.uid()))
         return false;
 
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    JSC::JSGlobalObject* globalObject = object->globalObject();
+    const JSC::HashTableValue* entry = bunGlobalObjectTable.entry(propertyName);
+    auto* globalObject = uncheckedDowncast<GlobalObject>(object->globalObject());
     char* fields = std::bit_cast<char*>(globalObject);
     JSValue value;
-    if (entry->attributes() & PropertyAttribute::CellProperty)
+    if (propertyName == vm.propertyNames->SharedArrayBuffer)
+        value = globalObject->arrayBufferConstructor(JSC::ArrayBufferSharingMode::Shared);
+    else if (!entry) {
+        value = JSC::JSGlobalObject::info()->staticPropHashTable->entry(propertyName)->lazyPropertyCallback()(vm, globalObject);
+        globalObject->extendConsole(vm, asObject(value));
+    } else if (entry->attributes() & PropertyAttribute::CellProperty)
         value = std::bit_cast<JSC::LazyCellProperty*>(fields + entry->lazyCellPropertyOffset())->get(globalObject);
     else if (entry->attributes() & PropertyAttribute::ClassStructure)
         value = std::bit_cast<JSC::LazyClassStructure*>(fields + entry->lazyClassStructureOffset())->constructor(globalObject);
@@ -5471,10 +5497,17 @@ bool NativeGlobals::getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObjec
         return false;
 
     object->putDirect(vm, propertyName, value, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if ENABLE(AOT)
+    if (auto* host = object->globalObject()->globalObjectMethodTable()->moduleHost; host && host->holderOfGlobal && host->holderOfGlobal(globalObject, propertyName.uid()) == object) [[unlikely]]
+        JSC::AOT::hostDidCreateGlobalMember(globalObject, propertyName.uid(), asObject(value));
+#endif
     return Base::getOwnPropertySlot(object, lexicalGlobalObject, propertyName, slot);
 }
 
 } // namespace Zig
+
+const JSC::ClassInfo Bun::WebGlobalObject::s_infoWithBunGlobals = { "GlobalObject"_s, &s_info, &Zig::bunGlobalObjectTable, nullptr,
+    CREATE_METHOD_TABLE(WebGlobalObject) };
 
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue newTarget, JSC::LazyClassStructure Zig::GlobalObject::* classStructure)
 {

@@ -96,7 +96,6 @@ pub enum Step {
 pub enum Incident {
     NothingMoved,
     CaughtUp,
-    Anticipated,
     OffsetWasSet,
     WheelLeftToScript,
     #[cfg(any(test, target_os = "macos"))]
@@ -107,10 +106,9 @@ pub enum Incident {
 
 /// The last one is for time that no `Step` took.
 const STEPS: [&str; 5] = ["jobs", "flatten", "paint", "commit", "elsewhere"];
-const INCIDENTS: [&str; 7] = [
+const INCIDENTS: [&str; 6] = [
     "nothing moved",
     "caught up",
-    "anticipated",
     "offset was set",
     "wheel left to script",
     "new surface",
@@ -128,7 +126,10 @@ struct Scroll {
     longest: [Duration; 4],
     missed: [u32; 5],
     slow: [u32; 5],
-    incidents: [u32; 7],
+    incidents: [u32; 6],
+    last_frame: Option<Instant>,
+    /// How many moves came in each eighth of the time between two frames.
+    phases: [u32; 8],
 }
 
 thread_local! {
@@ -150,12 +151,23 @@ pub fn note(incident: Incident) {
     }
 }
 
+pub fn fingers_moved(interval: Duration) {
+    if LOGS_MISSES.load(Ordering::Relaxed) {
+        SCROLL.with_borrow_mut(|it| {
+            it.last_frame.iter().for_each(|last| {
+                it.phases[((last.elapsed().div_duration_f64(interval) * 8.) as usize).min(7)] += 1
+            })
+        });
+    }
+}
+
 pub fn frame_began(at: Instant, interval: Duration, is_scrolling: bool, is_followed: bool) {
     if !LOGS_MISSES.load(Ordering::Relaxed) {
         return;
     }
     SCROLL.with_borrow_mut(|it| {
         let spent = std::mem::take(&mut it.spent);
+        it.last_frame = Some(at);
         if let Some(gap) =
             std::mem::replace(&mut it.began_at, is_followed.then_some(at)).map(|last| at - last)
         {
@@ -194,10 +206,11 @@ pub fn frame_began(at: Instant, interval: Duration, is_scrolling: bool, is_follo
                     list(&STEPS, &it.slow)
                 );
                 log!(
-                    "average {:.2?}, longest {:.1?},{}",
+                    "average {:.2?}, longest {:.1?},{} phases {:?}",
                     it.total.map(|total| total / it.frames),
                     it.longest,
-                    list(&INCIDENTS, &it.incidents)
+                    list(&INCIDENTS, &it.incidents),
+                    it.phases
                 );
             }
         }

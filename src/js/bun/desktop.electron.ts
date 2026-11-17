@@ -1,1 +1,1 @@
-export default require("internal/desktop/electron/main");
+export default $bindgen("desktop_modules.bind.ts", "modules").electron();

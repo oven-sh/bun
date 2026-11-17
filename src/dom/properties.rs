@@ -1,12 +1,14 @@
 //! The properties, and the computed style that has a value for each.
 
+use std::borrow::Cow;
 use std::rc::Rc;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 use crate::abi::FontMetrics;
 use crate::custom::Customs;
 use crate::grammar::{Definition, Mode, definition, split_list};
 use crate::name::{Map, Name};
+use crate::order::Order as _;
 use crate::selector::Pseudo;
 use crate::shorthand::{self, Part};
 use crate::svg_values::*;
@@ -34,11 +36,11 @@ impl Texts {
             .cloned()
             .chain(text.map(|it| (id, Rc::clone(it))))
             .collect();
-        all.sort_by_key(|it| it.0 as u16);
+        all.order_by_key(|it| it.0 as u16);
         Texts((!all.is_empty()).then(|| all.into()))
     }
 
-    fn differences(&self, other: &Texts, report: &mut impl FnMut(Id)) {
+    fn differences(&self, other: &Texts, report: &mut dyn FnMut(Id)) {
         self.all()
             .iter()
             .filter(|it| other.get(it.0) != Some(&it.1))
@@ -151,6 +153,15 @@ macro_rules! longhands {
                 }
             }
 
+            /// Whether that is what `get` answers.
+            pub(crate) fn has(&self, value: &Value) -> bool {
+                let is_same = match value {
+                    $($(Value::$Id(value) => self.$group.$field == *value,)+)+
+                    _ => return self.get(value.id()) == *value,
+                };
+                is_same && self.texts(value.id()).get(value.id()).is_none()
+            }
+
             pub(crate) fn set(&mut self, value: &Value) {
                 match value {
                     $($(Value::$Id(value) => {
@@ -179,13 +190,22 @@ macro_rules! longhands {
                 })+
             }
 
+            pub(crate) fn has_copies_of(&self, other: &Groups) -> bool {
+                $(!Rc::ptr_eq(&self.$group, &other.$group) && self.$group == other.$group)||+
+            }
+
             /// The properties whose values differ.
             pub(crate) fn differences(&self, other: &Groups, mut report: impl FnMut(Id)) {
+                self.report_differences(other, &mut report);
+            }
+
+            #[inline(never)]
+            fn report_differences(&self, other: &Groups, report: &mut dyn FnMut(Id)) {
                 $(if !Rc::ptr_eq(&self.$group, &other.$group) {
                     $(if self.$group.$field != other.$group.$field {
                         report(Id::$Id);
                     })+
-                    $(self.$group.$texts.differences(&other.$group.$texts, &mut report);)?
+                    $(self.$group.$texts.differences(&other.$group.$texts, report);)?
                 })+
             }
         }
@@ -200,6 +220,7 @@ pub(crate) enum Only {
     Marker,
     FirstLine,
     FirstLetter,
+    Cue,
 }
 
 impl Only {
@@ -208,6 +229,9 @@ impl Only {
             Pseudo::Marker => Only::Marker,
             Pseudo::FirstLine => Only::FirstLine,
             Pseudo::FirstLetter => Only::FirstLetter,
+            Pseudo::Part(part) if crate::name::is_name!(part, "cue" | "-internal-cue-node") => {
+                Only::Cue
+            }
             _ => Only::All,
         }
     }
@@ -234,6 +258,10 @@ impl Only {
         };
         match self {
             Only::All => true,
+            Only::Cue => is_in(
+                "animation- background- color font- line-height opacity outline- ruby-position text-combine-upright text-decoration- \
+                text-shadow text-wrap- transition- visibility white-space-collapse",
+            ),
             Only::Marker => {
                 of_text()
                     || is_in(
@@ -290,19 +318,20 @@ impl Value {
         }
     }
 
-    /// With lengths that are `by` times as long.
-    pub(crate) fn zoomed(self, by: f32) -> Value {
-        if by == 1.0 || !self.id().has_type() {
+    pub(crate) fn zoomed(self, from: f32, to: f32) -> Value {
+        if from == to || !self.id().has_type() {
             return self;
         }
-        let mut written = Out::new();
-        self.typed().write(&mut written);
-        let zoomed = bun_core::strings::contains(&written, b"px").then(|| {
+        let written = with_zoom(from, || crate::prelude::written(|out| self.write(out)));
+        let has_lengths = [&b"px"[..], b"matrix"]
+            .iter()
+            .any(|it| bun_core::strings::contains(&written, it));
+        let zoomed = has_lengths.then(|| {
             parse_all(&written, |p| {
                 self.id().parse_typed(
                     p,
                     &Ctx {
-                        zoom: by,
+                        zoom: to,
                         ..Ctx::dummy()
                     },
                 )
@@ -687,7 +716,7 @@ longhands! {
         BackgroundSize "background-size" size: Commas<BackgroundSize> = Commas::one(BackgroundSize::AUTO);
         BackgroundRepeat "background-repeat" repeat: Commas<Repeat> = Commas::one(Repeat(RepeatKind::Repeat, RepeatKind::Repeat));
         BackgroundOrigin "background-origin" origin: Commas<BoxArea> = Commas::one(BoxArea::PaddingBox);
-        BackgroundClip "background-clip" clip: Commas<BoxArea> = Commas::one(BoxArea::BorderBox), spelled;
+        BackgroundClip "background-clip" clip: Commas<ClipArea> = Commas::one(ClipArea(BoxArea::BorderBox)), spelled;
         BackgroundAttachment "background-attachment" attachment: Commas<Attachment> = Commas::one(Attachment::Scroll);
         BackgroundBlendMode "background-blend-mode" blend: Commas<Blend> = Commas::one(Blend::Normal);
         BorderImageSource "border-image-source" border_image: NoneOr<Image> = NoneOr(None), spelled;
@@ -896,7 +925,7 @@ const ALSO_PREFIXED: &str = "align-content align-items align-self animation anim
     column-gap column-rule column-rule-color column-rule-style column-rule-width column-span column-width columns filter \
     flex flex-basis flex-direction flex-flow flex-grow flex-shrink flex-wrap font-feature-settings hyphenate-character \
     justify-content line-break mask mask-clip mask-image mask-origin mask-position mask-repeat mask-size \
-    opacity order perspective perspective-origin print-color-adjust shape-image-threshold shape-margin shape-outside \
+    opacity order perspective-origin print-color-adjust shape-image-threshold shape-margin shape-outside \
     text-emphasis text-emphasis-color text-emphasis-position text-emphasis-style text-orientation text-size-adjust \
     transform transform-origin transform-style transition transition-delay transition-duration transition-property \
     transition-timing-function user-select writing-mode";
@@ -959,7 +988,7 @@ impl Id {
             || matches!(self, Id::Color | Id::ColorScheme | Id::Zoom)
     }
 
-    pub(crate) const FONT_OPTIONS: [Id; 8] = [
+    pub(crate) const FONT_OPTIONS: [Id; 9] = [
         Id::FontLanguageOverride,
         Id::FontPalette,
         Id::FontSizeAdjust,
@@ -968,6 +997,7 @@ impl Id {
         Id::FontVariantEastAsian,
         Id::FontVariantEmoji,
         Id::FontVariantPosition,
+        Id::WebkitFontSmoothing,
     ];
 
     /// Whether the computed values of other properties depend on it.
@@ -976,46 +1006,95 @@ impl Id {
             || Id::FONT_OPTIONS.contains(&self)
             || matches!(
                 self,
-                Id::Display | Id::Position | Id::Float | Id::Clear | Id::OverflowX | Id::OverflowY
+                Id::Display
+                    | Id::Position
+                    | Id::Float
+                    | Id::Clear
+                    | Id::OverflowX
+                    | Id::OverflowY
+                    | Id::TextRendering
             )
+    }
+
+    /// Whether the computed value is all there is to it.
+    pub(crate) fn stands_alone(self) -> bool {
+        use Id::*;
+        matches!(
+            self,
+            Width
+                | Height
+                | MinWidth
+                | MinHeight
+                | MaxWidth
+                | MaxHeight
+                | Top
+                | Right
+                | Bottom
+                | Left
+                | MarginTop
+                | MarginRight
+                | MarginBottom
+                | MarginLeft
+                | PaddingTop
+                | PaddingRight
+                | PaddingBottom
+                | PaddingLeft
+                | Transform
+                | Translate
+                | Rotate
+                | Scale
+                | Opacity
+                | BackgroundColor
+                | ZIndex
+        )
+    }
+
+    const SIDES: [Id; 8] = [
+        Id::MarginTop,
+        Id::PaddingTop,
+        Id::Top,
+        Id::BorderTopWidth,
+        Id::BorderTopStyle,
+        Id::BorderTopColor,
+        Id::ScrollMarginTop,
+        Id::ScrollPaddingTop,
+    ];
+    const AXES: [Id; 6] = [
+        Id::Width,
+        Id::MinWidth,
+        Id::MaxWidth,
+        Id::OverflowX,
+        Id::OverscrollBehaviorX,
+        Id::ContainIntrinsicWidth,
+    ];
+    const CORNERS: [Id; 2] = [Id::BorderTopLeftRadius, Id::CornerTopLeftShape];
+
+    fn find_in(self, groups: &[Id], size: usize) -> Option<(usize, usize)> {
+        groups.iter().map(|it| *it as usize).find_map(|first| {
+            Some((
+                first,
+                (self as usize).checked_sub(first).filter(|it| *it < size)?,
+            ))
+        })
+    }
+
+    /// <https://drafts.csswg.org/css-logical/#logical-property-group>, by its first member
+    pub(crate) fn logical_group(self) -> Option<Id> {
+        let found = self
+            .find_in(&Id::SIDES, 4)
+            .or_else(|| self.find_in(&Id::AXES, 2))
+            .or_else(|| self.find_in(&Id::CORNERS, 4));
+        found.map(|it| Id::ALL[it.0])
     }
 
     /// What a flow-relative property sets in `flow`, if it sets this in `Flow::DEFAULT`.
     pub(crate) fn in_flow(self, flow: Flow) -> Id {
-        const SIDES: [Id; 8] = [
-            Id::MarginTop,
-            Id::PaddingTop,
-            Id::Top,
-            Id::BorderTopWidth,
-            Id::BorderTopStyle,
-            Id::BorderTopColor,
-            Id::ScrollMarginTop,
-            Id::ScrollPaddingTop,
-        ];
-        const AXES: [Id; 6] = [
-            Id::Width,
-            Id::MinWidth,
-            Id::MaxWidth,
-            Id::OverflowX,
-            Id::OverscrollBehaviorX,
-            Id::ContainIntrinsicWidth,
-        ];
-        let find = |groups: &[Id], size| {
-            groups.iter().map(|it| *it as usize).find_map(|first| {
-                Some((
-                    first,
-                    (self as usize).checked_sub(first).filter(|it| *it < size)?,
-                ))
-            })
-        };
         let sides = flow.sides();
-        Id::ALL[if let Some((first, side)) = find(&SIDES, 4) {
+        Id::ALL[if let Some((first, side)) = self.find_in(&Id::SIDES, 4) {
             first + sides[side]
-        } else if let Some((first, axis)) = find(&AXES, 2) {
+        } else if let Some((first, axis)) = self.find_in(&Id::AXES, 2) {
             first + (axis ^ usize::from(flow.is_vertical()))
-        } else if let Some((first, corner)) =
-            find(&[Id::BorderTopLeftRadius, Id::CornerTopLeftShape], 4)
-        {
+        } else if let Some((first, corner)) = self.find_in(&Id::CORNERS, 4) {
             let (a, b) = (sides[(corner + 3) % 4], sides[corner]);
             first + if (a + 1) % 4 == b { b } else { a }
         } else {
@@ -1091,6 +1170,54 @@ impl Id {
     }
 
     /// Of a value that is valid.
+    /// What drawings are full of. `None` does not mean that it is invalid.
+    pub(crate) fn parse_simple(self, source: &[u8], cx: &Ctx) -> Option<Value> {
+        let color = || match *source {
+            [b'#', ref digits @ ..]
+                if digits.len() == 6 && digits.iter().all(u8::is_ascii_hexdigit) =>
+            {
+                Some(Color::Rgba(
+                    u32::from_str_radix(text(digits), 16).ok()? << 8 | 0xff,
+                ))
+            }
+            _ => None,
+        };
+        let paint = || match source {
+            [b'u', b'r', b'l', b'(', url @ .., b')'] => {
+                let is_fragment = matches!(url, [b'#', id @ ..] if id.iter().all(|it| it.is_ascii_alphanumeric() || matches!(it, b'-' | b'_' | b'.' | b':')));
+                is_fragment.then(|| SvgPaint::Url(cx.url(url), None))
+            }
+            _ => color().map(SvgPaint::Color),
+        };
+        let number = |source: &[u8]| crate::path::Numbers::only(source);
+        let px = || Some(Lp::Px(number(source.strip_suffix(b"px")?)? * cx.zoom));
+        let size = || px().filter(|_| source[0] != b'-');
+        Some(match self {
+            Id::Fill => Value::Fill(paint()?),
+            Id::Stroke => Value::Stroke(paint()?),
+            Id::StopColor => Value::StopColor(color()?),
+            Id::BackgroundColor => Value::BackgroundColor(color()?),
+            Id::Opacity => Value::Opacity(Alpha::new(number(source)?)),
+            Id::FillOpacity => Value::FillOpacity(Alpha::new(number(source)?)),
+            Id::StrokeOpacity => Value::StrokeOpacity(Alpha::new(number(source)?)),
+            Id::StopOpacity => Value::StopOpacity(Alpha::new(number(source)?)),
+            Id::StrokeWidth => Value::StrokeWidth(StrokeWidth(size().or_else(|| {
+                Some(Lp::Px(
+                    number(source).filter(|_| source[0] != b'-')? * cx.zoom,
+                ))
+            })?)),
+            Id::X => Value::X(px()?),
+            Id::Y => Value::Y(px()?),
+            Id::Cx => Value::Cx(px()?),
+            Id::Cy => Value::Cy(px()?),
+            Id::R => Value::R(PositiveLp(size()?)),
+            Id::Width => Value::Width(Size::Length(size()?)),
+            Id::Height => Value::Height(Size::Length(size()?)),
+            Id::Transform => Value::Transform(Transforms::of_hint(source, cx.zoom)?),
+            _ => return None,
+        })
+    }
+
     pub(crate) fn parse(self, source: &[u8], cx: &Ctx) -> Option<Value> {
         let computed = || {
             Some(Str::from(text(
@@ -1099,6 +1226,9 @@ impl Id {
         };
         if !self.has_type() {
             return Some(Value::Other(self, computed()?));
+        }
+        if let Some(value) = self.parse_simple(source, cx) {
+            return Some(value);
         }
         let value = parse_all(source, |p| self.parse_typed(p, cx));
         if !self.is_spelled() {
@@ -1121,19 +1251,52 @@ impl Id {
 thread_local! {
     static INITIAL: Groups = Groups::default();
     static LONGHANDS: Vec<&'static Definition> = Id::ALL.iter().filter_map(|id| definition(id.name())).collect();
-    static PROPERTIES: Map<Name, Prop> = {
-        let longhands = Id::ALL.iter().map(|id| (id.name(), Prop::Long(*id)));
-        let logical = logical().map(|(name, id)| (name, Prop::Logical(id)));
-        let shorthands = (0..).zip(shorthand::definitions()).map(|(index, it)| (it.name, Prop::Short(index)));
-        let mut all: Map<_, _> =
-            longhands.chain(logical).chain(shorthands).map(|(name, prop)| (Name::new(name.as_bytes()), prop)).collect();
-        all.insert(Name::new(b"all"), Prop::All);
-        for (alias, name) in aliases() {
-            all.insert(Name::new(&alias), all[&Name::new(&name)]);
-        }
-        all
-    };
 }
+
+/// By texts that are known in advance.
+pub(crate) struct PropsByName(Map<Name, (Cow<'static, [u8]>, Prop)>);
+
+impl PropsByName {
+    pub(crate) fn add(&mut self, name: Cow<'static, [u8]>, prop: Prop) {
+        self.0.insert(Name::hash(&name, false), (name, prop));
+    }
+
+    #[inline]
+    pub(crate) fn get(&self, name: &[u8], ignores_case: bool) -> Option<Prop> {
+        let known = self.0.get(&Name::hash(name, ignores_case))?;
+        (*known.0 == *name || ignores_case && known.0.eq_ignore_ascii_case(name)).then_some(known.1)
+    }
+}
+
+impl FromIterator<(Cow<'static, [u8]>, Prop)> for PropsByName {
+    fn from_iter<T: IntoIterator<Item = (Cow<'static, [u8]>, Prop)>>(all: T) -> Self {
+        PropsByName(
+            all.into_iter()
+                .map(|it| (Name::hash(&it.0, false), it))
+                .collect(),
+        )
+    }
+}
+
+static PROPERTIES: LazyLock<PropsByName> = LazyLock::new(|| {
+    let longhands = Id::ALL.iter().map(|id| (id.name(), Prop::Long(*id)));
+    let logical = logical().map(|(name, id)| (name, Prop::Logical(id)));
+    let shorthands = (0..)
+        .zip(shorthand::definitions())
+        .map(|(index, it)| (it.name, Prop::Short(index)));
+    let mut all: PropsByName = longhands
+        .chain(logical)
+        .chain(shorthands)
+        .chain([("all", Prop::All)])
+        .map(|it| (it.0.as_bytes().into(), it.1))
+        .collect();
+    for (alias, name) in aliases() {
+        all.get(&name, false)
+            .into_iter()
+            .for_each(|it| all.add(alias.clone().into(), it));
+    }
+    all
+});
 
 pub(crate) fn logical_props() -> impl Iterator<Item = Prop> {
     logical().map(|it| Prop::Logical(it.1))
@@ -1197,7 +1360,7 @@ impl Prop {
         if name.starts_with(b"--") {
             return (name.len() > 2).then(|| Prop::Custom(Name::new(name)));
         }
-        PROPERTIES.with(|all| all.get(&Name::lowercase(name)).copied())
+        PROPERTIES.get(name, true)
     }
 
     pub(crate) fn name(self) -> &'static str {
@@ -1299,12 +1462,40 @@ pub(crate) struct Style {
     pub(crate) plainness: Plainness,
 }
 
-/// What `Style::is_plain` and `Style::is_bare` have found. A copy is made to be changed.
+/// What `Style::is_plain`, `is_bare`, `is_inert`, `stacking`, `fixed`, `paints` and `Document::strut` have found. A copy is made to be changed.
 #[derive(Default)]
 pub(crate) struct Plainness(
     core::cell::Cell<Option<bool>>,
     core::cell::Cell<Option<bool>>,
+    core::cell::Cell<Option<bool>>,
+    core::cell::Cell<Option<[bool; 2]>>,
+    pub(crate) core::cell::Cell<crate::layout::Fixed>,
+    pub(crate) core::cell::Cell<(f32, [f32; 2])>,
+    core::cell::Cell<Paints>,
+    Compared,
 );
+
+/// A number of its own once it needs one, and that of the style that it was last compared with, above what was found.
+#[derive(Default)]
+struct Compared(core::cell::Cell<u64>, core::cell::Cell<u64>);
+
+#[thread_local]
+static LAST_NUMBER: core::cell::Cell<u64> = core::cell::Cell::new(0);
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Default)]
+    pub(crate) struct Paints: u8 {
+        const KNOWN = 1;
+        const RADII = 1 << 1;
+        /// `border-shape` or `corner-shape`
+        const SHAPES = 1 << 2;
+        /// The background is more than a color in the border box.
+        const LAYERS = 1 << 3;
+        /// The background or the border depend on more than the box.
+        const PICTURES = 1 << 4;
+        const TEXT_EFFECTS = 1 << 5;
+    }
+}
 
 impl Clone for Plainness {
     fn clone(&self) -> Plainness {
@@ -1511,16 +1702,105 @@ impl Style {
         ])
     }
 
+    /// `old` differs in nothing but properties that stand alone.
+    pub(crate) fn keep_findings_of(&self, old: &Style) {
+        let (to, from) = (&self.plainness, &old.plainness);
+        to.5.set(from.5.get());
+        if Rc::ptr_eq(&self.effects, &old.effects) {
+            to.0.set(from.0.get());
+            to.2.set(from.2.get());
+            to.3.set(from.3.get());
+        }
+    }
+
     /// Whether a box is where the layout has put it, and only `overflow` can clip it.
+    #[inline]
     pub(crate) fn is_plain(&self) -> bool {
-        self.plainness.0.get().unwrap_or_else(|| {
-            let is_plain = !self.has_transform()
-                && self.layout.position != PositionKind::Sticky
-                && self.effects.clip_path.0.is_none()
-                && !self.contain().contains(Contain::PAINT);
-            self.plainness.0.set(Some(is_plain));
-            is_plain
-        })
+        self.plainness
+            .0
+            .get()
+            .unwrap_or_else(|| self.find_plainness())
+    }
+
+    #[cold]
+    fn find_plainness(&self) -> bool {
+        let is_plain = !self.has_transform()
+            && self.layout.position != PositionKind::Sticky
+            && self.effects.clip_path.0.is_none()
+            && !self.contain().contains(Contain::PAINT);
+        self.plainness.0.set(Some(is_plain));
+        is_plain
+    }
+
+    const FOUND_BITS: u32 = 29;
+
+    /// What `note_comparison` was given for the same one.
+    #[inline]
+    pub(crate) fn comparison_with(&self, old: &Style) -> Option<u32> {
+        let (known, number) = (self.plainness.7.1.get(), old.plainness.7.0.get());
+        (number != 0 && known >> Style::FOUND_BITS == number)
+            .then_some(known as u32 & ((1 << Style::FOUND_BITS) - 1))
+    }
+
+    pub(crate) fn note_comparison(&self, old: &Style, found: u32) {
+        if old.plainness.7.0.get() == 0 {
+            LAST_NUMBER.update(|it| it + 1);
+            old.plainness.7.0.set(LAST_NUMBER.get());
+        }
+        self.plainness
+            .7
+            .1
+            .set(old.plainness.7.0.get() << Style::FOUND_BITS | u64::from(found));
+    }
+
+    #[inline]
+    pub(crate) fn paints(&self) -> Paints {
+        Some(self.plainness.6.get())
+            .filter(|it| !it.is_empty())
+            .unwrap_or_else(|| self.find_paints())
+    }
+
+    #[cold]
+    fn find_paints(&self) -> Paints {
+        let (p, b, mut paints) = (&self.paint, &self.background, Paints::KNOWN);
+        let is_set = |ids: &[Id]| ids.iter().any(|it| self.other_if_set(*it).is_some());
+        paints.set(
+            Paints::RADII,
+            [&p.top_left, &p.top_right, &p.bottom_right, &p.bottom_left]
+                .iter()
+                .any(|it| !matches!(it.0.0, Lp::Px(0.0))),
+        );
+        paints.set(
+            Paints::SHAPES,
+            is_set(&[
+                Id::BorderShape,
+                Id::CornerTopLeftShape,
+                Id::CornerTopRightShape,
+                Id::CornerBottomRightShape,
+                Id::CornerBottomLeftShape,
+            ]),
+        );
+        paints.set(
+            Paints::LAYERS,
+            b.image.iter().any(|it| it.0.is_some())
+                || b.clip.at(b.image.len() - 1).0 != BoxArea::BorderBox
+                || b.attachment.contains(&Attachment::Local),
+        );
+        paints.set(
+            Paints::PICTURES,
+            b.image
+                .iter()
+                .any(|it| !matches!(it.0, None | Some(Image::Gradient(_))))
+                || b.border_image.0.is_some()
+                || b.attachment.iter().any(|it| *it != Attachment::Scroll),
+        );
+        paints.set(
+            Paints::TEXT_EFFECTS,
+            !self.ink.text_shadow.0.0.is_empty()
+                || is_set(&[Id::WebkitTextStrokeWidth, Id::TextEmphasisStyle]),
+        );
+        self.plainness.6.set(paints);
+        paints
     }
 
     /// A rectangle that has no decorations.
@@ -1541,6 +1821,48 @@ impl Style {
             self.plainness.1.set(Some(is_bare));
             is_bare
         })
+    }
+
+    /// Whether the document has nothing to note or to start for an element that has it.
+    pub(crate) fn is_inert(&self) -> bool {
+        self.plainness.2.get().unwrap_or_else(|| {
+            let is_inert = self.mask.texts.all().is_empty()
+                && self.scroll.timeline_name.is_empty()
+                && self.scroll.snap_type.is_empty()
+                && self.effects.perspective.0.is_none()
+                && !self.has_depth()
+                && self.effects.blend == Blend::Normal
+                && self.layout.container_type.is_empty()
+                && self.layout.content_visibility == ContentVisibility::Visible
+                && self.rare.anchor_name.is_empty()
+                && !matches!(self.rare.content, Content::Items(..))
+                && !self.rare.intrinsic_width.remembers
+                && !self.rare.intrinsic_height.remembers
+                && self.transition.duration.iter().all(|it| it.0 <= 0.0)
+                && self.transition.delay.iter().all(|it| it.0 <= 0.0)
+                && self.animation.name.iter().all(|it| it.0.is_none());
+            self.plainness.2.set(Some(is_inert));
+            is_inert
+        })
+    }
+
+    /// `contains_fixed` and `is_stacking_context(false)`
+    pub(crate) fn stacking(&self) -> [bool; 2] {
+        self.plainness.3.get().unwrap_or_else(|| {
+            let stacking = [self.contains_fixed(), self.is_stacking_context(false)];
+            self.plainness.3.set(Some(stacking));
+            stacking
+        })
+    }
+
+    pub(crate) fn is_quiet(&self) -> bool {
+        let e = &self.effects;
+        !self.is_positioned()
+            && !self.is_stacking_context(true)
+            && (e.will_change.0 | self.animates).is_empty()
+            && e.transform_box == TransformBox::ViewBox
+            && e.backface != Backface::Hidden
+            && self.other_if_set(Id::BorderShape).is_none()
     }
 
     pub(crate) fn has_transform(&self) -> bool {

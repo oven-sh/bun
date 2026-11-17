@@ -1,1 +1,0 @@
-process.argv.splice(1, 1);(0, eval)("/* 中 */\nfunction code() {\n  throw new (class Boom extends Error {\n    constructor(message) {\n      super(message);\n    }\n  })(\"boom\");\n}\ncode();");

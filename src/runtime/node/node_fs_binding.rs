@@ -524,7 +524,7 @@ pub(crate) fn create_memfd_for_testing(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
+        match bun_sys::memfd_create(c"my_memfd".into(), bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size as i64);
                 Ok(Some(fd.native() as i32))

@@ -446,21 +446,26 @@ impl Scene {
         }
     }
 
-    /// After a change to nothing but the matrix of a `PushTransform`.
-    pub fn index_around(&mut self, mut push: usize) {
-        loop {
-            let Extent {
-                bounds: content,
-                mask: parent,
-                ..
-            } = self.extents[self.end(push) - 1];
-            let bounds = self.group_bounds(push, content);
-            if std::mem::replace(&mut self.extents[push].bounds, bounds) == bounds || parent == 0 {
-                return;
+    /// After a change to nothing but the matrices of these `PushTransform`s.
+    pub fn index_around(&mut self, mut changed: Vec<usize>) {
+        while !changed.is_empty() {
+            changed.retain_mut(|push| {
+                let Extent {
+                    bounds: content,
+                    mask: parent,
+                    ..
+                } = self.extents[self.end(*push) - 1];
+                let bounds = self.group_bounds(*push, content);
+                let differs = std::mem::replace(&mut self.extents[*push].bounds, bounds) != bounds;
+                *push = (parent as usize).wrapping_sub(1);
+                differs && parent != 0
+            });
+            changed.sort_unstable();
+            changed.dedup();
+            for &push in &changed {
+                let pop = self.end(push) - 1;
+                self.extents[pop].bounds = self.content_bounds(push);
             }
-            push = parent as usize - 1;
-            let pop = self.end(push) - 1;
-            self.extents[pop].bounds = self.content_bounds(push);
         }
     }
 

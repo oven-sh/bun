@@ -15,8 +15,14 @@ use crate::{
     WrapperGuard,
 };
 
+#[path = "bindgen/callback.rs"]
+mod callback;
 #[path = "bindgen/extern_types.rs"]
 pub mod extern_types;
+pub use callback::*;
+#[path = "bindgen/interface.rs"]
+mod interface;
+pub use interface::*;
 
 /// Makes `'a` invariant, so two calls' lifetimes never unify.
 type InvariantLifetime<'a> = PhantomData<fn(&'a ()) -> &'a ()>;
@@ -1229,6 +1235,10 @@ pub mod to_js {
     }
     number! {
         bool: bool => JSValue::from;
+        i8: i8 => |n| JSValue::js_number_from_int32(i32::from(n));
+        i16: i16 => |n| JSValue::js_number_from_int32(i32::from(n));
+        i64: i64 => |n| JSValue::js_number(n as f64);
+        f32: f32 => |n| JSValue::js_number(JSValue::purify_nan(f64::from(n)));
         u8: u8 => |n| JSValue::js_number_from_int32(i32::from(n));
         u16: u16 => |n| JSValue::js_number_from_int32(i32::from(n));
         i32: i32 => JSValue::js_number_from_int32;
@@ -1273,6 +1283,12 @@ pub mod to_js {
             self.as_value().as_value()
         }
     }
+    impl<'a, T: JsInterface> Any<'a> for &T {
+        #[inline(always)]
+        fn into_value(self, _: &JsHeap<'a>) -> JsLocal<'a> {
+            JsLocal::from_raw(self.to_js())
+        }
+    }
     impl<'a> Any<'a> for JSValue {
         #[inline(always)]
         fn into_value(self, heap: &JsHeap<'a>) -> JsLocal<'a> {
@@ -1285,6 +1301,39 @@ pub mod to_js {
     #[inline(always)]
     pub fn any<'a>(heap: &JsHeap<'a>, value: impl Any<'a>) -> Result<'a, JsLocal<'a>> {
         Ok(value.into_value(heap))
+    }
+
+    #[inline(always)]
+    pub fn instance<'a, T: JsInterface>(value: impl Instance<T>) -> Result<'a, JsLocal<'a>> {
+        Ok(JsLocal::from_raw(value.into_instance()))
+    }
+
+    #[inline]
+    pub fn sequence<'a, I: IntoIterator>(
+        heap: &JsHeap<'a>,
+        items: I,
+        convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
+    ) -> Result<'a, JsLocal<'a>> {
+        Ok(heap.create_array(items, convert)?.as_value())
+    }
+
+    #[inline]
+    pub fn frozen_sequence<'a, I: IntoIterator>(
+        heap: &JsHeap<'a>,
+        items: I,
+        convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
+    ) -> Result<'a, JsLocal<'a>> {
+        Ok(heap
+            .freeze_array(heap.create_array(items, convert)?)?
+            .as_value())
+    }
+
+    #[inline(always)]
+    pub fn string_impl<'a>(
+        heap: &JsHeap<'a>,
+        value: impl IntoJsString<'a>,
+    ) -> Result<'a, JsLocal<'a>> {
+        Ok(value.into_js_string(heap).as_value())
     }
 
     #[inline(always)]
@@ -1495,22 +1544,22 @@ pub fn hold_cached_to_declared_type(
     JSValue::ZERO
 }
 
-/// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.
+/// As [`host_fn_return`], for the constructor of a `refCounted` class: `None` if it failed.
 #[doc(hidden)]
 #[inline(always)]
-pub fn host_fn_construct_return<'a, T, E: IntoError<'a>>(
+pub fn host_fn_construct_return<'a, T: bun_ptr::AnyRefCounted, E: IntoError<'a>>(
     cx: &mut JsScope<'a>,
-    result: core::result::Result<*mut T, E>,
-) -> *mut c_void {
-    let wrapped: *mut c_void = match result {
-        Ok(wrapped) => wrapped.cast(),
+    result: core::result::Result<bun_ptr::RefPtr<T>, E>,
+) -> Option<bun_ptr::RefPtr<T>> {
+    let wrapped = match result {
+        Ok(wrapped) => Some(wrapped),
         Err(error) => {
             error.into_error(&cx.heap).into_host_fn_return(cx);
-            core::ptr::null_mut()
+            None
         }
     };
     debug_assert!(
-        cx.heap.exception_presence_matches(wrapped.is_null()),
+        cx.heap.exception_presence_matches(wrapped.is_none()),
         "a constructor fails exactly when an exception is pending",
     );
     wrapped

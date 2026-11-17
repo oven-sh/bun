@@ -1,5 +1,9 @@
+use super::blur::extent;
+use super::cpu::filter_reach;
 use super::graph;
-use super::raster::{Clip, Layer, Paint, average_scale, demultiply, multiply, premultiply};
+use super::raster::{
+    Clip, IntRect, Layer, Paint, average_scale, demultiply, multiply, premultiply,
+};
 use crate::abi::Filter;
 use crate::gfx::Transform;
 
@@ -61,11 +65,27 @@ fn color_matrix(filter: Filter) -> Option<[[f32; 4]; 3]> {
     })
 }
 
-pub fn apply(layer: &mut Layer, filters: &[Filter], matrix: &Transform) {
+/// The result is right in `wanted`, and `layer` may get other bounds.
+pub fn apply(layer: &mut Layer, filters: &[Filter], matrix: &Transform, wanted: IntRect) {
     let scale = average_scale(matrix);
-    for filter in filters {
+    for (index, filter) in filters.iter().enumerate() {
+        let needed = wanted.outset(filter_reach(&filters[index + 1..], matrix));
+        let nothing = || {
+            Layer::new(IntRect::new(
+                needed.left,
+                needed.top,
+                needed.left + 1,
+                needed.top + 1,
+            ))
+        };
         match *filter {
-            Filter::Blur(sigma) => layer.blur(sigma * scale),
+            Filter::Blur(sigma) => {
+                let rect = layer.rect.outset(extent(sigma * scale)).intersect(needed);
+                let Some(result) = layer.blurred([sigma * scale; 2], rect).or_else(nothing) else {
+                    continue;
+                };
+                *layer = result;
+            }
             Filter::Opacity(amount) => layer.scale_alpha(amount),
             Filter::Luminance { linear } => {
                 if linear {
@@ -86,14 +106,20 @@ pub fn apply(layer: &mut Layer, filters: &[Filter], matrix: &Transform) {
                 blur,
                 color,
             } => {
-                let Some(mut result) = Layer::new(layer.rect) else {
+                let (dx, dy) = (matrix.sx * x + matrix.kx * y, matrix.ky * x + matrix.sy * y);
+                let [dx, dy] = [dx, dy].map(|it| it.round().clamp(-1e8, 1e8) as i32);
+                let mut shape = layer.alpha();
+                shape.rect = shape.rect.offset(dx, dy);
+                let shadow = shape.blurred(
+                    blur * scale,
+                    shape.rect.outset(extent(blur * scale)).intersect(needed),
+                );
+                let Some(mut result) =
+                    Layer::new(shadow.rect.union(layer.rect.intersect(needed))).or_else(nothing)
+                else {
                     continue;
                 };
-                let mut shadow = layer.alpha();
-                shadow.blur(blur * scale);
-                let (dx, dy) = (matrix.sx * x + matrix.kx * y, matrix.ky * x + matrix.sy * y);
-                shadow.rect = shadow.rect.offset(dx.round() as i32, dy.round() as i32);
-                let clip = Clip::new(layer.rect);
+                let clip = Clip::new(result.rect);
                 result.fill_coverage(&shadow, &clip, &Paint::Solid(premultiply(color)));
                 result.draw(layer, None, &clip);
                 *layer = result;

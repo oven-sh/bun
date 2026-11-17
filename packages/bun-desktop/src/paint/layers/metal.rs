@@ -1,17 +1,16 @@
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::Entry;
 use std::ffi::{CString, c_char, c_void};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Once};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::core_animation::{Surface, Tree};
 use super::{Instance, Pass, SLOTS, Sample, Target as _};
 use crate::error::{Context as _, Result, ensure};
 use crate::hash::FastMap;
-use crate::json::Value;
 use crate::paint::arena::Chunk;
-use crate::platform::macos::{Object, answer};
+use crate::platform::macos::{Object, failure};
 
 #[repr(C)]
 struct Batch {
@@ -135,47 +134,61 @@ fn draw_with(
     }
     // SAFETY: the arguments that the shader declares. The instances only point into their blocks.
     unsafe {
-        answer(bd_gpu_draw(
+        failure(bd_gpu_draw(
             all,
             targets.as_ptr(),
             targets.len(),
             batches.as_ptr(),
         ))
     }
-    .map(drop)
 }
 
-/// Returns the name of the device if it draws what the CPU paints.
-fn set_up() -> Result<Value> {
+/// Fails unless it draws what the CPU paints.
+fn set_up() -> Result<()> {
     let shader = CString::new(include_str!("shader.metal"))?;
     // SAFETY: a string.
-    let name = unsafe { answer(bd_gpu_start(shader.as_ptr())) }?;
+    unsafe { failure(bd_gpu_start(shader.as_ptr())) }?;
     let surface = Surface::new(Sample::WIDTH, Sample::HEIGHT).context("there is no surface")?;
     let sample = Sample::new();
     let (instances, pass) = sample.pass(&surface);
     let mut buffers = Buffers::default();
     try_to_draw(&mut buffers, &instances, &[pass])?;
     // SAFETY: an answer.
-    unsafe { answer(bd_gpu_finish()) }?;
+    unsafe { failure(bd_gpu_finish()) }?;
     let difference = sample.difference(&Tree::lock(&surface, false));
     Tree::unlock(&surface, false);
     ensure!(difference <= 6, "its pixels are off by {difference}");
-    Ok(name)
+    Ok(())
 }
 
+/// It can fail for what another process has done, or for having slept.
 fn get_ready() {
-    static START: Once = Once::new();
+    const MAX_ATTEMPTS: u32 = 4;
+    const PAUSE: Duration = Duration::from_secs(10);
+    static IS_STARTING: AtomicBool = AtomicBool::new(false);
+    thread_local! {
+        static ATTEMPTS: Cell<(u32, Option<Instant>)> = const { Cell::new((0, None)) };
+    }
+    let (count, last) = ATTEMPTS.get();
+    if count == MAX_ATTEMPTS
+        || last.is_some_and(|it| it.elapsed() < PAUSE)
+        || IS_STARTING.swap(true, Ordering::Acquire)
+    {
+        return;
+    }
+    ATTEMPTS.set((count + 1, Some(Instant::now())));
     let start = || {
         let time = Instant::now();
         match set_up() {
-            Ok(name) => {
-                crate::diagnostics::log!("{name} is ready after {:?}", time.elapsed());
+            Ok(()) => {
+                crate::diagnostics::log!("the GPU is ready after {:?}", time.elapsed());
                 IS_USABLE.store(true, Ordering::Release);
             }
             Err(error) => crate::diagnostics::log!("the GPU is not used: {error:#}"),
         }
+        IS_STARTING.store(false, Ordering::Release);
     };
-    START.call_once(|| drop(std::thread::Builder::new().name("GPU".into()).spawn(start)));
+    drop(std::thread::Builder::new().name("GPU".into()).spawn(start));
 }
 
 /// Getting ready takes time and memory, so not for a frame or two, and not while the app starts.
@@ -203,8 +216,7 @@ pub fn is_ready() -> bool {
 /// Before anything that the last draws use is touched.
 pub fn finish() {
     // SAFETY: an answer.
-    if IS_USABLE.load(Ordering::Acquire) && !succeeded(unsafe { answer(bd_gpu_finish()) }.map(drop))
-    {
+    if IS_USABLE.load(Ordering::Acquire) && !succeeded(unsafe { failure(bd_gpu_finish()) }) {
         HAS_SPOILED.set(true);
     }
     CHUNKS.with_borrow_mut(|chunks| chunks.retain(|_, (_, chunk)| Arc::strong_count(chunk) > 1));

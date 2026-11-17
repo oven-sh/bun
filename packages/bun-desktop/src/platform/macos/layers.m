@@ -149,7 +149,8 @@ void bd_layer_animate(void* pointer, bool fades, const double* samples, size_t c
         animation.beginTime = CACurrentMediaTime() - secondsAgo;
         animation.fillMode = kCAFillModeBoth;
         animation.removedOnCompletion = NO;
-        animation.preferredFrameRateRange = (CAFrameRateRange) { 30, 60, 60 };
+        if (fades || cycle * cycles > 1)
+            animation.preferredFrameRateRange = (CAFrameRateRange) { 30, 60, 60 };
         [(__bridge CALayer*)pointer addAnimation:animation forKey:key];
     }
 }
@@ -168,11 +169,12 @@ static id<MTLDevice> device;
 static id<MTLCommandQueue> queue;
 static id<MTLRenderPipelineState> pipeline;
 
-/// The name of the device.
 char* bd_gpu_start(const char* shader)
 {
-    return answer(^id {
-        device = MTLCreateSystemDefaultDevice();
+    return attempt(^{
+        device = device ?: MTLCreateSystemDefaultDevice();
+        // One that has failed ignores what it is given.
+        queue = nil;
         if (!device.hasUnifiedMemory || ![device supportsFamily:MTLGPUFamilyApple1])
             fail(@"there is none, or it has memory of its own");
         NSError* error;
@@ -190,7 +192,6 @@ char* bd_gpu_start(const char* shader)
         pipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
         if (!pipeline)
             fail(error.description);
-        return device.name;
     });
 }
 
@@ -225,20 +226,19 @@ static id<MTLCommandBuffer> unfinished;
 
 char* bd_gpu_finish(void)
 {
-    return answer(^id {
+    return attempt(^{
         id<MTLCommandBuffer> commands = unfinished;
         unfinished = nil;
         [commands waitUntilCompleted];
         if (commands && commands.status != MTLCommandBufferStatusCompleted)
             fail(commands.error.description ?: @"it did not complete");
-        return nil;
     });
 }
 
 /// From when it returns, the window server only gets to read the surfaces after they were drawn on.
 char* bd_gpu_draw(void* instances, const BDPass* passes, size_t count, const BDBatch* batches)
 {
-    return answer(^id {
+    return attempt(^{
         id<MTLBuffer> all = (__bridge id<MTLBuffer>)instances;
         queue = queue ?: [device newCommandQueue];
         id<MTLCommandBuffer> commands = [queue commandBuffer];
@@ -266,6 +266,5 @@ char* bd_gpu_draw(void* instances, const BDPass* passes, size_t count, const BDB
         [commands commit];
         [commands waitUntilScheduled];
         unfinished = commands;
-        return nil;
     });
 }

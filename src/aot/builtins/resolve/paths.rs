@@ -249,6 +249,7 @@ impl Resolver<'_, '_> {
         }
         if input.dialect == SourceDialect::Runtime
             && holder.path.id == BuiltinId::GlobalThis
+            && matches!(input.hir[object].kind, ExprKind::Ident(known::globalThis))
             && let MemberKey::Name(name) = key
             && let Some(intrinsic) = self.find_native(name, true)
         {

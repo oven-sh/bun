@@ -60,7 +60,7 @@ electron.app.trustOrigins(["app://bundle"]);
 
 Trust an origin only if you would `require()` each script that it can load. Prefer origins that the app serves itself with `protocol.handle()`, and send a strict `Content-Security-Policy`.
 
-Everything else, and every `<iframe>` that has a `src` or a `srcdoc`, is rendered by a browser in sandboxed processes of its own. See `app.setWebEngine()`. If there is none, the load fails with `ERR_BLOCKED_BY_CLIENT`.
+Everything else, and every `<iframe>` that has a `src` or a `srcdoc`, is rendered by a browser in sandboxed processes of its own. See `app.setWebEngine()`. The site gets the cookies and the `Sec-Fetch-*` headers for the page that has navigated to it, as in a browser. If there is none, the load fails with `ERR_BLOCKED_BY_CLIENT`.
 
 ## Debugging
 
@@ -76,15 +76,15 @@ See also [what the DOM lacks](/runtime/desktop#what-is-missing).
 
 These throw or reject:
 
-| Module              | What                                                                                     |
-| ------------------- | ---------------------------------------------------------------------------------------- |
-| `app`               | `enableSandbox`, `moveToApplicationsFolder`, `getApplicationInfoForProtocol`             |
-| `webContents`       | `openDevTools`, `print`, `printToPDF`, `savePage`, `startDrag`, `beginFrameSubscription` |
-| `session`           | Extensions, service workers, PAC scripts                                                 |
-| `systemPreferences` | `getColor`, `promptTouchID`                                                              |
-| Whole modules       | `autoUpdater`, `contentTracing`, `desktopCapturer`, `netLog`, `pushNotifications`        |
-| Classes             | `ImageView`, `ShareMenu`, `TouchBar`                                                     |
+| Module        | What                                                                      |
+| ------------- | ------------------------------------------------------------------------- |
+| `app`         | `enableSandbox`                                                           |
+| `webContents` | `printToPDF`, `savePage`, `beginFrameSubscription` for a trusted page     |
+| Whole modules | `contentTracing`, `netLog`, and `desktopCapturer` with Chromium as engine |
+| Classes       | `ImageView`, `TouchBar`                                                   |
 
-These do nothing: `crashReporter`, the spell checker, network and device emulation, the settings of the HTTP cache and the host resolver, window tabs.
+These do nothing: `crashReporter`, network and device emulation, the settings of the host resolver.
+
+`autoUpdater` works on macOS, and reads the feeds of Squirrel.Mac. An update has to have the bundle identifier of the app, and to satisfy its designated requirement, which is checked after the download and again before the installation. An app with an ad hoc signature cannot be updated. Unlike in Electron, the whole archive is downloaded even if the feed has a delta, nothing is installed after the app was killed or while another instance of it runs, and only `quitAndInstall()` asks for the password of an administrator. It only asks if the user can change neither the bundle nor its executable, because that is what runs as root. As with Squirrel.Mac, whoever can rename what is in the folder of the app can put another executable in its place while the prompt is shown. The app installs the update itself while it exits, so it exits later, and writes the outcome to `~/Library/Caches/<bundle identifier>.ShipIt/ShipIt_stderr.log`.
 
 `.asar` archives are not read. Ship directories. Native addons have to use Node-API.

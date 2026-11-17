@@ -1,0 +1,19 @@
+[package]
+name = "bun_markup"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_md.workspace = true
+
+[dev-dependencies]
+bun_sema_standalone = { path = "../sema/standalone" }

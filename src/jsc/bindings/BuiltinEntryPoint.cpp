@@ -4,6 +4,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "InternalModuleRegistry.h"
 #include "ModuleLoader.h"
+#include "WorkerMessagingProxy.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
 namespace Bun {
@@ -15,13 +16,25 @@ enum class BuiltinEntryPoint : uint8_t {
     Html = 0,
     // `bun bake`: src/js/internal/bake.ts
     Bake = 1,
+    // WorkerOptions::nativeEntry
+    Native = 2,
 };
+
+extern "C" WebCore::WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 
 // Runs the default export of a built-in module as the program, instead of a user file.
 extern "C" JSPromise* Bun__loadBuiltinEntryPoint(Zig::GlobalObject* globalObject, BuiltinEntryPoint entryPoint)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (entryPoint == BuiltinEntryPoint::Native) {
+        auto& options = WebWorker__getMessagingProxy(globalObject->bunVM())->options();
+        options.nativeEntry(globalObject, options.argumentOfNativeEntry);
+        if (scope.exception()) [[unlikely]]
+            return JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, jsUndefined()));
+    }
 
     auto id = entryPoint == BuiltinEntryPoint::Bake ? InternalModuleRegistry::InternalBake : InternalModuleRegistry::InternalHtml;
     JSValue module = DeclaredModuleLoad::requireForCommandLine(globalObject, id);

@@ -98,6 +98,7 @@ static bool closeStepsCloseAnotherStream(ReadRequestKind kind)
     case ReadRequestKind::TextDecode:
         return true;
     case ReadRequestKind::Promise:
+    case ReadRequestKind::Internal:
     case ReadRequestKind::PipeTo:
     case ReadRequestKind::ReadStreamIntoSink:
     case ReadRequestKind::AsyncIterator:
@@ -117,6 +118,8 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
         RETURN_IF_EXCEPTION(scope, void());
         RELEASE_AND_RETURN(scope, resolvePromise(globalObject, promise, result));
     }
+    case ReadRequestKind::Internal:
+        return uncheckedDowncast<JSPromise>(context())->fulfill(vm, chunk);
     case ReadRequestKind::PipeTo:
         RELEASE_AND_RETURN(scope, pipeToReadRequestChunkSteps(globalObject, uncheckedDowncast<JSStreamPipeToOperation>(context()), chunk));
     case ReadRequestKind::DefaultTee:
@@ -153,6 +156,8 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject, MayDefer mayDefer)
         RETURN_IF_EXCEPTION(scope, void());
         RELEASE_AND_RETURN(scope, resolvePromise(globalObject, promise, result));
     }
+    case ReadRequestKind::Internal:
+        return uncheckedDowncast<JSPromise>(context())->fulfill(vm, this);
     case ReadRequestKind::PipeTo:
         RELEASE_AND_RETURN(scope, pipeToReadRequestCloseSteps(globalObject, uncheckedDowncast<JSStreamPipeToOperation>(context())));
     case ReadRequestKind::DefaultTee: {
@@ -224,6 +229,8 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error, MayD
     switch (m_kind) {
     case ReadRequestKind::Promise:
         RELEASE_AND_RETURN(scope, rejectPromise(globalObject, uncheckedDowncast<JSPromise>(context()), error));
+    case ReadRequestKind::Internal:
+        RELEASE_AND_RETURN(scope, rejectPromiseAsHandled(globalObject, uncheckedDowncast<JSPromise>(context()), error));
     case ReadRequestKind::PipeTo:
         RELEASE_AND_RETURN(scope, pipeToReadRequestErrorSteps(globalObject, uncheckedDowncast<JSStreamPipeToOperation>(context()), error));
     case ReadRequestKind::DefaultTee:

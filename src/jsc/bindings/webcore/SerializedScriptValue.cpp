@@ -39,6 +39,7 @@
 #include "CryptoKeyRSA.h"
 #include "CryptoKeyRSAComponents.h"
 #include "CryptoKeyRaw.h"
+#include "Bindgen/JSInterface.h"
 #include "DesktopRealm.h"
 #include "JSCryptoKey.h"
 #include "JSDOMBinding.h"
@@ -208,13 +209,16 @@ enum SerializationTag {
     Bun__PlatformObjectTag = 249,
     // <error:ErrorInstanceTag> <propertyName:"cause"> <value> TerminatorTag
     Bun__ErrorWithCauseTag = 248,
+    Bun__SharedBlobTag = 247,
 
     ErrorTag = 255
 };
 
 class CloneSerializer;
 
-extern "C" void Blob__onStructuredCloneSerialize(void* blob, CloneSerializer*);
+extern "C" bool Blob__onStructuredCloneSerialize(void* blob, CloneSerializer*);
+extern "C" bool Bun__Desktop__isBlobOfWeb(void* blob);
+extern "C" JSC::EncodedJSValue Bun__Desktop__retainedBlob(JSC::JSGlobalObject*, const uint8_t* id);
 extern "C" JSC::EncodedJSValue Blob__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
 extern "C" void BlockList__onStructuredCloneSerialize(void* blockList, CloneSerializer*);
 extern "C" JSC::EncodedJSValue BlockList__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
@@ -762,7 +766,8 @@ public:
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
         Vector<std::unique_ptr<SerializedBlockList>>& serializedBlockLists,
         Vector<SerializedHistogram>& serializedHistograms,
-        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
+        Vector<std::unique_ptr<SerializedBlob>>& serializedBlobs,
+        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer, std::span<const EncodedJSValue> hostObjects = {})
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
 #if ENABLE(WEBASSEMBLY)
@@ -770,9 +775,12 @@ public:
             wasmMemoryHandles,
 #endif
             out, context, sharedBuffers, forStorage, forTransfer);
+        for (uint32_t i = 0; i < hostObjects.size(); ++i)
+            serializer.m_hostObjects.add(asObject(JSValue::decode(hostObjects[i])), i);
         auto code = serializer.serialize(value);
         serializedBlockLists = WTF::move(serializer.m_serializedBlockLists);
         serializedHistograms = WTF::move(serializer.m_serializedHistograms);
+        serializedBlobs = WTF::move(serializer.m_serializedBlobs);
         return code;
     }
 
@@ -1306,7 +1314,7 @@ private:
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
 
-                if (arrayBuffer->isShared() && m_isInDesktopRealm && m_forStorage == SerializationForStorage::Yes) {
+                if (arrayBuffer->isShared() && m_isInDesktopRealm && (m_forStorage == SerializationForStorage::Yes || m_lexicalGlobalObject->runtimeFlags().isSharedArrayBufferHidden())) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
@@ -1416,7 +1424,7 @@ private:
                 return true;
             }
 #endif
-            if (obj->inherits<JSDOMException>()) {
+            if (obj->inherits<JSDOMException>() && !Bun::Bindgen::isSerializableInterface(obj)) {
                 dumpDOMException(obj, code);
                 return true;
             }
@@ -1431,8 +1439,15 @@ private:
                     write(TerminatorTag);
                     return true;
                 }
+                if ((m_isInDesktopRealm || Bun::isDesktopRealm(blob->realm())) && m_context == SerializationContext::WorkerPostMessage && m_forStorage == SerializationForStorage::No && Bun__Desktop__isBlobOfWeb(blob->wrapped())) {
+                    m_serializedBlobs.append(makeUnique<SerializedBlob>(blob->wrapped()));
+                    write(Bun__SharedBlobTag);
+                    write(m_serializedBlobs.last()->id.data(), sizeof(SerializedBlob::id));
+                    return true;
+                }
                 write(Bun__BlobTag);
-                Blob__onStructuredCloneSerialize(blob->wrapped(), this);
+                if (!Blob__onStructuredCloneSerialize(blob->wrapped(), this))
+                    code = SerializationReturnCode::DataCloneError;
                 return true;
             }
 
@@ -1993,6 +2008,7 @@ private:
 #endif
     ObjectPool m_objectPool;
     bool m_causeFollows { false };
+    ObjectPool m_hostObjects;
     bool m_isInDesktopRealm { Bun::isDesktopRealm(m_lexicalGlobalObject) };
     ObjectPool m_transferredMessagePorts;
     ObjectPool m_transferredArrayBuffers;
@@ -2003,6 +2019,7 @@ private:
     ArrayBufferContentsArray& m_sharedBuffers;
     Vector<std::unique_ptr<SerializedBlockList>> m_serializedBlockLists;
     Vector<SerializedHistogram> m_serializedHistograms;
+    Vector<std::unique_ptr<SerializedBlob>> m_serializedBlobs;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray& m_wasmModules;
     WasmMemoryHandleArray& m_wasmMemoryHandles;
@@ -2099,6 +2116,11 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             if (inputObjectStack.size() > maximumFilterRecursion)
                 return SerializationReturnCode::StackOverflowError;
             JSObject* inObject = asObject(inValue);
+            if (auto index = m_hostObjects.getOptional(inObject)) [[unlikely]] {
+                write(MessagePortReferenceTag);
+                write(*index);
+                break;
+            }
             if (m_isInDesktopRealm && inObject->getPrototypeDirect() != m_lexicalGlobalObject->objectPrototype()) [[unlikely]] {
                 if (checkForDuplicate(inObject))
                     break;
@@ -2377,7 +2399,8 @@ public:
         ,
         WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
 #endif
-    )
+        ,
+        std::span<const EncodedJSValue> hostObjects = {})
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
@@ -2389,6 +2412,7 @@ public:
         );
         if (!deserializer.isValid())
             return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
+        deserializer.m_hostObjects = hostObjects;
         return deserializer.deserialize();
     }
 
@@ -3868,6 +3892,8 @@ private:
         case MessagePortReferenceTag: {
             uint32_t index;
             bool indexSuccessfullyRead = read(index);
+            if (indexSuccessfullyRead && index < m_hostObjects.size())
+                return JSValue::decode(m_hostObjects[index]);
             if (!indexSuccessfullyRead || index >= m_messagePorts.size()) {
                 fail();
                 return JSValue();
@@ -4041,6 +4067,17 @@ private:
             return blob;
         }
 
+        case Bun__SharedBlobTag: {
+            JSValue blob = readBunType([](JSGlobalObject* globalObject, const uint8_t** ptr, const uint8_t* end) -> EncodedJSValue {
+                constexpr size_t length = sizeof(SerializedBlob::id);
+                if (static_cast<size_t>(end - *ptr) < length)
+                    return {};
+                return Bun__Desktop__retainedBlob(globalObject, std::exchange(*ptr, *ptr + length));
+            });
+            Bun::desktopRealmAdoptFile(m_lexicalGlobalObject, blob);
+            return blob;
+        }
+
         case Bun__nodenet_BlockList:
             return readBunType(BlockList__onStructuredCloneDeserialize);
 
@@ -4083,6 +4120,7 @@ private:
     std::optional<ObjectFinisher> m_objectFinisher { m_globalObject->aotInstance() ? std::make_optional<ObjectFinisher>() : std::nullopt };
 #endif
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
+    std::span<const EncodedJSValue> m_hostObjects;
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
     Vector<String> m_blobURLs;
@@ -4843,7 +4881,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     return create(globalObject, value, WTF::move(transferList), messagePorts, forStorage, SerializationErrorMode::Throwing, serializationContext, forTransfer);
 }
 
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer, std::span<const EncodedJSValue> hostObjects)
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4853,7 +4891,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         && forStorage == SerializationForStorage::No
         && forTransfer == SerializationForCrossProcessTransfer::No
         && transferList.isEmpty()
-        && messagePorts.isEmpty();
+        && messagePorts.isEmpty()
+        && hostObjects.empty();
 
     if (canUseFastPath) {
         bool canUseStringFastPath = false;
@@ -5150,12 +5189,13 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     std::unique_ptr<ArrayBufferContentsArray> sharedBuffers = makeUnique<ArrayBufferContentsArray>();
     Vector<std::unique_ptr<SerializedBlockList>> serializedBlockLists;
     Vector<SerializedHistogram> serializedHistograms;
+    Vector<std::unique_ptr<SerializedBlob>> serializedBlobs;
     auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, arrayBuffers,
 #if ENABLE(WEBASSEMBLY)
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, serializedBlockLists, serializedHistograms, forStorage, forTransfer);
+        buffer, context, *sharedBuffers, serializedBlockLists, serializedHistograms, serializedBlobs, forStorage, forTransfer, hostObjects);
 
     // Serialize may throw an exception. This code looks weird, but we'll rethrow it
     // in maybeThrowExceptionIfSerializationFailed (since that may also throw other
@@ -5189,7 +5229,31 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         ));
     result->m_serializedBlockLists = WTF::move(serializedBlockLists);
     result->m_serializedHistograms = WTF::move(serializedHistograms);
+    result->m_serializedBlobs = WTF::move(serializedBlobs);
     return result;
+}
+
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::createWithHostObjects(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& buffers, std::span<const EncodedJSValue> hostObjects)
+{
+    Vector<RefPtr<MessagePort>> noPorts;
+    return create(globalObject, value, WTF::move(buffers), noPorts, SerializationForStorage::No, SerializationErrorMode::Throwing, SerializationContext::WorkerPostMessage, SerializationForCrossProcessTransfer::No, hostObjects);
+}
+
+JSValue SerializedScriptValue::deserializeWithHostObjects(JSGlobalObject& globalObject, std::span<const EncodedJSValue> hostObjects)
+{
+    BUN_REMOVABLE_DEFINITION(StructuredClone, &SerializedScriptValue::deserializeWithHostObjects);
+    if (hostObjects.empty() || m_fastPath != FastPath::None)
+        return deserialize(globalObject, &globalObject);
+    auto scope = DECLARE_THROW_SCOPE(globalObject.vm());
+    auto result = CloneDeserializer::deserialize(&globalObject, &globalObject, {}, m_arrayBufferContentsArray.get(), m_data, {}, {}, m_sharedBufferContentsArray.get(),
+#if ENABLE(WEBASSEMBLY)
+        m_wasmModulesArray.get(), m_wasmMemoryHandlesArray.get(),
+#endif
+        hostObjects);
+    RETURN_IF_EXCEPTION(scope, {});
+    maybeThrowExceptionIfSerializationFailed(globalObject, result.second);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result.first ? result.first : jsNull();
 }
 
 Ref<SerializedScriptValue> SerializedScriptValue::createStringFastPath(const String& string)

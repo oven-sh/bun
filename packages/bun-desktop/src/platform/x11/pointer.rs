@@ -253,8 +253,6 @@ impl X11 {
                 (PINCH_BEGIN..=PINCH_END, _) => {
                     let scale = event.i32(64) as f32 / 65536.;
                     let before = self.pointer.pinch_scale.replace(scale);
-                    let phase = [Phase::Started, Phase::Moved, Phase::Ended]
-                        [usize::from(kind - PINCH_BEGIN)];
                     Input::Pinch {
                         at,
                         delta: if kind == PINCH_UPDATE {
@@ -262,7 +260,6 @@ impl X11 {
                         } else {
                             0.
                         },
-                        phase,
                         modifiers,
                     }
                 }

@@ -36,3 +36,21 @@ export const externalValueFeatures: readonly FeatureName[] = [
   "RegExpUnicodeProperties",
   ...arrayBufferViewFeatures,
 ];
+
+/** Any entry of a page can come to a load, a report, a message or a worker. */
+export const desktopFeatures: readonly FeatureName[] = [
+  "Desktop",
+  "AbortSignal",
+  "Bodies",
+  "Events",
+  "Headers",
+  "WebStreams",
+  "Buffer",
+  "HttpClient",
+  "Image",
+  "LegacyEncodings",
+  "MessageChannel",
+  "StructuredClone",
+  "Worker",
+  "WorkerConstructor",
+];

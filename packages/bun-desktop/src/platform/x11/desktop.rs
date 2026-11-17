@@ -2,8 +2,8 @@
 
 use std::cell::{Cell, RefCell};
 use std::ffi::OsStr;
-use std::io::Write as _;
-use std::os::fd::OwnedFd;
+use std::io::{Seek as _, Write as _};
+use std::os::fd::{FromRawFd as _, OwnedFd};
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
@@ -11,12 +11,16 @@ use std::process::{Command, Stdio};
 use std::rc::Rc;
 use std::time::Duration;
 
+use super::atspi;
 use super::dbus::{Bus, Message, PROPERTIES, Value};
 use super::selection::paths_in;
 use super::tray::Tray;
 use crate::error::{Context as _, Result, bail, ensure};
-use crate::json::{Value as Json, json};
-use crate::{app, bridge, window};
+use crate::protocol::{
+    FilePicker, PrintJob, Reply, SystemCommand, SystemEvent, SystemRequest, Text, TrayCommand,
+};
+use crate::sync::Mutex;
+use crate::{bridge, window};
 
 const PORTAL: [&str; 2] = [
     "org.freedesktop.portal.Desktop",
@@ -37,10 +41,6 @@ const POWER: [&str; 2] = [
     "org.freedesktop.UPower.PowerProfiles",
     "/org/freedesktop/UPower/PowerProfiles",
 ];
-
-fn string(value: &Json) -> &str {
-    value.as_str().unwrap_or("")
-}
 
 pub fn folder(variable: &str, in_home: &str) -> PathBuf {
     let given = std::env::var_os(variable)
@@ -63,11 +63,12 @@ pub struct Known {
     pub is_dark: Cell<Option<bool>>,
     pub button_layout: RefCell<Option<String>>,
     pub reduces_motion: Cell<bool>,
+    pub has_more_contrast: Cell<bool>,
     pub saves_power: Cell<bool>,
     /// By tag.
     notifications: RefCell<Vec<(String, u32)>>,
     /// The descriptor is closed to end it.
-    inhibitors: RefCell<Vec<(u64, Option<OwnedFd>)>>,
+    inhibitors: RefCell<Vec<(u32, Option<OwnedFd>)>>,
 }
 
 impl Known {
@@ -79,27 +80,30 @@ impl Known {
             ("org.freedesktop.appearance", "reduced-motion") => {
                 self.reduces_motion.set(value.number() == Some(1))
             }
+            ("org.freedesktop.appearance", "contrast") => {
+                self.has_more_contrast.set(value.number() == Some(1))
+            }
             ("org.gnome.desktop.wm.preferences", "button-layout") => {
                 drop(self.button_layout.replace(Some(value.str().into())))
             }
             _ => return,
         }
         window::appearance_changed();
+        super::tell_settings();
     }
 
-    fn signal(&self, message: &Message) {
+    fn signal(&self, bus: &Bus, message: &Message) {
         let body = &message.body;
         if message.is(SETTINGS, "SettingChanged") {
             self.setting(body.at(0).str(), body.at(1).str(), body.at(2));
         } else if message.is(LOGIN[2], "PrepareForSleep") {
-            app::event(
-                if body.at(0).is_true() {
-                    "suspend"
-                } else {
-                    "resume"
-                },
-                Json::Null,
-            );
+            bridge::emit_system(if body.at(0).is_true() {
+                SystemEvent::Suspend
+            } else {
+                SystemEvent::Resume
+            });
+        } else if message.is(PROPERTIES, "PropertiesChanged") && body.at(0).str() == atspi::STATUS {
+            atspi::status_changed(bus, body.at(1));
         } else if message.is(PROPERTIES, "PropertiesChanged") {
             let profile = body.at(1).get("ActiveProfile").str();
             self.saves_power.set(if profile.is_empty() {
@@ -111,32 +115,39 @@ impl Known {
             let is_it = |it: &mut (String, u32)| Some(it.1.into()) == body.at(0).number();
             let found = self.notifications.borrow_mut().extract_if(.., is_it).next();
             if let Some((tag, _)) = found.filter(|_| message.member == "ActionInvoked") {
-                let action = Some(body.at(1).str()).filter(|it| *it != "default");
-                bridge::emit(json!({ "t": "notification", "tag": tag, "action": action }));
+                bridge::emit_system(SystemEvent::Notification {
+                    tag: tag.into(),
+                    action: body.at(1).str().parse().ok().into(),
+                });
             }
         }
     }
 }
 
+/// The id and the name of the app.
+static IDENTITY: Mutex<(String, String)> = Mutex::new((String::new(), String::new()));
+
+pub fn name_of_app() -> String {
+    IDENTITY.lock().1.clone()
+}
+
 pub struct Desktop {
-    session: Option<Bus>,
-    system: Option<Bus>,
-    trays: RefCell<Vec<(u64, Rc<Tray>)>>,
+    session: Option<Rc<Bus>>,
+    system: Option<Rc<Bus>>,
+    trays: RefCell<Vec<(u32, Rc<Tray>)>>,
     pub known: Rc<Known>,
-    /// The id and the name of the app.
-    identity: RefCell<(String, String)>,
 }
 
 impl Desktop {
     pub fn connect() -> Desktop {
         let (session, system, known) = (
-            Bus::session().ok(),
-            Bus::system().ok(),
+            Bus::session().ok().map(Rc::new),
+            Bus::system().ok().map(Rc::new),
             Rc::new(Known::default()),
         );
         for bus in session.iter().chain(&system) {
             let known = known.clone();
-            bus.listen(move |_, message| known.signal(message));
+            bus.listen(move |bus, message| known.signal(bus, message));
         }
         if let Some(bus) = &session {
             bus.subscribe(&format!("interface='{SETTINGS}'"));
@@ -144,6 +155,7 @@ impl Desktop {
             for (namespace, key) in [
                 ("org.freedesktop.appearance", "color-scheme"),
                 ("org.freedesktop.appearance", "reduced-motion"),
+                ("org.freedesktop.appearance", "contrast"),
                 ("org.gnome.desktop.wm.preferences", "button-layout"),
             ] {
                 let known = known.clone();
@@ -151,10 +163,9 @@ impl Desktop {
                     [PORTAL[0], PORTAL[1], SETTINGS],
                     "Read",
                     vec![namespace.into(), key.into()],
-                    move |reply| {
-                        reply
-                            .iter()
-                            .for_each(|reply| known.setting(namespace, key, reply.body.at(0)));
+                    move |reply| match reply {
+                        Ok(reply) => known.setting(namespace, key, reply.body.at(0)),
+                        Err(_) => super::tell_settings(),
                     },
                 );
             }
@@ -182,12 +193,11 @@ impl Desktop {
             system,
             trays: RefCell::default(),
             known,
-            identity: RefCell::default(),
         }
     }
 
     pub fn for_each_bus(&self, mut f: impl FnMut(&Bus)) {
-        self.session.iter().chain(&self.system).for_each(&mut f);
+        self.session.iter().chain(&self.system).for_each(|it| f(it));
         if !self.trays.borrow().is_empty() {
             self.trays
                 .borrow()
@@ -203,100 +213,78 @@ impl Desktop {
     }
 
     fn session(&self) -> Result<&Bus> {
-        self.session.as_ref().context("there is no session bus")
+        self.session.as_deref().context("there is no session bus")
     }
 
-    pub fn command(&self, name: &str, arguments: &Json, reply: Option<u64>) -> Result<Json> {
-        let (reply, text) = (
-            || reply.context("the command needs a reply id"),
-            string(arguments).to_owned(),
-        );
-        match name {
-            "identity" => drop(self.identity.replace((
-                string(&arguments["id"]).into(),
-                string(&arguments["name"]).into(),
-            ))),
-            "activate" | "hide" | "hideOthers" | "unhide" | "activationPolicy"
-            | "recentDocument" | "dockMenu" => {}
-            "badge" => self.set_badge(string(&arguments["text"]), string(&arguments["appId"]))?,
-            "tray" => self.tray(arguments)?,
-            "notify" => self.notify(arguments)?,
-            "dismissNotification" => {
+    pub fn command(&self, command: SystemCommand) -> Result<()> {
+        match command {
+            SystemCommand::Identity { id, name } => {
+                let before = std::mem::replace(
+                    &mut *IDENTITY.lock(),
+                    (id.into_string(), name.into_string()),
+                );
+                if before.1.is_empty() {
+                    self.session.iter().for_each(atspi::watch);
+                }
+            }
+            SystemCommand::Badge { text, app_id } => self.set_badge(&text, &app_id)?,
+            SystemCommand::Progress { done, app_id } => self.update_launcher(
+                &app_id,
+                [
+                    ("progress", Value::F64(done.min(1.).into())),
+                    ("progress-visible", Value::Bool(done >= 0.)),
+                ],
+            )?,
+            SystemCommand::Tray { id, command } => self.tray(id, command)?,
+            SystemCommand::Notify {
+                tag,
+                title,
+                body,
+                actions,
+            } => self.notify(tag, &title, &body, &actions)?,
+            SystemCommand::DismissNotification(tag) => {
                 let found = self
                     .known
                     .notifications
                     .borrow_mut()
-                    .extract_if(.., |it| it.0 == text)
+                    .extract_if(.., |it| it.0 == *tag)
                     .next();
                 if let Some((_, id)) = found {
                     self.session()?
                         .tell(NOTIFICATIONS, "CloseNotification", vec![Value::U32(id)]);
                 }
             }
-            "preventSleep" => self.prevent_sleep(
-                arguments["id"].as_u64().unwrap_or(0),
-                string(&arguments["reason"]),
-            ),
-            "allowSleep" => self
-                .known
-                .inhibitors
-                .borrow_mut()
-                .retain(|it| Some(it.0) != arguments.as_u64()),
-            "onBattery" => return Ok(on_battery().into()),
-            "openUrl" | "openPath" => bridge::spawn(move || bridge::report(open(&text))),
-            "revealPath" => bridge::spawn(move || bridge::report(reveal(Path::new(&text)))),
-            "trash" => bridge::in_background(reply()?, move || {
-                trash(Path::new(&text)).map(|()| Json::Null)
-            }),
-            "pickFiles" => {
-                let parent = arguments["window"]
-                    .as_u64()
-                    .and_then(|id| window::platform_window(id as u32));
-                let (parent, options) = (parent.map(|it| it.handle()), arguments.clone());
-                let reply = reply()?;
-                // It takes as long as the user wants.
-                std::thread::Builder::new()
-                    .name("files".into())
-                    .spawn(move || {
-                        let chosen = pick_with_portal(&options, parent)
-                            .or_else(|_| pick_with_program(&options));
-                        let chosen = chosen.map(|paths| {
-                            paths
-                                .iter()
-                                .map(|it| it.to_string_lossy().into_owned())
-                                .collect::<Vec<_>>()
-                        });
-                        bridge::reply(
-                            reply,
-                            chosen.map(|it| if it.is_empty() { Json::Null } else { it.into() }),
-                        );
-                    })?;
+            SystemCommand::PreventSleep { id, reason } => self.prevent_sleep(id, &reason),
+            SystemCommand::AllowSleep(id) => {
+                self.known.inhibitors.borrow_mut().retain(|it| it.0 != id)
             }
-            "chromiumPassword" => {
-                let arguments = arguments.clone();
-                bridge::in_background(reply()?, move || {
-                    Ok(chromium_password(
-                        string(&arguments["application"]),
-                        string(&arguments["fresh"]),
-                    )?
-                    .into())
-                });
+            SystemCommand::OpenUrl(it) | SystemCommand::OpenPath(it) => {
+                bridge::spawn(move || bridge::report(open(&it)))
             }
-            _ => bail!("unknown command {name}"),
+            SystemCommand::RevealPath(path) => {
+                bridge::spawn(move || bridge::report(reveal(Path::new(&*path))))
+            }
+            _ => {}
         }
-        Ok(Json::Null)
+        Ok(())
     }
 
     /// https://wiki.ubuntu.com/Unity/LauncherAPI, which KDE, Dash to Dock and Plank read too.
     fn set_badge(&self, text: &str, app_id: &str) -> Result<()> {
         let count = text.parse().unwrap_or(0);
-        let properties = Value::options([
-            ("count", Value::I64(count)),
-            ("count-visible", Value::Bool(count > 0)),
-        ]);
+        self.update_launcher(
+            app_id,
+            [
+                ("count", Value::I64(count)),
+                ("count-visible", Value::Bool(count > 0)),
+            ],
+        )
+    }
+
+    fn update_launcher(&self, app_id: &str, properties: [(&str, Value); 2]) -> Result<()> {
         let body = vec![
             format!("application://{app_id}.desktop").as_str().into(),
-            properties,
+            Value::options(properties),
         ];
         self.session()?.emit(
             "/com/canonical/unity/launcherentry/1",
@@ -307,48 +295,44 @@ impl Desktop {
         Ok(())
     }
 
-    fn tray(&self, arguments: &Json) -> Result<()> {
-        let id = arguments["id"].as_u64().unwrap_or(0);
+    fn tray(&self, id: u32, command: TrayCommand) -> Result<()> {
         let mut trays = self.trays.borrow_mut();
-        match string(&arguments["op"]) {
-            "create" => trays.push((id, Tray::new(arguments)?.into())),
-            "destroy" => trays.retain(|it| it.0 != id),
-            what => trays
+        match command {
+            TrayCommand::Create { name, icon } => {
+                trays.push((id, Tray::new(id, name.into_string(), &icon)?.into()))
+            }
+            TrayCommand::Destroy => trays.retain(|it| it.0 != id),
+            change => trays
                 .iter()
                 .find(|it| it.0 == id)
                 .context("the tray icon was destroyed")?
                 .1
-                .change(what, &arguments["value"])?,
+                .change(change)?,
         }
         Ok(())
     }
 
-    fn notify(&self, arguments: &Json) -> Result<()> {
+    fn notify(&self, tag: Text, title: &str, body: &str, labels: &[Text]) -> Result<()> {
         let mut actions = vec!["default".to_owned(), String::new()];
-        for (index, label) in arguments["actions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .enumerate()
-        {
-            actions.extend([index.to_string(), string(label).into()]);
+        for (index, label) in labels.iter().enumerate() {
+            actions.extend([index.to_string(), label.to_string()]);
         }
-        let text = string(&arguments["body"])
+        let text = body
             .replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;");
-        let (id, name) = &*self.identity.borrow();
+        let (id, name) = &IDENTITY.lock().clone();
         let body = vec![
             name.as_str().into(),
             Value::U32(0),
             id.as_str().into(),
-            string(&arguments["title"]).into(),
+            title.into(),
             text.as_str().into(),
             Value::strings(actions.iter().map(String::as_str)),
             Value::options((!id.is_empty()).then(|| ("desktop-entry", id.as_str().into()))),
             Value::I32(-1),
         ];
-        let (known, tag) = (self.known.clone(), string(&arguments["tag"]).to_owned());
+        let (known, tag) = (self.known.clone(), tag.into_string());
         self.session()?
             .call_then(NOTIFICATIONS, "Notify", body, move |reply| match reply {
                 Ok(reply) => known
@@ -360,12 +344,12 @@ impl Desktop {
         Ok(())
     }
 
-    fn prevent_sleep(&self, id: u64, reason: &str) {
+    fn prevent_sleep(&self, id: u32, reason: &str) {
         let Some(bus) = &self.system else { return };
         self.known.inhibitors.borrow_mut().push((id, None));
         let body = vec![
             "idle".into(),
-            self.identity.borrow().1.as_str().into(),
+            Value::Str(name_of_app()),
             reason.into(),
             "block".into(),
         ];
@@ -396,7 +380,66 @@ impl Desktop {
     }
 }
 
-fn on_battery() -> bool {
+pub fn request(id: u32, request: SystemRequest) -> Result<()> {
+    match request {
+        SystemRequest::Trash(path) => {
+            bridge::reply_later(id, move || trash(Path::new(&*path)).map(|()| Reply::Done))
+        }
+        SystemRequest::PickFiles(options) => {
+            let parent = options
+                .window
+                .get()
+                .and_then(window::platform_window)
+                .map(|it| it.handle());
+            // It takes as long as the user wants.
+            std::thread::Builder::new()
+                .name("files".into())
+                .spawn(move || {
+                    let chosen =
+                        pick_with_portal(&options, parent).or_else(|_| pick_with_program(&options));
+                    bridge::reply(
+                        id,
+                        chosen.map(|paths| {
+                            Reply::Paths(
+                                paths
+                                    .iter()
+                                    .map(|it| (*it.to_string_lossy()).into())
+                                    .collect(),
+                            )
+                        }),
+                    );
+                })?;
+        }
+        SystemRequest::Print(job) => {
+            let parent = job
+                .window
+                .get()
+                .and_then(window::platform_window)
+                .map(|it| it.handle());
+            std::thread::Builder::new()
+                .name("print".into())
+                .spawn(move || {
+                    let printed = if job.is_silent {
+                        print_at_once(&job)
+                    } else {
+                        print_with_portal(&job, parent)
+                    };
+                    bridge::reply(id, printed.map(Reply::Agreed));
+                })?;
+        }
+        SystemRequest::ChromiumPassword { application, fresh } => {
+            bridge::reply_later(id, move || {
+                Ok(Reply::Secret(
+                    chromium_password(&application, &fresh)?.into(),
+                ))
+            });
+        }
+        _ => bail!("this desktop cannot do that"),
+    }
+    Ok(())
+}
+
+pub fn on_battery() -> bool {
     let supplies = std::fs::read_dir("/sys/class/power_supply")
         .into_iter()
         .flatten();
@@ -522,30 +565,21 @@ fn trash(path: &Path) -> Result<()> {
     unreachable!()
 }
 
-fn filters(options: &Json) -> impl Iterator<Item = (&str, Vec<String>)> {
-    let pattern = |it: &Json| {
-        if string(it) == "*" {
+fn filters(options: &FilePicker) -> impl Iterator<Item = (&str, Vec<String>)> {
+    let pattern = |it: &Text| {
+        if &**it == "*" {
             "*".into()
         } else {
-            format!("*.{}", string(it))
+            format!("*.{}", &**it)
         }
     };
-    let patterns = move |it: &Json| {
-        it["extensions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(pattern)
-            .collect()
-    };
-    options["filters"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(move |it| (string(&it["name"]), patterns(it)))
+    options
+        .filters
+        .iter()
+        .map(move |it| (&*it.name, it.extensions.iter().map(pattern).collect()))
 }
 
-fn pick_with_portal(options: &Json, parent: Option<u64>) -> Result<Vec<PathBuf>> {
+fn pick_with_portal(options: &FilePicker, parent: Option<u64>) -> Result<Vec<PathBuf>> {
     let bus = Bus::session()?;
     let request = format!(
         "{}/request/{}/files",
@@ -562,32 +596,34 @@ fn pick_with_portal(options: &Json, parent: Option<u64>) -> Result<Vec<PathBuf>>
             Value::Array("(us)".into(), globs.collect()),
         ])
     };
-    let saves = options["save"] == true;
+    let saves = options.saves;
     let all = [
         ("handle_token", Some("files".into())),
         (
             "accept_label",
-            options["buttonLabel"].as_str().map(Value::from),
+            options.button_label.unless_empty().map(Value::from),
         ),
         (
             "multiple",
-            (!saves).then(|| Value::Bool(options["multiple"] == true)),
+            (!saves).then_some(Value::Bool(options.takes_many)),
         ),
         (
             "directory",
-            (!saves).then(|| Value::Bool(options["directories"] == true)),
+            (!saves).then_some(Value::Bool(options.takes_directories)),
         ),
         (
             "current_name",
-            options["fileName"]
-                .as_str()
+            options
+                .file_name
+                .unless_empty()
                 .filter(|_| saves)
                 .map(Value::from),
         ),
         (
             "current_folder",
-            options["directory"]
-                .as_str()
+            options
+                .directory
+                .unless_empty()
                 .map(|it| Value::Bytes(it.bytes().chain([0]).collect())),
         ),
         (
@@ -604,7 +640,7 @@ fn pick_with_portal(options: &Json, parent: Option<u64>) -> Result<Vec<PathBuf>>
             .unwrap_or_default()
             .as_str()
             .into(),
-        string(&options["title"]).into(),
+        (*options.title).into(),
         Value::options(
             all.into_iter()
                 .filter_map(|(name, value)| Some((name, value?))),
@@ -623,22 +659,87 @@ fn pick_with_portal(options: &Json, parent: Option<u64>) -> Result<Vec<PathBuf>>
         .collect())
 }
 
-fn pick_with_program(options: &Json) -> Result<Vec<PathBuf>> {
+fn print_with_portal(job: &PrintJob, parent: Option<u64>) -> Result<bool> {
+    // SAFETY: a string. The descriptor is new.
+    let mut file = unsafe {
+        let descriptor = libc::memfd_create(c"print".as_ptr(), libc::MFD_CLOEXEC);
+        ensure!(descriptor >= 0, "there is no room for the document");
+        std::fs::File::from_raw_fd(descriptor)
+    };
+    file.write_all(&job.pdf)?;
+    file.rewind()?;
+    let bus = Bus::session()?;
+    let request = format!(
+        "{}/request/{}/print",
+        PORTAL[1],
+        bus.unique_name()?.replace(':', "").replace('.', "_")
+    );
+    bus.subscribe(&format!("path='{request}'"));
+    let body = vec![
+        parent
+            .map(|it| format!("x11:{it:x}"))
+            .unwrap_or_default()
+            .as_str()
+            .into(),
+        (*job.title).into(),
+        Value::Fd(0),
+        Value::options([("handle_token", "print".into())]),
+    ];
+    let request = bus.call_with_file(
+        [PORTAL[0], PORTAL[1], "org.freedesktop.portal.Print"],
+        "Print",
+        body,
+        file.into(),
+    )?;
+    Ok(bus
+        .wait_for_signal(request.body.at(0).str(), "Response")?
+        .body
+        .at(0)
+        .number()
+        == Some(0))
+}
+
+fn print_at_once(job: &PrintJob) -> Result<bool> {
+    let mut lp = Command::new("lp");
+    lp.args(["-n", &job.copies.to_string(), "-t", &job.title])
+        .args(
+            job.printer
+                .unless_empty()
+                .into_iter()
+                .flat_map(|it| ["-d", it]),
+        );
+    let Ok(mut lp) = lp
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Ok(false);
+    };
+    let written = lp
+        .stdin
+        .take()
+        .context("there is no pipe")?
+        .write_all(&job.pdf);
+    Ok(lp.wait()?.success() && written.is_ok())
+}
+
+fn pick_with_program(options: &FilePicker) -> Result<Vec<PathBuf>> {
     let mut zenity = Command::new("zenity");
     zenity.args(["--file-selection", "--separator=\n"]);
     let flags = [
-        ("save", "--save"),
-        ("directories", "--directory"),
-        ("multiple", "--multiple"),
+        (options.saves, "--save"),
+        (options.takes_directories, "--directory"),
+        (options.takes_many, "--multiple"),
     ];
+    zenity.args(flags.iter().filter(|it| it.0).map(|it| it.1));
     zenity.args(
-        flags
-            .iter()
-            .filter(|it| options[it.0] == true)
-            .map(|it| it.1),
+        options
+            .title
+            .unless_empty()
+            .map(|it| format!("--title={it}")),
     );
-    zenity.args(options["title"].as_str().map(|it| format!("--title={it}")));
-    let start = Path::new(string(&options["directory"])).join(string(&options["fileName"]));
+    let start = Path::new(&*options.directory).join(&*options.file_name);
     zenity.args(
         start
             .to_str()
@@ -661,7 +762,7 @@ fn pick_with_program(options: &Json) -> Result<Vec<PathBuf>> {
 }
 
 /// The password that Chromium keeps for `application` in the Secret Service. It is `fresh` if there was none.
-fn chromium_password(application: &str, fresh: &str) -> Result<String> {
+fn chromium_password(application: &str, fresh: &str) -> Result<Vec<u8>> {
     const SCHEMA: &str = "chrome_libsecret_os_crypt_password";
     const SERVICE: &str = "/org/freedesktop/secrets";
     let bus = Bus::session()?;
@@ -714,7 +815,7 @@ fn chromium_password(application: &str, fresh: &str) -> Result<String> {
                 let Value::Bytes(bytes) = secret.at(0).at(2) else {
                     bail!("the keyring has no password")
                 };
-                return Ok(String::from_utf8(bytes.clone())?);
+                return Ok(bytes.clone());
             }
         }
     }
@@ -749,5 +850,5 @@ fn chromium_password(application: &str, fresh: &str) -> Result<String> {
     ];
     let body = vec![properties, Value::Struct(secret), Value::Bool(false)];
     answer(call(collection.str(), "Secret.Collection", "CreateItem", body)?.at(1))?;
-    Ok(fresh.to_owned())
+    Ok(fresh.into())
 }

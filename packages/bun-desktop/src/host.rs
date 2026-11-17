@@ -59,7 +59,11 @@ pub fn init(has_main_thread: bool) {
     system::init();
     match has_main_thread {
         true => thread::expect(),
-        false => thread::spawn(run_ui_thread),
+        false => thread::spawn(|| {
+            thread::set_name(c"UI");
+            thread::enter();
+            run_ui_thread();
+        }),
     }
 }
 

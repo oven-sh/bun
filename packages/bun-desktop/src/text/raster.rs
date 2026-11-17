@@ -25,6 +25,8 @@ const GAMMA: f32 = if cfg!(target_os = "windows") {
 };
 const CONTRAST: f32 = if cfg!(target_os = "windows") {
     0.5
+} else if cfg!(target_os = "macos") {
+    0.
 } else {
     0.2
 };
@@ -332,11 +334,33 @@ fn rasterize_color(
     })
 }
 
-/// What the image of a glyph without colors of its own depends on: 3 bits of luminance, as a shade of gray.
-pub fn shade_for(color: u32) -> u32 {
-    if cfg!(target_os = "macos") {
-        return 0xFF;
+fn to_linear(value: f32) -> f32 {
+    match cfg!(target_os = "macos") {
+        true if value <= 0.04045 => value / 12.92,
+        true => ((value + 0.055) / 1.055).powf(2.4),
+        false => value.powf(GAMMA),
     }
+}
+
+fn from_linear(value: f32) -> f32 {
+    match cfg!(target_os = "macos") {
+        true if value <= 0.003_130_8 => value * 12.92,
+        true => 1.055 * value.powf(1. / 2.4) - 0.055,
+        false => value.powf(1. / GAMMA),
+    }
+}
+
+/// What the images of glyphs depend on.
+pub fn ink_for(face: &Face, color: u32) -> u32 {
+    match face.file.has_color {
+        true => color | 0xFF,
+        false if cfg!(target_os = "macos") && !face.is_smoothed => 0xFF,
+        false => shade_for(color),
+    }
+}
+
+/// 3 bits of luminance, as a shade of gray.
+fn shade_for(color: u32) -> u32 {
     thread_local! {
         static KNOWN: [Cell<(u32, u32)>; 64] = const { [const { Cell::new((0, 0xFF)) }; 64] };
     }
@@ -346,12 +370,11 @@ pub fn shade_for(color: u32) -> u32 {
             &known[((color >> 8).wrapping_mul(0x9E37_79B9) >> 26) as usize],
         );
         if known.get().0 != rgb {
-            let [r, g, b, _] = color
-                .to_be_bytes()
-                .map(|channel| (f32::from(channel) / 255.).powf(GAMMA));
-            let luminance = ((r * 0.2126 + g * 0.7152 + b * 0.0722).powf(1. / GAMMA) * 255.).round()
-                as u32
-                >> 5;
+            let [r, g, b, _] = color.to_be_bytes().map(|channel| {
+                to_linear(f32::from(channel >> u8::from(cfg!(target_os = "macos"))) / 255.)
+            });
+            let luminance =
+                (from_linear(r * 0.2126 + g * 0.7152 + b * 0.0722) * 255.).round() as u32 >> 5;
             known.set((
                 rgb,
                 ((luminance << 5 | luminance << 2 | luminance >> 1) * 0x0101_0100) | 0xFF,
@@ -362,20 +385,16 @@ pub fn shade_for(color: u32) -> u32 {
 }
 
 /// `SkTMaskGamma_build_correcting_lut`, which makes blending look as if it were done in linear light.
-fn correct(coverage: &mut [u8], color: u32) {
-    if cfg!(target_os = "macos") {
-        return;
-    }
+fn correct(coverage: &mut [u8], shade: u32) {
     static TABLES: [OnceLock<[u8; 256]>; 8] = [const { OnceLock::new() }; 8];
-    let shade = shade_for(color) >> 24;
     let table = TABLES[shade as usize >> 5].get_or_init(|| {
         let source = shade as f32 / 255.;
-        let (target, linear_source) = (1. - source, source.powf(GAMMA));
-        let linear_target = target.powf(GAMMA);
+        let (target, linear_source) = (1. - source, to_linear(source));
+        let linear_target = to_linear(target);
         std::array::from_fn(|value| {
             let raw = value as f32 / 255.;
             let alpha = raw + (1. - raw) * CONTRAST * linear_target * raw;
-            let blended = (linear_source * alpha + linear_target * (1. - alpha)).powf(1. / GAMMA);
+            let blended = from_linear(linear_source * alpha + linear_target * (1. - alpha));
             ((blended - target) / (source - target) * 255. + 0.5) as u8
         })
     });
@@ -384,7 +403,73 @@ fn correct(coverage: &mut [u8], color: u32) {
         .for_each(|value| *value = table[usize::from(*value)]);
 }
 
-/// `matrix` maps from the glyph's origin, with y down, to pixels. `hint` requires it not to scale.
+/// How far a black rectangle on white reaches beyond the left, upper, right and lower edge of `exact`, with a gamma of 2.
+#[cfg(any(test, target_os = "macos"))]
+pub fn growth_of_block(pixels: &[u32], columns: usize, exact: Rect) -> [f32; 4] {
+    let ink = |pixel: &u32| 1. - (f32::from((pixel >> 8) as u8) / 255.).powi(2);
+    let (rows, [x, y]) = (
+        pixels.len() / columns,
+        [columns / 2, pixels.len() / columns / 2],
+    );
+    let (row, column) = (&pixels[y * columns..][..columns], || {
+        pixels[x..].iter().step_by(columns)
+    });
+    [
+        exact.x - x as f32 + row[..x].iter().map(ink).sum::<f32>(),
+        exact.y - y as f32 + column().take(y).map(ink).sum::<f32>(),
+        x as f32 + row[x..].iter().map(ink).sum::<f32>() - exact.x - exact.width,
+        y as f32 + column().skip(y).take(rows).map(ink).sum::<f32>() - exact.y - exact.height,
+    ]
+}
+
+/// With the left, upper, right and lower edges moved outwards by less than a pixel.
+fn fill_grown(
+    path: &Path,
+    matrix: &Transform,
+    [left, up, right, down]: [f32; 4],
+    rect: IntRect,
+) -> Coverage {
+    const ROWS: usize = 4;
+    let moves = [
+        (0., 0.),
+        (-left, -up),
+        (right, -up),
+        (-left, down),
+        (right, down),
+    ]
+    .map(|(x, y)| matrix.post_translate(x, y).post_scale(1., ROWS as f32));
+    let copies: Path = moves
+        .iter()
+        .flat_map(|by| path.iter().map(|it| it.transform(by)))
+        .collect();
+    let tall = IntRect::new(
+        rect.left,
+        rect.top * ROWS as i32,
+        rect.right,
+        rect.bottom * ROWS as i32,
+    );
+    let (tall, width) = (
+        edges::fill(&copies, false, &Transform::identity(), tall),
+        rect.width(),
+    );
+    let average = |rows: &[u8], x: usize| {
+        ((0..ROWS)
+            .map(|row| usize::from(rows[row * width + x]))
+            .sum::<usize>()
+            + ROWS / 2)
+            / ROWS
+    };
+    Coverage {
+        rect,
+        data: tall
+            .data
+            .chunks_exact(width * ROWS)
+            .flat_map(|rows| (0..width).map(move |x| average(rows, x) as u8))
+            .collect(),
+    }
+}
+
+/// `matrix` maps from the glyph's origin, with y down, to pixels. `hint` requires it not to scale. `foreground` is from `ink_for`.
 pub fn rasterize(
     face: &Face,
     glyph: u32,
@@ -410,13 +495,22 @@ pub fn rasterize(
         return None;
     }
     let matrix = matrix.pre_concat(flip(face));
+    let scale = average_scale(&matrix);
+    let growth = face
+        .is_smoothed
+        .then(|| super::catalog::smoothing(size * scale))
+        .flatten()
+        .filter(|_| size * scale <= 256.);
     let stroke = if face.embolden {
-        embolden_width(size)
+        embolden_width(size) + growth.map_or(0., |it| (it[0] + it[2]) / scale)
     } else {
         0.
     };
-    let rect = device_bounds(path_bounds(&path, stroke), &matrix)?;
-    let mut coverage = edges::fill(&path, false, &matrix, rect);
+    let rect = device_bounds(path_bounds(&path, stroke), &matrix)?.outset(growth.is_some().into());
+    let mut coverage = growth.map_or_else(
+        || edges::fill(&path, false, &matrix, rect),
+        |it| fill_grown(&path, &matrix, it, rect),
+    );
     if face.embolden {
         coverage.unite(&Coverage::of_path(
             &path,
@@ -425,9 +519,70 @@ pub fn rasterize(
             rect,
         ));
     }
-    correct(&mut coverage.data, foreground);
+    if growth.is_some() || !cfg!(target_os = "macos") {
+        correct(
+            &mut coverage.data,
+            if face.file.has_color {
+                shade_for(foreground)
+            } else {
+                foreground
+            } >> 24,
+        );
+    }
     Some(GlyphImage {
         rect,
         pixels: GlyphPixels::Mask(coverage.data),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gfx::PathBuilder as _;
+
+    #[test]
+    fn grows_by_what_is_measured() {
+        let mut ring = Path::new();
+        ring.move_to([2.5, 2.5])
+            .line_to([12.5, 2.5])
+            .line_to([12.5, 12.5])
+            .line_to([2.5, 12.5])
+            .close();
+        let (solid, growth) = (ring.clone(), [0.125, 0.25, 0.375, 0.1875]);
+        ring.move_to([5., 5.])
+            .line_to([5., 10.])
+            .line_to([10., 10.])
+            .line_to([10., 5.])
+            .close();
+        let fill = |path| {
+            fill_grown(
+                path,
+                &Transform::identity(),
+                growth,
+                IntRect::new(0, 0, 15, 15),
+            )
+            .data
+        };
+        let on_white =
+            |it: u8| ((1. - f32::from(it) / 255.).sqrt() * 255.).round() as u32 * 0x01_0101;
+        let pixels: Vec<_> = fill(&solid).into_iter().map(on_white).collect();
+        let measured = growth_of_block(
+            &pixels,
+            15,
+            Rect {
+                x: 2.5,
+                y: 2.5,
+                width: 10.,
+                height: 10.,
+            },
+        );
+        assert!(
+            measured
+                .iter()
+                .zip(growth)
+                .all(|(a, b)| (a - b).abs() < 0.01),
+            "{measured:?}"
+        );
+        assert_eq!(fill(&ring)[7 * 15..][4..11], [255, 96, 0, 0, 0, 32, 255]);
+    }
 }

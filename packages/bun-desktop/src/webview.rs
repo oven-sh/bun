@@ -6,14 +6,14 @@ use std::io::{Read, Seek as _, SeekFrom};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use crate::abi::{Rect, Region};
-use crate::error::{Context as _, Result, bail, ensure};
+use crate::abi::Rect;
+use crate::error::{Context as _, Result, ensure};
 use crate::gfx::Pixmap;
 use crate::hash::FastMap;
-use crate::json::{Deserialize as _, Value, json};
 use crate::paint::raster::IntRect;
+use crate::protocol::{FramePixels, HelperSources, WebViewCommand};
 use crate::sync::Mutex;
-use crate::{bridge, images, surface};
+use crate::{images, surface};
 
 const TILE: i32 = 256;
 const MAX_SIDE: u64 = 16384;
@@ -39,10 +39,9 @@ thread_local! {
 static SPARE: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
 fn read_pixels(from: &mut impl Read, length: usize) -> std::io::Result<Vec<u8>> {
-    let mut rows = std::mem::take(&mut *SPARE.lock());
-    if rows.len() / 8 > length {
-        rows = Vec::new();
-    }
+    let mut rows = Some(std::mem::take(&mut *SPARE.lock()))
+        .filter(|it| it.len() / 8 <= length)
+        .unwrap_or_default();
     rows.resize(length, 0);
     from.read_exact(&mut rows)?;
     for [b, g, r, a] in rows.as_chunks_mut().0 {
@@ -52,8 +51,7 @@ fn read_pixels(from: &mut impl Read, length: usize) -> std::io::Result<Vec<u8>> 
 }
 
 /// The end for the other process. A file would be written to the disk.
-#[cfg(unix)]
-fn open_channel() -> Result<Value> {
+pub fn open_channel() -> Result<i32> {
     use std::os::fd::{AsRawFd as _, IntoRawFd as _};
     let (mut ours, theirs) = std::os::unix::net::UnixStream::pair()?;
     for (socket, option) in [(&ours, libc::SO_RCVBUF), (&theirs, libc::SO_SNDBUF)] {
@@ -86,12 +84,7 @@ fn open_channel() -> Result<Value> {
         })?;
     CHANNEL.set(Some(receiver));
     OWED.set(0);
-    Ok(theirs.into_raw_fd().into())
-}
-
-#[cfg(not(unix))]
-fn open_channel() -> Result<Value> {
-    Ok(Value::Null)
+    Ok(theirs.into_raw_fd())
 }
 
 impl View {
@@ -144,21 +137,20 @@ impl View {
         }
     }
 
-    fn read(&mut self, arguments: &Value, received: Option<Vec<u8>>) -> Result<()> {
-        let number = |key: &str| {
-            arguments[key]
-                .as_u64()
-                .filter(|it| *it <= MAX_SIDE)
-                .context("bad frame")
-        };
-        let (width, height) = (number("width")? as u32, number("height")? as u32);
-        let (left, top) = (number("x")? as i32, number("y")? as i32);
-        let rect = IntRect::new(
-            left,
-            top,
-            left + number("w")? as i32,
-            top + number("h")? as i32,
+    fn read(
+        &mut self,
+        [width, height]: [u32; 2],
+        area: [u32; 4],
+        received: Option<Vec<u8>>,
+    ) -> Result<()> {
+        ensure!(
+            area.iter()
+                .chain(&[width, height])
+                .all(|it| u64::from(*it) <= MAX_SIDE),
+            "bad frame"
         );
+        let [left, top, columns, rows] = area.map(|it| it as i32);
+        let rect = IntRect::new(left, top, left + columns, top + rows);
         if (width, height) != (self.pixmap.width(), self.pixmap.height()) {
             self.set_pixmap(Pixmap::new(width, height).context("bad frame")?);
         }
@@ -192,68 +184,57 @@ pub fn with<R>(id: u32, f: impl FnOnce(&View, u32) -> R) -> Option<R> {
     VIEWS.with_borrow(|views| views.get(&id).map(|view| f(view, view.version)))
 }
 
-pub fn command(name: &str, arguments: &Value) -> Result<Value> {
-    let id = arguments["id"].as_u64().unwrap_or(0) as u32;
-    match name {
-        "helper" => {
-            return Ok(json!({
-                "wire": include_str!("../../../src/js/internal/desktop/webview/wire.ts"),
-                "main": include_str!("webview/helper.js"),
-                "frame": include_str!("webview/frame.js"),
-            }));
-        }
-        "open" => {
-            let file = arguments["path"].as_str().map(File::open).transpose()?;
-            let pixmap = Pixmap::new(1, 1).expect("it is a size");
-            let id = images::next_id();
-            let view = View {
+pub extern "C" fn helper_sources() -> HelperSources {
+    HelperSources {
+        wire: include_str!("webview/wire.js").into(),
+        main: include_str!("webview/helper.js").into(),
+        frame: include_str!("webview/frame.js").into(),
+    }
+}
+
+pub fn open(file: Option<&str>) -> Result<u32> {
+    let file = file.map(File::open).transpose()?;
+    let (id, pixmap) = (images::next_id(), Pixmap::new(1, 1).expect("it is a size"));
+    VIEWS.with_borrow_mut(|views| {
+        views.insert(
+            id,
+            View {
                 pixmap,
                 scale: 1.,
                 version: 0,
                 tiles: vec![0],
                 file,
-            };
-            VIEWS.with_borrow_mut(|views| views.insert(id, view));
-            return Ok(id.into());
-        }
-        "channel" => return open_channel(),
-        "close" => {
+            },
+        )
+    });
+    Ok(id)
+}
+
+pub fn command(id: u32, command: WebViewCommand) -> Result<()> {
+    match command {
+        WebViewCommand::Close => {
             VIEWS.with_borrow_mut(|views| views.remove(&id));
+            crate::accessibility::image_closed(id);
             *SPARE.lock() = Vec::new();
         }
-        "show" => surface::show_image(arguments["surface"].as_u64().unwrap_or(0) as u32, id),
-        "regions" => {
-            let regions: Vec<([f32; 4], bool)> = Vec::deserialize(&arguments["regions"])?;
-            let region = |([x, y, width, height], drag): ([f32; 4], bool)| Region {
-                rect: Rect {
-                    x,
-                    y,
-                    width,
-                    height,
-                },
-                drag,
-            };
-            let surface = arguments["surface"].as_u64().unwrap_or(0) as u32;
-            surface::set_regions_of_image(surface, id, regions.into_iter().map(region).collect());
-        }
-        "mirror" => {
-            let scale = arguments["scale"].as_f64().map_or(1., |scale| scale as f32);
-            let surface = surface::get(arguments["surface"].as_u64().unwrap_or(0) as u32)
-                .context("there is no such surface")?;
+        WebViewCommand::Mirror {
+            surface,
+            scale,
+            area,
+        } => {
+            let surface = surface::get(surface).context("there is no such surface")?;
             let shown = with(id, |view, _| (view.scale == scale).then(|| view.all())).flatten();
-            let part = surface::parse_rect(&arguments["rect"])
-                .zip(shown)
-                .map(|(rect, shown)| {
-                    IntRect::nearest(Rect {
-                        x: rect.x * scale,
-                        y: rect.y * scale,
-                        width: rect.width * scale,
-                        height: rect.height * scale,
-                    })
-                    .intersect(shown)
-                });
+            let part = area.get().zip(shown).map(|(rect, shown)| {
+                IntRect::nearest(Rect {
+                    x: rect.x * scale,
+                    y: rect.y * scale,
+                    width: rect.width * scale,
+                    height: rect.height * scale,
+                })
+                .intersect(shown)
+            });
             if part.is_some_and(|part| part.is_empty()) {
-                return Ok(Value::Null);
+                return Ok(());
             }
             let layer = match part {
                 Some(part) => surface.borrow().render_area(part, scale)?,
@@ -270,15 +251,22 @@ pub fn command(name: &str, arguments: &Value) -> Result<Value> {
                 }
             });
         }
-        "frame" => VIEWS.with_borrow_mut(|views| {
+        WebViewCommand::Frame { scale, pixels } => VIEWS.with_borrow_mut(|views| {
             let channel = |it: &Option<Receiver<_>>| loop {
                 let received = it.as_ref()?.recv_timeout(Duration::from_secs(1)).ok()?;
                 if OWED.replace(OWED.get() - 1) == 1 {
                     break Some(received);
                 }
             };
-            OWED.set(OWED.get() + usize::from(arguments["isSent"] == true));
-            let received = if arguments["isSent"] == true {
+            let is_sent = matches!(
+                pixels,
+                FramePixels::Raw {
+                    is_in_channel: true,
+                    ..
+                }
+            );
+            OWED.set(OWED.get() + usize::from(is_sent));
+            let received = if is_sent {
                 CHANNEL.with_borrow(channel)
             } else {
                 None
@@ -286,17 +274,15 @@ pub fn command(name: &str, arguments: &Value) -> Result<Value> {
             let Some(view) = views.get_mut(&id) else {
                 return Ok(());
             };
-            view.version = view.version.wrapping_add(1);
-            view.scale = arguments["scale"].as_f64().map_or(1., |scale| scale as f32);
-            match arguments.get("blob") {
-                Some(blob) => images::decode_pixmap(&bridge::blob(blob)?)
+            (view.version, view.scale) = (view.version.wrapping_add(1), scale);
+            match pixels {
+                FramePixels::Encoded(bytes) => images::decode_pixmap(&bytes)
                     .context("bad frame")
                     .map(|it| view.show(it)),
-                None => view.read(arguments, received),
+                FramePixels::Raw { size, area, .. } => view.read(size, area, received),
             }
         })?,
-        _ => bail!("unknown command webview.{name}"),
     }
     surface::image_changed(id);
-    Ok(Value::Null)
+    Ok(())
 }

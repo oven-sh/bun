@@ -1,6 +1,6 @@
 //! https://drafts.fxtf.org/compositing/
 
-use super::raster::{Pixel, multiply};
+use super::raster::{Pixel, blend_row, multiply, prefer_wide};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
@@ -34,17 +34,53 @@ pub enum Mode {
     Luminosity,
 }
 
+impl Mode {
+    /// Where the source is transparent.
+    pub fn clears_backdrop(self) -> bool {
+        matches!(
+            self,
+            Mode::Clear
+                | Mode::Source
+                | Mode::SourceIn
+                | Mode::DestinationIn
+                | Mode::SourceOut
+                | Mode::DestinationAtop
+        )
+    }
+}
+
 type Color = [f32; 3];
 
-/// `factors` gets the alpha of the source and of the backdrop, and gives how much there is of each.
-fn composite(row: &mut [Pixel], source: &[Pixel], factors: impl Fn(u8, u8) -> (u8, u8)) {
-    for (below, above) in row.iter_mut().zip(source) {
-        let (a, b) = factors(above[3], below[3]);
-        let sum = |it: usize| {
-            u32::from(above[it]) * u32::from(a) + u32::from(below[it]) * u32::from(b) + 128
-        };
-        *below = std::array::from_fn(|it| ((sum(it) + (sum(it) >> 8)) >> 8).min(255) as u8);
-    }
+/// How much there is of the source or of the backdrop, from how much the other one lets through.
+#[derive(Clone, Copy)]
+pub struct Factor {
+    pub and: u8,
+    pub xor: u8,
+}
+
+impl Factor {
+    pub const NONE: Factor = Factor { and: 0, xor: 0 };
+    pub const ALL: Factor = Factor { and: 0, xor: 255 };
+    pub const COVERED: Factor = Factor { and: 255, xor: 255 };
+    pub const OPEN: Factor = Factor { and: 255, xor: 0 };
+}
+
+#[inline(always)]
+pub fn composite_pixel(below: Pixel, above: Pixel, [of_source, of_backdrop]: [Factor; 2]) -> Pixel {
+    let (a, b) = (
+        !below[3] & of_source.and ^ of_source.xor,
+        !above[3] & of_backdrop.and ^ of_backdrop.xor,
+    );
+    let sum =
+        |it: usize| u32::from(above[it]) * u32::from(a) + u32::from(below[it]) * u32::from(b) + 128;
+    std::array::from_fn(|it| ((sum(it) + (sum(it) >> 8)) >> 8).min(255) as u8)
+}
+
+pub fn composite(row: &mut [Pixel], source: &[Pixel], factors: [Factor; 2]) {
+    prefer_wide!(composite(row, source, factors));
+    row.iter_mut()
+        .zip(source)
+        .for_each(|(below, above)| *below = composite_pixel(*below, *above, factors));
 }
 
 /// `blend` gets the colors of the source and of the backdrop, which are not premultiplied.
@@ -135,16 +171,16 @@ pub fn blend(row: &mut [Pixel], source: &[Pixel], mode: Mode) {
         Mode::Clear => row.fill([0; 4]),
         Mode::Source => row.copy_from_slice(source),
         Mode::Destination => {}
-        Mode::SourceOver => composite(row, source, |a, _| (255, 255 - a)),
-        Mode::DestinationOver => composite(row, source, |_, b| (255 - b, 255)),
-        Mode::SourceIn => composite(row, source, |_, b| (b, 0)),
-        Mode::DestinationIn => composite(row, source, |a, _| (0, a)),
-        Mode::SourceOut => composite(row, source, |_, b| (255 - b, 0)),
-        Mode::DestinationOut => composite(row, source, |a, _| (0, 255 - a)),
-        Mode::SourceAtop => composite(row, source, |a, b| (b, 255 - a)),
-        Mode::DestinationAtop => composite(row, source, |a, b| (255 - b, a)),
-        Mode::Xor => composite(row, source, |a, b| (255 - b, 255 - a)),
-        Mode::Plus => composite(row, source, |_, _| (255, 255)),
+        Mode::SourceOver => blend_row(row, source, 255),
+        Mode::DestinationOver => composite(row, source, [Factor::OPEN, Factor::ALL]),
+        Mode::SourceIn => composite(row, source, [Factor::COVERED, Factor::NONE]),
+        Mode::DestinationIn => composite(row, source, [Factor::NONE, Factor::COVERED]),
+        Mode::SourceOut => composite(row, source, [Factor::OPEN, Factor::NONE]),
+        Mode::DestinationOut => composite(row, source, [Factor::NONE, Factor::OPEN]),
+        Mode::SourceAtop => composite(row, source, [Factor::COVERED, Factor::OPEN]),
+        Mode::DestinationAtop => composite(row, source, [Factor::OPEN, Factor::COVERED]),
+        Mode::Xor => composite(row, source, [Factor::OPEN, Factor::OPEN]),
+        Mode::Plus => composite(row, source, [Factor::ALL, Factor::ALL]),
         Mode::Screen => mix_channels(row, source, |s, b| s + b - s * b),
         Mode::Overlay => mix_channels(row, source, |s, b| hard_light(b, s)),
         Mode::Darken => mix_channels(row, source, f32::min),

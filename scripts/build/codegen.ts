@@ -958,16 +958,26 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void
     resolve(cfg.codegenDir, "GeneratedBindings+Tables.h"),
     resolve(cfg.codegenDir, "GeneratedBindings+Counts.h"),
     resolve(cfg.codegenDir, "GeneratedBindings+Classes.h"),
+    resolve(cfg.codegenDir, "GeneratedBindings+Interfaces.h"),
+    resolve(cfg.codegenDir, "GeneratedBindings+InterfaceInfos.h"),
+    resolve(cfg.codegenDir, "WebGlobalObject.names.h"),
+    resolve(cfg.codegenDir, "WebGlobalObject.lut.h"),
   ];
   const rust = [...new Set(compiled.map(src => crates.get(src)))].map(crate =>
     resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`),
   );
+  rust.push(resolve(cfg.codegenDir, "web_globals.rs"));
   const types = resolve(cfg.typesDir, "Bindgen.d.ts");
+  const webGlobals = [
+    "codegen/generate-web-globals.ts",
+    "codegen/web-globals.ts",
+    "jsc/bindings/ZigGlobalObject.lut.txt",
+  ];
 
   n.build({
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
-    inputs: [...sources.bindgen, ...sources.bindgenCodegen],
+    inputs: [...sources.bindgen, ...sources.bindgenCodegen, ...webGlobals.map(it => resolve(cfg.cwd, "src", it))],
     implicitInputs: [...declaredTypeInputs(cfg), ...guardInputs({ cfg, engine })],
     orderOnlyInputs: [dirStamp],
     vars: {

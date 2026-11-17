@@ -12,7 +12,7 @@ use crate::properties::{Id, Style};
 use crate::svg_values::{ColorInterpolation, MaskType};
 use crate::tree::Replaced;
 use crate::types::*;
-use crate::values::{AxisPosition, Interpolation, mix, mix_colors};
+use crate::values::{AxisPosition, Interpolation, mix, mix_colors, with_cors};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Frame {
@@ -231,25 +231,39 @@ pub(crate) struct Ready<'a> {
     pub(crate) ratio: Option<f32>,
     /// The size of one of its pixels.
     pub(crate) unit: f32,
+    is_mask: bool,
 }
 
 impl Document {
     pub(crate) fn ready<'a>(&self, image: &'a Image, style: &Style) -> Option<Ready<'a>> {
+        self.ready_as(image, style, false)
+    }
+
+    fn ready_as<'a>(&self, image: &'a Image, style: &Style, is_mask: bool) -> Option<Ready<'a>> {
         let (image, resolution) = image.chosen(self.environment.scale * self.environment.zoom)?;
         let unit = style.zoom / resolution;
         Some(match image {
             Image::Url(url) => {
-                let loaded = self.oriented_image(url, style).filter(|it| it.image != 0)?;
+                let loaded = if is_mask {
+                    self.oriented_image(&with_cors(url), style)
+                } else {
+                    self.oriented_image(url, style)
+                }
+                .filter(|it| it.image != 0)?;
                 Ready {
                     image,
                     id: loaded.image,
                     natural: loaded.size.map(|it| Some(it? * unit)),
                     ratio: loaded.ratio,
                     unit,
+                    is_mask,
                 }
             }
             Image::Fade(fade) => {
-                let [a, b] = fade.0.each_ref().map(|it| self.ready(it.as_ref()?, style));
+                let [a, b] = fade
+                    .0
+                    .each_ref()
+                    .map(|it| self.ready_as(it.as_ref()?, style, is_mask));
                 let natural =
                     [0, 1].map(|axis| Some(mix(a?.natural[axis]?, b?.natural[axis]?, fade.1)));
                 Ready {
@@ -258,6 +272,7 @@ impl Document {
                     natural,
                     ratio: natural[0].zip(natural[1]).map(|it| it.0 / it.1),
                     unit,
+                    is_mask,
                 }
             }
             _ => Ready {
@@ -266,6 +281,7 @@ impl Document {
                 natural: [None; 2],
                 ratio: None,
                 unit,
+                is_mask,
             },
         })
     }
@@ -341,7 +357,7 @@ impl<'a> Painter<'a> {
                 for (image, share) in fade.0.iter().zip([1.0 - fade.1, fade.1]) {
                     let Some(ready) = image
                         .as_ref()
-                        .and_then(|it| painter.document.ready(it, style))
+                        .and_then(|it| painter.document.ready_as(it, style, ready.is_mask))
                     else {
                         continue;
                     };
@@ -608,9 +624,12 @@ impl<'a> Painter<'a> {
         area: BoxArea,
         space: &Space,
         text: &mut dyn FnMut(&mut Self),
-        paint: impl FnOnce(&mut Self, RoundedRect, &Space),
+        paint: &mut dyn FnMut(&mut Self, RoundedRect, &Space),
     ) {
-        let is_masked = matches!(area, BoxArea::Text | BoxArea::BorderArea);
+        let is_masked = matches!(
+            area,
+            BoxArea::Text | BoxArea::BorderArea | BoxArea::BorderAreaAndText
+        );
         let bounds = contour.map_or(frame.shape.rect, |it| it.bounds(frame, 0.0));
         let (group, mut inside) = (
             is_masked
@@ -622,7 +641,9 @@ impl<'a> Painter<'a> {
             Some(contour) if contour.is_collapsed() => {}
             Some(contour) => {
                 match area {
-                    BoxArea::BorderArea => inside.visible = inside.visible.intersection(&bounds),
+                    BoxArea::BorderArea | BoxArea::BorderAreaAndText => {
+                        inside.visible = inside.visible.intersection(&bounds)
+                    }
                     BoxArea::BorderBox => self.clip_inside(
                         contour,
                         frame,
@@ -636,9 +657,11 @@ impl<'a> Painter<'a> {
         }
         if let Some(outer) = group {
             self.marker(&Item::Mask { luminance: false });
-            match area {
-                BoxArea::Text => text(self),
-                _ => self.border_in(style, frame, [BLACK; 4], space),
+            if area != BoxArea::BorderArea {
+                text(self);
+            }
+            if area != BoxArea::Text {
+                self.border_in(style, frame, [BLACK; 4], space);
             }
             self.end_group(outer);
         }
@@ -657,14 +680,16 @@ impl<'a> Painter<'a> {
             style.paint.background_color.resolve(style.color()),
             b.image.len() - 1,
         );
-        if style.has_background() {
+        if contour.is_none() && !style.paints().contains(crate::properties::Paints::LAYERS) {
+            self.fill(frame.shape, color, space);
+        } else if style.has_background() {
             let group = self.isolate_backgrounds(style, frame.shape.rect, space);
             let local = |index: usize| {
                 frame
                     .scrolled
                     .filter(|_| *b.attachment.at(index) == Attachment::Local)
             };
-            let clip = |index: usize| match *b.clip.at(index) {
+            let clip = |index: usize| match b.clip.at(index).0 {
                 BoxArea::BorderBox if local(index).is_some() => BoxArea::PaddingBox,
                 area => area,
             };
@@ -695,7 +720,7 @@ impl<'a> Painter<'a> {
                     clip(last),
                     space,
                     text,
-                    |painter, shape, space| {
+                    &mut |painter, shape, space| {
                         let shape = within(painter, last, shape);
                         painter.fill(shape, color, space);
                     },
@@ -721,7 +746,7 @@ impl<'a> Painter<'a> {
                             clip(index),
                             space,
                             text,
-                            |painter, shape, space| {
+                            &mut |painter, shape, space| {
                                 let shape = within(painter, index, shape);
                                 painter.background_layer(style, index, area, shape, space);
                             },
@@ -761,7 +786,7 @@ impl<'a> Painter<'a> {
                 .filter(|it| alpha(it.1) > 0)
         };
         let covered =
-            has_background && alpha(color) == 0xff && *b.clip.at(last) == BoxArea::BorderBox;
+            has_background && alpha(color) == 0xff && b.clip.at(last).0 == BoxArea::BorderBox;
         let simple = contour
             .as_ref()
             .and_then(|_| crate::contour::rounded_border_shape(style, frame));
@@ -811,7 +836,7 @@ impl<'a> Painter<'a> {
     }
 
     /// `space` has the units of the style, and `user` those of the subject.
-    pub(crate) fn mask_layers(&mut self, subject: &Subject<'a, '_>, space: &Space, user: &Space) {
+    pub(crate) fn mask_layers(&mut self, subject: &Subject<'a, '_>, scaled: &Space, space: &Space) {
         let (document, style) = (subject.document, subject.style);
         let m = &style.mask;
         for index in (0..m.image.len()).rev() {
@@ -847,7 +872,7 @@ impl<'a> Painter<'a> {
                     start,
                     end: self.out.filters.len() as u32,
                 },
-                if reference.is_some() { user } else { space },
+                if reference.is_some() { space } else { scaled },
             );
             let group = (blend != BlendMode::Normal || filters.end > start)
                 .then(|| self.begin_group(space.visible, 1.0, blend, filters, space));
@@ -858,7 +883,7 @@ impl<'a> Painter<'a> {
                 m.image[index]
                     .0
                     .as_ref()
-                    .and_then(|it| document.ready(it, style)),
+                    .and_then(|it| document.ready_as(it, style, true)),
             ) {
                 let placement = Placement {
                     x: m.x.at(index),
@@ -898,7 +923,7 @@ impl<'a> Painter<'a> {
             style.parse_other::<Image>(Id::WebkitMaskBoxImageSource),
             &subject.areas,
         ) {
-            self.nine_pieces(&image, crate::nine_pieces::MASK, style, frame, space);
+            self.nine_pieces(&image, crate::nine_pieces::MASK, style, frame, scaled);
         }
     }
 }
@@ -907,7 +932,9 @@ impl Replaced {
     /// What `object-view-box` leaves of it, and where that is in fractions of the whole.
     pub(crate) fn at_resolution(self, resolution: f32) -> Replaced {
         Replaced {
-            size: self.size.map(|it| Some(it? / resolution)),
+            size: self
+                .size
+                .map(|it| Some((it? / resolution).min(crate::values::MAX_LENGTH))),
             ..self
         }
     }

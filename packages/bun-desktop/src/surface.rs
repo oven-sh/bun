@@ -6,19 +6,18 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use crate::abi::{self, Item, Rect, RoundedRect};
-use crate::bridge::Kind;
 use crate::diagnostics::{self, Incident, trace};
-use crate::error::{Context as _, Result, bail};
+use crate::error::{Context as _, Result};
 use crate::gfx::Transform;
 use crate::hash::FastMap;
 use crate::host::{self, thread};
 use crate::input::{self, Ime};
-use crate::json::{Deserialize as _, Value, json};
 use crate::motion::{Motion, Next, Tables};
 use crate::paint::cpu::Painter;
 use crate::paint::raster::{Clip, IntRect, Layer};
 use crate::paint::scene::{Frame, Scene, copy};
 use crate::platform::Cursor;
+use crate::protocol::{Bitmap, Input, InputField, Maybe, Size, SurfaceCommand, SurfaceMetrics};
 use crate::sync::Mutex;
 use crate::window::{self, WindowState};
 use crate::{accessibility, bridge, images};
@@ -38,7 +37,7 @@ pub struct Surface {
     background: u32,
     /// What the page wants instead, or 0.
     canvas: u32,
-    image: u32,
+    pub image: u32,
     pub scene: Scene,
     pub motion: Motion,
     /// When the window last asked for a frame.
@@ -54,7 +53,6 @@ pub struct Surface {
     last_early_frame: Instant,
     pub cursor: Cursor,
     pub ime: Ime,
-    pub accessibility: accessibility::Tree,
 }
 
 thread_local! {
@@ -88,11 +86,11 @@ pub fn shown_in(state: &WindowState) -> Vec<Rc<RefCell<Surface>>> {
 }
 
 pub fn create_cover(id: u32, window: u32, rect: Rect, scene: Scene) -> Result<()> {
-    command("create", &json!({ "id": id, "focusable": false }))?;
+    create(id, Size::default(), 1., false);
     let surface = get(id).context("the surface was destroyed")?;
     let surface = &mut *surface.borrow_mut();
     (surface.window, surface.rect, surface.scene) = (Some(window), rect, scene);
-    surface.ime = Ime::parse(&json!({ "enabled": true }));
+    surface.ime = Ime::new(Maybe::Yes(InputField::default()));
     surface.scene.index();
     Ok(())
 }
@@ -166,13 +164,16 @@ impl Surface {
         (self.rect, self.scale) = (rect, scale);
         self.update_backing();
         if has_changed || always_reports {
-            let fields = [
-                self.id.into(),
-                rect.width.into(),
-                rect.height.into(),
-                scale.into(),
-            ];
-            bridge::emit_numbers(Kind::Resize, &fields, true);
+            bridge::emit_input(
+                self.id,
+                Input::Resize {
+                    size: Size {
+                        width: rect.width,
+                        height: rect.height,
+                    },
+                    scale,
+                },
+            );
         }
     }
 
@@ -230,10 +231,10 @@ impl Surface {
             .filter(|_| self.is_visible && !self.motion.is_scrolling())
     }
 
-    fn advance(&mut self, now: Instant) {
+    fn advance(&mut self, now: Instant, is_in_step: bool) {
         self.last_tick = now;
+        self.motion.follow(is_in_step);
         let next = self.motion.next;
-        self.motion.anticipate(milliseconds(now));
         let has_changed = self
             .motion
             .advance(self.id, &mut self.scene, milliseconds(now));
@@ -264,10 +265,38 @@ impl Surface {
         self.motion.is_scrolling()
     }
 
+    /// In the window.
+    #[cfg(target_os = "macos")]
+    pub fn scrolled_port(&mut self) -> Option<Rect> {
+        let (
+            Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            zoom,
+        ) = (self.motion.port(&self.scene)?, self.scene.zoom);
+        Some(Rect {
+            x: self.rect.x + x * zoom,
+            y: self.rect.y + y * zoom,
+            width: width * zoom,
+            height: height * zoom,
+        })
+    }
+
     pub fn next_motion(&self) -> Option<Instant> {
+        const LONGEST_REST: f64 = 3_600_000.;
         match self.motion.next {
             Next::Never => None,
-            Next::At(time) => Some(*EPOCH + Duration::from_secs_f64(time / 1000.)),
+            Next::At(time) => Some(
+                *EPOCH
+                    + Duration::from_secs_f64(
+                        time.min(milliseconds(self.last_tick) + LONGEST_REST)
+                            .max(0.)
+                            / 1000.,
+                    ),
+            ),
             Next::Frame | Next::Leisurely => Some(self.last_tick + Duration::from_millis(50)),
         }
     }
@@ -276,10 +305,12 @@ impl Surface {
         if self.frame_deadline.take().is_some() {
             (self.last_frame, self.inputs) = (now, bridge::inputs());
             let interval = host::interval().as_secs_f64() * 1000.;
-            bridge::emit_numbers(
-                Kind::Frame,
-                &[self.id.into(), milliseconds(now), interval],
-                false,
+            bridge::emit_input(
+                self.id,
+                Input::Frame {
+                    time: milliseconds(now),
+                    interval,
+                },
             );
         }
     }
@@ -368,7 +399,6 @@ impl Surface {
     }
 
     pub fn render_area(&self, area: IntRect, scale: f32) -> Result<Layer> {
-        let mut layer = Layer::new(area).context("the area is empty or too large")?;
         let frame = Frame::new(scale * self.scene.zoom, false);
         let painter = Painter {
             scene: &self.scene,
@@ -376,36 +406,36 @@ impl Surface {
             limit: usize::MAX,
             left_out: &[],
         };
-        let matrix = Transform::from_scale(frame.scale, frame.scale);
-        painter.paint(
+        let (matrix, items) = (
+            Transform::from_scale(frame.scale, frame.scale),
             0..self.scene.items.len(),
-            &mut layer,
-            &matrix,
-            &Clip::new(area),
         );
-        Ok(layer)
+        let whole = IntRect::nearest(Rect {
+            x: 0.,
+            y: 0.,
+            width: self.rect.width * scale,
+            height: self.rect.height * scale,
+        });
+        let needed = area
+            .outset(painter.reach_of_backdrops(items.clone(), &matrix))
+            .intersect(whole)
+            .union(area);
+        let mut layer = Layer::new(needed).context("the area is empty or too large")?;
+        painter.paint(items, &mut layer, &matrix, &Clip::new(needed));
+        if needed == area {
+            Ok(layer)
+        } else {
+            layer.copy(area).context("the area is empty or too large")
+        }
     }
 
-    fn capture(&self, arguments: &Value) -> Result<Value> {
-        let scale = arguments["scale"]
-            .as_f64()
-            .map_or(self.scale, |scale| scale as f32);
-        let layer = self.render(parse_rect(&arguments["rect"]), scale)?;
-        let (width, height, mut bytes) = (
-            layer.pixmap.width(),
-            layer.pixmap.height(),
-            images::straight_rgba(&layer),
-        );
-        if arguments["format"] != "rgba" {
-            bytes = crate::codec::Rgba {
-                width,
-                height,
-                data: bytes,
-            }
-            .to_png()
-            .context("nothing was captured")?;
-        }
-        Ok(json!({ "blob": bridge::put_blob(bytes), "width": width, "height": height }))
+    fn capture(&self, area: Option<Rect>) -> Result<Bitmap> {
+        let layer = self.render(area.map(without_negative_size), self.scale)?;
+        Ok(Bitmap {
+            width: layer.pixmap.width(),
+            height: layer.pixmap.height(),
+            pixels: images::straight_rgba(&layer).into(),
+        })
     }
 }
 
@@ -413,14 +443,12 @@ pub fn contains(rect: Rect, x: f32, y: f32) -> bool {
     x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height
 }
 
-pub fn parse_rect(value: &Value) -> Option<Rect> {
-    let number = |key: &str| Some(value.get(key)?.as_f64()? as f32);
-    Some(Rect {
-        x: number("x")?,
-        y: number("y")?,
-        width: number("width")?.max(0.),
-        height: number("height")?.max(0.),
-    })
+pub fn without_negative_size(rect: Rect) -> Rect {
+    Rect {
+        width: rect.width.max(0.),
+        height: rect.height.max(0.),
+        ..rect
+    }
 }
 
 type Submission = Box<(Scene, Tables)>;
@@ -454,6 +482,28 @@ pub unsafe fn submit(id: u32, list: &abi::DisplayList, compositing: Option<&abi:
     });
 }
 
+pub fn submit_scrollers(id: u32, scrollers: Vec<abi::Scroller>) {
+    thread::post(move || {
+        let Some(surface) =
+            get(id).filter(|it| it.borrow().motion.tables.scrollers.len() == scrollers.len())
+        else {
+            return;
+        };
+        let window = {
+            let surface = &mut *surface.borrow_mut();
+            surface.motion.tables.scrollers = scrollers;
+            surface
+                .motion
+                .advance(id, &mut surface.scene, milliseconds(surface.last_tick));
+            surface.refresh();
+            surface
+                .window
+                .filter(|_| surface.is_visible && !surface.motion.is_scrolling())
+        };
+        window.into_iter().for_each(window::draw_now);
+    });
+}
+
 pub fn release_memory() {
     SPARE.lock().take();
 }
@@ -467,13 +517,13 @@ pub fn milliseconds(time: Instant) -> f64 {
 /// With a position in the surface. `f` returns whether it used the event.
 pub fn with_motion(
     id: u32,
-    x: f64,
-    y: f64,
+    x: f32,
+    y: f32,
     f: impl FnOnce(&mut Motion, &Scene, [f32; 2]) -> bool,
 ) -> bool {
     let Some(surface) = get(id) else { return false };
     let surface = &mut *surface.borrow_mut();
-    let position = [x, y].map(|it| it as f32 / surface.scene.zoom);
+    let position = [x, y].map(|it| it / surface.scene.zoom);
     let was_used = f(&mut surface.motion, &surface.scene, position);
     if was_used {
         surface.window.map(window::request_frame);
@@ -485,12 +535,14 @@ pub fn with_motion(
 pub fn catch_up(id: u32) {
     let Some(surface) = get(id) else { return };
     let mut surface = surface.borrow_mut();
-    if surface
+    diagnostics::fingers_moved(host::interval());
+    if let Some(late) = surface
         .starved_at
-        .is_some_and(|it| it.elapsed() < host::interval() * 3 / 5)
+        .map(|it| it.elapsed())
+        .filter(|it| *it < host::interval() * 3 / 5)
     {
         diagnostics::note(Incident::CaughtUp);
-        surface.advance(Instant::now());
+        surface.advance(Instant::now(), late < host::interval() / 5);
         let window = surface.window;
         drop(surface);
         window.into_iter().for_each(window::draw_now);
@@ -504,7 +556,7 @@ pub fn change_motion(id: u32, f: impl FnOnce(&mut Motion)) {
 }
 
 /// In place of a display list, until the next one. 0 is no image.
-pub fn show_image(id: u32, image: u32) {
+fn show_image(id: u32, image: u32) {
     let Some(surface) = get(id) else { return };
     let surface = &mut *surface.borrow_mut();
     (surface.scene, surface.motion, surface.image) = (Scene::default(), Motion::default(), image);
@@ -512,7 +564,7 @@ pub fn show_image(id: u32, image: u32) {
     surface.refresh();
 }
 
-pub fn set_regions_of_image(id: u32, image: u32, regions: Vec<abi::Region>) {
+fn set_regions_of_image(id: u32, image: u32, regions: Vec<abi::Region>) {
     let Some(surface) = get(id).filter(|it| it.borrow().image == image) else {
         return;
     };
@@ -536,7 +588,7 @@ pub fn begin_frame(state: &WindowState) {
     for surface in in_window(state) {
         let surface = &mut *surface.borrow_mut();
         if surface.is_visible {
-            surface.advance(now);
+            surface.advance(now, now < surface.last_tick + host::interval() * 3 / 2);
             is_scrolling |= surface.is_scrolling();
             is_followed |= surface.is_scrolling() && surface.motion.next == Next::Frame;
         }
@@ -579,41 +631,7 @@ pub fn begin_overdue_frames() {
     });
 }
 
-pub fn request_frame(id: u32) {
-    if let Some(surface) = get(id) {
-        surface.borrow_mut().request_frame();
-    }
-}
-
-/// `index` is into `cursors` in `internal/desktop/native.ts`.
-pub fn set_cursor(id: u32, index: u32) {
-    use Cursor::*;
-    const CURSORS: [Cursor; 22] = [
-        Arrow,
-        PointingHand,
-        IBeam,
-        VerticalIBeam,
-        Crosshair,
-        OpenHand,
-        ClosedHand,
-        NotAllowed,
-        DragLink,
-        DragCopy,
-        ContextMenu,
-        ResizeColumn,
-        ResizeRow,
-        ResizeLeft,
-        ResizeRight,
-        ResizeUp,
-        ResizeDown,
-        ResizeLeftRight,
-        ResizeUpDown,
-        ResizeUpLeftDownRight,
-        ResizeUpRightDownLeft,
-        Hidden,
-    ];
-    let Some(surface) = get(id) else { return };
-    let cursor = CURSORS.get(index as usize).copied().unwrap_or_default();
+fn set_cursor(surface: &RefCell<Surface>, cursor: Cursor) {
     let window = Some(&mut *surface.borrow_mut())
         .filter(|surface| surface.cursor != cursor)
         .and_then(|surface| {
@@ -636,147 +654,195 @@ fn detach(id: u32) {
         .retain(|attached| *attached != id);
     input::forget_surface(&state, id);
     window::refresh(state.id);
-    accessibility::update(&state);
+    accessibility::window_changed(&state);
 }
 
 pub fn is_focusable(id: u32) -> bool {
     get(id).is_some_and(|surface| surface.borrow().is_focusable)
 }
 
-pub fn command(name: &str, arguments: &Value) -> Result<Value> {
-    let id = arguments["id"].as_u64().context("the surface has no id")? as u32;
-    if name == "create" {
-        let number = |key: &str, otherwise: f32| {
-            arguments[key]
-                .as_f64()
-                .map_or(otherwise, |number| number as f32)
-        };
-        let mut surface = Surface {
-            id,
-            window: None,
-            bounds: None,
-            rect: Rect {
-                x: 0.,
-                y: 0.,
-                width: number("width", 0.),
-                height: number("height", 0.),
-            },
-            scale: number("scale", 1.),
-            is_visible: true,
-            is_passthrough: false,
-            is_focusable: arguments["focusable"] != false,
-            radius: 0.,
-            background: 0,
-            canvas: 0,
-            image: 0,
-            scene: Scene::default(),
-            motion: Motion::default(),
-            starved_at: None,
-            last_tick: Instant::now(),
-            caret_moved_at: Instant::now(),
-            frame_deadline: None,
-            last_frame: Instant::now(),
-            inputs: u32::MAX,
-            last_early_frame: *EPOCH,
-            cursor: Cursor::Arrow,
-            ime: Ime::default(),
-            accessibility: accessibility::Tree::default(),
-        };
-        surface.update_backing();
-        SURFACES.with_borrow_mut(|surfaces| surfaces.insert(id, Rc::new(RefCell::new(surface))));
-        return Ok(Value::Null);
-    }
+fn create(id: u32, size: Size, scale: f32, is_focusable: bool) {
+    let mut surface = Surface {
+        id,
+        window: None,
+        bounds: None,
+        rect: Rect {
+            x: 0.,
+            y: 0.,
+            width: size.width,
+            height: size.height,
+        },
+        scale,
+        is_visible: true,
+        is_passthrough: false,
+        is_focusable,
+        radius: 0.,
+        background: 0,
+        canvas: 0,
+        image: 0,
+        scene: Scene::default(),
+        motion: Motion::default(),
+        starved_at: None,
+        last_tick: Instant::now(),
+        caret_moved_at: Instant::now(),
+        frame_deadline: None,
+        last_frame: Instant::now(),
+        inputs: u32::MAX,
+        last_early_frame: *EPOCH,
+        cursor: Cursor::Arrow,
+        ime: Ime::default(),
+    };
+    surface.update_backing();
+    SURFACES.with_borrow_mut(|surfaces| surfaces.insert(id, Rc::new(RefCell::new(surface))));
+}
+
+pub fn destroy(id: u32) {
+    detach(id);
+    SURFACES.with_borrow_mut(|surfaces| surfaces.remove(&id));
+    accessibility::surface_destroyed(id);
+}
+
+type Placed = (Rc<RefCell<Surface>>, Option<Rc<WindowState>>);
+
+fn existing(id: u32) -> Result<Placed> {
     let shared = get(id).context("the surface was destroyed")?;
     let state = shared
         .borrow()
         .window
         .and_then(|window| window::state(window).ok());
-    match name {
-        "destroy" => {
-            detach(id);
-            SURFACES.with_borrow_mut(|surfaces| surfaces.remove(&id));
+    Ok((shared, state))
+}
+
+pub fn metrics(id: u32) -> Result<SurfaceMetrics> {
+    let (shared, state) = existing(id)?;
+    let (surface, (x, y)) = (
+        shared.borrow(),
+        state.map_or((0., 0.), |state| state.metrics.get().origin),
+    );
+    Ok(SurfaceMetrics {
+        bounds: Rect {
+            x: x + surface.rect.x,
+            y: y + surface.rect.y,
+            ..surface.rect
+        },
+        scale: surface.scale,
+    })
+}
+
+pub fn capture(id: u32, area: Option<Rect>) -> Result<Bitmap> {
+    existing(id)?.0.borrow().capture(area)
+}
+
+pub fn command(id: u32, command: SurfaceCommand, edits: u32) -> Result<()> {
+    match command {
+        SurfaceCommand::Create {
+            size,
+            scale,
+            is_focusable,
+        } => {
+            create(id, size, scale, is_focusable);
+            return Ok(());
         }
-        "attach" => {
-            let target = arguments["window"]
-                .as_u64()
-                .map(|window| window::state(window as u32))
-                .transpose()?;
-            let index = arguments["index"].as_u64().unwrap_or(u64::MAX) as usize;
-            match (&state, &target) {
-                (Some(from), Some(to)) if from.id == to.id => {
-                    to.surfaces.borrow_mut().retain(|other| *other != id)
+        SurfaceCommand::RequestFrame | SurfaceCommand::Cursor(_) if get(id).is_none() => {
+            return Ok(());
+        }
+        SurfaceCommand::Show(view) => {
+            show_image(id, view);
+            accessibility::windows_changed();
+            return Ok(());
+        }
+        SurfaceCommand::Regions { view, regions } => {
+            set_regions_of_image(id, view, regions.into_vec());
+            return Ok(());
+        }
+        _ => {}
+    }
+    let (shared, state) = existing(id)?;
+    let change = |f: &dyn Fn(&mut Surface)| {
+        let mut borrowed = shared.borrow_mut();
+        let surface = &mut *borrowed;
+        f(surface);
+        match &state {
+            Some(state) => surface.place_in(state, false),
+            None => surface.place(surface.bounds.unwrap_or(surface.rect), surface.scale, false),
+        }
+        surface.refresh();
+        drop(borrowed);
+        accessibility::windows_changed();
+    };
+    match command {
+        SurfaceCommand::Create { .. }
+        | SurfaceCommand::Show(_)
+        | SurfaceCommand::Regions { .. } => unreachable!(),
+        SurfaceCommand::Destroy => destroy(id),
+        SurfaceCommand::Detach => detach(id),
+        SurfaceCommand::Attach { window, index } => {
+            let target = window::state(window)?;
+            match &state {
+                Some(from) if from.id == target.id => {
+                    target.surfaces.borrow_mut().retain(|other| *other != id)
                 }
                 _ => detach(id),
             }
-            if let Some(target) = target {
-                let index = index.min(target.surfaces.borrow().len());
-                target.surfaces.borrow_mut().insert(index, id);
-                shared.borrow_mut().window = Some(target.id);
-                shared.borrow_mut().place_in(&target, true);
-                if target.focused_surface.get().is_none() && is_focusable(id) {
-                    input::focus(&target, Some(id));
-                }
-                window::refresh(target.id);
-                accessibility::update(&target);
+            let index =
+                (index.get().unwrap_or(u32::MAX) as usize).min(target.surfaces.borrow().len());
+            target.surfaces.borrow_mut().insert(index, id);
+            shared.borrow_mut().window = Some(target.id);
+            shared.borrow_mut().place_in(&target, true);
+            if target.focused_surface.get().is_none() && is_focusable(id) {
+                input::focus(&target, Some(id));
             }
+            window::refresh(target.id);
+            accessibility::window_changed(&target);
         }
-        "set" => {
-            let surface = &mut *shared.borrow_mut();
-            if let Some(bounds) = arguments.get("bounds") {
-                surface.bounds = parse_rect(bounds);
-            }
-            surface.is_visible = arguments["visible"].as_bool().unwrap_or(surface.is_visible);
-            surface.is_passthrough = arguments["passthrough"]
-                .as_bool()
-                .unwrap_or(surface.is_passthrough);
-            surface.radius = arguments["radius"]
-                .as_f64()
-                .map_or(surface.radius, |radius| radius as f32);
-            surface.canvas = arguments["canvas"]
-                .as_u64()
-                .map_or(surface.canvas, |color| color as u32);
-            surface.background = arguments["background"]
-                .as_u64()
-                .map_or(surface.background, |color| color as u32);
-            match &state {
-                Some(state) => surface.place_in(state, false),
-                None => surface.place(surface.bounds.unwrap_or(surface.rect), surface.scale, false),
-            }
-            surface.refresh();
+        SurfaceCommand::Bounds(bounds) => {
+            change(&|it| it.bounds = bounds.get().map(without_negative_size))
         }
-        "size" => {
-            let (surface, (x, y)) = (
-                shared.borrow(),
-                state.map_or((0., 0.), |state| state.metrics.get().origin),
-            );
-            let Rect { width, height, .. } = surface.rect;
-            let (x, y) = (x + surface.rect.x, y + surface.rect.y);
-            return Ok(
-                json!({ "width": width, "height": height, "scale": surface.scale, "x": x, "y": y }),
-            );
+        SurfaceCommand::Place {
+            bounds,
+            is_visible,
+            radius,
+        } => {
+            change(&|it| {
+                (it.bounds, it.is_visible, it.radius) =
+                    (Some(without_negative_size(bounds)), is_visible, radius)
+            });
         }
-        "focus" => {
-            if let Some(state) = state {
-                input::focus(&state, Some(id));
-            }
+        SurfaceCommand::Visible(is_visible) => change(&|it| it.is_visible = is_visible),
+        SurfaceCommand::Passthrough(is_passthrough) => {
+            change(&|it| it.is_passthrough = is_passthrough)
         }
-        "ime" => {
-            let before = std::mem::replace(&mut shared.borrow_mut().ime, Ime::parse(arguments));
-            if arguments["edits"] != u64::from(bridge::edits()) {
+        SurfaceCommand::Background(color) => change(&|it| it.background = color),
+        SurfaceCommand::Canvas(color) => change(&|it| it.canvas = color),
+        SurfaceCommand::Focus => state
+            .into_iter()
+            .for_each(|state| input::focus(&state, Some(id))),
+        SurfaceCommand::RequestFrame => shared.borrow_mut().request_frame(),
+        SurfaceCommand::Cursor(cursor) => set_cursor(&shared, cursor),
+        SurfaceCommand::BeginDrag(dragged) => {
+            let [width, height] = [dragged.area.width, dragged.area.height]
+                .map(|it| (it * shared.borrow().scale).round() as i32);
+            let image = images::take_recording(dragged.image, width, height);
+            let window = state.and_then(|it| window::platform_window(it.id));
+            window
+                .into_iter()
+                .for_each(|it| it.begin_drag(&dragged, image.as_ref()));
+        }
+        SurfaceCommand::Field(field) => {
+            let before = std::mem::replace(&mut shared.borrow_mut().ime, Ime::new(field));
+            if edits != bridge::edits() {
                 shared.borrow_mut().ime.keep_text_of(&before);
             }
-            if let Some(state) = state {
-                input::ime_changed(&state, &before, id);
-            }
+            state
+                .into_iter()
+                .for_each(|state| input::ime_changed(&state, &before, id));
         }
-        "capture" => return shared.borrow().capture(arguments),
-        "a11y" => {
-            shared.borrow_mut().accessibility = accessibility::Tree::deserialize(arguments)?;
-            if let Some(state) = state {
-                accessibility::update(&state);
-            }
+        SurfaceCommand::PasswordField => {
+            let before = std::mem::replace(&mut shared.borrow_mut().ime, Ime::for_password());
+            state
+                .into_iter()
+                .for_each(|state| input::ime_changed(&state, &before, id));
         }
-        _ => bail!("unknown command surface.{name}"),
     }
-    Ok(Value::Null)
+    Ok(())
 }

@@ -239,7 +239,7 @@ export interface RustBuildInputs {
 const generatedBuiltinTables = ["aot_builtin_ids.rs", "aot_builtin_syntax.rs", "aot_builtin_table.rs"];
 
 const generatedFilesReadBy: Record<string, string[] | "all"> = {
-  bun_aot: [...generatedBuiltinTables, "aot_schema.rs"],
+  bun_aot: [...generatedBuiltinTables, "aot_schema.rs", "web_globals.rs"],
   bun_aot_builtins: [...generatedBuiltinTables, "aot_schema_builtins.rs"],
   bun_aot_interface: ["aot_schema_interface.rs"],
   bun_ast: ["runtime.out.js"],
@@ -247,6 +247,8 @@ const generatedFilesReadBy: Record<string, string[] | "all"> = {
   bun_core: ["build_options.rs"],
   bun_css_jsc: ["generated_bindgen_bun_css_jsc.rs"],
   bun_dom: ["generated_bindgen_bun_dom.rs"],
+  bun_ui: ["generated_bindgen_bun_ui.rs"],
+  bun_desktop: ["generated_bindgen_bun_desktop.rs"],
   bun_http_jsc: ["generated_bindgen_bun_http_jsc.rs"],
   bun_install: ["bun-shim-impl.exe"],
   bun_install_jsc: ["generated_bindgen_bun_install_jsc.rs"],
@@ -269,6 +271,7 @@ const generatedFilesReadBy: Record<string, string[] | "all"> = {
   bun_sourcemap_jsc: ["generated_bindgen_bun_sourcemap_jsc.rs"],
   bun_sql_jsc: ["generated_bindgen_bun_sql_jsc.rs"],
   bun_sys_jsc: ["generated_bindgen_bun_sys_jsc.rs"],
+  bun_web: ["generated_bindgen_bun_web.rs"],
 };
 
 function generatedFilesOf(packageName: string): string[] | "all" {

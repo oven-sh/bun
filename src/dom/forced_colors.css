@@ -1,0 +1,62 @@
+@namespace svg url(http://www.w3.org/2000/svg);
+
+svg|svg {
+  forced-color-adjust: preserve-parent-color;
+}
+svg|foreignObject {
+  forced-color-adjust: auto;
+}
+::placeholder {
+  color: GrayText;
+}
+summary {
+  color: LinkText;
+}
+hr,
+input[type="range" i] {
+  color: CanvasText;
+}
+:focus-visible {
+  outline-color: Highlight;
+}
+fieldset,
+hr,
+select {
+  border-color: CanvasText;
+}
+input,
+textarea {
+  border-color: ButtonBorder;
+}
+:is(button, input, select, textarea):is(:hover, :focus) {
+  border-color: Highlight;
+}
+:is(button, input, select, textarea):disabled,
+:is(button, input:is([type="button" i], [type="submit" i], [type="reset" i])):disabled {
+  border-color: GrayText;
+  background-color: ButtonFace;
+  color: GrayText;
+  opacity: 1;
+}
+input[type="color" i],
+meter {
+  forced-color-adjust: none;
+}
+select:not(:-internal-base-options, :open) option:checked,
+select:open option:is(:hover, :focus),
+input::-internal-suggestion:hover,
+input::-internal-suggestion-active,
+input::-internal-date-picker-chosen,
+input::-webkit-datetime-edit-year-field:focus,
+input::-webkit-datetime-edit-month-field:focus,
+input::-webkit-datetime-edit-week-field:focus,
+input::-webkit-datetime-edit-day-field:focus,
+input::-webkit-datetime-edit-hour-field:focus,
+input::-webkit-datetime-edit-minute-field:focus,
+input::-webkit-datetime-edit-second-field:focus,
+input::-webkit-datetime-edit-millisecond-field:focus,
+input::-webkit-datetime-edit-ampm-field:focus {
+  background-color: Highlight;
+  color: HighlightText;
+  forced-color-adjust: none;
+}

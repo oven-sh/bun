@@ -7,21 +7,23 @@ use std::time::Duration;
 use super::{Cursor, Display, Edge, Geometry, Icon, Platform, Point, Window};
 use crate::abi::Rect;
 use crate::error::{Result, bail};
-use crate::json::{Value, json};
+use crate::protocol::{
+    Clipboard, ClipboardPart, Reply, SystemCommand, SystemRequest, SystemState, WindowCommand,
+};
 use crate::window::{self, Options};
 use crate::{accessibility, bridge};
 
 pub struct Headless;
 
 impl Platform for Headless {
-    fn name(&self) -> &'static str {
-        "headless"
+    fn has_display(&self) -> bool {
+        false
     }
 
     fn open_window(&self, options: &Options, _: Option<&Icon>) -> Result<Rc<dyn Window>> {
         let geometry = Geometry {
-            x: options.x.unwrap_or(0.),
-            y: options.y.unwrap_or(0.),
+            x: options.x.get().unwrap_or(0.),
+            y: options.y.get().unwrap_or(0.),
             width: options.width,
             height: options.height,
             scale: 1.,
@@ -56,31 +58,46 @@ impl Platform for Headless {
 
     fn set_dark(&self, _: Option<bool>) {}
 
-    fn command(&self, name: &str, _: &Value, reply: Option<u64>) -> Result<Value> {
-        Ok(match (name, reply) {
-            ("info", _) => {
-                json!({ "thermalState": "nominal", "lowPower": false, "reduceMotion": false })
+    fn command(&self, command: SystemCommand) -> Result<()> {
+        match command {
+            SystemCommand::Tray { .. } | SystemCommand::RegisterHotKey { .. } => {
+                bail!("that needs a display")
             }
-            ("cursor", _) => json!({ "x": 0, "y": 0 }),
-            ("systemSettings" | "readClipboard", _) => json!({}),
-            ("idleSeconds", _) => json!(0),
-            ("onBattery" | "isHidden", _) => json!(false),
-            ("tray" | "hotkey" | "messageBox" | "trash" | "registerUrlScheme", _) => {
-                bail!("{name} needs a display")
-            }
-            (_, Some(reply)) => {
-                bridge::reply(
-                    reply,
-                    Ok(if name.starts_with("spelling.") {
-                        json!([])
-                    } else {
-                        Value::Null
-                    }),
-                );
-                Value::Null
-            }
-            _ => Value::Null,
-        })
+            _ => Ok(()),
+        }
+    }
+
+    fn request(&self, id: u32, request: SystemRequest) -> Result<()> {
+        bridge::reply(
+            id,
+            Ok(match request {
+                SystemRequest::CheckSpelling(_) => Reply::Misspelled(Default::default()),
+                SystemRequest::GuessSpelling(_) => Reply::Guesses(Default::default()),
+                SystemRequest::LearnSpelling(_) => Reply::Done,
+                _ => bail!("that needs a display"),
+            }),
+        );
+        Ok(())
+    }
+
+    fn state(&self) -> SystemState {
+        SystemState::default()
+    }
+
+    fn cursor_position(&self) -> Result<Point> {
+        Ok(Point::default())
+    }
+
+    fn idle_seconds(&self) -> Result<f64> {
+        Ok(0.)
+    }
+
+    fn is_on_battery(&self) -> bool {
+        false
+    }
+
+    fn read_clipboard(&self, _: ClipboardPart) -> Clipboard {
+        Clipboard::default()
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -95,6 +112,12 @@ impl Platform for Headless {
 
     #[cfg(not(target_os = "macos"))]
     fn dispatch(&self, _: &[i32]) {}
+
+    fn has_screen_reader(&self) -> bool {
+        false
+    }
+
+    fn accessibility_changed(&self, _: &[accessibility::Event]) {}
 
     fn shut_down(&self, _: bool) {}
 }
@@ -155,28 +178,27 @@ impl Window for Unseen {
 
     fn title_was_double_clicked(&self) {}
 
-    fn set_accessibility_tree(&self, _: &accessibility::Update) {}
-
-    fn command(&self, name: &str, value: &Value, _: Option<&dyn Window>) -> Result<Value> {
-        let [width, height] = [0, 1].map(|index| value[index].as_f64().unwrap_or(0.) as f32);
-        match name {
-            "isMinimized" => return Ok(false.into()),
-            "windowNumber" => return Ok(0.into()),
-            "size" => {
+    fn command(&self, command: &WindowCommand) -> Result<()> {
+        match *command {
+            WindowCommand::Size(size) => {
                 self.geometry.set(Geometry {
-                    width,
-                    height,
+                    width: size.width,
+                    height: size.height,
                     ..self.geometry.get()
                 });
                 window::bounds_changed(self.id);
             }
-            "fullscreen" => self.geometry.set(Geometry {
-                is_fullscreen: value == true,
+            WindowCommand::Fullscreen(is_fullscreen) => self.geometry.set(Geometry {
+                is_fullscreen,
                 ..self.geometry.get()
             }),
             _ => {}
         }
-        Ok(Value::Null)
+        Ok(())
+    }
+
+    fn is_minimized(&self) -> bool {
+        false
     }
 
     fn handle(&self) -> u64 {

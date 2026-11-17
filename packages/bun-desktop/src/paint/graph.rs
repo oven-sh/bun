@@ -652,7 +652,7 @@ impl Graph<'_> {
                     .pixels_mut()
                     .iter_mut()
                     .for_each(|pixel| *pixel = super::raster::scale(tint, pixel[3]));
-                shadow.blur_by(self.lengths(&offset[2..]));
+                shadow = shadow.blurred(self.lengths(&offset[2..]), rect)?;
                 shadow.draw(&source.layer, None, &Clip::new(rect));
                 (shadow, linear)
             }
@@ -666,11 +666,10 @@ impl Graph<'_> {
                 );
                 (layer, false)
             }
-            (Primitive::GaussianBlur, [_, _]) => {
-                let mut layer = input(first)?.layer.copy(rect)?;
-                layer.blur_by(self.lengths(rest));
-                (layer, linear)
-            }
+            (Primitive::GaussianBlur, [_, _]) => (
+                input(first)?.layer.blurred(self.lengths(rest), rect)?,
+                linear,
+            ),
             (Primitive::Image, [position]) => {
                 let mut layer = Layer::new(rect)?;
                 draw(*position as usize, &mut layer);

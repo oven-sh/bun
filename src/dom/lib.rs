@@ -1,11 +1,14 @@
 //! Styles, layout and display lists for the DOM of `bun:desktop`.
-#![feature(cell_leak)]
+#![feature(cell_leak, hint_prefetch, thread_local)]
 #![cfg_attr(unix, feature(rt, update_panic_count))]
 #![cfg_attr(unix, allow(internal_features))]
 
-pub mod abi;
+mod abi;
+mod abi_graphics;
+mod accessibility;
 mod anchor;
 mod animation;
+mod api;
 mod background;
 mod bindings;
 mod block;
@@ -24,14 +27,18 @@ mod counter_style;
 mod counters;
 mod cssom;
 mod custom;
+mod declarations;
 mod document;
+mod drag_image;
 mod editing;
 mod effects;
 mod embedded;
+mod engine_event;
 
 mod columns;
 mod flex;
 mod float_area;
+mod font_face;
 mod fragment;
 mod generated_bindgen;
 mod geometry;
@@ -47,16 +54,20 @@ mod math;
 mod motion;
 mod name;
 mod nine_pieces;
+mod order;
 mod paint;
 mod path;
 mod platform;
 mod positioned;
+mod prelude;
 mod properties;
 mod recovery;
 mod restyle;
+mod rule_tree;
 mod rules;
 mod scan;
 mod scroll;
+mod search;
 mod segments;
 mod selector;
 mod selector_parser;
@@ -66,6 +77,7 @@ mod shorthand;
 mod smil;
 mod smil_values;
 mod snap;
+mod style_sheet;
 mod svg;
 mod svg_filter;
 mod svg_paint;

@@ -132,7 +132,7 @@ fn ligate(context: &mut Apply, positions: Positions, id: u16) {
     context.at = next;
 }
 
-fn ligatures(set: Data) -> impl Iterator<Item = (u16, Data)> {
+pub fn ligatures(set: Data) -> impl Iterator<Item = (u16, Data)> {
     let read = move |offset: u16| {
         let ligature = set.from(offset.into())?;
         Some((

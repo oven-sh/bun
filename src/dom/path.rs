@@ -35,6 +35,19 @@ impl Numbers<'_> {
         Some(f32::from(first - b'0'))
     }
 
+    /// With nothing but digits, a point and a minus sign.
+    pub(crate) fn only(source: &[u8]) -> Option<f32> {
+        let (number, len) = decimal(source)?;
+        (len == source.len()).then_some(number)
+    }
+
+    /// `None` unless there is nothing but numbers, and no more than 6.
+    pub(crate) fn few(source: &[u8]) -> Option<smallvec::SmallVec<[f32; 6]>> {
+        let mut input = Numbers(source);
+        let numbers = input.by_ref().take(6).collect();
+        (input.0.is_empty() && !source.trim_ascii_end().ends_with(b",")).then_some(numbers)
+    }
+
     /// `None` unless there is nothing but numbers.
     pub(crate) fn all(source: &str) -> Option<Vec<f32>> {
         let mut input = Numbers(source.as_bytes());
@@ -43,12 +56,41 @@ impl Numbers<'_> {
     }
 }
 
+/// The number and its length, if it is short and has no exponent.
+fn decimal(text: &[u8]) -> Option<(f32, usize)> {
+    const POWERS: [f64; 16] = [
+        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+    ];
+    let start = usize::from(text.first() == Some(&b'-'));
+    let (mut digits, mut end, mut point) = (0u64, start, None);
+    while let Some(&byte) = text.get(end).filter(|_| end < 16) {
+        match byte {
+            b'0'..=b'9' => digits = digits * 10 + u64::from(byte - b'0'),
+            b'.' if point.is_none() => point = Some(end),
+            _ => break,
+        }
+        end += 1;
+    }
+    (end > start
+        && end < 16
+        && text[end - 1] != b'.'
+        && !matches!(text.get(end), Some(b'e' | b'E')))
+    .then_some(())?;
+    let number = (digits as f64 / POWERS[point.map_or(0, |it| end - it - 1)]) as f32;
+    Some((if start == 1 { -number } else { number }, end))
+}
+
 impl Iterator for Numbers<'_> {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
         self.skip_spaces();
         let text = self.0;
+        if let Some((number, len)) = decimal(text) {
+            self.0 = &text[len..];
+            self.skip_separator();
+            return Some(number);
+        }
         let digits = |from: usize| {
             text[from..]
                 .iter()
@@ -266,7 +308,7 @@ pub(crate) fn as_shape(source: &[u8], other: &[u8]) -> Option<Out> {
     Some(out)
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub(crate) struct Path {
     pub(crate) verbs: Vec<PathVerb>,
     /// The verbs that end in the middle of an arc.
@@ -297,6 +339,106 @@ pub(crate) struct Vertex {
 fn cubic_at([a, b, c, d]: [Point; 4], t: f32) -> Point {
     let u = 1.0 - t;
     [0, 1].map(|i| u * u * u * a[i] + 3.0 * u * t * (u * b[i] + t * c[i]) + t * t * t * d[i])
+}
+
+const STEPS: usize = 64;
+
+fn halves([a, b, c, d]: [Point; 4]) -> [[Point; 4]; 2] {
+    let middle = |a: Point, b: Point| [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+    let (ab, bc, cd) = (middle(a, b), middle(b, c), middle(c, d));
+    let (abc, bcd) = (middle(ab, bc), middle(bc, cd));
+    [
+        [a, ab, abc, middle(abc, bcd)],
+        [middle(abc, bcd), bcd, cd, d],
+    ]
+}
+
+fn extent<const N: usize>(points: &[Point; N], axis: usize) -> (f32, f32) {
+    points.iter().fold((f32::MAX, f32::MIN), |(low, high), it| {
+        (low.min(it[axis]), high.max(it[axis]))
+    })
+}
+
+fn may_be_near<const N: usize>(points: &[Point; N], point: Point, reach: f32) -> bool {
+    let (x, y) = (extent(points, 0), extent(points, 1));
+    point[0] >= x.0 - reach
+        && point[0] <= x.1 + reach
+        && point[1] >= y.0 - reach
+        && point[1] <= y.1 + reach
+}
+
+/// `steps` says which part of the whole curve it is.
+fn split_near(
+    curve: [Point; 4],
+    steps: core::ops::Range<usize>,
+    point: Point,
+    [near, far]: [f32; 2],
+    out: &mut Vec<Piece>,
+) {
+    if !may_be_near(
+        &curve,
+        point,
+        if steps.start == 0 || steps.end == STEPS {
+            far
+        } else {
+            near
+        },
+    ) {
+        return;
+    }
+    if steps.len() == 1 {
+        return out.push(Piece {
+            from: curve[0],
+            to: curve[3],
+            tangents: None,
+        });
+    }
+    let ([first, second], middle) = (halves(curve), (steps.start + steps.end) / 2);
+    split_near(first, steps.start..middle, point, [near, far], out);
+    split_near(second, middle..steps.end, point, [near, far], out);
+}
+
+/// What a ray from a point to the right crosses.
+struct Ray {
+    from: Point,
+    winding: i32,
+    touches: bool,
+}
+
+impl Ray {
+    const TOUCHING: f32 = 1e-4;
+
+    fn line(&mut self, from: Point, to: Point) {
+        let [x, y] = self.from;
+        if (from[1] <= y) != (to[1] <= y)
+            && x < from[0] + (y - from[1]) / (to[1] - from[1]) * (to[0] - from[0])
+        {
+            self.winding += if to[1] > from[1] { 1 } else { -1 };
+        }
+        self.touches |= may_be_near(&[from, to], self.from, Ray::TOUCHING)
+            && distance(
+                &Piece {
+                    from,
+                    to,
+                    tangents: None,
+                },
+                self.from,
+            ) < Ray::TOUCHING;
+    }
+
+    fn curve(&mut self, curve: [Point; 4], steps: usize) {
+        let ([x, y], (left, right), (top, bottom)) =
+            (self.from, extent(&curve, 0), extent(&curve, 1));
+        if y < top - Ray::TOUCHING || y > bottom + Ray::TOUCHING || x > right + Ray::TOUCHING {
+            return;
+        }
+        if steps == 1 || x < left - Ray::TOUCHING {
+            return self.line(curve[0], curve[3]);
+        }
+        halves(curve)
+            .into_iter()
+            .for_each(|it| self.curve(it, steps / 2));
+    }
 }
 
 impl From<&[PathVerb]> for Path {
@@ -543,7 +685,6 @@ impl Path {
     }
 
     pub(crate) fn pieces(&self) -> Vec<Piece> {
-        const STEPS: usize = 64;
         let mut pieces = Vec::new();
         for (from, verb, to) in self.steps() {
             match verb {
@@ -578,6 +719,27 @@ impl Path {
         pieces
     }
 
+    /// Without those that are more than `near` away, or `far` where segments meet.
+    pub(crate) fn pieces_near(&self, point: Point, near: f32, far: f32) -> Vec<Piece> {
+        let mut pieces = Vec::new();
+        for (from, verb, to) in self.steps() {
+            match verb {
+                PathVerb::Move(_) => {}
+                PathVerb::Line(_) | PathVerb::Close => {
+                    pieces.extend(may_be_near(&[from, to], point, far).then_some(Piece {
+                        from,
+                        to,
+                        tangents: None,
+                    }))
+                }
+                PathVerb::Cubic(a, b, _) => {
+                    split_near([from, a, b, to], 0..STEPS, point, [near, far], &mut pieces)
+                }
+            }
+        }
+        pieces
+    }
+
     pub(crate) fn length(&self) -> f32 {
         self.pieces()
             .iter()
@@ -587,12 +749,8 @@ impl Path {
     }
 
     /// How far it is to the end of each segment.
-    pub(crate) fn distances(&self) -> Vec<f32> {
-        let ends = (1..=self.verbs.len())
-            .filter(|it| *it == 1 || !matches!(self.verbs[it - 1], PathVerb::Move(_)));
-        ends.take(1024)
-            .map(|it| Path::from(&self.verbs[..it]).length())
-            .collect()
+    pub(crate) fn end_of_verb(&self, index: usize) -> Option<Point> {
+        self.steps().nth(index).map(|it| it.2)
     }
 
     pub(crate) fn start(&self) -> Option<Point> {
@@ -635,37 +793,42 @@ impl Path {
         (low[0] <= high[0]).then(|| Rect::from_edges(low[0], low[1], high[0], high[1]))
     }
 
-    pub(crate) fn contains(&self, [x, y]: Point, is_even_odd: bool) -> bool {
-        let mut closed = Path::default();
-        for verb in &self.verbs {
-            closed.verbs.extend(
-                (matches!(verb, PathVerb::Move(_)) && !closed.verbs.is_empty())
-                    .then_some(PathVerb::Close),
-            );
-            closed.verbs.push(*verb);
+    pub(crate) fn contains(&self, point: Point, is_even_odd: bool) -> bool {
+        let (mut ray, mut open) = (
+            Ray {
+                from: point,
+                winding: 0,
+                touches: false,
+            },
+            None,
+        );
+        for (from, verb, to) in self.steps() {
+            match verb {
+                PathVerb::Move(_) => open
+                    .replace((to, to))
+                    .into_iter()
+                    .for_each(|(start, at)| ray.line(at, start)),
+                PathVerb::Line(_) | PathVerb::Close => ray.line(from, to),
+                PathVerb::Cubic(a, b, _) => ray.curve([from, a, b, to], STEPS),
+            }
+            open.get_or_insert((from, to)).1 = to;
         }
-        closed.verbs.push(PathVerb::Close);
-        let pieces = closed.pieces();
-        let crossings = pieces.iter().filter(|Piece { from, to, .. }| {
-            (from[1] <= y) != (to[1] <= y)
-                && x < from[0] + (y - from[1]) / (to[1] - from[1]) * (to[0] - from[0])
-        });
-        let winding: i32 = crossings
-            .map(|it| if it.to[1] > it.from[1] { 1 } else { -1 })
-            .sum();
-        (if is_even_odd {
-            winding % 2 != 0
-        } else {
-            winding != 0
-        }) || pieces.iter().any(|it| distance(it, [x, y]) < 1e-4)
+        open.into_iter().for_each(|(start, at)| ray.line(at, start));
+        ray.touches
+            || if is_even_odd {
+                ray.winding % 2 != 0
+            } else {
+                ray.winding != 0
+            }
     }
 
     /// Like the renderer, with round joins.
     pub(crate) fn covers(&self, outline: &crate::abi::Outline, point: Point) -> bool {
+        let reach = outline.stroke.width / 2.0;
         let is_near = || {
-            self.pieces()
+            self.pieces_near(point, reach, reach)
                 .iter()
-                .any(|it| distance(it, point) <= outline.stroke.width / 2.0)
+                .any(|it| distance(it, point) <= reach)
         };
         match outline.how {
             crate::abi::OUTLINE_WITH_STROKE => self.contains(point, outline.even_odd) || is_near(),

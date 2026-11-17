@@ -138,19 +138,20 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL);
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto url = Bun::Bindgen::Generated::ObjectURLRegistry::jsCreateObjectURL(globalObject, callFrame);
-    RETURN_IF_EXCEPTION(scope, {});
     if (!Bun::isDesktopRealm(globalObject)) [[likely]]
-        return url;
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::callDesktopRealmHook(globalObject, "objectUrlCreated"_s, JSValue::decode(url), jsUndefined())));
+        return Bun::Bindgen::Generated::ObjectURLRegistry::jsCreateObjectURL(globalObject, callFrame);
+    return Bun::desktopRealmCreateObjectURL(globalObject, callFrame->argument(0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     if (!Bun::isDesktopRealm(globalObject) || !callFrame->argumentCount()) [[likely]]
         return Bun::Bindgen::Generated::ObjectURLRegistry::jsRevokeObjectURL(globalObject, callFrame);
-    return JSValue::encode(Bun::callDesktopRealmHook(globalObject, "revokeObjectUrl"_s, callFrame->uncheckedArgument(0), jsUndefined()));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String url = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::desktopRealmRevokeObjectURL(globalObject, url);
+    return encodedJSUndefined();
 }
 
 static const HashTableValue JSDOMURLConstructorTableValues[] = {

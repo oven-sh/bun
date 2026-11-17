@@ -506,23 +506,38 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     expect(result).toEqual({ stdout: "0,0,0,0,0,1", stderr: "", exitCode: 0 });
   });
 
-  test.skipIf(!isASAN)("process.exit() leaves no leak report", async () => {
-    const result = await run(
+  test.skipIf(!isASAN).each([
+    [
+      "process.exit()",
       /* js */ `
       const { session, duplex } = await connect();
       duplex.inNextWrite = () => {
         console.log("exiting");
         process.exit(0);
       };
-      session.ping(() => {});
-    `,
-      {
-        ...bunEnv,
-        BUN_DESTRUCT_VM_ON_EXIT: "1",
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
-      },
-    );
+      session.ping(() => {});`,
+    ],
+    [
+      "'close' during a request with a signal",
+      /* js */ `
+      await (async () => {
+        const { session, duplex } = await connect();
+        duplex.inNextWrite = () => duplex.emit("close");
+        const headers = { "x-a": Buffer.alloc(30000, "~").toString() };
+        session.request(headers, { signal: new AbortController().signal }).on("error", () => {});
+        await once(session, "close");
+      })();
+      await tick();
+      Bun.gc(true);
+      console.log("exiting");`,
+    ],
+  ])("%s leaves no leak report", async (_, script) => {
+    const result = await run(script, {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
+    });
     expect(result).toEqual({ stdout: "exiting", stderr: "", exitCode: 0 });
   });
 

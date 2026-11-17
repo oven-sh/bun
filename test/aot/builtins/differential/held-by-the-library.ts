@@ -92,11 +92,6 @@ const openLibraryOfFFI: Open = realm => {
   return { value, close: () => value.close() };
 };
 
-const openDesktopEngine: Open = realm => {
-  const Engine = bindingOf(realm, "native:Bindgen:dom.bind.ts:DesktopEngine");
-  return { value: new Engine(0, "https://example.com/"), close: noop };
-};
-
 export const openersOfWhatTheLibraryHolds: Open[] = [
   receiverOf("%ParsedShellScript%.prototype", "setEnv", () => void Bun.$`true`.env({})),
   sourceOf("Blob", () => new Blob(["text"]).stream()),
@@ -108,5 +103,4 @@ export const openersOfWhatTheLibraryHolds: Open[] = [
   openQuery("mysql"),
   openCallbackOfFFI,
   openLibraryOfFFI,
-  openDesktopEngine,
 ];

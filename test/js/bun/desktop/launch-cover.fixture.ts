@@ -1,4 +1,5 @@
 import { app, Window } from "bun:desktop";
+import { desktopInternals } from "bun:internal-for-testing";
 
 const step = process.env.STEP;
 const type = (keyCode: string) => {
@@ -13,11 +14,8 @@ await app.whenReady();
 if (step === "crash") process.kill(process.pid, "SIGKILL");
 if (step === "early" || step === "discarded") {
   // Before the app has made the window, whose id is 1.
-  const other: any = new Window({ show: false });
-  const { id } = other;
-  other.id = 1;
-  for (const type of ["keyDown", "keyUp"]) other.sendInputEvent({ type, keyCode: "s" });
-  other.id = id;
+  new Window({ show: false });
+  for (const type of ["keyDown", "keyUp"]) desktopInternals.sendInputEvent(1, { type, keyCode: "s" });
   await new Promise(setImmediate);
   if (step === "discarded") new Window({ show: false, launchCover: false });
 }
@@ -30,6 +28,14 @@ const window = new Window({
   launchCover: true,
 });
 const log: string[] = [String(window.isLaunchCoverShown())];
+if (process.env.SCREEN && window.isLaunchCoverShown() && step === "click") {
+  const { x, y } = window.getContentBounds();
+  for (let isBlue = false; !isBlue; await Bun.sleep(1)) {
+    const all = Buffer.from(await Bun.file(process.env.SCREEN).arrayBuffer());
+    const at = all.readUInt32BE(0) + all.readUInt32BE(76) * 12 + (y + 120) * all.readUInt32BE(48) + (x + 50) * 4;
+    isBlue = (all.readUInt32LE(at) & 0xffffff) === 0xff;
+  }
+}
 await window.loadHTML(
   `<input placeholder="Text" style="display:block;height:60px"><button style="width:100px;height:100px;background:${step === "changed" || step === "part" ? "red" : "blue"}"></button>`,
 );
@@ -62,6 +68,12 @@ if (step === "keep") {
 window.endLaunchCover();
 while (window.isLaunchCoverShown()) await new Promise(setImmediate);
 log.push(`[${field.value}]`);
+if (step === "second") {
+  const second = new Window({ show: false });
+  log.push(`${window.id} ${second.id}`);
+  second.destroy();
+  log.push(String(window.isDestroyed()), String(Window.getAllWindows().length));
+}
 field.value = "";
 if (step === "clear") Window.clearLaunchCover();
 else if (step === "part") log.push(String(await window.saveLaunchCover({ x: 0, y: 70, width: 150, height: 130 })));

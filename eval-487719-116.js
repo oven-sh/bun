@@ -1,1 +1,0 @@
-process.argv.splice(1, 1);const contents = require('./abcd.json?url'); console.log(JSON.stringify(contents));

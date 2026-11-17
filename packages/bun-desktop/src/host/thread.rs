@@ -2,7 +2,8 @@
 
 use std::cell::{Cell, OnceCell};
 use std::collections::VecDeque;
-use std::ffi::c_void;
+use std::ffi::{CStr, c_void};
+use std::mem::MaybeUninit;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
@@ -35,10 +36,12 @@ impl Queue {
         let mut jobs = self.jobs.lock();
         jobs.push_back(job);
         self.length.store(jobs.len(), Ordering::Release);
-        let must_wake = jobs.len() == 1 && !self.is_awaited.load(Ordering::Relaxed);
+        let (is_first, is_awaited) = (jobs.len() == 1, self.is_awaited.load(Ordering::Relaxed));
         drop(jobs);
-        self.posted.notify_one();
-        must_wake
+        if is_awaited {
+            self.posted.notify_one();
+        }
+        is_first && !is_awaited
     }
 
     fn pop(&self) -> Option<Job> {
@@ -106,17 +109,46 @@ pub fn is_elsewhere() -> bool {
     exists() && !IS_CURRENT.get()
 }
 
+/// Not with `std::thread`, which allocates what only the end of the thread frees: the process may end first.
+pub fn detach(stack_size: usize, run: fn()) -> bool {
+    extern "C" fn start(run: *mut c_void) -> *mut c_void {
+        // SAFETY: what `detach` has passed.
+        unsafe { std::mem::transmute::<*mut c_void, fn()>(run)() };
+        std::ptr::null_mut()
+    }
+    let (mut attributes, mut thread) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: the attributes are initialized first.
+    unsafe {
+        libc::pthread_attr_init(attributes.as_mut_ptr());
+        libc::pthread_attr_setstacksize(attributes.as_mut_ptr(), stack_size);
+        libc::pthread_attr_setdetachstate(attributes.as_mut_ptr(), libc::PTHREAD_CREATE_DETACHED);
+        let status = libc::pthread_create(
+            thread.as_mut_ptr(),
+            attributes.as_ptr(),
+            start,
+            run as *mut c_void,
+        );
+        libc::pthread_attr_destroy(attributes.as_mut_ptr());
+        status == 0
+    }
+}
+
+/// Of the current thread. Linux takes 15 bytes.
+pub fn set_name(name: &CStr) {
+    // SAFETY: it is a C string.
+    unsafe {
+        #[cfg(target_os = "linux")]
+        libc::pthread_setname_np(libc::pthread_self(), name.as_ptr());
+        #[cfg(target_os = "macos")]
+        libc::pthread_setname_np(name.as_ptr());
+    }
+}
+
+/// `run` calls `enter`.
 pub fn spawn(run: fn()) {
     let is_wanted = std::env::var("BUN_DESKTOP_THREADS").as_deref() != Ok("1");
     if system::RUNS_ON_ANY_THREAD && is_wanted && !EXISTS.swap(true, Ordering::Relaxed) {
-        let thread = std::thread::Builder::new()
-            .name("UI".into())
-            .stack_size(8 << 20)
-            .spawn(move || {
-                IS_CURRENT.set(true);
-                run();
-            });
-        EXISTS.store(thread.is_ok(), Ordering::Relaxed);
+        EXISTS.store(detach(8 << 20, run), Ordering::Relaxed);
     }
 }
 
@@ -180,6 +212,13 @@ pub fn ask<R: Send + 'static>(job: impl FnOnce() -> R + Send + 'static) -> R {
         .into_inner()
         .unwrap_or_else(|| receiver.recv().expect("the UI thread is gone"));
     result.unwrap_or_else(|panic| resume_unwind(panic))
+}
+
+/// Returns when what this thread has posted is done.
+pub fn catch_up() {
+    if !HAS_STOPPED.load(Ordering::Relaxed) {
+        ask(|| ());
+    }
 }
 
 pub fn has_jobs() -> bool {

@@ -1,31 +1,31 @@
-//! What `internal/desktop/dom/canvas.ts` draws on.
+//! What `src/dom/api/canvas` draws on.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::abi::{self, Filter, FontSetting, GradientStop, Rect, RoundedRect, TextRun};
-use crate::codec::Rgba;
-use crate::error::{Context as _, Result, bail};
+use crate::abi::{self, Filter, GradientStop, PathVerb, Rect, RoundedRect, Span, TextRun};
+use crate::abi_graphics::{
+    self as wire, Area, Baseline, Command, Pen, Snapshot, TextMetrics, TextStyle,
+};
 use crate::gfx::{self, Cap, Fill, Join, PathBuilder as _, Pixmap, Point, Stroke, Transform};
 use crate::hash::FastMap;
 use crate::images::{self, Content};
-use crate::json::{Value, json};
 use crate::paint::blend::Mode as BlendMode;
+use crate::paint::blur;
 use crate::paint::gradient::{Geometry, Gradient, Spread};
 use crate::paint::raster::{
-    Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, blur_extent, demultiply, map_point,
-    map_rect, premultiply, rounded_rect_path, scale,
+    Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, Rows, demultiply, map_point, map_rect,
+    premultiply, rounded_rect_path, scale,
 };
 use crate::paint::scene::{Frame, outset};
 use crate::paint::warp;
 use crate::paint::{cpu, filter};
-use crate::text::{self, Description, Line};
-use crate::{bridge, surface};
+use crate::surface;
+use crate::text::{self, Line};
 
-#[derive(Clone)]
 enum Style {
     Color(u32),
-    Gradient(Rc<Gradient>),
+    Gradient(Gradient),
     Pattern {
         tile: Rc<Pixmap>,
         repeats: [bool; 2],
@@ -33,7 +33,6 @@ enum Style {
     },
 }
 
-#[derive(Clone)]
 struct State {
     matrix: Transform,
     fill: Style,
@@ -60,11 +59,13 @@ struct Canvas {
     version: u32,
     is_opaque: bool,
     state: State,
-    saved: Vec<State>,
+    clips: Vec<Clip>,
 }
 
 thread_local! {
     static CANVASES: RefCell<FastMap<u32, Rc<RefCell<Canvas>>>> = RefCell::default();
+    /// The windows were not told yet.
+    static CHANGED: RefCell<Vec<u32>> = RefCell::default();
 }
 
 fn get(id: u32) -> Option<Rc<RefCell<Canvas>>> {
@@ -75,147 +76,6 @@ pub fn with_pixels<R>(id: u32, f: impl FnOnce(&Pixmap, u32) -> R) -> Option<R> {
     let canvas = get(id)?;
     let canvas = canvas.try_borrow().ok()?;
     Some(f(&canvas.layer.as_ref()?.pixmap, canvas.version))
-}
-
-type Texts<'a> = std::str::Split<'a, char>;
-
-struct Reader<'a> {
-    numbers: std::slice::Iter<'a, [u8; 8]>,
-}
-
-impl Reader<'_> {
-    fn next(&mut self) -> Option<f64> {
-        self.numbers.next().map(|bytes| f64::from_ne_bytes(*bytes))
-    }
-
-    fn integer(&mut self) -> Option<u32> {
-        self.next().map(|number| number as u32)
-    }
-
-    fn floats<const N: usize>(&mut self) -> Option<[f32; N]> {
-        let mut floats = [0.; N];
-        for float in &mut floats {
-            *float = self.next()? as f32;
-        }
-        Some(floats)
-    }
-
-    fn matrix(&mut self) -> Option<Transform> {
-        let [a, b, c, d, e, f] = self.floats()?;
-        Some(Transform::from_row(a, b, c, d, e, f))
-    }
-
-    fn rect(&mut self) -> Option<Rect> {
-        let [x, y, width, height] = self.floats()?;
-        Some(Rect {
-            x: x.min(x + width),
-            y: y.min(y + height),
-            width: width.abs(),
-            height: height.abs(),
-        })
-    }
-
-    /// In device pixels.
-    fn path(&mut self) -> Option<Path> {
-        let (mut path, end) = (Path::new(), self.integer()? as usize);
-        let end = self.numbers.len().checked_sub(end)?;
-        while self.numbers.len() > end {
-            match self.integer()? {
-                0 => path.move_to(self.floats::<2>()?),
-                1 => path.line_to(self.floats::<2>()?),
-                2 => path.quad_to(self.floats::<2>()?, self.floats::<2>()?),
-                3 => path.curve_to(
-                    self.floats::<2>()?,
-                    self.floats::<2>()?,
-                    self.floats::<2>()?,
-                ),
-                _ => path.close(),
-            };
-        }
-        Some(path)
-    }
-
-    fn style(&mut self) -> Option<Style> {
-        let geometry = match self.integer()? {
-            0 => return Some(Style::Color(self.integer()?)),
-            1 => Geometry::Linear {
-                from: self.floats()?,
-                to: self.floats()?,
-            },
-            2 => Geometry::Radial {
-                from: self.floats()?,
-                to: self.floats()?,
-            },
-            3 => {
-                let [start, x, y] = self.floats()?;
-                Geometry::Sweep {
-                    center: [x, y],
-                    start,
-                    span: std::f32::consts::TAU,
-                }
-            }
-            _ => {
-                let (id, repeats, matrix) = (
-                    self.integer()?,
-                    [self.integer()? != 0, self.integer()? != 0],
-                    self.matrix()?,
-                );
-                let tile = PATTERNS.with_borrow(|patterns| patterns.get(&id).cloned());
-                return Some(tile.map_or(Style::Color(0), |tile| Style::Pattern {
-                    tile,
-                    repeats,
-                    matrix,
-                }));
-            }
-        };
-        let stops = (0..self.integer()?).map(|_| {
-            Some(GradientStop {
-                offset: self.next()? as f32,
-                color: self.integer()?,
-            })
-        });
-        let stops = stops.collect::<Option<Vec<_>>>()?;
-        Some(match geometry {
-            Geometry::Linear { from, to } if from == to => Style::Color(0),
-            Geometry::Radial { from, to } if from == to => Style::Color(0),
-            _ => Style::Gradient(Rc::new(Gradient::new(geometry, &stops, Spread::Pad, false))),
-        })
-    }
-
-    fn filter(&mut self) -> Option<Filter> {
-        let (kind, [amount]) = (self.integer()?, self.floats()?);
-        Some(match kind {
-            0 => Filter::Blur(amount),
-            1 => Filter::Brightness(amount),
-            2 => Filter::Contrast(amount),
-            3 => Filter::Grayscale(amount),
-            4 => Filter::HueRotate(amount),
-            5 => Filter::Invert(amount),
-            6 => Filter::Opacity(amount),
-            7 => Filter::Saturate(amount),
-            8 => Filter::Sepia(amount),
-            _ => Filter::DropShadow {
-                blur: amount,
-                offset: self.floats()?,
-                color: self.integer()?,
-            },
-        })
-    }
-
-    fn line(&mut self, text: &str) -> Option<(Line, u32, f32)> {
-        let (font, [size, letter_spacing, word_spacing], direction) =
-            (self.integer()?, self.floats()?, self.integer()?);
-        let end = text.len() as u32;
-        let run = TextRun {
-            end,
-            font,
-            size,
-            letter_spacing,
-            word_spacing,
-            word_break: abi::BREAK_NORMAL,
-        };
-        Some((Line::new(text, run, direction as u8), font, size))
-    }
 }
 
 thread_local! {
@@ -414,19 +274,33 @@ impl State {
         }
     }
 
+    /// For drawing something with these bounds.
+    fn clip_for(&self, bounds: IntRect) -> Clip {
+        if self.mode == BlendMode::Clear {
+            self.clip.within_rect(bounds)
+        } else {
+            self.clip.clone()
+        }
+    }
+
+    fn has_effects(&self) -> bool {
+        self.has_shadow() || !self.filters.is_empty()
+    }
+
     /// `draw` paints with source-over inside of `bounds`, which are in device pixels.
     fn compose(&self, target: &mut Layer, bounds: Rect, draw: impl FnOnce(&mut Layer, &Clip)) {
         let bounds = IntRect::around(bounds);
-        if self.mode == BlendMode::SourceOver && !self.has_shadow() && self.filters.is_empty() {
+        if self.mode == BlendMode::SourceOver && !self.has_effects() {
             return draw(target, &self.clip.within_rect(bounds));
         }
         let (sigma, [dx, dy]) = (
-            self.shadow_blur / 2.,
-            self.shadow_offset.map(|offset| offset.round() as i32),
+            (self.shadow_blur / 2.).min(blur::MAX_SIGMA_OF_SHADOWS),
+            self.shadow_offset
+                .map(|offset| offset.round().clamp(-1e8, 1e8) as i32),
         );
         let filter_reach = cpu::filter_reach(&self.filters, &Transform::identity());
         let shadow_reach = if self.has_shadow() {
-            blur_extent(sigma)
+            blur::extent(sigma)
         } else {
             0
         };
@@ -434,34 +308,28 @@ impl State {
         if self.has_shadow() {
             needed = needed.union(needed.offset(-dx, -dy).outset(shadow_reach));
         }
-        let area = bounds
-            .outset(filter_reach + shadow_reach)
-            .intersect(needed.outset(filter_reach));
-        let affects_everything = matches!(
-            self.mode,
-            BlendMode::SourceIn
-                | BlendMode::SourceOut
-                | BlendMode::DestinationIn
-                | BlendMode::DestinationAtop
-                | BlendMode::Source
-        );
+        let area = bounds.intersect(needed.outset(filter_reach));
         let mut blend = |source: &Layer| match self.mode {
             BlendMode::SourceOver => target.draw(source, None, &self.clip),
-            mode if affects_everything => target.draw_with_mode(source, mode, &self.clip),
-            mode => target.draw_with_mode(source, mode, &self.clip.within_rect(source.rect)),
+            mode => target.draw_with_mode(source, mode, &self.clip_for(source.rect)),
         };
         let Some(mut source) = Layer::new(area).or_else(|| Layer::new(IntRect::new(-1, -1, 0, 0)))
         else {
             return;
         };
-        draw(&mut source, &Clip::new(area.intersect(bounds)));
-        filter::apply(&mut source, &self.filters, &Transform::identity());
+        draw(&mut source, &Clip::new(area));
+        filter::apply(&mut source, &self.filters, &Transform::identity(), needed);
         if self.has_shadow()
-            && let Some(mut shadow) = Layer::new(area.offset(dx, dy))
+            && let cast = source.rect.offset(dx, dy)
+            && let Some(mut shadow) =
+                Layer::new(cast.outset(shadow_reach).intersect(self.clip.rect))
+                    .or_else(|| Layer::new(IntRect::new(-1, -1, 0, 0)))
         {
-            let mut shape = source.alpha();
-            shape.blur(sigma);
-            shape.rect = shadow.rect;
+            let shape = Coverage {
+                rect: cast,
+                ..source.alpha()
+            }
+            .blurred(sigma, shadow.rect);
             shadow.fill_coverage(
                 &shape,
                 &Clip::new(shape.rect),
@@ -507,11 +375,33 @@ impl State {
     fn fill_rect(&self, target: &mut Layer, rect: Rect) {
         let device = map_rect(&self.matrix, rect);
         let pixels = IntRect::nearest(device);
+        if let (Style::Color(color), BlendMode::SourceOver, None) =
+            (&self.fill, self.mode, &self.clip.mask)
+            && !self.matrix.has_skew()
+            && !self.has_effects()
+        {
+            return target.fill_rect(
+                device,
+                premultiply(with_alpha(*color, self.alpha)),
+                self.clip.rect,
+            );
+        }
         if self.matrix.has_skew() || pixels.to_rect() != device {
             return self.fill_path(
                 target,
                 &transformed(&rect_path(rect), &self.matrix),
                 Fill::NonZero,
+            );
+        }
+        if let (Style::Color(color), false) = (
+            &self.fill,
+            self.mode == BlendMode::SourceOver || self.has_effects(),
+        ) {
+            return target.combine(
+                pixels,
+                &Rows::Same(premultiply(with_alpha(*color, self.alpha))),
+                self.mode,
+                &self.clip_for(pixels),
             );
         }
         self.compose(target, device, |layer, clip| {
@@ -532,12 +422,12 @@ impl State {
                 clip.rect,
             ));
         }
-        if let Some(mut blank) = Layer::new(clip.rect) {
-            if is_opaque {
-                blank.pixels_mut().fill([0, 0, 0, 255]);
-            }
-            target.replace(&blank, &clip);
-        }
+        target.combine(
+            clip.rect,
+            &Rows::Same([0, 0, 0, if is_opaque { 255 } else { 0 }]),
+            BlendMode::Source,
+            &clip,
+        );
     }
 
     fn draw_text(
@@ -629,6 +519,33 @@ impl State {
             height: size[1],
         };
         let from = crate::paint::scene::intersect(from, all);
+        let (part, dx, dy) = (
+            IntRect::around(from),
+            placement.tx.round(),
+            placement.ty.round(),
+        );
+        let is_copy = frame_is_unscaled(&placement)
+            && (placement.tx - dx).abs() + (placement.ty - dy).abs() < 1e-3
+            && part.to_rect() == from;
+        let (dx, dy, is_masked) = (
+            dx as i32,
+            dy as i32,
+            self.mode == BlendMode::SourceOver && self.clip.mask.is_some(),
+        );
+        if let (Content::Pixels(pixmap), true) =
+            (&content, is_copy && !is_masked && !self.has_effects())
+        {
+            let (rect, by) = (
+                part.offset(dx, dy),
+                (self.alpha.min(1.) * 255.).round() as u8,
+            );
+            return target.combine(
+                rect,
+                &Rows::Of(pixmap, [dx, dy], by),
+                self.mode,
+                &self.clip_for(rect),
+            );
+        }
         self.compose(target, map_rect(&placement, from), |layer, clip| {
             let pixmap = match content {
                 Content::Pixels(pixmap) => pixmap,
@@ -643,13 +560,8 @@ impl State {
                     return layer.draw(&drawn, Some(&shape), clip);
                 }
             };
-            let part = IntRect::around(from);
-            let (dx, dy) = (placement.tx.round(), placement.ty.round());
-            let is_copy = frame_is_unscaled(&placement)
-                && (placement.tx - dx).abs() + (placement.ty - dy).abs() < 1e-3;
-            if is_copy && part.to_rect() == from {
-                let (pixels, dx, dy): (&[Pixel], _, _) =
-                    (pixmap.data().as_chunks().0, dx as i32, dy as i32);
+            if is_copy {
+                let pixels: &[Pixel] = pixmap.data().as_chunks().0;
                 let copy = |x: i32, y: i32, row: &mut [Pixel]| {
                     let start = (y - dy) as usize * pixmap.width() as usize + (x - dx) as usize;
                     row.copy_from_slice(&pixels[start..start + row.len()]);
@@ -705,111 +617,343 @@ fn frame_is_unscaled(matrix: &Transform) -> bool {
     !matrix.has_skew() && (matrix.sx - 1.).abs() < 1e-5 && (matrix.sy - 1.).abs() < 1e-5
 }
 
-fn fill_rule(even_odd: u32) -> Fill {
-    if even_odd != 0 {
+fn fill_rule(is_even_odd: bool) -> Fill {
+    if is_even_odd {
         Fill::EvenOdd
     } else {
         Fill::NonZero
     }
 }
 
+fn matrix([a, b, c, d, e, f]: abi::Matrix) -> Transform {
+    Transform::from_row(a, b, c, d, e, f)
+}
+
+fn upright(
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }: Rect,
+) -> Rect {
+    Rect {
+        x: x.min(x + width),
+        y: y.min(y + height),
+        width: width.abs(),
+        height: height.abs(),
+    }
+}
+
+fn path(verbs: &[PathVerb]) -> Path {
+    let mut path = Path::with_capacity(verbs.len());
+    for verb in verbs {
+        match *verb {
+            PathVerb::Move(to) => path.move_to(to),
+            PathVerb::Line(to) => path.line_to(to),
+            PathVerb::Cubic(a, b, to) => path.curve_to(a, b, to),
+            PathVerb::Close => path.close(),
+        };
+    }
+    path
+}
+
+fn pixels([x, y, width, height]: Area) -> IntRect {
+    IntRect {
+        left: x,
+        top: y,
+        right: x.saturating_add(width),
+        bottom: y.saturating_add(height),
+    }
+}
+
+fn line(text: &str, style: &TextStyle) -> Line {
+    let TextStyle {
+        font,
+        size,
+        letter_spacing,
+        word_spacing,
+        ..
+    } = *style;
+    let run = TextRun {
+        end: text.len() as u32,
+        font,
+        size,
+        letter_spacing,
+        word_spacing,
+        word_break: abi::BREAK_NORMAL,
+    };
+    Line::new(text, run, style.is_right_to_left.into())
+}
+
 /// From the y coordinate that was given down to the alphabetic baseline.
-fn baseline_offset(baseline: u32, font: u32, size: f32) -> f32 {
-    let ((em_ascent, em_descent), metrics) = (text::em_box(font, size), text::metrics(font, size));
-    match baseline {
-        1 => em_ascent,
-        2 => metrics.ascent * 0.8,
-        3 => (em_ascent - em_descent) / 2.,
-        4 => -metrics.descent,
-        5 => -em_descent,
-        _ => 0.,
+fn baseline_offset(style: &TextStyle) -> f32 {
+    let ((em_ascent, em_descent), [alphabetic, hanging, ideographic]) =
+        (text::em_box(style.font, style.size), baselines(style));
+    match style.baseline {
+        Baseline::Alphabetic => alphabetic,
+        Baseline::Top => em_ascent,
+        Baseline::Hanging => hanging,
+        Baseline::Middle => (em_ascent - em_descent) / 2.,
+        Baseline::Ideographic => ideographic,
+        Baseline::Bottom => -em_descent,
+    }
+}
+
+fn baselines(style: &TextStyle) -> [f32; 3] {
+    let (metrics, given) = (
+        text::metrics(style.font, style.size),
+        text::baselines(style.font, style.size, [b"romn", b"hang", b"ideo"]),
+    );
+    [
+        given[0].unwrap_or(0.),
+        given[1].unwrap_or(metrics.ascent * 0.8),
+        given[2].unwrap_or(-metrics.descent),
+    ]
+}
+
+/// `wire::Commands`, for another thread.
+pub struct Owned {
+    commands: Vec<Command>,
+    verbs: Vec<PathVerb>,
+    stops: Vec<GradientStop>,
+    filters: Vec<Filter>,
+    dashes: Vec<f32>,
+    text: Vec<u8>,
+    is_partial: bool,
+}
+
+impl Owned {
+    /// # Safety
+    /// The slices are alive.
+    pub unsafe fn new(from: &wire::Commands) -> Owned {
+        // SAFETY: the caller's contract.
+        unsafe {
+            Owned {
+                commands: from.commands.get().to_vec(),
+                verbs: from.verbs.get().to_vec(),
+                stops: from.stops.get().to_vec(),
+                filters: from.filters.get().to_vec(),
+                dashes: from.dashes.get().to_vec(),
+                text: from.text.get().to_vec(),
+                is_partial: from.is_partial,
+            }
+        }
+    }
+
+    fn path(&self, verbs: Span) -> Path {
+        path(&self.verbs[verbs.range()])
+    }
+
+    fn style(&self, paint: wire::Paint) -> Style {
+        let (geometry, stops) = match paint {
+            wire::Paint::Color(color) => return Style::Color(color),
+            wire::Paint::Linear { from, to, .. } if from == to => return Style::Color(0),
+            wire::Paint::Radial { from, to, .. } if from == to => return Style::Color(0),
+            wire::Paint::Linear { from, to, stops } => (Geometry::Linear { from, to }, stops),
+            wire::Paint::Radial { from, to, stops } => (Geometry::Radial { from, to }, stops),
+            wire::Paint::Conic {
+                center,
+                start,
+                stops,
+            } => (
+                Geometry::Sweep {
+                    center,
+                    start,
+                    span: std::f32::consts::TAU,
+                },
+                stops,
+            ),
+            wire::Paint::Pattern {
+                tile,
+                repeats,
+                matrix: to,
+            } => {
+                let tile = PATTERNS.with_borrow(|patterns| patterns.get(&tile).cloned());
+                return tile.map_or(Style::Color(0), |tile| Style::Pattern {
+                    tile,
+                    repeats,
+                    matrix: matrix(to),
+                });
+            }
+        };
+        Style::Gradient(Gradient::new(
+            geometry,
+            &self.stops[stops.range()],
+            Spread::Pad,
+            false,
+        ))
+    }
+
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
+    pub fn run(&self) {
+        let (mut selected, mut current, mut is_marked) = (0, None, false);
+        for command in &self.commands {
+            match *command {
+                Command::Create {
+                    id,
+                    size,
+                    is_opaque,
+                } => {
+                    let state = State::new(IntRect::default());
+                    let mut canvas = Canvas {
+                        layer: None,
+                        version: 0,
+                        is_opaque,
+                        state,
+                        clips: Vec::new(),
+                    };
+                    canvas.reset(size);
+                    CANVASES.with_borrow_mut(|canvases| {
+                        canvases.insert(id, Rc::new(RefCell::new(canvas)))
+                    });
+                }
+                Command::Snapshot(wanted) => match snapshot(&wanted) {
+                    Some(tile) if wanted.is_tile => drop(
+                        PATTERNS
+                            .with_borrow_mut(|patterns| patterns.insert(wanted.id, Rc::new(tile))),
+                    ),
+                    Some(pixmap) => images::insert_as(wanted.id, pixmap),
+                    None => {}
+                },
+                Command::Release(id) => {
+                    CANVASES.with_borrow_mut(|canvases| canvases.remove(&id));
+                    PATTERNS.with_borrow_mut(|patterns| patterns.remove(&id));
+                    images::release(id);
+                }
+                Command::DropFontScope(scope) => crate::text::drop_font_scope(scope),
+                Command::Select(id) => (selected, current, is_marked) = (id, get(id), false),
+                command => {
+                    let Some(canvas) = &current else { continue };
+                    if canvas.borrow_mut().run(selected, command, self)
+                        && !std::mem::replace(&mut is_marked, true)
+                    {
+                        CHANGED.with_borrow_mut(|changed| {
+                            changed.extend((!changed.contains(&selected)).then_some(selected))
+                        });
+                    }
+                }
+            }
+        }
+        if !self.is_partial {
+            CHANGED.take().into_iter().for_each(surface::image_changed);
+        }
+    }
+}
+
+impl State {
+    fn set_pen(&mut self, pen: Pen, dashes: &[f32]) {
+        (self.line_width, self.miter_limit, self.dash_offset) =
+            (pen.width, pen.miter_limit, pen.dash_offset);
+        self.cap = [Cap::Butt, Cap::Round, Cap::Square][pen.cap as usize];
+        self.join = [Join::Miter, Join::Round, Join::Bevel][pen.join as usize];
+        dashes.clone_into(&mut self.dashes);
+    }
+
+    fn clip_to(&mut self, path: &Path, rule: Fill) -> Clip {
+        let area = IntRect::around(path_bounds(path)).intersect(self.clip.rect);
+        let coverage = Coverage::of_path(path, rule, &Transform::identity(), area);
+        let clip = match coverage.data.iter().all(|value| *value == 255) {
+            true => self.clip.within_rect(coverage.rect),
+            false => self.clip.within(coverage),
+        };
+        std::mem::replace(&mut self.clip, clip)
     }
 }
 
 impl Canvas {
-    fn reset(&mut self, width: u32, height: u32) {
+    fn reset(&mut self, [width, height]: [u32; 2]) {
         let bounds = IntRect::new(0, 0, width.min(1 << 16) as i32, height.min(1 << 16) as i32);
         self.layer = Layer::new(bounds);
         if let Some(layer) = self.layer.as_mut().filter(|_| self.is_opaque) {
             layer.pixels_mut().fill([0, 0, 0, 255]);
         }
-        (self.state, self.saved) = (State::new(bounds), Vec::new());
-        self.version = self.version.wrapping_add(1);
+        (self.state, self.clips) = (State::new(bounds), Vec::new());
     }
 
-    fn set(&mut self, operation: u32, reader: &mut Reader) -> Option<()> {
+    /// Whether it draws.
+    fn run(&mut self, id: u32, command: Command, list: &Owned) -> bool {
         let state = &mut self.state;
-        match operation {
-            1 => self.saved.push(state.clone()),
-            2 => *state = self.saved.pop()?,
-            3 => state.matrix = reader.matrix()?,
-            4 => state.fill = reader.style()?,
-            5 => state.stroke = reader.style()?,
-            6 => state.alpha = reader.next()? as f32,
-            7 => state.mode = *MODES.get(reader.integer()? as usize)?,
-            8 => {
-                [state.line_width, state.miter_limit, state.dash_offset] = reader.floats()?;
-                state.cap = *[Cap::Butt, Cap::Round, Cap::Square].get(reader.integer()? as usize)?;
-                state.join =
-                    *[Join::Miter, Join::Round, Join::Bevel].get(reader.integer()? as usize)?;
-                state.dashes = (0..reader.integer()?)
-                    .map(|_| Some(reader.next()? as f32))
-                    .collect::<Option<_>>()?;
+        match command {
+            Command::Transform(to) => state.matrix = matrix(to),
+            Command::FillPaint(paint) => state.fill = list.style(paint),
+            Command::StrokePaint(paint) => state.stroke = list.style(paint),
+            Command::Compositing { alpha, operator } => {
+                (state.alpha, state.mode) = (alpha, MODES[operator as usize])
             }
-            9 => {
-                (state.shadow_offset, [state.shadow_blur]) = (reader.floats()?, reader.floats()?);
-                state.shadow_color = reader.integer()?;
+            Command::Pen { pen, dashes } => state.set_pen(pen, &list.dashes[dashes.range()]),
+            Command::Shadow {
+                offset,
+                blur,
+                color,
+            } => {
+                (state.shadow_offset, state.shadow_blur, state.shadow_color) = (offset, blur, color)
             }
-            10 => state.is_smooth = reader.integer()? != 0,
-            11 => {
-                state.filters = (0..reader.integer()?)
-                    .map(|_| reader.filter())
-                    .collect::<Option<_>>()?
+            Command::Smoothing(is_smooth) => state.is_smooth = is_smooth,
+            Command::Filters(filters) => {
+                list.filters[filters.range()].clone_into(&mut state.filters)
             }
-            _ => {
-                let (rule, path) = (fill_rule(reader.integer()?), reader.path()?);
-                let area = IntRect::around(path_bounds(&path)).intersect(state.clip.rect);
-                let coverage = Coverage::of_path(&path, rule, &Transform::identity(), area);
-                state.clip = match coverage.data.iter().all(|value| *value == 255) {
-                    true => state.clip.within_rect(coverage.rect),
-                    false => state.clip.within(coverage),
-                };
+            Command::Clip {
+                verbs,
+                is_even_odd,
+                saves,
+            } => {
+                let before = state.clip_to(&list.path(verbs), fill_rule(is_even_odd));
+                self.clips.extend(saves.then_some(before));
+            }
+            Command::RestoreClip => self
+                .clips
+                .pop()
+                .into_iter()
+                .for_each(|clip| state.clip = clip),
+            command => {
+                self.version = self.version.wrapping_add(1);
+                self.draw(id, command, list);
+                return true;
             }
         }
-        Some(())
+        false
     }
 
-    fn draw(
-        &mut self,
-        id: u32,
-        operation: u32,
-        reader: &mut Reader,
-        texts: &mut Texts,
-    ) -> Option<()> {
-        let mut nothing = None;
-        let target = match &mut self.layer {
-            Some(layer) => layer,
-            None => nothing.insert(Layer::new(IntRect::new(-1, -1, 0, 0))?),
+    fn draw(&mut self, id: u32, command: Command, list: &Owned) {
+        if let Command::Reset(size) = command {
+            return self.reset(size);
+        }
+        let (Some(target), state) = (&mut self.layer, &self.state) else {
+            return;
         };
-        let state = &self.state;
-        match operation {
-            13 => {
-                let rule = fill_rule(reader.integer()?);
-                state.fill_path(target, &reader.path()?, rule);
+        match command {
+            Command::Erase => {
+                target
+                    .pixels_mut()
+                    .fill([0, 0, 0, if self.is_opaque { 255 } else { 0 }])
             }
-            14 => {
-                let path = reader.path()?;
+            Command::Fill { verbs, is_even_odd } => {
+                state.fill_path(target, &list.path(verbs), fill_rule(is_even_odd))
+            }
+            Command::Stroke { verbs } => {
                 if let Some(inverse) = state.matrix.invert() {
-                    state.stroke_path(target, &transformed(&path, &inverse));
+                    state.stroke_path(target, &transformed(&list.path(verbs), &inverse));
                 }
             }
-            15 => state.fill_rect(target, reader.rect()?),
-            16 => state.stroke_path(target, &rect_path(reader.rect()?)),
-            17 => state.clear_rect(target, reader.rect()?, self.is_opaque),
-            18 | 19 => {
-                let (line, font, size) = reader.line(texts.next()?)?;
-                let ([x, y, alignment, max_width], baseline) =
-                    (reader.floats()?, reader.integer()?);
+            Command::FillRect(rect) => state.fill_rect(target, upright(rect)),
+            Command::StrokeRect(rect) => state.stroke_path(target, &rect_path(upright(rect))),
+            Command::ClearRect(rect) => state.clear_rect(target, upright(rect), self.is_opaque),
+            Command::Text {
+                text,
+                style,
+                at: [x, y],
+                alignment,
+                max_width,
+                strokes,
+            } => {
+                let line = line(
+                    std::str::from_utf8(&list.text[text.range()]).unwrap_or_default(),
+                    &style,
+                );
                 let squeeze = if line.width > max_width {
                     max_width / line.width
                 } else {
@@ -817,134 +961,84 @@ impl Canvas {
                 };
                 let (x, y) = (
                     x - line.width * squeeze * alignment,
-                    y + baseline_offset(baseline, font, size),
+                    y + baseline_offset(&style),
                 );
-                let matrix = state.matrix.pre_translate(x, y).pre_scale(squeeze, 1.);
-                state.draw_text(target, &line, size, matrix, operation == 19);
-            }
-            20 => {
-                let (image, size, from, to) = (
-                    reader.integer()?,
-                    reader.floats()?,
-                    reader.rect()?,
-                    reader.rect()?,
+                state.draw_text(
+                    target,
+                    &line,
+                    style.size,
+                    state.matrix.pre_translate(x, y).pre_scale(squeeze, 1.),
+                    strokes,
                 );
-                if image == id {
-                    let copy = target.pixmap.clone();
-                    state.draw_image(target, Content::Pixels(&copy), size, from, to);
-                } else {
-                    let draw =
-                        |content: Content, _| state.draw_image(target, content, size, from, to);
-                    images::with_first_frame(image, draw);
-                }
             }
-            _ => return None,
+            Command::Image {
+                image,
+                size,
+                from,
+                to,
+            } if image == id => {
+                let copy = target.pixmap.clone();
+                state.draw_image(
+                    target,
+                    Content::Pixels(&copy),
+                    size,
+                    upright(from),
+                    upright(to),
+                );
+            }
+            Command::Image {
+                image,
+                size,
+                from,
+                to,
+            } => {
+                images::with_first_frame(image, |content, _| {
+                    state.draw_image(target, content, size, upright(from), upright(to))
+                });
+            }
+            _ => {}
         }
-        Some(())
+        if self.is_opaque && state.mode != BlendMode::SourceOver {
+            target
+                .pixels_mut()
+                .iter_mut()
+                .for_each(|pixel| pixel[3] = 255);
+        }
     }
 }
 
-/// `text` has what the operations write, separated by U+0000.
-pub fn draw(numbers: &[u8], text: &[u8]) {
-    let mut texts = std::str::from_utf8(text).unwrap_or_default().split('\0');
-    let mut reader = Reader {
-        numbers: numbers.as_chunks().0.iter(),
-    };
-    let (mut id, mut current) = (0, None);
-    let mut changed: Vec<u32> = Vec::new();
-    let mut run = || {
-        while let Some(operation) = reader.integer() {
-            if operation == 0 {
-                id = reader.integer()?;
-                current = get(id);
-                continue;
-            }
-            let canvas = &mut *current.as_ref()?.borrow_mut();
-            if operation <= 12 {
-                canvas.set(operation, &mut reader)?;
-                continue;
-            }
-            if !changed.contains(&id) {
-                changed.push(id);
-            }
-            canvas.version = canvas.version.wrapping_add(1);
-            canvas.draw(id, operation, &mut reader, &mut texts)?;
-        }
-        Some(())
-    };
-    bridge::report(run().context("could not draw on a canvas"));
-    changed.into_iter().for_each(surface::image_changed);
-}
-
-fn describe_font(arguments: &Value) -> u32 {
-    let mut families = Vec::new();
-    for family in arguments["families"].as_array().into_iter().flatten() {
-        families.extend((family[1] == true).then_some(abi::GENERIC_FAMILY));
-        families.extend(
-            family[0]
-                .as_str()
-                .unwrap_or("")
-                .bytes()
-                .filter(|byte| *byte > abi::GENERIC_FAMILY),
-        );
-        families.push(0);
-    }
-    let number = |key: &str, otherwise: f32| {
-        arguments[key]
-            .as_f64()
-            .map_or(otherwise, |number| number as f32)
-    };
-    let features = arguments["features"].as_array().into_iter().flatten();
-    let tags = features.filter_map(|tag| tag.as_str()?.as_bytes().try_into().ok());
-    text::describe(Description {
-        scope: arguments["scope"].as_u64().unwrap_or(0) as u32,
-        stretch: number("stretch", 100.),
-        style: number("style", 0.) as u8,
-        kerning: arguments["kerning"] != false,
-        features: tags.map(|tag| FontSetting { tag, value: 1. }).collect(),
-        language: arguments["language"].as_str().unwrap_or("").into(),
-        ..Description::new(&families, number("weight", 400.))
-    })
-}
-
-/// From the operands of `Reader::line` and the baseline to the fields of `TextMetrics`.
-pub fn measure(numbers: &[f64; 12], text: &[u8]) -> Option<[f64; 12]> {
-    let numbers = numbers.map(f64::to_ne_bytes);
-    let mut reader = Reader {
-        numbers: numbers.iter(),
-    };
-    let (line, font, size) = reader.line(std::str::from_utf8(text).ok()?)?;
-    let shift = baseline_offset(reader.integer()?, font, size);
-    let (ink, (em_ascent, em_descent), metrics) = (
-        line.ink_bounds(),
-        text::em_box(font, size),
-        text::metrics(font, size),
+pub fn measure(text: &[u8], style: &TextStyle) -> TextMetrics {
+    let (line, shift) = (
+        line(std::str::from_utf8(text).unwrap_or_default(), style),
+        baseline_offset(style),
     );
-    let fields = [
-        line.width,
-        -ink.x,
-        ink.x + ink.width,
-        -ink.y - shift,
-        ink.y + ink.height + shift,
-        metrics.ascent - shift,
-        metrics.descent + shift,
-        em_ascent - shift,
-        em_descent + shift,
-        metrics.ascent * 0.8 - shift,
-        0. - shift,
-        -metrics.descent - shift,
-    ];
-    Some(fields.map(f64::from))
+    let (ink, metrics) = (line.ink_bounds(), text::metrics(style.font, style.size));
+    let ((em_ascent, em_descent), [alphabetic, hanging, ideographic]) =
+        (text::em_box(style.font, style.size), baselines(style));
+    TextMetrics {
+        width: line.width,
+        ink_left: -ink.x,
+        ink_right: ink.x + ink.width,
+        ink_ascent: -ink.y - shift,
+        ink_descent: ink.y + ink.height + shift,
+        font_ascent: metrics.ascent - shift,
+        font_descent: metrics.descent + shift,
+        em_ascent: em_ascent - shift,
+        em_descent: em_descent + shift,
+        hanging: hanging - shift,
+        alphabetic: alphabetic - shift,
+        ideographic: ideographic - shift,
+    }
 }
 
-/// `[x, y, evenOdd, path]`, or with `stroke`, `[x, y, matrix, the operands of operation 8, path]`.
-fn hit_test(numbers: &[u8], strokes: bool) -> Option<bool> {
+/// Whether anything is painted in a very small pixel around the point, so that the edge counts as inside.
+fn covers<'a>(
+    path: &Path,
+    style: impl Into<gfx::Style<'a>>,
+    matrix: Transform,
+    [x, y]: [f32; 2],
+) -> bool {
     const SAMPLES: f32 = 64.;
-    let mut reader = Reader {
-        numbers: numbers.as_chunks().0.iter(),
-    };
-    let [x, y] = reader.floats()?;
-    // Whether anything is painted in a very small pixel around the point, so that the edge counts as inside.
     let zoom = Transform::from_row(
         SAMPLES,
         0.,
@@ -953,212 +1047,116 @@ fn hit_test(numbers: &[u8], strokes: bool) -> Option<bool> {
         0.5 - x * SAMPLES,
         0.5 - y * SAMPLES,
     );
-    let pixel = IntRect::new(0, 0, 1, 1);
-    let coverage = if strokes {
-        let mut canvas = Canvas {
-            layer: None,
-            version: 0,
-            is_opaque: false,
-            state: State::new(pixel),
-            saved: Vec::new(),
-        };
-        canvas.set(3, &mut reader)?;
-        canvas.set(8, &mut reader)?;
-        let path = transformed(&reader.path()?, &canvas.state.matrix.invert()?);
-        Coverage::of_path(
-            &path,
-            canvas.state.pen(),
-            &zoom.pre_concat(canvas.state.matrix),
-            pixel,
+    let coverage = Coverage::of_path(
+        path,
+        style,
+        &zoom.pre_concat(matrix),
+        IntRect::new(0, 0, 1, 1),
+    );
+    coverage.data.first().is_some_and(|it| *it != 0)
+}
+
+pub fn is_in_path(point: [f32; 2], verbs: &[PathVerb], is_even_odd: bool) -> bool {
+    covers(
+        &path(verbs),
+        fill_rule(is_even_odd),
+        Transform::identity(),
+        point,
+    )
+}
+
+pub fn is_in_stroke(
+    point: [f32; 2],
+    verbs: &[PathVerb],
+    to: abi::Matrix,
+    pen: Pen,
+    dashes: &[f32],
+) -> bool {
+    let (mut state, matrix) = (State::new(IntRect::default()), matrix(to));
+    state.set_pen(pen, dashes);
+    matrix.invert().is_some_and(|inverse| {
+        covers(
+            &transformed(&path(verbs), &inverse),
+            state.pen(),
+            matrix,
+            point,
         )
-    } else {
-        let rule = fill_rule(reader.integer()?);
-        Coverage::of_path(&reader.path()?, rule, &zoom, pixel)
-    };
-    Some(*coverage.data.first()? != 0)
-}
-
-fn encode(
-    width: u32,
-    height: u32,
-    premultiplied: Vec<u8>,
-    format: &str,
-    quality: f64,
-) -> Result<Value> {
-    let mut image = Rgba {
-        width,
-        height,
-        data: premultiplied,
-    };
-    let bytes = if format == "image/jpeg" {
-        // Premultiplied colors are those on black.
-        image.to_jpeg((quality * 100.).round().clamp(1., 100.) as u8)
-    } else {
-        image
-            .data
-            .as_chunks_mut()
-            .0
-            .iter_mut()
-            .for_each(|pixel| *pixel = demultiply(*pixel));
-        if format == "image/webp" {
-            image.to_webp()
-        } else {
-            image.to_png()
-        }
-    };
-    Ok(bridge::put_blob(bytes.context("the canvas is empty")?).into())
-}
-
-fn area(arguments: &Value) -> IntRect {
-    let number = |key: &str| arguments[key].as_f64().unwrap_or(0.) as f32;
-    IntRect::nearest(Rect {
-        x: number("x"),
-        y: number("y"),
-        width: number("width"),
-        height: number("height"),
     })
 }
 
-/// A part of an image, a canvas or `blob` (RGBA), at another size.
-fn snapshot(id: u32, arguments: &Value) -> Result<Pixmap> {
-    let number = |key: &str| arguments[key].as_f64().unwrap_or(0.) as f32;
-    let size = [number("sourceWidth"), number("sourceHeight")];
-    let to = Rect {
-        x: 0.,
-        y: 0.,
-        width: number("toWidth"),
-        height: number("toHeight"),
-    };
-    let mut target = Layer::new(IntRect::nearest(to)).context("the image is empty or too large")?;
-    let mut state = State::new(target.rect);
-    state.is_smooth = arguments["pixelated"] != true;
-    if arguments["flipY"] == true {
+fn snapshot(wanted: &Snapshot) -> Option<Pixmap> {
+    let [width, height] = wanted.to.map(|it| i32::try_from(it).unwrap_or(0));
+    let mut target = Layer::new(IntRect::new(0, 0, width, height))?;
+    let (mut state, to) = (State::new(target.rect), target.rect.to_rect());
+    state.is_smooth = wanted.is_smooth;
+    if wanted.flips {
         state.matrix = Transform::from_row(1., 0., 0., -1., 0., to.height);
     }
-    let mut draw = |content: Content, _| {
-        state.draw_image(&mut target, content, size, area(arguments).to_rect(), to)
-    };
-    if arguments["blob"].is_u64() {
-        let pixmap = images::pixmap_from_rgba(
-            size[0] as u32,
-            size[1] as u32,
-            bridge::blob(&arguments["blob"])?,
-        );
-        draw(Content::Pixels(&pixmap.context("the image is empty")?), 0);
-    } else {
-        images::with_first_frame(id, draw);
-    }
-    Ok(target.pixmap)
+    images::with_first_frame(wanted.source, |content, _| {
+        state.draw_image(&mut target, content, wanted.size, wanted.part, to)
+    });
+    Some(target.pixmap)
 }
 
-pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-    let number = |key: &str| arguments[key].as_u64().unwrap_or(0) as u32;
-    let id = number("id");
-    match name {
-        "create" => {
-            let (state, is_opaque) = (State::new(IntRect::default()), arguments["opaque"] == true);
-            let mut canvas = Canvas {
-                layer: None,
-                version: 0,
-                is_opaque,
-                state,
-                saved: Vec::new(),
-            };
-            canvas.reset(number("width"), number("height"));
-            let id = images::next_id();
-            CANVASES.with_borrow_mut(|canvases| canvases.insert(id, Rc::new(RefCell::new(canvas))));
-            return Ok(id.into());
-        }
-        "release" => {
-            CANVASES.with_borrow_mut(|canvases| canvases.remove(&id));
-            PATTERNS.with_borrow_mut(|patterns| patterns.remove(&id));
-            return Ok(Value::Null);
-        }
-        "font" => return Ok(describe_font(arguments).into()),
-        "hitTest" => {
-            return Ok(json!(hit_test(
-                &bridge::blob(&arguments["blob"])?,
-                arguments["stroke"] == true
-            )));
-        }
-        "bitmap" => return Ok(images::insert(snapshot(id, arguments)?).into()),
-        "pattern" => {
-            let (tile, pattern) = (Rc::new(snapshot(id, arguments)?), images::next_id());
-            PATTERNS.with_borrow_mut(|patterns| patterns.insert(pattern, tile));
-            return Ok(pattern.into());
-        }
-        _ => {}
+/// Premultiplied colors are those on black.
+pub fn read(id: u32, area: Area, is_on_black: bool, rgba: &mut [u8]) {
+    let (canvas, wanted) = (get(id), pixels(area));
+    let canvas = canvas.as_ref().map(|it| it.borrow());
+    let layer = canvas.as_ref().and_then(|it| it.layer.as_ref());
+    let shared = layer.map_or_else(IntRect::default, |it| it.rect.intersect(wanted));
+    if shared.is_empty() || shared != wanted {
+        rgba.fill(0);
     }
-    let canvas = get(id).context("the canvas was released")?;
-    let mut canvas = canvas.borrow_mut();
-    match name {
-        "erase" => {
-            let blank = if canvas.is_opaque {
-                [0, 0, 0, 255]
-            } else {
-                [0; 4]
-            };
-            canvas
-                .layer
+    let Some(layer) = layer.filter(|_| !shared.is_empty()) else {
+        return;
+    };
+    let rows = rgba
+        .as_chunks_mut::<4>()
+        .0
+        .chunks_mut(area[2] as usize)
+        .skip((shared.top - wanted.top) as usize);
+    for (row, y) in rows.zip(shared.top..shared.bottom) {
+        let (to, from) = (
+            &mut row[(shared.left - wanted.left) as usize..][..shared.width()],
+            layer.row(y, shared.left, shared.right),
+        );
+        match is_on_black || from.iter().fold(255, |all, pixel| all & pixel[3]) == 255 {
+            true => to.copy_from_slice(from),
+            false => to
                 .iter_mut()
-                .for_each(|layer| layer.pixels_mut().fill(blank));
-            canvas.version = canvas.version.wrapping_add(1);
+                .zip(from)
+                .for_each(|(to, from)| *to = demultiply(*from)),
         }
-        "resize" => canvas.reset(number("width"), number("height")),
-        "getImageData" => {
-            let copy = match &canvas.layer {
-                Some(layer) => layer.copy(area(arguments)),
-                None => Layer::new(area(arguments)),
-            };
-            return Ok(bridge::put_blob(images::straight_rgba(
-                &copy.context("the area is too large")?,
-            ))
-            .into());
-        }
-        "putImageData" => {
-            let (rect, mut rgba) = (area(arguments), bridge::blob(&arguments["blob"])?);
-            if canvas.is_opaque {
-                rgba.as_chunks_mut::<4>()
-                    .0
-                    .iter_mut()
-                    .for_each(|pixel| pixel[3] = 255);
-            }
-            let pixmap = images::pixmap_from_rgba(rect.width() as u32, rect.height() as u32, rgba);
-            if let (Some(layer), Some(pixmap)) = (&mut canvas.layer, pixmap) {
-                layer.replace(
-                    &Layer { rect, pixmap },
-                    &Clip::new(area(&arguments["dirty"])),
-                );
-            }
-            canvas.version = canvas.version.wrapping_add(1);
-        }
-        "encode" => {
-            let pixmap = canvas
-                .layer
-                .as_ref()
-                .context("the canvas is empty")?
-                .pixmap
-                .clone();
-            let (format, quality) = (
-                arguments["type"].as_str().unwrap_or("").to_owned(),
-                arguments["quality"].as_f64(),
-            );
-            let work = move || {
-                encode(
-                    pixmap.width(),
-                    pixmap.height(),
-                    pixmap.take(),
-                    &format,
-                    quality.unwrap_or(0.92),
-                )
-            };
-            let Some(reply) = reply else { return work() };
-            bridge::in_background(reply, work);
-            return Ok(Value::Null);
-        }
-        _ => bail!("unknown command canvas.{name}"),
     }
-    drop(canvas);
-    surface::image_changed(id);
-    Ok(Value::Null)
+}
+
+pub fn part_of(rgba: &[u8], area: Area, part: Area) -> Vec<u8> {
+    let [left, top] = [0, 1].map(|axis| (i64::from(part[axis]) - i64::from(area[axis])) as usize);
+    let rows = rgba
+        .chunks(area[2] as usize * 4)
+        .skip(top)
+        .take(part[3] as usize);
+    let mut copy = Vec::with_capacity(part[2] as usize * part[3] as usize * 4);
+    rows.for_each(|row| copy.extend_from_slice(&row[left * 4..][..part[2] as usize * 4]));
+    copy
+}
+
+pub fn write(id: u32, area: Area, mut rgba: Vec<u8>) {
+    let Some(canvas) = get(id) else { return };
+    let mut canvas = canvas.borrow_mut();
+    if canvas.is_opaque {
+        rgba.as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .for_each(|pixel| pixel[3] = 255);
+    }
+    let (rect, pixmap) = (
+        pixels(area),
+        images::pixmap_from_rgba(area[2] as u32, area[3] as u32, rgba),
+    );
+    if let (Some(layer), Some(pixmap)) = (&mut canvas.layer, pixmap) {
+        layer.replace(&Layer { rect, pixmap }, &Clip::new(rect));
+    }
+    canvas.version = canvas.version.wrapping_add(1);
+    CHANGED.with_borrow_mut(|changed| changed.extend((!changed.contains(&id)).then_some(id)));
 }

@@ -9,8 +9,9 @@ use crate::document::Document;
 use crate::geometry::translation;
 use crate::inline::ItemKind;
 use crate::name::{Name, Set, name};
+use crate::order::Order as _;
 use crate::paint::{Painter, Picture, Space, square};
-use crate::properties::{Id, Style};
+use crate::properties::{Id, Prop, Style};
 use crate::rules::Level;
 use crate::selector::{Pseudo, TransitionPart as Part};
 use crate::sheet::{AtKind, Block, Defined, Keyframe};
@@ -220,7 +221,7 @@ impl Document {
         if id != 0 {
             self.stacking_contexts_in(id, &mut inside);
         }
-        inside.sort_by_key(|it| it.0);
+        inside.order_by_key(|it| it.0);
         inside
             .into_iter()
             .for_each(|it| self.named_in(it.1, it.2, scope, out));
@@ -314,24 +315,25 @@ impl Document {
     ) -> Option<Placement> {
         let (id, rect) = self.captured_box(node)?;
         let mut styles = Out::new();
-        for property in [
-            "writing-mode",
-            "direction",
-            "text-orientation",
-            "mix-blend-mode",
-            "color-scheme",
+        for id in [
+            Id::WritingMode,
+            Id::Direction,
+            Id::TextOrientation,
+            Id::MixBlendMode,
+            Id::ColorScheme,
         ] {
             styles.extend(
                 [
-                    property.as_bytes(),
+                    id.name().as_bytes(),
                     b":",
-                    &self.computed_style(node, b"", property.as_bytes(), true),
+                    &self.computed_style(node, Pseudo::None, Prop::Long(id), true),
                     b";",
                 ]
                 .concat(),
             );
         }
-        let backdrop_filter = self.computed_style(node, b"", b"backdrop-filter", true);
+        let backdrop_filter =
+            self.computed_style(node, Pseudo::None, Prop::Long(Id::BackdropFilter), true);
         if self.tree.is_root(node) {
             let [width, height] = self.snapshot_size();
             let ink = Rect::new([0.0, 0.0, width, height]);
@@ -392,15 +394,23 @@ impl Document {
         }
         let ink = Rect::new([left, top, right - left, bottom - top]);
         let (border, mut of_children) = (style.border(), Out::new());
-        for property in ["top-left", "top-right", "bottom-right", "bottom-left"]
-            .into_iter()
-            .flat_map(|it| [format!("border-{it}-radius"), format!("corner-{it}-shape")])
-        {
+        let radii = [
+            Id::BorderTopLeftRadius,
+            Id::BorderTopRightRadius,
+            Id::BorderBottomRightRadius,
+            Id::BorderBottomLeftRadius,
+        ];
+        for id in radii.into_iter().chain([
+            Id::CornerTopLeftShape,
+            Id::CornerTopRightShape,
+            Id::CornerBottomRightShape,
+            Id::CornerBottomLeftShape,
+        ]) {
             of_children.extend(
                 [
-                    property.as_bytes(),
+                    id.name().as_bytes(),
                     b":",
-                    &self.computed_style(node, b"", property.as_bytes(), true),
+                    &self.computed_style(node, Pseudo::None, Prop::Long(id), true),
                     b";",
                 ]
                 .concat(),
@@ -423,6 +433,28 @@ impl Document {
             styles,
             backdrop_filter,
         })
+    }
+
+    /// With the matrix to the viewport, and what it covers there. Of what is larger than the viewport, the part in that.
+    pub(crate) fn picture_of(&mut self, node: NodeId) -> Option<(Picture, Matrix, Rect)> {
+        let (placement, viewport) = (self.placement(node, None, 0)?, self.border_box(VIEWPORT));
+        let matrix = multiply(
+            &placement.matrix,
+            &translation(placement.fraction.map(|it| -it)),
+        );
+        let mut area = if self.own_box(node).is_some() {
+            placement.ink.transformed(&matrix)
+        } else {
+            self.bounding_rect(node)
+        };
+        if area.width * area.height > viewport.width * viewport.height {
+            area = area.intersection(&viewport);
+        }
+        Some((
+            Painter::capture(self, node, &placement, area.transformed(&invert(&matrix)?)),
+            matrix,
+            area,
+        ))
     }
 
     fn classes_of(&self, node: NodeId, scope: NodeId) -> Vec<Name> {
@@ -495,12 +527,17 @@ impl Document {
         true
     }
 
-    pub(crate) fn hand_over_old_state(&mut self, ticket: u32) {
-        let transition = self.take_transition(0);
+    /// What `take_over_old_state` takes.
+    pub(crate) fn hand_over_old_state(&mut self) -> u32 {
+        let (transition, ticket) = (
+            self.take_transition(0),
+            (bun_core::fast_random() % 0x7fff_fffe) as u32 + 1,
+        );
         OUTBOUND.with_borrow_mut(|all| {
             all.drain(..all.len().saturating_sub(3));
             all.extend(transition.map(|it| (ticket, it)));
         });
+        ticket
     }
 
     pub(crate) fn take_over_old_state(&mut self, ticket: u32) -> bool {
@@ -513,33 +550,34 @@ impl Document {
         self.add_transition(transition)
     }
 
-    /// The types, or `none` if navigations have no transition.
-    pub(crate) fn navigation_transition(&mut self) -> Out {
+    /// The types, if navigations have a transition.
+    pub(crate) fn navigation_transition(&mut self) -> Option<Out> {
         self.update_style();
         let Some((Defined::Descriptors(all), _)) =
             self.find_defined(DOCUMENT, AtKind::ViewTransition, "")
         else {
-            return b"none".into();
+            return None;
         };
         let value = |name: &str| {
             all.iter()
                 .rfind(|it| &*it.0 == name)
                 .map_or("none", |it| &it.1)
         };
-        match (value("navigation"), value("types")) {
-            ("auto", "none") => Out::new(),
-            ("auto", types) => types.into(),
-            _ => b"none".into(),
-        }
+        (value("navigation") == "auto").then(|| {
+            Some(value("types"))
+                .filter(|it| *it != "none")
+                .unwrap_or_default()
+                .into()
+        })
     }
 
     fn add_pseudo(&mut self, parent: NodeId, pseudo: Pseudo, classes: &[Name]) -> NodeId {
         let mut element = Element::new(name!(""), Namespace::Html);
-        (element.pseudo, element.originator) = (
+        element.set_pseudo(
             pseudo,
             self.tree.element(parent).map_or(0, |it| it.originator),
         );
-        element.custom_states.extend_from_slice(classes);
+        element.rare_mut().custom_states = classes.into();
         let node = self.tree.create(Data::Element(Box::new(element)));
         self.tree.link(parent, node, 0);
         self.tree[node].scope = self.tree[parent].scope;
@@ -561,7 +599,7 @@ impl Document {
         self.tree
             .element_mut(node)
             .into_iter()
-            .for_each(|it| it.hints = Some(Rc::clone(&block)));
+            .for_each(|it| it.rare_mut().hints = Some(Rc::clone(&block)));
         self.tree.mark_style(node, Flags::REMATCH);
     }
 
@@ -688,7 +726,7 @@ impl Document {
             self.boxes.mark_ink(self.tree[node].layout_box);
         }
         let mut element = Element::new(name!(""), Namespace::Html);
-        (element.pseudo, element.originator) = (Pseudo::Transition(Part::Block, Name::NONE), root);
+        element.set_pseudo(Pseudo::Transition(Part::Block, Name::NONE), root);
         transition.root = self.tree.create(Data::Element(Box::new(element)));
         self.tree[transition.root].scope = self.tree[root].scope;
         let old = self.tree.element_mut(root).map_or(0, |it| {
@@ -1153,12 +1191,22 @@ impl Painter<'_> {
             match document.own_box(node) {
                 Some(_) => painter.placed_stacking_context(id, space, true),
                 None => {
-                    let mut items = document.boxes[id].inline.iter().flat_map(|it| &it.items);
-                    let index = items
+                    let Some(inline) = &document.boxes[id].inline else {
+                        return Picture::default();
+                    };
+                    let index = inline
+                        .items
+                        .iter()
                         .position(|it| it.node == node && matches!(it.kind, ItemKind::Open(_)));
-                    index
-                        .into_iter()
-                        .for_each(|it| painter.inline_layer(id, it, &space));
+                    match index {
+                        Some(index) if crate::inline::is_layer(&inline.items[index].style) => {
+                            painter.inline_layer(id, index, &space)
+                        }
+                        Some(index) => {
+                            painter.lines(id, node, index..inline.inside(index).end, &space)
+                        }
+                        None => {}
+                    }
                 }
             }
         }

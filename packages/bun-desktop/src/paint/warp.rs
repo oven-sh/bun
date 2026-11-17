@@ -1,6 +1,8 @@
 //! Pixels that are painted once and then repeated or distorted.
 
-use super::raster::{Clip, Coverage, IntRect, Layer, Paint, Pixel, map_point, map_rect};
+use super::raster::{
+    Clip, Coverage, IntRect, Layer, Paint, Pixel, map_point, map_rect, over, prefer_wide, scale,
+};
 use crate::abi::{Rect, RoundedRect, Tile};
 use crate::gfx::{Pixmap, Transform};
 
@@ -103,6 +105,59 @@ fn interpolate(x: f32, y: f32, at: impl Fn(i32, i32) -> Pixel) -> Pixel {
             |a: Pixel, b: Pixel| u32::from(a[channel]) * (256 - fx) + u32::from(b[channel]) * fx;
         ((row(a, b) * (256 - fy) + row(c, d) * fy + (1 << 15)) >> 16) as u8
     })
+}
+
+/// Positions have 16 bits after the point.
+pub struct Samples<'a> {
+    pub texels: &'a [Pixel],
+    pub width: usize,
+    /// From one pixel to the next.
+    pub step: [i32; 2],
+    /// Positions are taken to be between 0 and this, which leaves room for another column and another row.
+    pub last: [i32; 2],
+}
+
+impl Samples<'_> {
+    #[inline(always)]
+    pub(super) fn at(&self, start: [i32; 2], steps: i32) -> Pixel {
+        let [x, y] = [0, 1].map(|axis| {
+            start[axis]
+                .wrapping_add(self.step[axis].wrapping_mul(steps))
+                .clamp(0, self.last[axis])
+        });
+        let (at, across, down) = (
+            (y >> 16) as usize * self.width + (x >> 16) as usize,
+            x as u64 >> 10 & 63,
+            y as u64 >> 10 & 63,
+        );
+        let spread = |at: usize| {
+            let bits = u64::from(u32::from_le_bytes(self.texels[at]));
+            (bits | bits << 24) & 0xFF_00FF_00FF_00FF
+        };
+        let mix = |a: u64, b: u64, by: u64| {
+            (a * (64 - by) + b * by + 0x20_0020_0020_0020) >> 6 & 0xFF_00FF_00FF_00FF
+        };
+        let line = |at: usize| mix(spread(at), spread(at + 1), across);
+        let mixed = mix(line(at), line(at + self.width), down);
+        ((mixed | mixed >> 24) as u32).to_le_bytes()
+    }
+}
+
+/// Each row comes with the position of its first pixel.
+pub fn draw_samples<'a>(
+    rows: impl Iterator<Item = (&'a mut [Pixel], [i32; 2])>,
+    source: &Samples,
+    by: u8,
+) {
+    prefer_wide!(draw_samples(rows, source, by));
+    for (row, start) in rows {
+        for (steps, pixel) in (0..).zip(row) {
+            *pixel = match source.at(start, steps) {
+                color @ [.., 255] if by == 255 => color,
+                color => over(*pixel, scale(color, by)),
+            };
+        }
+    }
 }
 
 /// `paint` paints what is in `bounds` with a matrix that only scales.

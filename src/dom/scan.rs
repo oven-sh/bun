@@ -297,7 +297,9 @@ pub(crate) fn end_of_statement(source: &[u8], at: usize) -> usize {
 /// That is not important, and that ends with its semicolon.
 pub(crate) fn is_one_declaration(source: &[u8]) -> bool {
     let value = &source[..source.len() - 1];
-    bun_core::strings::index_of_any(value, b"{}()[]\"'\\/;!").is_none()
+    !value
+        .iter()
+        .any(|it| IS_SPECIAL[usize::from(*it)] || *it == b'!')
         || matches!(next_item(source, 0), Next::Statement { .. })
             && end_of_statement(source, 0) == source.len()
             && !without_priority(value).1
@@ -463,8 +465,9 @@ impl Selectors<'_> {
                     };
                     let value =
                         value.filter(|it| own.is_some() && it.iter().all(|it| is_name(*it)));
-                    own = value
-                        .map(|it| (2, key::value(written, it)))
+                    own = name
+                        .zip(value)
+                        .map(|(name, it)| (2, key::value_in_selector(name, written, it)))
                         .filter(|it| it.1 != Name::NONE)
                         .or(own);
                 }

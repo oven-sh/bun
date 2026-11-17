@@ -1,0 +1,43 @@
+[package]
+name = "bun_web"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags.workspace = true
+bstr.workspace = true
+bun_pac.workspace = true
+bun_resolver.workspace = true
+bun_spawn_sys.workspace = true
+bun_which.workspace = true
+smallvec.workspace = true
+bun_base64.workspace = true
+bun_boringssl_sys.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_errno.workspace = true
+bun_event_loop.workspace = true
+bun_highway.workspace = true
+bun_http.workspace = true
+bun_http1.workspace = true
+bun_http_jsc.workspace = true
+bun_http_types.workspace = true
+bun_io.workspace = true
+bun_jsc.workspace = true
+bun_opaque.workspace = true
+bun_paths.workspace = true
+bun_ptr.workspace = true
+bun_sha_hmac.workspace = true
+bun_simdutf_sys.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
+bun_ui.workspace = true
+bun_url.workspace = true
+bun_wyhash.workspace = true
+encoding_rs.workspace = true

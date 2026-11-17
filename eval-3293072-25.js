@@ -1,1 +1,0 @@
-process.argv.splice(1, 1);const e = new Error("cyc"); e.cause = e; e.errors = [e]; throw e;

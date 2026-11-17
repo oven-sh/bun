@@ -52,9 +52,7 @@ impl Settings {
     }
 
     pub fn scale(&self) -> f32 {
-        let mut from_environment = ["GDK_SCALE", "GPUI_X11_SCALE_FACTOR"]
-            .into_iter()
-            .map(std::env::var);
+        let mut from_environment = ["GDK_SCALE"].into_iter().map(std::env::var);
         let chosen = from_environment.find_map(|it| it.ok()?.parse().ok());
         let dpi = || {
             self.number("Xft.dpi")

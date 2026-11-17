@@ -8,8 +8,9 @@ use crate::boxes::Child;
 use crate::counter_style::CounterStyle;
 use crate::document::Document;
 use crate::name::name;
+use crate::order::Order as _;
 use crate::properties::Style;
-use crate::tree::{AFTER, BEFORE, DOCUMENT, Data, Element, MARKER, Namespace, NodeId, Replaced};
+use crate::tree::{DOCUMENT, Data, Element, MARKER, Namespace, NodeId, Replaced};
 use crate::types::*;
 use crate::values::Str;
 
@@ -177,47 +178,11 @@ impl Document {
         }
     }
 
-    fn set_generated_text(&mut self, id: NodeId, text: String) {
+    fn set_generated_text(&mut self, id: NodeId, text: &str) {
         if self.tree[id].text() != Some(text.as_bytes()) {
-            self.tree[id].data = Data::Text(text.into_bytes());
+            self.tree[id].data = Data::Text(text.into());
             self.mark_rebuild(self.tree[id].parent);
         }
-    }
-
-    /// For the accessible name.
-    pub(crate) fn generated_text(&self, id: NodeId, pseudo: &[u8]) -> Vec<u8> {
-        let index = match pseudo {
-            b"::before" => BEFORE,
-            b"::after" => AFTER,
-            _ => MARKER,
-        };
-        let generated = self.tree.element(id).map_or(0, |it| it.generated[index]);
-        let Some(style) = self
-            .tree
-            .style(generated)
-            .filter(|it| it.is_visible() && it.rare.content != Content::Normal)
-        else {
-            return Vec::new();
-        };
-        if let (Content::Items(_, Some(_)), Some(alt)) =
-            (&style.rare.content, self.counter_users.get(&generated))
-        {
-            return [b" ", alt.as_bytes(), b" "].concat();
-        }
-        let space: &[u8] = if style.display() == Display::Inline {
-            b""
-        } else {
-            b" "
-        };
-        let texts = self
-            .tree
-            .children(generated)
-            .filter_map(|it| self.tree[it].text());
-        core::iter::once(space)
-            .chain(texts)
-            .chain([space])
-            .collect::<Vec<_>>()
-            .concat()
     }
 
     fn append_generated(&mut self, parent: NodeId, data: Data) -> NodeId {
@@ -242,9 +207,9 @@ impl Document {
             if is_marker { None } else { Some(0.0) },
         );
         self.tree
-            .element_mut(child)
+            .element_to_style(child)
             .into_iter()
-            .for_each(|it| it.replaced = Some(shown));
+            .for_each(|it| it.rare_mut().replaced = Some(shown));
     }
 
     /// `size` is that of an image that is drawn.
@@ -353,7 +318,7 @@ impl Document {
         let Content::Items(items, alt) = &style.rare.content else {
             if let Some(image) = &style.text.list_image.0 {
                 self.append_generated_image(id, image, style);
-                self.append_generated(id, Data::Text(b" ".to_vec()));
+                self.append_generated(id, Data::Text(" ".into()));
             }
             return;
         };
@@ -365,10 +330,10 @@ impl Document {
             match item {
                 ContentItem::Image(image) => self.append_generated_image(id, image, style),
                 ContentItem::String(string) => {
-                    _ = self.append_generated(id, Data::Text(string.as_bytes().to_vec()))
+                    _ = self.append_generated(id, Data::Text((&**string).into()))
                 }
                 _ => {
-                    self.append_generated(id, Data::Text(Vec::new()));
+                    self.append_generated(id, Data::Text(Default::default()));
                     self.counter_users.insert(id, String::new());
                     self.counters_are_stale = true;
                 }
@@ -381,10 +346,18 @@ impl Document {
             Child::Element(id, style) if style.display().is_list_item() => Some(*id),
             _ => None,
         });
-        let has_items = items.clone().next().is_some();
-        if !has_items && self.deep_lists.is_empty() {
-            return;
+        match self.list_around(parent, items.clone().next().is_some()) {
+            Some((list, true)) => self.stale_lists.push(list),
+            Some((list, false)) => {
+                self.number(list, &items.collect::<smallvec::SmallVec<[_; 16]>>())
+            }
+            None => {}
         }
+    }
+
+    /// And whether it has items that are not its children.
+    fn list_around(&mut self, parent: NodeId, has_items: bool) -> Option<(NodeId, bool)> {
+        (has_items || !self.deep_lists.is_empty()).then_some(())?;
         let list = core::iter::once(parent)
             .chain(self.tree.flat_ancestors(parent))
             .find(|it| self.owns_items(*it))
@@ -392,18 +365,24 @@ impl Document {
         if has_items && list != parent {
             self.deep_lists.insert(list);
         }
-        match self.deep_lists.contains(&list) {
-            true => self.stale_lists.push(list),
-            false => self.number(list, items),
-        }
+        Some((list, self.deep_lists.contains(&list)))
     }
 
-    pub(crate) fn number_deep_lists(&mut self) {
+    /// A child comes or goes without the others being made again.
+    pub(crate) fn renumber_around(&mut self, parent: NodeId, is_item: bool) {
+        let list = self
+            .list_around(parent, is_item)
+            .filter(|it| (is_item || it.1) && self.stale_lists.last() != Some(&it.0));
+        self.stale_lists.extend(list.map(|it| it.0));
+    }
+
+    pub(crate) fn number_stale_lists(&mut self) {
         let mut lists = core::mem::take(&mut self.stale_lists);
-        lists.sort_unstable();
+        lists.order_by(Ord::cmp);
         lists.dedup();
         for list in lists {
-            let (mut items, mut pending) = (Vec::new(), vec![list]);
+            let (mut items, mut pending, is_deep) =
+                (Vec::new(), vec![list], self.deep_lists.contains(&list));
             while let Some(id) = pending.pop() {
                 let Some(style) = self
                     .tree
@@ -413,17 +392,20 @@ impl Document {
                     continue;
                 };
                 items.extend((id != list && style.display().is_list_item()).then_some(id));
-                if id == list || !self.owns_items(id) {
+                if id == list
+                    || style.display() == Display::Contents
+                    || is_deep && !self.owns_items(id)
+                {
                     let first = pending.len();
                     pending.extend(self.tree.flat_children(id));
                     pending[first..].reverse();
                 }
             }
-            self.number(list, items.iter().copied());
+            self.number(list, &items);
         }
     }
 
-    fn number(&mut self, list: NodeId, items: impl Iterator<Item = NodeId> + Clone) {
+    fn number(&mut self, list: NodeId, items: &[NodeId]) {
         let ordered = self
             .tree
             .element(list)
@@ -434,28 +416,20 @@ impl Document {
             1
         };
         let start = ordered.and_then(|it| it.number(name!("start")));
-        let of_items = |all: &[Counter], missing| {
+        fn of_items(all: &[Counter], missing: i32) -> impl DoubleEndedIterator<Item = i32> {
             all.iter()
                 .filter(|it| &*it.0 == "list-item")
-                .map(|it| it.1.unwrap_or(missing))
-                .collect::<Vec<i32>>()
-        };
-        let first = start.map_or_else(
-            || {
-                if step < 0 {
-                    items.clone().count() as i32
-                } else {
-                    1
-                }
-            },
-            |it| it as i32,
-        );
+                .map(move |it| it.1.unwrap_or(missing))
+        }
+        let first = start.map_or(if step < 0 { items.len() as i32 } else { 1 }, |it| {
+            it as i32
+        });
         let reset = self
             .tree
             .style(list)
-            .and_then(|it| of_items(&it.rare.counter_reset, 0).pop());
+            .and_then(|it| of_items(&it.rare.counter_reset, 0).next_back());
         let mut last = reset.unwrap_or_else(|| first.saturating_sub(step));
-        for element in items.filter_map(|it| self.tree.element(it)) {
+        for element in items.iter().filter_map(|it| self.tree.element(*it)) {
             let Some(rare) = element.style.as_ref().map(|it| &it.rare) else {
                 continue;
             };
@@ -466,17 +440,16 @@ impl Document {
                     .map(|it| it as i32)
             };
             let added = of_items(&rare.counter_increment, 1)
-                .into_iter()
                 .reduce(i32::saturating_add)
                 .unwrap_or(step);
             let next = || {
                 of_items(&rare.counter_reset, 0)
-                    .pop()
+                    .next_back()
                     .unwrap_or(last)
                     .saturating_add(added)
             };
             last = of_items(&rare.counter_set, 0)
-                .pop()
+                .next_back()
                 .or_else(value)
                 .unwrap_or_else(next);
             self.ordinals.push((element.generated[MARKER], last));
@@ -492,14 +465,23 @@ impl Document {
             {
                 continue;
             }
+            let digits = self.tree[self.tree[marker].first_child]
+                .text()
+                .and_then(|it| it.strip_suffix(b". "))
+                .filter(|it| matches!(it, [b'1'..=b'9', ..]));
+            if is_named(style, &["decimal"])
+                && digits.and_then(|it| crate::values::text(it).parse().ok()) == Some(value)
+            {
+                continue;
+            }
             let text = self.represent(marker, value, &style.text.list_type, true);
             match self.tree[marker].first_child {
                 0 => {
-                    self.append_generated(marker, Data::Text(text.into_bytes()));
+                    self.append_generated(marker, Data::Text(text.as_str().into()));
                     self.mark_parent_rebuild(marker);
                 }
                 child if self.tree[child].text() == Some(text.as_bytes()) => {}
-                child => self.set_generated_text(child, text),
+                child => self.set_generated_text(child, &text),
             }
         }
     }
@@ -511,7 +493,7 @@ impl Document {
             for (id, text) in texts {
                 match self.counter_users.get_mut(&id) {
                     Some(alt) => *alt = text,
-                    None => self.set_generated_text(id, text),
+                    None => self.set_generated_text(id, &text),
                 }
             }
         }

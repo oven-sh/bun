@@ -1,6 +1,7 @@
 //! Linux and FreeBSD. Wayland compositors are talked to through Xwayland.
 
 mod atom;
+mod atspi;
 mod cursor;
 mod dbus;
 mod desktop;
@@ -23,10 +24,13 @@ use self::keyboard::{Composer, HotKey, Keymap, Sequence};
 pub use self::keysyms::keysym_to_char;
 use self::window::Window;
 use self::wire::{Bytes as _, Connection, Extension, Request};
-use super::{Cursor, Display, Icon, Platform, RawKey, WindowButton};
+use super::{Cursor, Display, Icon, Platform, Point, RawKey, WindowButton};
 use crate::error::{Context as _, Result};
 use crate::input::{self, TextInput};
-use crate::json::{Value, json};
+use crate::protocol::{
+    Chord, Clipboard, ClipboardPart, SystemCommand, SystemEvent, SystemRequest, SystemSettings,
+    SystemState,
+};
 use crate::window::Options;
 use crate::{app, bridge};
 
@@ -87,7 +91,7 @@ struct X11 {
     sequence: RefCell<String>,
     input_method: OnceCell<Option<Rc<ibus::InputMethod>>>,
     text_input_changed: Cell<bool>,
-    hot_keys: RefCell<Vec<HotKey>>,
+    hot_keys: RefCell<Vec<(u32, HotKey)>>,
     pointer: pointer::Pointer,
     selections: selection::Selections,
     desktop: desktop::Desktop,
@@ -267,9 +271,11 @@ impl X11 {
         self.cursors.take();
         for window in self.all_windows() {
             window.reload_cursor();
+            window.scale_limits();
             crate::window::bounds_changed(window.id);
         }
         crate::window::appearance_changed();
+        tell_settings();
     }
 
     fn displays_changed(&self) {
@@ -278,9 +284,9 @@ impl X11 {
         let metrics = |it: &Display| (it.bounds, it.work_area, it.scale, it.frequency);
         for display in &now {
             match before.iter().find(|it| it.id == display.id) {
-                None => app::event("display-added", display.id.into()),
+                None => bridge::emit_system(SystemEvent::DisplayAdded(display.id)),
                 Some(old) if metrics(old) != metrics(display) => {
-                    app::event("display-metrics-changed", display.id.into())
+                    bridge::emit_system(SystemEvent::DisplayChanged(display.id))
                 }
                 Some(_) => {}
             }
@@ -289,7 +295,7 @@ impl X11 {
             .iter()
             .filter(|old| now.iter().all(|it| it.id != old.id))
         {
-            app::event("display-removed", display.id.into());
+            bridge::emit_system(SystemEvent::DisplayRemoved(display.id));
         }
     }
 
@@ -397,8 +403,13 @@ impl X11 {
         self.time.set(event.u32(4));
         let Some(window) = self.window(event.u32(12)) else {
             let pressed = HotKey::pressed(code, state);
-            if down && self.hot_keys.borrow().contains(&pressed) {
-                bridge::emit(json!({ "t": "hotkey", "id": pressed.id() }));
+            for (id, _) in self
+                .hot_keys
+                .borrow()
+                .iter()
+                .filter(|it| down && it.1 == pressed)
+            {
+                bridge::emit_system(SystemEvent::HotKey(*id));
             }
             return;
         };
@@ -406,6 +417,16 @@ impl X11 {
             self.with_keymap(|it| it.symbol(code, state)),
             u32::from(code.saturating_sub(8)),
         );
+        if atspi::takes_key(
+            down,
+            symbol,
+            code,
+            state,
+            self.time.get(),
+            keysym_to_char(symbol).filter(|it| !it.is_control()),
+        ) {
+            return;
+        }
         let is_repeat = self.last_pressed.replace(if down { code } else { 0 }) == code && down;
         input::raw_key(RawKey {
             down,
@@ -423,18 +444,11 @@ impl X11 {
         }
     }
 
-    fn set_hot_key(&self, accelerator: &str, on: bool) -> Result<u32> {
-        let key = self.with_keymap(|keymap| HotKey::parse(accelerator, keymap))?;
-        if on {
-            key.grab(&self.x)?;
-            self.hot_keys.borrow_mut().push(key);
-        } else {
-            self.hot_keys
-                .borrow_mut()
-                .extract_if(.., |it| *it == key)
-                .for_each(|it| it.release(&self.x));
-        }
-        Ok(key.id())
+    fn register_hot_key(&self, id: u32, chord: &Chord) -> Result<()> {
+        let key = self.with_keymap(|keymap| HotKey::new(chord, keymap))?;
+        key.grab(&self.x)?;
+        self.hot_keys.borrow_mut().push((id, key));
+        Ok(())
     }
 
     // ───────────────────────────── events ─────────────────────────────
@@ -524,6 +538,7 @@ impl X11 {
 
     fn for_each_bus(&self, mut f: impl FnMut(&dbus::Bus)) {
         self.desktop.for_each_bus(&mut f);
+        atspi::with_bus(&mut f);
         self.input_method
             .get()
             .into_iter()
@@ -531,7 +546,7 @@ impl X11 {
             .for_each(|it| f(&it.bus));
     }
 
-    fn idle_seconds(&self) -> Result<f64> {
+    fn seconds_since_input(&self) -> Result<f64> {
         // Xwayland only knows about the input for its own windows.
         let from_compositor =
             std::env::var_os("WAYLAND_DISPLAY").and_then(|_| self.desktop.idle_milliseconds().ok());
@@ -547,11 +562,21 @@ impl X11 {
     }
 }
 
-impl Platform for &'static X11 {
-    fn name(&self) -> &'static str {
-        "X11"
+fn tell_settings() {
+    thread_local! {
+        static TOLD: Cell<[bool; 2]> = Cell::default();
     }
+    let Ok(platform) = crate::host::platform() else {
+        return;
+    };
+    let settings = platform.settings();
+    let now = [settings.more_contrast, platform.state().reduces_motion];
+    if TOLD.replace(now) != now {
+        crate::bridge::emit_system(SystemEvent::Settings(settings));
+    }
+}
 
+impl Platform for &'static X11 {
     fn open_window(&self, options: &Options, icon: Option<&Icon>) -> Result<Rc<dyn super::Window>> {
         let window = Window::open(self, options, icon)?;
         self.windows.borrow_mut().push(window.clone());
@@ -600,30 +625,68 @@ impl Platform for &'static X11 {
         Some([left, right].map(|side| side.split(',').filter_map(button).collect()))
     }
 
-    fn command(&self, name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-        Ok(match name {
-            "info" => json!({
-                "thermalState": "nominal",
-                "lowPower": self.desktop.known.saves_power.get(),
-                "reduceMotion": self.desktop.known.reduces_motion.get()
-                    || self.settings.borrow().get("Gtk/EnableAnimations") == Some("0"),
-            }),
-            "readClipboard" => self.read_clipboard(arguments.as_str().unwrap_or("")),
-            "writeClipboard" => self.write_clipboard(arguments).map(|()| Value::Null)?,
-            "cursor" => {
-                let pointer = self.x.call(Request::new(38, 0).u32(self.x.screen.root))?;
-                let [x, y] = [16, 18].map(|at| f32::from(pointer.i16(at)) / self.scale.get());
-                json!({ "x": x, "y": y })
+    fn command(&self, command: SystemCommand) -> Result<()> {
+        match command {
+            SystemCommand::WriteClipboard {
+                contents,
+                is_selection,
+            } => self.write_clipboard(contents, is_selection),
+            SystemCommand::RegisterHotKey { id, chord } => self.register_hot_key(id, &chord),
+            SystemCommand::UnregisterHotKey(id) => {
+                self.hot_keys
+                    .borrow_mut()
+                    .extract_if(.., |it| it.0 == id)
+                    .for_each(|it| it.1.release(&self.x));
+                Ok(())
             }
-            "idleSeconds" => self.idle_seconds()?.into(),
-            "hotkey" => self
-                .set_hot_key(
-                    arguments["accelerator"].as_str().unwrap_or(""),
-                    arguments["on"] == true,
-                )?
-                .into(),
-            _ => self.desktop.command(name, arguments, reply)?,
-        })
+            command => self.desktop.command(command),
+        }
+    }
+
+    fn request(&self, id: u32, request: SystemRequest) -> Result<()> {
+        desktop::request(id, request)
+    }
+
+    fn state(&self) -> SystemState {
+        SystemState {
+            saves_power: self.desktop.known.saves_power.get(),
+            reduces_motion: self.desktop.known.reduces_motion.get()
+                || self.settings.borrow().get("Gtk/EnableAnimations") == Some("0"),
+            ..SystemState::default()
+        }
+    }
+
+    fn settings(&self) -> SystemSettings {
+        let theme = self
+            .settings
+            .borrow()
+            .get("Net/ThemeName")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let more_contrast = self.desktop.known.has_more_contrast.get()
+            || theme.contains("high") && theme.contains("contrast");
+        SystemSettings {
+            more_contrast,
+            ..SystemSettings::default()
+        }
+    }
+
+    fn cursor_position(&self) -> Result<Point> {
+        let pointer = self.x.call(Request::new(38, 0).u32(self.x.screen.root))?;
+        let [x, y] = [16, 18].map(|at| f32::from(pointer.i16(at)) / self.scale.get());
+        Ok(Point { x, y })
+    }
+
+    fn idle_seconds(&self) -> Result<f64> {
+        self.seconds_since_input()
+    }
+
+    fn is_on_battery(&self) -> bool {
+        desktop::on_battery()
+    }
+
+    fn read_clipboard(&self, part: ClipboardPart) -> Clipboard {
+        self.read_selection(part)
     }
 
     fn descriptors(&self) -> Vec<i32> {
@@ -681,12 +744,20 @@ impl Platform for &'static X11 {
         }
     }
 
+    fn has_screen_reader(&self) -> bool {
+        atspi::has_screen_reader()
+    }
+
+    fn accessibility_changed(&self, events: &[crate::accessibility::Event]) {
+        atspi::post(events);
+    }
+
     fn shut_down(&self, is_exiting: bool) {
         self.desktop.shut_down();
         self.hot_keys
             .take()
             .into_iter()
-            .for_each(|it| it.release(&self.x));
+            .for_each(|it| it.1.release(&self.x));
         if is_exiting {
             self.hand_over_clipboard();
         }

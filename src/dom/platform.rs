@@ -1,15 +1,25 @@
 //! Fonts, from the UI library. Without it, every character is a square of 1em.
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate::abi::{self, Cluster, FontMetrics, FontSetting, Glyph, Slice, TextRun};
+use crate::abi_graphics::Graphics;
+use crate::font_face::Coverage;
 use crate::name::{Map, Name, Set};
+use crate::order::Order as _;
 use crate::properties::{Groups, Id};
+use crate::svg_values::TextRendering;
 use crate::types::{AutoOrNone, FontCaps, FontKerning, FontStyle, Ligatures, Numeric};
 
 unsafe extern "C" {
     safe fn Bun__Desktop__renderer() -> *const c_void;
+    safe fn Bun__Desktop__graphics() -> *const c_void;
+}
+
+pub(crate) fn graphics() -> Option<&'static Graphics> {
+    // SAFETY: null, or a static of the library, which is never unloaded.
+    unsafe { Bun__Desktop__graphics().cast::<Graphics>().as_ref() }
 }
 
 pub(crate) fn renderer() -> Option<&'static abi::Renderer> {
@@ -18,21 +28,64 @@ pub(crate) fn renderer() -> Option<&'static abi::Renderer> {
 }
 
 #[derive(Default)]
+#[repr(C)]
 pub(crate) struct Shaped {
-    pub(crate) clusters: Vec<Cluster>,
-    pub(crate) glyphs: Vec<Glyph>,
-    pub(crate) faces: Vec<abi::Face>,
+    pub(crate) text: Box<str>,
+    /// One for each cluster, or none.
+    pub(crate) letters: Box<[abi::Letter]>,
+    pub(crate) label: Option<crate::lines::Label>,
+    spelled_out: core::cell::OnceCell<(Box<[Cluster]>, Box<[Glyph]>)>,
+    pub(crate) faces: smallvec::SmallVec<[abi::Face; 1]>,
     pub(crate) base_level: u8,
+}
+
+impl Shaped {
+    #[inline]
+    fn spelled_out(&self) -> &(Box<[Cluster]>, Box<[Glyph]>) {
+        self.spelled_out.get_or_init(|| {
+            let (clusters, glyphs) = abi::spell_out(&self.text, &self.letters);
+            (clusters.into(), glyphs.into())
+        })
+    }
+
+    #[inline]
+    pub(crate) fn clusters(&self) -> &[Cluster] {
+        &self.spelled_out().0
+    }
+
+    pub(crate) fn glyphs(&self) -> &[Glyph] {
+        &self.spelled_out().1
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        if self.letters.is_empty() {
+            self.clusters().len()
+        } else {
+            self.letters.len()
+        }
+    }
 }
 
 pub(crate) struct Fonts {
     pub(crate) device_scale: f32,
     pub(crate) scope: u32,
     metrics: RefCell<Map<(u32, u32), FontMetrics>>,
-    /// Family in lowercase, weight, and whether it is slanted.
-    pub(crate) used: RefCell<Set<(Name, [u32; 3])>>,
-    pub(crate) newly_used: RefCell<Vec<(Name, [u32; 3])>>,
+    pub(crate) used: RefCell<Set<Wanted>>,
+    pub(crate) newly_used: RefCell<Vec<Wanted>>,
+    /// There is no telling with what characters.
+    pub(crate) used_by_canvases: Set<Wanted>,
+    /// By what `describe` has returned.
+    described: RefCell<Set<(u32, Wanted)>>,
+    /// The first bytes of the characters that faces are waiting for.
+    awaited: Option<Box<[bool; 256]>>,
+    written: RefCell<Set<(u32, char)>>,
+    pub(crate) newly_written: RefCell<Vec<(u32, char)>>,
+    /// Since something was added to `newly_used`.
+    pub(crate) has_written: Cell<bool>,
 }
+
+/// The family in lowercase, the stretch, the slope and the weight.
+pub(crate) type Wanted = (Name, [u32; 3]);
 
 pub(crate) fn features(style: &Groups) -> Vec<FontSetting> {
     let (font, mut features) = (&style.font, Vec::new());
@@ -125,6 +178,12 @@ impl Fonts {
             metrics: RefCell::default(),
             used: RefCell::default(),
             newly_used: RefCell::default(),
+            used_by_canvases: Set::default(),
+            described: RefCell::default(),
+            awaited: None,
+            written: RefCell::default(),
+            newly_written: RefCell::default(),
+            has_written: Cell::new(false),
         }
     }
 
@@ -134,21 +193,72 @@ impl Fonts {
 
     pub(crate) fn describe(&self, groups: &Groups, defined: &Defined) -> u32 {
         let font = &groups.font;
-        let slope = match font.style {
-            FontStyle::Normal => 0.0,
-            FontStyle::Italic => crate::sheet::FontFace::ITALIC,
-            FontStyle::Oblique(angle) => angle,
-        };
+        let id = self.identify(groups, defined);
         for family in font.family.names() {
             let used = (
                 Name::lowercase(family),
-                [font.stretch.0, slope, font.weight.0].map(|it| it.round().to_bits()),
+                [font.stretch.0, font.style.slope(), font.weight.0].map(|it| it.round().to_bits()),
             );
-            if self.used.borrow_mut().insert(used) {
+            if self.described.borrow_mut().insert((id, used)) && self.used.borrow_mut().insert(used)
+            {
+                self.has_written
+                    .set(self.has_written.get() && !self.newly_used.borrow().is_empty());
                 self.newly_used.borrow_mut().push(used);
             }
         }
-        let Some(renderer) = renderer() else { return 0 };
+        id
+    }
+
+    pub(crate) fn note_written(&self, text: &str, runs: &[TextRun]) {
+        self.has_written.set(true);
+        let Some(awaited) = self
+            .awaited
+            .as_deref()
+            .filter(|it| text.bytes().any(|byte| it[usize::from(byte)]))
+        else {
+            return;
+        };
+        let mut runs = runs.iter().peekable();
+        for (at, character) in text
+            .char_indices()
+            .filter(|it| awaited[usize::from(text.as_bytes()[it.0])])
+        {
+            while runs.next_if(|it| it.end as usize <= at).is_some() {}
+            let written = runs
+                .peek()
+                .map(|it| (it.font, character))
+                .filter(|it| self.written.borrow_mut().insert(*it));
+            self.newly_written.borrow_mut().extend(written);
+        }
+    }
+
+    pub(crate) fn wait_for<'a>(&mut self, faces: impl Iterator<Item = &'a Coverage>) {
+        let mut awaited = None;
+        for face in faces {
+            let awaited: &mut Box<[bool; 256]> =
+                awaited.get_or_insert_with(|| Box::new([false; 256]));
+            (0..=u8::MAX)
+                .zip(awaited.iter_mut())
+                .for_each(|(byte, it)| {
+                    *it |= if byte < 128 {
+                        face.has(char::from(byte))
+                    } else {
+                        face.has_more_than_ascii()
+                    }
+                });
+        }
+        self.awaited = awaited;
+        self.written.get_mut().clear();
+    }
+
+    pub(crate) fn is_for(&self, font: u32, wanted: Wanted) -> bool {
+        self.described.borrow().contains(&(font, wanted))
+    }
+
+    fn identify(&self, groups: &Groups, defined: &Defined) -> u32 {
+        let (Some(renderer), font) = (renderer(), &groups.font) else {
+            return 0;
+        };
         let features = [&defined.features[..], &features(groups)].concat();
         let mut adjust = groups
             .other(Id::FontSizeAdjust)
@@ -159,6 +269,10 @@ impl Fonts {
         if let [b'"', tag @ .., b'"'] = groups.other(Id::FontLanguageOverride).as_bytes() {
             language_override = core::array::from_fn(|it| *tag.get(it).unwrap_or(&b' '));
         }
+        let is_smoothed = matches!(
+            groups.other(Id::WebkitFontSmoothing),
+            "auto" | "subpixel-antialiased"
+        ) && groups.svg.text_rendering != TextRendering::GeometricPrecision;
         let allowed = |value, bit| if value == AutoOrNone::Auto { bit } else { 0 };
         let (style, oblique_angle) = match font.style {
             FontStyle::Normal => (abi::FONT_NORMAL, 0.0),
@@ -180,6 +294,11 @@ impl Fonts {
                 | allowed(font.synthesis_style, abi::SYNTHESIZE_STYLE)
                 | if groups.other(Id::FontSynthesisSmallCaps) == "auto" {
                     abi::SYNTHESIZE_SMALL_CAPS
+                } else {
+                    0
+                }
+                | if is_smoothed {
+                    abi::SYNTHESIZE_SMOOTHING
                 } else {
                     0
                 },
@@ -245,10 +364,17 @@ pub(crate) fn shape(text: &str, runs: &[TextRun], direction: u8) -> Shaped {
     // SAFETY: the arguments outlive the call, and the result is copied before the next one.
     unsafe {
         let shaped = (renderer.shape)(Slice::new(text.as_bytes()), Slice::new(runs), direction);
+        let letters = shaped.letters.get();
         Shaped {
-            clusters: shaped.clusters.get().to_vec(),
-            glyphs: shaped.glyphs.get().to_vec(),
-            faces: shaped.faces.get().to_vec(),
+            text: text.into(),
+            letters: letters.into(),
+            label: crate::lines::Label::new(text, letters, shaped.faces.get()),
+            spelled_out: if letters.is_empty() {
+                (shaped.clusters.get().into(), shaped.glyphs.get().into()).into()
+            } else {
+                Default::default()
+            },
+            faces: shaped.faces.get().into(),
             base_level: shaped.base_level,
         }
     }
@@ -318,7 +444,7 @@ pub(crate) fn ink_spans(
             .get()
             .to_vec()
     };
-    spans.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    spans.order_by(|a, b| a[0].total_cmp(&b[0]));
     spans
 }
 
@@ -369,8 +495,10 @@ fn shape_squares(text: &str, runs: &[TextRun], direction: u8) -> Shaped {
         previous = character;
     }
     Shaped {
-        clusters,
-        glyphs: Vec::new(),
+        text: text.into(),
+        spelled_out: (clusters.into(), Box::default()).into(),
+        letters: Box::default(),
+        label: None,
         faces: runs.iter().map(face).collect(),
         base_level,
     }

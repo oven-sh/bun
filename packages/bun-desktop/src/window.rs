@@ -10,7 +10,6 @@ use crate::diagnostics::Step;
 use crate::error::{Context as _, Result};
 use crate::hash::FastMap;
 use crate::input::{self, Pointer};
-use crate::json::{Value, json, record};
 use crate::paint::cpu;
 use crate::paint::flatten::{self, Placement};
 #[cfg(target_os = "macos")]
@@ -22,42 +21,11 @@ use crate::paint::raster::IntRect;
 use crate::paint::scene::Frame;
 use crate::paint::software::Compositor;
 use crate::platform::{self, Geometry, Icon};
+pub use crate::protocol::WindowOptions as Options;
+use crate::protocol::{Background, Event, Maybe, SystemEvent, WindowEvent};
 use crate::surface::Surface;
 use crate::sync::Mutex;
 use crate::{app, bridge, diagnostics, frame, host, images, surface, text};
-
-record! {
-    required
-    #[derive(Clone)]
-    pub struct Options {
-        pub id: u32,
-        pub title: String,
-        pub x: Option<f32>,
-        pub y: Option<f32>,
-        pub width: f32,
-        pub height: f32,
-        pub min_width: f32,
-        pub min_height: f32,
-        pub show: bool,
-        pub focus: bool,
-        pub frame: bool,
-        pub hidden_title_bar: bool,
-        pub traffic_light_position: Option<(f32, f32)>,
-        pub background: String,
-        pub background_color: Option<u32>,
-        pub resizable: bool,
-        pub movable: bool,
-        pub accept_first_mouse: bool,
-        pub minimizable: bool,
-        pub kind: String,
-        pub maximized: bool,
-        pub fullscreen: bool,
-        pub app_id: Option<String>,
-        pub icon: Option<u32>,
-        pub overlay: Option<frame::Overlay>,
-        .. pub cover: Option<u32>,
-    }
-}
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct Metrics {
@@ -84,7 +52,6 @@ pub struct WindowState {
     /// What is left of it, over the surfaces.
     pub kept_cover: Cell<Option<u32>>,
     pub is_active: Cell<bool>,
-    pub is_accessible: Cell<bool>,
     pub pointer: Pointer,
     pub frame_buttons: RefCell<frame::Buttons>,
     /// The platform asks for frames.
@@ -340,7 +307,10 @@ pub mod layers {
         let options = state.options.borrow();
         let is_opaque = options
             .background_color
-            .map_or(options.background == "opaque", |color| color & 0xFF == 0xFF);
+            .get()
+            .map_or(options.background == Background::Opaque, |color| {
+                color & 0xFF == 0xFF
+            });
         let Metrics {
             width,
             height,
@@ -349,18 +319,25 @@ pub mod layers {
         } = state.metrics.get();
         let mut layers = state.layers.borrow_mut();
         let layers = layers.get_or_insert_with(|| Layers::new(Tree::new(window.layer())));
-        layers.target.begin(scale.into(), is_opaque);
         let all = IntRect::new(
             0,
             0,
             (width * scale).ceil() as i32,
             (height * scale).ceil() as i32,
         );
-        layers.set_scrolling(
-            surface::shown_in(state)
-                .iter()
-                .any(|it| it.borrow().is_scrolling()),
-        );
+        layers.target.begin(scale.into(), is_opaque);
+        let ports: Vec<_> = surface::shown_in(state)
+            .iter()
+            .filter_map(|it| it.borrow_mut().scrolled_port())
+            .collect();
+        layers.set_scrolling(ports.first().map(|it| {
+            IntRect::nearest(Rect {
+                x: it.x * scale,
+                y: it.y * scale,
+                width: it.width * scale,
+                height: it.height * scale,
+            })
+        }));
         if layers.frames_scrolled().is_multiple_of(8) {
             let shows = software::see_through(&state.compositor.lock().primitives, all);
             let points = [shows.start, shows.end].map(|it| f64::from(it) / f64::from(scale));
@@ -488,13 +465,9 @@ pub fn request_leisurely_frame(id: u32) {
     window.inspect(|window| window.request_leisurely_frame());
 }
 
-pub fn create(mut options: Options) -> Result<()> {
-    let icon = options
-        .icon
-        .take()
-        .and_then(bridge::take_blob)
-        .map(|bytes| images::decode_still(&bytes));
+pub fn create(options: Options, icon: Option<&[u8]>, cover: Option<u32>) -> Result<()> {
     let icon = icon
+        .map(images::decode_still)
         .transpose()
         .context("could not decode the window's icon")?;
     let icon = icon.map(|icon| Icon {
@@ -505,14 +478,17 @@ pub fn create(mut options: Options) -> Result<()> {
     let (id, platform) = (options.id, host::platform()?);
     app::forget_appearance();
     let mut placed = options.clone();
-    if let (None, Some(display)) = (options.x.zip(options.y), platform.displays().first()) {
+    if let (None, Some(display)) = (
+        options.x.get().zip(options.y.get()),
+        platform.displays().first(),
+    ) {
         let area = display.work_area;
         (placed.width, placed.height) = (
             options.width.min(area.width),
             options.height.min(area.height),
         );
-        placed.x = Some(area.x + (area.width - placed.width) / 2.);
-        placed.y = Some(area.y + (area.height - placed.height) / 2.);
+        placed.x = Maybe::Yes(area.x + (area.width - placed.width) / 2.);
+        placed.y = Maybe::Yes(area.y + (area.height - placed.height) / 2.);
     }
     let state = Rc::new(WindowState {
         id,
@@ -520,7 +496,7 @@ pub fn create(mut options: Options) -> Result<()> {
             width: options.width,
             height: options.height,
             scale: 1.,
-            origin: (options.x.unwrap_or(0.), options.y.unwrap_or(0.)),
+            origin: (options.x.get().unwrap_or(0.), options.y.get().unwrap_or(0.)),
             content: Rect {
                 x: 0.,
                 y: 0.,
@@ -532,10 +508,9 @@ pub fn create(mut options: Options) -> Result<()> {
         }),
         surfaces: RefCell::default(),
         focused_surface: Cell::default(),
-        cover: Cell::new(options.cover.take()),
+        cover: Cell::new(cover),
         kept_cover: Cell::default(),
         is_active: Cell::default(),
-        is_accessible: Cell::default(),
         pointer: Pointer::default(),
         frame_buttons: RefCell::default(),
         is_shown: Cell::default(),
@@ -622,6 +597,7 @@ pub fn destroy(id: u32) -> Result<()> {
 
 fn forget(id: u32) {
     host::forget_frames(id);
+    crate::accessibility::window_closed(id);
     if let Some(entry) = WINDOWS.with_borrow_mut(|windows| windows.remove(&id)) {
         entry.state.is_shown.set(false);
         surface::in_window(&entry.state)
@@ -630,20 +606,8 @@ fn forget(id: u32) {
     }
 }
 
-pub fn emit(id: u32, event: &str, value: Value) {
-    bridge::emit(json!({ "t": "window", "w": id, "e": event, "v": value }));
-}
-
-pub fn describe(geometry: &Geometry) -> Value {
-    json!({
-        "x": geometry.x,
-        "y": geometry.y,
-        "width": geometry.width,
-        "height": geometry.height,
-        "maximized": geometry.is_maximized,
-        "fullscreen": geometry.is_fullscreen,
-        "scale": geometry.scale,
-    })
+fn emit(id: u32, event: WindowEvent) {
+    bridge::emit(Event::Window { id, event });
 }
 
 /// What can be computed again.
@@ -689,8 +653,9 @@ pub fn bounds_changed(id: u32) {
     if geometry == before {
         return;
     }
-    bridge::emit_latest(json!({ "t": "window", "w": id, "e": "bounds", "v": describe(&geometry) }));
+    emit(id, WindowEvent::Bounds(geometry));
     state.measure(geometry);
+    crate::accessibility::window_changed(&state);
     if geometry
         != (Geometry {
             x: geometry.x,
@@ -718,7 +683,14 @@ pub fn activation_changed(id: u32, is_active: bool) {
         .ok()
         .filter(|state| state.is_active.get() != is_active)
     {
-        emit(id, if is_active { "focus" } else { "blur" }, Value::Null);
+        emit(
+            id,
+            if is_active {
+                WindowEvent::Focus
+            } else {
+                WindowEvent::Blur
+            },
+        );
         input::activation_changed(&state, is_active);
         refresh(id);
     }
@@ -735,24 +707,26 @@ pub fn visibility_changed(id: u32) {
         .forget_at
         .set((!is_visible).then(|| Instant::now() + MAY_COME_BACK));
     refresh(id);
-    emit(id, "visibility", is_visible.into());
+    emit(id, WindowEvent::Visibility(is_visible));
 }
 
 pub fn close_requested(id: u32) {
-    emit(id, "close", Value::Null);
+    emit(id, WindowEvent::CloseRequested);
 }
 
 /// By someone else.
 pub fn was_closed(id: u32) {
     if state(id).is_ok() {
         forget(id);
-        emit(id, "closed", Value::Null);
+        emit(id, WindowEvent::Closed);
     }
 }
 
 pub fn appearance_changed() {
     app::forget_appearance();
-    bridge::emit_latest(json!({ "t": "theme", "dark": app::is_dark() }));
+    bridge::emit_system(SystemEvent::Theme {
+        is_dark: app::is_dark(),
+    });
     ids().into_iter().for_each(refresh);
 }
 
@@ -830,9 +804,9 @@ fn flatten_surfaces(
             height: height * scale,
         })
     };
-    let background = match options.background_color {
+    let background = match options.background_color.get() {
         Some(color) => color,
-        None if options.background == "opaque" => frame::default_background(),
+        None if options.background == Background::Opaque => frame::default_background(),
         None => 0,
     };
     let everything = device(Rect {
@@ -870,14 +844,15 @@ fn flatten_surfaces(
             rect.intersect(device(metrics.content)),
         );
         #[cfg(target_os = "macos")]
-        let movers = &layers::movers(state, &surface, frame.now);
+        let (movers, in_motion) = (&layers::movers(state, &surface, frame.now), &[]);
         #[cfg(not(target_os = "macos"))]
-        let movers = &[];
+        let (movers, in_motion) = (&[], &surface.motion.in_motion());
         flatten::paint(
             &surface.scene,
             &frame,
             &Placement {
                 movers,
+                in_motion,
                 origin,
                 clip,
                 background,
@@ -895,6 +870,7 @@ fn flatten_surfaces(
     state.frame_buttons.replace(buttons);
     let placement = Placement {
         movers: &[],
+        in_motion: &[],
         origin: (0, 0),
         clip: everything,
         background,

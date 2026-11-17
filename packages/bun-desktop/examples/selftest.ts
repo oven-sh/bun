@@ -51,6 +51,25 @@ if (mode === "all") {
     });
   }
 }
+if (mode === "all" && isMac) {
+  Bun.spawnSync([
+    process.execPath,
+    "build",
+    "--compile",
+    "--desktop",
+    join(import.meta.dir, "covered.ts"),
+    "--outfile=" + join(directory, "covered"),
+  ]);
+  console.log("\ncovered:");
+  for (const STEP of ["save", "earlier", "later", "after"]) {
+    const app = join(directory, "covered.app/Contents/MacOS/covered");
+    console.log(
+      Bun.spawnSync([app], { env: { ...process.env, STEP }, timeout: 20_000 })
+        .stdout.toString()
+        .trim() || `FAIL ${STEP}`,
+    );
+  }
+}
 if (!mode.startsWith("run-")) process.exit(0);
 
 process.on("uncaughtException", error => console.log("FAIL", error) ?? process.exit(1));
@@ -156,6 +175,46 @@ function bind(library: string, name: string, args: string[], returns: string): (
   return (dlopen(library, { [name]: { args, returns } } as any).symbols as any)[name];
 }
 const framework = (name: string) => `/System/Library/Frameworks/${name}.framework/${name}`;
+/** Returns the one that was selected, if `id` is enabled. It only works on a main thread. */
+function selectInputSource(id: string) {
+  function select(wanted: string) {
+    const { dlopen, read, CString } = require("bun:ffi");
+    const path = (name: string) => `/System/Library/Frameworks/${name}.framework/${name}`;
+    const call = (library: string, name: string, args: string[], returns: string, ...values: unknown[]) =>
+      dlopen(library, { [name]: { args, returns } }).symbols[name](...values);
+    const carbon = call("libSystem.B.dylib", "dlopen", ["ptr", "i32"], "ptr", Buffer.from(path("Carbon") + "\0"), 1);
+    const key = read.ptr(
+      call("libSystem.B.dylib", "dlsym", ["ptr", "ptr"], "ptr", carbon, Buffer.from("kTISPropertyInputSourceID\0")),
+    );
+    const idOf = (source: unknown) => {
+      const [text, id] = [
+        Buffer.alloc(256),
+        call(path("Carbon"), "TISGetInputSourceProperty", ["ptr", "ptr"], "ptr", source, key),
+      ];
+      call(
+        path("CoreFoundation"),
+        "CFStringGetCString",
+        ["ptr", "ptr", "i64", "u32"],
+        "bool",
+        id,
+        text,
+        256,
+        0x08000100,
+      );
+      return String(new CString(require("bun:ffi").ptr(text)));
+    };
+    const before = idOf(call(path("Carbon"), "TISCopyCurrentKeyboardInputSource", [], "ptr"));
+    const all = call(path("Carbon"), "TISCreateInputSourceList", ["ptr", "bool"], "ptr", null, false);
+    for (let at = Number(call(path("CoreFoundation"), "CFArrayGetCount", ["ptr"], "i64", all)); at--;) {
+      const source = call(path("CoreFoundation"), "CFArrayGetValueAtIndex", ["ptr", "i64"], "ptr", all, at);
+      if (idOf(source) === wanted && !call(path("Carbon"), "TISSelectInputSource", ["ptr"], "i32", source))
+        console.log(before);
+    }
+  }
+  return Bun.spawnSync([process.execPath, "-e", `(${select})(${JSON.stringify(id)})`])
+    .stdout.toString()
+    .trim();
+}
 const mac = isMac && {
   send(returns: string, receiver: unknown, selector: string, ...typed: [string, unknown][]) {
     const objc = "/usr/lib/libobjc.A.dylib";
@@ -225,6 +284,31 @@ const mac = isMac && {
       this.post(this.send("ptr", "NSEvent", selector, ["u64", type], ...at, ["u64", 0], ["f64", 0], ...rest));
     }
   },
+  mouse(type: number, [x, y]: number[]) {
+    const event = this.graphics(
+      "CGEventCreateMouseEvent",
+      "ptr",
+      ["ptr", null],
+      ["u32", type],
+      ["f64", x],
+      ["f64", y],
+      ["u32", 0],
+    );
+    this.graphics("CGEventPost", "void", ["u32", 0], ["ptr", event]);
+    return Bun.sleep(50);
+  },
+  windowLevels() {
+    const windows = this.graphics("CGWindowListCopyWindowInfo", "ptr", ["u32", 1], ["u32", 0]);
+    const key = this.send("ptr", "NSString", "stringWithUTF8String:", ["ptr", cString("kCGWindowLayer")]);
+    const comma = this.send("ptr", "NSString", "stringWithUTF8String:", ["ptr", cString(",")]);
+    const joined = this.send(
+      "ptr",
+      this.send("ptr", windows, "valueForKey:", ["ptr", key]),
+      "componentsJoinedByString:",
+      ["ptr", comma],
+    );
+    return String(this.send("cstring", joined, "UTF8String")).split(",");
+  },
   /** What the window server has, which a process may see of its own windows. */
   capture(width: number, height: number) {
     const nowhere: [string, unknown][] = [
@@ -281,8 +365,8 @@ async function compareWithScreen(name: string) {
   const page = await window.capturePage();
   await Bun.write(file(name + ".page.png"), page.toPNG());
   if (!mac) return;
-  const { OffscreenCanvas, ImageData, Blob, createImageBitmap } = window.window as any;
-  const bitmap = await createImageBitmap(new Blob([page.toPNG()], { type: "image/png" }));
+  const { OffscreenCanvas, ImageData, Blob } = window.window as any;
+  const bitmap = await (window.window as any).createImageBitmap(new Blob([page.toPNG()], { type: "image/png" }));
   const { width, height } = bitmap;
   const shown = await Promise.try(() => mac.capture(width, height)).catch(error => log(error));
   if (!shown) return check(`${name}: the window can be captured`, false);
@@ -374,6 +458,28 @@ if (mac) {
   await until(() => field.value !== "");
   await Bun.sleep(100);
   check("it pastes once", field.value === "plain", JSON.stringify(field.value));
+  const japanese = "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese";
+  async function composes() {
+    const usual = selectInputSource(japanese);
+    if (!usual) return false;
+    let did = false;
+    field.addEventListener("compositionupdate", () => (did = true), { once: true });
+    await Bun.sleep(700);
+    for (const code of [40, 0]) mac.key(code);
+    await until(() => did);
+    for (const code of [53, 53]) mac.key(code);
+    await Bun.sleep(300);
+    selectInputSource(usual);
+    return did;
+  }
+  if (await composes()) {
+    popUp(() => {});
+    field.select();
+    await Bun.sleep(500);
+    mac.key(53);
+    await Bun.sleep(500);
+    check("an input method composes after a menu", await composes(), JSON.stringify(field.value));
+  } else log("INFO input methods are not tested: Japanese (Romaji) is not enabled, or does not take these keys");
   let clicked: any;
   list.addEventListener("click", (event: any) => (clicked = event));
   mac.click(700, 100);
@@ -436,10 +542,14 @@ if (mac) {
   check("takes the focus", await until(() => sheet.isFocused(), 3000));
   sheet.close();
   check("and gives it back", await until(() => window.isFocused(), 3000));
+  new Window({ parent: window, modal: true, width: 300, height: 120 }).close();
+  check("also if it closes at once", await until(() => window.isFocused(), 3000));
   async function hasRed(element: any) {
-    const { OffscreenCanvas, Blob, createImageBitmap } = window.window as any;
+    const { OffscreenCanvas, Blob } = window.window as any;
     const { x, y, width, height } = element.getBoundingClientRect();
-    const bitmap = await createImageBitmap(new Blob([(await window.capturePage({ x, y, width, height })).toPNG()]));
+    const bitmap = await (window.window as any).createImageBitmap(
+      new Blob([(await window.capturePage({ x, y, width, height })).toPNG()]),
+    );
     const context = new OffscreenCanvas(bitmap.width, bitmap.height).getContext("2d");
     context.drawImage(bitmap, 0, 0);
     const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
@@ -462,6 +572,38 @@ if (mac) {
     check(`spelling in a ${it.localName}`, isMarked);
   }
   editor.remove();
+  if (mac.graphics("CGPreflightPostEventAccess", "bool")) {
+    const source: any = field.parentNode.appendChild(document.createElement("span"));
+    source.textContent = "Dragged";
+    source.style.userSelect = "text";
+    const middle = (it: any) => {
+      const [{ x, y, width, height }, content] = [it.getBoundingClientRect(), window.getContentBounds()];
+      return [content.x + x + width / 2, content.y + y + height / 2];
+    };
+    for (const [target, effect] of [
+      [field, "copy"],
+      [list, "none"],
+    ] as any) {
+      const [from, to] = [middle(source), middle(target)];
+      let [ended, levels] = ["", new Set<string>()];
+      source.addEventListener("dragend", (event: any) => (ended = event.dataTransfer.dropEffect), { once: true });
+      (window.window as any).getSelection().selectAllChildren(source);
+      for (const type of [5, 1]) await mac.mouse(type, from);
+      for (let step = 1; step <= 12; step++) {
+        await mac.mouse(
+          6,
+          from.map((it, axis) => it + ((to[axis] - it) * step) / 12),
+        );
+        for (const it of mac.windowLevels()) levels.add(it);
+      }
+      await Bun.sleep(300);
+      await mac.mouse(2, to);
+      check("what is dragged has an image", levels.has("500"), "levels of windows:", [...levels].join());
+      check(`and ends with ${effect}`, await until(() => ended === effect, 3000), ended);
+    }
+    check("and was dropped once", field.value.split("Dragged").length === 2, field.value);
+    source.remove();
+  } else log("INFO drags are not tested, the mouse may not be moved");
   const tray = new Tray((await window.capturePage({ x: 100, y: 0, width: 9, height: 9 })).toPNG());
   await Bun.sleep(300);
   check("tray", tray.getBounds().height > 10 && tray.getBounds().height < 50, JSON.stringify(tray.getBounds()));

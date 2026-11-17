@@ -118,6 +118,10 @@ pub struct AotOptions {
     /// `bun test --aot --isolate` or `--parallel`: the runner gives each test file a fresh realm of one VM, and each realm runs an instance of the program of its own.
     /// `Bun.s3` and the environments of native addons are carried from one realm to the next, so a later file may call a function of an earlier one.
     pub runs_in_several_realms: bool,
+    /// `--desktop`: some of the realms are windows and workers of the web, whose global objects have other names than Bun's.
+    pub has_realms_of_the_web: bool,
+    /// The global object of the program is a window.
+    pub starts_in_window: bool,
     pub replaced_by_tests: ReplacedByTests,
     /// Only a build of Bun with Fuzzilli looks at it.
     pub preload: Option<Preload>,
@@ -209,6 +213,8 @@ impl Default for AotOptions {
             entry_points_run_again: false,
             typescript_drops_absent_exports: false,
             runs_in_several_realms: false,
+            has_realms_of_the_web: false,
+            starts_in_window: false,
             replaced_by_tests: ReplacedByTests::default(),
             preload: None,
             thread_count: None,
@@ -278,6 +284,8 @@ mod tests {
             entry_points_run_again,
             typescript_drops_absent_exports,
             runs_in_several_realms,
+            has_realms_of_the_web,
+            starts_in_window,
             replaced_by_tests,
             preload,
             thread_count,
@@ -338,6 +346,8 @@ mod tests {
         assert!(!entry_points_run_again);
         assert!(!typescript_drops_absent_exports);
         assert!(!runs_in_several_realms);
+        assert!(!has_realms_of_the_web);
+        assert!(!starts_in_window);
         assert!(builtins.is_empty());
         assert!(test_files.is_empty());
         assert!(preloads.is_empty());

@@ -442,6 +442,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   relr: "boolean",
   pgoGenerate: "string",
   pgoUse: "string",
+  orderHints: "string",
   asan: "boolean",
   assertions: "boolean",
   logs: "boolean",
@@ -685,6 +686,8 @@ Options:
                                   code), for faster rebuilds,
                                   debugInfo (full|lines|none) and linkerMap,
                                   for faster compiles and links,
+                                  order-hints (file[,file] — symbol lists the
+                                  link's order file is made from),
                                   os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)

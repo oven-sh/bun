@@ -60,15 +60,17 @@ script,
 style,
 template,
 title,
-[hidden]:not([hidden="until-found" i]),
+[hidden]:not([hidden="until-found" i], embed),
 input[type="hidden" i],
 dialog:not([open], :popover-open),
-noscript,
 audio:not([controls]),
 [popover]:-internal-html:not(:popover-open):not(dialog[open]) {
   display: none;
 }
-[hidden="until-found" i] {
+noscript:-internal-html {
+  display: none !important;
+}
+[hidden="until-found" i]:not(embed) {
   content-visibility: hidden;
 }
 html {
@@ -77,14 +79,13 @@ html {
 body {
   margin: 8px;
 }
-slot {
+slot:-internal-html {
   display: contents;
 }
 
 address,
 blockquote,
 center,
-dialog,
 div,
 figure,
 figcaption,
@@ -154,7 +155,7 @@ bdo[dir] {
 }
 textarea[dir="auto" i],
 pre[dir="auto" i],
-input[dir="auto" i] {
+input[dir="auto" i]:is([type="search" i], [type="tel" i], [type="url" i], [type="email" i]) {
   unicode-bidi: plaintext;
 }
 
@@ -529,7 +530,8 @@ dialog {
   background-color: Canvas;
   color: CanvasText;
 }
-dialog:modal {
+dialog:modal,
+dialog:-internal-top-layer:not([popover]) {
   position: fixed;
   overflow: auto;
   inset-block: 0;
@@ -563,7 +565,8 @@ dialog:modal,
 dialog::backdrop {
   background: rgb(0 0 0 / 10%);
 }
-:popover-open::backdrop {
+:popover-open::backdrop,
+[popover]:-internal-html:not(:modal)::backdrop {
   pointer-events: none !important;
   background-color: transparent;
 }
@@ -579,7 +582,14 @@ dialog::backdrop {
   width: 100% !important;
   height: 100% !important;
   transform: none !important;
+  rotate: none !important;
+  scale: none !important;
+  translate: none !important;
   object-fit: contain;
+}
+iframe:fullscreen {
+  border: none !important;
+  padding: 0 !important;
 }
 :fullscreen::backdrop {
   background: black;
@@ -892,8 +902,37 @@ input[type="time" i]::-webkit-calendar-picker-indicator {
     url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='white' stroke-width='2' d='M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 7v5.500l4.500 2.700'/></svg>")
   );
 }
+input:not([type^="date" i], [type="month" i], [type="time" i], [type="week" i])::-webkit-calendar-picker-indicator {
+  width: 0.66em;
+  height: 0.66em;
+  margin-inline-start: 0;
+  padding: 0.17em 0.34em;
+  background: currentColor content-box;
+  clip-path: polygon(0 20%, 100% 20%, 50% 85%) content-box;
+  opacity: 0;
+  cursor: default;
+  user-select: none;
+}
+input:is(:hover, :focus)::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
 input:is(:disabled, [readonly])::-webkit-calendar-picker-indicator {
   visibility: hidden;
+}
+input::-webkit-calendar-picker-indicator:focus,
+input:focus-visible::-internal-color-well:focus,
+input:focus-visible::-internal-color-hues:focus,
+input:focus-visible::-internal-color-code:focus,
+input:focus-visible::-internal-color-suggestion:focus {
+  outline: auto 1px -webkit-focus-ring-color;
+}
+input:focus-visible::-internal-date-picker-cell:focus,
+input:focus-visible::-internal-date-picker-chosen:focus,
+input:focus-visible::-internal-date-picker-today:focus {
+  outline: auto 1px -webkit-focus-ring-color;
+}
+input:focus-visible::-internal-color-well:focus {
+  outline-offset: -2px;
 }
 input::-internal-date-picker {
   display: none;
@@ -1003,6 +1042,100 @@ input::-webkit-color-swatch {
   flex: 1 1 auto;
   border: 1px solid #777;
 }
+input::-internal-color-picker,
+input::-internal-suggestions {
+  all: initial;
+  display: block;
+  position: fixed;
+  position-area: block-end span-inline-end;
+  position-try-fallbacks:
+    flip-block,
+    flip-inline,
+    flip-block flip-inline;
+  box-sizing: border-box;
+  border: 1px solid light-dark(#bfbfbf, #6b6b6b);
+  background-color: Field;
+  color: FieldText;
+  color-scheme: inherit;
+  font: 13px system-ui;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 25%);
+  cursor: default;
+  user-select: none;
+  overlay: auto;
+}
+input::-internal-color-picker {
+  width: 234px;
+  direction: ltr;
+}
+input::-internal-color-well {
+  position: relative;
+  height: 150px;
+  overflow: clip;
+  background-image: linear-gradient(transparent, #000), linear-gradient(90deg, #fff, transparent);
+}
+input::-internal-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 14px;
+}
+input::-internal-color-preview {
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  margin-right: 10px;
+  border: 1px solid #8888;
+  border-radius: 50%;
+}
+input::-internal-color-hues {
+  position: relative;
+  flex: 1;
+  height: 12px;
+  border-radius: 2px;
+  background-image: linear-gradient(90deg, red, yellow, lime, aqua, blue, fuchsia, red);
+}
+input::-internal-color-ring {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -7px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 2px 1px #0009;
+}
+input::-internal-color-code {
+  font-family: ui-monospace, monospace;
+  text-align: center;
+}
+input::-internal-color-suggestion {
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border: 1px solid #8888;
+}
+input::-internal-suggestions {
+  min-width: anchor-size(width);
+  max-width: 100vw;
+  max-height: 300px;
+  padding-block: 4px;
+  overflow: hidden auto;
+  white-space: pre;
+}
+input::-internal-suggestion,
+input::-internal-suggestion-active {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 10px;
+}
+input::-internal-suggestion:hover,
+input::-internal-suggestion-active {
+  background-color: light-dark(#e3e3e3, #545454);
+}
+input::-internal-suggestion-label {
+  opacity: 0.6;
+}
 
 select {
   box-sizing: border-box;
@@ -1045,7 +1178,7 @@ select::-internal-select-texts,
 select::-internal-select-sizer {
   field-sizing: inherit;
 }
-select:not(:-internal-base, [multiple], [size]:not([size="0"], [size="1"])) {
+select:-internal-native:not([multiple]:not([size="1"]), [size]:not([size="0"], [size="1"])) {
   line-height: normal !important;
 }
 option:not(:-internal-in-base) br {
@@ -1060,6 +1193,9 @@ select::-internal-select-sizer {
 }
 select::-internal-select-picker {
   display: none;
+}
+select:not(:-internal-base-options)::-internal-select-picker {
+  white-space: normal;
 }
 select:not(:-internal-base-options):open::-internal-select-picker {
   display: block;
@@ -1077,18 +1213,18 @@ select:not(:-internal-base-options):open::-internal-select-picker {
   pointer-events: auto;
   interactivity: auto;
 }
-select:is([multiple], [size]:not([size="0"], [size="1"])) {
+select:is([multiple]:not([size="1"]), [size]:not([size="0"], [size="1"])) {
   border-radius: 2px;
   overflow-inline: hidden;
   overflow-block: scroll;
   background-color: Field;
   vertical-align: text-bottom;
 }
-select:is([multiple], [size]:not([size="0"], [size="1"]))::-internal-select-button,
-select:is([multiple], [size]:not([size="0"], [size="1"]))::-internal-select-replaced-button {
+select:is([multiple]:not([size="1"]), [size]:not([size="0"], [size="1"]))::-internal-select-button,
+select:is([multiple]:not([size="1"]), [size]:not([size="0"], [size="1"]))::-internal-select-replaced-button {
   display: none;
 }
-select:is([multiple], [size]:not([size="0"], [size="1"]))::-internal-select-picker {
+select:is([multiple]:not([size="1"]), [size]:not([size="0"], [size="1"]))::-internal-select-picker {
   display: block;
 }
 option {
@@ -1105,6 +1241,7 @@ optgroup::before {
   display: block;
   padding-block: 0 1px;
   padding-inline: 2px;
+  white-space: nowrap;
   content: attr(label);
 }
 optgroup:-internal-has-legend::before {
@@ -1183,7 +1320,8 @@ select:-internal-base::-internal-select-button-slot {
   display: contents;
 }
 select:-internal-base::-internal-select-replaced-button,
-select:-internal-base::-internal-select-sizer {
+select:-internal-base::-internal-select-sizer,
+select:-internal-base::-internal-select-no-label {
   display: none;
 }
 select:-internal-base::-internal-select-label {
@@ -1230,7 +1368,7 @@ select:-internal-base-options::picker(select) {
 select:-internal-base-options:not(:open)::picker(select) {
   display: none;
 }
-select:-internal-base:is([multiple], [size]:not([size="0"], [size="1"])) {
+select:-internal-base:is([multiple]:not([size="1"]), [size]:not([size="0"], [size="1"])) {
   display: inline-block;
   height: auto;
   block-size: calc(max(24px, 1lh) * attr(size type(<integer>), 4));
@@ -1243,8 +1381,8 @@ select:-internal-base:is([multiple], [size]:not([size="0"], [size="1"])) {
   background-color: transparent;
   vertical-align: baseline;
 }
-select:-internal-base:is([multiple], [size]:not([size="0"], [size="1"]))::-internal-select-button,
-select:-internal-base:is([multiple], [size]:not([size="0"], [size="1"]))::-internal-select-button-slot {
+select:-internal-base:is([multiple]:not([size="1"]), [size]:not([size="0"], [size="1"]))::-internal-select-button,
+select:-internal-base:is([multiple]:not([size="1"]), [size]:not([size="0"], [size="1"]))::-internal-select-button-slot {
   display: none;
 }
 option:-internal-in-base {

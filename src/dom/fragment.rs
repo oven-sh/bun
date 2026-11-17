@@ -333,7 +333,7 @@ impl Breaks {
         }
     }
 
-    /// What is left of the column by the `depth` outermost boxes that clone their edges.
+    /// What is left of the column by the `depth` outermost boxes that clone their edges, which is enough to make progress.
     fn range(&self, column: usize, depth: usize) -> [f32; 2] {
         let sum = |side: usize| {
             self.insets[..depth]
@@ -342,7 +342,8 @@ impl Breaks {
                 .map(|it| it.0[side])
                 .sum::<f32>()
         };
-        [self.start(column) + sum(0), self.end(column) - sum(1)]
+        let start = self.start(column) + sum(0);
+        [start, (self.end(column) - sum(1)).max(start + 1.0)]
     }
 
     pub(crate) fn note(&mut self, column: usize, bottom: f32) {
@@ -830,9 +831,8 @@ impl Flow<'_> {
             _ => {
                 let cut = self
                     .cuts
-                    .iter()
-                    .find(|it| it.0 == column)
-                    .map_or(0.0, |it| it.1);
+                    .binary_search_by_key(&column, |it| it.0)
+                    .map_or(0.0, |it| self.cuts[it].1);
                 if cut > self.breaks.end(column) {
                     cut
                 } else {
@@ -1183,7 +1183,7 @@ impl Document {
         let (before, after) = (rare.break_before, rare.break_after);
         breaks.tally.has_new_box |= breaks.is_in_last_row(column) && self.boxes[id].node != 0;
         let grows = core::mem::take(&mut breaks.grows);
-        if self.is_monolithic(id) {
+        if self.is_monolithic(id) || self.layout_fuel == 0 {
             let output = self.lay_out(id, input, floats);
             let height = output.height;
             breaks.placed.insert(id, Placed::whole(column, top, height));
@@ -1221,12 +1221,15 @@ impl Document {
                 (column, top),
                 is_pinned,
                 grows,
-                breaks.budget.saturating_sub(1),
+                breaks
+                    .budget
+                    .saturating_sub(1)
+                    .min(self.layout_fuel.try_into().unwrap_or(u32::MAX)),
             );
             let output = self.lay_out_uncached(id, input, floats.as_deref_mut(), breaks);
             let last = breaks.outcome.last;
             match breaks.retry.take() {
-                Some(retry) => breaks.earlier.push(retry),
+                Some(retry) => breaks.earlier.extend((retry.id != 0).then_some(retry)),
                 None if cares_for_end
                     && breaks.tally.furthest[0] > last
                     && breaks.ends.len() == marks[2]
@@ -1649,16 +1652,17 @@ impl Document {
         y: f32,
     ) {
         let (margin, input) = self.shrunk_input(id, basis);
-        let known = flow
-            .breaks
-            .floats
-            .iter()
-            .rfind(|it| it.0 == id)
-            .map(|it| it.2);
+        const MAX_ATTEMPTS: usize = 6;
+        let mut attempts = flow.breaks.floats.iter().rev().filter(|it| it.0 == id);
+        let (known, may_retry) = (
+            attempts.next().map(|it| it.2),
+            attempts.nth(MAX_ATTEMPTS).is_none(),
+        );
         let known = known.unwrap_or(self.boxes[id].layout.size.height + margin.bottom);
         let (top, height, _) = self.fragment_float(id, input, flow, flow.first, y, margin);
         if flow.breaks.retry.is_none()
             && flow.breaks.budget > 0
+            && may_retry
             && ((top - y).abs() > TOLERANCE || (height - known).abs() > TOLERANCE)
         {
             flow.breaks.floats.push((id, flow.top + top, height));
@@ -2013,7 +2017,11 @@ impl Document {
     }
 
     /// The border box, or what is around its pieces.
+    #[inline]
     pub(crate) fn extent(&self, id: BoxId) -> Rect {
+        if self.boxes.pieces.is_empty() {
+            return self.border_box(id);
+        }
         let pieces = self
             .pieces(id)
             .and_then(|it| it.iter().map(|it| it.rect).reduce(|a, b| a.union(&b)));

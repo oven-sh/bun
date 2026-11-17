@@ -9,11 +9,11 @@ use super::pixels::{Presenter, Target};
 use super::wire::{Bytes as _, Request};
 use super::{X11, event, mask};
 use crate::error::{Context as _, Result};
-use crate::json::Value;
+use crate::host;
 use crate::paint::raster::IntRect;
 use crate::platform::{self, Cursor, Edge, Geometry, Icon, Painter, Point};
+use crate::protocol::{Background, WindowCommand, WindowKind};
 use crate::window::{self, Options};
-use crate::{accessibility, host};
 
 #[derive(Clone, Copy)]
 struct Limits {
@@ -31,6 +31,7 @@ pub struct Window {
     is_managed: bool,
     /// The left, the top, the width and the height of the content, in pixels of the screen.
     pub area: Cell<[i32; 4]>,
+    aspect_ratio: Cell<f32>,
     limits: Cell<Limits>,
     /// `_NET_WM_STATE`, which the window manager forgets while the window is withdrawn.
     state: RefCell<Vec<u32>>,
@@ -51,18 +52,14 @@ pub struct Window {
     awaited_count: Cell<Option<([u32; 2], bool)>>,
 }
 
-fn pair(value: &Value) -> Option<(f32, f32)> {
-    Some((value[0].as_f64()? as f32, value[1].as_f64()? as f32))
-}
-
 impl Window {
     pub fn open(x11: &'static X11, options: &Options, icon: Option<&Icon>) -> Result<Rc<Window>> {
         const BORDER_GRAVITY_REDIRECT_EVENTS_COLORMAP: u32 = 0x8 | 0x10 | 0x200 | 0x800 | 0x2000;
         const NORTH_WEST: u32 = 1;
         let (x, scale) = (&x11.x, x11.scale.get());
         let area = [
-            options.x.unwrap_or(0.),
-            options.y.unwrap_or(0.),
+            options.x.get().unwrap_or(0.),
+            options.y.get().unwrap_or(0.),
             options.width,
             options.height,
         ];
@@ -71,14 +68,14 @@ impl Window {
         let with_alpha = x
             .screen
             .visual_with_alpha
-            .filter(|_| options.background != "opaque");
+            .filter(|_| options.background != Background::Opaque);
         let (depth, visual) =
             with_alpha.map_or((x.screen.depth, x.screen.visual), |visual| (32, visual));
         let (xid, colormap) = (x.new_id(), (depth == 32).then(|| x.new_id()));
         if let Some(colormap) = colormap {
             x.send(Request::new(78, 0).words(&[colormap, x.screen.root, visual]));
         }
-        let is_managed = options.kind != "popup";
+        let is_managed = options.kind != WindowKind::Popup;
         let events = mask::KEYS
             | mask::EXPOSURE
             | mask::VISIBILITY
@@ -153,7 +150,7 @@ impl Window {
         );
         x.set_bytes(xid, atom::WM_CLIENT_MACHINE, atom::STRING, &x.host_name);
         x.set_words(xid, x11.atom(atom::XdndAware), atom::ATOM, &[5]);
-        if let Some(id) = &options.app_id {
+        if let Some(id) = options.app_id.unless_empty() {
             x.set_bytes(
                 xid,
                 atom::WM_CLASS,
@@ -161,9 +158,9 @@ impl Window {
                 format!("{id}\0{id}\0").as_bytes(),
             );
         }
-        let kind = match options.kind.as_str() {
-            "popup" => atom::_NET_WM_WINDOW_TYPE_NOTIFICATION,
-            "dialog" => atom::_NET_WM_WINDOW_TYPE_DIALOG,
+        let kind = match options.kind {
+            WindowKind::Popup => atom::_NET_WM_WINDOW_TYPE_NOTIFICATION,
+            WindowKind::Dialog => atom::_NET_WM_WINDOW_TYPE_DIALOG,
             _ => atom::_NET_WM_WINDOW_TYPE_NORMAL,
         };
         x.set_words(
@@ -174,7 +171,7 @@ impl Window {
         );
         let parent = x11
             .active_window()
-            .filter(|_| matches!(options.kind.as_str(), "floating" | "dialog"));
+            .filter(|_| matches!(options.kind, WindowKind::Floating | WindowKind::Dialog));
         if let Some(parent) = &parent {
             x.set_words(xid, atom::WM_TRANSIENT_FOR, atom::WINDOW, &[parent.xid]);
         }
@@ -202,7 +199,7 @@ impl Window {
             (atom::_NET_WM_STATE_FULLSCREEN, options.fullscreen),
             (
                 atom::_NET_WM_STATE_MODAL,
-                options.kind == "dialog" && parent.is_some(),
+                options.kind == WindowKind::Dialog && parent.is_some(),
             ),
         ];
         let window = Rc::new(Window {
@@ -213,6 +210,7 @@ impl Window {
             is_client_decorated,
             is_managed,
             area: [left, top, width, height].into(),
+            aspect_ratio: Cell::default(),
             limits: Limits {
                 min: (options.min_width, options.min_height),
                 max: None,
@@ -288,6 +286,12 @@ impl Window {
             top as u32,
         ]);
         hints[5..9].copy_from_slice([min, max.unwrap_or_default()].as_flattened());
+        if self.aspect_ratio.get() > 0. {
+            hints[0] |= 128;
+            hints[11..15].copy_from_slice(
+                [[(self.aspect_ratio.get() * 10_000.) as u32, 10_000]; 2].as_flattened(),
+            );
+        }
         hints[17] = STATIC;
         self.x11
             .x
@@ -524,6 +528,10 @@ impl Window {
         }
     }
 
+    pub fn scale_limits(&self) {
+        self.set_size_hints(self.area.get());
+    }
+
     pub fn reload_cursor(&self) {
         self.cursor
             .take()
@@ -681,43 +689,54 @@ impl platform::Window for Window {
         }
     }
 
-    fn set_accessibility_tree(&self, _: &accessibility::Update) {}
+    fn is_minimized(&self) -> bool {
+        self.has_state(atom::_NET_WM_STATE_HIDDEN)
+    }
 
-    fn command(
-        &self,
-        name: &str,
-        value: &Value,
-        _: Option<&dyn platform::Window>,
-    ) -> Result<Value> {
-        let (x, on) = (&self.x11.x, value == true);
-        match name {
-            "isMinimized" => return Ok(self.has_state(atom::_NET_WM_STATE_HIDDEN).into()),
-            "title" => self.set_title(value.as_str().unwrap_or("")),
-            "position" => self.configure(0, pair(value).context("expected two numbers")?),
-            "size" => self.configure(2, pair(value).context("expected two numbers")?),
-            "limits" => {
-                let (min, max) = (pair(&value["min"]).unwrap_or_default(), pair(&value["max"]));
+    fn command(&self, command: &WindowCommand) -> Result<()> {
+        let x = &self.x11.x;
+        match *command {
+            WindowCommand::Title(ref title) => self.set_title(title),
+            WindowCommand::Position(at) => self.configure(0, (at.x, at.y)),
+            WindowCommand::Size(size) => self.configure(2, (size.width, size.height)),
+            WindowCommand::Limits(limits) => {
+                let (min, max) = (
+                    (limits.min.width, limits.min.height),
+                    limits.max.get().map(|it| (it.width, it.height)),
+                );
                 self.limits.set(Limits {
                     min,
                     max,
-                    is_resizable: value["resizable"] == true,
+                    is_resizable: limits.is_resizable,
                 });
                 self.set_size_hints(self.area.get());
             }
-            "focus" | "restore" if !self.is_withdrawn.get() => self.activate(),
-            "minimize" => self.tell_manager(atom::WM_CHANGE_STATE, [3, 0, 0, 0, 0]),
-            "maximize" => self.set_maximized(on),
-            "fullscreen" | "simpleFullscreen" => {
+            WindowCommand::Focus | WindowCommand::MoveTop | WindowCommand::Restore
+                if !self.is_withdrawn.get() =>
+            {
+                self.activate()
+            }
+            WindowCommand::Minimize => self.tell_manager(atom::WM_CHANGE_STATE, [3, 0, 0, 0, 0]),
+            WindowCommand::Maximize(on) => self.set_maximized(on),
+            WindowCommand::Fullscreen(on) | WindowCommand::SimpleFullscreen(on) => {
                 self.set_state(&[atom::_NET_WM_STATE_FULLSCREEN], on)
             }
-            "alwaysOnTop" => self.set_state(&[atom::_NET_WM_STATE_ABOVE], on),
-            "skipTaskbar" => self.set_state(&[atom::_NET_WM_STATE_SKIP_TASKBAR], on),
-            "allWorkspaces" => self.set_state(&[atom::_NET_WM_STATE_STICKY], on),
-            "attention" if !self.is_active.get() => {
-                self.set_state(&[atom::_NET_WM_STATE_DEMANDS_ATTENTION], true)
+            WindowCommand::AlwaysOnTop(on) => self.set_state(&[atom::_NET_WM_STATE_ABOVE], on),
+            WindowCommand::SkipTaskbar(on) => {
+                self.set_state(&[atom::_NET_WM_STATE_SKIP_TASKBAR], on)
             }
-            "opacity" => {
-                let opacity = value.as_f64().unwrap_or(1.).clamp(0., 1.) * f64::from(u32::MAX);
+            WindowCommand::AllWorkspaces(on) => self.set_state(&[atom::_NET_WM_STATE_STICKY], on),
+            WindowCommand::Attention(on) => self.set_state(
+                &[atom::_NET_WM_STATE_DEMANDS_ATTENTION],
+                on && !self.is_active.get(),
+            ),
+            WindowCommand::Blur => x.send(Request::new(12, 0).words(&[self.xid, 0x40, 1])),
+            WindowCommand::AspectRatio { ratio, .. } => {
+                self.aspect_ratio.set(ratio);
+                self.set_size_hints(self.area.get());
+            }
+            WindowCommand::Opacity(opacity) => {
+                let opacity = f64::from(opacity).clamp(0., 1.) * f64::from(u32::MAX);
                 x.set_words(
                     self.xid,
                     self.x11.atom(atom::_NET_WM_WINDOW_OPACITY),
@@ -725,7 +744,7 @@ impl platform::Window for Window {
                     &[opacity as u32],
                 );
             }
-            "ignoreMouseEvents" => {
+            WindowCommand::IgnoreMouseEvents(on) => {
                 const INPUT: [u8; 4] = [0, 2, 0, 0];
                 let shape = x
                     .extension(x.ask_for_extension("SHAPE"))
@@ -739,10 +758,10 @@ impl platform::Window for Window {
                         .words(&[self.xid, 0, 0]),
                 });
             }
-            "beep" => x.send(Request::new(104, 0)),
+            WindowCommand::Beep => x.send(Request::new(104, 0)),
             _ => {}
         }
-        Ok(Value::Null)
+        Ok(())
     }
 
     fn handle(&self) -> u64 {

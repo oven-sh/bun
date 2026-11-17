@@ -1,0 +1,946 @@
+//! `webContents`: what shows one document after the other, in a window or in a frame.
+
+mod api;
+mod context;
+mod embedding;
+mod features;
+mod frame;
+mod history;
+mod hooks;
+
+pub(crate) mod inspection;
+mod link;
+mod load;
+mod open;
+pub(crate) mod page;
+pub(crate) mod parts;
+mod sandbox;
+pub(crate) mod worlds;
+
+use std::rc::Rc;
+
+use bun_ui::protocol::{Command, SurfaceCommand};
+use bun_ui::surfaces;
+use bun_web::headers::HeaderList;
+use bun_web::host::Activation;
+
+use self::context::Context;
+use self::frame::Embedded;
+use self::inspection::{Inspection, News};
+use self::load::Loading;
+use self::page::{About, Creator, Page};
+use crate::devtools::debugger::Debugger;
+use crate::generated_bindgen::contents::js_ElectronWebContents as fields;
+use crate::prelude::*;
+use crate::session::{self, Session};
+use crate::view::View;
+use crate::webview::remote::Remote;
+use crate::window::Window;
+use crate::{app, process};
+
+pub(crate) use self::history::{Document, Entry, History};
+pub(crate) use self::hooks::all_chosen;
+pub(crate) use self::load::{How, Request};
+
+type Values<'a, 'b> = &'b [JsLocal<'a>];
+type Method<T> = fn(&'static T, &[JSValue]) -> JsResult<JSValue>;
+type Methods<T> = &'static [(&'static str, Method<T>)];
+
+/// Functions that need no `this`.
+fn bind<T: JsInterface + 'static>(
+    object: JSValue,
+    owner: &T,
+    methods: Methods<T>,
+) -> JsResult<JSValue> {
+    for &(name, method) in methods {
+        let body = move |owner, arguments: &[JSValue]| {
+            // SAFETY: what was captured.
+            method(unsafe { T::from_js_unchecked(owner) }, arguments)
+        };
+        object.put(global(), name.as_bytes(), function(owner.to_js(), body)?);
+    }
+    Ok(object)
+}
+
+const NOTHING: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
+
+fn nothing(result: JsResult<impl Sized>) -> JsResult<JSValue> {
+    result.map(|_| JSValue::UNDEFINED)
+}
+
+fn field(value: Option<JSValue>) -> JSValue {
+    value.unwrap_or(JSValue::UNDEFINED)
+}
+
+fn object_in(value: Option<JSValue>) -> Option<JSValue> {
+    value.filter(|it| it.is_object())
+}
+
+/// What is in a field, which gets it when it is first wanted.
+fn lazily(
+    held: Option<JSValue>,
+    create: fn() -> JsResult<JSValue>,
+    hold: impl FnOnce(JSValue),
+) -> JsResult<JSValue> {
+    if let Some(it) = object_in(held) {
+        return Ok(it);
+    }
+    let created = create()?;
+    hold(created);
+    Ok(created)
+}
+
+/// `{ ...from }`, into `to`.
+fn spread(to: JSValue, from: JSValue) -> JsResult<JSValue> {
+    if from.is_object() {
+        let mut names = from.keys(global())?.array_iterator(global())?;
+        while let Some(name) = names.next()? {
+            JSValue::put_to_property_key(to, global(), name, get_by_value(global(), from, name)?)?;
+        }
+    }
+    Ok(to)
+}
+
+/// 0 for what is no number.
+trait Numbers {
+    fn as_u32(self) -> u32;
+    fn as_i32(self) -> i32;
+}
+
+impl Numbers for JSValue {
+    fn as_u32(self) -> u32 {
+        self.get_number().unwrap_or_default() as u32
+    }
+
+    fn as_i32(self) -> i32 {
+        self.get_number().unwrap_or_default() as i32
+    }
+}
+
+fn callable_at(arguments: &[JSValue], index: usize) -> JsResult<JSValue> {
+    let found = Some(argument(arguments, index)).filter(|it| it.is_callable());
+    found.ok_or_else(|| type_error(format_args!("A function is required")))
+}
+
+fn text_at(arguments: &[JSValue], index: usize) -> JsResult<String> {
+    text_of(argument(arguments, index))
+}
+
+fn text_if_any(value: JSValue) -> JsResult<Option<String>> {
+    value.is_string().then(|| text_of(value)).transpose()
+}
+
+fn or_undefined(value: Option<impl IntoJs>) -> JsResult<JSValue> {
+    bun_ui::value::or_undefined(value, global())
+}
+
+fn without_hash(url: &str) -> &str {
+    crate::text::before(url, "#")
+}
+
+fn is_web(url: &str) -> bool {
+    url.starts_with("http:") || url.starts_with("https:")
+}
+
+struct Preferences {
+    uses_web_engine: bool,
+    has_web_security: bool,
+    runs_scripts: bool,
+    loads_images: bool,
+    disables_dialogs: bool,
+    throttles_background: bool,
+    is_transparent: bool,
+    checks_spelling: bool,
+    focuses_on_navigation: bool,
+    isolates_context: bool,
+    integrates_node: bool,
+    integrates_node_in_frames: bool,
+    is_sandboxed: bool,
+    zoom_factor: f64,
+    preload: Option<String>,
+}
+
+impl Preferences {
+    fn read(given: JSValue) -> JsResult<Preferences> {
+        let is_set = |name| JsResult::Ok(get(given, name)?.to_boolean());
+        let is_left_on = |name| JsResult::Ok(get(given, name)? != JSValue::FALSE);
+        let (integrates_node, sandbox) = (is_set("nodeIntegration")?, get(given, "sandbox")?);
+        Ok(Preferences {
+            uses_web_engine: is_set("webEngine")?,
+            has_web_security: is_left_on("webSecurity")?,
+            runs_scripts: is_left_on("javascript")?,
+            loads_images: is_left_on("images")?,
+            disables_dialogs: is_set("disableDialogs")?,
+            throttles_background: is_left_on("backgroundThrottling")?,
+            is_transparent: is_set("transparent")?,
+            checks_spelling: is_left_on("spellcheck")?,
+            focuses_on_navigation: is_left_on("focusOnNavigation")?,
+            isolates_context: is_left_on("contextIsolation")?,
+            integrates_node,
+            integrates_node_in_frames: is_set("nodeIntegrationInSubFrames")?,
+            is_sandboxed: if sandbox.is_undefined_or_null() {
+                !integrates_node
+            } else {
+                sandbox.to_boolean()
+            },
+            zoom_factor: get(given, "zoomFactor")?.get_number().unwrap_or(1.),
+            preload: text_if_any(get(given, "preload")?)?,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Markup<'a> {
+    Html,
+    StartOfHtml,
+    /// The type.
+    Xml(&'a str),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Kind {
+    Window,
+    BrowserView,
+    Remote,
+    Frame,
+    Print,
+}
+
+pub(crate) struct State {
+    id: u32,
+    surface: u32,
+    kind: Cell<Kind>,
+    session: &'static Session,
+    preferences: Rc<Preferences>,
+    context: Context,
+    embedded: Option<Embedded>,
+    /// Of the window and its frames.
+    history: RefCell<History>,
+    activation: RefCell<Option<Activation>>,
+    loading: Loading,
+    is_destroyed: Cell<bool>,
+    /// The listeners of `destroyed` have been called.
+    is_gone: Cell<bool>,
+    has_shown_trusted: Cell<bool>,
+    /// The URL of what was shown, until something else is.
+    crashed_at: RefCell<Option<String>>,
+    ignores_menu_shortcuts: Cell<bool>,
+    is_muted: Cell<bool>,
+    background: Cell<u32>,
+    user_agent: RefCell<Option<String>>,
+    zoom_mode: RefCell<String>,
+    own_zoom: Cell<Option<f64>>,
+    last_search: Cell<u32>,
+    inspection: Inspection,
+}
+
+pub(crate) struct Contents(Box<State>, #[expect(dead_code)] HasFields);
+
+impl core::ops::Deref for Contents {
+    type Target = State;
+
+    fn deref(&self) -> &State {
+        &self.0
+    }
+}
+
+#[derive(Default)]
+struct All {
+    /// Until they are destroyed, the oldest first.
+    alive: RefCell<Vec<Root<Contents>>>,
+    last_id: Cell<u32>,
+    focused: Cell<u32>,
+}
+
+state!(fn all() -> All);
+
+fn alive_at(index: usize) -> Option<&'static Contents> {
+    all().alive.borrow().get(index).map(Root::get)
+}
+
+/// Some may be left out if `alive` changes meanwhile.
+fn alive() -> impl Iterator<Item = &'static Contents> {
+    (0..).map_while(alive_at)
+}
+
+fn of_app() -> impl Iterator<Item = &'static Contents> {
+    alive().filter(|it| !matches!(it.kind.get(), Kind::Frame | Kind::Print))
+}
+
+fn with_id(id: u32) -> Option<&'static Contents> {
+    let all = all().alive.borrow();
+    all.binary_search_by_key(&id, |it| it.get().id)
+        .ok()
+        .map(|at| all[at].get())
+}
+
+fn focused() -> Option<&'static Contents> {
+    with_id(all().focused.get())
+}
+
+/// Where the user is.
+pub(crate) fn to_edit(window: JSValue) -> JsResult<JSValue> {
+    focused().map_or_else(|| get(window, "webContents"), |it| Ok(it.to_js()))
+}
+
+pub(crate) fn theme_changed() -> JsResult<()> {
+    of_app().try_for_each(Contents::environment_changed)
+}
+
+pub(crate) fn dictionary_changed() -> JsResult<()> {
+    of_app().try_for_each(|it| it.page().tell("dictionaryChanged", &[]))
+}
+
+pub(crate) fn online_changed(is_online: bool) {
+    alive().for_each(|it| {
+        it.page()
+            .later(move |page| page.tell("onlineChanged", &[is_online.into()]))
+    });
+}
+
+enum Start<'a> {
+    Alone,
+    /// By a frame of the web engine.
+    OpenedByGuest(JSValue, &'static Session),
+    Opened {
+        opener: &'a Page,
+        /// Makes the first document in the realm of `opener`.
+        create_page: Option<JSValue>,
+        is_related: bool,
+    },
+    Framed(&'a Page, JSValue),
+}
+
+const OF_FRAMES: &[&str] = &[
+    "console-message",
+    "did-navigate-in-page",
+    "did-redirect-navigation",
+    "did-start-navigation",
+    "frame-created",
+    "will-frame-navigate",
+    "will-redirect",
+];
+
+fn modifier_names(bits: u32) -> JsResult<JSValue> {
+    let names = ["shift", "control", "alt", "meta", "altgr", "capslock"]
+        .into_iter()
+        .enumerate();
+    js(names
+        .filter(|it| bits & 1 << it.0 != 0)
+        .map(|it| it.1)
+        .collect::<Vec<_>>())
+}
+
+impl Contents {
+    pub(crate) fn create(preferences: JSValue, kind: Kind) -> JsResult<&'static Contents> {
+        Contents::start(preferences, kind, &Start::Alone)
+    }
+
+    fn start(given: JSValue, kind: Kind, start: &Start<'_>) -> JsResult<&'static Contents> {
+        let given = if given.is_object() {
+            given
+        } else {
+            object!({})
+        };
+        let (session, preferences) = match *start {
+            Start::Framed(parent, _) => (
+                parent.contents().session,
+                Rc::clone(&parent.contents().preferences),
+            ),
+            _ => {
+                let session = match (cast::<Session>(get(given, "session")?), start) {
+                    (_, Start::OpenedByGuest(_, session)) => session,
+                    (Some(session), _) => session,
+                    (None, Start::Opened { opener, .. }) => opener.contents().session,
+                    (None, _) => session::from_partition(
+                        &text_if_any(get(given, "partition")?)?.unwrap_or_default(),
+                    )?,
+                };
+                (session, Rc::new(Preferences::read(given)?))
+            }
+        };
+        let creator = match *start {
+            Start::Framed(page, _)
+            | Start::Opened {
+                opener: page,
+                is_related: true,
+                ..
+            } => Some(page),
+            _ => None,
+        };
+        all().last_id.update(|it| it + 1);
+        let state = State {
+            id: all().last_id.get(),
+            surface: surfaces::next_id(),
+            kind: kind.into(),
+            session,
+            preferences,
+            context: Context::new(creator.map(Page::contents)),
+            embedded: match *start {
+                Start::Framed(parent, element) => Some(Embedded::new(parent, element)?),
+                _ => None,
+            },
+            history: Default::default(),
+            activation: Default::default(),
+            loading: Default::default(),
+            is_destroyed: false.into(),
+            is_gone: false.into(),
+            has_shown_trusted: false.into(),
+            crashed_at: Default::default(),
+            ignores_menu_shortcuts: false.into(),
+            is_muted: false.into(),
+            background: 0.into(),
+            user_agent: None.into(),
+            zoom_mode: "default".to_owned().into(),
+            own_zoom: None.into(),
+            last_search: 0.into(),
+            inspection: Default::default(),
+        };
+        let this = fields::create(heap(), Contents(state.into(), HasFields::default()));
+        fields::set_preferences(this, given);
+        match *start {
+            Start::Alone => {}
+            Start::OpenedByGuest(opener, _) => fields::set_opener(this, opener),
+            Start::Opened {
+                opener, is_related, ..
+            } => {
+                fields::set_opener(this, opener.to_js());
+                fields::set_opened_by(this, is_related.then(|| opener.contents()));
+            }
+            Start::Framed(parent, element) => this.embed(parent, element)?,
+        }
+        this.tell_surface(SurfaceCommand::Create {
+            size: Size {
+                width: 800.,
+                height: 600.,
+            },
+            scale: 1.,
+            is_focusable: true,
+        })?;
+        let receive = listener(this, |it, arguments| it.handle(argument(arguments, 0)))?;
+        surfaces::listen_with_script(global(), this.surface, receive);
+        let about = About {
+            is_initial: true,
+            referrer: creator.map(Page::url).unwrap_or_default(),
+            creator: creator.map(|it| Creator::Page(Rc::new(Root::new(it)))),
+            ..Default::default()
+        };
+        this.show_from_now(this.new_page("about:blank", about)?)?;
+        this.page().forget_creator();
+        all().alive.borrow_mut().push(Root::new(this));
+        if let Start::Opened {
+            opener,
+            create_page: Some(create_page),
+            ..
+        } = *start
+        {
+            this.page().adopt(opener, create_page);
+        }
+        if !matches!(kind, Kind::Frame | Kind::Print) {
+            announce(app::object(), "web-contents-created", &[this.to_js()])?;
+        }
+        if matches!(start, Start::Opened { .. }) {
+            this.announce_frame()?;
+        }
+        Ok(this)
+    }
+
+    /// For a reference that is known to lead into a cell.
+    fn itself(&self) -> &'static Contents {
+        // SAFETY: it is one.
+        unsafe { Contents::from_js_unchecked(self.to_js()) }
+    }
+
+    pub(crate) fn page(&self) -> &'static Page {
+        fields::page(self.itself()).expect("there is always one")
+    }
+
+    /// What apps see of a frame.
+    fn owner(&self) -> &'static Contents {
+        fields::owner(self.itself()).unwrap_or_else(|| self.itself())
+    }
+
+    pub(crate) fn parent(&self) -> Option<&'static Contents> {
+        fields::parent(self.itself())
+    }
+
+    fn is_frame(&self) -> bool {
+        self.embedded.is_some()
+    }
+
+    pub(crate) fn guest(&self) -> Option<&'static Remote> {
+        fields::guest(self.itself())
+    }
+
+    pub(crate) fn set_guest(&self, guest: Option<&Remote>) {
+        if guest.is_some() {
+            self.crashed_at.take();
+        }
+        fields::set_guest(self, guest);
+    }
+
+    pub(crate) fn surface(&self) -> u32 {
+        self.surface
+    }
+
+    pub(crate) fn background(&self) -> u32 {
+        self.background.get()
+    }
+
+    pub(crate) fn preferences(&self) -> JSValue {
+        field(fields::preferences(self))
+    }
+
+    pub(crate) fn history(&self) -> &'static RefCell<History> {
+        &self.owner().history
+    }
+
+    /// The last event that has told it.
+    pub(crate) fn size(&self) -> Option<JSValue> {
+        object_in(fields::size(self))
+    }
+
+    pub(crate) fn window(&self) -> Option<&'static Window> {
+        fields::view(self.owner())?.window()
+    }
+
+    fn window_object(&self) -> JSValue {
+        self.window().map_or(JSValue::UNDEFINED, JsInterface::to_js)
+    }
+
+    fn is_visible(&self) -> JsResult<bool> {
+        let is_drawn = fields::view(self.owner()).is_some_and(View::is_drawn);
+        Ok(is_drawn && self.window().map(Window::is_on_screen).transpose()? == Some(true))
+    }
+
+    fn is_window_focused(&self) -> JsResult<bool> {
+        Ok(self.window().map(Window::has_focus).transpose()? == Some(true))
+    }
+
+    pub(crate) fn focus_window(&self) -> JsResult<()> {
+        self.window().map_or(Ok(()), Window::take_focus)
+    }
+
+    fn tell_surface(&self, command: SurfaceCommand) -> JsResult<()> {
+        tell(Command::Surface {
+            id: self.surface,
+            command,
+        })
+    }
+
+    fn later(&self, work: impl FnOnce(&'static Contents) -> JsResult<()> + 'static) {
+        let this = Root::new(self);
+        post(Priority::Host, move || work(this.get()));
+    }
+
+    pub(crate) fn show_in(&self, view: &View, kind: Kind) -> JsResult<()> {
+        if fields::view(self).is_some() {
+            return Err(type_error(format_args!(
+                "options.webContents is already attached to a window"
+            )));
+        }
+        self.kind.set(kind);
+        fields::set_view(self, Some(view));
+        Ok(())
+    }
+
+    pub(crate) fn is_transparent(&self) -> bool {
+        self.preferences.is_transparent
+    }
+
+    pub(crate) fn is_gone(&self) -> bool {
+        self.is_gone.get()
+    }
+
+    pub(crate) fn change_background(&self, color: u32) -> JsResult<()> {
+        self.background.set(color);
+        self.guest().map_or(Ok(()), Remote::change_background)
+    }
+
+    pub(crate) fn environment_changed(&self) -> JsResult<()> {
+        match self.guest() {
+            Some(guest) => guest.environment_changed(),
+            None => self.page().tell("environmentChanged", &[]),
+        }
+    }
+
+    // ── events ──
+
+    fn emit(&self, name: &str, arguments: &[JSValue]) -> JsResult<()> {
+        let is_of_frames = || {
+            OF_FRAMES.contains(&name)
+                || name.starts_with("did-frame-")
+                || name.starts_with("did-fail-")
+        };
+        if !self.is_frame() || is_of_frames() {
+            emit(self.owner().to_js(), name, arguments)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// With an event before `arguments`. False if a listener has prevented the default.
+    fn dispatch(&self, name: &str, arguments: &[JSValue]) -> JsResult<bool> {
+        let event = Event::create();
+        let mut all = [event.to_js(); 7];
+        all[1..=arguments.len()].copy_from_slice(arguments);
+        self.emit(name, &all[..=arguments.len()])?;
+        Ok(!event.get_default_prevented())
+    }
+
+    fn announce(&self, name: &str, arguments: &[JSValue]) -> JsResult<()> {
+        self.dispatch(name, arguments).map(drop)
+    }
+
+    fn announce_for_frame(&self, name: &str, page: &Page, arguments: &[JSValue]) -> JsResult<()> {
+        let mut all = [JSValue::UNDEFINED; 6];
+        let (given, rest) = all.split_at_mut(arguments.len());
+        given.copy_from_slice(arguments);
+        rest[..3].copy_from_slice(&[
+            (!self.is_frame()).into(),
+            js(self.owner().id)?,
+            js(page.id)?,
+        ]);
+        self.announce(name, &all[..arguments.len() + 3])
+    }
+
+    /// False if a listener has prevented the default.
+    fn dispatch_navigation(
+        &self,
+        name: &str,
+        url: &str,
+        is_same_document: bool,
+        initiator: JSValue,
+    ) -> JsResult<bool> {
+        let (frame, url, is_main) = (self.main_frame()?, js(url)?, !self.is_frame());
+        let event = Event::create()
+            .with("url", url)?
+            .with("isSameDocument", is_same_document)?;
+        let event = event
+            .with("isMainFrame", is_main)?
+            .with("frame", frame)?
+            .with("initiator", initiator)?;
+        let ids = [get(frame, "processId")?, get(frame, "routingId")?];
+        self.emit(
+            name,
+            &[
+                event.to_js(),
+                url,
+                is_same_document.into(),
+                is_main.into(),
+                ids[0],
+                ids[1],
+            ],
+        )?;
+        Ok(!event.get_default_prevented())
+    }
+
+    // ── documents ──
+
+    fn new_page(&self, url: &str, mut about: About) -> JsResult<&'static Page> {
+        about.sandbox = self.sandbox_of_next(about.headers())?;
+        Page::create(self, url, about)
+    }
+
+    fn sandbox_of_next(&self, headers: &HeaderList) -> JsResult<sandbox::Sandbox> {
+        let mut sandbox = match (self.parent(), self.opener_page()) {
+            (Some(parent), _) => parent.page().sandbox(),
+            (None, Some(opener)) => opener.sandbox().of_popups(),
+            _ => Default::default(),
+        };
+        if self.embedded.as_ref().is_some_and(|it| it.kind == "iframe") {
+            self.attribute("sandbox")?
+                .into_iter()
+                .for_each(|it| sandbox.restrict(it.as_bytes()));
+        }
+        headers
+            .values(b"content-security-policy")
+            .for_each(|it| sandbox.restrict_by_policy(it));
+        Ok(sandbox)
+    }
+
+    fn opener_page(&self) -> Option<&'static Page> {
+        cast(fields::opener(self)?)
+    }
+
+    /// The empty document costs nothing until something looks at it.
+    pub(crate) fn started_page(&self) -> JsResult<&'static Page> {
+        if !self.page().is_started() {
+            self.show(self.page(), "", Markup::Html)?;
+        }
+        Ok(self.page())
+    }
+
+    fn show(&self, page: &Page, source: &str, markup: Markup<'_>) -> JsResult<()> {
+        if !page.is_started() {
+            page.start()?;
+        }
+        if page.is_initial() && page.agent().is_some() {
+            self.tell_element("measure", &[])?;
+            if let Some(size) = self.size() {
+                let quiet = spread(object!({}), size)?;
+                quiet.put(global(), b"isQuiet", JSValue::TRUE);
+                page.tell("handleEvent", &[quiet])?;
+            }
+            self.notify(News::DocumentCreated)?;
+            return page.tell("parseHTML", &[js("")?]);
+        }
+        self.size()
+            .map_or(Ok(()), |it| page.tell("handleEvent", &[it]))?;
+        if self.is_focused()
+            || self.inspection.seems_focused.get()
+            || self.ask_element("isFocused", &[])?.to_boolean()
+        {
+            page.tell(
+                "handleEvent",
+                &[object!({ "t": "focus", "s": self.surface })],
+            )?;
+        }
+        self.notify(News::DocumentCreated)?;
+        match markup {
+            Markup::Html => page.tell("loadHTML", &[js(source)?]),
+            Markup::StartOfHtml => page.tell("loadHTML", &[js(source)?, JSValue::TRUE]),
+            Markup::Xml(kind) => page.tell("loadXML", &[js(source)?, js(kind)?]),
+        }
+    }
+
+    pub(crate) fn leave_page(&self) -> JsResult<()> {
+        self.page().dispose()?;
+        fields::set_page(
+            self,
+            Some(self.new_page(
+                "about:blank",
+                About {
+                    is_initial: true,
+                    ..Default::default()
+                },
+            )?),
+        );
+        Ok(())
+    }
+
+    pub(crate) fn has_crashed_at(&self, url: String) {
+        self.crashed_at.replace(Some(url));
+    }
+
+    fn crash(&self, reason: &str) -> JsResult<()> {
+        self.page().dispose()?;
+        self.cancel_pending()?;
+        let (old, url) = (self.page(), self.page().url_in_history());
+        let page = self.new_page(&url, About::default())?;
+        page.succeed(old);
+        fields::set_page(self, Some(page));
+        self.has_crashed_at(url);
+        self.set_loading(false)?;
+        let details = object!({ "reason": reason, "exitCode": 2 });
+        self.announce("render-process-gone", &[details])?;
+        announce(
+            app::object(),
+            "render-process-gone",
+            &[self.owner().to_js(), details],
+        )
+    }
+
+    fn may_unload(&self, is_closing: bool) -> JsResult<bool> {
+        Ok(self.page().may_be_unloaded()?
+            || (!is_closing && !self.page().ask("hasBeenActive", &[])?.to_boolean())
+            || (!self.is_frame() && !self.dispatch("will-prevent-unload", &[])?))
+    }
+
+    pub(crate) fn close_now(&self) -> JsResult<()> {
+        if self.is_destroyed.get() {
+            return Ok(());
+        }
+        self.announce("close", &[])?;
+        self.destroy_now()
+    }
+
+    /// With the window that it fills.
+    fn close_soon(&self) {
+        self.later(
+            |it| match it.window().filter(|_| it.kind.get() == Kind::Window) {
+                Some(window) => window.request_close(),
+                None => it.owner().close_now(),
+            },
+        );
+    }
+
+    fn destroy_now(&self) -> JsResult<()> {
+        if self.is_destroyed.get() {
+            return Ok(());
+        }
+        self.cancel_pending()?;
+        self.give_up_promise()?;
+        self.page().dispose()?;
+        if self.is_destroyed.replace(true) {
+            return Ok(());
+        }
+        self.discard();
+        self.guest().map_or(Ok(()), Remote::end)?;
+        fields::inspector(self).map_or(Ok(()), Debugger::end)?;
+        self.notify(News::Destroyed)?;
+        all().alive.borrow_mut().retain(|it| !same(it.get(), self));
+        if self.is_frame() && self.is_busy() {
+            self.owner().later(Contents::report_loading);
+        }
+        bun_web::storage::drop_session_storage(self.id);
+        fields::view(self).map_or(Ok(()), View::release)?;
+        surfaces::ignore(self.surface);
+        bun_ui::queue::destroy_surface(global(), self.surface)?;
+        let result = self.announce("destroyed", &[]);
+        self.is_gone.set(true);
+        self.history.take();
+        result
+    }
+
+    // ── input ──
+
+    pub(crate) fn input(&self, event: JSValue) -> JsResult<()> {
+        self.handle(spread(object!({ "s": self.surface }), event)?)
+    }
+
+    fn handle(&self, event: JSValue) -> JsResult<()> {
+        let kind = get(event, "t")?.to_utf8(global())?;
+        let mut event = event;
+        match &*kind {
+            b"resize" => {
+                // The library repeats what `place()` has said, which may have changed since.
+                if self.is_frame() && !get(event, "isQuiet")?.to_boolean() {
+                    return Ok(());
+                }
+                fields::set_size(self, event);
+                fields::pending_guest(self).map_or(Ok(()), |it| it.handle_event(event))?;
+            }
+            b"focus" if !self.is_frame() => {
+                all().focused.set(self.id);
+                self.emit("focus", &[])?;
+            }
+            b"blur" => {
+                if self.is_focused() {
+                    all().focused.set(0);
+                }
+                self.emit("blur", &[])?;
+                if self.inspection.seems_focused.get() {
+                    return Ok(());
+                }
+            }
+            b"mouse" | b"wheel"
+                if !self.is_frame() && !self.before_mouse(event, *kind == *b"wheel")? =>
+            {
+                return Ok(());
+            }
+            b"drag" if !self.is_frame() && self.guest().is_none() => {
+                event = hooks::with_files(event)?
+            }
+            _ => {}
+        }
+        match self.guest() {
+            _ if self.is_destroyed.get() => Ok(()),
+            Some(guest) => guest.handle_event(event),
+            None if *kind == *b"key" && !self.page().is_started() => {
+                let key = bun_web::host::Keystroke {
+                    is_down: text_of(get(event, "e")?)? == "down",
+                    key: text_of(get(event, "key")?)?,
+                    code: text_of(get(event, "code")?)?,
+                    location: get(event, "location")?.as_u32(),
+                    modifiers: get(event, "m")?.as_u32(),
+                    repeats: get(event, "repeat")?.to_boolean(),
+                    is_composing: get(event, "composing")?.to_boolean(),
+                };
+                if !self.before_input(&key)? && key.is_down {
+                    link::handle_shortcut(self.page(), &key)?;
+                }
+                tell(Command::KeyWasHandled)
+            }
+            None => self.page().tell("handleEvent", &[event]),
+        }
+    }
+
+    /// False if the page is not to see it.
+    fn before_mouse(&self, event: JSValue, is_wheel: bool) -> JsResult<bool> {
+        let button = get(event, "b")?.get_number().map(|it| it as usize);
+        if let Some(3 | 4) = button {
+            if let Some(window) = self.window()
+                && text_of(get(event, "e")?)? == "up"
+            {
+                let command = if button == Some(3) {
+                    "browser-backward"
+                } else {
+                    "browser-forward"
+                };
+                announce(window.to_js(), "app-command", &[js(command)?])?;
+            }
+            return Ok(true);
+        }
+        if !has_listeners(self.to_js(), "before-mouse-event")?
+            && !has_listeners(self.to_js(), "input-event")?
+        {
+            return Ok(true);
+        }
+        let kind = match &*text_of(get(event, "e")?)? {
+            _ if is_wheel => "mouseWheel",
+            "down" => "mouseDown",
+            "up" => "mouseUp",
+            "leave" => "mouseLeave",
+            _ => "mouseMove",
+        };
+        let modifiers = modifier_names(get(event, "m")?.as_u32())?;
+        let input = object!({
+            "type": kind,
+            "modifiers": modifiers,
+            "x": get(event, "x")?,
+            "y": get(event, "y")?,
+            "globalX": get(event, "sx")?,
+            "globalY": get(event, "sy")?,
+            "clickCount": get(event, "n")?,
+            "button": *button.and_then(|it| ["left", "middle", "right"].get(it)).unwrap_or(&"none"),
+        });
+        if !self.dispatch("before-mouse-event", &[input])? {
+            return Ok(false);
+        }
+        self.announce(
+            "input-event",
+            &[object!({ "type": kind, "modifiers": modifiers })],
+        )
+        .map(|()| true)
+    }
+
+    /// Whether the app has taken the key.
+    pub(crate) fn before_input(&self, key: &bun_web::host::Keystroke) -> JsResult<bool> {
+        if self.is_frame()
+            || (!has_listeners(self.to_js(), "before-input-event")?
+                && !has_listeners(self.to_js(), "input-event")?)
+        {
+            return Ok(false);
+        }
+        let (is_down, bits) = (key.is_down, key.modifiers);
+        let modifiers = modifier_names(bits)?;
+        let input = object!({
+            "type": if is_down { "keyDown" } else { "keyUp" },
+            "key": &*key.key,
+            "code": &*key.code,
+            "isAutoRepeat": key.repeats,
+            "isComposing": key.is_composing,
+            "shift": bits & 1 != 0,
+            "control": bits & 2 != 0,
+            "alt": bits & 4 != 0,
+            "meta": bits & 8 != 0,
+            "location": key.location,
+            "modifiers": modifiers,
+        });
+        if !self.dispatch("before-input-event", &[input])? {
+            return Ok(true);
+        }
+        let input = object!({ "type": if is_down { "rawKeyDown" } else { "keyUp" }, "modifiers": modifiers });
+        self.announce("input-event", &[input]).map(|()| false)
+    }
+}
+
+fn logs_to_stderr() -> bool {
+    state!(fn known() -> core::cell::OnceCell<bool>);
+    *known().get_or_init(|| {
+        process::variable("ELECTRON_ENABLE_LOGGING")
+            .is_ok_and(|it| it.is_some_and(|it| !it.is_empty()))
+            || crate::command_line::switch("enable-logging").is_some()
+    })
+}

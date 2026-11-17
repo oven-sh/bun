@@ -1,16 +1,19 @@
 //! Inline-level content: white space processing and shaping. `lines.rs` breaks it into lines.
 
 use core::cell::RefCell;
-use core::hash::{Hash, Hasher};
+use core::hash::Hasher;
 use core::ops::Range;
+use std::borrow::Cow;
 use std::rc::Rc;
 
-use crate::abi::{self, Cluster, TextRun};
+use smallvec::SmallVec;
+
+use crate::abi::{self, Cluster, Letter, TextRun};
 use crate::boxes::BoxId;
 use crate::characters::*;
 use crate::document::Document;
 use crate::lines::{Line, Lines, edge};
-use crate::name::{FastHasher, Map};
+use crate::name::{Map, keyed_hasher};
 use crate::platform::{self, Shaped, glyph_extent, has_positioning_feature};
 use crate::properties::Style;
 use crate::tree::NodeId;
@@ -73,6 +76,8 @@ pub(crate) struct Item {
     pub(crate) kind: ItemKind,
     /// `style` is that of `::first-line` or `::first-letter`.
     pub(crate) has_own_style: bool,
+    /// Its clusters have the same face, direction and orientation.
+    pub(crate) is_uniform: bool,
     pub(crate) node: NodeId,
     /// For text, of the parent.
     pub(crate) style: Rc<Style>,
@@ -90,20 +95,135 @@ pub(crate) struct Paragraph {
     pub(crate) shaped: Rc<Shaped>,
 }
 
+/// Their starts are in the whole text, and their glyphs and faces in their paragraph.
+pub(crate) struct Clusters {
+    pub(crate) paragraphs: SmallVec<[Paragraph; 1]>,
+    joined: core::cell::OnceCell<Vec<Cluster>>,
+    count: u32,
+    /// The letters of the paragraphs say all.
+    are_letters: bool,
+}
+
+impl Clusters {
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.count as usize
+    }
+
+    fn paragraph_of(&self, cluster: u32) -> &Paragraph {
+        &self.paragraphs[self
+            .paragraphs
+            .partition_point(|it| it.first_cluster <= cluster)
+            .max(1)
+            - 1]
+    }
+
+    #[cold]
+    fn join(&self) -> Vec<Cluster> {
+        let (mut joined, mut start) = (Vec::with_capacity(self.len()), 0);
+        for Paragraph { shaped, .. } in &self.paragraphs {
+            joined.extend(shaped.clusters().iter().map(|cluster| Cluster {
+                start: cluster.start + start,
+                ..*cluster
+            }));
+            start += shaped.text.len() as u32;
+        }
+        joined
+    }
+
+    /// `range` is in one paragraph.
+    pub(crate) fn letters(&self, range: &Range<u32>) -> Option<&[Letter]> {
+        let paragraph = self.are_letters.then(|| self.paragraph_of(range.start))?;
+        paragraph.shaped.letters.get(
+            (range.start - paragraph.first_cluster) as usize
+                ..(range.end - paragraph.first_cluster) as usize,
+        )
+    }
+
+    /// The glyphs may be missing.
+    pub(crate) fn as_letters(&self) -> Option<Cow<'_, [Letter]>> {
+        let letter = |it: &Cluster| {
+            Some(Letter {
+                advance: it.advance,
+                glyph: abi::NO_GLYPH,
+                flags: it.flags,
+                face: it.face.try_into().ok()?,
+            })
+        };
+        match &self.paragraphs[..] {
+            _ if !self.are_letters => self.iter().map(letter).collect(),
+            [only] => Some(Cow::Borrowed(&only.shaped.letters)),
+            all => {
+                let mut joined = Vec::with_capacity(self.len());
+                all.iter()
+                    .for_each(|it| joined.extend_from_slice(&it.shaped.letters));
+                Some(joined.into())
+            }
+        }
+    }
+
+    pub(crate) fn label(&self) -> Option<crate::lines::Label> {
+        let [only] = &self.paragraphs[..] else {
+            return None;
+        };
+        only.shaped.label.filter(|_| self.are_letters)
+    }
+}
+
+impl core::ops::Deref for Clusters {
+    type Target = [Cluster];
+    #[inline]
+    fn deref(&self) -> &[Cluster] {
+        match (self.joined.get(), &self.paragraphs[..]) {
+            (Some(joined), _) => joined,
+            (_, [only]) => only.shaped.clusters(),
+            _ => self.joined.get_or_init(|| self.join()),
+        }
+    }
+}
+
+impl core::ops::DerefMut for Clusters {
+    fn deref_mut(&mut self) -> &mut [Cluster] {
+        self.joined.get_or_init(|| self.join());
+        self.are_letters = false;
+        self.joined.get_mut().map_or(&mut [], |it| it)
+    }
+}
+
+pub(crate) enum Text {
+    Own(Box<str>),
+    /// That of the only paragraph.
+    Shared(Rc<Shaped>),
+}
+
+impl core::ops::Deref for Text {
+    type Target = str;
+    #[inline]
+    fn deref(&self) -> &str {
+        match self {
+            Text::Own(own) => own,
+            Text::Shared(shaped) => &shaped.text,
+        }
+    }
+}
+
 pub(crate) struct Inline {
-    pub(crate) text: String,
-    pub(crate) items: Vec<Item>,
-    pub(crate) segments: Vec<Segment>,
-    /// Their starts are in `text`, and their glyphs and faces in their paragraph.
-    pub(crate) clusters: Vec<Cluster>,
-    pub(crate) paragraphs: Vec<Paragraph>,
+    pub(crate) text: Text,
+    pub(crate) items: SmallVec<[Item; 1]>,
+    pub(crate) segments: SmallVec<[Segment; 1]>,
+    pub(crate) clusters: Clusters,
     pub(crate) has_bidi: bool,
     pub(crate) has_layers: bool,
     pub(crate) has_ruby: bool,
     pub(crate) force_line: bool,
+    /// If that is all there is.
+    pub(crate) label: Option<crate::lines::Label>,
     /// The same items and clusters in the style of `::first-line`, which comes with them.
     pub(crate) first_line: Option<Box<(Inline, Rc<Style>)>>,
     pub(crate) lines: Lines,
+    /// How far an item may paint outside of its fragments.
+    pub(crate) outset: core::cell::Cell<Option<f32>>,
+    pub(crate) prose: core::cell::OnceCell<Option<crate::lines::Prose>>,
 }
 
 impl Inline {
@@ -136,11 +256,7 @@ impl Inline {
     }
 
     pub(crate) fn paragraph_of(&self, cluster: u32) -> &Paragraph {
-        &self.paragraphs[self
-            .paragraphs
-            .partition_point(|it| it.first_cluster <= cluster)
-            .max(1)
-            - 1]
+        self.clusters.paragraph_of(cluster)
     }
 
     pub(crate) fn is_newline(&self, cluster: u32) -> bool {
@@ -201,7 +317,7 @@ impl Inline {
         match segments.get(segments.partition_point(|it| it.end <= offset)) {
             None => segments.last().map_or(0, |it| it.node_end),
             Some(it) if it.node_end - it.node_start == it.end - it.start => {
-                it.node_start + offset - it.start
+                it.node_start + offset.saturating_sub(it.start)
             }
             Some(it) => it.node_start,
         }
@@ -215,11 +331,20 @@ impl Inline {
 }
 
 pub(crate) struct Builder {
-    pub(crate) id: BoxId,
     root: Rc<Style>,
     text: String,
-    items: Vec<Item>,
-    segments: Vec<Segment>,
+    items: SmallVec<[Item; 1]>,
+    segments: SmallVec<[Segment; 1]>,
+    /// What opens the bidi contexts around the current position.
+    contexts: Vec<&'static str>,
+    /// For each ruby around the current position, where the current base starts.
+    bases: Vec<u32>,
+    state: State,
+}
+
+#[derive(Default)]
+pub(crate) struct State {
+    pub(crate) id: BoxId,
     parent: u32,
     /// A collapsible space would collapse.
     after_space: bool,
@@ -227,15 +352,24 @@ pub(crate) struct Builder {
     trailing_space: Option<usize>,
     in_word: bool,
     force_line: bool,
-    /// What opens the bidi contexts around the current position.
-    contexts: Vec<&'static str>,
     /// A forced break has closed them.
     are_contexts_closed: bool,
     /// The collapsible space at the end is a segment break.
     ends_with_break: bool,
     has_split_text: bool,
-    /// For each ruby around the current position, where the current base starts.
-    bases: Vec<u32>,
+}
+
+impl core::ops::Deref for Builder {
+    type Target = State;
+    fn deref(&self) -> &State {
+        &self.state
+    }
+}
+
+impl core::ops::DerefMut for Builder {
+    fn deref_mut(&mut self) -> &mut State {
+        &mut self.state
+    }
 }
 
 pub(crate) fn bidi_controls(style: &Style) -> (&'static str, &'static str) {
@@ -254,24 +388,30 @@ pub(crate) fn bidi_controls(style: &Style) -> (&'static str, &'static str) {
 }
 
 impl Builder {
-    pub(crate) fn new(id: BoxId, root: &Rc<Style>) -> Builder {
-        let mut builder = Builder {
-            id,
-            root: Rc::clone(root),
-            text: String::new(),
-            items: Vec::new(),
-            segments: Vec::new(),
-            parent: 0,
-            after_space: true,
-            trailing_space: None,
-            in_word: false,
-            force_line: false,
-            contexts: Vec::new(),
-            are_contexts_closed: false,
-            ends_with_break: false,
-            has_split_text: false,
-            bases: Vec::new(),
-        };
+    pub(crate) fn new(id: BoxId, root: &Rc<Style>, spare: Option<Box<Builder>>) -> Box<Builder> {
+        let mut builder = spare.unwrap_or_else(|| {
+            let (text, items, segments, contexts, bases, state) = Default::default();
+            Box::new(Builder {
+                root: Rc::clone(root),
+                text,
+                items,
+                segments,
+                contexts,
+                bases,
+                state,
+            })
+        });
+        builder.text.clear();
+        builder.contexts.clear();
+        builder.bases.clear();
+        (builder.root, builder.state) = (
+            Rc::clone(root),
+            State {
+                id,
+                after_space: true,
+                ..State::default()
+            },
+        );
         if matches!(
             root.layout.unicode_bidi,
             UnicodeBidi::BidiOverride | UnicodeBidi::IsolateOverride
@@ -303,6 +443,7 @@ impl Builder {
         self.items.push(Item {
             kind,
             has_own_style: false,
+            is_uniform: false,
             node,
             style: Rc::clone(style),
             start,
@@ -357,7 +498,7 @@ impl Builder {
         self.push(ItemKind::RubyBase, 0, style, "");
     }
 
-    pub(crate) fn annotate(&mut self, id: BoxId, node: NodeId, style: &Rc<Style>) {
+    pub(crate) fn annotate(&mut self, annotation: BoxId, node: NodeId, style: &Rc<Style>) {
         let is_in_ruby = self
             .bases
             .last()
@@ -381,7 +522,7 @@ impl Builder {
                 .into_iter()
                 .for_each(|it| it.has_own_style = true);
         }
-        self.push(ItemKind::Annotation(id, base), node, style, "");
+        self.push(ItemKind::Annotation(annotation, base), node, style, "");
         (self.after_space, self.trailing_space) = (false, None);
         if is_in_ruby {
             self.start_base(&ruby);
@@ -404,14 +545,14 @@ impl Builder {
         self.items.iter_mut().for_each(|it| it.has_own_style = true);
     }
 
-    pub(crate) fn embed(&mut self, id: BoxId, node: NodeId, style: &Rc<Style>) {
+    pub(crate) fn embed(&mut self, embedded: BoxId, node: NodeId, style: &Rc<Style>) {
         if style.is_out_of_flow() {
-            self.push(ItemKind::OutOfFlow(id), node, style, "");
+            self.push(ItemKind::OutOfFlow(embedded), node, style, "");
         } else if style.is_floating() {
-            self.push(ItemKind::Float(id), node, style, "");
+            self.push(ItemKind::Float(embedded), node, style, "");
         } else {
             self.reopen_contexts(style);
-            self.push(ItemKind::Atomic(id), node, style, "\u{fffc}");
+            self.push(ItemKind::Atomic(embedded), node, style, "\u{fffc}");
             (self.after_space, self.trailing_space, self.in_word) = (false, None, false);
         }
     }
@@ -509,6 +650,7 @@ impl Builder {
         self.push(ItemKind::Text, node, style, "");
         let (index, first) = (self.items.len() - 1, self.segments.len());
         let data = crate::values::text(data);
+        self.text.reserve(data.len());
         if collapse.preserves_spaces()
             && transform == TextTransform::None
             && mask.is_none()
@@ -519,7 +661,27 @@ impl Builder {
             self.map(first, base, data.len(), start);
             (self.after_space, self.trailing_space) = (data.ends_with('\n'), None);
         } else {
-            for (offset, character) in data.char_indices() {
+            let (is_verbatim, mut rest) = (transform == TextTransform::None && mask.is_none(), 0);
+            while let Some(character) = data[rest..].chars().next() {
+                let offset = rest;
+                rest += character.len_utf8();
+                if is_verbatim && character > ' ' && character != '\u{200b}' {
+                    let words = data
+                        [offset..offset + without_collapsing(&data.as_bytes()[offset..])]
+                        .trim_end_matches(' ');
+                    let start = self.text.len();
+                    self.text.push_str(words);
+                    self.map(first, base + offset, words.len(), start);
+                    let decisive = words
+                        .chars()
+                        .rfind(|it| continues_word(*it, false) || !continues_word(*it, true));
+                    self.in_word = decisive.map_or(self.in_word, char::is_alphanumeric);
+                    (self.after_space, self.trailing_space, rest) =
+                        (false, None, offset + words.len());
+                    self.ends_with_break = self.ends_with_break
+                        && !bun_core::strings::contains_char(words.as_bytes(), b' ');
+                    continue;
+                }
                 let keeps_break = character == '\n' && collapse != WhiteSpaceCollapse::Collapse;
                 if keeps_break || character == '\u{200b}' && self.ends_with_break {
                     self.items[index].end = self.text.len() as u32;
@@ -557,7 +719,7 @@ impl Builder {
                             data,
                             offset,
                             character,
-                            self.in_word,
+                            self.state.in_word,
                             style,
                         ),
                     }
@@ -574,10 +736,10 @@ impl Builder {
 
     /// `first_line` is the style of `::first-line`, if it applies.
     pub(crate) fn finish(
-        mut self,
+        &mut self,
         document: &mut Document,
         first_line: Option<Rc<Style>>,
-    ) -> Inline {
+    ) -> Box<Inline> {
         self.remove_trailing_space();
         if self.has_split_text {
             let texts = self
@@ -610,8 +772,14 @@ impl Builder {
             }
             (items, root)
         });
-        let mut inline = shape_items(document, self.text, self.items, &self.root);
-        (inline.segments, inline.force_line) = (self.segments, self.force_line);
+        let mut inline = shape_items(
+            document,
+            &self.text,
+            core::mem::take(&mut self.items),
+            &self.root,
+        );
+        (inline.segments, inline.force_line) =
+            (core::mem::take(&mut self.segments), self.force_line);
         inline.first_line = first_line.map(|(items, root)| {
             let (mut text, mut moved, mut in_word) = (String::new(), items.clone(), false);
             for (item, normal) in moved.iter_mut().zip(&inline.items) {
@@ -628,21 +796,22 @@ impl Builder {
                 }
                 item.end = text.len() as u32;
             }
-            let mut restyled = shape_items(document, text, moved, &root);
+            let mut restyled = shape_items(document, &text, moved, &root);
             if restyled
                 .items
                 .iter()
                 .zip(&inline.items)
                 .any(|(a, b)| a.clusters != b.clusters)
             {
-                restyled = shape_items(document, inline.text.clone(), items, &root);
+                restyled = shape_items(document, &inline.text, items, &root);
             }
             (restyled.segments, restyled.force_line) = (inline.segments.clone(), inline.force_line);
             Box::new((
-                restyled,
+                *restyled,
                 document.turned_style(&root, root.text.writing_mode),
             ))
         });
+        inline.label = inline.find_label();
         inline
     }
 }
@@ -722,20 +891,50 @@ fn interrupts_shaping(item: &Item) -> bool {
         return false;
     };
     let is_left = matches!(item.kind, ItemKind::Open(_)) != style.is_rtl();
-    let [(margin, rest), (large_margin, large_rest)] =
-        [0.0, 100.0].map(|basis| edge(style, is_left, basis));
-    style.layout.vertical_align != VerticalAlign::Keyword(VerticalAlignName::Baseline)
-        || has_edge && [margin, rest, large_margin, large_rest] != [0.0; 4]
+    let takes_room = |basis: f32| edge(style, is_left, basis) != (0.0, 0.0);
+    !matches!(
+        style.layout.vertical_align,
+        VerticalAlign::Keyword(VerticalAlignName::Baseline)
+    ) || has_edge && (takes_room(100.0) || takes_room(0.0))
 }
 
-fn shape_items(document: &Document, text: String, mut items: Vec<Item>, root: &Style) -> Inline {
+/// How long the words are that single spaces separate.
+fn without_collapsing(text: &[u8]) -> usize {
+    let (stays, mut done) = (
+        |[it, next]: &[u8; 2]| (*next > b' ') | (*next == b' ') & (*it > b' '),
+        0,
+    );
+    while text[done..]
+        .first_chunk::<33>()
+        .is_some_and(|it| it.array_windows().fold(true, |all, it| all & stays(it)))
+    {
+        done += 32;
+    }
+    done + text[done..]
+        .array_windows()
+        .take_while(|it| stays(it))
+        .count()
+        + 1
+}
+
+fn shape_items(
+    document: &Document,
+    text: &str,
+    mut items: SmallVec<[Item; 1]>,
+    root: &Style,
+) -> Box<Inline> {
     let direction = match (root.layout.unicode_bidi, root.is_rtl()) {
         (UnicodeBidi::Plaintext, _) => abi::DIRECTION_AUTO,
         (_, true) => abi::DIRECTION_RTL,
         (_, false) => abi::DIRECTION_LTR,
     };
-    let (mut clusters, mut paragraphs) = (Vec::new(), Vec::new());
-    let (mut start, mut first_item, mut runs) = (0, 0, Vec::<TextRun>::new());
+    let mut clusters = Clusters {
+        paragraphs: SmallVec::new(),
+        joined: Default::default(),
+        count: 0,
+        are_letters: !text.is_empty(),
+    };
+    let (mut start, mut first_item, mut runs) = (0, 0, SmallVec::<[TextRun; 4]>::new());
     while start < text.len() {
         let rest = &text.as_bytes()[start..];
         let end = start
@@ -751,6 +950,10 @@ fn shape_items(document: &Document, text: String, mut items: Vec<Item>, root: &S
         {
             if item.start == item.end {
                 is_apart |= interrupts_shaping(item);
+                continue;
+            }
+            if let (ItemKind::Atomic(_), Some(last)) = (item.kind, runs.last_mut()) {
+                last.end = item.end - start as u32;
                 continue;
             }
             let run = text_run(&item.style, (item.end as usize).min(end) - start);
@@ -791,59 +994,134 @@ fn shape_items(document: &Document, text: String, mut items: Vec<Item>, root: &S
             }
         }
         let shaped = document.shape(&text[start..end], &runs, direction);
-        let first_cluster = clusters.len() as u32;
-        clusters.extend(shaped.clusters.iter().map(|cluster| Cluster {
-            start: cluster.start + start as u32,
-            ..*cluster
-        }));
-        paragraphs.push(Paragraph {
+        let first_cluster = clusters.count;
+        (clusters.count, clusters.are_letters) = (
+            first_cluster + shaped.count() as u32,
+            clusters.are_letters && !shaped.letters.is_empty(),
+        );
+        clusters.paragraphs.push(Paragraph {
             first_cluster,
             shaped,
         });
         start = end;
     }
+    let kept = match &clusters.paragraphs[..] {
+        [only] => Text::Shared(Rc::clone(&only.shaped)),
+        _ => Text::Own(text.into()),
+    };
     let mut next = 0;
     for item in &mut items {
         let first = next;
-        while clusters
-            .get(next)
-            .is_some_and(|cluster: &Cluster| cluster.start < item.end)
-        {
-            next += 1;
-        }
+        next = match clusters.len() == text.len() {
+            true => item.end as usize,
+            false if clusters.are_letters => {
+                first + text[item.start as usize..item.end as usize].chars().count()
+            }
+            false => {
+                first
+                    + clusters[first..]
+                        .iter()
+                        .take_while(|it| it.start < item.end)
+                        .count()
+            }
+        };
         item.clusters = first as u32..next as u32;
     }
-    let mut inline = Inline {
-        has_bidi: clusters.iter().any(|cluster| cluster.bidi_level > 0),
+    let (mode, is_ascii) = (root.text.writing_mode.of_lines(), text.is_ascii());
+    let mut inline = Box::new(Inline {
+        has_bidi: (direction == abi::DIRECTION_RTL || !is_ascii)
+            && !clusters.are_letters
+            && clusters.iter().any(|cluster| cluster.bidi_level > 0),
         has_layers: items
             .iter()
             .any(|it| matches!(it.kind, ItemKind::Open(_)) && is_layer(&it.style)),
         has_ruby: items
             .iter()
             .any(|it| matches!(it.kind, ItemKind::Annotation(..))),
-        text,
+        text: kept,
         items,
-        segments: Vec::new(),
+        segments: SmallVec::new(),
         clusters,
-        paragraphs,
         force_line: false,
+        label: None,
         first_line: None,
         lines: Lines::default(),
+        outset: Default::default(),
+        prose: Default::default(),
+    });
+    let minds_ideographs = || {
+        text.chars().any(|it| matches!(it, '‘' | '’' | '“' | '”'))
+            || inline
+                .items
+                .iter()
+                .any(|it| it.style.text.autospace == TextAutospace::Normal)
     };
-    let (mode, is_ascii) = (root.text.writing_mode.of_lines(), inline.text.is_ascii());
+    let (has_ruby, is_ascii) = (
+        inline.has_ruby && !is_ascii,
+        is_ascii || text.chars().all(|it| it.is_ascii() || it == '\u{fffc}'),
+    );
+    let adjusts = !is_ascii
+        && (text.chars().any(|it| {
+            matches!(
+                it,
+                '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{205f}' | '\u{3000}'
+            )
+        }) || text.chars().any(|it| it >= '\u{2e80}' && is_ideograph(it))
+            && minds_ideographs());
     for index in 0..inline.items.len() {
         if mode.is_vertical() {
             inline.items[index].style = document.turned_style(&inline.items[index].style, mode);
         }
-        if !is_ascii
+        let item = &inline.items[index];
+        if adjusts
+            || has_ruby
             || mode.is_vertical()
-            || inline.items[index].style.text.line_break == LineBreak::Anywhere
+            || item.style.text.line_break == LineBreak::Anywhere
+            || matches!(item.kind, ItemKind::Atomic(_))
         {
             inline.adjust_clusters(index);
         }
     }
-    if !is_ascii && inline.text.bytes().any(|it| it >= 0xe3) {
+    let may_trim = |(it, next): (char, char)| match spacing_class(it) {
+        None => {
+            matches!(it, '‘' | '’' | '“' | '”') || spacing_class(next) != Some(Punctuation::Other)
+        }
+        Some(class) => matches!(class, Punctuation::Opening | Punctuation::Closing),
+    };
+    if !is_ascii
+        && text.bytes().any(|it| it >= 0xe3)
+        && text
+            .chars()
+            .zip(text.chars().skip(1).chain([' ']))
+            .any(may_trim)
+    {
         inline.trim_punctuation();
+    }
+    let kind = |it: &Cluster| (it.face, it.bidi_level, it.flags & (UPRIGHT | COMBINED));
+    let are_uniform = !inline.has_bidi
+        && !mode.is_vertical()
+        && inline
+            .clusters
+            .paragraphs
+            .iter()
+            .all(|it| it.shaped.faces.len() == 1);
+    let Inline {
+        items, clusters, ..
+    } = &mut *inline;
+    let letters = (!are_uniform && clusters.are_letters)
+        .then(|| clusters.as_letters())
+        .flatten();
+    for item in items {
+        let range = item.clusters.start as usize..item.clusters.end as usize;
+        item.is_uniform = are_uniform
+            || match &letters {
+                Some(letters) => letters[range]
+                    .array_windows()
+                    .fold(true, |all, [a, b]| all & (a.face == b.face)),
+                None => clusters[range]
+                    .array_windows()
+                    .fold(true, |all, [a, b]| all & (kind(a) == kind(b))),
+            };
     }
     inline
 }
@@ -860,7 +1138,7 @@ impl Inline {
         );
         Some((
             shaped.faces[usize::from(it.face)],
-            *shaped.glyphs[it.glyphs.range()].first()?,
+            *shaped.glyphs()[it.glyphs.range()].first()?,
         ))
     }
 
@@ -938,7 +1216,8 @@ impl Inline {
             return 0.0;
         }
         let paragraph = self.paragraph_of(cluster);
-        it.advance - paragraph.shaped.clusters[(cluster - paragraph.first_cluster) as usize].advance
+        it.advance
+            - paragraph.shaped.clusters()[(cluster - paragraph.first_cluster) as usize].advance
     }
 
     /// The cluster that is shown to the left of where `at` meets the text before it.
@@ -1002,7 +1281,9 @@ impl Inline {
                     }
                     _ => 0,
                 };
-                self.clusters[at as usize].flags |= flags;
+                if flags != 0 {
+                    self.clusters[at as usize].flags |= flags;
+                }
                 before = own;
             }
             if let ItemKind::RubyBase | ItemKind::Annotation(..) = item.kind {
@@ -1020,11 +1301,17 @@ impl Inline {
         );
         match item.kind {
             ItemKind::Atomic(_) => {
-                let [before, after] = [
-                    clusters.start.checked_sub(1),
-                    Some(clusters.end).filter(|it| *it < count),
-                ]
-                .map(|it| it.map(|it| self.character(it)));
+                let [before, after] = match self.clusters.are_letters {
+                    true => [
+                        self.text[..item.start as usize].chars().next_back(),
+                        self.text[item.end as usize..].chars().next(),
+                    ],
+                    false => [
+                        clusters.start.checked_sub(1),
+                        Some(clusters.end).filter(|it| *it < count),
+                    ]
+                    .map(|it| it.map(|it| self.character(it))),
+                };
                 for (at, other) in [
                     (clusters.start, before),
                     (
@@ -1032,7 +1319,8 @@ impl Inline {
                         after.filter(|it| !matches!(it, ' ' | '\t' | '\n')),
                     ),
                 ] {
-                    if let Some(other) = other {
+                    let is_right = |other| matches!(self.clusters.letters(&(at..at + 1)), Some([it]) if other == '\n' || (it.flags & abi::CLUSTER_BREAK_BEFORE == 0) == glues(other));
+                    if let Some(other) = other.filter(|it| !is_right(*it)) {
                         let flags = &mut self.clusters[at as usize].flags;
                         *flags = if glues(other) {
                             *flags & !abi::CLUSTER_BREAK_BEFORE
@@ -1080,10 +1368,13 @@ impl Inline {
                     let character = self.character(at);
                     let after_combined =
                         at > 0 && self.clusters[at as usize - 1].flags & COMBINED != 0;
-                    if text.autospace == TextAutospace::Normal && at > 0 {
+                    if text.autospace == TextAutospace::Normal
+                        && at > 0
+                        && (is_ideograph(character) || is_ideograph(self.character(at - 1)))
+                    {
                         let is_chinese = speaks(&item.style, "zh");
                         let is_letter = |it: char| {
-                            it.is_alphanumeric() && !is_wide(it) && !is_ideograph(it)
+                            !is_wide(it) && !is_ideograph(it) && it.is_alphanumeric()
                                 || is_chinese
                                     && matches!(
                                         it,
@@ -1204,15 +1495,27 @@ pub(crate) fn text_run(style: &Style, end: usize) -> TextRun {
 
 impl Document {
     pub(crate) fn shape(&self, text: &str, runs: &[TextRun], direction: u8) -> Rc<Shaped> {
-        let mut hasher = FastHasher::default();
-        (text, direction).hash(&mut hasher);
+        let mut hasher = keyed_hasher();
         for run in runs {
-            let floats = [run.size, run.letter_spacing, run.word_spacing].map(f32::to_bits);
-            (run.end, run.font, floats, run.word_break).hash(&mut hasher);
+            let [size, letters, words] =
+                [run.size, run.letter_spacing, run.word_spacing].map(|it| u64::from(it.to_bits()));
+            hasher.write_u64((u64::from(run.end) << 32) | u64::from(run.font));
+            hasher.write_u64((size << 32) | letters);
+            hasher
+                .write_u64((words << 32) | (u64::from(run.word_break) << 8) | u64::from(direction));
         }
+        hasher.write(text.as_bytes());
         let mut cache = self.shaped.borrow_mut();
-        let shaped = cache.entry(hasher.finish());
-        Rc::clone(shaped.or_insert_with(|| Rc::new(platform::shape(text, runs, direction))))
+        if self.newly_shaped_bytes.get() > 1 << 15 {
+            self.newly_shaped_bytes.set(0);
+            cache.retain(|_, it| it.text.len() < 256 || Rc::strong_count(it) > 1);
+        }
+        Rc::clone(cache.entry(hasher.finish()).or_insert_with(|| {
+            self.newly_shaped_bytes
+                .update(|it| it + if text.len() < 256 { 0 } else { text.len() });
+            self.fonts.note_written(text, runs);
+            Rc::new(platform::shape(text, runs, direction))
+        }))
     }
 
     /// And whether it is below the line.

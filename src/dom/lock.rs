@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use crate::boxes::{BoxId, Boxes, Kind};
+use crate::boxes::{BoxId, Boxes, Children, Kind};
 use crate::document::Document;
 use crate::name::{Map, Name, Set};
 use crate::properties::{Id, Style};
@@ -60,20 +60,27 @@ pub(crate) struct Locks {
     forced: Vec<NodeId>,
     /// With `auto` in `contain-intrinsic-size`.
     pub(crate) remembering: Set<NodeId>,
+    pub(crate) has_remembered: bool,
+    /// The `sizes_version` of the last `remember_sizes`.
+    remembered_for: Option<u32>,
     /// For how many more frames each counts as relevant, having been scrolled to.
     kept: Map<NodeId, u8>,
     /// The focus, the selection or the top layer has changed.
     pub(crate) relevance_is_stale: bool,
     pub(crate) wants_leaves: bool,
+    /// Those with `auto`, for a screen reader.
+    pub(crate) are_open: bool,
     /// The `layout_version`.
     pub(crate) proximity_is_for: Option<u32>,
 }
 
 #[derive(Default)]
 pub(crate) struct Parked {
-    pub(crate) children: Vec<BoxId>,
+    pub(crate) children: Children,
     pub(crate) outside_marker: BoxId,
     hoisted: Vec<BoxId>,
+    /// If the first child is the legend.
+    legend_excess: Option<f32>,
     /// The layout fits the box around them.
     pub(crate) fits: bool,
     /// Of that box, when they were laid out.
@@ -93,7 +100,7 @@ impl Boxes {
     }
 
     /// Parked or not.
-    pub(crate) fn all_children(&mut self, id: BoxId) -> &mut Vec<BoxId> {
+    pub(crate) fn all_children(&mut self, id: BoxId) -> &mut Children {
         match self[id].is_parking {
             true => &mut self.parked.entry(id).or_default().children,
             false => &mut self[id].children,
@@ -101,18 +108,18 @@ impl Boxes {
     }
 
     pub(crate) fn park(&mut self, id: BoxId, fits: bool) {
+        self.note_new_part(id);
         let it = &mut self[id];
         if !core::mem::replace(&mut it.is_parking, true) {
-            let (children, hoisted) = (
-                core::mem::take(&mut it.children),
-                core::mem::take(&mut it.hoisted),
-            );
+            let (children, hoisted) = (core::mem::take(&mut it.children), it.take_hoisted());
             let outside_marker = core::mem::take(&mut it.outside_marker);
             let size = (it.cache.is_current()
                 && !it.cache.has_escapees()
                 && !it.uses_parent[0]
                 && !it.joins_formatting_context)
                 .then(|| it.size());
+            let legend_excess =
+                core::mem::take(&mut it.has_legend).then(|| core::mem::take(&mut it.legend_excess));
             it.forget_extents();
             self.parked.insert(
                 id,
@@ -120,6 +127,7 @@ impl Boxes {
                     children,
                     outside_marker,
                     hoisted,
+                    legend_excess,
                     fits,
                     size,
                 },
@@ -132,13 +140,16 @@ impl Boxes {
         let Some(parked) = self.parked.remove(&id) else {
             return true;
         };
+        self.note_new_part(id);
         let it = &mut self[id];
-        (it.children, it.outside_marker, it.hoisted, it.is_parking) = (
-            parked.children,
-            parked.outside_marker,
-            parked.hoisted,
-            false,
-        );
+        (it.children, it.outside_marker, it.is_parking) =
+            (parked.children, parked.outside_marker, false);
+        if !parked.hoisted.is_empty() {
+            it.hoisted = parked.hoisted;
+        }
+        if let Some(excess) = parked.legend_excess.filter(|_| !it.children.is_empty()) {
+            (it.has_legend, it.legend_excess) = (true, excess);
+        }
         it.forget_extents();
         parked.fits
     }
@@ -160,7 +171,11 @@ impl Document {
     }
 
     pub(crate) fn is_in_skipped_contents(&self, id: NodeId) -> bool {
-        !self.locks.missed.is_empty() && self.tree.is_in_skipped_contents(id)
+        self.has_skipped_contents() && self.tree.is_in_skipped_contents(id)
+    }
+
+    pub(crate) fn has_skipped_contents(&self) -> bool {
+        !self.locks.missed.is_empty()
     }
 
     /// Whether changing it has to wait.
@@ -200,9 +215,11 @@ impl Document {
         } else {
             self.locks.remembering.remove(&id)
         };
+        self.locks.remembered_for = None;
         if let Some(element) = self
             .tree
-            .element_mut(id)
+            .element_to_style(id)
+            .and_then(|it| it.rare_if_any())
             .filter(|_| style.display() != Display::None)
         {
             element.remembered_size =
@@ -211,6 +228,9 @@ impl Document {
     }
 
     pub(crate) fn remember_sizes(&mut self) {
+        if self.locks.remembered_for.replace(self.sizes_version) == Some(self.sizes_version) {
+            return;
+        }
         for id in &self.locks.remembering {
             let Some(own) = self
                 .own_box(*id)
@@ -224,9 +244,10 @@ impl Document {
                 it.style.rare.intrinsic_height.remembers.then_some(height),
             ]);
             self.tree
-                .element_mut(*id)
+                .element_to_style(*id)
                 .into_iter()
-                .for_each(|it| it.remembered_size = size);
+                .for_each(|it| it.rare_mut().remembered_size = size);
+            self.locks.has_remembered = true;
         }
     }
 
@@ -315,19 +336,22 @@ impl Document {
 
     pub(crate) fn age_locks(&mut self) {
         self.needs_frame = !self.locks.kept.is_empty();
-        self.locks.kept.retain(|_, frames| {
-            *frames -= 1;
-            *frames > 0
-        });
+        if self.needs_frame {
+            self.locks.kept.retain(|_, frames| {
+                *frames -= 1;
+                *frames > 0
+            });
+        }
     }
 
     /// `seen` is the style that the children know.
     pub(crate) fn lock(&mut self, id: NodeId, seen: Option<Rc<Style>>) {
+        self.announce_rebuilds();
         self.tree[id].set(
             Flags::SKIPPED | Flags::HAS_MISSED | Flags::DIRTY_DESCENDANTS | Flags::REBUILD_BELOW,
         );
         self.tree.forget_unskipped();
-        self.tree[id].dirty_child.set(0);
+        self.tree.dirty_child(id).set(0);
         self.locks.missed.entry(id).or_insert(Missed {
             change: Change::empty(),
             customs: Set::default(),
@@ -345,6 +369,7 @@ impl Document {
 
     /// `restyle_children` has to follow.
     pub(crate) fn unlock(&mut self, id: NodeId) {
+        self.locks.remembered_for = None;
         self.tree[id].unset(Flags::SKIPPED);
         self.locks.forced.retain(|it| *it != id);
         if let Some(own) = self.own_box(id) {
@@ -500,10 +525,17 @@ impl Document {
         }
     }
 
+    #[inline]
     pub(crate) fn stop_forcing(&mut self) {
+        if !self.locks.forced.is_empty() {
+            self.park_forced();
+        }
+    }
+
+    fn park_forced(&mut self) {
         for id in core::mem::take(&mut self.locks.forced) {
             self.tree[id].set(Flags::DIRTY_DESCENDANTS | Flags::REBUILD_BELOW);
-            self.tree[id].dirty_child.set(0);
+            self.tree.dirty_child(id).set(0);
             if let Some(own) = self.own_box(id) {
                 let fits = self.boxes[own].cache.is_current();
                 self.boxes.park(own, fits);

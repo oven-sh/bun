@@ -64,7 +64,8 @@ pub(crate) fn builtins_used_at_start(options: &AotOptions, start: StartOfRun) ->
     let interpreted_async = (interprets_files && start.keeps_code_without_names)
         .then_some(BuiltinId::InterpretedAsyncFiles);
     let further = warnings.into_iter().chain(interpreted);
-    let further = further.chain(interpreted_async);
+    let window = (options.starts_in_window).then_some(BuiltinId::WindowOfProgram);
+    let further = further.chain(interpreted_async).chain(window);
     features.filter_map(read_for).chain(further).collect()
 }
 

@@ -1,6 +1,8 @@
 //! `shape-outside`
 
-use crate::abi::{GradientShape, Rect, RoundedRect};
+use std::rc::Rc;
+
+use crate::abi::{GradientShape, Matrix, Rect, RoundedRect};
 use crate::boxes::BoxId;
 use crate::document::Document;
 use crate::layout::Edges;
@@ -14,8 +16,14 @@ pub(crate) enum FloatArea {
     /// With the margin around them.
     Edges(Vec<[[f32; 2]; 2]>, f32),
     /// One for each pixel.
-    Rows(Vec<Option<[f32; 2]>>),
+    Rows(Rows),
 }
+
+type Rows = Rc<[Option<[f32; 2]>]>;
+
+/// The last ones, with all that they are made from.
+#[derive(Default)]
+pub(crate) struct ImageShapes(Vec<((Image, u32, crate::color::Rgba, Matrix, [f32; 8]), Rows)>);
 
 fn unite(a: Option<[f32; 2]>, b: Option<[f32; 2]>) -> Option<[f32; 2]> {
     a.zip(b)
@@ -173,6 +181,54 @@ impl Document {
             BoxArea::MarginBox => outline.outset(margin),
             _ => outline,
         };
+        let insets = match area {
+            BoxArea::PaddingBox => border,
+            BoxArea::ContentBox => padding,
+            BoxArea::MarginBox => margin.map(|it| -it),
+            _ => [0.0; 4],
+        };
+        if let Some(path) = matches!(shape, Shape::Box)
+            .then(|| crate::contour::shaped_corners(&it.style, outline, insets))
+            .flatten()
+        {
+            const TOUCHING: f32 = 1.0 / 64.0;
+            let RoundedRect {
+                rect,
+                radii: [a, b, c, d],
+            } = reference;
+            let down = |x: f32, upper: [f32; 2], lower: [f32; 2]| {
+                [
+                    [x, rect.y + upper[1] - TOUCHING],
+                    [x, rect.bottom() - lower[1] + TOUCHING],
+                ]
+            };
+            let along = |y: f32, left: [f32; 2], right: [f32; 2]| {
+                [
+                    [rect.x + left[0] - TOUCHING, y],
+                    [rect.right() - right[0] + TOUCHING, y],
+                ]
+            };
+            let sides = [
+                down(rect.x, a, d),
+                down(rect.right(), b, c),
+                along(rect.y, a, b),
+                along(rect.bottom(), d, c),
+            ];
+            let inside = |[x, y]: [f32; 2]| {
+                [
+                    x.max(rect.x).min(rect.right()),
+                    y.max(rect.y).min(rect.bottom()),
+                ]
+            };
+            let edges = path
+                .pieces()
+                .iter()
+                .map(|it| [it.from, it.to].map(inside))
+                .chain(sides)
+                .map(|it| it.map(|it| apply(&turn, it)))
+                .collect();
+            return Some(Box::new(FloatArea::Edges(edges, grown)));
+        }
         Some(Box::new(
             match (shape, resolve(shape, &reference, it.style.zoom)) {
                 (Shape::Image(image), _) => {
@@ -196,29 +252,54 @@ impl Document {
                     {
                         return None;
                     }
-                    let pixels = extent.map(|it| it.round() as usize);
+                    let (pixels, threshold) = (
+                        extent.map(|it| it.round() as usize),
+                        it.style.rare.shape_threshold.0 * 255.0,
+                    );
+                    let key = (
+                        image.clone(),
+                        self.svg_changes,
+                        it.style.ink.color,
+                        turn,
+                        [
+                            content.x, content.y, extent[0], extent[1], size[0], size[1],
+                            threshold, grown,
+                        ],
+                    );
+                    if let Some(known) = self.image_shapes.borrow().0.iter().find(|it| it.0 == key)
+                    {
+                        return Some(Box::new(FloatArea::Rows(Rc::clone(&known.1))));
+                    }
                     let alphas = match image {
                         Image::Gradient(gradient) => {
                             gradient_alpha(gradient, it.style.ink.color, pixels)
                         }
                         _ => self.image_alpha(loaded?.image, pixels),
                     };
-                    let (threshold, mut rows) = (
-                        it.style.rare.shape_threshold.0 * 255.0,
-                        vec![None; size[1].ceil().max(0.0) as usize],
-                    );
-                    for index in
-                        (0..alphas.len()).filter(|index| f32::from(alphas[*index]) > threshold)
-                    {
-                        let [x, y] = apply(
-                            &turn,
-                            [
-                                content.x.round() + (index % pixels[0]) as f32 + 0.5,
-                                content.y.round() + (index / pixels[0]) as f32 + 0.5,
-                            ],
-                        );
-                        if let Some(row) = rows.get_mut(y as usize).filter(|_| y >= 0.0) {
-                            *row = unite(*row, Some([x - 0.5, x + 0.5]));
+                    let mut rows = vec![None; size[1].ceil().max(0.0) as usize];
+                    for (y, line) in alphas.chunks(pixels[0].max(1)).enumerate() {
+                        let mut covered =
+                            (0..line.len()).filter(|x| f32::from(line[*x]) > threshold);
+                        let ends = if turn[1] == 0.0 {
+                            [covered.next(), covered.next_back()]
+                        } else {
+                            [None; 2]
+                        };
+                        for x in ends
+                            .into_iter()
+                            .flatten()
+                            .chain(covered.take(if turn[1] == 0.0 { 0 } else { usize::MAX }))
+                        {
+                            let [x, y] = apply(
+                                &turn,
+                                [
+                                    content.x.round() + x as f32 + 0.5,
+                                    content.y.round() + y as f32 + 0.5,
+                                ],
+                            );
+                            if let Some(row) = rows.get_mut(y as usize).filter(|_| y >= 0.0) {
+                                *row = unite(*row, Some([x - 0.5, x + 0.5]));
+                            }
                         }
                     }
                     let reach = grown
@@ -242,7 +323,13 @@ impl Document {
                         })
                         .fold(None, unite)
                     };
-                    FloatArea::Rows((0..rows.len()).map(around).collect())
+                    let (rows, known): (Rows, _) = (
+                        (0..rows.len()).map(around).collect(),
+                        &mut self.image_shapes.borrow_mut().0,
+                    );
+                    known.truncate(7);
+                    known.insert(0, (key, Rc::clone(&rows)));
+                    FloatArea::Rows(rows)
                 }
                 (_, Resolved::Rounded(RoundedRect { rect, radii })) => {
                     let (turned, mut turned_radii) = (rect.transformed(&turn), radii);

@@ -150,12 +150,32 @@ extern "C" JSC::EncodedJSValue Bun__throwForRemovedFunction(JSC::JSGlobalObject*
     return Bun::throwFeatureRemovedError(globalObject, WTF::String(name), feature);
 }
 
+#if ENABLE(AOT)
+// `keyOf` in src/codegen/builtins/emit-uses.ts.
+static JSC::AOT::BuiltinID idOfRecordedBuiltin(const JSC::AOT::BuiltinTable& table, uint32_t recorded)
+{
+    constexpr uint32_t isKey = 0x80000000;
+    if (!(recorded & isKey))
+        return JSC::AOT::BuiltinID { recorded };
+    for (unsigned index = 0; index < table.builtinCount(); ++index) {
+        JSC::AOT::BuiltinID id(index);
+        uint32_t hash = 0x811c9dc5;
+        auto text = table.textOf(id);
+        for (char16_t character : StringView(text).codeUnits())
+            hash = (hash ^ character) * 0x01000193;
+        if ((hash | isKey) == recorded)
+            return id;
+    }
+    return {};
+}
+#endif
+
 extern "C" JSC::EncodedJSValue Bun__throwForRemovedBuiltin(JSC::JSGlobalObject* globalObject, uint16_t feature, uint32_t builtin)
 {
 #if ENABLE(AOT)
     const auto& table = JSC::AOT::BuiltinTable::singleton();
-    JSC::AOT::BuiltinID id { builtin };
-    if (!Bun::hasPublicPath(table, id))
+    JSC::AOT::BuiltinID id = idOfRecordedBuiltin(table, builtin);
+    if (!id || !Bun::hasPublicPath(table, id))
         return Bun__throwForRemovedFeature(globalObject, feature);
     return Bun::throwFeatureRemovedError(globalObject, table.textOf(id), feature);
 #else

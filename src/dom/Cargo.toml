@@ -11,14 +11,22 @@ workspace = true
 
 [dependencies]
 bitflags.workspace = true
+bstr.workspace = true
+paste = "1"
 smallvec.workspace = true
 bun_alloc.workspace = true
 bun_ast.workspace = true
+bun_base64.workspace = true
 bun_collections.workspace = true
 bun_core.workspace = true
 bun_css.workspace = true
 bun_jsc.workspace = true
+bun_markup.workspace = true
 bun_md.workspace = true
 bun_parsers.workspace = true
+bun_sys.workspace = true
+bun_ui.workspace = true
 bun_url.workspace = true
+bun_web.workspace = true
 bun_wyhash.workspace = true
+bun_yarr.workspace = true

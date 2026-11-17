@@ -8,7 +8,7 @@ use bun_css::Token;
 use bun_css::css_parser::color::{parse_hash_color, parse_named_color};
 
 use crate::calc::{Inputs, Kind, Node, Options, Unit};
-use crate::name::{Map, Name};
+use crate::name::Map;
 use crate::values::*;
 
 keywords! {
@@ -422,7 +422,7 @@ impl Exact {
         self
     }
 
-    fn write(&self, out: &mut Out) {
+    pub(crate) fn write(&self, out: &mut Out) {
         if self.is_legacy {
             return write_rgba(self.rgba(), out);
         }
@@ -577,6 +577,13 @@ impl Interpolation {
 
 /// Light and dark.
 const SYSTEM: &[(&str, u32, u32)] = &[
+    #[cfg(target_os = "macos")]
+    ("highlight", 0x80bcfe99, 0xb3d7ffcc),
+    #[cfg(target_os = "macos")]
+    ("highlighttext", 0xff, 0xff),
+    #[cfg(target_os = "macos")]
+    ("selecteditemtext", 0xff, 0x3b3b3bff),
+    ("accentcolor", 0x0075ffff, 0x0075ffff),
     ("activetext", 0xff0000ff, 0xff0000ff),
     (
         "buttonface buttonhighlight buttonshadow threedface",
@@ -608,6 +615,53 @@ const SYSTEM: &[(&str, u32, u32)] = &[
     ),
 ];
 
+const FORCED: &[(&str, u32, u32)] = &[
+    (
+        "accentcolor selecteditem -webkit-focus-ring-color",
+        0x37006eff,
+        0x1aebffff,
+    ),
+    ("highlight", 0x050049cc, 0x00e6ffcc),
+    (
+        "activetext linktext visitedtext -webkit-link -webkit-activelink",
+        0x00009fff,
+        0xffff00ff,
+    ),
+    ("graytext inactivecaptiontext", 0x600000ff, 0x3ff23fff),
+    (
+        "canvas accentcolortext highlighttext selecteditemtext buttonface buttonhighlight buttonshadow threedface field activecaption \
+        appworkspace background inactivecaption infobackground menu scrollbar window",
+        0xffffffff,
+        0xff,
+    ),
+];
+
+fn look_up(table: &[(&str, u32, u32)], name: &[u8], is_dark: bool) -> Option<u32> {
+    table
+        .iter()
+        .find(|it| it.0.split_ascii_whitespace().any(|it| eq(name, it)))
+        .map(|it| if is_dark { it.2 } else { it.1 })
+}
+
+/// A system color.
+pub(crate) fn forced(name: &[u8], is_dark: bool) -> u32 {
+    look_up(FORCED, name, is_dark)
+        .or_else(|| look_up(SYSTEM, name, is_dark))
+        .unwrap_or(0)
+}
+
+/// A translucent color that looks like the opaque one on white.
+pub(crate) fn blended_with_white(color: u32) -> u32 {
+    let [red, green, blue, _] = color.to_be_bytes();
+    let alpha = [153u8, 170, 187]
+        .into_iter()
+        .find(|it| red.min(green).min(blue) >= 255 - *it)
+        .unwrap_or(204);
+    let channel =
+        |it: u8| (f32::from(it.saturating_sub(255 - alpha)) / (f32::from(alpha) / 255.0)) as u8;
+    u32::from_be_bytes([channel(red), channel(green), channel(blue), alpha])
+}
+
 /// A channel as it is written. `Node::None` is `none`.
 type Channels = [Node; 3];
 
@@ -637,15 +691,13 @@ fn keyword_value(name: &[u8], cx: &Ctx) -> Option<u32> {
     if eq(name, "transparent") {
         return Some(0);
     }
-    cx.uses(Deps::INHERITED | Deps::VIEWPORT);
+    cx.uses(Deps::SCHEME | Deps::VIEWPORT);
     match () {
-        () if eq(name, "accentcolor") => Some(cx.accent),
-        () => {
-            let found = SYSTEM
-                .iter()
-                .find(|it| it.0.split_ascii_whitespace().any(|it| eq(name, it)));
-            found.map(|it| if cx.dark { it.2 } else { it.1 })
+        () if cx.forces_colors => Some(forced(name, cx.dark)).filter(|it| *it != 0),
+        () if cfg!(target_os = "macos") && !cx.dark && eq(name, "selecteditem") => {
+            Some(cx.highlight)
         }
+        () => look_up(SYSTEM, name, cx.dark),
     }
 }
 
@@ -807,7 +859,7 @@ impl Specified {
     }
 
     /// `None` if it takes `currentcolor`, and that is not known.
-    fn resolve(&self, cx: &Ctx, current: Option<&Exact>) -> Option<Exact> {
+    pub(crate) fn resolve(&self, cx: &Ctx, current: Option<&Exact>) -> Option<Exact> {
         let evaluate = |node: &Node, basis: f64, keywords: &[f64]| {
             let value = node.simplified(Some(cx), true).evaluate(&Inputs {
                 basis,
@@ -821,7 +873,7 @@ impl Specified {
             Specified::Exact(exact) => *exact,
             Specified::Keyword(name) => Exact::legacy(keyword_value(name, cx)?),
             Specified::LightDark(light, dark) => {
-                cx.uses(Deps::INHERITED);
+                cx.uses(Deps::SCHEME);
                 if cx.dark { dark } else { light }.resolve(cx, current)?
             }
             Specified::Contrast(color) => {
@@ -939,7 +991,10 @@ impl Specified {
             }
         };
         match self {
-            Specified::LightDark(light, dark) => if cx.dark { dark } else { light }.computed(cx),
+            Specified::LightDark(light, dark) => {
+                cx.uses(Deps::SCHEME);
+                if cx.dark { dark } else { light }.computed(cx)
+            }
             Specified::Contrast(it) => Specified::Contrast(color(it)),
             Specified::Alpha(origin, alpha) => Specified::Alpha(color(origin), node(alpha)),
             Specified::Mix(method, items) => Specified::Mix(
@@ -1091,6 +1146,10 @@ impl Specified {
     }
 
     pub(crate) fn compute(&self, cx: &Ctx) -> Color {
+        if cx.forces_colors && matches!(self, Specified::Keyword(name) if forced(name, false) != 0)
+        {
+            cx.uses(Deps::SYSTEM_COLOR);
+        }
         match self.computed(cx) {
             Specified::Current => Color::Current,
             Specified::Exact(exact) => Color::new(exact, false),
@@ -1109,7 +1168,7 @@ struct Palette {
     next: usize,
     /// With the last value of `currentcolor`, and the result.
     pending: Vec<Rc<(Specified, Cell<(u32, u32)>)>>,
-    pending_index: Map<Name, u32>,
+    pending_index: Map<Out, u32>,
 }
 
 const FIRST_PASSING: usize = 0xf000;
@@ -1156,36 +1215,41 @@ impl Palette {
     fn add_pending(&mut self, color: Specified) -> Color {
         let mut source = Out::new();
         color.write(&mut source);
-        if self.pending.len() >= 1 << 16 && !self.pending_index.contains_key(&Name::new(&source)) {
+        if self.pending.len() >= 1 << 16 && !self.pending_index.contains_key(&source) {
             return Color::Current;
         }
-        Color::Pending(
-            *self
-                .pending_index
-                .entry(Name::new(&source))
-                .or_insert_with(|| {
-                    let black = color
-                        .resolve(&Ctx::dummy(), Some(&Exact::legacy(0xff)))
-                        .map_or(0, |it| it.rgba());
-                    self.pending
-                        .push(Rc::new((color, Cell::new((0xff, black)))));
-                    self.pending.len() as u32 - 1
-                }),
-        )
+        Color::Pending(*self.pending_index.entry(source).or_insert_with(|| {
+            let black = color
+                .resolve(&Ctx::dummy(), Some(&Exact::legacy(0xff)))
+                .map_or(0, |it| it.rgba());
+            self.pending
+                .push(Rc::new((color, Cell::new((0xff, black)))));
+            self.pending.len() as u32 - 1
+        }))
     }
 }
 
 thread_local! {
     static PALETTE: RefCell<Palette> = RefCell::default();
-    static CURRENT_COLOR: Cell<Option<Rgba>> = const { Cell::new(None) };
+    static HAS_WRITTEN_CURRENT_COLOR: Cell<bool> = const { Cell::new(false) };
 }
 
+#[thread_local]
+static CURRENT_COLOR: Cell<Option<Rgba>> = Cell::new(None);
+
 /// Lets `write` and `lerp` resolve `currentcolor`.
+#[inline]
 pub(crate) fn with_current_color<R>(color: Rgba, run: impl FnOnce() -> R) -> R {
     let outer = CURRENT_COLOR.replace(Some(color));
     let result = run();
     CURRENT_COLOR.set(outer);
     result
+}
+
+pub(crate) fn writes_current_color(write: impl FnOnce()) -> bool {
+    HAS_WRITTEN_CURRENT_COLOR.set(false);
+    write();
+    HAS_WRITTEN_CURRENT_COLOR.get()
 }
 
 /// For what is written once and kept.
@@ -1265,6 +1329,9 @@ impl Css for Color {
         Specified::parse(p).map(|it| it.compute(cx))
     }
     fn write(&self, out: &mut Out) {
+        if matches!(self, Color::Current | Color::Pending(_)) {
+            HAS_WRITTEN_CURRENT_COLOR.set(true);
+        }
         match (self.exact(CURRENT_COLOR.get()), self) {
             (Some(exact), _) => exact.write(out),
             (None, Color::Pending(index)) => {
@@ -1344,7 +1411,7 @@ impl Css for Rgba {
     fn parse(p: &mut P, cx: &Ctx) -> Option<Rgba> {
         let color = Color::parse(p, cx)?;
         if color.uses_current() {
-            cx.uses(Deps::INHERITED);
+            cx.uses(Deps::INHERITED | Deps::INK);
         }
         Some(Rgba::new(color, cx.color))
     }

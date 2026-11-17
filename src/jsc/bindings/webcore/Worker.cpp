@@ -177,6 +177,11 @@ extern "C" void WebWorker__workerThreadStarted(WorkerMessagingProxy* proxy)
     proxy->workerThreadStarted();
 }
 
+extern "C" bool WebWorker__hasNativeEntry(WorkerMessagingProxy* proxy)
+{
+    return proxy->options().nativeEntry;
+}
+
 extern "C" void WebWorker__workerGlobalScopeStarted(WorkerMessagingProxy* proxy, Zig::GlobalObject* globalObject)
 {
     WebWorker__entrySettled(globalObject);

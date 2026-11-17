@@ -119,7 +119,6 @@ const loadedWith: Record<string, string> = {
 };
 // Each loads at a first use, while no module loads.
 const loadedLater = [
-  "internal/desktop/electron/aliases.ts",
   "internal/fs/streams.ts",
   "internal/process/tick_ring.ts",
   // At the first read of WriteStream of node:tty: an-accessor-under-get-color-depth-hears-one-store.test.ts asks it.

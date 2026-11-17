@@ -276,7 +276,7 @@ extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, void
     global->m_perThreadData = perThreadData;
 }
 
-const JSC::ClassInfo Bake::GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr,
+const JSC::ClassInfo Bake::GlobalObject::s_info = { "GlobalObject"_s, &Base::s_infoWithBunGlobals, nullptr, nullptr,
     CREATE_METHOD_TABLE(Bake::GlobalObject) };
 
 }; // namespace Bake

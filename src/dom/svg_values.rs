@@ -140,7 +140,9 @@ impl Css for Dashes {
         self.0.write(out);
     }
     fn lerp(&self, to: &Self, t: Mixing) -> Option<Self> {
-        let (a, b) = (&self.0.0, &to.0.0);
+        let (a, b, Mixing::Lerp(_)) = (&self.0.0, &to.0.0, t) else {
+            return None;
+        };
         let count = (1..=b.len())
             .map(|it| it * a.len())
             .find(|it| *it > 0 && it % b.len() == 0)?;

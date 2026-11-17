@@ -2734,6 +2734,5 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         response.body_read_ref.r#ref(vm);
     }
     response.poll_ref.r#ref(vm);
-    // SAFETY: the wrapper adopts the first ref.
-    unsafe { NodeHTTPResponse::to_js_ptr(response.into_raw(), global_object) }
+    js::to_js(response, global_object)
 }

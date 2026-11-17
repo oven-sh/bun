@@ -25,6 +25,7 @@ unsafe extern "C" {
 thread_local! {
     static IS_RUNNING: Cell<bool> = const { Cell::new(false) };
     static SOURCE_WAS_READY: Cell<bool> = const { Cell::new(false) };
+    static HAS_POSTED: Cell<bool> = const { Cell::new(false) };
     static IS_READY: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -46,12 +47,10 @@ fn turn() {
     }
 }
 
-/// Runs JavaScript from a loop that `wait` has no control of.
+/// Runs JavaScript before `wait` returns: a menu or a drag may have the loop, and since macOS 26 the event that ends the wait
+/// only arrives with the next frame of the display.
 fn tick() {
-    if !bd_loop_is_in_next_event()
-        && super::CAN_TICK.get()
-        && (IS_READY.take() || bridge::has_events())
-    {
+    if super::CAN_TICK.get() && (IS_READY.take() || bridge::has_events()) {
         super::tick();
         // It was armed before the callbacks ran, which may have set timers.
         if SOURCE_WAS_READY.take() {
@@ -68,12 +67,12 @@ fn before_waiting() {
         let timeout = super::time_until_next_turn().filter(|_| IS_RUNNING.get());
         arm(None, timeout);
         timeout == Some(Duration::ZERO)
-    } else if bd_loop_is_in_next_event() {
-        if IS_READY.get() || super::has_work() {
-            return bd_loop_post_empty_event();
-        }
-        false
     } else {
+        if !bd_loop_is_in_next_event() {
+            HAS_POSTED.set(false);
+        } else if (IS_READY.get() || super::has_work()) && !HAS_POSTED.replace(true) {
+            bd_loop_post_empty_event();
+        }
         super::CAN_TICK.get() && (IS_READY.get() || bridge::has_events())
     };
     match is_due {
@@ -125,7 +124,7 @@ pub fn wait(
     source: Option<isize>,
     timeout: &mut dyn FnMut() -> Option<Duration>,
 ) -> bool {
-    let is_launched = platform.is_some_and(|platform| platform.name() != "headless");
+    let is_launched = platform.is_some_and(|platform| platform.has_display());
     if thread::exists() {
         if is_launched {
             IS_RUNNING.set(true);
@@ -144,6 +143,7 @@ pub fn wait(
     trace!("waits for {timeout:?}");
     arm(source, timeout);
     bd_loop_pump(timeout != Some(Duration::ZERO));
+    HAS_POSTED.set(false);
     IS_READY.take()
 }
 

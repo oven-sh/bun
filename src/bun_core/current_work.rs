@@ -2,7 +2,6 @@
 //! what it is still busy with. Only its thread writes a record. Any thread reads it at any moment, a signal handler too.
 
 use core::cell::Cell;
-use core::marker::PhantomData;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64};
 use std::sync::OnceLock;
@@ -198,38 +197,37 @@ fn record_of_this_thread() -> Option<&'static Record> {
     free
 }
 
-pub struct WorkGuard<'a> {
-    previous: Option<(Step, *const [u8], u64)>,
-    path: PhantomData<&'a [u8]>,
+/// Only a local of [`working_on`].
+struct PutsBack(Option<(Step, *const [u8], u64)>);
+
+impl PutsBack {
+    fn enter(step: Step, path: &[u8]) -> PutsBack {
+        let started_at = milliseconds_now();
+        let previous = CURRENT.replace(Some((step, core::ptr::from_ref(path), started_at)));
+        ensure_build_signal_stack();
+        if let Some(record) = record_of_this_thread() {
+            record.set(Some((step, path, started_at)));
+        }
+        PutsBack(previous)
+    }
 }
 
-impl Drop for WorkGuard<'_> {
+impl Drop for PutsBack {
     fn drop(&mut self) {
-        CURRENT.set(self.previous);
+        CURRENT.set(self.0);
         if let Some(record) = record_of_this_thread() {
-            // SAFETY: the guard that was given that path is dropped after this one.
+            // SAFETY: the path is an argument of the `working_on` call around this one.
             record.set(
-                self.previous
-                    .map(|(step, path, started_at)| (step, unsafe { &*path }, started_at)),
+                (self.0).map(|(step, path, started_at)| (step, unsafe { &*path }, started_at)),
             );
         }
     }
 }
 
-/// Until the guard is dropped, the calling thread is at that step of that file. Guards are dropped in the reverse of the
-/// order they are made in.
-#[must_use]
-pub fn working_on(step: Step, path: &[u8]) -> WorkGuard<'_> {
-    let started_at = milliseconds_now();
-    let previous = CURRENT.replace(Some((step, core::ptr::from_ref(path), started_at)));
-    ensure_build_signal_stack();
-    if let Some(record) = record_of_this_thread() {
-        record.set(Some((step, path, started_at)));
-    }
-    WorkGuard {
-        previous,
-        path: PhantomData,
-    }
+/// While `work` runs, the calling thread is at that step of that file.
+pub fn working_on<R>(step: Step, path: &[u8], work: impl FnOnce() -> R) -> R {
+    let _puts_back = PutsBack::enter(step, path);
+    work()
 }
 
 /// Gives this thread an alternate signal stack, so that a build that overflows the stack can report it. Does nothing
@@ -359,36 +357,38 @@ mod tests {
     #[test]
     fn a_thread_names_the_file_it_is_at_and_the_one_around_it_afterwards() {
         assert_eq!(said(describe_where_this_thread_stopped), "");
-        let outer = working_on(Step::Lower, b"/project/outer.ts");
-        {
-            let _inner = working_on(Step::Check, b"/project/inner.ts");
+        working_on(Step::Lower, b"/project/outer.ts", || {
+            working_on(Step::Check, b"/project/inner.ts", || {
+                assert_eq!(
+                    said(describe_where_this_thread_stopped),
+                    "Stopped while checking /project/inner.ts.\n"
+                );
+            });
             assert_eq!(
                 said(describe_where_this_thread_stopped),
-                "Stopped while checking /project/inner.ts.\n"
+                "Stopped while compiling /project/outer.ts in Lower.\n"
             );
-        }
-        assert_eq!(
-            said(describe_where_this_thread_stopped),
-            "Stopped while compiling /project/outer.ts in Lower.\n"
-        );
-        let from_elsewhere = std::thread::spawn(|| {
-            (
-                said(describe_where_this_thread_stopped),
-                said(describe_what_threads_are_compiling),
-            )
+            let from_elsewhere = std::thread::spawn(|| {
+                (
+                    said(describe_where_this_thread_stopped),
+                    said(describe_what_threads_are_compiling),
+                )
+            });
+            let (of_other_thread, of_all_threads) = from_elsewhere.join().unwrap();
+            assert_eq!(of_other_thread, "");
+            assert!(
+                of_all_threads.contains("Still compiling /project/outer.ts in Lower for 0 s.\n")
+            );
         });
-        let (of_other_thread, of_all_threads) = from_elsewhere.join().unwrap();
-        assert_eq!(of_other_thread, "");
-        assert!(of_all_threads.contains("Still compiling /project/outer.ts in Lower for 0 s.\n"));
-        drop(outer);
         assert_eq!(said(describe_where_this_thread_stopped), "");
     }
 
     #[test]
     fn a_long_path_keeps_its_end() {
         let path = [b"/long".repeat(60), b"/end.ts".to_vec()].concat();
-        let _work = working_on(Step::Load, &path);
-        let said = said(describe_where_this_thread_stopped);
+        let said = working_on(Step::Load, &path, || {
+            said(describe_where_this_thread_stopped)
+        });
         assert!(said.starts_with("Stopped while loading ...") && said.ends_with("/end.ts.\n"));
         assert!(said.len() < 260);
     }

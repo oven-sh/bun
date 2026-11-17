@@ -11,6 +11,10 @@ use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE};
 use super::sfnt::{self, variations};
 use crate::hash::FastMap;
 
+pub fn smoothing(_size: f32) -> Option<[f32; 4]> {
+    None
+}
+
 pub type FamilyId = u32;
 
 type FcConfig = c_void;

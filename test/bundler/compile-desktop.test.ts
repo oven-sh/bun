@@ -352,6 +352,23 @@ describe.concurrent("--desktop", () => {
       expect(await run([join(String(dir), bundle, executable)], String(dir))).toMatchObject(started);
     });
 
+    test("the event targets of Bun are instances of the EventTarget of the window", async () => {
+      using dir = project(
+        { name: "notes", module: "app.ts", desktop: { name: "Memo", dom: true } },
+        {
+          "app.ts": `
+            console.log(new AbortController().signal instanceof EventTarget, new MessageEvent("a") instanceof Event);
+            process.exit(0);
+          `,
+        },
+      );
+      expect(await bun(dir, "compile", "--desktop", "--outfile=out")).toMatchObject({ exitCode: 0 });
+      expect(await run([join(String(dir), "out" + extension, executable)], String(dir))).toMatchObject({
+        stdout: "true true\n",
+        exitCode: 0,
+      });
+    });
+
     test.skipIf(!canTrim)("--trim keeps bun:desktop", async () => {
       using dir = memo();
       expect(await bun(dir, "compile", "--desktop", "--trim", "--outfile=out")).toMatchObject({ exitCode: 0 });
@@ -441,7 +458,7 @@ const sizeOf = box => box.size();
 const call = (text, name) => text[name]() + text.trimEnd().length;
 let replaced = "replaced";
 try { String.prototype[self.name || "trimEnd"] = () => ""; } catch (error) { replaced = error.name; }
-import(self.origin + "/rare.js").then(rare => console.log([sizeOf(new Box(1)), sizeOf({ size: () => 7 }), call("a ", "trim"), replaced, rare.default].join()));`,
+import(self.origin + "/rare.js").then(rare => console.log([sizeOf(new Box(1)), sizeOf({ size: () => 7 }), call("a ", "trim"), replaced, rare.default, navigator.locks].join()));`,
         },
       );
       const outputs = [];
@@ -452,27 +469,193 @@ import(self.origin + "/rare.js").then(rare => console.log([sizeOf(new Box(1)), s
         const cmd = [join(String(dir), "out" + extension, executable)];
         outputs.push((await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" })).stdout);
       }
-      expect(outputs).toEqual(["2,7,a0,replaced,5\n", "2,7,a1,TypeError,5\n"]);
+      expect(outputs).toEqual([
+        "2,7,a0,replaced,5,[object LockManager]\n",
+        "2,7,a1,TypeError,5,[object LockManager]\n",
+      ]);
       const { stderr } = await bun(dir, "compile", "--aot-assume=anything", "app.js");
       expect(stderr).toContain("separate-realms, locked-builtins, complete-order");
     });
 
-    test("bun:desktop/dom replaces the globals of Bun", async () => {
+    test.skipIf(!hasLibrary)("what a page has read from window or a collection follows the document", async () => {
       using dir = project(
-        { name: "notes" },
+        { name: "notes", desktop: { name: "Memo" } },
         {
-          "app.js": `import "bun:desktop/dom";
-const heard = [];
+          "app.js": `const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.setCompiledScripts({ "app://bundle/": "/$bunfs/root/web/" });
+app.whenReady().then(() => {
+  protocol.handle("app", () => new Response("<body><script type=module src=/page.js></script>", { headers: { "content-type": "text/html" } }));
+  const { webContents } = new BrowserWindow();
+  webContents.on("console-message", event => (console.log(event.message), process.exit(0)));
+  webContents.loadURL("app://bundle/");
+});`,
+          "web/page.js": `const seen = [];
+const show = it => (it === undefined ? "-" : (it.localName ?? it.name ?? String(it)));
+const often = (read, from) => { let it; for (let i = 0; i < 200; i++) it = read(from); return show(it); };
+const named = it => it.thing, keyed = it => it[self.name || "thing"], tested = it => "thing" in it;
+const free = () => (typeof thing === "undefined" ? undefined : thing), global = () => globalThis.thing;
+const look = () => seen.push([named, keyed, tested, free, global].map(it => often(it, window)).join(" "));
+const add = html => (document.body.insertAdjacentHTML("beforeend", html), document.body.lastChild);
+const steps = [
+  () => add("<p id=thing>"),
+  () => Object.assign(add("<b>"), { id: "thing" }),
+  () => add("<form name=thing>"),
+  () => Object.assign(add("<img>"), { name: "thing" }),
+  () => add("<iframe name=thing></iframe>"),
+  () => { const frame = add("<iframe></iframe>"); look(); frame.contentWindow.name = "thing"; return frame; },
+];
+look();
+for (const step of steps) {
+  const element = step();
+  look();
+  element.remove();
+  look();
+}
+const event = it => it.event?.type;
+addEventListener("one", () => seen.push(often(event, window)));
+seen.push(often(event, window));
+dispatchEvent(new Event("one"));
+const width = it => it.innerWidth > 0;
+seen.push(often(width, window));
+window.innerWidth = 0;
+seen.push(often(width, window));
+const { children } = add("<p><i id=item></i></p>"), item = it => it.item, length = it => it.length;
+seen.push(often(item, children), often(length, children));
+children[0].remove();
+seen.push(often(length, children));
+localStorage.setItem("key", "stored");
+const key = it => it.key;
+seen.push(often(key, localStorage));
+delete Storage.prototype.key;
+seen.push(often(key, localStorage));
+console.log(seen.join("\\n"));`,
+        },
+      );
+      const flags = ["--aot-assume=separate-realms", "--outfile=out"];
+      const built = await run([bunExe(), "compile", "--desktop", ...flags, "app.js", "web/page.js"], String(dir));
+      expect(built).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out" + extension, executable)];
+      const env = { BUN_DESKTOP_HEADLESS: "1", HOME: String(dir), XDG_CONFIG_HOME: String(dir), APPDATA: String(dir) };
+      const { stdout, exitCode } = await run(cmd, String(dir), env);
+      const absent = "- - false - -";
+      const present = (it: string) => `${it} ${it} true ${it} ${it}`;
+      expect(stdout.trimEnd().split("\n")).toEqual([
+        absent,
+        ...["p", "b", "form", "img", "thing"].flatMap(it => [present(it), absent]),
+        ...[absent, present("thing"), absent],
+        ...["-", "one", "true", "false", "item", "1", "0", "key", "stored"],
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.skipIf(!hasLibrary || isWindows)("a program that imports nothing else starts the web engine", async () => {
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo" } },
+        {
+          "engine": `#!/bin/sh\necho started\nkill $PPID\n`,
+          "app.js": `import { Window, app } from "bun:desktop";
+app.setWebEngine({ type: "chromium", path: process.cwd() + "/engine" });
+new Window().document.body.innerHTML = "<iframe srcdoc=a></iframe>";`,
+        },
+      );
+      chmodSync(join(String(dir), "engine"), 0o755);
+      const built = await run([bunExe(), "compile", "--desktop", "app.js", "--outfile=out"], String(dir));
+      expect(built).toMatchObject({ exitCode: 0 });
+      const env = { BUN_DESKTOP_HEADLESS: "1", ELECTRON_ENABLE_LOGGING: "1" };
+      const { stdout } = await run([join(String(dir), "out" + extension, executable)], String(dir), env);
+      expect(stdout).toBe("started\n");
+    });
+
+    test("desktop.dom starts the program in a window", async () => {
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo", dom: true } },
+        {
+          "app.js": `const heard = [];
 document.body.addEventListener("a", event => heard.push(event.target.localName));
 for (const event of [new Event("a"), new CustomEvent("a"), new ErrorEvent("a")]) document.body.dispatchEvent(event);
 addEventListener("b", event => heard.push(event.target === self));
 dispatchEvent(new Event("b"));
-console.log(heard.join(), document.body instanceof EventTarget, new FormData(document.createElement("form")).has("a"));`,
+console.log(heard.join(), document.body instanceof EventTarget, new FormData(document.createElement("form")).has("a"));
+console.log(typeof Bun, typeof process, Buffer.from("a").length, globalThis instanceof Window);`,
         },
       );
-      expect(await bun(dir, "compile", "app.js", "--outfile=out")).toMatchObject({ exitCode: 0 });
-      expect(await run([join(String(dir), isWindows ? "out.exe" : "out")], String(dir))).toMatchObject({
-        stdout: "body,body,body,true true false\n",
+      expect(await bun(dir, "compile", "--desktop", "app.js", "--outfile=out")).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out" + extension, executable)];
+      expect(await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" })).toMatchObject({
+        stdout: "body,body,body,true true false\nobject object 1 true\n",
+        exitCode: 0,
+      });
+    });
+
+    test.skipIf(!hasLibrary)("a compiled page does not find the globals of Bun", async () => {
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo" } },
+        {
+          "app.js": `const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.setCompiledScripts({ "app://bundle/": "/$bunfs/root/web/" }, { exclusive: true });
+app.whenReady().then(() => {
+  protocol.handle("app", () => new Response("<script type=module src=/page.js></script>", { headers: { "content-type": "text/html" } }));
+  const { webContents } = new BrowserWindow();
+  webContents.on("console-message", event => (console.log(event.message, typeof process.pid, typeof Bun.version), process.exit(0)));
+  webContents.loadURL("app://bundle/");
+});`,
+          "web/page.js": `const root = typeof window === "object" ? window : globalThis;
+const found = [typeof process, typeof Bun, typeof Buffer, typeof setImmediate, typeof global, typeof SharedArrayBuffer, root.process, globalThis.Bun];
+root.process = { env: { A: "a" } };
+new Response(new Blob(["b"]).stream()).text().then(text => console.log([...found, process.env.A, text, new URL("app://bundle/x").origin, console.write].join()));`,
+        },
+      );
+      const built = await run(
+        [bunExe(), "compile", "--desktop", "app.js", "web/page.js", "--outfile=out"],
+        String(dir),
+      );
+      expect(built).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out" + extension, executable)];
+      expect(await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" })).toMatchObject({
+        stdout: "undefined,undefined,undefined,undefined,undefined,undefined,,,a,b,app://bundle, number string\n",
+        exitCode: 0,
+      });
+    });
+
+    test.skipIf(!hasLibrary)("compiled scripts are subject to the policy of the page", async () => {
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo" } },
+        {
+          "app.js": `const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.setCompiledScripts({ "app://bundle/": "/$bunfs/root/web/" });
+const page = \`<script src=/a.js></script><script type=module src=/a.js></script><script type=module nonce=n src=/b.js></script>
+<script nonce=n>
+const worker = new Promise(done => Object.assign(new Worker("/a.js"), { onerror: () => done("refused"), onmessage: () => done("ran") }));
+onload = async () => console.log([self.a, self.b, await worker, await import("/a.js").then(() => self.a, error => error.name)].join());
+</script>\`;
+const policies = ["script-src 'nonce-n'", "script-src 'unsafe-inline' app://bundle/b.js", "script-src 'unsafe-inline' 'self'"];
+app.whenReady().then(async () => {
+  let policy;
+  protocol.handle("app", () => new Response(policy.includes("nonce") ? page : page.replaceAll(" nonce=n", ""), { headers: { "content-type": "text/html", "content-security-policy": policy } }));
+  const { webContents } = new BrowserWindow();
+  for (policy of policies) {
+    const logged = new Promise(done => webContents.on("console-message", event => event.level === "info" && done(event.message)));
+    webContents.loadURL("app://bundle/");
+    console.log(await logged);
+  }
+  process.exit(0);
+});`,
+          "web/a.js": `self.a = "a"; if (!self.document) postMessage("ran");`,
+          "web/b.js": `self.b = "b";`,
+        },
+      );
+      const files = ["app.js", "web/a.js", "web/b.js"];
+      const built = await run([bunExe(), "compile", "--desktop", ...files, "--outfile=out"], String(dir));
+      expect(built).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out" + extension, executable)];
+      expect(await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" })).toMatchObject({
+        stdout: ",b,refused,a\n,b,refused,TypeError\na,b,ran,a\n",
         exitCode: 0,
       });
     });
@@ -580,6 +763,19 @@ console.log(heard.join(), document.body instanceof EventTarget, new FormData(doc
     expect(await manifest.json()).toMatchObject({ name, version });
     expect(existsSync(join(String(dir), bundle, "Contents/MacOS", name))).toBe(true);
     expect(exitCode).toBe(0);
+  });
+
+  test("only an app takes the argument that installs its update", async () => {
+    using dir = project(undefined, { "app.ts": `console.log(process.argv.slice(2).join());` });
+    const flag = "--bun-desktop-install-update";
+    expect(await bun(dir, flag, "app.ts", "b")).toMatchObject({ stdout: "b\n", exitCode: 0 });
+    expect(await bun(dir, "build", "--compile", "app.ts", "--outfile=plain")).toMatchObject({ exitCode: 0 });
+    expect(
+      await run([join(String(dir), isWindows ? "plain.exe" : "plain"), flag, "a", "b"], String(dir)),
+    ).toMatchObject({
+      stdout: flag + ",a,b\n",
+      exitCode: 0,
+    });
   });
 
   test("a smaller icon does not take on the color of transparent pixels", async () => {

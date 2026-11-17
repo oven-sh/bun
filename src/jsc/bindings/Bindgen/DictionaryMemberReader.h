@@ -10,11 +10,17 @@ class DictionaryMemberReader {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
-    DictionaryMemberReader(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, unsigned firstMemberNameIndex, unsigned memberNameCount)
+    enum Lookup : bool {
+        StopsAtObjectPrototype,
+        ReadsObjectPrototype,
+    };
+
+    DictionaryMemberReader(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, unsigned firstMemberNameIndex, unsigned memberNameCount, Lookup lookup = StopsAtObjectPrototype)
         : m_vm(vm)
         , m_globalObject(globalObject)
         , m_object(object)
         , m_memberNames(schemaStrings(vm).memberNames(firstMemberNameIndex, memberNameCount))
+        , m_lookup(lookup)
     {
     }
 
@@ -22,10 +28,14 @@ public:
     NEVER_INLINE JSC::JSValue get(unsigned index);
 
 private:
+    JSC::JSValue fullGet(unsigned index);
+    JSC::JSValue inherited(unsigned index);
+
     JSC::VM& m_vm;
     JSC::JSGlobalObject* m_globalObject;
     JSC::JSObject* m_object;
     const JSC::Identifier* m_memberNames;
+    Lookup m_lookup;
 };
 
 }

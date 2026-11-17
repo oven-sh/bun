@@ -508,6 +508,13 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
 #endif
 }
 
+// A compiled program has been linked as if there were no such modules.
+extern "C" void Bun__Desktop__provideModule(Zig::GlobalObject* globalObject, const BunString* name, EncodedJSValue load)
+{
+    if (!Bun::hasCompiledModules())
+        globalObject->onLoadPlugins.addModuleMock(globalObject->vm(), name->toWTFString(), asObject(JSValue::decode(load)));
+}
+
 enum class ModuleMockFunction : uint8_t {
     MockModule,
     ViMock,
@@ -8688,6 +8695,8 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     }
 
     WTF::String specifierString = specifier->toWTFString(BunString::ZeroCopy);
+    if (specifierString.isNull()) [[unlikely]]
+        return fallback();
     if (auto& beingLoaded = globalObject->onLoadPlugins.moduleMocksBeingLoaded; !beingLoaded.isEmpty()) [[unlikely]] {
         auto* moduleMock = dynamicDowncast<Zig::JSModuleMock>(beingLoaded.get(specifierString).get());
         if (moduleMock && moduleMock->state != Zig::JSModuleMock::State::NotCalled) {

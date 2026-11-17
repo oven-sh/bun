@@ -8,12 +8,12 @@ fn is_breakable_space(character: char) -> bool {
     matches!(character, ' ' | '\t' | '\n')
 }
 
-fn is_ideograph(character: char) -> bool {
+pub fn is_ideograph(character: char) -> bool {
     matches!(character, '\u{4E00}'..='\u{9FFF}' | '\u{AC00}'..='\u{D7A3}')
 }
 
 /// The common ones of those that words are made of.
-fn is_letter(character: char) -> bool {
+pub fn is_letter(character: char) -> bool {
     matches!(character, 'a'..='z' | 'A'..='Z' | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{24F}' | '\u{38E}'..='\u{3A1}' | '\u{3A3}'..='\u{481}'
         | '\u{5D0}'..='\u{5EA}' | '\u{620}'..='\u{64A}' | '\u{671}'..='\u{6D3}' | '\u{1E00}'..='\u{1EFF}')
 }
@@ -36,8 +36,16 @@ fn breaks_between_ascii(before_last: Option<char>, last: u8, next: u8) -> bool {
     }
 }
 
+/// Those of a cluster. There is no break next to what is not ASCII.
+pub fn flags_in_ascii(text: &[u8], offset: usize) -> u8 {
+    let breaks =
+        text[offset.saturating_sub(1)..=offset].is_ascii() && breaks_in_ascii(text, offset);
+    (u8::from(breaks) * abi::CLUSTER_BREAK_BEFORE)
+        | (u8::from(matches!(text[offset], b' ' | b'\t')) * abi::CLUSTER_SPACE)
+}
+
 /// `Breaks::allows` without `break-all`.
-pub fn breaks_in_ascii(text: &[u8], offset: usize) -> bool {
+fn breaks_in_ascii(text: &[u8], offset: usize) -> bool {
     let (Some(&last), next) = (text[..offset].last(), text[offset]) else {
         return false;
     };
@@ -158,10 +166,21 @@ impl Breaks {
                 && next > ' '
                 && breaks_between_ascii(before.next(), last as u8, next as u8);
         }
-        if is_ideograph(last) && is_ideograph(next) {
+        let is_word = |it: char| it == '\u{FFFC}' || it.is_ascii_digit() || is_letter(it);
+        if is_ideograph(last) && is_ideograph(next)
+            || [last, next].contains(&'\u{FFFC}') && is_word(last) && is_word(next)
+        {
             return true;
         }
-        if is_letter(last) && is_letter(next) {
+        let is_quote = |it: char| {
+            matches!(it, '\u{2018}' | '\u{2019}')
+                || matches!(it, '\u{201C}' | '\u{201D}') && rules & abi::BREAK_CJ == 0
+        };
+        let is_narrow = |it: char| it.is_ascii_graphic() || is_letter(it);
+        if is_letter(last) && (is_letter(next) || matches!(next, '\u{A0}' | '\u{2026}'))
+            || (is_quote(last) || last == '\u{A0}') && is_narrow(next)
+            || is_narrow(last) && is_quote(next)
+        {
             return false;
         }
         if offset >= self.word_end || rules != self.rules {

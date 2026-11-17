@@ -467,6 +467,53 @@ impl Shaper<'_> {
         }
     }
 
+    fn is_left_alone(
+        &self,
+        glyphs: [Option<u32>; 2],
+        acts: impl Fn(&layout::Table, u16) -> bool,
+    ) -> bool {
+        let (plan, definitions) = (self.plan, &self.tables.definitions);
+        let lookups = plan
+            .substitutions
+            .iter()
+            .flat_map(|it| &it.lookups)
+            .map(|it| (0, it))
+            .chain(
+                plan.positions
+                    .iter()
+                    .filter(|_| plan.uses_gpos)
+                    .map(|it| (1, it)),
+            );
+        let acts = |(table, (index, options)): (usize, &(u16, Options))| {
+            options.mask & plan.global_mask != 0
+                && self.tables.layout[table]
+                    .as_ref()
+                    .is_some_and(|it| acts(it, *index))
+        };
+        let is_base = |it: u32| {
+            definitions.classes.is_none() || matches!(definitions.class(it), 0 | buffer::BASE)
+        };
+        plan.rules == Rules::Default
+            && plan.morx_flags.is_none()
+            && matches!(plan.kerning, Kerning::None)
+            && glyphs.into_iter().flatten().all(is_base)
+            && !{ lookups }.any(acts)
+    }
+
+    /// Whether all that can start at `first` is that it is placed, in a way that depends on nothing but `second`, which follows it.
+    pub fn only_kerns(&self, first: u32, second: Option<u32>) -> bool {
+        self.is_left_alone([Some(first), second], |table, index| {
+            table.may_act_on(index, first, second)
+        })
+    }
+
+    /// Whether nothing that depends on other glyphs can start at it.
+    pub fn is_independent(&self, glyph: u32) -> bool {
+        self.is_left_alone([Some(glyph), None], |table, index| {
+            table.may_look_around(index, glyph)
+        })
+    }
+
     /// The glyphs have a character and a cluster, and end up in visual order.
     pub fn shape(&self, buffer: &mut Buffer) {
         work::limited((buffer.glyphs.len() + 16) << 17, || {

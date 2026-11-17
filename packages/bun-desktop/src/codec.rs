@@ -1,7 +1,9 @@
 //! Image files. Bun has the codecs for PNG, JPEG and WebP. Containers, animations, GIF and BMP are read here.
 
+use std::ffi::c_void;
 use std::time::Duration;
 
+use crate::abi_graphics as wire;
 use crate::bun::{self, abi, host};
 
 pub const MAX_SIDE: u32 = 32768;
@@ -82,19 +84,6 @@ impl Rgba {
             .map(move |row| &mut row[start..end])
     }
 
-    pub fn cropped(mut self, area: [u32; 4]) -> Rgba {
-        let (mut width, mut height, mut data) = (0, 0, Vec::new());
-        for row in self.rows_mut(area) {
-            (width, height) = (row.len() as u32, height + 1);
-            data.extend_from_slice(row.as_flattened());
-        }
-        Rgba {
-            width,
-            height,
-            data,
-        }
-    }
-
     pub fn resized(&self, width: u32, height: u32) -> Option<Rgba> {
         let (pixels, size) = (self.data.as_ptr(), [self.width, self.height]);
         // SAFETY: `data` has all pixels.
@@ -126,10 +115,6 @@ impl Rgba {
     /// Without the alpha channel.
     pub fn to_jpeg(&self, quality: u8) -> Option<Vec<u8>> {
         self.encode(abi::FORMAT_JPEG, quality)
-    }
-
-    pub fn to_webp(&self) -> Option<Vec<u8>> {
-        self.encode(abi::FORMAT_WEBP, 100)
     }
 
     fn oriented(self, orientation: u8) -> Rgba {
@@ -164,6 +149,25 @@ impl Rgba {
             data,
         }
     }
+}
+
+/// # Safety
+/// As `Graphics::encode`.
+pub unsafe fn encode(
+    size: &[u32; 2],
+    rgba: *const u8,
+    format: wire::Format,
+    quality: u8,
+    sink: wire::Sink,
+    context: *mut c_void,
+) -> bool {
+    let (format, effort) = match format {
+        wire::Format::Png => (abi::FORMAT_PNG, 1),
+        wire::Format::Jpeg => (abi::FORMAT_JPEG, quality),
+        wire::Format::Webp => (abi::FORMAT_WEBP, 100),
+    };
+    // SAFETY: the caller's contract.
+    unsafe { (host().encode_image)(rgba, size, format, effort, sink, context) }
 }
 
 fn fits(width: u32, height: u32) -> bool {

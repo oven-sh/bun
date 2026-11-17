@@ -10,9 +10,10 @@ use crate::boxes::{BoxId, Kind};
 use crate::document::Document;
 use crate::fragment::{Band, Breaks, Member};
 use crate::layout::{
-    AutoSize, Edges, Input, Output, Room, Widths, auto_margins, clamp, diffused, distribute, gap,
-    margin, sizes, unit,
+    AutoSize, Edges, Input, Output, Room, Traits, Widths, at_least, auto_margins, clamp, diffused,
+    distribute, gap, margin, sizes, unit,
 };
+use crate::order::Order as _;
 use crate::positioned::{Edge, halves};
 use crate::properties::Style;
 use crate::types::*;
@@ -27,9 +28,13 @@ struct Container {
     wraps_back: bool,
     /// The least number of lines.
     balanced: Option<usize>,
+    is_webkit_box: bool,
     align_items: Align,
     /// Of the content box.
     size: [Option<f32>; 2],
+    /// Along the main and the cross axis.
+    gaps: [f32; 2],
+    is_probed: bool,
 }
 
 struct Item {
@@ -41,14 +46,17 @@ struct Item {
     limits: [f32; 2],
     edges: f32,
     size: f32,
+    /// Without the limits.
+    target: f32,
     is_frozen: bool,
     factors: [f32; 2],
     has_definite_basis: bool,
     align: Align,
     stretches: bool,
+    has_auto_margin: bool,
     cross: f32,
     /// Whether it is measured from the end of the line, and the distance.
-    baseline: Option<(usize, f32)>,
+    baseline: Option<(bool, f32)>,
 }
 
 struct Line {
@@ -81,9 +89,15 @@ impl Container {
                 l.align_items,
             ),
         };
+        let is_webkit_box = matches!(
+            style.display(),
+            Display::WebkitBox | Display::WebkitInlineBox
+        );
         let balanced = wrap
             .is_balanced
             .then_some(style.rare.flex_line_count.0 as usize);
+        let gaps = [gap(&l.column_gap, size[0]), gap(&l.row_gap, size[1])];
+        let gaps = if main == 0 { gaps } else { [gaps[1], gaps[0]] };
         Container {
             style: Rc::clone(style),
             main,
@@ -91,18 +105,12 @@ impl Container {
             wraps: wrap.wraps,
             wraps_back: wrap.is_reversed,
             balanced,
+            is_webkit_box,
             align_items,
             size,
+            gaps,
+            is_probed: false,
         }
-    }
-
-    /// Along the main and the cross axis.
-    fn gaps(&self) -> [f32; 2] {
-        let gaps = [
-            gap(&self.style.layout.column_gap, self.size[0]),
-            gap(&self.style.layout.row_gap, self.size[1]),
-        ];
-        [gaps[self.main], gaps[1 - self.main]]
     }
 
     /// Relative to the direction in which things flow along the axis, which `flex-start` and `flex-end` refer to.
@@ -169,7 +177,11 @@ impl Container {
 
 impl Item {
     fn outer(&self, size: f32, axis: usize) -> f32 {
-        size + self.margin.sums()[axis]
+        size + if axis == 0 {
+            self.margin.left + self.margin.right
+        } else {
+            self.margin.top + self.margin.bottom
+        }
     }
 }
 
@@ -184,13 +196,6 @@ fn resolve_flexible_lengths(items: &mut [Item], space: f32, main: usize) {
                 it.base > it.size
             };
     }
-    let free = |items: &[Item]| {
-        space
-            - items
-                .iter()
-                .map(|it| it.outer(if it.is_frozen { it.size } else { it.base }, main))
-                .sum::<f32>()
-    };
     let weight = |it: &Item| {
         f64::from(if shrinks {
             it.factors[1] * (it.base - it.edges)
@@ -198,24 +203,24 @@ fn resolve_flexible_lengths(items: &mut [Item], space: f32, main: usize) {
             it.factors[0]
         })
     };
-    let initial = free(items);
+    let (mut initial, units) = (None, f64::from(crate::layout::units_per_pixel()));
     while items.iter().any(|it| !it.is_frozen) {
-        let unfrozen = || items.iter().filter(|it| !it.is_frozen);
-        let (factors, total) = (
-            unfrozen()
-                .map(|it| it.factors[usize::from(shrinks)])
-                .sum::<f32>(),
-            unfrozen().map(weight).sum::<f64>(),
-        );
-        let mut remaining = free(items);
+        let (mut used, mut factors, mut total) = (0.0, 0.0, 0.0);
+        for it in &*items {
+            used += it.outer(if it.is_frozen { it.size } else { it.base }, main);
+            if !it.is_frozen {
+                (factors, total) = (
+                    factors + it.factors[usize::from(shrinks)],
+                    total + weight(it),
+                );
+            }
+        }
+        let mut remaining = space - used;
+        let initial = *initial.get_or_insert(remaining);
         if factors < 1.0 && (initial * factors).abs() < remaining.abs() {
             remaining = initial * factors;
         }
-        let (mut violation, mut error) = (0.0, 0.0);
-        let (mut wanted, units) = (
-            SmallVec::<[f32; 8]>::new(),
-            f64::from(crate::layout::units_per_pixel()),
-        );
+        let (mut violation, mut error) = (0.0f32, 0.0);
         for it in items.iter_mut().filter(|it| !it.is_frozen) {
             let exact = match total > 0.0 && (remaining < 0.0) == shrinks {
                 true => f64::from(remaining) * weight(it) / total + error,
@@ -223,23 +228,133 @@ fn resolve_flexible_lengths(items: &mut [Item], space: f32, main: usize) {
             };
             let share = (exact * units).round() / units;
             error = exact - share;
-            let target = it.base + share as f32;
-            it.size = clamp(target, it.limits);
-            violation += it.size - target;
-            wanted.push(target);
+            it.target = it.base + share as f32;
+            it.size = clamp(it.target, it.limits);
+            violation += it.size - it.target;
         }
-        for (it, target) in items.iter_mut().filter(|it| !it.is_frozen).zip(wanted) {
-            it.is_frozen = violation == 0.0
-                || if violation > 0.0 {
-                    it.size > target
-                } else {
-                    it.size < target
-                };
+        if violation == 0.0 || violation.is_nan() {
+            break;
+        }
+        for it in items.iter_mut().filter(|it| !it.is_frozen) {
+            it.is_frozen = if violation > 0.0 {
+                it.size > it.target
+            } else {
+                it.size < it.target
+            };
         }
     }
 }
 
 impl Document {
+    /// What `flex_item` comes to for most.
+    #[inline(always)]
+    fn plain_flex_item(&mut self, container: &Container, id: BoxId) -> Option<Item> {
+        let (it, main) = (&self.boxes[id], container.main);
+        let fixed = it.fixed_sizes().filter(|it| {
+            !it.traits.contains(Traits::HAS_AUTO_MARGIN)
+                && container.balanced.is_none()
+                && !container.is_webkit_box
+        })?;
+        let (l, margin, edges) = (
+            &it.style.layout,
+            fixed.margin,
+            (fixed.border + fixed.padding).sums(),
+        );
+        let (align, factors) = (
+            align_self(&it.style, container.align_items),
+            [l.flex_grow.0, l.flex_shrink.0],
+        );
+        let inside = |size: Option<f32>, margins: f32| Some(at_least(0.0, size? - margins));
+        let mut room = Room {
+            available: [
+                inside(container.size[0], margin.sums()[0]),
+                inside(container.size[1], margin.sums()[1]),
+            ],
+            basis: container.size,
+            height: None,
+        };
+        let stretches = matches!(align.0, AlignName::Normal | AlignName::Stretch)
+            && [fixed.height, fixed.width][main].is_none();
+        let fills = stretches && !container.wraps;
+        let has_automatic_minimum =
+            matches!(sizes(&it.style)[2 + main], Size::Auto) && !it.overflow[main].scrolls();
+        let specified = match (main, fixed.height) {
+            (0, _) => fixed.width,
+            (_, None) => None,
+            _ => it.resolve_size(&l.height, 1, &room, edges, &mut |_| None),
+        };
+        let resolved = match &l.flex_basis.0 {
+            Size::Auto => specified,
+            basis @ Size::Length(_) => it.resolve_size(basis, main, &room, edges, &mut |_| None),
+            _ => return None,
+        };
+        let (mut content, mut cross) = ([0.0; 2], 0.0);
+        if main == 0 {
+            room.available[1] = room.available[1].filter(|_| !container.wraps);
+            room.height = room.available[1]
+                .filter(|_| fills)
+                .map(|it| clamp(it.max(edges[1]), fixed.limits[1]));
+            if resolved.is_none() || has_automatic_minimum {
+                content = self.fixed_content_widths(id, &fixed, room.height).sizes;
+            }
+        } else {
+            cross = match (fixed.width, room.available[0]) {
+                (Some(width), _) => clamp(width, fixed.limits[0]),
+                (None, Some(available)) if fills => clamp(available.max(edges[0]), fixed.limits[0]),
+                _ => self.resolve_width(
+                    id,
+                    &room,
+                    if fills {
+                        AutoSize::Stretch
+                    } else {
+                        AutoSize::Fit
+                    },
+                ),
+            };
+            if resolved.is_none() || has_automatic_minimum {
+                let is_probe =
+                    factors[0] > 0.0 && (container.size[1].is_some() || container.is_probed);
+                let input = Input {
+                    width: cross,
+                    basis: (room.basis[0].unwrap_or(0.0), room.basis[1]),
+                    ignores_height: fixed.height.is_some(),
+                    is_probe,
+                    ..Input::default()
+                };
+                content = [self.measure(id, input).intrinsic; 2];
+            }
+        }
+        let (base, mut limits) = (
+            resolved.unwrap_or_else(|| content[1].max(edges[main])),
+            fixed.limits[main],
+        );
+        if has_automatic_minimum {
+            limits[0] = content[0]
+                .min(specified.unwrap_or(content[0]))
+                .min(limits[1])
+                .max(edges[main]);
+        }
+        let (size, has_definite_basis) = (clamp(base, limits), main == 0 || resolved.is_some());
+        Some(Item {
+            id,
+            margin,
+            room,
+            base,
+            limits,
+            edges: edges[main],
+            size,
+            target: 0.0,
+            is_frozen: false,
+            factors,
+            has_definite_basis,
+            align,
+            stretches,
+            has_auto_margin: false,
+            cross: cross.max(0.0),
+            baseline: None,
+        })
+    }
+
     fn flex_item(&mut self, container: &Container, id: BoxId) -> Item {
         if self.boxes[id].kind == Kind::Table {
             // Its borders may collapse.
@@ -251,7 +366,7 @@ impl Document {
         let mut space = container.size;
         if let Some(count) = container.balanced.map(|it| it as f32) {
             space[1 - main] =
-                space[1 - main].map(|it| unit((it - container.gaps()[1] * (count - 1.0)) / count));
+                space[1 - main].map(|it| unit((it - container.gaps[1] * (count - 1.0)) / count));
         }
         let available =
             [0, 1].map(|axis| space[axis].map(|it| (it - margin.sums()[axis]).max(0.0)));
@@ -263,10 +378,7 @@ impl Document {
         if main == 0 && container.wraps && !it.is_orthogonal() {
             room.available[1] = None;
         }
-        let is_webkit_box = matches!(
-            container.style.display(),
-            Display::WebkitBox | Display::WebkitInlineBox
-        );
+        let is_webkit_box = container.is_webkit_box;
         let (l, align) = (
             &style.layout,
             if is_webkit_box {
@@ -401,7 +513,11 @@ impl Document {
         };
         let (size, edges) = (clamp(base, limits), edges[main]);
         cross = cross.max(0.0);
-        let (is_frozen, baseline) = (false, None);
+        let (is_frozen, baseline, has_auto_margin) = (
+            false,
+            None,
+            style.fixed().traits.contains(Traits::HAS_AUTO_MARGIN),
+        );
         Item {
             id,
             margin,
@@ -410,22 +526,28 @@ impl Document {
             limits,
             edges,
             size,
+            target: 0.0,
             is_frozen,
             factors,
             has_definite_basis,
             align,
             stretches,
+            has_auto_margin,
             cross,
             baseline,
         }
     }
 
+    #[inline(always)]
     fn flex_items(&mut self, id: BoxId, container: &Container) -> SmallVec<[Item; 4]> {
-        let mut items = SmallVec::new();
+        let mut items = SmallVec::with_capacity(self.boxes[id].children.len());
         for index in 0..self.boxes[id].children.len() {
             let child = self.boxes[id].children[index];
             if !self.boxes[child].style.is_out_of_flow() {
-                items.push(self.flex_item(container, child));
+                match self.plain_flex_item(container, child) {
+                    Some(item) => items.push(item),
+                    None => items.push(self.flex_item(container, child)),
+                }
             }
         }
         items
@@ -492,14 +614,14 @@ impl Document {
             maxes.extend(container.balanced.map(|_| own.sizes[1]));
         }
         if container.main == 0 && count > 1 {
-            let gaps = container.gaps()[0] * (count - 1) as f32;
+            let gaps = container.gaps[0] * (count - 1) as f32;
             widths.sizes = [
                 widths.sizes[0] + if container.wraps { 0.0 } else { gaps },
                 widths.sizes[1] + gaps,
             ];
         }
         if let Some(count) = container.balanced.filter(|it| *it > 1) {
-            let gap = container.gaps()[0];
+            let gap = container.gaps[0];
             let length =
                 |line: Range<usize>| maxes[line].iter().map(|it| it + gap).sum::<f32>() - gap;
             widths.sizes[1] = balance(&maxes, gap, f32::INFINITY, count.min(maxes.len()))
@@ -531,11 +653,26 @@ impl Document {
             }
             sizes[1] += widest;
         }
-        sizes[1] += container.gaps()[1] * lines.len().saturating_sub(1) as f32;
+        sizes[1] += container.gaps[1] * lines.len().saturating_sub(1) as f32;
         Widths {
             sizes,
             uses_height: true,
         }
+    }
+
+    /// Whether it seems to be a column whose items change when its height is known.
+    fn divides_height(&self, id: BoxId) -> bool {
+        let it = &self.boxes[id];
+        it.kind == Kind::Flex
+            && matches!(
+                it.style.layout.flex_direction,
+                FlexDirection::Column | FlexDirection::ColumnReverse
+            )
+            && it
+                .children
+                .iter()
+                .take(4)
+                .any(|it| crate::layout::is_relative(&self.boxes[*it].style.layout.flex_basis.0))
     }
 
     fn item_input(&self, container: &Container, item: &Item) -> Input {
@@ -554,6 +691,7 @@ impl Document {
         }
     }
 
+    #[inline(never)]
     pub(crate) fn lay_out_flex(
         &mut self,
         id: BoxId,
@@ -564,8 +702,11 @@ impl Document {
         let inset = it.inset(input.basis.0);
         let inner = |height: f32| (height - inset.sums()[1]).max(0.0);
         let width = (input.width - inset.sums()[0]).max(0.0);
-        let container = Container::new(&it.style, [Some(width), it.inner_height(input, inset)]);
-        let (main, cross, gaps) = (container.main, 1 - container.main, container.gaps());
+        let container = Container {
+            is_probed: input.is_probe,
+            ..Container::new(&it.style, [Some(width), it.inner_height(input, inset)])
+        };
+        let (main, cross, gaps) = (container.main, 1 - container.main, container.gaps);
         let has_ratio = it.ratio.is_some() && input.height.is_none();
         let mut items = self.flex_items(id, &container);
         let mut output = Output {
@@ -596,6 +737,9 @@ impl Document {
             };
             output.intrinsic = inset.sums()[1] + lines.iter().map(length).fold(0.0, f32::max);
             self.finish_height(id, input, inset, &mut output);
+            if input.is_probe {
+                return output;
+            }
             main_size = inner(output.height);
         }
 
@@ -612,6 +756,7 @@ impl Document {
                             item.id,
                             Input {
                                 height: None,
+                                is_probe: self.divides_height(item.id),
                                 ..input
                             },
                         ),
@@ -646,6 +791,9 @@ impl Document {
                 output.intrinsic += unit(container.style.line_height());
             }
             self.finish_height(id, input, inset, &mut output);
+            if input.is_probe {
+                return output;
+            }
             cross_size = inner(output.height);
         }
         let (mut free, align_content) =
@@ -681,7 +829,11 @@ impl Document {
                 + gaps_in(items.len(), gaps[0]);
             let mut free = main_size - used;
             let auto = |document: &Document, item: &Item, axis| {
-                auto_margins(&document.boxes[item.id].style, axis)
+                if item.has_auto_margin {
+                    auto_margins(&document.boxes[item.id].style, axis)
+                } else {
+                    [false; 2]
+                }
             };
             let auto_count = items
                 .iter()
@@ -709,18 +861,21 @@ impl Document {
                     Vec::new(),
                 ));
             }
-            for item in items {
-                let (margins, is_auto) = (item.margin.along(main), auto(self, item, main));
-                item.margin.set(
-                    main,
-                    [0, 1].map(|side| {
-                        if is_auto[side] {
-                            diffused(share, shares.next().unwrap_or(0))
-                        } else {
-                            margins[side]
-                        }
-                    }),
-                );
+            let last = items.len() - 1;
+            for (index, item) in items.iter_mut().enumerate() {
+                if item.has_auto_margin {
+                    let (margins, is_auto) = (item.margin.along(main), auto(self, item, main));
+                    item.margin.set(
+                        main,
+                        [0, 1].map(|side| {
+                            if is_auto[side] {
+                                diffused(share, shares.next().unwrap_or(0))
+                            } else {
+                                margins[side]
+                            }
+                        }),
+                    );
+                }
                 if main == 0 && !self.boxes[item.id].is_orthogonal() {
                     item.room.available[1] = Some((line.cross - item.margin.sums()[1]).max(0.0));
                 }
@@ -767,8 +922,9 @@ impl Document {
                     0.0
                 } else {
                     match item.baseline {
-                        Some((0, ascent)) => line.ascents[0] - ascent,
+                        Some((false, ascent)) => line.ascents[0] - ascent,
                         Some((_, ascent)) => free - (line.ascents[1] - ascent),
+                        None if free == 0.0 => 0.0,
                         None => {
                             distribute(
                                 container.along_flow(
@@ -784,11 +940,15 @@ impl Document {
                         }
                     }
                 };
-                let mut at = [0.0; 2];
-                at[main] = physical(main, diffused(offset, 0), item.outer(item.size, main))
+                let along = physical(main, diffused(offset, 0), item.outer(item.size, main))
                     + item.margin.along(main)[0];
-                at[cross] = physical(cross, line_offset + within, item.outer(item.cross, cross))
+                let across = physical(cross, line_offset + within, item.outer(item.cross, cross))
                     + item.margin.along(cross)[0];
+                let at = if main == 0 {
+                    [along, across]
+                } else {
+                    [across, along]
+                };
                 offset += item.outer(item.size, main) + gaps[0] + between;
                 self.place_child(item.id, at, item.margin, basis);
                 self.absorb(item.id, &own, &mut output);
@@ -831,6 +991,9 @@ impl Document {
                     let style = &self.boxes[item.id].style;
                     output.uses_height |= crate::layout::is_relative(&style.layout.flex_basis.0);
                 }
+                if index != 0 && index != last {
+                    continue;
+                }
                 for (which, baseline) in self.boxes[item.id]
                     .baselines_for(&container.style, &own)
                     .into_iter()
@@ -862,7 +1025,8 @@ impl Document {
             line_offset = exact_offset + line.cross + gaps[1] + between_lines;
         }
 
-        for index in 0..self.boxes[id].children.len() {
+        let count = self.boxes[id].children.len();
+        for index in 0..if count > items.len() { count } else { 0 } {
             let child = self.boxes[id].children[index];
             let it = &mut self.boxes[child];
             if it.style.is_out_of_flow() {
@@ -889,7 +1053,7 @@ impl Document {
         if let Some(breaks) = breaks {
             let mut flow = self.flow(id, input, inset, breaks);
             let ends = if main == 0 {
-                stacks.sort_by(|a, b| a.0[0].top.total_cmp(&b.0[0].top));
+                stacks.order_by(|a, b| a.0[0].top.total_cmp(&b.0[0].top));
                 let (mut bands, mut members) = (Vec::new(), Vec::new());
                 for (band, own) in stacks {
                     members.extend(own.into_iter().map(|it| Member {
@@ -965,7 +1129,7 @@ impl Document {
             );
             (*size, item.baseline) = (
                 size.max(ascents[side] + descents[side]),
-                Some((side, ascent)),
+                Some((side == 1, ascent)),
             );
         } else {
             *size = size.max(outer);
@@ -973,8 +1137,9 @@ impl Document {
     }
 }
 
+#[inline(always)]
 fn break_lines(items: &[Item], container: &Container, limit: f32) -> SmallVec<[Line; 1]> {
-    let (mut lines, mut start, mut used, gap) = (SmallVec::new(), 0, 0.0, container.gaps()[0]);
+    let (mut lines, mut start, mut used, gap) = (SmallVec::new(), 0, 0.0, container.gaps[0]);
     let line = |items| Line {
         items,
         cross: 0.0,

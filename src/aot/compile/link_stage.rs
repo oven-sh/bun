@@ -154,7 +154,9 @@ impl Build<'_> {
                         steps.end("link stage: paths of entry points and folders");
                         let replaced = &loaded.contents.replaced_builtins;
                         debug_assert!(replaced.is_sorted_by(|left, right| left < right));
+                        let may_lack_bun = self.options.aot.has_realms_of_the_web;
                         program.replaceable_builtins = (replaced.iter())
+                            .filter(|&&number| may_lack_bun || number != BuiltinId::Bun.to_wire())
                             .map(|&number| ReplaceableBuiltin {
                                 member: BuiltinId::from_wire(number)
                                     .expect("the load lists members of the table"),

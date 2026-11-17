@@ -23,6 +23,7 @@
 // the wrapper as the next-largest single fan-in after the e0204b3/80284f8
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
+#![feature(freeze)]
 #![feature(thread_local)]
 
 extern crate alloc;
@@ -458,6 +459,8 @@ pub mod zig_stack_trace;
 #[path = "bindgen.rs"]
 pub mod bindgen;
 #[cfg(debug_assertions)]
+pub(crate) mod bindgen_interface_test;
+#[cfg(debug_assertions)]
 #[path = "bindgen_test.rs"]
 pub(crate) mod bindgen_test;
 #[path = "BunCPUProfiler.rs"]
@@ -473,8 +476,6 @@ pub mod comptime_string_map_jsc;
 pub(crate) mod declared_results_testing;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
-#[path = "FFI.rs"]
-pub mod ffi;
 #[path = "JSCScheduler.rs"]
 pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
@@ -539,6 +540,17 @@ pub fn expect_desktop_program() {
     unsafe {
         let env = bun_sys::environ();
         JSC__useOptionsForDesktopProgram(env.as_ptr().cast(), env.len());
+    }
+}
+
+/// The global object of the main thread is a window. Before the first VM.
+pub fn start_in_window() {
+    Bun__startInWindow();
+}
+
+pub fn start_in_window_if_preloaded(preloads: &[Box<[u8]>]) {
+    if preloads.iter().any(|it| &**it == b"bun:desktop/dom") {
+        start_in_window();
     }
 }
 
@@ -658,34 +670,6 @@ impl From<JsError> for crate::CrateError {
             JsError::Thrown => crate::CrateError::JSError,
             JsError::Terminated => crate::CrateError::WorkerTerminated,
         }
-    }
-}
-
-/// Adapter for `(fmt, args)`-style throw helpers.
-///
-/// Call sites pass either `()`
-/// (no interpolation — message *is* the literal) or a pre-expanded
-/// `format_args!(..)` (interpolation already applied — message *is* the
-/// `Arguments` value). This trait dispatches both shapes onto the canonical
-/// [`JSGlobalObject::throw`] without requiring every caller to wrap a literal
-/// in `format_args!("")`.
-pub trait ThrowFmtArgs: Sized {
-    /// `globalThis.throw(fmt, args)` — throw a generic `Error`.
-    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError;
-}
-impl ThrowFmtArgs for () {
-    #[inline]
-    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError {
-        // No interpolation; the literal IS the message. Route
-        // through `throw` with an `Arguments` whose `as_str()` is `Some(fmt)`
-        // so `create_error_instance` hits its static-string fast path.
-        global.throw(format_args!("{fmt}"))
-    }
-}
-impl ThrowFmtArgs for core::fmt::Arguments<'_> {
-    #[inline]
-    fn dispatch_throw(self, global: &JSGlobalObject, _fmt: &'static str) -> JsError {
-        global.throw(self)
     }
 }
 
@@ -907,6 +891,7 @@ pub enum BuiltinName {
     signal,
     cmd,
     errors,
+    maxHeaderPairs,
     /// Private name (`$internal` in builtins); user code cannot set it.
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
@@ -955,11 +940,18 @@ impl<'a, T> WrapperGuard<'a, T> {
     /// `native` is null, or points to the struct that `wrapper` holds or to a part of it, valid and only shared until `wrapper` is collected.
     #[doc(hidden)]
     pub unsafe fn new(wrapper: &'a JSValue, native: *mut T) -> Option<Self> {
-        Some(Self {
-            native: core::ptr::NonNull::new(native)?,
-            wrapper: EnsureStillAlive(*wrapper),
+        // SAFETY: forwarded.
+        Some(unsafe { Self::from_parts(*wrapper, core::ptr::NonNull::new(native)?) })
+    }
+
+    /// SAFETY: as [`new`](Self::new).
+    #[doc(hidden)]
+    pub unsafe fn from_parts(wrapper: JSValue, native: core::ptr::NonNull<T>) -> Self {
+        Self {
+            native,
+            wrapper: EnsureStillAlive(wrapper),
             _value: core::marker::PhantomData,
-        })
+        }
     }
 
     /// As [`core::cell::Ref::map`].
@@ -1034,15 +1026,6 @@ impl JSGlobalObject {
     // `vm_ptr()` lives in `JSGlobalObject.rs` (canonical impl block); the
     // duplicate that grew here during the port has been removed to avoid
     // E0034 multiple-applicable-items at every call site.
-
-    /// Two-arg shim for mechanically-ported `throw("fmt", .{…})` call sites.
-    /// Dispatches via [`ThrowFmtArgs`] so both `()` and `format_args!(..)`
-    /// callers reach [`JSGlobalObject::throw`] with the right `Arguments`.
-    #[doc(hidden)]
-    #[inline]
-    pub fn throw2(&self, fmt: &'static str, args: impl ThrowFmtArgs) -> JsError {
-        args.dispatch_throw(self, fmt)
-    }
 
     /// `globalThis.ERR(.INVALID_ARG_TYPE, fmt, args).toJS()` — Node-compat error
     /// builder. Returns the error JSValue; caller decides whether to throw or wrap.
@@ -1251,9 +1234,9 @@ pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
-    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue,
+    EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,
+    Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]
@@ -1520,6 +1503,7 @@ unsafe extern "C" {
         is_compiler: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
+    safe fn Bun__startInWindow();
     fn JSC__useOptionsForDesktopProgram(env: *const *const c_char, count: usize);
 }
 

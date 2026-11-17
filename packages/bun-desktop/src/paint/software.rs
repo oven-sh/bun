@@ -8,20 +8,25 @@ use crate::hash::FastMap;
 use crate::small_vec::SmallVec;
 
 use super::arena::{Arena, Block};
-use super::flatten::{Kind, Primitive};
+use super::flatten::{Kind, Primitive, TURNED_EDGE};
 use super::raster::{
-    IntRect, Layer, Pixel, blend_row, fill_row, fill_through, over, premultiply, scale, set_row,
+    IntRect, Layer, Outlined, Pixel, blend_row, blend_rows, fill_outlined, fill_row, fill_rows,
 };
+use super::raster::{
+    fill_rows_through, map_point, over, premultiply, scale, set_rows, swap_red_and_blue,
+};
+use super::warp::{Samples, draw_samples};
+use crate::gfx::Transform;
 #[cfg(any(test, not(target_os = "macos")))]
 use crate::platform::{Painted, Pixels};
 
 /// A part of a texture.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Sprite {
     pub texture: u32,
     pub is_color: bool,
     /// Another one for each texture that there ever was.
-    id: u32,
+    pub(super) id: u32,
     pub part: IntRect,
 }
 
@@ -110,7 +115,7 @@ impl Atlas {
                 .pixels_mut()
                 .iter_mut()
                 .zip(pixels)
-                .for_each(|(to, [b, g, r, a])| *to = [r, g, b, a]);
+                .for_each(|(to, from)| *to = swap_red_and_blue(from));
             return Some(layer);
         }
         let mut sums = vec![[0u16; 4]; width];
@@ -212,7 +217,7 @@ pub(super) fn is_shaped(primitive: &Primitive) -> bool {
 }
 
 /// How much of a pixel is inside of the outer edge, and outside of the inner one.
-fn coverage(from_corner: [f32; 2], radius: f32, border: [f32; 2]) -> (u8, u8) {
+fn coverage(from_corner: [f32; 2], radius: f32, border: [f32; 2]) -> [u8; 2] {
     let border = border.map(|width| if width == 0. { -0.5 } else { width });
     let [u, v] = from_corner.map(|distance| distance + radius);
     let from_inner_corner = [from_corner[0] + border[0], from_corner[1] + border[1]];
@@ -228,18 +233,26 @@ fn coverage(from_corner: [f32; 2], radius: f32, border: [f32; 2]) -> (u8, u8) {
         let radii = border.map(|width| (radius - width).max(0.));
         (length(u / radii[0], v / radii[1]) - 1.) * (radii[0] + radii[1]) * -0.5
     };
-    (
-        alpha((0.5 - outer).clamp(0., 1.)),
-        alpha((0.5 - inner).clamp(0., 1.)),
-    )
+    [outer, inner].map(|it| alpha((0.5 - it).clamp(0., 1.)))
 }
 
 /// `coverage` for the pixels next to a corner. The last row and column go on like that.
 struct Corner {
     side: usize,
-    pixels: Vec<(u8, u8)>,
-    /// For each row, how many pixels are not completely inside of both edges.
+    /// Each row from the edge inwards, and then back.
+    pixels: Vec<[u8; 2]>,
+    /// For each row, how many pixels are not like the last one.
     curved: Vec<i32>,
+}
+
+impl Corner {
+    fn row(&self, index: i32) -> (&[[u8; 2]], i32) {
+        let index = (index.max(0) as usize).min(self.side - 1);
+        (
+            &self.pixels[index * self.side * 2..][..self.side * 2],
+            self.curved[index],
+        )
+    }
 }
 
 fn corner(radius: f32, border: [f32; 2]) -> Rc<Corner> {
@@ -254,28 +267,26 @@ fn corner(radius: f32, border: [f32; 2]) -> Rc<Corner> {
             .entry([radius, border[0], border[1]].map(f32::to_bits))
             .or_insert_with(|| {
                 let side = radius.max(border[0]).max(border[1]).ceil() as usize + 2;
-                let at = |index: usize| {
-                    coverage(
-                        [index % side, index / side].map(|it| -0.5 - it as f32),
-                        radius,
-                        border,
-                    )
+                let at = |column: usize, row: usize| {
+                    coverage([column, row].map(|it| -0.5 - it as f32), radius, border)
                 };
-                Rc::new({
-                    let pixels: Vec<_> = (0..side * side).map(at).collect();
-                    let curved = |row: &[(u8, u8)]| match row
+                let pixels: Vec<_> = (0..side)
+                    .flat_map(|row| {
+                        (0..side)
+                            .chain((0..side).rev())
+                            .map(move |column| at(column, row))
+                    })
+                    .collect();
+                let curved = |row: &[[u8; 2]]| {
+                    row[..side]
                         .iter()
-                        .rposition(|it| *it != (255, 0))
-                        .map_or(0, |it| it + 1)
-                    {
-                        all if all == side => i32::MAX / 2,
-                        some => some as i32,
-                    };
-                    Corner {
-                        side,
-                        curved: pixels.chunks(side).map(curved).collect(),
-                        pixels,
-                    }
+                        .rposition(|it| *it != row[side])
+                        .map_or(0, |it| it as i32 + 1)
+                };
+                Rc::new(Corner {
+                    side,
+                    curved: pixels.chunks(side * 2).map(curved).collect(),
+                    pixels,
                 })
             });
         corner.clone()
@@ -301,39 +312,33 @@ impl Outline<'_> {
             .chain(&[top, right, bottom, left])
             .all(|it| *it <= MAX_SIDE);
         let borders = [[left, top], [right, top], [right, bottom], [left, bottom]];
-        let corners = (is_aligned && is_small)
-            .then(|| [0, 1, 2, 3].map(|index| corner(radii[index], borders[index])));
+        let corners = (is_aligned && is_small).then(|| {
+            let first = corner(radii[0], borders[0]);
+            let other = |it: usize| {
+                if (radii[it], borders[it]) == (radii[0], borders[0]) {
+                    first.clone()
+                } else {
+                    corner(radii[it], borders[it])
+                }
+            };
+            [0, 1, 2, 3].map(other)
+        });
         Outline { primitive, corners }
     }
 
     /// The columns of a row in which `coverage` is the same.
     fn middle(&self, y: i32) -> Range<i32> {
-        let (straight, bounds) = (middle_of_row(self.primitive, y), self.primitive.bounds);
         let Some(known) = &self.corners else {
-            return straight;
+            return middle_of_row(self.primitive, y);
         };
-        let (below_top, above_bottom) = (
-            y - bounds.y as i32,
-            (bounds.y + bounds.height) as i32 - 1 - y,
-        );
-        let (row, corners) = if below_top < above_bottom {
-            (below_top, [0, 1])
-        } else {
-            (above_bottom, [3, 2])
-        };
-        let [left, right] = corners
-            .map(|index| known[index].curved[(row.max(0) as usize).min(known[index].side - 1)]);
-        let inside = bounds.x as i32 + left..(bounds.x + bounds.width) as i32 - right;
-        if inside.len() > straight.len() {
-            inside
-        } else {
-            straight
-        }
+        let all = IntRect::nearest(self.primitive.bounds);
+        let [(_, left), (_, right)] = rows_of_corners(known, all, y);
+        all.left + left..all.right - right
     }
 
     /// Calls `f` with the `coverage` of each of the columns.
     #[inline(always)]
-    fn visit(&self, y: i32, columns: impl Iterator<Item = i32>, mut f: impl FnMut(i32, (u8, u8))) {
+    fn visit(&self, y: i32, columns: impl Iterator<Item = i32>, mut f: impl FnMut(i32, [u8; 2])) {
         let bounds = self.primitive.bounds;
         let half = [bounds.width / 2., bounds.height / 2.];
         let from_center = y as f32 + 0.5 - bounds.y - half[1];
@@ -342,10 +347,8 @@ impl Outline<'_> {
             if from_center < 0. { [0, 1] } else { [3, 2] },
         );
         if let Some(known) = &self.corners {
-            let rows = corners.map(|index| {
-                let Corner { side, pixels, .. } = &*known[index];
-                &pixels[(-from_edge as usize).min(side - 1) * side..][..*side]
-            });
+            let rows =
+                corners.map(|index| &known[index].row(-from_edge as i32).0[..known[index].side]);
             let (first, last) = (bounds.x as i32, (bounds.x + bounds.width) as i32 - 1);
             for x in columns {
                 let (row, column) = if x - first < last - x {
@@ -376,6 +379,22 @@ impl Outline<'_> {
             );
         }
     }
+}
+
+/// `Corner::row` on the left and on the right, each of which has half of the width.
+fn rows_of_corners(known: &[Rc<Corner>; 4], all: IntRect, y: i32) -> [(&[[u8; 2]], i32); 2] {
+    let (below_top, above_bottom, half) =
+        (y - all.top, all.bottom - 1 - y, (all.right - all.left) / 2);
+    let (row, [left, right]) = if below_top < above_bottom {
+        (below_top, [0, 1])
+    } else {
+        (above_bottom, [3, 2])
+    };
+    let (left, right) = (known[left].row(row), known[right].row(row));
+    [
+        (left.0, left.1.min(half)),
+        (right.0, right.1.min(all.right - all.left - half)),
+    ]
 }
 
 /// The columns of a row that are between the corners.
@@ -468,23 +487,85 @@ impl<'a> Band<'a> {
         start + (area.left - self.left) as usize..start + (area.right - self.left) as usize
     }
 
+    fn rows(&mut self, area: IntRect) -> impl Iterator<Item = &mut [Pixel]> {
+        let (start, width) = (self.span(area.top, area).start, area.width());
+        self.pixels[start..]
+            .chunks_mut(self.width)
+            .take(area.height())
+            .map(move |row| &mut row[..width])
+    }
+
     fn quad(&mut self, primitive: &Primitive, color: Pixel, border_color: Pixel, area: IntRect) {
         if !is_shaped(primitive) {
-            for y in area.top..area.bottom {
-                let span = self.span(y, area);
-                fill_row(&mut self.pixels[span], color);
-            }
-            return;
+            return fill_rows(self.rows(area), color);
         }
-        let outline = Outline::of(primitive);
-        let color_for = |coverage: (u8, u8)| match coverage {
-            (0, _) => [0; 4],
-            (255, 0) => color,
-            (outer, inner) => scale(over(color, scale(border_color, inner)), outer),
+        let (outline, colors, all) = (
+            Outline::of(primitive),
+            Outlined::new(color, border_color),
+            IntRect::nearest(primitive.bounds),
+        );
+        let mut straight = IntRect {
+            top: area.bottom,
+            ..area
         };
-        for y in area.top..area.bottom {
+        if let Some(known @ [a, b, c, d]) = &outline.corners {
+            let top = area.top.max(all.top + a.side.max(b.side) as i32 - 1);
+            let between = IntRect {
+                top,
+                bottom: area.bottom.min(all.bottom - c.side.max(d.side) as i32 + 1),
+                ..area
+            };
+            if !between.is_empty() {
+                straight = between;
+                let [(left, before), (right, after)] = rows_of_corners(known, all, top);
+                let (left, middle, right) = (
+                    &left[..before as usize],
+                    left[left.len() / 2],
+                    &right[right.len() - after as usize..],
+                );
+                let runs = |it| {
+                    <[[u8; 2]]>::chunk_by(it, PartialEq::eq).map(|it| (it.len() as i32, it[0]))
+                };
+                let mut x = all.left;
+                for (length, coverage) in runs(left)
+                    .chain([(all.right - all.left - before - after, middle)])
+                    .chain(runs(right))
+                {
+                    let part = IntRect {
+                        left: x,
+                        right: x + length,
+                        ..straight
+                    }
+                    .intersect(straight);
+                    if !part.is_empty() {
+                        fill_rows(self.rows(part), colors.at(coverage));
+                    }
+                    x += length;
+                }
+            }
+        }
+        for y in (area.top..straight.top).chain(straight.bottom..area.bottom) {
             let span = self.span(y, area);
             let row = &mut self.pixels[span];
+            if let Some(known) = &outline.corners {
+                let [(left, before), (right, after)] = rows_of_corners(known, all, y);
+                let [start, end] = [all.left + before, all.right - after]
+                    .map(|it| it.clamp(area.left, area.right));
+                let (first, rest) = row.split_at_mut((start - area.left) as usize);
+                let (middle, last) = rest.split_at_mut((end - start) as usize);
+                if !first.is_empty() {
+                    fill_outlined(first, &colors, &left[(area.left - all.left) as usize..]);
+                }
+                fill_row(middle, colors.at(left[left.len() / 2]));
+                if !last.is_empty() {
+                    fill_outlined(
+                        last,
+                        &colors,
+                        &right[right.len() - (all.right - end) as usize..],
+                    );
+                }
+                continue;
+            }
             let middle = outline.middle(y);
             let (start, end) = (
                 middle.start.clamp(area.left, area.right),
@@ -494,20 +575,14 @@ impl<'a> Band<'a> {
                 y,
                 (area.left..start).chain(end..area.right),
                 |x, coverage| {
-                    let (pixel, color) = (&mut row[(x - area.left) as usize], color_for(coverage));
-                    if color != [0; 4] {
-                        *pixel = if color[3] == 255 {
-                            color
-                        } else {
-                            over(*pixel, color)
-                        };
-                    }
+                    let pixel = &mut row[(x - area.left) as usize];
+                    *pixel = colors.over(*pixel, coverage);
                 },
             );
             outline.visit(y, (start..end).take(1), |_, coverage| {
                 fill_row(
                     &mut row[(start - area.left) as usize..(end - area.left) as usize],
-                    color_for(coverage),
+                    colors.at(coverage),
                 );
             });
         }
@@ -515,17 +590,12 @@ impl<'a> Band<'a> {
 
     fn mask(&mut self, primitive: &Primitive, texture: &Texture, color: Pixel, area: IntRect) {
         let (left, top) = (primitive.bounds.x as i32, primitive.bounds.y as i32);
-        for y in area.top..area.bottom {
-            let (span, start) = (
-                self.span(y, area),
-                (y - top) as usize * texture.width + (area.left - left) as usize,
-            );
-            fill_through(
-                &mut self.pixels[span],
-                color,
-                &texture.data()[start..start + area.width()],
-            );
-        }
+        let start = (area.top - top) as usize * texture.width + (area.left - left) as usize;
+        fill_rows_through(
+            self.rows(area)
+                .zip(texture.data()[start..].chunks(texture.width)),
+            color,
+        );
     }
 
     fn image(&mut self, primitive: &Primitive, tile: &Sprite, texture: &Texture, area: IntRect) {
@@ -548,6 +618,27 @@ impl<'a> Band<'a> {
         );
         let is_aligned = bounds.width == part.width() as f32 && bounds.x.fract() == 0.;
         let (opacity, is_shaped) = (alpha(primitive.opacity), is_shaped(primitive));
+        let repeats = part.height() == 1;
+        if is_aligned
+            && !is_shaped
+            && (repeats || bounds.height == part.height() as f32 && bounds.y.fract() == 0.)
+        {
+            let top = if repeats {
+                part.top
+            } else {
+                part.top + area.top - bounds.y as i32
+            };
+            let start =
+                top as usize * texture.width + (part.left + area.left - bounds.x as i32) as usize;
+            let step = if repeats { 0 } else { texture.width };
+            let rows = self
+                .rows(area)
+                .zip((0..).map(|row| &texels[start + row * step..][..area.width()]));
+            return match texture.is_opaque && opacity == 255 {
+                true => rows.for_each(|(row, colors)| row.copy_from_slice(colors)),
+                false => blend_rows(rows, opacity),
+            };
+        }
         let outline = is_shaped.then(|| Outline::of(primitive));
         self.columns.clear();
         if !is_aligned && (part.width() as i32) > 1 {
@@ -562,13 +653,6 @@ impl<'a> Band<'a> {
             let (above, below, span) = (texel_row(above), texel_row(below), self.span(y, area));
             let (row, colors) = (&mut self.pixels[span], &mut self.colors);
             let first = (part.left + area.left - bounds.x as i32) as usize;
-            if is_aligned && down == 0 && !is_shaped {
-                match texture.is_opaque && opacity == 255 {
-                    true => row.copy_from_slice(&above[first..first + row.len()]),
-                    false => blend_row(row, &above[first..first + row.len()], opacity),
-                }
-                continue;
-            }
             let texel = |column: usize| {
                 if down == 0 {
                     above[column]
@@ -614,12 +698,12 @@ impl<'a> Band<'a> {
                 outline.visit(
                     y,
                     (area.left..start).chain(end..area.right),
-                    |x, (outer, _)| {
+                    |x, [outer, _]| {
                         let color = &mut colors[(x - area.left) as usize];
                         *color = scale(*color, outer);
                     },
                 );
-                outline.visit(y, (start..end).take(1), |_, (outer, _)| {
+                outline.visit(y, (start..end).take(1), |_, [outer, _]| {
                     if outer != 255 {
                         let middle =
                             &mut colors[(start - area.left) as usize..(end - area.left) as usize];
@@ -633,7 +717,52 @@ impl<'a> Band<'a> {
         }
     }
 
+    fn turned(&mut self, texture: &Texture, to_texels: &Transform, opacity: u8, area: IntRect) {
+        let texels = texture.data().as_chunks::<4>().0;
+        let last =
+            [texture.width, texels.len() / texture.width.max(1)].map(|it| it as i32 - TURNED_EDGE);
+        if last[0].min(last[1]) <= 0 {
+            return;
+        }
+        let (steps, fixed) = ([to_texels.sx, to_texels.ky], |it: f32| (it * 65536.) as i32);
+        let (per_step, width) = (
+            steps.map(|it| 1. / if it == 0. { 1e-9 } else { it }),
+            area.width() as f32,
+        );
+        let rows = self.rows(area).zip(area.top..).filter_map(|(row, y)| {
+            let (u, v) = map_point(to_texels, area.left as f32 + 0.5, y as f32 + 0.5);
+            let first = [u - 0.5, v - 0.5];
+            let [across, down] = [0, 1].map(|axis| {
+                [-first[axis], last[axis] as f32 - first[axis]].map(|it| it * per_step[axis])
+            });
+            let start = across[0]
+                .min(across[1])
+                .max(down[0].min(down[1]))
+                .clamp(0., width) as usize;
+            let end = across[0]
+                .max(across[1])
+                .min(down[0].max(down[1]))
+                .ceil()
+                .clamp(0., width) as usize;
+            let [u, v] = [0, 1].map(|axis| fixed(first[axis] + steps[axis] * start as f32));
+            Some((row.get_mut(start..end)?, [u.saturating_add(1 << 9), v]))
+        });
+        draw_samples(
+            rows,
+            &Samples {
+                texels,
+                width: texture.width,
+                step: steps.map(fixed),
+                last: last.map(|it| it << 16),
+            },
+            opacity,
+        );
+    }
+
     fn paint(&mut self, primitive: &Primitive, area: IntRect) {
+        if area.is_empty() {
+            return;
+        }
         let textures = self.textures;
         let texture =
             |tile: &Sprite| Some(&textures[tile.texture as usize]).filter(|it| it.width > 0);
@@ -657,6 +786,14 @@ impl<'a> Band<'a> {
             Kind::Image(tile) => texture(tile)
                 .into_iter()
                 .for_each(|it| self.image(primitive, tile, it, area)),
+            Kind::Turned {
+                texture, to_texels, ..
+            } => self.turned(
+                &textures[*texture as usize],
+                to_texels,
+                alpha(primitive.opacity),
+                area,
+            ),
         }
     }
 }
@@ -670,16 +807,51 @@ fn pair(a: impl Into<i64>, b: impl Into<i64>) -> u64 {
     (a.into() as u64) << 32 | u64::from(b.into() as u32)
 }
 
+const NOWHERE: [i32; 2] = [i32::MAX, i32::MIN];
+const EVERYWHERE: [i32; 2] = [i32::MIN, i32::MAX];
+
+fn between_edges(primitive: &Primitive) -> [[i32; 2]; 2] {
+    let (bounds, [tl, tr, br, bl], [top, right, bottom, left]) =
+        (primitive.bounds, primitive.radii, border_of(primitive));
+    let between = |start: f32, length: f32, first: f32, second: f32| match (first.max(second) + 2.)
+        * 2.
+        < length
+    {
+        true => [
+            ((start + first).ceil() as i32).saturating_add(1),
+            ((start + length - second).floor() as i32).saturating_sub(1),
+        ],
+        false => NOWHERE,
+    };
+    [
+        between(
+            bounds.x,
+            bounds.width,
+            left.max(tl).max(bl),
+            right.max(tr).max(br),
+        ),
+        between(
+            bounds.y,
+            bounds.height,
+            top.max(tl).max(tr),
+            bottom.max(bl).max(br),
+        ),
+    ]
+}
+
 /// What is needed of a primitive to tell whether a tile has changed.
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(super) struct Summary {
     pub area: IntRect,
     y: f32,
     /// Of all that does not change when it moves up or down.
     shape: u64,
-    /// The rows that look the same, and a hash of that.
-    band: Range<i32>,
-    band_shape: u64,
+    /// Of all that does not change with the bounds.
+    look: u64,
+    /// The left and the right edge, and the height.
+    extent: [f32; 3],
+    /// For the columns and for the rows: from where the first edge, and up to where the second one makes no difference.
+    free: [[i32; 2]; 2],
     uniform: IntRect,
     color: Pixel,
     /// It does not show on top of `color`.
@@ -687,6 +859,10 @@ pub(super) struct Summary {
 }
 
 impl Summary {
+    fn hides(&self, area: IntRect) -> bool {
+        self.color[3] == 255 && self.uniform.contains(area)
+    }
+
     pub fn of(primitive: &Primitive) -> Summary {
         let floats = |[a, b, c, d]: [f32; 4]| {
             [
@@ -702,15 +878,30 @@ impl Summary {
                 pair(part.width() as i32, part.height() as i32),
             ]
         };
-        let (bounds, mut band, mut uniform, mut color) =
-            (primitive.bounds, 0..0, IntRect::default(), [0; 4]);
+        let (bounds, mut free, mut uniform, mut color) =
+            (primitive.bounds, [NOWHERE; 2], IntRect::default(), [0; 4]);
         let kind = match primitive.kind {
             Kind::Mask(tile, color) => of_tile(tile, color),
             Kind::Image(tile) => {
-                if tile.part.height() == 1 && !is_shaped(primitive) {
-                    band = i32::MIN..i32::MAX;
-                }
+                let is_shaped = is_shaped(primitive);
+                free = [tile.part.width(), tile.part.height()].map(|it| {
+                    if it == 1 && !is_shaped {
+                        EVERYWHERE
+                    } else {
+                        NOWHERE
+                    }
+                });
                 of_tile(tile, 0)
+            }
+            Kind::Turned {
+                id, to_texels: it, ..
+            } => {
+                let [a, b] = floats([it.sx, it.ky, it.kx, it.sy]);
+                [
+                    combine(a, id.into()),
+                    b,
+                    pair(it.tx.to_bits(), it.ty.to_bits()),
+                ]
             }
             Kind::Quad {
                 color: fill,
@@ -718,28 +909,31 @@ impl Summary {
                 border,
             } => {
                 (uniform, color) = (uniform_part(primitive), bgra(fill, primitive.opacity));
-                band = if is_shaped(primitive) {
-                    uniform.top..uniform.bottom
+                free = if is_shaped(primitive) {
+                    between_edges(primitive)
                 } else {
-                    i32::MIN..i32::MAX
+                    [EVERYWHERE; 2]
                 };
                 let [a, b] = floats(border);
                 [pair(fill, border_color), a, !b]
             }
         };
-        let across = pair(bounds.x.to_bits(), bounds.width.to_bits());
-        let band_shape = kind
+        let look = kind
             .into_iter()
-            .fold(combine(primitive.opacity.to_bits().into(), across), combine);
-        let shape = floats(primitive.radii)
-            .into_iter()
-            .fold(band_shape ^ u64::from(bounds.height.to_bits()), combine);
+            .chain(floats(primitive.radii))
+            .fold(primitive.opacity.to_bits().into(), combine);
+        let shape = combine(
+            look ^ u64::from(bounds.height.to_bits()),
+            pair(bounds.x.to_bits(), bounds.width.to_bits()),
+        );
+        let extent = [bounds.x, bounds.x + bounds.width, bounds.height];
         Summary {
             area: covered(primitive),
             y: bounds.y,
             shape,
-            band,
-            band_shape,
+            look,
+            extent,
+            free,
             uniform,
             color,
             has_one_color: has_one_color(primitive),
@@ -811,8 +1005,16 @@ impl Grid {
 
     /// From the top to the bottom. What has the same columns does not have the same rows.
     pub fn areas(&self, is_included: impl Fn(usize) -> bool) -> Vec<IntRect> {
+        self.areas_in(self.rows_of(self.window), is_included)
+    }
+
+    fn areas_in(
+        &self,
+        rows: impl Iterator<Item = i32>,
+        is_included: impl Fn(usize) -> bool,
+    ) -> Vec<IntRect> {
         let mut areas: Vec<IntRect> = Vec::new();
-        for row in self.rows_of(self.window) {
+        for row in rows {
             self.runs(row, self.columns_of(self.window), &is_included, |run| {
                 let continues = |it: &&mut IntRect| {
                     (it.left, it.right, it.bottom) == (run.left, run.right, run.top)
@@ -887,9 +1089,9 @@ fn survey_again(
     down: i32,
     wanted: IntRect,
 ) {
-    let hides_all =
-        |it: &Summary| it.color[3] == 255 && it.uniform.offset(0, down).contains(wanted);
-    let backdrop = summaries.iter().rposition(hides_all);
+    let backdrop = summaries
+        .iter()
+        .rposition(|it| it.hides(wanted.offset(0, -down)));
     let empty = backdrop.map_or(Tile::flat([0; 4], 0), |index| {
         Tile::flat(summaries[index].color, index + 1)
     });
@@ -905,8 +1107,9 @@ fn survey_again(
             continue;
         }
         let (all, color) = (grid.columns_of(visited), summary.color);
-        let placed = combine(summary.shape, (summary.y + down as f32).to_bits().into());
-        if summary.band.is_empty() && summary.uniform.is_empty() && !summary.has_one_color {
+        let y = summary.y + down as f32;
+        if summary.free == [NOWHERE; 2] && summary.uniform.is_empty() && !summary.has_one_color {
+            let placed = combine(summary.shape, y.to_bits().into());
             let value = combine(
                 combine(placed, pair(area.left, area.right)),
                 pair(area.top, area.bottom),
@@ -923,21 +1126,34 @@ fn survey_again(
         let (filled_columns, filled_rows) = grid.inside(summary.uniform.offset(0, down));
         let filled_columns = filled_columns.start.clamp(all.start, all.end)
             ..filled_columns.end.clamp(all.start, all.end);
+        let edges = |free: [i32; 2], [first, second]: [f32; 2], start: i32, end: i32| {
+            pair(
+                if start < free[0] {
+                    first.to_bits()
+                } else {
+                    u32::MAX
+                },
+                if end > free[1] {
+                    second.to_bits()
+                } else {
+                    u32::MAX
+                },
+            )
+        };
+        let ([columns, rows], [left, right, height]) = (summary.free, summary.extent);
+        let same = (area.left.max(columns[0]), area.right.min(columns[1]));
         for row in grid.rows_of(visited) {
             let (top, bottom) = (
                 area.top.max(row * TILE_HEIGHT),
                 area.bottom.min((row + 1) * TILE_HEIGHT),
             );
-            let is_in_band = summary.band.start <= top - down && bottom - down <= summary.band.end;
             let value = combine(
-                if is_in_band {
-                    summary.band_shape
-                } else {
-                    placed
-                },
+                combine(
+                    summary.look,
+                    edges(rows, [y, y + height], top - down, bottom - down),
+                ),
                 pair(top, bottom),
             );
-            let value = combine(value, pair(area.left, area.right));
             let filled = if filled_rows.contains(&row) {
                 filled_columns.clone()
             } else {
@@ -947,10 +1163,18 @@ fn survey_again(
                 &mut tiles[row as usize * grid.columns..][all.start as usize..all.end as usize];
             let (before, rest) = tiles.split_at_mut((filled.start - all.start) as usize);
             let (inside, after) = rest.split_at_mut(filled.len());
-            for tile in before.iter_mut().chain(after) {
+            for (column, tile) in (all.start..).zip(before).chain((filled.end..).zip(after)) {
+                let (start, end) = (column * TILE_WIDTH, (column + 1) * TILE_WIDTH);
                 if tile.is_flat && summary.has_one_color && tile.base == color {
                     tile.first = index as u32 + 1;
+                } else if same.0 <= start && end <= same.1 {
+                    (tile.hash, tile.is_flat) = (combine(tile.hash, value), false);
                 } else {
+                    let (start, end) = (area.left.max(start), area.right.min(end));
+                    let value = combine(
+                        combine(value, edges(columns, [left, right], start, end)),
+                        pair(start, end),
+                    );
                     (tile.hash, tile.is_flat) = (combine(tile.hash, value), false);
                 }
             }
@@ -1015,7 +1239,7 @@ pub(super) fn movement(before: &[Summary], after: &[Summary]) -> Option<i32> {
     for sample in after
         .iter()
         .step_by(after.len() / SAMPLES + 1)
-        .filter(|sample| sample.band.is_empty())
+        .filter(|sample| sample.free[1] == NOWHERE)
     {
         let same = before
             .iter()
@@ -1063,6 +1287,41 @@ pub(super) struct Plan<'a> {
 }
 
 impl Plan<'_> {
+    #[cfg(any(test, not(target_os = "macos")))]
+    fn areas(&self) -> Vec<IntRect> {
+        let rows = self
+            .grid
+            .rows_of(self.grid.window)
+            .filter(|row| self.has_changes[*row as usize]);
+        self.grid
+            .areas_in(rows, |tile| self.actions[tile] == Action::Paint)
+    }
+
+    fn clear(&self, band: &mut Band, rows: Range<i32>, columns: &Range<i32>) {
+        let Plan {
+            grid,
+            tiles,
+            actions,
+            has_changes,
+            ..
+        } = self;
+        for row in rows.filter(|row| has_changes[*row as usize]) {
+            let (first, mut column) = (row as usize * grid.columns, columns.start);
+            while column < columns.end {
+                let (start, base) = (column, tiles[first + column as usize].base);
+                let is_same =
+                    |tile: usize| actions[tile] == Action::Paint && tiles[tile].base == base;
+                column = (start..columns.end)
+                    .find(|it| !is_same(first + *it as usize))
+                    .unwrap_or(columns.end);
+                if start < column {
+                    set_rows(band.rows(grid.rect(row, start..column)), base);
+                }
+                column = column.max(start + 1);
+            }
+        }
+    }
+
     /// `area` is made of whole tiles.
     pub fn paint(&self, band: &mut Band, area: IntRect) {
         let Plan {
@@ -1072,24 +1331,7 @@ impl Plan<'_> {
             has_changes,
             ..
         } = self;
-        for row in grid.rows_of(area).filter(|row| has_changes[*row as usize]) {
-            let (first, columns) = (row as usize * grid.columns, grid.columns_of(area));
-            let mut column = columns.start;
-            while column < columns.end {
-                let (start, base) = (column, tiles[first + column as usize].base);
-                let is_same =
-                    |tile: usize| actions[tile] == Action::Paint && tiles[tile].base == base;
-                column = (start..columns.end)
-                    .find(|it| !is_same(first + *it as usize))
-                    .unwrap_or(columns.end);
-                let rect = grid.rect(row, start..column);
-                for y in (rect.top..rect.bottom).filter(|_| start < column) {
-                    let span = band.span(y, rect);
-                    set_row(&mut band.pixels[span], base);
-                }
-                column = column.max(start + 1);
-            }
-        }
+        let (mut uncleared, columns) = (grid.rows_of(area), grid.columns_of(area));
         for (index, (primitive, summary)) in self.primitives.iter().zip(self.summaries).enumerate()
         {
             let visible = summary.area.intersect(area);
@@ -1098,15 +1340,33 @@ impl Plan<'_> {
             }
             let is_needed =
                 |tile: usize| actions[tile] == Action::Paint && tiles[tile].first <= index as u32;
+            let mut above = IntRect::default();
             for row in grid
                 .rows_of(visible)
                 .filter(|row| has_changes[*row as usize])
             {
                 grid.runs(row, grid.columns_of(visible), is_needed, |run| {
-                    band.paint(primitive, run.intersect(visible))
+                    if (above.left, above.right, above.bottom) == (run.left, run.right, run.top) {
+                        above.bottom = run.bottom;
+                    } else {
+                        band.paint(
+                            primitive,
+                            std::mem::replace(&mut above, run).intersect(visible),
+                        );
+                    }
+                    // As late as possible, for the pixels to be in the cache when they are painted over.
+                    if row >= uncleared.start {
+                        self.clear(
+                            band,
+                            std::mem::replace(&mut uncleared.start, row + 1)..row + 1,
+                            &columns,
+                        );
+                    }
                 });
             }
+            band.paint(primitive, above.intersect(visible));
         }
+        self.clear(band, uncleared, &columns);
     }
 }
 
@@ -1115,6 +1375,8 @@ pub struct Compositor {
     pub atlas: Atlas,
     pub primitives: Vec<Primitive>,
     pub(super) shown: Vec<Summary>,
+    /// What `shown` was made of, unless it is empty.
+    summarized: Vec<Primitive>,
     /// The survey of `shown`.
     pub(super) tiles: Vec<Tile>,
     pub(super) window: IntRect,
@@ -1126,6 +1388,28 @@ pub struct Compositor {
 }
 
 impl Compositor {
+    pub(super) fn summarize(&self) -> Vec<Summary> {
+        let (known, shown) = (&self.summarized, &self.shown);
+        let more = known.len().wrapping_sub(self.primitives.len());
+        let find = |index: usize, it: &Primitive| {
+            known
+                .get(index)
+                .filter(|known| known.looks_like(it))
+                .and(shown.get(index))
+        };
+        let of = |(index, it): (usize, _)| {
+            find(index, it)
+                .or_else(|| find(index.wrapping_add(more), it))
+                .map_or_else(|| Summary::of(it), Summary::clone)
+        };
+        self.primitives.iter().enumerate().map(of).collect()
+    }
+
+    pub(super) fn show(&mut self, summaries: Vec<Summary>) {
+        self.summarized.clone_from(&self.primitives);
+        self.shown = summaries;
+    }
+
     /// While `window` is that of `shown`.
     pub(super) fn survey(&mut self, summaries: &[Summary], grid: &Grid) -> Vec<Tile> {
         let mut tiles = std::mem::take(&mut self.tiles);
@@ -1184,7 +1468,7 @@ impl Compositor {
             window,
             columns: width.div_ceil(TILE_WIDTH as usize),
         };
-        let summaries: Vec<_> = self.primitives.iter().map(Summary::of).collect();
+        let summaries = self.summarize();
         let tiles = self.survey(&summaries, grid);
         let mut hashes: Vec<_> = tiles.iter().map(|tile| tile.hash).collect();
         let hidden = grid.columns_of(window).end as usize..;
@@ -1200,16 +1484,27 @@ impl Compositor {
             let painted = buffer
                 .and_then(|index| self.buffers.get(index))
                 .map_or(&[][..], |(_, hashes)| hashes);
-            let tiles = hashes.iter().enumerate();
-            tiles
-                .map(|(tile, it)| {
-                    if *it == UNKNOWN || painted.get(tile) == Some(it) {
+            let (mut actions, mut painted) = (
+                vec![Action::Keep; hashes.len()],
+                painted.chunks(grid.columns),
+            );
+            for (actions, row) in actions
+                .chunks_mut(grid.columns)
+                .zip(hashes.chunks(grid.columns))
+            {
+                let painted = painted.next().unwrap_or_default();
+                if row == painted {
+                    continue;
+                }
+                for (tile, action) in actions.iter_mut().enumerate() {
+                    *action = if row[tile] == UNKNOWN || painted.get(tile) == Some(&row[tile]) {
                         Action::Keep
                     } else {
                         Action::Paint
-                    }
-                })
-                .collect()
+                    };
+                }
+            }
+            actions
         };
         let mut actions = compare(known);
         let count = |actions: &[Action]| actions.iter().filter(|it| **it == Action::Paint).count();
@@ -1237,7 +1532,11 @@ impl Compositor {
                 }
             }
         }
-        let mut moved = grid.areas(|tile| actions[tile] == Action::Move);
+        let mut moved = if down == 0 {
+            Vec::new()
+        } else {
+            grid.areas(|tile| actions[tile] == Action::Move)
+        };
         if down > 0 {
             moved.reverse();
         }
@@ -1256,7 +1555,8 @@ impl Compositor {
             }
         }
 
-        let (textures, primitives) = (&self.atlas.0.borrow().slots[..], &self.primitives);
+        let (atlas, primitives) = (self.atlas.0.borrow(), &self.primitives);
+        let textures = &atlas.slots[..];
         let has_changes = actions
             .chunks(grid.columns)
             .map(|row| row.contains(&Action::Paint))
@@ -1269,16 +1569,25 @@ impl Compositor {
             actions: &actions,
             has_changes,
         };
+        let mut areas = plan.areas();
+        let changed = areas
+            .iter()
+            .fold(IntRect::default(), |all, it| all.union(*it));
         let paint_band = |top: i32, pixels: &mut [Pixel]| {
             let rows = IntRect {
                 top,
                 bottom: top + (pixels.len() / width) as i32,
                 ..window
-            };
-            plan.paint(&mut Band::new(pixels, width, 0, top, textures), rows);
+            }
+            .intersect(changed);
+            if !rows.is_empty() {
+                plan.paint(&mut Band::new(pixels, width, 0, top, textures), rows);
+            }
         };
         let threads = count(&actions).div_ceil(TILES_PER_THREAD).min(MAX_THREADS);
-        if threads > 0 {
+        if threads == 1 {
+            paint_band(0, pixels.data);
+        } else if threads > 1 {
             let rows = grid.rows_of(window).len().div_ceil(threads) * TILE_HEIGHT as usize;
             let mut bands = (0..)
                 .step_by(rows)
@@ -1295,17 +1604,58 @@ impl Compositor {
         }
 
         if known != Some(0) {
-            actions = compare(Some(0));
+            let actions = compare(Some(0));
+            areas = grid.areas(|tile| actions[tile] == Action::Paint);
         }
-        let areas = grid.areas(|tile| actions[tile] == Action::Paint);
+        drop(atlas);
         self.buffers.retain(|(id, _)| *id != pixels.id);
         self.buffers.truncate(2);
         self.buffers.insert(0, (pixels.id, hashes));
-        (self.shown, self.tiles) = (summaries, tiles);
+        self.show(summaries);
+        self.tiles = tiles;
         Painted {
             moved,
             moved_by: down,
             areas,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_quarter_turn_moves_whole_pixels() {
+        let texel = |x: u8, y: u8| {
+            if (2..14).contains(&x) && (2..4).contains(&y) {
+                [x, 0, x, 200 + y]
+            } else {
+                [0; 4]
+            }
+        };
+        let (atlas, area) = (Atlas::default(), IntRect::new(0, 0, 6, 16));
+        let tile = atlas.insert(
+            true,
+            16,
+            6,
+            &(0..96)
+                .flat_map(|it| texel(it % 16, it / 16))
+                .collect::<Vec<_>>(),
+        );
+        let kind = Kind::Turned {
+            texture: tile.texture,
+            id: tile.id,
+            to_texels: Transform::from_row(0., -1., 1., 0., 0., 6.),
+        };
+        let shown = atlas
+            .snapshot(&[Primitive::new(area.to_rect(), area, kind)], area, 1)
+            .unwrap();
+        assert_eq!(
+            shown.pixels(),
+            (0..96)
+                .map(|it| texel(it / 6, 5 - it % 6))
+                .collect::<Vec<_>>()
+        );
     }
 }

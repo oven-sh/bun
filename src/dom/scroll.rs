@@ -1,17 +1,22 @@
 //! Scrolling, scrollbars and resizers.
 
+use core::cell::RefCell;
 use std::rc::Rc;
 
 use crate::abi::{Matrix, Rect};
-use crate::boxes::{BoxId, Kind, VIEWPORT};
+use crate::boxes::{BoxId, Kind, LayoutBox, VIEWPORT};
 use crate::document::Document;
+use crate::engine_event::{EngineEvent, ForNode};
 use crate::inline::{Item, ItemKind};
+use crate::layout::{at_least, at_most};
 use crate::lines::FragmentKind;
 use crate::name::{Map, Name, Set, name};
+use crate::order::Order as _;
 use crate::properties::Style;
+use crate::segments::Layers;
 use crate::selector::Pseudo;
 use crate::snap::{Intent, Snapping};
-use crate::tree::{DOCUMENT, NodeId, State};
+use crate::tree::{DOCUMENT, Element, Gone, NodeId, State};
 use crate::types::*;
 use crate::values::Size;
 
@@ -47,9 +52,15 @@ pub(crate) struct Scrolling {
     awaited: Vec<(u32, usize)>,
     /// Those that are not at the origin.
     scrolled: Set<NodeId>,
+    /// Something gets `display: none`, which offsets outlast.
+    pub(crate) is_hiding: bool,
+    /// The ancestors of those that had an offset then.
+    pub(crate) around_hidden: Set<NodeId>,
     moved: Vec<NodeId>,
     ended: Vec<NodeId>,
     pub(crate) timeline_sources: Set<NodeId>,
+    /// Among those, while nothing but first styles change.
+    pub(crate) declarers: RefCell<Option<crate::timeline::Declarers>>,
     /// What the containers of `scroll-state()` queries were last evaluated with.
     pub(crate) states: Map<NodeId, [[bool; 4]; 4]>,
     /// The sides towards which those have last been scrolled by a distance.
@@ -60,6 +71,8 @@ pub(crate) struct Scrolling {
     pub(crate) initial_targets: Set<NodeId>,
     /// Those that `scroll-initial-target` leaves alone.
     pub(crate) touched: Set<NodeId>,
+    /// By the user or a script, since the fragment of the URL was shown.
+    pub(crate) has_moved_on: bool,
     /// When the gesture counts as over.
     pub(crate) settling: Option<(NodeId, f64)>,
     /// The elements whose change of style rules out scroll anchoring.
@@ -97,31 +110,28 @@ impl Scrolling {
         fading.chain(self.settling.map(|it| it.1 - now))
     }
 
-    pub(crate) fn forget(&mut self, id: NodeId) {
-        if self.scrolled.remove(&id)
-            || !self.moved.is_empty()
-            || !self.smooth.is_empty()
-            || !self.shown.is_empty()
-        {
-            self.smooth.retain(|it| it.node != id);
-            self.moved.retain(|it| *it != id);
-            self.ended.retain(|it| *it != id);
-            self.shown.retain(|it| it.0 != id);
+    pub(crate) fn forget(&mut self, gone: &Gone) {
+        self.smooth.retain(|it| !gone.has(it.node));
+        self.moved.retain(|it| !gone.has(*it));
+        self.ended.retain(|it| !gone.has(*it));
+        self.shown.retain(|it| !gone.has(it.0));
+        self.snap_events.retain(|it| !gone.has(it.0));
+        for set in [
+            &mut self.scrolled,
+            &mut self.around_hidden,
+            &mut self.timeline_sources,
+            &mut self.initial_targets,
+            &mut self.touched,
+            &mut self.repositioned,
+        ] {
+            gone.leave_set(set);
         }
-        self.timeline_sources.remove(&id);
-        if self.states.remove(&id).is_some() {
-            self.directions.remove(&id);
-        }
-        if !self.snapping.is_empty() || !self.initial_targets.is_empty() {
-            self.snapping.remove(&id);
-            self.snap_events.retain(|it| it.0 != id);
-            self.initial_targets.remove(&id);
-        }
-        self.touched.remove(&id);
-        self.settling = self.settling.filter(|it| it.0 != id);
-        self.repositioned.remove(&id);
-        self.hovered = self.hovered.filter(|it| it.0 != id);
-        self.dragged = self.dragged.filter(|it| it.0 != id);
+        gone.leave_map(&mut self.states);
+        gone.leave_map(&mut self.directions);
+        gone.leave_map(&mut self.snapping);
+        self.settling = self.settling.filter(|it| !gone.has(it.0));
+        self.hovered = self.hovered.filter(|it| !gone.has(it.0));
+        self.dragged = self.dragged.filter(|it| !gone.has(it.0));
     }
 
     pub(crate) fn is_animating(&self) -> bool {
@@ -170,6 +180,87 @@ pub(crate) enum Alignment {
     CenterIfNeeded,
 }
 
+/// What is left for the document around a frame.
+#[derive(Clone, Copy)]
+pub(crate) struct Revealed {
+    /// In the viewport.
+    pub(crate) rect: Rect,
+    pub(crate) align: [Alignment; 2],
+    pub(crate) behavior: u8,
+}
+
+pub(crate) const FAR: Rect = Rect {
+    x: -1e9,
+    y: -1e9,
+    width: 2e9,
+    height: 2e9,
+};
+
+/// What quiet boxes come to in their parent.
+#[derive(Clone, Copy)]
+pub(crate) struct Contents {
+    /// Left, top, right and bottom.
+    reach: [f32; 4],
+    ink: [f32; 4],
+    layers: Layers,
+}
+
+impl Default for Contents {
+    fn default() -> Contents {
+        let nothing = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+        Contents {
+            reach: nothing,
+            ink: nothing,
+            layers: Layers::KNOWN,
+        }
+    }
+}
+
+impl Contents {
+    /// Whether it is known.
+    #[inline(always)]
+    pub(crate) fn add(&mut self, child: &LayoutBox) -> bool {
+        let (Some(spread), Some(ink), true) =
+            (child.spread.get(), child.ink.get(), child.is_quiet())
+        else {
+            return false;
+        };
+        let (at, layers) = (
+            [child.layout.location.x, child.layout.location.y],
+            child.painted.layers.get(),
+        );
+        let add = |[left, top, right, bottom]: [f32; 4], it: Rect| {
+            [
+                at_most(left, it.x),
+                at_most(top, it.y),
+                at_least(right, it.right()),
+                at_least(bottom, it.bottom()),
+            ]
+        };
+        let spread = spread.moved(at).intersection(&FAR);
+        (self.reach, self.ink) = (
+            if spread.is_empty() {
+                self.reach
+            } else {
+                add(self.reach, spread)
+            },
+            add(self.ink, ink.moved(at)),
+        );
+        self.layers = (self.layers | (layers - Layers::KNOWN)) - (Layers::KNOWN - layers);
+        true
+    }
+}
+
+#[inline(always)]
+fn around([left, top, right, bottom]: [f32; 4], it: Rect) -> Rect {
+    Rect::from_edges(
+        at_most(left, it.x),
+        at_most(top, it.y),
+        at_least(right, it.right()),
+        at_least(bottom, it.bottom()),
+    )
+}
+
 impl Document {
     pub(crate) fn scroll_offset(&self, node: NodeId) -> [f32; 2] {
         match node {
@@ -179,8 +270,22 @@ impl Document {
     }
 
     /// What the box adds to the scrollable overflow of its container, relative to the container's border box.
-    fn overflow_contribution(&self, id: BoxId) -> Rect {
-        let (it, mut rect) = (&self.boxes[id], self.extent(id));
+    pub(crate) fn overflow_contribution(&self, id: BoxId) -> Rect {
+        let it = &self.boxes[id];
+        if let Some(known) = it.spread.get() {
+            return known.moved([it.layout.location.x, it.layout.location.y]);
+        }
+        let mut rect = self.extent(id);
+        if it.overflow == [Overflow::Visible; 2] && it.style.stacking() == [false; 2] {
+            let inside = self.scrollable_overflow(id);
+            rect = if rect.is_empty() {
+                inside
+            } else {
+                rect.union(&inside)
+            };
+            it.spread.set(rect);
+            return rect.moved([it.layout.location.x, it.layout.location.y]);
+        }
         if !it.scrolls() && !it.style.contain().contains(Contain::LAYOUT) {
             let inside = self.scrollable_overflow(id);
             let inside = self
@@ -196,6 +301,66 @@ impl Document {
             .own_transform(id)
             .map_or(rect, |matrix| rect.transformed(&matrix));
         rect.moved([it.layout.location.x, it.layout.location.y])
+    }
+
+    /// While the boxes in it are at hand.
+    #[inline]
+    pub(crate) fn note_extents(&self, id: BoxId) {
+        let it = &self.boxes[id];
+        let gathered = self.gathered.take().filter(|it| it.0 == id).map(|it| it.1);
+        if !(it.is_ordinary
+            && it.turned == it.mode
+            && it.overflow == [Overflow::Visible; 2]
+            && (it.outside_marker == 0 || self.boxes[it.outside_marker].is_quiet())
+            && !it.has_legend
+            && it.is_quiet()
+            && it.hoisted.is_empty())
+        {
+            return;
+        }
+        let mut contents = gathered.unwrap_or_default();
+        if gathered.is_none()
+            && !(it.children.len() <= 8
+                && it.children.iter().all(|it| contents.add(&self.boxes[*it])))
+        {
+            let is_near = |it: &LayoutBox| {
+                it.ink.get().is_some()
+                    || it.children.len() <= 8
+                        && it
+                            .children
+                            .iter()
+                            .all(|it| self.boxes[*it].ink.get().is_some())
+            };
+            if it.children.len() <= 8
+                && it
+                    .children
+                    .iter()
+                    .map(|it| &self.boxes[*it])
+                    .all(|it| it.mode == WritingMode::HorizontalTb && is_near(it))
+            {
+                self.overflow_contribution(id);
+                self.ink(id);
+            }
+            return;
+        }
+        let (border, whole) = (it.layout.border, self.border_box(id));
+        let (reach, mut ink) = (
+            around(contents.reach, whole.shrunk(border.to_array())),
+            around(contents.ink, whole),
+        );
+        if it.outside_marker != 0 {
+            let at = self.boxes[it.outside_marker].layout.location;
+            ink = ink.union(&self.ink(it.outside_marker).moved([at.x, at.y]));
+        }
+        it.reach.set(reach);
+        it.spread.set(if whole.is_empty() {
+            reach
+        } else {
+            whole.union(&reach)
+        });
+        it.ink
+            .set(ink.union(&whole.grown(it.style.fixed().outset).grown(border.top)));
+        self.note_layers(id, contents.layers);
     }
 
     /// What it takes to show the document without scrolling.
@@ -250,25 +415,7 @@ impl Document {
             return known;
         }
         let client = self.client_box(id);
-        let in_flow = || {
-            it.children
-                .iter()
-                .copied()
-                .skip(usize::from(it.has_legend && it.scrolls()))
-                .filter(|child| !self.boxes[*child].style.is_out_of_flow())
-        };
-        let hoisted = it
-            .hoisted
-            .iter()
-            .copied()
-            .filter(|child| !self.is_fixed_to_viewport(*child));
-        let inside = (in_flow().filter(|_| !it.is_replaced()).chain(hoisted))
-            .map(|child| self.overflow_contribution(child));
-        let text = it
-            .inline
-            .as_ref()
-            .map(|it| self.from_lines(id, it.lines.bounds));
-        let mut reachable = Rect::new([-1e9, -1e9, 2e9, 2e9]);
+        let mut reachable = FAR;
         if it.scrolls() {
             let [backwards, upwards] = it.reaches_negative_overflow();
             let [left, right] = if backwards {
@@ -290,14 +437,35 @@ impl Document {
         } else {
             client
         };
-        let inside = inside.chain(text).map(|it| it.intersection(&reachable));
-        let mut reach = inside
-            .filter(|it| !it.is_empty())
-            .fold(least, |all, it| all.union(&it));
-        if it.scrolls() {
-            reach = reach.union(&self.padded_flow(id));
+        let mut reach = least;
+        let mut add = |rect: Rect| {
+            let rect = rect.intersection(&reachable);
+            if !rect.is_empty() {
+                reach = reach.union(&rect);
+            }
+        };
+        for child in it
+            .children
+            .iter()
+            .skip(usize::from(it.has_legend && it.scrolls()))
+        {
+            if !it.is_replaced() && !self.boxes[*child].style.is_out_of_flow() {
+                add(self.overflow_contribution(*child));
+            }
         }
-        it.reach.set(Some(reach));
+        it.hoisted
+            .iter()
+            .filter(|it| !self.is_fixed_to_viewport(**it))
+            .for_each(|it| add(self.overflow_contribution(*it)));
+        it.inline
+            .iter()
+            .for_each(|it| add(self.from_lines(id, it.lines.bounds)));
+        if it.scrolls() {
+            reach = Some(reach.union(&self.padded_flow(id)))
+                .filter(|it| !it.is_empty())
+                .unwrap_or(reach);
+        }
+        it.reach.set(reach);
         reach
     }
 
@@ -389,6 +557,22 @@ impl Document {
         self.own_box(node).filter(|it| self.boxes[*it].scrolls())
     }
 
+    pub(crate) fn forget_hidden_offsets(&mut self, leaving: NodeId) {
+        if self.scrolling.around_hidden.is_empty() || !self.scrolling.around_hidden.remove(&leaving)
+        {
+            return;
+        }
+        for node in &self.scrolling.scrolled {
+            if self.tree.flat_ancestors(*node).any(|it| it == leaving) {
+                self.tree
+                    .element_mut(*node)
+                    .and_then(Element::rare_if_any)
+                    .into_iter()
+                    .for_each(|it| it.scroll = [0.0; 2]);
+            }
+        }
+    }
+
     fn clamp_offset(&self, id: BoxId, offset: [f32; 2]) -> [f32; 2] {
         let (range, scale) = (self.scroll_range(id), self.environment.scale);
         [0, 1].map(|axis| {
@@ -408,8 +592,8 @@ impl Document {
         if offset == self.scroll_offset(node) {
             return false;
         }
-        match self.tree.element_mut(node) {
-            Some(element) => element.scroll = offset,
+        match self.tree.element_to_style(node) {
+            Some(element) => element.rare_mut().scroll = offset,
             None => self.scrolling.viewport = offset,
         }
         self.scrolling.scrolled.insert(node);
@@ -490,6 +674,7 @@ impl Document {
     fn note_direction(&mut self, node: NodeId, from: [f32; 2], to: [f32; 2]) {
         self.carousels.unpin(node);
         self.scrolling.touched.insert(node);
+        self.scrolling.has_moved_on |= from != to;
         if !self.scrolling.states.is_empty() && from != to {
             let known = self.scrolling.directions.entry(node).or_default();
             for (axis, [back, forth]) in [[3, 1], [0, 2]]
@@ -510,27 +695,29 @@ impl Document {
     }
 
     pub(crate) fn emit_scroll_events(&mut self) {
+        if !self.scrolling.has_events() {
+            return;
+        }
         let snaps = core::mem::take(&mut self.scrolling.snap_events);
-        let phases = [
-            (
-                "scrollsnapchanging",
-                "scroll",
-                core::mem::take(&mut self.scrolling.moved),
-            ),
-            (
-                "scrollsnapchange",
-                "scrollend",
-                core::mem::take(&mut self.scrolling.ended),
-            ),
-        ];
-        for (has_ended, (snap, kind, nodes)) in [false, true].into_iter().zip(phases) {
+        for (has_ended, nodes) in [
+            (false, core::mem::take(&mut self.scrolling.moved)),
+            (true, core::mem::take(&mut self.scrolling.ended)),
+        ] {
             snaps
                 .iter()
                 .filter(|it| it.1 == has_ended)
-                .for_each(|(node, _, [block, inline])| {
-                    self.emit(snap, *node, &format!(",{block},{inline}"))
+                .for_each(|(node, _, targets)| {
+                    self.emit(
+                        *node,
+                        ForNode::Snap {
+                            has_ended,
+                            targets: *targets,
+                        },
+                    )
                 });
-            nodes.into_iter().for_each(|node| self.emit(kind, node, ""));
+            nodes
+                .into_iter()
+                .for_each(|node| self.emit(node, ForNode::Scroll { has_ended }));
         }
     }
 
@@ -570,6 +757,7 @@ impl Document {
                 Intent::End(axes)
             },
         );
+        self.scrolling.has_moved_on |= from != to;
         match is_relative {
             true => self.note_direction(node, from, to),
             false => self.note_direction(node, to, to),
@@ -662,12 +850,19 @@ impl Document {
 
     pub(crate) fn report_finished_scrolls(&mut self) {
         let (awaited, smooth) = (&mut self.scrolling.awaited, &self.scrolling.smooth);
+        if awaited.is_empty() {
+            return;
+        }
         let over: Vec<_> = awaited
             .extract_if(.., |it| !smooth.iter().any(|smooth| smooth.request == it.0))
             .collect();
-        over.into_iter().for_each(|(request, left)| {
-            self.emit("scrolled", 0, &format!(",{request},{}", left > 0))
-        });
+        self.events.extend(
+            over.into_iter()
+                .map(|(request, left)| EngineEvent::ScrollRequest {
+                    request,
+                    was_interrupted: left > 0,
+                }),
+        );
     }
 
     pub(crate) fn advance_smooth_scrolls(&mut self, now: f64) {
@@ -842,7 +1037,7 @@ impl Document {
         align: [Alignment; 2],
         behavior: u8,
         only_nearest: bool,
-    ) {
+    ) -> Option<Revealed> {
         let mut rect = rect.transformed(&self.to_viewport(at));
         let mut at = at;
         while at != VIEWPORT && !self.is_fixed_to_viewport(at) && self.boxes[at].container != 0 {
@@ -881,9 +1076,38 @@ impl Document {
                 .intersection(&self.client_box(at))
                 .transformed(&matrix);
             if only_nearest {
-                break;
+                return None;
             }
         }
+        Some(Revealed {
+            rect,
+            align,
+            behavior,
+        })
+    }
+
+    pub(crate) fn scroll_into_view_for_script(
+        &mut self,
+        node: NodeId,
+        align: [Alignment; 2],
+        behavior: u8,
+        only_nearest: bool,
+        is_awaited: bool,
+    ) -> Option<Revealed> {
+        self.update_style();
+        if node != 0 && !self.unlock_around(node) {
+            return None;
+        }
+        self.catch_up_with_compositor();
+        self.update_layout_for(node);
+        let mut revealed = None;
+        self.scroll_for_script(is_awaited, |it| {
+            revealed = it.scroll_into_view(node, align, behavior, only_nearest)
+        });
+        if !self.carousels.is_empty() {
+            self.pin_marker_around(node);
+        }
+        revealed
     }
 
     /// `align` is for the inline and the block axis.
@@ -893,9 +1117,9 @@ impl Document {
         align: [Alignment; 2],
         behavior: u8,
         only_nearest: bool,
-    ) {
+    ) -> Option<Revealed> {
         let rects = self.local_rects(node);
-        let Some((at, _)) = rects.first() else { return };
+        let (at, _) = rects.first()?;
         let rect = rects
             .iter()
             .filter(|it| it.0 == *at)
@@ -918,7 +1142,7 @@ impl Document {
             align,
             behavior,
             only_nearest,
-        );
+        )
     }
 
     /// Top, right, bottom and left.
@@ -990,6 +1214,9 @@ impl Document {
     // ───────────────────────────── across layouts ─────────────────────────────
 
     pub(crate) fn update_scrollers_of_moved_boxes(&mut self) {
+        if self.moved_boxes.is_empty() {
+            return;
+        }
         let moved = core::mem::take(&mut self.moved_boxes)
             .into_iter()
             .filter_map(|it| self.own_box(it))
@@ -1009,15 +1236,18 @@ impl Document {
             })
             .collect();
         for id in scrollers {
-            let (it, needed) = (
-                &self.boxes[id],
-                self.needed_scrollbars(id, &self.scroll_range(id)),
-            );
+            let (it, range) = (&self.boxes[id], self.scroll_range(id));
+            let needed = self.needed_scrollbars(id, &range);
+            let need_each_other = it.scrollbars == [true; 2]
+                && range
+                    .iter()
+                    .all(|range| range[1] - range[0] < it.scrollbar_size + 0.5);
             let is_stale = |axis: usize| {
-                it.overflow[axis] == Overflow::Auto && it.scrollbars[axis] != needed[axis]
+                it.overflow[axis] == Overflow::Auto
+                    && (it.scrollbars[axis] != needed[axis] || need_each_other)
             };
             let node = it.node;
-            if is_stale(0) || is_stale(1) {
+            if (is_stale(0) || is_stale(1)) && !self.queries.with_new_scrollbars.contains(&id) {
                 self.boxes.mark_contents(id);
                 self.needs_layout = true;
             }
@@ -1025,9 +1255,9 @@ impl Document {
         }
     }
 
-    /// From the border box of `id` to that of `scroller`, if it scrolls with it.
-    pub(crate) fn to_scroller(&self, id: BoxId, scroller: BoxId) -> Option<Matrix> {
-        let (mut matrix, mut at) = (IDENTITY, id);
+    /// From the border box of `descendant` to that of `scroller`, if it scrolls with it.
+    pub(crate) fn to_scroller(&self, descendant: BoxId, scroller: BoxId) -> Option<Matrix> {
+        let (mut matrix, mut at) = (IDENTITY, descendant);
         while at != scroller {
             (at != 0 && !self.is_fixed_to_viewport(at)).then_some(())?;
             (matrix, at) = (
@@ -1240,7 +1470,7 @@ impl Document {
         });
         let mut anchors: Vec<_> = anchors.collect();
         if anchors.len() > 1 {
-            anchors.sort_by_cached_key(|it| {
+            anchors.order_by_cached_key(|it| {
                 core::cmp::Reverse(self.tree.flat_ancestors(it.scroller).count())
             });
         }

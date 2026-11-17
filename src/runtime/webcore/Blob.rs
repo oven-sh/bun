@@ -11,6 +11,7 @@ use core::ptr::NonNull;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 
+use crate::desktop::web::blob as web_blob;
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
@@ -269,7 +270,7 @@ pub(crate) trait BlobExt {
         cx: &mut JsScope<'_>,
         parts: JsLocal<'_>,
         options: JsLocal<'_>,
-    ) -> JsResult<*mut Blob>
+    ) -> JsResult<RefPtr<Blob>>
     where
         Self: Sized;
     fn init_with_all_ascii(
@@ -521,11 +522,8 @@ impl BlobExt for Blob {
         cx: &mut JsScope<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        unsafe extern "C" {
-            safe fn Bun__isDesktopRealm(global: &JSGlobalObject) -> bool;
-        }
         // `Bun.Image` reads and writes files.
-        if Bun__isDesktopRealm(cx.global()) {
+        if web_blob::Bun__isDesktopRealm(cx.global()) {
             return Err(cx
                 .global()
                 .throw_type_error(format_args!("image() is not available to web pages")));
@@ -556,6 +554,10 @@ impl BlobExt for Blob {
         None
     }
     fn on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W) -> crate::Result<()> {
+        if self.snapshot().is_some() {
+            let copy = web_blob::in_memory(self).map_err(|_| crate::Error::InvalidValue)?;
+            return copy.on_structured_clone_serialize(writer);
+        }
         let is_memory_backed = if let Some(store) = self.store.get() {
             matches!(store.data, store::Data::Bytes(_))
         } else {
@@ -951,6 +953,9 @@ impl BlobExt for Blob {
         cx: &mut JsScope<'_>,
         chunk_size: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        if web_blob::Bun__isDesktopRealm(cx.global()) || self.snapshot().is_some() {
+            return web_blob::stream(cx, self);
+        }
         self.get_stream_with_cache(
             &cx.js_thread(),
             this_value.to_js(),
@@ -1004,6 +1009,9 @@ impl BlobExt for Blob {
         Ok(stream)
     }
     fn text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, Blob::to_string));
+        }
         let _store = self.store.get().clone(); // hold a ref across the call
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_string(&cx, Lifetime::Clone))
@@ -1016,12 +1024,18 @@ impl BlobExt for Blob {
     }
 
     fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, Blob::to_array_buffer));
+        }
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_array_buffer(&cx, Lifetime::Clone))
     }
 
     fn bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, Blob::to_uint8_array));
+        }
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_uint8_array(&cx, Lifetime::Clone))
@@ -1371,8 +1385,6 @@ impl BlobExt for Blob {
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
-                // `writable_stream` adopts the dup'd ref by value; the
-                // MultiPartUpload derefs on done.
                 return crate::webcore::s3::client::writable_stream(
                     credentials_with_options.credentials.dupe(),
                     path,
@@ -1539,6 +1551,10 @@ impl BlobExt for Blob {
         content_type: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
+        if web_blob::Bun__isDesktopRealm(global_this) || self.snapshot().is_some() {
+            let (start, end, mime) = (start.to_js(), end.to_js(), content_type.to_js());
+            return web_blob::slice(global_this, self, start, end, mime);
+        }
 
         if self.size.get() == 0 {
             return Ok(Blob::init_empty(global_this).into_js(global_this));
@@ -1667,7 +1683,7 @@ impl BlobExt for Blob {
     // TODO: Move this to a separate `File` object or BunFile
     fn get_last_modified(&self) -> f64 {
         if let Some(store) = self.store.get() {
-            if matches!(store.data, store::Data::File(_)) {
+            if matches!(store.data, store::Data::File(_)) && self.snapshot().is_none() {
                 // do not hold a pattern-bound `&File` across
                 // `resolve_file_stat` — it materializes `&mut File` on the same
                 // memory (Stacked Borrows UB; the optimizer may legally cache the
@@ -1902,10 +1918,13 @@ impl BlobExt for Blob {
         cx: &mut JsScope<'_>,
         parts: JsLocal<'_>,
         options: JsLocal<'_>,
-    ) -> JsResult<*mut Blob> {
+    ) -> JsResult<RefPtr<Blob>> {
         let global_this = cx.global();
         let parts = parts.to_js();
         let options = options.to_js();
+        if web_blob::Bun__isDesktopRealm(global_this) {
+            return web_blob::construct_blob(global_this, parts, options);
+        }
         let blob: Blob;
         if parts.is_undefined() && options.is_undefined() {
             blob = Blob::init_empty(global_this);
@@ -3037,8 +3056,8 @@ impl<'a> FormDataContext<'a> {
 pub(crate) extern "C" fn Blob__onStructuredCloneSerialize(
     this: &Blob,
     serializer: &mut bun_jsc::CloneSerializer,
-) {
-    let _ = this.on_structured_clone_serialize(serializer);
+) -> bool {
+    this.on_structured_clone_serialize(serializer).is_ok()
 }
 
 /// Returns an empty value without throwing when the bytes are not a valid record (the deserializer reports its usual error).
@@ -3147,6 +3166,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
+            if web_blob::Bun__isDesktopRealm(global_this) {
+                return Err(crate::Error::InvalidValue);
+            }
             if version >= 4 {
                 file_size = Some(reader.read_int_le::<u64>()?);
             }
@@ -3262,9 +3284,17 @@ impl URLSearchParamsConverter {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
-    let this = Blob::from_js(&value)?;
-    Some(NonNull::new(Blob__dupe(&this)).expect("Blob__dupe returns a fresh heap allocation"))
+pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<RefPtr<Blob>> {
+    Some(Blob__dupe(&*Blob::from_js(&value)?))
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Blob__dupeForRealm(value: JSValue, realm: &JSGlobalObject) -> Option<RefPtr<Blob>> {
+    let this = Blob::from_js(&value)
+        .filter(|it| it.snapshot().is_some() || (!it.needs_to_read_file() && !it.is_s3()))?;
+    let copy = this.dupe_with_content_type(true);
+    copy.global_this.set(realm);
+    Some(Blob::new(copy))
 }
 
 #[unsafe(no_mangle)]
@@ -3276,7 +3306,7 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &Blob, path_str: &BunString) {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
+pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> RefPtr<Blob> {
     Blob::new(this.dupe_with_content_type(true))
 }
 
@@ -3346,7 +3376,6 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
     err: &bun_sys::Error,
     path_string: &bun_core::ZStr,
-    err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
         match mkdirp_parent(path_string.as_bytes()) {
@@ -3356,7 +3385,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
             }
             bun_sys::Result::Err(err2) => {
                 this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
-                this.set_system_error(err.with_path(err_path).to_system_error());
+                this.set_system_error(err.to_system_error());
                 this.set_opened_fd_if_present(Fd::INVALID);
                 return Retry::Fail;
             }
@@ -4225,6 +4254,10 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
             "Cannot write to a Blob backed by bytes, which are always read-only"
         )));
     }
+    if blob.snapshot().is_some() {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Cannot write to a File, which is read-only")));
+    }
     Ok(())
 }
 
@@ -4494,9 +4527,9 @@ bun_jsc::jsc_host_abi! {
         bits: JSValue,
         name: JSValue,
         options: JSValue,
-    ) -> Option<NonNull<Blob>> {
+    ) -> Option<RefPtr<Blob>> {
         match jsdom_file_construct(global_this, bits, name, options) {
-            Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct returns Blob::new (heap::alloc)")),
+            Ok(b) => Some(b),
             Err(jsc::JsError::Thrown) => None,
             Err(jsc::JsError::Terminated) => {
                 // A constructor runs beneath script: rethrow so the caller keeps unwinding.
@@ -4516,8 +4549,11 @@ pub(crate) fn jsdom_file_construct(
     bits: JSValue,
     name: JSValue,
     options: JSValue,
-) -> JsResult<*mut Blob> {
+) -> JsResult<RefPtr<Blob>> {
     jsc::mark_binding();
+    if web_blob::Bun__isDesktopRealm(global_this) {
+        return web_blob::construct_file(global_this, bits, name, options);
+    }
 
     let name = BunString::from_js(name, global_this)?;
     let blob = Blob::get::<false, true>(global_this, bits)?;
@@ -4882,7 +4918,7 @@ pub(crate) unsafe extern "C" fn Blob__fromBytes(
     global_this: &JSGlobalObject,
     ptr: *const u8,
     len: usize,
-) -> *mut Blob {
+) -> RefPtr<Blob> {
     if ptr.is_null() || len == 0 {
         return Blob::new(Blob::init_empty(global_this));
     }
@@ -4905,20 +4941,15 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     ptr: *const u8,
     len: usize,
     mime: *const c_char,
-) -> *mut Blob {
+) -> RefPtr<Blob> {
     // SAFETY: forwarded from caller's contract.
     let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
     // SAFETY: caller guarantees `mime` is a NUL-terminated 'static C string.
     let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
     if !mime_slice.is_empty() {
-        // SAFETY: `blob` is a fresh heap allocation returned by `Blob__fromBytes`;
-        // we are the sole owner until this function returns it.
-        unsafe {
-            (*blob)
-                .content_type
-                .set(BlobContentType::Owned(mime_slice.into()));
-            (*blob).content_type_was_set.set(true);
-        }
+        blob.content_type
+            .set(BlobContentType::Owned(mime_slice.into()));
+        blob.content_type_was_set.set(true);
     }
     blob
 }
@@ -4935,7 +4966,7 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     ptr: *mut u8,
     len: usize,
     mime: *const c_char,
-) -> *mut Blob {
+) -> RefPtr<Blob> {
     #[cfg(not(unix))]
     {
         // Windows Chrome backend never calls this; if it ever does, fall back to copying.
@@ -4946,8 +4977,10 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     {
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `[ptr, ptr+len)`
         // is a valid page-aligned mmap'd region we now own.
-        let bytes =
-            unsafe { store::Bytes::from_mapping(core::ptr::slice_from_raw_parts_mut(ptr, len)) };
+        let bytes = unsafe {
+            let bytes = NonNull::slice_from_raw_parts(NonNull::new_unchecked(ptr), len);
+            store::Bytes::from_mapping(bun_sys::Mmap::from_raw(bytes))
+        };
         let store = RefPtr::new(Store::new(
             store::Data::Bytes(bytes),
             bun_http_types::MimeType::NONE,
@@ -5163,7 +5196,7 @@ impl<const TYPED_ARRAY_VIEW: jsc::JSType> read_file::ReadFileToJs
         {
             return Err(g.throw_out_of_memory());
         }
-        jsc::ArrayBuffer::from_owned_bytes(by, TYPED_ARRAY_VIEW).to_js_unchecked(g)
+        jsc::ArrayBuffer::from_default_allocator(g, TYPED_ARRAY_VIEW, by.into_vec())
     }
     unsafe fn from_store(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue> {
         // SAFETY: fn contract.
@@ -5678,22 +5711,13 @@ pub(crate) trait FileOpener: Sized {
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
     /// straight through to the error branch.
-    fn try_mkdirp(
-        &mut self,
-        _err: bun_sys::Error,
-        _path: &bun_core::ZStr,
-        _display_path: &[u8],
-    ) -> Retry {
+    fn try_mkdirp(&mut self, _err: bun_sys::Error, _path: &bun_core::ZStr) -> Retry {
         Retry::No
     }
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let path_string = match self.pathlike() {
-            PathOrFileDescriptor::Path(p) => p.clone(),
-            PathOrFileDescriptor::Fd(_) => unreachable!(),
-        };
-        let path = path_string.slice_z(&mut buf);
+        let path = self.pathlike().path().slice_z(&mut buf);
 
         loop {
             match bun_sys::open(
@@ -5707,7 +5731,8 @@ pub(crate) trait FileOpener: Sized {
                 }
                 bun_sys::Result::Err(err) => {
                     if err.get_errno() == bun_sys::E::ENOENT {
-                        match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                        // Not `err`: its path is "" if the path does not fit `buf`.
+                        match self.try_mkdirp(err.with_path(self.pathlike().path().slice()), path) {
                             Retry::Continue => continue,
                             Retry::Fail => {
                                 // `mkdir_if_not_exists` has set `errno` and `system_error`.
@@ -5717,10 +5742,7 @@ pub(crate) trait FileOpener: Sized {
                             Retry::No => {}
                         }
                     }
-                    let err = node::fs::error_for_caller(
-                        [Some(&path_string), None],
-                        err.with_path(path_string.slice()),
-                    );
+                    let err = sys_error_with_path_like(&err, self.pathlike());
                     self.set_errno(bun_errno::from_errno(err.errno as i32).into());
                     self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
                     self.set_opened_fd(Fd::INVALID);

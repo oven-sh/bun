@@ -1,5 +1,7 @@
 //! From the rules that apply to an element to its computed style.
 
+mod forced_colors;
+
 use core::cell::{Cell, OnceCell, RefCell};
 use core::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -13,17 +15,21 @@ use crate::custom::{
     Changed, Customs, Entries, Function, Inherited, Lookup, Recent, Registry, Stack, Syntax, Text,
     guarded, has_tainted_url, style_query, untainted,
 };
+use crate::declarations::InlineBlocks;
 use crate::document::{Document, Environment, Quirks};
-use crate::name::{FastHasher, Map, Name, is_name, name};
+use crate::name::{FastHasher, Map, Name, is_name, keyed_hasher, name};
+use crate::order::Order as _;
 use crate::properties::{Font, Groups, Id, Ink, Only, Prop, Style, Text as TextGroup, Value};
-use crate::rules::{Dependencies, Found, INLINE, Kind, Level, Matched, Query, RuleSet};
+use crate::rules::{
+    Decided, Dependencies, Found, INLINE, Kind, Level, Matched, Memo, Query, RuleSet, last_version,
+};
 use crate::selector::{Bloom, HasResults, Pseudo, ScrollPart};
 use crate::sheet::{
     AtKind, Block, Cached, ContainerQuery, Declaration, Declared, Defined, Sheet, Wanted, Wide,
     Within,
 };
 use crate::theme::{Look, Styled};
-use crate::tree::{AFTER, BEFORE, DOCUMENT, Flags, Namespace, NodeId, State};
+use crate::tree::{AFTER, BEFORE, DOCUMENT, Element, Flags, Namespace, NodeId, State};
 use crate::types::*;
 use crate::values::*;
 
@@ -34,11 +40,19 @@ struct Shared {
     style: Rc<Style>,
 }
 
+/// The style of an element in one that has `display: none`.
+pub(crate) struct Hidden {
+    versions: [u32; 3],
+    by: (NodeId, Rc<Style>),
+    style: Rc<Style>,
+}
+
 /// The same object for all elements that match the same rules.
 pub(crate) struct RuleList {
     matched: Box<[Matched]>,
     /// The `epoch` of the `Stylist` when an element last matched it.
     epoch: Cell<u32>,
+    has_important: OnceCell<bool>,
     shared: RefCell<SmallVec<[Shared; 1]>>,
     /// Of the declarations of custom properties that win.
     customs: OnceCell<u64>,
@@ -47,13 +61,36 @@ pub(crate) struct RuleList {
 }
 
 impl RuleList {
+    fn new(matched: Box<[Matched]>, epoch: u32) -> RuleList {
+        RuleList {
+            matched,
+            epoch: Cell::new(epoch),
+            has_important: OnceCell::new(),
+            shared: RefCell::default(),
+            customs: OnceCell::new(),
+            plan: OnceCell::new(),
+            other_plans: OnceCell::new(),
+        }
+    }
+
+    fn has_important(&self) -> bool {
+        *self.has_important.get_or_init(|| {
+            self.matched
+                .iter()
+                .any(|it| it.block.declarations().has_important)
+        })
+    }
+
     /// The properties that animations do not override.
-    pub(crate) fn important(&self, flow: Flow) -> SmallVec<[Id; 4]> {
-        match self
-            .matched
+    pub(crate) fn is_important_custom(&self, name: Name) -> bool {
+        self.plan(Flow::DEFAULT)
+            .customs
             .iter()
-            .any(|it| it.block.declarations().has_important)
-        {
+            .any(|it| it.0 == name && self.declaration(it.1).0.important)
+    }
+
+    pub(crate) fn important(&self, flow: Flow) -> SmallVec<[Id; 4]> {
+        match self.has_important() {
             true => self
                 .plan(flow)
                 .longhands
@@ -106,6 +143,8 @@ pub(crate) struct Stylist {
     /// What each container has been asked.
     pub(crate) answers: RefCell<Map<NodeId, Vec<(Rc<Wanted>, bool)>>>,
     pub(crate) initial: Rc<Style>,
+    anonymous_block: Rc<crate::properties::Layout>,
+    effects_in_user_space: Rc<crate::properties::Effects>,
     /// The computed values of a box that no declaration applies to.
     lists: RefCell<Map<u64, Rc<RuleList>>>,
     /// How often `lists` was cleaned up, and how many it kept the last time.
@@ -115,7 +154,7 @@ pub(crate) struct Stylist {
     recent_groups: (Recent<Font>, Recent<TextGroup>, Recent<Ink>),
     /// By `RuleList::customs` and what is inherited, both of which the value keeps alive, if they depend on nothing else.
     customs: RefCell<Map<(u64, *const Inherited), (Customs, Rc<Inherited>, Box<[Matched]>)>>,
-    blocks: Map<u64, Rc<Block>>,
+    pub(crate) blocks: InlineBlocks,
     substituted: RefCell<Map<u64, (Option<Rc<[Value]>>, Deps, u32)>>,
 }
 
@@ -138,9 +177,11 @@ impl Stylist {
 }
 
 thread_local! {
-    static USER_AGENT: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("user_agent.css"), b"", b"", 0, Default::default()));
-    static QUIRKS: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("quirks.css"), b"", b"", 0, Default::default()));
-    static MATH: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("math.css"), b"", b"", 0, Default::default()));
+    static USER_AGENT: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("user_agent.css"), b"", Default::default()));
+    static QUIRKS: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("quirks.css"), b"", Default::default()));
+    static FORCED_COLORS: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("forced_colors.css"), b"", Default::default()));
+    static MATH: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("math.css"), b"", Default::default()));
+    static MEDIA: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("media.css"), b"", Default::default()));
 }
 
 impl Stylist {
@@ -152,6 +193,17 @@ impl Stylist {
             dependencies: RefCell::default(),
             has_results: HasResults::default(),
             answers: Default::default(),
+            anonymous_block: Rc::new(crate::properties::Layout {
+                display: DisplayValue(Display::Block),
+                ..(*initial.layout).clone()
+            }),
+            effects_in_user_space: Rc::new(crate::properties::Effects {
+                origin: crate::transform::TransformOrigin(
+                    crate::values::Position(Lp::ZERO, Lp::ZERO),
+                    0.0,
+                ),
+                ..(*initial.effects).clone()
+            }),
             initial: Rc::new(initial),
             lists: RefCell::default(),
             epoch: (0, 0),
@@ -159,7 +211,7 @@ impl Stylist {
             recent_customs: Recent::default(),
             recent_groups: Default::default(),
             customs: RefCell::default(),
-            blocks: Map::default(),
+            blocks: InlineBlocks::default(),
             substituted: RefCell::default(),
         };
         stylist.user_agent.get_mut().is_of_user_agent = true;
@@ -172,6 +224,8 @@ impl Stylist {
             (&USER_AGENT, true),
             (&QUIRKS, environment.quirks == Quirks::All),
             (&MATH, environment.has_math),
+            (&MEDIA, environment.has_media),
+            (&FORCED_COLORS, environment.forces_colors),
         ];
         let sheets: Vec<_> = needed
             .into_iter()
@@ -183,33 +237,29 @@ impl Stylist {
             .set_sheets(&sheets, environment, self.dependencies.get_mut());
     }
 
-    /// Equal `style` attributes share a block, and so their elements can share a style.
     pub(crate) fn block(
         &mut self,
         source: &[u8],
         within: Within,
         base_url: &Rc<[u8]>,
     ) -> Option<Rc<Block>> {
-        if source.is_empty() {
-            return None;
-        }
-        let block = self
-            .blocks
-            .entry(bun_wyhash::hash_with_seed(within as u64, source));
-        Some(Rc::clone(block.or_insert_with(|| {
-            Rc::new(Block::parse(source, within, base_url))
-        })))
+        (!source.is_empty()).then(|| self.blocks.parse(source, within, base_url))
     }
 
     pub(crate) fn collect_garbage(&mut self, elements: usize) {
         let lists = self.lists.get_mut();
-        let is_due = lists.len() > self.epoch.1 + 512;
+        let is_due = lists.len() > self.epoch.1 + 512.max(elements / 4);
         if is_due {
+            let next = self.epoch.0.wrapping_add(1);
             lists.retain(|_, list| Rc::strong_count(list) > 1 || list.epoch.get() == self.epoch.0);
-            self.epoch = (self.epoch.0.wrapping_add(1), lists.len());
+            lists
+                .values()
+                .filter(|it| Rc::strong_count(it) > 1)
+                .for_each(|it| it.epoch.set(next));
+            self.epoch = (next, lists.len());
         }
         if is_due || self.blocks.len() > 2 * elements + 1024 {
-            self.blocks.retain(|_, block| Rc::strong_count(block) > 1);
+            self.blocks.forget_unused();
         }
         if self.substituted.get_mut().len() > 1 << 15 {
             self.substituted.get_mut().clear();
@@ -225,32 +275,28 @@ impl Stylist {
         self.customs.get_mut().clear();
     }
 
-    fn intern(&self, found: Found) -> Rc<RuleList> {
+    fn intern(&self, found: &Found) -> Rc<RuleList> {
+        self.intern_all(found.iter().map(|it| &it.1))
+    }
+
+    fn intern_all<'a>(&self, found: impl Iterator<Item = &'a Matched> + Clone) -> Rc<RuleList> {
         let mut hasher = FastHasher::default();
-        for (_, it) in &found {
+        for it in found.clone() {
             (Rc::as_ptr(&it.block), it.level, it.layer, it.only).hash(&mut hasher);
         }
+        let identity = |it: &Matched| (Rc::as_ptr(&it.block), it.level, it.layer, it.only);
         let same = |list: &RuleList| {
-            list.matched.len() == found.len()
-                && (list.matched.iter().zip(&found)).all(|(a, (_, b))| {
-                    Rc::ptr_eq(&a.block, &b.block)
-                        && (a.level, a.layer, a.only) == (b.level, b.layer, b.only)
-                })
+            list.matched
+                .iter()
+                .map(identity)
+                .eq(found.clone().map(identity))
         };
         let mut lists = self.lists.borrow_mut();
         if let Some(list) = lists.get(&hasher.finish()).filter(|list| same(list)) {
             list.epoch.set(self.epoch.0);
             return Rc::clone(list);
         }
-        let matched = found.into_iter().map(|it| it.1).collect();
-        let list = Rc::new(RuleList {
-            matched,
-            epoch: Cell::new(self.epoch.0),
-            shared: RefCell::default(),
-            customs: OnceCell::new(),
-            plan: OnceCell::new(),
-            other_plans: OnceCell::new(),
-        });
+        let list = Rc::new(RuleList::new(found.cloned().collect(), self.epoch.0));
         lists.insert(hasher.finish(), Rc::clone(&list));
         list
     }
@@ -286,20 +332,51 @@ impl Subject for Environment {
             F::PrefersReducedMotion => reduce(self.reduced_motion),
             F::PrefersReducedTransparency => reduce(self.reduced_transparency),
             F::PrefersContrast => pick(self.more_contrast, name!("more"), name!("no-preference")),
+            F::ForcedColors => pick(self.forces_colors, name!("active"), name!("none")),
             F::PrefersColorScheme => pick(self.dark, name!("dark"), name!("light")),
             _ => Actual::Keyword(name!("none")),
         })
     }
 
     fn compute(&self, value: &Node) -> f64 {
+        let RootUnits {
+            size,
+            line_height,
+            metrics: [x_height, zero_advance, cap_height, ideograph_advance],
+        } = self.initial_font;
+        let (font, metrics) = (
+            FontUnits {
+                size,
+                line_height,
+                weight: 400.0,
+            },
+            || crate::abi::FontMetrics {
+                x_height,
+                zero_advance,
+                cap_height,
+                ideograph_advance,
+                ..Default::default()
+            },
+        );
         value.compute(
             &Ctx {
                 viewport: self.viewport,
                 container: &|| self.viewport,
+                root: self.initial_font,
+                font,
+                metrics: &metrics,
                 ..Ctx::dummy()
             },
             1.0,
         )
+    }
+}
+
+fn default_font_size(style: &Style) -> f32 {
+    if *style.font.family.0 == *b"\x01monospace\0" {
+        13.0
+    } else {
+        16.0
     }
 }
 
@@ -381,6 +458,8 @@ bitflags::bitflags! {
         const INSIDE_MARKER = 1 << 11;
         const SELECT_SIZER = 1 << 12;
         const MARKER_GROUP = 1 << 13;
+        /// An SVG element without a box.
+        const IN_USER_SPACE = 1 << 14;
     }
 }
 
@@ -444,6 +523,8 @@ impl Highlight {
 enum Pending<'a> {
     Declared(&'a Declaration, &'a Block),
     Done(Option<Text>),
+    /// With `Stack::open_cycle`.
+    InCycle(Option<Text>, Name),
 }
 
 struct Resolver<'a> {
@@ -465,6 +546,16 @@ impl Resolver<'_> {
         let (registry, name) = (&self.document.styles.registry, self.declared[index].0);
         let (declaration, block) = match &self.declared[index].1 {
             Pending::Done(value) => return value.clone(),
+            Pending::InCycle(value, start) => {
+                let mut start = *start;
+                while !self.stack.reaches(start)
+                    && let Ok(index) = self.declared.binary_search_by_key(&start, |it| it.0)
+                    && let Pending::InCycle(_, outer) = self.declared[index].1
+                {
+                    start = outer;
+                }
+                return value.clone();
+            }
             Pending::Declared(declaration, block) => (*declaration, *block),
         };
         let registered = registry.get(&name);
@@ -476,7 +567,7 @@ impl Resolver<'_> {
                     by,
                     source,
                     computed,
-                }) = declaration.cached.borrow().as_deref()
+                }) = &*declaration.cached.borrow()
                     && Rc::ptr_eq(by, registered)
                     && *source == value
                     && cx.zoom == 1.0
@@ -497,17 +588,16 @@ impl Resolver<'_> {
                 cx.uses(own.deps.get());
                 if own.deps.get().is_empty() && cx.zoom == 1.0 {
                     let by = Rc::clone(registered);
-                    declaration
-                        .cached
-                        .replace(Some(Box::new(Cached::Registered {
-                            by,
-                            source: value,
-                            computed: computed.clone(),
-                        })));
+                    declaration.cached.replace(Some(Cached::Registered {
+                        by,
+                        source: value,
+                        computed: computed.clone(),
+                    }));
                 }
                 computed
             }
         };
+        let mut open_cycle = None;
         let value = match &declaration.value {
             Declared::Wide(wide) => self.wide(name, *wide),
             Declared::Text(value) => {
@@ -515,6 +605,7 @@ impl Resolver<'_> {
             }
             Declared::Template(template) => {
                 let substituted = guarded(self, name, |this| template.value(this));
+                open_cycle = self.stack.open_cycle.take();
                 if let Some(wide @ (Wide::Revert | Wide::RevertLayer | Wide::RevertRule)) =
                     substituted.as_ref().and_then(|it| Wide::of(it))
                 {
@@ -523,12 +614,15 @@ impl Resolver<'_> {
                 match substituted.and_then(|it| {
                     Wide::of(&it).map_or_else(|| compute(it, self.cx), |wide| self.wide(name, wide))
                 }) {
-                    None if registered.is_some() => unset(self.customs),
+                    None if registered.is_some_and(|it| it.interpolates()) => unset(self.customs),
                     value => value,
                 }
             }
         };
-        self.declared[index].1 = Pending::Done(value.clone());
+        self.declared[index].1 = match open_cycle {
+            Some(start) => Pending::InCycle(value.clone(), start),
+            None => Pending::Done(value.clone()),
+        };
         value
     }
 }
@@ -690,8 +784,15 @@ impl Resolver<'_> {
             Some((values, own.deps.get()))
         };
         let is_usual = cx.zoom == 1.0 && cx.root == self.document.environment.root_font;
-        let can_keep = |deps: Deps| is_usual && Deps::OF_DOCUMENT.contains(deps);
+        let can_keep = |deps: Deps| is_usual && (Deps::OF_DOCUMENT | Deps::SCHEME).contains(deps);
         let generations = self.document.environment.generations();
+        let generations = |deps: Deps| {
+            (if deps.intersects(Deps::ROOT | Deps::VIEWPORT) {
+                generations(deps)
+            } else {
+                0
+            }) ^ u32::from(cx.dark && deps.contains(Deps::SCHEME)) << 31
+        };
         let (mut out, alias);
         let (source, is_substituted): (&[u8], _) = match &declaration.value {
             Declared::Wide(wide) => return Outcome::Wide(*wide),
@@ -722,7 +823,7 @@ impl Resolver<'_> {
                 }
             },
         };
-        let known = match declaration.cached.borrow().as_deref() {
+        let known = match &*declaration.cached.borrow() {
             Some(Cached::Values {
                 generation,
                 flow,
@@ -745,7 +846,7 @@ impl Resolver<'_> {
                 let parsed = match is_substituted && is_usual {
                     false => parse(source),
                     true => {
-                        let mut hasher = FastHasher::default();
+                        let mut hasher = keyed_hasher();
                         (prop, cx.flow, source, block.base_url.as_ptr()).hash(&mut hasher);
                         let mut memo = self.document.styles.substituted.borrow_mut();
                         match memo.get(&hasher.finish()) {
@@ -773,13 +874,13 @@ impl Resolver<'_> {
                         Box::default()
                     };
                     let (generation, flow) = (generations(deps), cx.flow);
-                    *declaration.cached.borrow_mut() = Some(Box::new(Cached::Values {
+                    *declaration.cached.borrow_mut() = Some(Cached::Values {
                         generation,
                         flow,
                         substituted,
                         values,
                         deps,
-                    }));
+                    });
                 }
                 parsed
             }
@@ -809,16 +910,26 @@ enum Phase {
 
 impl Phase {
     fn of(id: Id) -> Phase {
+        static PHASES: std::sync::LazyLock<Vec<Phase>> =
+            std::sync::LazyLock::new(|| Id::ALL.iter().map(|it| Phase::find(*it)).collect());
+        PHASES[id as usize]
+    }
+
+    fn find(id: Id) -> Phase {
         match id {
             Id::Zoom | Id::ColorScheme | Id::Direction | Id::WritingMode | Id::MathDepth => {
                 Phase::First
             }
             Id::LineHeight => Phase::LineHeight,
-            _ if Id::FONT_OPTIONS.contains(&id) => Phase::LineHeight,
+            _ if Id::FONT_OPTIONS.contains(&id) || id == Id::TextRendering => Phase::LineHeight,
             _ if id.is_early() => Phase::Font,
             _ => Phase::Rest,
         }
     }
+}
+
+fn is_ink(id: Id) -> bool {
+    (Id::Color as u16..=Id::ScrollbarColor as u16).contains(&(id as u16))
 }
 
 /// The declarations that win.
@@ -828,6 +939,8 @@ struct Plan {
     /// By phase, and then by declaration.
     longhands: Box<[(Id, At)]>,
     styled: Styled,
+    /// The properties of `Groups::ink` that it sets.
+    inks: Box<[Id]>,
 }
 
 /// What `revert` and `revert-layer` have ruled out.
@@ -858,7 +971,7 @@ impl Plan {
             .filter(|it| it.1.block.declarations().has_important)
             .map(|it| (it, true))
             .collect();
-        ordered.sort_by_key(|((_, it), _)| (it.level, it.layer != INLINE, it.layer));
+        ordered.order_by_key(|((_, it), _)| (it.level, it.layer != INLINE, it.layer));
         ordered.extend(descending().map(|it| (it, false)));
 
         let (mut customs, mut longhands, mut seen) =
@@ -896,7 +1009,7 @@ impl Plan {
                     }
                     continue;
                 }
-                let ids = declaration.prop.longhands(flow);
+                let ids = declaration.longhands(flow);
                 let is_all = ids.len() == Id::ALL.len();
                 for id in ids.iter().copied() {
                     if seen[id as usize]
@@ -921,15 +1034,27 @@ impl Plan {
                 }
             }
         }
-        customs.sort_by_key(|it| it.0);
+        customs.order_by_key(|it| it.0);
         customs.dedup_by_key(|it| it.0);
-        longhands.sort_by_key(|it| Phase::of(it.0));
+        longhands.order_by_key(|it| Phase::of(it.0));
         let is_for_control = longhands.iter().any(|it| it.0 == Id::Appearance);
         let by_page = longhands
             .iter()
             .filter(|it| is_for_control && matched[usize::from(it.1.0)].level > Level::Hints);
+        let inherits = |at: At| {
+            matches!(
+                matched[usize::from(at.0)].block.declarations().list[usize::from(at.1)].value,
+                Declared::Wide(Wide::Inherit | Wide::Unset)
+            )
+        };
+        let inks = longhands
+            .iter()
+            .filter(|it| is_ink(it.0) && !inherits(it.1))
+            .map(|it| it.0)
+            .collect();
         Plan {
             styled: by_page.map(|it| Styled::by(it.0)).collect(),
+            inks,
             customs: customs.into(),
             longhands: longhands.into(),
         }
@@ -1064,12 +1189,18 @@ impl Document {
 
     fn container_size(&self, id: NodeId) -> [f32; 2] {
         self.tree[id].set(Flags::MEASURES_CONTAINER);
+        self.size_of_container_from(self.tree.flat_parent(id))
+    }
+
+    fn size_of_container_from(&self, first: NodeId) -> [f32; 2] {
         [0, 1].map(|axis| {
-            let containers = self.tree.flat_ancestors(id).filter(|it| {
-                self.tree
-                    .style(*it)
-                    .is_some_and(|it| it.queried_axes()[axis])
-            });
+            let containers = core::iter::once(first)
+                .chain(self.tree.flat_ancestors(first))
+                .filter(|it| {
+                    self.tree
+                        .style(*it)
+                        .is_some_and(|it| it.queried_axes()[axis])
+                });
             let mut containers = containers.inspect(|it| self.tree[*it].set(Flags::IS_MEASURED));
             containers
                 .find_map(|it| self.tree.element(it)?.container_size)
@@ -1141,6 +1272,20 @@ impl Document {
     }
 
     /// Parses the rules that have been waiting for something that the element has.
+    /// Of an element whose other keys have been.
+    pub(crate) fn activate_key(&self, id: NodeId, key: Name) {
+        let dependencies = &mut self.styles.dependencies.borrow_mut();
+        for rules in [
+            Some(&self.styles.user_agent),
+            self.styles.scopes.get(&self.tree[id].scope).map(|it| &**it),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            rules.borrow_mut().activate_key(key, dependencies);
+        }
+    }
+
     pub(crate) fn activate_rules(&self, id: NodeId) {
         let Some(element) = self.tree.element(id) else {
             return;
@@ -1163,18 +1308,35 @@ impl Document {
             let has = |pseudo| u8::from(self.has_rules_for(element.pseudo.nested(pseudo)));
             return has(Pseudo::Before) << BEFORE | has(Pseudo::After) << AFTER;
         }
-        let found = self.with_query(id, Pseudo::Before, bloom, |query| {
-            let mut found = 0;
-            if self.has_default_styles(id) {
-                self.styles
-                    .user_agent
-                    .borrow()
-                    .generated(&query, Kind::Normal, 0, &mut found);
-            }
-            self.visit_rule_sets(&query, &mut |rules, kind, host, _| {
-                rules.generated(&query, kind, host, &mut found)
-            });
-            found
+        let known = bloom
+            .and_then(|it| it.last_generated.take())
+            .filter(|it| it.0 == id)
+            .map(|it| it.1);
+        let found = known.unwrap_or_else(|| {
+            self.with_query(id, Pseudo::Before, bloom, |query| {
+                let (mut found, user_agent) = (0, self.styles.user_agent.borrow());
+                if self.has_default_styles(id) {
+                    user_agent.generated(&query, Kind::Normal, 0, &mut found);
+                }
+                self.visit_rule_sets(&query, &mut |rules, kind, host, _| {
+                    rules.generated(&query, kind, host, &mut found)
+                });
+                if query.signature != Name::NONE
+                    && self
+                        .tree
+                        .element(id)
+                        .is_some_and(|it| self.has_rules_of_one_scope(id, it))
+                    && user_agent.always_generates_the_same(query.signature)
+                    && let Some(rules) = self.styles.scopes.get(&self.tree[id].scope)
+                {
+                    rules.borrow().note_generated(
+                        query.signature,
+                        user_agent.version_of_memos.get(),
+                        found,
+                    );
+                }
+                found
+            })
         });
         debug_assert!(bloom.is_none() || found == self.generated_by_rules(id, None));
         found
@@ -1218,42 +1380,101 @@ impl Document {
         bloom: Option<&Bloom>,
         with_starting: bool,
     ) -> Rc<RuleList> {
+        if let Some(element) = self.tree.element(id).filter(|it| !it.is_generated()) {
+            // The element that the memos were made for has activated the same.
+            if element.has_only_classes()
+                && !self.has_own_declarations(element)
+                && let Some(known) = bloom
+                    .filter(|_| !with_starting)
+                    .and_then(|it| self.known_rules(id, element, it).ok())
+            {
+                known.epoch.set(self.styles.epoch.0);
+                return known;
+            }
+            self.activate_rules(id);
+        }
+        self.match_active_rules(id, bloom, with_starting)
+    }
+
+    /// For an element that no rule is waiting for.
+    pub(crate) fn match_active_rules(
+        &self,
+        id: NodeId,
+        bloom: Option<&Bloom>,
+        with_starting: bool,
+    ) -> Rc<RuleList> {
         let mut matched = Found::new();
         let Some(element) = self.tree.element(id) else {
-            return self.styles.intern(matched);
+            return self.styles.intern(&matched);
         };
         if !element.is_generated() {
-            self.activate_rules(id);
-            self.with_query(id, Pseudo::None, bloom, |query| {
-                self.collect_rules(
-                    &Query {
-                        with_starting,
-                        ..query
-                    },
-                    &mut matched,
-                    element.hints.as_ref(),
-                );
-                debug_assert!({
-                    let mut expected = Found::new();
+            let known = bloom
+                .filter(|_| !with_starting)
+                .map_or(Err(None), |it| self.known_rules(id, element, it));
+            let of_sheets = known.or_else(|decided| {
+                self.with_query(id, Pseudo::None, bloom, |query| {
+                    let hints = element.hints.as_ref().filter(|_| decided.is_none());
                     self.collect_rules(
                         &Query {
                             with_starting,
-                            signature: Name::NONE,
                             ..query
                         },
-                        &mut expected,
-                        element.hints.as_ref(),
+                        &mut matched,
+                        hints,
                     );
-                    expected
-                        .iter()
-                        .map(|it| it.0)
-                        .eq(matched.iter().map(|it| it.0))
+                    debug_assert!({
+                        let mut expected = Found::new();
+                        self.collect_rules(
+                            &Query {
+                                with_starting,
+                                signature: Name::NONE,
+                                ..query
+                            },
+                            &mut expected,
+                            hints,
+                        );
+                        expected
+                            .iter()
+                            .map(|it| it.0)
+                            .eq(matched.iter().map(|it| it.0))
+                    });
                 });
+                let (memo, key) = decided.ok_or(())?;
+                let list = self.styles.intern(&matched);
+                matched.clear();
+                memo.keep(key, &list);
+                Ok::<_, ()>(list)
             });
+            if let Ok(list) = of_sheets {
+                list.epoch.set(self.styles.epoch.0);
+                if !self.has_own_declarations(element) {
+                    return list;
+                }
+                matched.extend(list.matched.iter().map(|it| (0, it.clone())));
+                if let Some(block) = &element.hints {
+                    let hints = Matched {
+                        block: Rc::clone(block),
+                        level: Level::Hints,
+                        layer: 0,
+                        only: Only::default(),
+                    };
+                    matched.insert(
+                        matched.partition_point(|it| it.1.level < Level::Hints),
+                        (0, hints),
+                    );
+                }
+            }
         }
         if element.pseudo != Pseudo::None {
             let is_transition = matches!(element.pseudo, Pseudo::Transition(..));
             self.tree.matched_part.set(id);
+            let decided = bloom
+                .filter(|_| !with_starting)
+                .and_then(|it| self.decide_rules_of_generated(element, it));
+            if let Some(list) = decided.as_ref().and_then(|(memo, key)| memo.list(*key)) {
+                list.epoch.set(self.styles.epoch.0);
+                return list;
+            }
             self.with_query(
                 element.originator,
                 element.pseudo,
@@ -1271,6 +1492,29 @@ impl Document {
                         element.hints.as_ref().filter(|_| is_transition),
                     );
                 },
+            );
+            if let Some((memo, key)) = decided {
+                let list = self.styles.intern(&matched);
+                memo.keep(key, &list);
+                return list;
+            }
+        }
+        if let Some(originator) = self.originator_for_cue_styles(id, element) {
+            let mut embedded = Found::new();
+            self.activate_rules(originator);
+            self.with_query(originator, element.pseudo, None, |query| {
+                self.collect_rules(
+                    &Query {
+                        with_starting,
+                        ..query
+                    },
+                    &mut embedded,
+                    None,
+                )
+            });
+            matched.insert_many(
+                matched.partition_point(|it| it.1.level <= Level::Own),
+                embedded,
             );
         }
         if let Some(outer) = self
@@ -1317,7 +1561,278 @@ impl Document {
                 },
             ));
         }
-        self.styles.intern(matched)
+        self.styles.intern(&matched)
+    }
+
+    /// https://w3c.github.io/webvtt/#css-extensions-introduction. It is in the shadow tree of what follows the root of the cue.
+    fn originator_for_cue_styles(&self, id: NodeId, element: &Element) -> Option<NodeId> {
+        matches!(element.pseudo, Pseudo::Part(part) if crate::name::is_name!(part, "cue" | "-internal-cue-node")).then_some(())?;
+        let root = core::iter::once(id)
+            .chain(self.tree.flat_ancestors(id))
+            .find(|it| self.tree.is_root_of_cue(*it))?;
+        Some(self.tree[self.tree.element(self.tree[root].next)?.shadow_root].first_child)
+    }
+
+    pub(crate) fn has_own_declarations(&self, element: &Element) -> bool {
+        element.hints.is_some()
+            || element.inline_style.is_some()
+            || !self.smil.effects.styles.is_empty()
+    }
+
+    /// Whether no sheets apply to it but those of the user agent and of its scope.
+    fn has_rules_of_one_scope(&self, id: NodeId, element: &Element) -> bool {
+        let node = &self.tree[id];
+        element.shadow_root == 0
+            && node.slot == 0
+            && (node.scope == DOCUMENT || !element.has(name!("part")))
+    }
+
+    /// Or else where they are to be kept.
+    #[inline]
+    fn known_rules(
+        &self,
+        id: NodeId,
+        element: &Element,
+        bloom: &Bloom,
+    ) -> Result<Rc<RuleList>, Option<(Rc<Memo>, (u32, u32, u32))>> {
+        if let Some(list) = self.recall_rules(id, element, bloom) {
+            return Ok(list);
+        }
+        let (memo, key) = self.decide_rules(id, element, bloom).ok_or(None)?;
+        let Some(list) = memo.list(key) else {
+            return Err(Some((memo, key)));
+        };
+        self.remember_rules(id, element, bloom, &list);
+        Ok(list)
+    }
+
+    fn versions_of_memos(&self, id: NodeId) -> Option<[u32; 2]> {
+        Some([
+            self.styles.user_agent.borrow().version_of_memos.get(),
+            self.styles
+                .scopes
+                .get(&self.tree[id].scope)?
+                .borrow()
+                .version_of_memos
+                .get(),
+        ])
+    }
+
+    #[inline]
+    fn recall_rules(&self, id: NodeId, element: &Element, bloom: &Bloom) -> Option<Rc<RuleList>> {
+        let classes = element.classes.as_ref()?;
+        (element.pseudo == Pseudo::None
+            && bloom.is_above(&self.tree, id)
+            && self.has_rules_of_one_scope(id, element))
+        .then_some(())?;
+        let (signature, versions) = (
+            self.styles
+                .dependencies
+                .borrow()
+                .signature(&self.tree, id, bloom),
+            self.versions_of_memos(id)?,
+        );
+        let known = classes.decided.borrow();
+        let known = known
+            .iter()
+            .find(|it| (it.signature, it.versions) == (signature, versions))?;
+        let list = known.list.upgrade()?;
+        bloom.last_generated.set(Some((id, known.generates)));
+        bloom.last_decided.set(id);
+        Some(list)
+    }
+
+    /// After `decide_rules`.
+    fn remember_rules(&self, id: NodeId, element: &Element, bloom: &Bloom, list: &Rc<RuleList>) {
+        if bloom.last_decided.get() == id
+            && let (Some(classes), Some((of, generates)), Some(versions)) = (
+                &element.classes,
+                bloom.last_generated.get(),
+                self.versions_of_memos(id),
+            )
+            && of == id
+        {
+            let signature = self
+                .styles
+                .dependencies
+                .borrow()
+                .signature(&self.tree, id, bloom);
+            let mut known = classes.decided.borrow_mut();
+            known.swap(0, 1);
+            known[0] = Decided {
+                signature,
+                versions,
+                list: Rc::downgrade(list),
+                generates,
+            };
+        }
+    }
+
+    fn decide_rules_of_generated(
+        &self,
+        element: &Element,
+        bloom: &Bloom,
+    ) -> Option<(Rc<Memo>, (u32, u32, u32))> {
+        let (id, outer) = (element.originator, self.tree.element(element.originator)?);
+        (element.is_generated()
+            && element.state.is_empty()
+            && !self.has_own_declarations(element)
+            && outer.pseudo == Pseudo::None
+            && self.has_rules_of_one_scope(id, outer))
+        .then_some(())?;
+        let (scope, user_agent) = (self.tree[id].scope, self.styles.user_agent.borrow());
+        self.with_query(id, element.pseudo, Some(bloom), |query| {
+            (query.signature != Name::NONE).then_some(())?;
+            let (memo, own) = self
+                .styles
+                .scopes
+                .get(&scope)?
+                .borrow()
+                .decide(&query, self.tree.host_of(scope))?;
+            Some((
+                memo,
+                (
+                    user_agent.version_of_memos.get(),
+                    user_agent.decide(&query, 0)?.1,
+                    own,
+                ),
+            ))
+        })
+    }
+
+    fn decide_rules(
+        &self,
+        id: NodeId,
+        element: &Element,
+        bloom: &Bloom,
+    ) -> Option<(Rc<Memo>, (u32, u32, u32))> {
+        (element.pseudo == Pseudo::None && self.has_rules_of_one_scope(id, element))
+            .then_some(())?;
+        let (scope, user_agent) = (self.tree[id].scope, self.styles.user_agent.borrow());
+        self.with_query(id, Pseudo::None, Some(bloom), |query| {
+            (query.signature != Name::NONE).then_some(())?;
+            let (memo, own) = self
+                .styles
+                .scopes
+                .get(&scope)?
+                .borrow()
+                .decide(&query, self.tree.host_of(scope))?;
+            let version = user_agent.version_of_memos.get();
+            bloom.last_generated.set(
+                memo.always_generates
+                    .get()
+                    .filter(|it| it.0 == version)
+                    .map(|it| (id, it.1)),
+            );
+            if memo.is_alone_in_deciding.get() == Some(version) {
+                bloom.last_decided.set(
+                    if memo.is_decided() && bloom.last_generated.get().is_some() {
+                        id
+                    } else {
+                        0
+                    },
+                );
+                return Some((memo, (version, 0, own)));
+            }
+            bloom.last_decided.set(0);
+            let (defaults, matching) = user_agent.decide(&query, 0)?;
+            memo.is_alone_in_deciding
+                .set(defaults.is_decided().then_some(version));
+            Some((memo, (version, matching, own)))
+        })
+    }
+
+    /// `None` if `old` already has the `style` attribute as it is.
+    pub(crate) fn with_inline_style(&self, id: NodeId, old: &RuleList) -> Option<Rc<RuleList>> {
+        let (block, known) = (
+            self.tree.element(id)?.inline_style.as_ref(),
+            old.matched.iter().rposition(Matched::is_inline),
+        );
+        if block.map(Rc::as_ptr) == known.map(|it| Rc::as_ptr(&old.matched[it].block)) {
+            return None;
+        }
+        let (before, after) = old.matched.split_at(
+            known.unwrap_or_else(|| old.matched.partition_point(|it| it.level <= Level::Own)),
+        );
+        let inline = block.map(|it| Matched {
+            only: Only::default(),
+            block: Rc::clone(it),
+            level: Level::Own,
+            layer: INLINE,
+        });
+        Some(
+            self.styles.intern_all(
+                before
+                    .iter()
+                    .chain(&inline)
+                    .chain(&after[usize::from(known.is_some())..]),
+            ),
+        )
+    }
+
+    /// If all that `with_inline_style` has done is to give values to properties that nothing depends on.
+    pub(crate) fn amended_style(
+        &self,
+        id: NodeId,
+        old: &RuleList,
+        new: &RuleList,
+        style: &Style,
+    ) -> Option<Style> {
+        let block = &new.matched.last().filter(|it| it.is_inline())?.block;
+        let before = old
+            .matched
+            .last()
+            .filter(|it| it.is_inline())
+            .map_or(&[][..], |it| &it.block.declarations().list);
+        let after = &block.declarations().list;
+        if after.len() < before.len()
+            || old.has_important()
+            || block.declarations().has_important
+            || style.layout.appearance != Appearance::None
+            || style.deps.contains(Deps::ANCHOR)
+            || self.anchored.contains_key(&id)
+            || self.tree.is_root(id)
+            || self.environment.forces_colors
+            || self.tree.element(id)?.pseudo != Pseudo::None
+        {
+            return None;
+        }
+        _ = new.has_important.set(false);
+        let mut amended = style.clone();
+        amended.deps |= self.with_context(id, style, style, |cx| {
+            let mut resolver = self.resolver(id, &style.customs, cx);
+            for (index, declaration) in after.iter().enumerate() {
+                let (Declared::Text(text), Prop::Long(property)) =
+                    (&declaration.value, declaration.prop)
+                else {
+                    return None;
+                };
+                match before.get(index).map(|it| (it.prop, &it.value)) {
+                    Some((Prop::Long(other), Declared::Text(same)))
+                        if other == property && same == text =>
+                    {
+                        continue;
+                    }
+                    Some((Prop::Long(other), Declared::Text(_))) if other == property => {}
+                    Some(_) => return None,
+                    None => {}
+                }
+                let is_repeated = after[index + 1..]
+                    .iter()
+                    .any(|it| matches!(it.prop, Prop::Long(it) if it == property));
+                let Outcome::Values(values) = resolver.resolve(declaration, block) else {
+                    return None;
+                };
+                (property.stands_alone() && !is_repeated).then_some(())?;
+                values.iter().for_each(|it| amended.groups.set(it));
+            }
+            Some(cx.deps.get())
+        })?;
+        amended.keep_findings_of(style);
+        (!amended
+            .deps
+            .intersects(Deps::ATTRIBUTES | Deps::SIBLINGS | Deps::CONTAINER | Deps::ANCHOR))
+        .then_some(amended)
     }
 
     pub(crate) fn level_of_declaration(&self, id: NodeId, property: Id) -> Option<Level> {
@@ -1381,7 +1896,7 @@ impl Document {
         self.with_query(id, pseudo, None, |query| {
             self.collect_rules(&query, &mut matched, None)
         });
-        let rules = (!matched.is_empty()).then(|| self.styles.intern(matched))?;
+        let rules = (!matched.is_empty()).then(|| self.styles.intern(&matched))?;
         let has_customs = !rules.plan(Flow::DEFAULT).customs.is_empty();
         let customs = if has_customs {
             self.cascade_customs(id, &rules, style, style, &[]).0
@@ -1427,6 +1942,11 @@ impl Document {
             .set(&Value::Color(crate::color::Rgba::plain(CURRENT)));
         let mut highlight = parent.as_deref().cloned().unwrap_or_default();
         self.with_context(id, &style, &probe, |cx| {
+            let cx = &Ctx {
+                container: &|| self.size_of_container_from(id),
+                deps: Cell::default(),
+                ..*cx
+            };
             let mut resolver = self.resolver(id, &customs, cx);
             for (property, at) in rules
                 .plan(style.flow())
@@ -1453,6 +1973,9 @@ impl Document {
                 );
             }
         });
+        highlight.has_colors &= !(self.environment.forces_colors
+            && pseudo == Pseudo::Selection
+            && style.takes_forced_colors());
         Some(
             parent
                 .filter(|it| **it == highlight)
@@ -1533,7 +2056,7 @@ impl Document {
                 None,
             );
         });
-        let rules = self.styles.intern(matched);
+        let rules = self.styles.intern(&matched);
         rules
             .has_author_rules()
             .then(|| self.shared_style(id, &rules, parent, Adjust::empty()))
@@ -1544,104 +2067,121 @@ impl Document {
         let Some(element) = self.tree.element(id) else {
             return adjust;
         };
-        let moved_to = self.layout_parent_of_part(id);
-        let layout_parent = (moved_to
-            .into_iter()
-            .chain(self.tree.flat_ancestors(moved_to.unwrap_or(id))))
-        .filter_map(|ancestor| self.tree.style(ancestor))
-        .find(|style| style.display() != Display::Contents);
+        let moved_to = if element.pseudo == Pseudo::None {
+            None
+        } else {
+            self.layout_parent_of_part(id)
+        };
+        let mut above = moved_to.unwrap_or_else(|| self.tree.flat_parent(id));
+        while above != 0
+            && self
+                .tree
+                .style(above)
+                .is_none_or(|it| it.display() == Display::Contents)
+        {
+            above = self.tree.flat_parent(above);
+        }
         let is_math = element.namespace == Namespace::MathMl;
-        let is_blockified = layout_parent.is_some_and(|it| {
-            it.display().blockifies_children()
-                && !it.clamps_lines()
-                && (is_math || !it.display().is_math())
-        });
-        adjust.set(Adjust::MATH, is_math);
-        adjust.set(Adjust::BLOCKIFY, is_blockified);
-        adjust.set(Adjust::LEGEND, element.html_tag() == name!("legend"));
-        adjust.set(
-            Adjust::INLINIFY,
-            layout_parent.is_some_and(|it| {
+        if let Some(it) = self.tree.style(above) {
+            adjust.set(
+                Adjust::BLOCKIFY,
+                it.display().blockifies_children()
+                    && !it.clamps_lines()
+                    && (is_math || !it.display().is_math()),
+            );
+            adjust.set(
+                Adjust::INLINIFY,
                 matches!(
                     it.display(),
                     Display::Ruby | Display::BlockRuby | Display::RubyText
-                )
-            }),
-        );
-        adjust.set(
-            Adjust::TEXT_FIELD,
-            element.pseudo == Pseudo::Part(name!("-webkit-textfield-decoration-container")),
-        );
-        adjust.set(
-            Adjust::MARKER_GROUP,
-            element.pseudo == Pseudo::Scroll(ScrollPart::Group),
-        );
-        adjust.set(
-            Adjust::SELECT_SIZER,
-            element.pseudo == Pseudo::Part(name!("-internal-select-sizer")),
-        );
-        adjust.set(Adjust::ROOT, self.tree.is_root(id));
-        adjust.set(
-            Adjust::TOP_LAYER,
-            self.tree[id].has(Flags::TOP_LAYER) || element.pseudo == Pseudo::Backdrop,
-        );
-        if matches!(element.pseudo, Pseudo::Part(part) if part == name!("-internal-editor-container"))
-        {
-            let clips = |it: &Rc<Style>| match if it.flow().is_vertical() {
-                &it.layout.width
-            } else {
-                &it.layout.height
-            } {
-                Size::Length(Lp::Px(height)) if *height > it.line_height().floor() => true,
-                Size::Length(Lp::Fraction(_) | Lp::Calc(_)) => true,
-                _ => {
-                    it.metrics.ascent + it.metrics.descent + it.metrics.line_gap > it.line_height()
-                }
-            };
-            adjust.set(
-                Adjust::NORMAL_LINES,
-                self.tree.style(element.originator).is_some_and(clips),
+                ),
             );
         }
-        let is_svg = |id| {
-            self.tree
-                .element(id)
-                .is_some_and(|it| it.namespace == Namespace::Svg)
-        };
-        adjust.set(Adjust::IN_SVG, is_svg(id) && is_svg(self.tree[id].parent));
+        adjust.set(Adjust::ROOT, self.tree.is_root(id));
+        adjust.set(Adjust::TOP_LAYER, self.tree[id].has(Flags::TOP_LAYER));
+        match element.pseudo {
+            Pseudo::Part(part) if part == name!("-webkit-textfield-decoration-container") => {
+                adjust |= Adjust::TEXT_FIELD
+            }
+            Pseudo::Part(part) if part == name!("-internal-select-sizer") => {
+                adjust |= Adjust::SELECT_SIZER
+            }
+            Pseudo::Part(part) if part == name!("-internal-editor-container") => {
+                let clips = |it: &Rc<Style>| match if it.flow().is_vertical() {
+                    &it.layout.width
+                } else {
+                    &it.layout.height
+                } {
+                    Size::Length(Lp::Px(height)) if *height > it.line_height().floor() => true,
+                    Size::Length(Lp::Fraction(_) | Lp::Calc(_)) => true,
+                    _ => {
+                        it.metrics.ascent + it.metrics.descent + it.metrics.line_gap
+                            > it.line_height()
+                    }
+                };
+                adjust.set(
+                    Adjust::NORMAL_LINES,
+                    self.tree.style(element.originator).is_some_and(clips),
+                );
+            }
+            Pseudo::Scroll(ScrollPart::Group) => adjust |= Adjust::MARKER_GROUP,
+            Pseudo::Backdrop => adjust |= Adjust::TOP_LAYER,
+            Pseudo::Marker => {
+                let is_inside = self
+                    .tree
+                    .style(element.originator)
+                    .is_some_and(|it| it.text.list_position == ListStylePosition::Inside);
+                adjust.set(
+                    Adjust::INSIDE_MARKER,
+                    is_inside || self.tree.html_tag(element.originator) == name!("summary"),
+                );
+            }
+            _ => {}
+        }
+        match element.namespace {
+            Namespace::Html => {
+                adjust.set(Adjust::LEGEND, element.tag == name!("legend"));
+                adjust.set(
+                    Adjust::ATOMIC,
+                    is_name!(
+                        element.tag,
+                        "img"
+                            | "video"
+                            | "audio"
+                            | "canvas"
+                            | "iframe"
+                            | "embed"
+                            | "object"
+                            | "input"
+                            | "textarea"
+                            | "select"
+                            | "meter"
+                            | "progress"
+                            | "br"
+                            | "wbr"
+                    ),
+                );
+            }
+            Namespace::Svg
+                if self
+                    .tree
+                    .element(self.tree[id].parent)
+                    .is_some_and(|it| it.namespace == Namespace::Svg) =>
+            {
+                adjust |= Adjust::IN_SVG
+            }
+            Namespace::Svg => adjust |= Adjust::OUTER_SVG,
+            Namespace::MathMl => adjust |= Adjust::MATH,
+            Namespace::Other => {}
+        }
+        let is_outer_svg = element.tag == name!("svg")
+            && !self
+                .tree
+                .element(self.tree[id].parent)
+                .is_some_and(crate::svg::has_svg_children);
         adjust.set(
-            Adjust::OUTER_SVG,
-            is_svg(id) && !adjust.contains(Adjust::IN_SVG),
-        );
-        let is_inside = || {
-            self.tree
-                .style(element.originator)
-                .is_some_and(|it| it.text.list_position == ListStylePosition::Inside)
-                || self.tree.html_tag(element.originator) == name!("summary")
-        };
-        adjust.set(
-            Adjust::INSIDE_MARKER,
-            element.pseudo == Pseudo::Marker && is_inside(),
-        );
-        adjust.set(
-            Adjust::ATOMIC,
-            is_name!(
-                element.html_tag(),
-                "img"
-                    | "video"
-                    | "audio"
-                    | "canvas"
-                    | "iframe"
-                    | "embed"
-                    | "object"
-                    | "input"
-                    | "textarea"
-                    | "select"
-                    | "meter"
-                    | "progress"
-                    | "br"
-                    | "wbr"
-            ),
+            Adjust::IN_USER_SPACE,
+            element.namespace == Namespace::Svg && !is_outer_svg,
         );
         adjust
     }
@@ -1672,14 +2212,7 @@ impl Document {
                 only: Only::default(),
             }])
             .collect();
-        let rules = RuleList {
-            matched,
-            epoch: Cell::default(),
-            shared: Default::default(),
-            customs: Default::default(),
-            plan: OnceCell::new(),
-            other_plans: OnceCell::new(),
-        };
+        let rules = RuleList::new(matched, 0);
         Some(self.cascade(id, &rules, parent, self.adjustments(id), &[], &[]))
     }
 
@@ -1768,13 +2301,46 @@ impl Document {
         if let Some(found) = found {
             return Rc::clone(&found.style);
         }
+        let similar = shared.first().filter(|it| {
+            (it.adjust, it.generation) == (adjust, generations(it.style.deps))
+                && !it.style.deps.intersects(Deps::PARENT | Deps::INK)
+                && it.style.zoom == it.parent.zoom
+                && it.parent.inherits_the_same_but_ink(parent)
+        });
+        let inked = similar.map(|it| {
+            let mut style = Style::clone(&it.style);
+            style.groups.ink = Rc::clone(&parent.ink);
+            rules
+                .plan(style.flow())
+                .inks
+                .iter()
+                .for_each(|id| style.groups.set(&it.style.get(*id)));
+            match Rc::ptr_eq(&style.ink, &parent.ink) {
+                false if style.ink == it.style.ink => return Rc::clone(&it.style),
+                false => self.styles.recent_groups.2.share(&mut style.groups.ink),
+                true => {}
+            }
+            Rc::new(style)
+        });
         drop(shared);
-        let mut style = self.cascade(id, rules, parent, adjust, &[], &[]);
+        debug_assert!(inked.as_ref().is_none_or(|it| {
+            let mut count = 0;
+            it.differences(&self.cascade(id, rules, parent, adjust, &[], &[]), |_| {
+                count += 1
+            });
+            count == 0
+        }));
+        let style = inked.unwrap_or_else(|| {
+            let mut style = self.cascade(id, rules, parent, adjust, &[], &[]);
+            rules
+                .shared
+                .borrow()
+                .first()
+                .into_iter()
+                .for_each(|last| style.groups.share_with(&last.style));
+            Rc::new(style)
+        });
         let mut shared = rules.shared.borrow_mut();
-        if let Some(last) = shared.first() {
-            style.groups.share_with(&last.style);
-        }
-        let style = Rc::new(style);
         if !style
             .deps
             .intersects(Deps::ATTRIBUTES | Deps::SIBLINGS | Deps::CONTAINER)
@@ -1806,8 +2372,10 @@ impl Document {
         read: impl FnOnce(&Ctx) -> R,
     ) -> R {
         read(&Ctx {
-            viewport: [0, 1]
-                .map(|axis| self.environment.viewport[axis] - self.root_scrollbars[axis]),
+            viewport: [
+                self.environment.viewport[0] - self.root_scrollbars[0],
+                self.environment.viewport[1] - self.root_scrollbars[1],
+            ],
             root: self.environment.root_font,
             font: fonts_from.font_units(),
             metrics: &|| fonts_from.metrics,
@@ -1833,8 +2401,9 @@ impl Document {
             },
             element: id,
             color: fonts_from.ink.color,
-            accent: self.environment.accent,
+            highlight: self.environment.highlight[0],
             dark: own.dark,
+            forces_colors: self.environment.forces_colors,
             zoom: own.zoom,
             flow: own.flow(),
             base_url: b"",
@@ -1865,7 +2434,7 @@ impl Document {
             return self.cascade_customs(id, rules, parent, parent, &[]);
         }
         let hash = rules.customs.get_or_init(|| {
-            let mut hasher = FastHasher::default();
+            let mut hasher = keyed_hasher();
             winners
                 .iter()
                 .for_each(|it| core::ptr::from_ref(rules.declaration(it.1).0).hash(&mut hasher));
@@ -1922,7 +2491,7 @@ impl Document {
                     .chain(declared)
                     .collect();
                 if !animated.is_empty() {
-                    declared.sort_by_key(|it| it.0);
+                    declared.order_by_key(|it| it.0);
                     declared.dedup_by_key(|it| it.0);
                 }
                 let mut resolver = Resolver {
@@ -1996,7 +2565,14 @@ impl Document {
                 let mut resolver = self.resolver(id, &style.customs, cx);
                 for won in winners.chunk_by(|a, b| a.1 == b.1) {
                     let (declaration, block) = rules.declaration(won[0].1);
-                    match resolver.resolve(declaration, block) {
+                    let outcome = resolver.resolve(declaration, block);
+                    if matches!(outcome, Outcome::Wide(_))
+                        && !matches!(declaration.value, Declared::Wide(_))
+                        && won.iter().any(|it| is_ink(it.0))
+                    {
+                        cx.uses(Deps::INK);
+                    }
+                    match outcome {
                         Outcome::Values(values) if values.len() == won.len() => {
                             values.iter().for_each(|it| groups.set(it))
                         }
@@ -2010,12 +2586,21 @@ impl Document {
                         Outcome::Wide(wide) => {
                             for (id, _) in won {
                                 match (wide, id.is_inherited()) {
+                                    (Wide::Initial, _) if *id == Id::Color => id
+                                        .parse(b"canvastext", cx)
+                                        .iter()
+                                        .for_each(|it| groups.set(it)),
                                     (Wide::Initial, true) => {
-                                        groups.set(&initial.get(*id).zoomed(cx.zoom))
+                                        groups.set(&initial.get(*id).zoomed(1.0, cx.zoom))
+                                    }
+                                    (Wide::Initial | Wide::Unset, false)
+                                        if *id == Id::TransformOrigin =>
+                                    {
+                                        groups.set(&initial.get(*id))
                                     }
                                     (Wide::Inherit, false) => {
                                         cx.uses(Deps::PARENT);
-                                        groups.set(&parent.get(*id).zoomed(cx.zoom / parent.zoom));
+                                        groups.set(&parent.get(*id).zoomed(parent.zoom, cx.zoom));
                                     }
                                     _ => {}
                                 }
@@ -2038,9 +2623,10 @@ impl Document {
 
     pub(crate) fn resolve_font(&self, id: NodeId, style: &mut Style, parent: &Style) {
         let has_same_options = Rc::ptr_eq(&style.svg, &parent.svg)
-            || Id::FONT_OPTIONS
-                .iter()
-                .all(|it| style.other_if_set(*it) == parent.other_if_set(*it));
+            || style.svg.text_rendering == parent.svg.text_rendering
+                && Id::FONT_OPTIONS
+                    .iter()
+                    .all(|it| style.other_if_set(*it) == parent.other_if_set(*it));
         if style.font == parent.font && has_same_options {
             (style.font_id, style.metrics) = (parent.font_id, parent.metrics);
             style.groups.font = Rc::clone(&parent.font);
@@ -2083,6 +2669,9 @@ impl Document {
             animates: Default::default(),
             ..*parent
         };
+        if adjust.contains(Adjust::IN_USER_SPACE) {
+            style.groups.effects = Rc::clone(&self.styles.effects_in_user_space);
+        }
         if core::ptr::eq(parent, &raw const *self.styles.initial) {
             style.dark = self.environment.is_dark(ColorScheme::empty());
         }
@@ -2105,9 +2694,11 @@ impl Document {
                     inherited
                         .extend((it.is_inherited() && Phase::of(it) != Phase::First).then_some(it))
                 });
-                inherited
-                    .into_iter()
-                    .for_each(|it| style.groups.set(&parent.get(it).zoomed(zoom)));
+                inherited.into_iter().for_each(|it| {
+                    style
+                        .groups
+                        .set(&parent.get(it).zoomed(parent.zoom, style.zoom))
+                });
                 zoomed = Some(style.clone());
             }
             let fonts_from = zoomed.as_ref().unwrap_or(parent);
@@ -2120,18 +2711,11 @@ impl Document {
             let is_keyword = style.deps.contains(Deps::FONT_SIZE_KEYWORD);
             style.has_absolute_font_size = style.deps.contains(Deps::ABSOLUTE_FONT_SIZE)
                 || parent.has_absolute_font_size && !is_keyword;
-            let default_size = |style: &Style| {
-                if *style.font.family.0 == *b"\x01monospace\0" {
-                    13.0
-                } else {
-                    16.0
-                }
-            };
-            let scale = default_size(&style)
+            let scale = default_font_size(&style)
                 / if is_keyword {
                     16.0
                 } else {
-                    default_size(parent)
+                    default_font_size(parent)
                 };
             if scale != 1.0 && !style.has_absolute_font_size {
                 style
@@ -2181,16 +2765,28 @@ impl Document {
             widths.into_iter().for_each(|it| {
                 style
                     .groups
-                    .set(&self.styles.initial.get(it).zoomed(style.zoom))
+                    .set(&self.styles.initial.get(it).zoomed(1.0, style.zoom))
             });
         }
         self.cascade_phase(id, rules, Phase::Rest, parent, &mut style, None);
         animate(&mut style, Phase::Rest);
+        if self.environment.forces_colors {
+            self.force_colors(id, rules, parent, adjust, &mut style);
+        }
         match (style.ink.interactivity, parent.ink.interactivity) {
             (Interactivity::Escapes, _) => {
                 style.groups.set(&Value::Interactivity(Interactivity::Auto))
             }
-            (Interactivity::Auto | Interactivity::Inert, Interactivity::InertSubtree) => style
+            (
+                Interactivity::Auto,
+                Interactivity::InertSubtree | Interactivity::AutoInInertSubtree,
+            ) => style
+                .groups
+                .set(&Value::Interactivity(Interactivity::AutoInInertSubtree)),
+            (
+                Interactivity::Inert,
+                Interactivity::InertSubtree | Interactivity::AutoInInertSubtree,
+            ) => style
                 .groups
                 .set(&Value::Interactivity(Interactivity::InertSubtree)),
             _ => {}
@@ -2421,25 +3017,42 @@ impl Document {
         (style.was_inline, style.computed_sides) = old;
     }
 
-    pub(crate) fn has_starting_styles(&self) -> bool {
-        self.styles
-            .scopes
-            .values()
-            .any(|rules| rules.borrow().has_starting_styles())
+    pub(crate) fn may_have_starting_style(&self, id: NodeId, bloom: &Bloom) -> bool {
+        let is_plain = |it: &Element| {
+            it.pseudo == Pseudo::None
+                && !self.tree[id].has(Flags::ANIMATED)
+                && self.has_rules_of_one_scope(id, it)
+        };
+        if !self.tree.element(id).is_some_and(is_plain) {
+            return self
+                .styles
+                .scopes
+                .values()
+                .any(|rules| rules.borrow().has_starting_styles());
+        }
+        let scope = self.tree[id].scope;
+        let has = |rules: &Rc<RefCell<RuleSet>>| {
+            self.with_query(id, Pseudo::None, Some(bloom), |query| {
+                rules
+                    .borrow()
+                    .has_starting_style(&query, self.tree.host_of(scope))
+            })
+        };
+        self.styles.scopes.get(&scope).is_some_and(has)
     }
 
     /// The values of a keyframe, or of `@position-try`.
     pub(crate) fn compute_block(
         &self,
         id: NodeId,
-        block: &Block,
+        block: &Rc<Block>,
         style: &Style,
         parent: &Style,
     ) -> (Vec<Value>, Entries, Deps) {
         let (mut values, mut customs, mut deps) = (Vec::new(), Vec::new(), Deps::empty());
         for declaration in block.declarations().list.iter().filter(|it| !it.important) {
-            let ids = declaration.prop.longhands(style.flow());
-            let fonts_from = if ids.iter().any(|id| id.is_early()) {
+            let ids = declaration.longhands(style.flow());
+            let fonts_from = if ids.iter().any(|id| Phase::of(*id) <= Phase::Font) {
                 parent
             } else {
                 style
@@ -2447,20 +3060,47 @@ impl Document {
             deps |= self.with_context(id, fonts_from, style, |cx| {
                 let mut resolver = self.resolver(id, &style.customs, cx);
                 if let Prop::Custom(name) = declaration.prop {
-                    resolver
-                        .declared
-                        .push((name, Pending::Declared(declaration, block)));
+                    if !matches!(
+                        declaration.value,
+                        Declared::Wide(Wide::RevertLayer | Wide::RevertRule)
+                    ) {
+                        resolver
+                            .declared
+                            .push((name, Pending::Declared(declaration, block)));
+                    }
                     customs.push((name, resolver.var(name)));
-                    return cx.deps.get();
+                    return cx.deps.get()
+                        | if matches!(declaration.value, Declared::Text(_)) {
+                            Deps::empty()
+                        } else {
+                            Deps::PARENT
+                        };
                 }
-                match resolver.resolve(declaration, block) {
-                    Outcome::Values(resolved) => values.extend(resolved.iter().cloned()),
+                let (start, outcome) = (values.len(), resolver.resolve(declaration, block));
+                let is_keyword = cx.deps.get().contains(Deps::FONT_SIZE_KEYWORD)
+                    || matches!(outcome, Outcome::Wide(Wide::Initial));
+                match outcome {
+                    Outcome::Values(resolved) => {
+                        values.extend(resolved.iter().filter(|it| ids.contains(&it.id())).cloned())
+                    }
+                    Outcome::Wide(Wide::Revert)
+                        if let Some(reverted) = self.style_with(id, Rc::clone(block)) =>
+                    {
+                        values.extend(ids.iter().map(|it| reverted.computed(*it)))
+                    }
                     Outcome::Wide(wide) => values.extend(ids.iter().map(|id| match wide {
                         Wide::Inherit => parent.computed(*id),
                         Wide::Unset if id.is_inherited() => parent.computed(*id),
                         Wide::Initial | Wide::Unset => self.styles.initial.get(*id),
                         _ => style.computed(*id),
                     })),
+                }
+                if is_keyword
+                    && let Some(Value::FontSize(size)) = values[start..]
+                        .iter_mut()
+                        .find(|it| it.id() == Id::FontSize)
+                {
+                    size.0 *= default_font_size(style) / 16.0;
                 }
                 cx.deps.get()
                     | if matches!(declaration.value, Declared::Text(_)) {
@@ -2486,27 +3126,110 @@ impl Document {
             animates: Default::default(),
             ..*parent
         };
-        style.groups.set(&Value::Display(DisplayValue(display)));
+        match display {
+            Display::Block => style.groups.layout = Rc::clone(&self.styles.anonymous_block),
+            _ => style.groups.set(&Value::Display(DisplayValue(display))),
+        }
         Rc::new(style)
     }
 
     /// Also for an element that is not rendered.
+    #[inline]
     pub(crate) fn style_on_demand(&self, id: NodeId) -> Option<Rc<Style>> {
-        self.tree.element(id)?;
-        let elements = || {
-            core::iter::once(id)
-                .chain(self.tree.flat_ancestors(id))
-                .take_while(|it| self.tree.element(*it).is_some())
+        Some(
+            self.tree
+                .element(id)?
+                .style
+                .clone()
+                .unwrap_or_else(|| self.style_of_unstyled(id)),
+        )
+    }
+
+    fn style_of_unstyled(&self, id: NodeId) -> Rc<Style> {
+        let versions = || {
+            [
+                last_version(),
+                self.environment.generation,
+                self.environment.viewport_generation,
+            ]
         };
-        let unstyled: Vec<_> = elements()
-            .take_while(|it| self.tree.style(*it).is_none())
-            .collect();
-        let known = elements()
-            .find_map(|it| self.tree.style(it))
-            .unwrap_or(&self.styles.initial);
-        Some(unstyled.into_iter().rfold(Rc::clone(known), |parent, it| {
-            self.compute_style(it, &self.match_rules(it, None, false), &parent)
-        }))
+        let recall = |it: NodeId| {
+            let hidden = self.tree.found().hidden.borrow();
+            let known = hidden.get(&it).filter(|it| {
+                it.versions == versions()
+                    && self
+                        .tree
+                        .style(it.by.0)
+                        .is_some_and(|by| Rc::ptr_eq(by, &it.by.1))
+            })?;
+            Some((Rc::clone(&known.style), Some(known.by.clone())))
+        };
+        let styled = |it: NodeId| {
+            self.tree.style(it).map(|style| {
+                (
+                    Rc::clone(style),
+                    (style.display() == Display::None).then(|| (it, Rc::clone(style))),
+                )
+            })
+        };
+        let (mut unstyled, mut known) = (SmallVec::<[NodeId; 8]>::new(), None);
+        for it in core::iter::once(id)
+            .chain(self.tree.flat_ancestors(id))
+            .take_while(|it| self.tree.element(*it).is_some())
+        {
+            known = styled(it).or_else(|| recall(it));
+            if known.is_some() {
+                break;
+            }
+            unstyled.push(it);
+        }
+        let (mut style, mut by) = known.unwrap_or_else(|| (Rc::clone(&self.styles.initial), None));
+        for it in unstyled.into_iter().rev() {
+            style = self.compute_style(it, &self.rules_on_demand(it), &style);
+            by = by.filter(|_| {
+                !style.deps.contains(Deps::CONTAINER)
+                    && self.tree.found().rules.borrow().contains_key(&it)
+            });
+            if let Some(by) = by.clone() {
+                self.tree.found().hidden.borrow_mut().insert(
+                    it,
+                    Hidden {
+                        versions: versions(),
+                        by,
+                        style: Rc::clone(&style),
+                    },
+                );
+            }
+        }
+        style
+    }
+
+    fn rules_on_demand(&self, id: NodeId) -> Rc<RuleList> {
+        let known = self
+            .tree
+            .found()
+            .rules
+            .borrow()
+            .get(&id)
+            .filter(|it| it.0 == last_version())
+            .map(|it| Rc::clone(&it.1));
+        debug_assert!(
+            known.as_ref().is_none_or(
+                |it| it.matched.len() == self.match_rules(id, None, false).matched.len()
+            )
+        );
+        known.unwrap_or_else(|| {
+            let rules = self.match_rules(id, None, false);
+            let mut known = self.tree.found().rules.borrow_mut();
+            _ = match !self.tree[id].has(Flags::QUERIES_CONTAINER)
+                && self.smil.effects.styles.is_empty()
+                && self.tree.element(id).is_some_and(|it| !it.is_generated())
+            {
+                true => known.insert(id, (last_version(), Rc::clone(&rules))),
+                false => known.remove(&id),
+            };
+            rules
+        })
     }
 }
 
@@ -2518,6 +3241,27 @@ impl Style {
             && Rc::ptr_eq(&self.svg, &other.svg)
             && (self.zoom, self.dark, self.metrics) == (other.zoom, other.dark, other.metrics)
             && self.has_absolute_font_size == other.has_absolute_font_size
+    }
+
+    pub(crate) fn inherits_the_same_but_ink(&self, other: &Style) -> bool {
+        Rc::ptr_eq(&self.font, &other.font)
+            && Rc::ptr_eq(&self.text, &other.text)
+            && Rc::ptr_eq(&self.svg, &other.svg)
+            && Rc::ptr_eq(&self.customs.inherited, &other.customs.inherited)
+            && (
+                self.zoom,
+                self.dark,
+                self.metrics,
+                self.has_absolute_font_size,
+            ) == (
+                other.zoom,
+                other.dark,
+                other.metrics,
+                other.has_absolute_font_size,
+            )
+            && (self.ink.interactivity, self.ink.color_scheme)
+                == (other.ink.interactivity, other.ink.color_scheme)
+            && self.layout.justify_items.is_legacy() == other.layout.justify_items.is_legacy()
     }
 
     pub(crate) fn inherits_the_same_as(&self, other: &Style) -> bool {

@@ -114,6 +114,9 @@ export const nativeGlobals = Array.from(
   .map(({ 1: name }) => name)
   .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
 
+// A window has none of these, or its own.
+const absentFromWindows = ["Bun", "SharedArrayBuffer", "atob", "btoa", "process", "structuredClone"];
+
 // What fake timers replace. As in Node, they don't stop the timers of builtin modules.
 // Only the bare name is `@natives.setTimeout`. `globalThis.setTimeout` is what script sees, for node:timers.
 export const nativeFunctions = [
@@ -124,6 +127,7 @@ export const nativeFunctions = [
   "clearInterval",
   "clearImmediate",
   "queueMicrotask",
+  ...absentFromWindows,
 ];
 
 /** The defines for globalsToPrefix and nativeGlobals don't apply to `const { Blob } = globalThis`. */

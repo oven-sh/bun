@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "FormatStackTraceForJS.h"
+#include "DesktopRealm.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
@@ -625,7 +626,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         }
     } else if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
         if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
-            if (prepareStackTrace) {
+            // An error of the parser quotes the script, which a page may not be allowed to read.
+            if (sourceURL.isEmpty() || !Bun::isDesktopRealm(globalObject)) {
                 if (prepareStackTrace.isCallable()) {
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
                     auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());

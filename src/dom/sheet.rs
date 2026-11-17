@@ -1,7 +1,8 @@
 //! Style sheets, flattened into what the cascade reads.
 
-use core::cell::{Cell, OnceCell, RefCell};
+use core::cell::{OnceCell, RefCell};
 use core::ops::Range;
+use std::borrow::Cow;
 use std::rc::{Rc, Weak};
 
 use bun_core::strings;
@@ -10,8 +11,12 @@ use bun_css::Token;
 use crate::condition::{self, Condition, ContainerCondition, Feature};
 use crate::counter_style::CounterStyle;
 use crate::custom::{Function, Registered, Template, Text};
+use crate::declarations::{DeclarationList, Editable};
+use crate::font_face::{self, Descriptor, FontFace};
 use crate::grammar::{Mode, definition, is_reserved, split_list};
 use crate::name::{Map, Name};
+use crate::order::Order as _;
+use crate::prelude::{Inside, Prelude};
 use crate::properties::{Id, Prop, Value};
 use crate::scan::{self, Next, Required};
 use crate::selector::{List, Selector};
@@ -59,11 +64,116 @@ pub(crate) struct Declaration {
     pub(crate) prop: Prop,
     pub(crate) important: bool,
     pub(crate) value: Declared,
-    pub(crate) cached: RefCell<Option<Box<Cached>>>,
+    pub(crate) cached: RefCell<Option<Cached>>,
+    /// The one longhand of `prop` that scripts have left it.
+    only: Option<Prop>,
+}
+
+impl Declaration {
+    pub(crate) fn new(
+        prop: Prop,
+        important: bool,
+        value: Declared,
+        only: Option<Prop>,
+    ) -> Declaration {
+        Declaration {
+            prop,
+            important,
+            value,
+            cached: RefCell::default(),
+            only,
+        }
+    }
+
+    pub(crate) fn longhands(&self, flow: Flow) -> &'static [Id] {
+        self.only.unwrap_or(self.prop).longhands(flow)
+    }
+}
+
+/// A value of a longhand with a class in the place of each number: whether it is negative, zero, an integer.
+#[derive(Clone, Copy, PartialEq)]
+struct Shape(Id, [u8; 46]);
+
+thread_local! {
+    static VALID: RefCell<Vec<Option<Shape>>> = RefCell::new(vec![None; 128]);
+}
+
+impl Shape {
+    /// `None` unless it is simple.
+    fn of(id: Id, mut source: &[u8]) -> Option<Shape> {
+        let digits = |it: &[u8]| it.iter().take_while(|it| it.is_ascii_digit()).count();
+        let (mut shape, mut is_in_name, mut is_nested) = (Shape(id, [0; 46]), false, false);
+        for class in &mut shape.1 {
+            let [byte, after @ ..] = source else {
+                return Some(shape);
+            };
+            let unsigned = if *byte == b'-' { after } else { source };
+            if !is_in_name && matches!(unsigned, [b'0'..=b'9', ..] | [b'.', b'0'..=b'9', ..]) {
+                let whole = digits(unsigned);
+                let fraction = if let [b'.', rest @ ..] = &unsigned[whole..] {
+                    digits(rest)
+                } else {
+                    0
+                };
+                let (number, rest) =
+                    unsigned.split_at(whole + fraction + usize::from(fraction > 0));
+                (number.len() < 30
+                    && !matches!(rest, [b'e' | b'E', b'0'..=b'9' | b'+' | b'-', ..]))
+                .then_some(())?;
+                let is_zero = number.iter().all(|it| matches!(it, b'0' | b'.'));
+                (*class, source) = (
+                    1 + u8::from(*byte == b'-')
+                        + 2 * u8::from(is_zero)
+                        + 4 * u8::from(fraction > 0),
+                    rest,
+                );
+                continue;
+            }
+            is_in_name = byte.is_ascii_alphanumeric() || *byte == b'-';
+            match byte {
+                b'(' | b')' => is_nested = (is_nested != (*byte == b'(')).then_some(!is_nested)?,
+                b' ' | b',' | b'%' => {}
+                b'+' | b'*' | b'/' if after.starts_with(b" ") => {}
+                _ => is_in_name.then_some(())?,
+            }
+            (*class, source) = (*byte, after);
+        }
+        None
+    }
+
+    fn slot(&self) -> usize {
+        bun_wyhash::hash_with_seed(self.0 as u64, &self.1) as usize % 128
+    }
+
+    fn is_valid(self) -> bool {
+        VALID.with_borrow(|it| it[self.slot()] == Some(self))
+    }
+
+    fn validate(self, source: &[u8]) -> bool {
+        let goes_by_shape = self.0.syntax().accepts_alike(source);
+        if goes_by_shape == Some(true)
+            || goes_by_shape.is_some() && !self.1.iter().any(|it| (1..=8).contains(it))
+        {
+            VALID.with_borrow_mut(|it| it[self.slot()] = Some(self));
+        }
+        goes_by_shape.is_some()
+    }
 }
 
 impl Declared {
     pub(crate) fn parse(prop: Prop, source: &[u8]) -> Option<Declared> {
+        if matches!(prop, Prop::Long(id) if id != Id::Transform && id.parse_simple(source, &Ctx::dummy()).is_some())
+        {
+            return Some(Declared::Text(source.into()));
+        }
+        let shape = if let Prop::Long(id) | Prop::Logical(id) = prop {
+            Shape::of(id, source)
+        } else {
+            None
+        };
+        if shape.is_some_and(Shape::is_valid) {
+            return Some(Declared::Text(source.into()));
+        }
         if let Some(wide) = Wide::of(source) {
             return Some(Declared::Wide(wide));
         }
@@ -76,7 +186,9 @@ impl Declared {
         } else {
             crate::calc::scope_random(prop, source)
         };
-        prop.accepts(&source)
+        let shape = shape.filter(|_| matches!(source, Cow::Borrowed(_)));
+        shape
+            .map_or_else(|| prop.accepts(&source), |it| it.validate(&source))
             .then(|| Declared::Text((*source).into()))
     }
 
@@ -164,7 +276,7 @@ pub(crate) fn supports_declaration(name: &[u8], value: &[u8]) -> bool {
 }
 
 pub(crate) struct Declarations {
-    pub(crate) list: Box<[Declaration]>,
+    pub(crate) list: Box<[Rc<Declaration>]>,
     pub(crate) has_important: bool,
     pub(crate) sets_content: bool,
     /// The custom properties that are read or set. Sorted.
@@ -180,6 +292,8 @@ pub(crate) enum Within {
     Style,
     /// A style rule or attribute in a document that is in quirks mode.
     Quirks,
+    /// What attributes mean.
+    Hints,
     Keyframe,
     PositionTry,
 }
@@ -188,7 +302,7 @@ impl Within {
     pub(crate) fn allows(self, prop: Prop, important: bool) -> bool {
         let name = prop.name();
         match self {
-            Within::Style | Within::Quirks => true,
+            Within::Style | Within::Quirks | Within::Hints => true,
             Within::Keyframe => {
                 !important
                     && (!name.starts_with("animation")
@@ -218,14 +332,18 @@ unsafe extern "C" {
 }
 
 #[derive(Clone)]
-enum Source {
+pub(crate) enum Source {
     Owned(Rc<[u8]>),
     /// The pages of a file that ships with the program.
     Mapped(&'static [u8]),
 }
 
 impl Source {
-    fn of_sheet(bytes: &[u8]) -> Source {
+    pub(crate) fn copy_of(bytes: &[u8]) -> Source {
+        Source::Owned(bytes[..bytes.len().min(u32::MAX as usize)].into())
+    }
+
+    pub(crate) fn of_sheet(bytes: &[u8]) -> Source {
         let bytes = &bytes[..bytes.len().min(u32::MAX as usize)];
         // SAFETY: a live slice, which is only read.
         let mapped = unsafe { Bun__Desktop__mappedResource(bytes.as_ptr(), bytes.len()) };
@@ -256,26 +374,58 @@ impl core::ops::Deref for Source {
 
 /// Parsed when it first applies.
 pub(crate) struct Block {
-    source: Cell<Option<(Source, Range<u32>, Within)>>,
+    source: Source,
+    range: Range<u32>,
+    within: Within,
     pub(crate) base_url: Rc<[u8]>,
     parsed: OnceCell<Declarations>,
+    /// For scripts.
+    pub(crate) editable: OnceCell<Box<Editable>>,
 }
 
 fn slice<'a>(source: &'a [u8], range: &Range<u32>) -> &'a [u8] {
     &source[range.start as usize..range.end as usize]
 }
 
+impl Declarations {
+    fn new(list: Vec<Rc<Declaration>>) -> Declarations {
+        let mut reads_any = false;
+        let mut references = Vec::new();
+        for declaration in &list {
+            if let Prop::Custom(name) = declaration.prop {
+                references.push(name);
+            }
+            if let Declared::Template(template) = &declaration.value {
+                reads_any |= template.references(&mut references);
+            }
+        }
+        references.order_by(Ord::cmp);
+        references.dedup();
+        Declarations {
+            has_important: list.iter().any(|it| it.important),
+            sets_content: list.iter().any(|it| {
+                matches!(
+                    it.only.unwrap_or(it.prop),
+                    Prop::Long(Id::Content) | Prop::All
+                )
+            }),
+            references: references.into(),
+            reads_any,
+            list: list.into(),
+        }
+    }
+}
+
 impl Block {
     fn new(source: &Source, range: Range<usize>, within: Within, base_url: &Rc<[u8]>) -> Block {
-        let source = Cell::new(Some((
-            source.clone(),
-            range.start as u32..range.end as u32,
-            within,
-        )));
+        let (source, range) = (source.clone(), range.start as u32..range.end as u32);
         Block {
             source,
+            range,
+            within,
             base_url: Rc::clone(base_url),
             parsed: OnceCell::new(),
+            editable: OnceCell::new(),
         }
     }
 
@@ -288,77 +438,193 @@ impl Block {
         )
     }
 
+    pub(crate) fn edited(list: DeclarationList, within: Within, base_url: &Rc<[u8]>) -> Block {
+        let block = Block::new(&Source::default(), 0..0, within, base_url);
+        Block {
+            editable: Box::new(Editable::new(list)).into(),
+            ..block
+        }
+    }
+
+    /// After `editable` has changed.
+    pub(crate) fn forget_source(&mut self) {
+        (self.source, self.range, self.parsed) = (Source::default(), 0..0, OnceCell::new());
+    }
+
+    pub(crate) fn of_declarations(list: Vec<Rc<Declaration>>, base_url: &Rc<[u8]>) -> Block {
+        Block {
+            parsed: Declarations::new(list).into(),
+            ..Block::new(&Source::default(), 0..0, Within::Style, base_url)
+        }
+    }
+
+    pub(crate) fn within(&self) -> Within {
+        self.within
+    }
+
+    pub(crate) fn has_source(&self, source: &[u8]) -> bool {
+        slice(&self.source, &self.range) == source
+    }
+
     pub(crate) fn declarations(&self) -> &Declarations {
-        self.parsed.get_or_init(|| {
-            let mut list = Vec::new();
-            if let Some((source, range, within)) = self.source.take() {
-                visit_declarations(slice(&source, &range), |name, value, important| {
-                    let prop = Prop::from_name(name).filter(|it| within.allows(*it, important));
-                    if name.starts_with(b"--") {
-                        crate::custom::remember(name);
-                    }
-                    let declared = prop.and_then(|prop| {
-                        Some((prop, Declared::parse_within(prop, value, within)?))
-                    });
-                    list.extend(declared.map(|(prop, value)| Declaration {
-                        prop,
-                        important,
-                        value,
-                        cached: RefCell::default(),
-                    }));
-                });
-            }
-            let mut reads_any = false;
-            let mut references = Vec::new();
-            for declaration in &list {
-                if let Prop::Custom(name) = declaration.prop {
-                    references.push(name);
-                }
-                if let Declared::Template(template) = &declaration.value {
-                    reads_any |= template.references(&mut references);
-                }
-            }
-            references.sort_unstable();
-            references.dedup();
-            Declarations {
-                has_important: list.iter().any(|it| it.important),
-                sets_content: list
-                    .iter()
-                    .any(|it| matches!(it.prop, Prop::Long(Id::Content) | Prop::All)),
-                references: references.into(),
-                reads_any,
-                list: list.into(),
-            }
+        self.parsed.get_or_init(|| match self.editable.get() {
+            Some(edited) => Declarations::new(edited.list.for_cascade()),
+            None => RECENT.with_borrow_mut(|recent| self.parse_declarations(recent)),
         })
     }
+
+    fn parse_declarations(&self, recent: &mut [Option<Recent>]) -> Declarations {
+        let (source, mut at, mut list) = (
+            slice(&self.source, &self.range),
+            0,
+            smallvec::SmallVec::<[_; 16]>::new(),
+        );
+        while at < source.len() {
+            let text = &source[at..at
+                + strings::index_of_char_usize(&source[at..], b';').unwrap_or(source.len() - at)];
+            let (after, is_last) = (at + text.len() + 1, at + text.len() == source.len());
+            if text.trim_ascii().is_empty() {
+                at = after;
+                continue;
+            }
+            let slot = (text.len() <= Recent::MAX_LEN)
+                .then(|| &mut recent[bun_wyhash::hash(text) as usize % Recent::COUNT]);
+            if let Some(Some(known)) = slot.as_deref()
+                && (&*known.text, known.within) == (text, self.within)
+                && known
+                    .base_url
+                    .as_ref()
+                    .is_none_or(|it| Rc::ptr_eq(it, &self.base_url))
+            {
+                list.extend(known.declaration.clone());
+                at = after;
+                continue;
+            }
+            let (mut parsed, mut is_custom) = (None, false);
+            let next = visit_declaration(source, at, &mut |name, value, important| {
+                (parsed, is_custom) = (
+                    self.parse_declaration(name, value, important),
+                    name.starts_with(b"--"),
+                )
+            });
+            let Some(next) = next else { break };
+            let is_plain = strings::index_of_any(text, b"([{\"'\\/").is_none();
+            if let Some(slot) = slot.filter(|_| {
+                !is_custom
+                    && (is_plain
+                        || next == after && !is_last && !strings::contains_char(text, b'{'))
+            }) {
+                *slot = Some(Recent {
+                    text: text.into(),
+                    within: self.within,
+                    base_url: (!is_plain).then(|| Rc::clone(&self.base_url)),
+                    declaration: parsed.clone(),
+                });
+            }
+            list.extend(parsed);
+            at = next;
+        }
+        Declarations::new(list.into_vec())
+    }
+
+    fn parse_declaration(
+        &self,
+        name: &[u8],
+        value: &[u8],
+        important: bool,
+    ) -> Option<Rc<Declaration>> {
+        if name.starts_with(b"--") {
+            crate::custom::remember(name);
+        }
+        let prop = Prop::from_name(name).filter(|it| self.within.allows(*it, important))?;
+        let value = match (self.within, prop) {
+            (Within::Hints, Prop::Long(Id::Transform)) => Declared::Text(value.into()),
+            _ => Declared::parse_within(prop, value, self.within)?,
+        };
+        Some(Rc::new(Declaration::new(prop, important, value, None)))
+    }
+
+    /// Of a block that has been parsed and not edited.
+    pub(crate) fn visit_sources(&self, mut visit: impl FnMut(&Rc<Declaration>, &[u8])) {
+        let mut rest = self.declarations().list.iter().peekable();
+        visit_declarations(
+            slice(&self.source, &self.range),
+            |name, value, important| {
+                let is_valid = |it: &Declaration| {
+                    matches!(&it.value, Declared::Text(it) if **it == *value)
+                        || Declared::parse_within(it.prop, value, self.within).is_some()
+                };
+                if let Some(it) = rest.next_if(|it| {
+                    it.important == important
+                        && Prop::from_name(name) == Some(it.prop)
+                        && is_valid(it)
+                }) {
+                    visit(it, value);
+                }
+            },
+        );
+    }
+}
+
+/// What the text up to a semicolon has been parsed as.
+struct Recent {
+    text: Box<[u8]>,
+    within: Within,
+    /// If it can matter.
+    base_url: Option<Rc<[u8]>>,
+    declaration: Option<Rc<Declaration>>,
+}
+
+impl Recent {
+    const COUNT: usize = 1024;
+    const MAX_LEN: usize = 48;
+}
+
+thread_local! {
+    static RECENT: RefCell<Box<[Option<Recent>]>> = RefCell::new((0..Recent::COUNT).map(|_| None).collect());
 }
 
 /// The name, the value, and whether it is important.
 pub(crate) fn visit_declarations(source: &[u8], mut visit: impl FnMut(&[u8], &[u8], bool)) {
     let mut at = 0;
-    loop {
-        at = match scan::next_item(source, at) {
-            Next::End(_) => return,
-            Next::Block { start, brace } if source[start] == b'@' => {
-                scan::end_of_block(source, brace).0 + 1
+    while let Some(next) = visit_declaration(source, at, &mut visit) {
+        at = next;
+    }
+}
+
+/// Where the next item starts.
+fn visit_declaration(
+    source: &[u8],
+    at: usize,
+    visit: &mut dyn FnMut(&[u8], &[u8], bool),
+) -> Option<usize> {
+    Some(match scan::next_item(source, at) {
+        Next::End(_) => return None,
+        Next::Block { start, brace } if source[start] == b'@' => {
+            scan::end_of_block(source, brace).0 + 1
+        }
+        Next::Block { start, brace } => {
+            let end = scan::end_of_statement(source, brace);
+            if let Some((name, value)) = scan::declaration(&source[start..end.min(source.len())])
+                .filter(|it| eq(it.0, "initial-value"))
+            {
+                visit(name, value, false);
             }
-            Next::Block { brace, .. } => scan::end_of_statement(source, brace),
-            Next::Statement { start, end } => {
-                if let Some((name, value)) = scan::declaration(&source[start..end]) {
-                    let (value, important) = scan::without_priority(value);
-                    match name.iter().all(|it| !matches!(it, b'\\' | 0)) {
-                        true => visit(name, value, important),
-                        false => {
-                            _ = parse_all(name, |p| {
-                                ident(p).map(|name| visit(name, value, important))
-                            })
-                        }
+            end
+        }
+        Next::Statement { start, end } => {
+            if let Some((name, value)) = scan::declaration(&source[start..end]) {
+                let (value, important) = scan::without_priority(value);
+                match name.iter().all(|it| !matches!(it, b'\\' | 0)) {
+                    true => visit(name, value, important),
+                    false => {
+                        _ = parse_all(name, |p| ident(p).map(|name| visit(name, value, important)))
                     }
                 }
-                end
             }
-        };
-    }
+            end
+        }
+    })
 }
 
 pub(crate) struct ContainerQuery {
@@ -509,45 +775,7 @@ pub(crate) struct Keyframe {
     pub(crate) adds: Option<Composite>,
 }
 
-pub(crate) struct FontFace {
-    pub(crate) family: Str,
-    /// What `src/js/internal/desktop/dom/fonts.ts` loads.
-    pub(crate) json: Str,
-    /// The ranges of the stretch, the slope and the weight.
-    pub(crate) offers: [[f32; 2]; 3],
-}
-
-impl FontFace {
-    pub(crate) const ITALIC: f32 = 14.0;
-
-    /// <https://drafts.csswg.org/css-fonts-4/#font-style-matching>
-    pub(crate) fn distance(&self, [stretch, slope, weight]: [f32; 3]) -> [u32; 3] {
-        let directed = |wanted: f32, [low, high]: [f32; 2], prefers_lower: bool| {
-            let (above, below) = ((low - wanted).max(0.0), (wanted - high).max(0.0));
-            above
-                + below
-                + if (if prefers_lower { above } else { below }) > 0.0 {
-                    1e4
-                } else {
-                    0.0
-                }
-        };
-        let [stretches, slopes, weights] = self.offers;
-        let is_last = (400.0..=500.0).contains(&weight) && weights[0] > 500.0;
-        let slope = directed(
-            slope,
-            slopes,
-            slope < if slope < 0.0 { -10.99 } else { 11.0 },
-        );
-        [
-            directed(stretch, stretches, stretch <= 100.0),
-            slope,
-            directed(weight, weights, weight < 400.0) + f32::from(is_last) * 2e4,
-        ]
-        .map(|it| (it * 4.0) as u32)
-    }
-}
-
+#[derive(Clone)]
 pub(crate) struct Import {
     pub(crate) url: Str,
     /// What to wrap the imported sheet in.
@@ -575,6 +803,8 @@ pub(crate) struct Sheet {
     namespaces: Namespaces,
     pub(crate) imports: Vec<Import>,
     pub(crate) uses_owner: bool,
+    /// By where the placeholder starts.
+    edited: Map<u32, Rc<Block>>,
 }
 
 struct Builder {
@@ -712,17 +942,16 @@ impl Prepared {
         let Next::Block { start, brace } = scan::next_rule(source, 0, false) else {
             return false;
         };
-        crate::cssom::prelude(
+        Prelude::parse(
             &source[start..brace],
-            b"",
+            Inside::Sheet,
             Some(b""),
             &Namespaces::default(),
         )
         .is_some()
     }
 
-    pub(crate) fn new(source: &[u8]) -> Prepared {
-        let source = Source::of_sheet(source);
+    pub(crate) fn new(source: Source) -> Prepared {
         // SAFETY: the bytes are not freed before the thread is joined.
         let bytes: &'static [u8] = unsafe { &*core::ptr::from_ref::<[u8]>(&source) };
         let thread = std::thread::Builder::new()
@@ -736,7 +965,7 @@ impl Prepared {
         }
     }
 
-    pub(crate) fn source(&self) -> &[u8] {
+    pub(crate) fn source(&self) -> &Source {
         &self.source
     }
 
@@ -751,18 +980,49 @@ impl Drop for Prepared {
     }
 }
 
+/// What a sheet is parsed with.
+pub(crate) struct Parameters {
+    pub(crate) base_url: Rc<[u8]>,
+    pub(crate) media: Box<[u8]>,
+    pub(crate) owner: NodeId,
+    pub(crate) within: Within,
+}
+
+pub(crate) enum Compiling {
+    Done(Rc<Sheet>),
+    /// With the hash for sharing it.
+    Scanning(Prepared, Parameters, u64),
+}
+
+impl Compiling {
+    pub(crate) fn finish(&mut self) -> Rc<Sheet> {
+        let sheet = match self {
+            Compiling::Done(sheet) => return Rc::clone(sheet),
+            Compiling::Scanning(prepared, with, hash) => {
+                Sheet::shared(*hash, with.owner, prepared.source()).unwrap_or_else(|| {
+                    Sheet::finish(prepared, with, Vec::new()).share(*hash, with.owner)
+                })
+            }
+        };
+        *self = Compiling::Done(Rc::clone(&sheet));
+        sheet
+    }
+}
+
 thread_local! {
     static SHARED: RefCell<Map<u64, Weak<Sheet>>> = RefCell::default();
 }
 
 impl Sheet {
     /// By the hash of what it is parsed with.
-    pub(crate) fn shared(hash: u64, owner: NodeId) -> Option<Rc<Sheet>> {
-        SHARED.with_borrow(|all| {
-            [hash, hash ^ (u64::from(owner) + 1)]
-                .iter()
-                .find_map(|it| all.get(it)?.upgrade())
-        })
+    pub(crate) fn shared(hash: u64, owner: NodeId, source: &[u8]) -> Option<Rc<Sheet>> {
+        SHARED
+            .with_borrow(|all| {
+                [hash, hash ^ (u64::from(owner) + 1)]
+                    .iter()
+                    .find_map(|it| all.get(it)?.upgrade())
+            })
+            .filter(|it| *it.source == *source)
     }
 
     pub(crate) fn share(self, hash: u64, owner: NodeId) -> Rc<Sheet> {
@@ -786,34 +1046,37 @@ impl Sheet {
         sheet
     }
 
-    pub(crate) fn parse(
-        source: &[u8],
-        base_url: &[u8],
-        media: &[u8],
-        owner: NodeId,
-        within: Within,
-    ) -> Sheet {
-        let source = Source::of_sheet(source);
-        Sheet::finish(
-            Prepared {
-                source,
-                thread: None,
+    pub(crate) fn parse(source: &[u8], base_url: &[u8], within: Within) -> Sheet {
+        Sheet::with_blocks(
+            Source::of_sheet(source),
+            &Parameters {
+                base_url: base_url.into(),
+                media: Box::default(),
+                owner: 0,
+                within,
             },
-            base_url,
-            media,
-            owner,
-            within,
+            Vec::new(),
         )
     }
 
-    pub(crate) fn finish(
-        mut prepared: Prepared,
-        base_url: &[u8],
-        media: &[u8],
-        owner: NodeId,
-        within: Within,
+    /// `edited` stand in for the declarations that start there.
+    pub(crate) fn with_blocks(
+        source: Source,
+        with: &Parameters,
+        edited: Vec<(u32, Rc<Block>)>,
     ) -> Sheet {
-        let source = prepared.source.clone();
+        Sheet::finish(
+            &mut Prepared {
+                source,
+                thread: None,
+            },
+            with,
+            edited,
+        )
+    }
+
+    fn finish(prepared: &mut Prepared, with: &Parameters, edited: Vec<(u32, Rc<Block>)>) -> Sheet {
+        let (source, within) = (prepared.source.clone(), with.within);
         let Outline {
             steps,
             raw,
@@ -823,33 +1086,42 @@ impl Sheet {
             .join()
             .filter(|_| within != Within::Quirks)
             .unwrap_or_else(|| Outline::new(&source, within == Within::Quirks));
+        let edited = edited.into_iter().collect();
         let sheet = Sheet {
             source: source.clone(),
-            base_url: base_url.into(),
+            base_url: Rc::clone(&with.base_url),
             raw,
             deferred,
             keys,
             within,
+            edited,
             ..Sheet::default()
         };
         let mut builder = Builder {
             sheet,
             order: 0,
-            owner,
+            owner: with.owner,
             groups: Map::default(),
         };
         builder.sheet.layers.push(Vec::new());
         builder
             .sheet
             .media
-            .push((condition::media_list(media).0, 0));
+            .push((condition::media_list(&with.media).0, 0));
         builder.sheet.contexts.push(Rc::default());
         builder.build(&source, steps);
         builder.sheet
     }
 
-    pub(crate) fn source(&self) -> &[u8] {
+    pub(crate) fn source(&self) -> &Source {
         &self.source
+    }
+
+    fn block(&self, range: Range<usize>, within: Within) -> Rc<Block> {
+        self.edited.get(&(range.start as u32)).map_or_else(
+            || Rc::new(Block::new(&self.source, range, within, &self.base_url)),
+            Rc::clone,
+        )
     }
 
     fn compile(&self, rule: u32, selector: u16, class: Option<Name>) -> Option<Rc<Rule>> {
@@ -860,14 +1132,7 @@ impl Sheet {
             ..Parser::default()
         };
         let list = || parser.parse(slice(&self.source, &(raw.start..raw.brace)));
-        let block = || {
-            Rc::new(Block::new(
-                &self.source,
-                raw.brace as usize + 1..raw.end as usize,
-                self.within,
-                &self.base_url,
-            ))
-        };
+        let block = || self.block(raw.brace as usize + 1..raw.end as usize, self.within);
         let (selector, block) = match (class, raw.is_list) {
             (Some(class), _) => (Selector::class(class), block()),
             (None, false) => (list()?.first()?.clone(), block()),
@@ -914,12 +1179,7 @@ impl Sheet {
             let range = rule.body.start as usize..rule.body.end as usize;
             Some(match rule.kind {
                 AtKind::Keyframes => Defined::Keyframes(self.frames(range)),
-                AtKind::PositionTry => Defined::Block(Rc::new(Block::new(
-                    &self.source,
-                    range,
-                    Within::PositionTry,
-                    &self.base_url,
-                ))),
+                AtKind::PositionTry => Defined::Block(self.block(range, Within::PositionTry)),
                 AtKind::Function => {
                     Defined::Function(Rc::new(Function::parse(prelude, body, &self.base_url)?))
                 }
@@ -952,23 +1212,25 @@ impl Sheet {
             let Some(offsets) = keyframe_selectors(&source[start..brace]) else {
                 continue;
             };
-            let (mut easing, mut adds) = (None, None);
-            visit_declarations(&source[brace + 1..end], |name, value, important| {
-                if eq(name, "animation-timing-function")
-                    && !important
-                    && supports_declaration(name, value)
-                {
-                    easing = parse_all(split_list(value)[0], |p| Easing::parse(p, &Ctx::dummy()));
-                } else if eq(name, "animation-composition") && !important {
-                    adds = Composite::from_name(split_list(value)[0]).or(adds);
-                }
-            });
-            let block = Rc::new(Block::new(
-                &self.source,
-                brace + 1..end,
-                Within::Keyframe,
-                &self.base_url,
-            ));
+            let block = self.block(brace + 1..end, Within::Keyframe);
+            let first_of = |id: Id| {
+                let value = |it: &Rc<Declaration>| {
+                    if let Declared::Text(value) = &it.value {
+                        Some(split_list(value)[0].to_vec())
+                    } else {
+                        None
+                    }
+                };
+                block
+                    .declarations()
+                    .list
+                    .iter()
+                    .rfind(|it| it.prop == Prop::Long(id))
+                    .and_then(value)
+            };
+            let easing = first_of(Id::AnimationTimingFunction)
+                .and_then(|it| parse_all(&it, |p| Easing::parse(p, &Ctx::dummy())));
+            let adds = first_of(Id::AnimationComposition).and_then(|it| Composite::from_name(&it));
             let frame = |(range, offset)| Keyframe {
                 offset,
                 range,
@@ -978,87 +1240,24 @@ impl Sheet {
             };
             frames.extend(offsets.into_iter().map(frame));
         }
-        frames.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+        bun_collections::index_sort::sort_slice_by(&mut frames, |a, b| {
+            a.offset.total_cmp(&b.offset)
+        });
         frames.into()
     }
 
     fn font_face(&self, body: &[u8]) -> Option<FontFace> {
-        let (all, cx) = (
-            descriptors("font-face", body),
-            Ctx {
-                base_url: &self.base_url,
-                ..Ctx::dummy()
-            },
-        );
-        let get = |name: &str| {
-            all.iter()
-                .find(|it| &*it.0 == name)
-                .map(|it| it.1.as_bytes())
-        };
-        let family = parse_all(get("font-family")?, crate::hooks::family_name)?;
-        let mut json = b"{\"src\":[".to_vec();
-        for source in split_list(get("src")?) {
-            let (kind, value) = with_parser(source, |p| match url(p, &cx) {
-                Some(url) => ("url", url),
-                None => (
-                    "local",
-                    text(
-                        &function(p)
-                            .and_then(|_| nested(p, crate::hooks::family_name))
-                            .unwrap_or_default(),
-                    )
-                    .into(),
-                ),
-            });
-            json.extend(format!("{{\"{kind}\":").bytes());
-            crate::json_string(value.as_bytes(), &mut json);
-            json.extend_from_slice(b"},");
-        }
-        json.extend_from_slice(b"null]");
-        let mut offers = [[100.0; 2], [0.0; 2], [400.0; 2]];
-        for (name, value) in all.iter().filter(|it| &*it.0 != "src") {
-            let computed = definition(&format!("@font-face/{name}"))
-                .and_then(|it| it.write(value.as_bytes(), Mode::Computed(&cx)));
-            if let (Some(index), Some(value)) = (
-                ["font-stretch", "font-style", "font-weight"]
-                    .iter()
-                    .position(|it| *it == &**name),
-                &computed,
-            ) {
-                let number = |it: &str| {
-                    if it == "bold" {
-                        Some(700.0)
-                    } else {
-                        it.trim_end_matches(['%', 'd', 'e', 'g'])
-                            .parse::<f32>()
-                            .ok()
-                    }
-                };
-                let mut numbers = strings::split(value, b" ").map(text).filter_map(number);
-                match (numbers.next(), numbers.next()) {
-                    (Some(a), b) => offers[index] = [a.min(b.unwrap_or(a)), a.max(b.unwrap_or(a))],
-                    _ if matches!(&**value, b"italic" | b"oblique") => {
-                        offers[index] = [FontFace::ITALIC; 2]
-                    }
-                    _ => {}
-                }
-            }
-            json.extend(format!(",\"{name}\":").bytes());
-            crate::json_string(
-                if &**name == "font-family" {
-                    &family
-                } else {
-                    computed.as_deref().unwrap_or_default()
-                },
-                &mut json,
-            );
-        }
-        json.push(b'}');
-        Some(FontFace {
-            family: text(&family).into(),
-            json: text(&json).into(),
-            offers,
-        })
+        let all = descriptors("font-face", body);
+        let mut face = FontFace::of_rule(font_face::Source::parse_list(
+            all.iter().find(|it| &*it.0 == "src")?.1.as_bytes(),
+            &self.base_url,
+        ));
+        all.iter().for_each(|(name, value)| {
+            Descriptor::from_name(name.as_bytes())
+                .into_iter()
+                .for_each(|it| face.set(it, value.as_bytes()))
+        });
+        all.iter().any(|it| &*it.0 == "font-family").then_some(face)
     }
 }
 
@@ -1159,7 +1358,7 @@ pub(crate) fn defined_name(kind: AtKind, prelude: &[u8]) -> Option<Str> {
             }
             AtKind::FontFace | AtKind::ViewTransition => Out::new(),
             _ => ident(p)
-                .filter(|it| it.starts_with(b"--") && it.len() > 2)?
+                .filter(|it| it.starts_with(b"--") && (it.len() > 2 || kind != AtKind::Property))?
                 .to_vec(),
         })
     });
@@ -1232,7 +1431,12 @@ pub(crate) fn import_rule(prelude: &[u8]) -> Option<ImportRule> {
         let (url, modifiers) = string(p)
             .map(|it| (it, &b""[..]))
             .or_else(|| link(p))
-            .map(|it| (it.0.to_vec(), it.1.to_vec()))?;
+            .map(|it| (it.0.to_vec(), it.1))?;
+        let modifiers = if modifiers.is_empty() {
+            Out::new()
+        } else {
+            definition("<url-modifiers>")?.write(modifiers, Mode::Specified)?
+        };
         let argument = |p: &mut P, name: &str| {
             attempt(p, |p| p.expect_function_matching(name.as_bytes()).ok()).is_some()
         };
@@ -1279,16 +1483,16 @@ pub(crate) fn at_rule(prelude: &[u8]) -> (Out, &[u8]) {
     })
 }
 
-const MAX_NESTING: u8 = 64;
+const MAX_NESTING: u8 = 128;
 
 impl Builder {
     fn build(&mut self, source: &[u8], steps: Vec<Step>) {
         let (mut context, mut outer, mut skipped, mut has_skipped) = (0, Vec::new(), 0, false);
         let (mut allows_imports, mut allows_namespaces) = (true, true);
         let is_valid = |[start, brace]: [u32; 2], sheet: &Sheet| {
-            crate::cssom::prelude(
+            Prelude::parse(
                 slice(source, &(start..brace)),
-                b"",
+                Inside::Sheet,
                 Some(b""),
                 &sheet.namespaces,
             )
@@ -1565,12 +1769,7 @@ impl Builder {
         let Some(selectors) = selectors.filter(|_| !range.is_empty()) else {
             return;
         };
-        let block = Rc::new(Block::new(
-            &self.sheet.source,
-            range,
-            self.sheet.within,
-            &self.sheet.base_url,
-        ));
+        let block = self.sheet.block(range, self.sheet.within);
         self.order += 1;
         self.sheet.rules.extend(selectors.iter().map(|selector| {
             let (selector, block, context) = (selector.clone(), Rc::clone(&block), Rc::clone(cx));

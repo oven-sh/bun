@@ -4,10 +4,11 @@ use std::cell::Cell;
 
 use super::Data;
 
-const SLOTS: usize = 1 << 12;
+const SLOTS: usize = 1 << 14;
 
 thread_local! {
-    static KNOWN: [Cell<(usize, u32, u32)>; SLOTS] = const { [const { Cell::new((0, 0, 0)) }; SLOTS] };
+    // SAFETY: integers can be zero.
+    static KNOWN: Box<[Cell<(usize, u32, u32)>; SLOTS]> = unsafe { Box::new_zeroed().assume_init() };
 }
 
 /// `kind` tells searches apart, as one table may be taken for another.

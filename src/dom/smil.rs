@@ -1,7 +1,9 @@
 //! When the animation elements of SVG are active. https://www.w3.org/TR/SMIL3/smil-timing.html
 
 use crate::document::Document;
+use crate::engine_event::{ForNode, TimeEvent};
 use crate::name::{Map, Name, Set, is_name, name};
+use crate::order::Order as _;
 use crate::tree::{Element, Namespace, NodeId};
 
 const INDEFINITE: f64 = f64::INFINITY;
@@ -17,6 +19,13 @@ enum Condition {
     Repeat(Option<Name>, u32, f64),
     /// Scripts watch out for it.
     Event,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Instance {
+    Begin,
+    End,
+    EndIfActive,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -52,6 +61,20 @@ struct Timed {
     /// What the last events were about.
     active: Option<Interval>,
     iteration: u32,
+}
+
+/// The animations of a container, in the order of the tree.
+#[derive(Default)]
+struct Members {
+    ids: Vec<NodeId>,
+    /// Where those are whose conditions are about an id.
+    dependents: Map<Name, Vec<usize>>,
+}
+
+impl Members {
+    fn dependents_of(&self, name: Name) -> &[usize] {
+        self.dependents.get(&name).map_or(&[], Vec::as_slice)
+    }
 }
 
 #[derive(Default)]
@@ -93,8 +116,7 @@ pub(crate) fn is_animation(element: &Element) -> bool {
 
 fn clock(source: &str) -> Option<f64> {
     let (source, number) = (source.trim_ascii(), |it: &str| {
-        it.bytes()
-            .all(|it| it.is_ascii_digit() || it == b'.')
+        (it.bytes().all(|it| it.is_ascii_digit() || it == b'.') && !it.ends_with('.'))
             .then(|| it.parse::<f64>().ok())?
     });
     if source == "indefinite" {
@@ -200,7 +222,7 @@ impl Timed {
                     None
                 }
             }));
-            self.instances[kind].sort_by(|a, b| a.0.total_cmp(&b.0));
+            self.instances[kind].order_by(|a, b| a.0.total_cmp(&b.0));
         }
         (self.duration, self.repeat_duration) = (
             time(name!("dur")).filter(|it| *it > 0.0),
@@ -256,8 +278,8 @@ impl Timed {
         };
         let end = self.instances[END]
             .iter()
-            .map(|it| it.0)
-            .find(|it| *it >= begin && !was_used(*it));
+            .find(|it| it.0 > begin || it.0 == begin && it.1 != Origin::Script && !was_used(it.0))
+            .map(|it| it.0);
         let may_come = self.instances[END].is_empty()
             || self.conditions[END]
                 .iter()
@@ -308,7 +330,10 @@ impl Timed {
                     self.previous = self.interval;
                     self.instances
                         .iter_mut()
-                        .for_each(|it| it.retain(|it| it.1 == Origin::Attribute || it.0 >= end));
+                        .zip([begin, end])
+                        .for_each(|(list, kept)| {
+                            list.retain(|it| it.1 == Origin::Attribute || it.0 >= kept)
+                        });
                     self.interval = self.resolve(now);
                 }
             }
@@ -430,29 +455,47 @@ impl Document {
             })
     }
 
-    fn members(&self, svg: NodeId) -> Vec<NodeId> {
-        let has_any = self.smil.elements.values().any(|it| it.container == svg);
-        self.tree
+    fn members(&self, svg: NodeId) -> Members {
+        let ids: Vec<_> = self
+            .tree
             .descendants(svg)
-            .take_while(|_| has_any)
             .filter(|it| {
                 self.smil
                     .elements
                     .get(it)
                     .is_some_and(|it| it.container == svg)
             })
-            .collect()
+            .collect();
+        let mut dependents = Map::<_, Vec<_>>::default();
+        for (at, id) in ids.iter().enumerate() {
+            for condition in self.smil.elements[id].conditions.iter().flatten() {
+                if let Condition::Sync(base, ..) | Condition::Repeat(Some(base), ..) = condition {
+                    let known = dependents.entry(*base).or_default();
+                    known.pop_if(|it| *it == at);
+                    known.push(at);
+                }
+            }
+        }
+        Members { ids, dependents }
     }
 
     /// Tells those whose conditions are about `source`.
-    fn notify(&mut self, members: &[NodeId], source: NodeId, repeat: Option<(u32, f64)>, now: f64) {
+    fn notify(&mut self, members: &Members, source: NodeId, repeat: Option<(u32, f64)>, now: f64) {
         let (Some(name), Some(interval)) = (
             self.tree.element(source).map(|it| it.id),
             self.smil.elements[&source].interval,
         ) else {
             return;
         };
-        for (id, kind) in members.iter().flat_map(|it| [(*it, BEGIN), (*it, END)]) {
+        let others = members
+            .dependents_of(name)
+            .iter()
+            .map(|it| members.ids[*it])
+            .filter(|it| *it != source);
+        for (id, kind) in others
+            .chain([source])
+            .flat_map(|it| [(it, BEGIN), (it, END)])
+        {
             let Some(it) = self.smil.elements.get_mut(&id) else {
                 continue;
             };
@@ -487,11 +530,13 @@ impl Document {
         }
     }
 
-    fn settle_intervals(&mut self, members: &[NodeId], now: f64, fires: bool) {
-        for _ in 0..members.len() * 4 + 4 {
-            let mut has_changed = false;
-            for id in members {
-                let Some(it) = self.smil.elements.get_mut(id) else {
+    fn settle_intervals(&mut self, members: &Members, now: f64, fires: bool) {
+        let (mut unsettled, mut steps): (Vec<_>, _) = ((0..members.ids.len()).collect(), 0);
+        while !unsettled.is_empty() && steps < members.ids.len() * 16 {
+            steps += unsettled.len();
+            for at in core::mem::take(&mut unsettled) {
+                let id = members.ids[at];
+                let Some(it) = self.smil.elements.get_mut(&id) else {
                     continue;
                 };
                 let is_momentary = it.interval.is_some_and(|[begin, end]| {
@@ -499,20 +544,25 @@ impl Document {
                 });
                 if it.update(now) {
                     if fires && is_momentary && it.previous.is_some_and(|it| it[END] <= now) {
-                        self.announce(*id, now, true);
-                        ["beginEvent", "endEvent"]
+                        self.announce(id, now, true);
+                        [TimeEvent::Begin, TimeEvent::End]
                             .into_iter()
-                            .for_each(|it| self.emit(it, *id, ",0"));
+                            .for_each(|it| self.emit(id, ForNode::Smil(it)));
                     }
-                    has_changed = true;
-                    self.notify(members, *id, None, now);
+                    self.notify(members, id, None, now);
+                    unsettled.push(at);
+                    unsettled.extend(
+                        self.tree
+                            .element(id)
+                            .into_iter()
+                            .flat_map(|it| members.dependents_of(it.id)),
+                    );
                 }
             }
-            if !has_changed {
-                break;
-            }
+            unsettled.order_by(Ord::cmp);
+            unsettled.dedup();
         }
-        for id in members {
+        for id in &members.ids {
             let it = &self.smil.elements[id];
             let (current, known) = (it.current(now), it.iteration);
             let iteration = current.and_then(|_| it.progress(now)).map_or(0, |it| it.2);
@@ -525,7 +575,7 @@ impl Document {
                 self.notify(members, *id, Some((iteration, now)), now);
             }
             if fires && !self.announce(*id, now, false) && iteration > known {
-                self.emit("repeatEvent", *id, &format!(",{iteration}"));
+                self.emit(*id, ForNode::Smil(TimeEvent::Repeat));
             }
         }
     }
@@ -538,20 +588,21 @@ impl Document {
         let current = it.current(now).filter(|_| !only_ends);
         let before = core::mem::replace(&mut it.active, current);
         let differs = before.map(|it| it[BEGIN]) != current.map(|it| it[BEGIN]);
-        for (kind, interval) in [("endEvent", before), ("beginEvent", current)] {
+        for (kind, interval) in [(TimeEvent::End, before), (TimeEvent::Begin, current)] {
             if differs && interval.is_some() {
-                self.emit(kind, id, ",0");
+                self.emit(id, ForNode::Smil(kind));
             }
         }
         differs
     }
 
-    fn advance(&mut self, svg: NodeId, from: f64, to: f64, fires: bool) {
-        let (members, mut now) = (self.members(svg), from);
-        for _ in 0..200_000 / (members.len() + 1) {
-            self.settle_intervals(&members, now, fires);
-            self.settle_intervals(&members, now, fires);
+    fn advance(&mut self, svg: NodeId, members: &Members, from: f64, to: f64, fires: bool) {
+        let mut now = from;
+        for _ in 0..200_000 / (members.ids.len() + 1) {
+            self.settle_intervals(members, now, fires);
+            self.settle_intervals(members, now, fires);
             now = members
+                .ids
                 .iter()
                 .map(|it| self.smil.elements[it].next_change(now))
                 .fold(INDEFINITE, f64::min);
@@ -559,14 +610,16 @@ impl Document {
                 break;
             }
         }
-        self.settle_intervals(&members, to, fires);
+        self.settle_intervals(members, to, fires);
         members
+            .ids
             .iter()
             .for_each(|it| _ = self.announce(*it, to, false));
         self.container(svg).time = to;
     }
 
     fn adopt_animations(&mut self) {
+        let mut containers = Set::default();
         for id in core::mem::take(&mut self.smil.stale) {
             let is_svg = |it: &NodeId| {
                 self.tree
@@ -596,8 +649,12 @@ impl Document {
                 it.previous = it.current(now).map(|it| [it[BEGIN], now]).or(it.previous);
                 it.interval = None;
             }
+            containers.insert(svg);
+        }
+        for svg in containers {
             let (now, members) = (self.container(svg).time, self.members(svg));
             members
+                .ids
                 .iter()
                 .for_each(|it| self.notify(&members, *it, None, now));
         }
@@ -614,7 +671,13 @@ impl Document {
             .copied()
             .filter(|_| self.smil.has_started)
             .collect();
+        let used: Set<_> = self.smil.elements.values().map(|it| it.container).collect();
         for svg in containers {
+            let members = if used.contains(&svg) {
+                self.members(svg)
+            } else {
+                Members::default()
+            };
             let it = self.container(svg);
             let (from, elapsed) = (
                 it.time,
@@ -622,7 +685,7 @@ impl Document {
                     (now - core::mem::replace(it, now)).max(0.0) / 1000.0
                 }),
             );
-            self.advance(svg, from, from + elapsed, true);
+            self.advance(svg, &members, from, from + elapsed, true);
             let progress = |id: NodeId| {
                 self.smil.elements[&id].progress(from + elapsed).map(
                     |(begin, fraction, iteration)| {
@@ -637,9 +700,9 @@ impl Document {
                     },
                 )
             };
-            contributing.extend(self.members(svg).into_iter().filter_map(progress));
+            contributing.extend(members.ids.into_iter().filter_map(progress));
         }
-        contributing.sort_by(|a, b| a.0.total_cmp(&b.0));
+        contributing.order_by(|a, b| a.0.total_cmp(&b.0));
         self.apply_smil(contributing.into_iter().map(|it| it.1));
     }
 
@@ -687,7 +750,7 @@ impl Document {
                 .map(|it| (*it.0, it.1.active))
                 .collect(),
         );
-        self.advance(svg, 0.0, to, false);
+        self.advance(svg, &self.members(svg), 0.0, to, false);
         if !has_started {
             self.events.truncate(events);
             active.into_iter().for_each(|(id, active)| {
@@ -712,13 +775,7 @@ impl Document {
         self.container(svg).is_paused
     }
 
-    pub(crate) fn add_smil_instance(
-        &mut self,
-        id: NodeId,
-        ends: bool,
-        offset: f64,
-        is_for_event: bool,
-    ) {
+    pub(crate) fn add_smil_instance(&mut self, id: NodeId, instance: Instance, offset: f64) {
         self.adopt_animations();
         let Some(svg) = self.smil.elements.get(&id).map(|it| it.container) else {
             return;
@@ -728,9 +785,18 @@ impl Document {
             .smil
             .elements
             .get_mut(&id)
-            .filter(|it| !(is_for_event && ends && it.current(now).is_none()))
+            .filter(|it| instance != Instance::EndIfActive || it.current(now).is_some())
         {
-            it.add(usize::from(ends), now + offset, Origin::Script, now);
+            it.add(
+                if instance == Instance::Begin {
+                    BEGIN
+                } else {
+                    END
+                },
+                now + offset,
+                Origin::Script,
+                now,
+            );
         }
         self.smil.needs_update = true;
     }

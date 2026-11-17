@@ -78,6 +78,10 @@ JSC_DECLARE_HOST_FUNCTION(illegalConstructor);
 // A plain object with the properties of the table, that inherits from `prototypeBase`.
 JSC::JSObject* createClassPrototype(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototypeBase, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>);
 
+// Of `node:events`.
+JSC::JSObject* eventEmitterConstructor(JSC::JSGlobalObject*);
+JSC::JSObject* eventEmitterPrototype(JSC::JSGlobalObject*);
+
 JSC::Structure* structureForClass(JSC::JSGlobalObject*, unsigned classIndex);
 JSC::JSObject* prototypeForClass(JSC::JSGlobalObject*, unsigned classIndex);
 JSC::JSObject* constructorForClass(JSC::JSGlobalObject*, unsigned classIndex);

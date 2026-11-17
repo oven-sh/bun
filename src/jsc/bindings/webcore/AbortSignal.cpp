@@ -253,7 +253,8 @@ void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReas
     // `this` before the allocation rather than only inside signalAbort(JSValue).
     Ref protectedThis { *this };
     m_commonReason = reason;
-    signalAbort(toJS(globalObject, reason));
+    auto* object = wrapper();
+    signalAbort(toJS(object ? object->realm() : globalObject, reason));
 }
 
 void AbortSignal::cleanNativeBindings(void* ref)

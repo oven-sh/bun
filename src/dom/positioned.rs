@@ -4,10 +4,12 @@ use std::rc::Rc;
 
 use crate::abi::Rect;
 use crate::anchor::Anchored;
-use crate::boxes::{BoxId, Kind};
+use crate::boxes::{BoxId, Kind, LayoutBox, VIEWPORT};
 use crate::document::Document;
 use crate::fragment::Breaks;
-use crate::layout::{AutoSize, Claims, Output, Point, Room, auto_margins, margin, resolve, unit};
+use crate::layout::{
+    AutoSize, Claims, Output, Point, Room, Setting, auto_margins, margin, resolve, unit,
+};
 use crate::types::*;
 
 /// The part of a box that is at its static position.
@@ -61,6 +63,16 @@ struct Axis {
     room: [f32; 2],
 }
 
+impl LayoutBox {
+    /// In both axes.
+    pub(crate) fn has_insets(&self) -> bool {
+        let l = &self.style.layout;
+        [[&l.left, &l.right], [&l.top, &l.bottom]]
+            .iter()
+            .all(|it| it.iter().any(|it| matches!(it, Inset::Length(_))))
+    }
+}
+
 impl Document {
     /// Those in `id` that nothing in between is the containing block of.
     fn collect_positioned(&self, id: BoxId, wanted: Claims, out: &mut Vec<BoxId>) {
@@ -97,7 +109,7 @@ impl Document {
         mut breaks: Option<&mut Breaks>,
     ) {
         let it = &mut self.boxes[id];
-        it.hoisted.clear();
+        it.forget_hoisted();
         if it.kind == Kind::Lines {
             return self.claim_by_inline_elements(id, output, breaks);
         }
@@ -155,8 +167,63 @@ impl Document {
             }
             escapes |= own.escapes - claims;
         }
-        self.boxes[container].hoisted.append(&mut found);
+        if !found.is_empty() {
+            self.boxes[container].hoisted.append(&mut found);
+        }
         escapes
+    }
+
+    /// Without what is around it, if that is enough to know where it and what is in it are.
+    pub(crate) fn lay_out_alone(&mut self, id: BoxId) -> bool {
+        let container = self.boxes[id].container;
+        let block = &self.boxes[container];
+        if block.kind == Kind::Lines
+            || block.mode.is_vertical()
+            || block.splits_layers
+            || !self.boxes.pieces.is_empty()
+        {
+            return false;
+        }
+        let (area, rtl) = (self.client_box(container), block.style.is_rtl());
+        self.lay_out_out_of_flow(id, container, area, rtl, None)
+            .escapes
+            .is_empty()
+    }
+
+    /// Whether nothing but its own contents and style, `area` and the static position say where it is.
+    fn is_simply_positioned(&self, id: BoxId, container: BoxId) -> bool {
+        let (it, block) = (&self.boxes[id], &self.boxes[container]);
+        matches!(block.kind, Kind::Block | Kind::Flex)
+            && [block.mode, block.turned, self.boxes[it.parent].mode]
+                == [WritingMode::HorizontalTb; 3]
+            && it.claimed_by_inline.is_empty()
+            && !(block.is_cell() || block.splits_layers)
+            && self.anchored.is_empty()
+            && self.boxes.pieces.is_empty()
+    }
+
+    /// Without its container. Returns what escapes from it.
+    pub(crate) fn refresh_out_of_flow(&mut self, id: BoxId) -> Option<Claims> {
+        let it = &self.boxes[id];
+        let container = it.container;
+        (it.style.is_out_of_flow()
+            && it.cache.escapes().is_empty()
+            && self.boxes[VIEWPORT].size() == self.environment.viewport
+            && self.boxes[container].cache.is_current()
+            && self.is_simply_positioned(id, container)
+            && self.boxes[container].hoisted.contains(&id))
+        .then_some(())?;
+        let (area, rtl) = (
+            self.client_box(container),
+            self.boxes[container].style.is_rtl(),
+        );
+        let escapes = self
+            .lay_out_out_of_flow(id, container, area, rtl, None)
+            .escapes;
+        self.boxes.mark_ink(id);
+        self.boxes.note_change(container);
+        self.moved_boxes_in_scrollers.push(id);
+        Some(escapes)
     }
 
     fn lay_out_out_of_flow(
@@ -167,6 +234,22 @@ impl Document {
         rtl: bool,
         breaks: Option<&mut Breaks>,
     ) -> Output {
+        let setting = Setting::new(
+            (area.width, Some(area.height)),
+            [rtl, false, false, false],
+            TextAlign::Start,
+            Align::NORMAL,
+        );
+        let may_settle = area.x == area.y
+            && breaks.is_none()
+            && self.boxes[id].has_insets()
+            && self.is_simply_positioned(id, container);
+        if may_settle
+            && self.boxes[id].container == container
+            && let Some((_, _, output)) = self.settled(id, setting).filter(|it| it.0 == area.x)
+        {
+            return output;
+        }
         let (mut origin, mut at) = ([0.0; 2], self.boxes[id].parent);
         while at != container && at != 0 {
             let location = self.boxes[at].layout.location;
@@ -206,6 +289,12 @@ impl Document {
         }
         if let Some(known) = self.anchored.get_mut(&it.node) {
             known.block = area.transformed(&mode.to_physical(container_size));
+        }
+        if matches!(block.kind, Kind::Grid | Kind::Lines) || block.splits_layers {
+            self.containing_parts
+                .insert(id, area.transformed(&mode.to_physical(container_size)));
+        } else if !self.containing_parts.is_empty() {
+            self.containing_parts.remove(&id);
         }
         let (original, reverses, has_area) = (area, mode.reverses(), anchored.area.is_some());
         let center = mode.turn_axes(anchored.center);
@@ -426,6 +515,9 @@ impl Document {
         }
         let layout = &mut self.boxes[id].layout;
         (layout.location, layout.margin) = (Point { x, y }, margin);
+        if may_settle {
+            self.note_settled(id, setting, original.x);
+        }
         let is_static = insets[1] == [None; 2] || self.boxes[container].kind == Kind::Lines;
         let output = breaks
             .and_then(|it| self.fragment_out_of_flow(id, container, input, y, is_static, it))

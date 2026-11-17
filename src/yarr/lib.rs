@@ -59,6 +59,7 @@ unsafe extern "C" {
         length: u32,
         is_8_bit: bool,
         flags: u16,
+        expansion_limit: usize,
         offsets_size: &mut u32,
         refusal: &mut u8,
     ) -> *mut c_void;
@@ -69,6 +70,7 @@ unsafe extern "C" {
         is_8_bit: bool,
         start: u32,
         offsets: *mut u32,
+        remaining_steps: Option<&mut usize>,
     ) -> bool;
     fn Yarr__RegularExpression__deinit(this: *mut c_void);
 }
@@ -83,7 +85,7 @@ struct Instance(NonNull<c_void>);
 
 impl Instance {
     /// With how long the `offsets` of a match have to be.
-    fn new(pattern: Text<'_>, bits: u16) -> Result<(Instance, u32), Error> {
+    fn new(pattern: Text<'_>, bits: u16, expansion_limit: usize) -> Result<(Instance, u32), Error> {
         let Some((characters, length, is_8_bit)) = pattern.parts() else {
             return Err(Error::TooLarge);
         };
@@ -95,6 +97,7 @@ impl Instance {
                 length,
                 is_8_bit,
                 bits,
+                expansion_limit,
                 &mut offsets_len,
                 &mut refusal,
             )
@@ -182,13 +185,18 @@ pub struct Compiled {
 impl Compiled {
     /// `bits`: of [`flags`].
     pub fn new(pattern: Text<'_>, bits: u16) -> Result<Compiled, Error> {
+        Self::within(pattern, bits, usize::MAX)
+    }
+
+    /// [`Error::TooLarge`] if classes and quantifiers stand for more than `expansion_limit` terms and members.
+    pub fn within(pattern: Text<'_>, bits: u16, expansion_limit: usize) -> Result<Compiled, Error> {
         static START: std::sync::Once = std::sync::Once::new();
         START.call_once(__bun_yarr_initialize);
         let both = flags::UNICODE | flags::UNICODE_SETS;
         if bits >> 8 != 0 || bits & both == both {
             return Err(Error::Syntax);
         }
-        let (instance, offsets_len) = Instance::new(pattern, bits)?;
+        let (instance, offsets_len) = Instance::new(pattern, bits, expansion_limit)?;
         Ok(Compiled {
             pattern: match pattern {
                 Text::Latin1(it) => Pattern::Latin1(it.into()),
@@ -245,7 +253,7 @@ impl Compiled {
                 Pattern::Utf16(it) => Text::Utf16(it),
             };
             // It can fail where the first did not: with less of the stack left. One is only freed when it finds no place, so another comes back.
-            match Instance::new(pattern, self.bits) {
+            match Instance::new(pattern, self.bits, usize::MAX) {
                 Ok((instance, offsets_len)) => {
                     debug_assert_eq!(offsets_len, self.offsets_len);
                     return Some(Taken::new(self, instance));
@@ -285,6 +293,18 @@ impl Compiled {
     /// a group that took no part is [`NO_MATCH`], and its end can be anything.
     #[inline]
     pub fn exec(&self, text: Text<'_>, start: u32, offsets: &mut [u32]) -> bool {
+        self.exec_within(text, start, offsets, None)
+    }
+
+    /// It takes what it does off `remaining_steps`, and gives up when none are left.
+    #[inline]
+    pub fn exec_within(
+        &self,
+        text: Text<'_>,
+        start: u32,
+        offsets: &mut [u32],
+        remaining_steps: Option<&mut usize>,
+    ) -> bool {
         let Some((characters, length, is_8_bit)) = text.parts() else {
             return false;
         };
@@ -303,6 +323,7 @@ impl Compiled {
                 is_8_bit,
                 start,
                 offsets.as_mut_ptr(),
+                remaining_steps,
             )
         }
     }

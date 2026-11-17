@@ -19,10 +19,9 @@
 //! Windows (no inheritable sockets): two uv_pipe()s driven here instead, see [`PipeEvent`] and `Bun__Chrome__writePipe`.
 
 use core::ffi::{CStr, c_char};
-use core::ptr;
 #[cfg(windows)]
 use core::sync::atomic::AtomicU32;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write as _;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -34,6 +33,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
+use bun_ptr::{AliasableBox, CellExt as _};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
@@ -69,13 +69,19 @@ struct WindowsPipes {
     read_buf: bun_jsc::JsCell<Box<[u8]>>,
 }
 
-// PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
-// Only accessed from the JS thread (exported fns are called from C++ on the
-// mutator thread; on_process_exit runs on the event loop thread which is the
-// same thread), so Relaxed ordering suffices.
-static INSTANCE: AtomicPtr<ChromeProcess> = AtomicPtr::new(ptr::null_mut());
+/// Empty in a Worker.
+fn unreaped() -> &'static super::Unreaped<ChromeProcess> {
+    &crate::jsc_hooks::runtime_state().browsers.chrome
+}
 
-/// Generation of the Chrome in INSTANCE; stamped on every [`PipeEvent`] (same threading as INSTANCE).
+/// Of the Chrome that C++ talks to, which is the newest of the main thread. 0: none.
+static PID: AtomicI32 = AtomicI32::new(0);
+
+/// libuv only reports the signal of a kill that went through the handle.
+#[cfg(windows)]
+static TERMINATED_PID: AtomicI32 = AtomicI32::new(0);
+
+/// Generation of the Chrome in PID; stamped on every [`PipeEvent`].
 #[cfg(windows)]
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
@@ -87,10 +93,24 @@ static GENERATION: AtomicU32 = AtomicU32::new(0);
 /// rejectAllAndMarkDead handles promise rejection on the next loop tick.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Chrome__kill() {
-    // SAFETY: JS-thread-only global; see INSTANCE decl.
-    unsafe {
-        if let Some(i) = INSTANCE.load(Ordering::Relaxed).as_mut() {
-            let _ = i.process.kill(9);
+    let pid = PID.load(Ordering::Relaxed);
+    if pid == 0 {
+        return;
+    }
+    #[cfg(unix)]
+    bun_spawn::ffi::kill(pid, libc::SIGKILL);
+    #[cfg(windows)]
+    {
+        if let Some(state) = crate::jsc_hooks::try_runtime_state() {
+            let unreaped = state.browsers.chrome.take();
+            let killed = unreaped.last().map(|chrome| chrome.process.kill(9));
+            state.browsers.chrome.put_back(unreaped);
+            if killed.is_some() {
+                return;
+            }
+        }
+        if uv::terminate(pid).int() == 0 {
+            TERMINATED_PID.store(pid, Ordering::Relaxed);
         }
     }
 }
@@ -98,20 +118,20 @@ extern "C" fn Bun__Chrome__kill() {
 /// Transport::retireGlobal (`bun test --isolate`): unpublish and kill this Chrome so the next file can spawn its own at once.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Chrome__retire() {
-    let this = INSTANCE.swap(ptr::null_mut(), Ordering::Relaxed);
-    // SAFETY: INSTANCE held a live heap-allocated pointer; `on_exit` only
-    // frees it after it runs, and we have just taken it out of INSTANCE.
-    let Some(chrome) = (unsafe { this.as_mut() }) else {
-        return;
-    };
-    chrome.retired = true;
-    #[cfg(windows)]
-    {
-        // Queued events from this Chrome carry its generation; `QueuedEvent::deliver` drops them.
-        GENERATION.fetch_add(1, Ordering::Relaxed);
-        chrome.pipes.close();
-    }
-    let _ = chrome.process.kill(9);
+    unreaped().with_taken(|unreaped| {
+        let Some(chrome) = unreaped.last_mut().filter(|chrome| !chrome.retired) else {
+            return;
+        };
+        PID.store(0, Ordering::Relaxed);
+        chrome.retired = true;
+        #[cfg(windows)]
+        {
+            // Queued events from this Chrome carry its generation; `QueuedEvent::deliver` drops them.
+            GENERATION.fetch_add(1, Ordering::Relaxed);
+            chrome.pipes.close();
+        }
+        let _ = chrome.process.kill(9);
+    });
 }
 
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
@@ -131,7 +151,7 @@ unsafe extern "C" fn Bun__Chrome__ensure(
     stderr_inherit: bool,
 ) -> i32 {
     {
-        if !INSTANCE.load(Ordering::Relaxed).is_null() {
+        if PID.load(Ordering::Relaxed) != 0 {
             return -1; // C++ already holds the transport
         }
 
@@ -178,24 +198,26 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl ChromeProcess {
-    /// Safety: `this` is the pointer published in INSTANCE (freed here).
-    unsafe fn on_exit(this: *mut ChromeProcess, status: &Status) {
+    fn on_exit(this: *mut ChromeProcess, status: &Status) {
         scoped_log!(Chrome, "chrome exited: {}", status);
-        // A retired Chrome was already unpublished by `Bun__Chrome__retire`.
-        let _ =
-            INSTANCE.compare_exchange(this, ptr::null_mut(), Ordering::Relaxed, Ordering::Relaxed);
-        // SAFETY: caller contract; nothing else references the allocation once INSTANCE is cleared.
-        let chrome = unsafe { bun_core::heap::take(this) };
+        let Some(chrome) = super::remove(unreaped(), this) else {
+            return;
+        };
         if chrome.retired {
             return;
         }
+        PID.store(0, Ordering::Relaxed);
         let signo: i32 = status.signal().map_or(0, |signal| i32::from(signal.0));
         #[cfg(windows)]
-        PipeEvent::Exited { signo }.post(chrome.generation);
+        {
+            let was_terminated = TERMINATED_PID.swap(0, Ordering::Relaxed) == chrome.process.pid;
+            let signo = if was_terminated { 9 } else { signo };
+            PipeEvent::Exited { signo }.post(chrome.generation);
+        }
         #[cfg(not(windows))]
         {
             drop(chrome);
-            // SAFETY: plain FFI call; takes no pointers.
+            // SAFETY: takes no pointers, and this is the thread that C++ called `Bun__Chrome__ensure` on.
             unsafe { Bun__Chrome__died(signo) };
         }
     }
@@ -635,19 +657,14 @@ impl Endpoints {
 
     /// Publishes the singleton and returns our fd for C++ to adopt.
     fn attach(self, process: ProcessHandle) -> crate::Result<i32> {
-        let chrome = bun_ptr::AliasableBox::new(ChromeProcess {
+        let chrome = AliasableBox::new(ChromeProcess {
             process,
             retired: false,
         });
-        // SAFETY: `chrome` owns `process` and outlives it.
-        let process = unsafe {
-            let process = &(*chrome.as_ptr()).process;
-            Process::set_exit_handler(
-                process,
-                ProcessExit::new(ProcessExitKind::ChromeProcess, chrome.as_ptr()),
-            );
-            process
-        };
+        let process = &chrome.process;
+        // SAFETY: `chrome` owns `process`, whose `Drop` detaches the handler.
+        let handler = unsafe { ProcessExit::new(ProcessExitKind::ChromeProcess, chrome.as_ptr()) };
+        Process::set_exit_handler(process, handler);
         if let Err(e) = process.watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
             return Err(crate::Error::WatchFailed);
@@ -656,7 +673,8 @@ impl Endpoints {
         // fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit. dispatchOnExit
         // also SIGKILLs via Bun__Chrome__kill.
         process.disable_keeping_event_loop_alive();
-        INSTANCE.store(chrome.into_raw(), Ordering::Relaxed);
+        PID.store(process.pid, Ordering::Relaxed);
+        unreaped().with_taken(|unreaped| unreaped.push(chrome));
 
         debug_assert!(self.child.is_none());
         // usockets owns the fd from here on; this module only owns the process.
@@ -728,15 +746,14 @@ impl Endpoints {
             read_buf: bun_jsc::JsCell::new(vec![0u8; READ_BUF_SIZE].into_boxed_slice()),
         };
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
-        let chrome = bun_ptr::AliasableBox::new(ChromeProcess {
+        let chrome = AliasableBox::new(ChromeProcess {
             process,
             retired: false,
             pipes,
             generation,
         });
         let self_ptr = chrome.as_ptr();
-        // SAFETY: a field projection of `chrome`.
-        let process = unsafe { &(*self_ptr).process };
+        let process = &chrome.process;
 
         // Unlike POSIX the exit can't be delivered before we return (it comes
         // through this thread's loop), so the exit handler is installed after.
@@ -754,11 +771,12 @@ impl Endpoints {
             return Err(err.into());
         }
 
-        // SAFETY: `self_ptr` is live until `on_exit`.
+        // SAFETY: `chrome` owns `process`, whose `Drop` detaches the handler.
         let handler = unsafe { ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr) };
         Process::set_exit_handler(process, handler);
         process.disable_keeping_event_loop_alive();
-        INSTANCE.store(chrome.into_raw(), Ordering::Relaxed);
+        PID.store(process.pid, Ordering::Relaxed);
+        unreaped().with_taken(|unreaped| unreaped.push(chrome));
         GENERATION.store(generation, Ordering::Relaxed);
         Ok(0)
     }
@@ -908,23 +926,22 @@ impl WriteReq {
 #[cfg(windows)]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
-    let instance = INSTANCE.load(Ordering::Relaxed);
-    if instance.is_null() {
-        return; // Chrome already exited; the Exited event is on its way to C++
-    }
-    // SAFETY: INSTANCE is live until `on_exit` clears it, and no read callback runs below.
-    let (pipe, generation) = unsafe { (&(*instance).pipes.cmd, (*instance).generation) };
-    let pipe = pipe.as_ref().expect("closed after INSTANCE is cleared");
-    scoped_log!(Chrome, "write {} bytes", len);
     // SAFETY: caller contract.
     let bytes = unsafe { bun_core::ffi::slice(data, len) };
-    for chunk in bytes.chunks(u32::MAX as usize) {
-        // SAFETY: `pipe` belongs to the published instance read above.
-        if !unsafe { WriteReq::submit(pipe.as_ptr(), chunk, generation) } {
-            PipeEvent::Closed.post(generation);
-            return;
+    unreaped().with_taken(|unreaped| {
+        let Some(chrome) = unreaped.last().filter(|chrome| !chrome.retired) else {
+            return; // Chrome already exited; the Exited event is on its way to C++
+        };
+        let pipe = (chrome.pipes.cmd.as_ref()).expect("closed when it is retired");
+        scoped_log!(Chrome, "write {} bytes", len);
+        for chunk in bytes.chunks(u32::MAX as usize) {
+            // SAFETY: `pipe` belongs to `chrome`.
+            if !unsafe { WriteReq::submit(pipe.as_ptr(), chunk, chrome.generation) } {
+                PipeEvent::Closed.post(chrome.generation);
+                return;
+            }
         }
-    }
+    });
 }
 
 // Implemented in ChromeBackend.cpp.

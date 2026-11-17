@@ -22,9 +22,15 @@ mod shaper;
 mod woff;
 mod words;
 
-pub use fonts::{Description, Palette, Recipe, command, describe, em_box, face, metrics, prewarm};
+pub use fonts::{
+    Description, Palette, Recipe, baselines, describe, em_box, face, metrics, prewarm,
+};
+pub use fonts::{
+    decode_font, decode_font_later, drop_font_scope, font_families, order_font, register_font,
+    unregister_font,
+};
 pub use line::{Line, glyph_extent, ink_spans};
-pub use raster::{GlyphImage, GlyphPixels, glyph_path, rasterize, shade_for};
+pub use raster::{GlyphImage, GlyphPixels, glyph_path, ink_for, rasterize};
 pub use shape::{Shaped, shape};
 
 pub fn release_memory() {

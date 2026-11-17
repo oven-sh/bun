@@ -8,7 +8,7 @@ use crate::boxes::{BoxId, VIEWPORT};
 use crate::document::Document;
 use crate::name::{Map, Set};
 use crate::properties::Style;
-use crate::tree::{DOCUMENT, NodeId};
+use crate::tree::{DOCUMENT, Gone, NodeId};
 use crate::types::*;
 
 #[derive(Clone, Copy)]
@@ -48,6 +48,8 @@ pub(crate) struct Compositor {
     /// They have a `wheel` listener that is not passive.
     pub(crate) wheel_blockers: Set<NodeId>,
     is_applying: bool,
+    /// The scrollers of the picture are not what the renderer has.
+    pub(crate) has_shifted: bool,
 }
 
 /// Leaves out those that interpolation gives.
@@ -110,10 +112,10 @@ pub(crate) fn corners(
 }
 
 impl Compositor {
-    pub(crate) fn forget(&mut self, node: NodeId) {
-        self.scrolled.get_mut().remove(&node);
-        self.sampled.remove(&node);
-        self.wheel_blockers.remove(&node);
+    pub(crate) fn forget(&mut self, gone: &Gone) {
+        gone.leave_map(self.scrolled.get_mut());
+        gone.leave_map(&mut self.sampled);
+        gone.leave_set(&mut self.wheel_blockers);
     }
 
     /// The renderer starts from nothing with one that was not in the list before.
@@ -135,9 +137,6 @@ impl Document {
     fn composited(&self, id: BoxId) -> Option<([[f32; 2]; 2], [bool; 2], [bool; 2], &Style)> {
         let it = &self.boxes[id];
         (self.compositor.is_on && it.scrolls()).then_some(())?;
-        let range = self.scroll_range(id);
-        let scrolls = [0, 1]
-            .map(|axis| it.overflow[axis] != Overflow::Hidden && range[axis][1] > range[axis][0]);
         let style = if id == VIEWPORT {
             self.tree.style(self.tree.root_element())?
         } else {
@@ -145,6 +144,10 @@ impl Document {
         };
         let contains =
             [style.scroll.overscroll_x, style.scroll.overscroll_y].map(|it| it != Overscroll::Auto);
+        (it.overflow != [Overflow::Hidden; 2] || contains.contains(&true)).then_some(())?;
+        let range = self.scroll_range(id);
+        let scrolls = [0, 1]
+            .map(|axis| it.overflow[axis] != Overflow::Hidden && range[axis][1] > range[axis][0]);
         (scrolls.contains(&true) || contains.contains(&true))
             .then_some((range, scrolls, contains, style))
     }
@@ -248,23 +251,43 @@ impl Document {
     }
 
     pub(crate) fn scroll_offset_changed(&mut self, node: NodeId, offset: [f32; 2]) {
-        let is_shown = self.compositor.is_applying
-            && (self
-                .own_box(node)
-                .zip(self.pictures.current())
-                .and_then(|(id, picture)| {
-                    let (painted, overscan) = (picture.painted_offset(node)?, self.overscan(id));
-                    Some(
-                        (0..2).all(|axis| {
-                            (offset[axis] - painted[axis]).abs() <= overscan[axis] * 0.4
-                        }),
-                    )
+        let is_near = self
+            .own_box(node)
+            .zip(self.pictures.current())
+            .and_then(|(id, picture)| {
+                let (painted, overscan) = (picture.painted_offset(node)?, self.overscan(id));
+                Some((0..2).all(|axis| {
+                    (offset[axis] - painted[axis]).abs()
+                        <= overscan[axis]
+                            * if self.compositor.is_applying {
+                                0.4
+                            } else {
+                                0.6
+                            }
                 }))
-                == Some(true);
-        match is_shown {
+            });
+        match is_near == Some(true)
+            && (self.compositor.is_applying || self.shift_in_picture(node, offset).is_some())
+        {
             true => self.repaint_eventually(self.nearest_box(node)),
             false => self.repaint(node),
         }
+    }
+
+    /// Has the renderer show another part of what it has.
+    fn shift_in_picture(&mut self, node: NodeId, offset: [f32; 2]) -> Option<()> {
+        let (state, picture) = (
+            self.compositor.scrolled.get_mut().get(&node)?,
+            self.pictures.current_mut().filter(|it| it.is_submitted)?,
+        );
+        let it = picture
+            .scrollers
+            .iter_mut()
+            .find(|it| (it.id, it.generation) == (state.id, state.generation))?;
+        it.applied =
+            [0, 1].map(|axis| state.applied[axis] - f64::from(offset[axis] - it.offset[axis]));
+        (self.compositor.has_shifted, self.needs_frame) = (true, true);
+        Some(())
     }
 
     pub(crate) fn blocks_wheel(&self, node: NodeId) -> bool {

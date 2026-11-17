@@ -7,9 +7,10 @@ use crate::boxes::{BoxId, Kind, VIEWPORT};
 use crate::document::Document;
 use crate::geometry::translation;
 use crate::name::{Map, Name, name};
+use crate::order::Order as _;
 use crate::properties::{Id, Style};
 use crate::selector::{Pseudo, ScrollPart, key};
-use crate::tree::{DOCUMENT, Flags, Namespace, NodeId, State};
+use crate::tree::{DOCUMENT, Flags, Gone, Namespace, NodeId, State};
 use crate::types::*;
 
 /// Bits of `generated_by_rules`.
@@ -103,8 +104,11 @@ impl Carousels {
             .for_each(|it| it.pinned_in = 0);
     }
 
-    pub(crate) fn forget(&mut self, id: NodeId) {
-        if !self.is_empty() {
+    pub(crate) fn forget(&mut self, gone: &Gone) {
+        for id in gone.ids.iter().copied() {
+            if self.is_empty() {
+                break;
+            }
             self.groups.remove(&id);
             self.unpin(id);
             if let Some(group) = self
@@ -119,7 +123,7 @@ impl Carousels {
         self.hovered
             .iter_mut()
             .chain([&mut self.focused])
-            .filter(|it| **it == id)
+            .filter(|it| gone.has(**it))
             .for_each(|it| *it = 0);
     }
 }
@@ -177,7 +181,7 @@ fn choose(targets: &[Target], at: f32, [min, max]: [f32; 2], view: [f32; 2]) -> 
         .filter(is_reserved)
         .map(f32::floor)
         .collect();
-    offsets.sort_by(f32::total_cmp);
+    offsets.order_by(f32::total_cmp);
     offsets.dedup();
     let progress = (at - if is_at_start { min } else { max - reserved }) / reserved;
     let chosen = match offsets
@@ -223,7 +227,11 @@ impl Document {
     fn keep_part(&mut self, id: NodeId, part: ScrollPart, old: NodeId, is_wanted: bool) -> NodeId {
         if !is_wanted {
             if old != 0 {
-                self.mark_parent_rebuild(old);
+                let parent = self
+                    .layout_parent_of_part(old)
+                    .unwrap_or_else(|| self.tree.flat_parent(old));
+                self.mark_rebuild(parent);
+                self.needs_layout = true;
                 self.free_subtree(old);
             }
             return 0;
@@ -234,7 +242,7 @@ impl Document {
             ""
         };
         let new = if old == 0 {
-            self.create_element(tag, Namespace::Html)
+            self.create_element(crate::api::core::Atom::new(tag), Namespace::Html, None)
         } else {
             old
         };
@@ -244,7 +252,7 @@ impl Document {
             .element_mut(new)
             .filter(|it| it.pseudo != Pseudo::Scroll(part))
         {
-            (element.pseudo, element.originator) = (Pseudo::Scroll(part), id);
+            element.set_pseudo(Pseudo::Scroll(part), id);
             self.tree[new].set(Flags::REMATCH);
             self.pseudo_element_created(id, Pseudo::Scroll(part), new);
         }
@@ -714,8 +722,7 @@ impl Document {
             match self.tree.element_mut(marker) {
                 Some(element) if element.is_generated() => self.set_part_state(marker, state, on),
                 Some(element) if element.custom_states.contains(&name) != on => {
-                    element.custom_states.retain(|it| *it != name);
-                    element.custom_states.extend(on.then_some(name));
+                    element.set_custom_state(name, on);
                     self.feature_changed(marker, key::custom_state(name));
                 }
                 _ => {}

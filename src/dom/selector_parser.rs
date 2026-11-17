@@ -9,6 +9,7 @@ use smallvec::{SmallVec, smallvec};
 
 use crate::grammar::is_reserved;
 use crate::name::{Name, name};
+use crate::order::Order as _;
 use crate::selector::*;
 use crate::tree::{Flags, State};
 use crate::values::*;
@@ -55,6 +56,7 @@ struct Within {
     after: After,
     /// The default namespace does not apply to a subject that has no type selector.
     is_logical: bool,
+    is_cue: bool,
 }
 
 const USER_ACTIONS: &str = "active focus focus-visible focus-within hover";
@@ -183,6 +185,7 @@ fn pseudo_class(name: &[u8]) -> Option<Simple> {
         b"-internal-native" => Simple::Native,
         b"-internal-base" => Simple::Base(Flags::BASE_SELECT),
         b"-internal-base-options" => Simple::Base(Flags::BASE_OPTIONS),
+        b"-internal-top-layer" => Simple::Base(Flags::TOP_LAYER),
         b"-internal-html" => Simple::Html,
         b"-internal-in-html" => Simple::InHtml,
         b"-internal-in-base" => Simple::InBase,
@@ -271,6 +274,7 @@ impl Parser<'_> {
         pseudo_elements: true,
         after: After::Nothing,
         is_logical: false,
+        is_cue: false,
     };
 
     fn read(self, source: &[u8], out: Option<Out>, within: Within) -> Option<(List, Option<Out>)> {
@@ -585,7 +589,7 @@ impl Reader<'_> {
                 value: value.into(),
                 case,
                 key: if has_key {
-                    key::value(local, value)
+                    key::value_in_selector(names.0, local, value)
                 } else {
                     Name::NONE
                 },
@@ -703,6 +707,24 @@ impl Reader<'_> {
                                 }
                                 Ok(pseudo)
                             }
+                            true if name == b"cue" => {
+                                let list = nested(p, |p| {
+                                    self.list(
+                                        p,
+                                        Within {
+                                            only_compounds: true,
+                                            after: After::Nothing,
+                                            is_cue: true,
+                                            ..inner
+                                        },
+                                        false,
+                                    )
+                                })?;
+                                selector.specificity +=
+                                    list.iter().map(|it| it.specificity).max().unwrap_or(0);
+                                simples.push(Simple::Cue(list));
+                                Ok(Pseudo::Part(name!("-internal-cue-node")))
+                            }
                             true => nested(p, |p| {
                                 self.functional_element(
                                     &name,
@@ -749,6 +771,7 @@ impl Reader<'_> {
                         true => nested(p, |p| {
                             self.functional_class(&name, p, Within { after, ..inner })
                         })?,
+                        false if within.is_cue && name == b"root" => (CLASS, Simple::RootOfCue),
                         false => (CLASS, pseudo_class(&name)?),
                     };
                     self.text(&[if is_function { b")" } else { b"" }]);
@@ -831,9 +854,6 @@ impl Reader<'_> {
                     Combinator::Part,
                 )));
             }
-            b"cue" => self
-                .list(p, compounds, false)
-                .map(|_| Pseudo::Part(Name::NONE))?,
             b"highlight" => {
                 let name = ident(p)?;
                 self.write(|out| write_ident(name, out));
@@ -1030,7 +1050,7 @@ impl Reader<'_> {
             selector.outer_features(&mut |key, _, _| has.outer_keys.push(key));
             Some(selector)
         })?;
-        has.keys.sort_unstable();
+        has.keys.order_by(Ord::cmp);
         has.keys.dedup();
         Some((max_specificity(&has.relatives), Simple::Has(Rc::new(has))))
     }

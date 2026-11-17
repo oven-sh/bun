@@ -1,9 +1,7 @@
 //! Scrolling and animations that do not wait for JavaScript.
 
-use std::sync::LazyLock;
-
 use crate::abi::{self, Driver, Hit, Item, Rect, Scroller, Source};
-use crate::bridge::{self, Kind};
+use crate::bridge;
 use crate::diagnostics::{self, Incident};
 use crate::gfx::{Point, Transform};
 use crate::hash::FastMap;
@@ -11,6 +9,8 @@ use crate::hash::FastMap;
 use crate::paint::flatten::Mover;
 use crate::paint::raster::map_rect;
 use crate::paint::scene::{Scene, intersect, union};
+use crate::platform::Phase;
+use crate::protocol::{Input, Wheel};
 use crate::surface::contains;
 
 #[derive(Default, PartialEq)]
@@ -89,6 +89,8 @@ impl Glide {
 
 struct Scrolled {
     total: [f64; 2],
+    /// It only changes when a frame begins.
+    shown: [f64; 2],
     reported: [f64; 2],
     reported_at: f64,
     generation: u32,
@@ -136,28 +138,24 @@ impl Next {
 
 const TIME_UNREPORTED: f64 = 45.;
 
-fn release_wheel(wheel: &mut Option<[f64; 10]>) -> bool {
+fn release_wheel(wheel: &mut Option<(u32, Wheel, Phase)>) -> bool {
     wheel
         .take()
-        .inspect(|fields| bridge::emit_numbers(Kind::Wheel, fields, false))
+        .inspect(|&(surface, wheel, _)| bridge::emit_input(surface, Input::Wheel(wheel)))
         .is_some()
 }
 
 impl Scrolled {
     fn report(&mut self, surface: u32, id: u32) {
-        let ([x, y], has_ended) = (self.total, !self.is_scrolling);
         self.reported = self.total;
-        bridge::emit_numbers(
-            Kind::Scroll,
-            &[
-                surface.into(),
-                id.into(),
-                x,
-                y,
-                has_ended.into(),
-                self.generation.into(),
-            ],
-            !has_ended,
+        bridge::emit_input(
+            surface,
+            Input::Scroll {
+                node: id,
+                generation: self.generation,
+                total: self.total,
+                has_ended: !self.is_scrolling,
+            },
         );
     }
 }
@@ -175,23 +173,21 @@ pub struct Motion {
     /// Rises if the engine answers most of the reports of a scroll with something else to show.
     reactions: u8,
     /// The turns that were followed since `wheel_reported_at`.
-    wheel: Option<[f64; 10]>,
+    wheel: Option<(u32, Wheel, Phase)>,
     wheel_reported_at: f64,
     /// Until when the next move of the fingers is expected.
     is_touched_until: f64,
     /// How far the fingers have moved on each axis lately.
     trend: [f32; 2],
-    /// Their last move, if a frame has shown it.
-    last_move: [f64; 2],
-    is_move_shown: bool,
-    /// What was shown of a move that has not come yet.
-    anticipated: [f64; 2],
     pub next: Next,
     next_of_scrolls: Next,
     /// The items that follow the time and can be seen.
     moving: Vec<(usize, Next)>,
     /// Those that the system moves.
     lifted: Vec<usize>,
+    /// By the id of the scroller, until the scroll is over.
+    #[cfg(target_os = "macos")]
+    port: Option<(u32, Rect)>,
 }
 
 /// Calls `f` with each item, and the matrix and the clip around it.
@@ -279,7 +275,7 @@ impl Motion {
         let total = self
             .scrolled
             .get(&scroller.id)
-            .map_or(scroller.applied, |it| Motion::clamp(scroller, it.total));
+            .map_or(scroller.applied, |it| Motion::clamp(scroller, it.shown));
         [0, 1].map(|axis| (total[axis] - scroller.applied[axis]) as f32)
     }
 
@@ -311,6 +307,7 @@ impl Motion {
         {
             let at_rest = || Scrolled {
                 total: applied,
+                shown: applied,
                 reported: applied,
                 reported_at: 0.,
                 generation,
@@ -370,13 +367,15 @@ impl Motion {
                     scroller,
                     scrolled.glide.map_or(glide.to, |glide| glide.at(now)),
                 );
+                scrolled.shown = scrolled.total;
             }
             let held_until = latch
                 .filter(|latch| latch.id == Some(scroller.id))
                 .map(|latch| latch.until);
             let is_dragged = self.drag.is_some_and(|drag| drag.id == scroller.id);
-            scrolled.is_scrolling = scrolled.glide.is_some() || held_until.is_some() || is_dragged;
-            next = next.or(if scrolled.glide.is_some() {
+            let is_underway = scrolled.glide.is_some() || scrolled.shown != scrolled.total;
+            scrolled.is_scrolling = is_underway || held_until.is_some() || is_dragged;
+            next = next.or(if is_underway {
                 Next::Frame
             } else {
                 held_until.map_or(Next::Never, Next::At)
@@ -410,16 +409,17 @@ impl Motion {
     }
 
     /// Of a turn that was followed.
-    pub fn report_wheel(&mut self, mut fields: [f64; 10], now: f64) {
-        let continues = |it: &mut [f64; 10]| {
-            [5, 8, 9].iter().all(|at| it[*at] == fields[*at])
-                && [6, 7].iter().all(|at| it[*at] * fields[*at] >= 0.)
+    pub fn report_wheel(&mut self, surface: u32, mut wheel: Wheel, phase: Phase, now: f64) {
+        let continues = |(_, held, held_phase): &mut (u32, Wheel, Phase)| {
+            (held.at.modifiers, held.is_precise, *held_phase)
+                == (wheel.at.modifiers, wheel.is_precise, phase)
+                && (0..2).all(|axis| held.delta[axis] * wheel.delta[axis] >= 0.)
         };
-        if let Some(held) = self.wheel.take_if(continues) {
-            (6..8).for_each(|at| fields[at] += held[at]);
+        if let Some((_, held, _)) = self.wheel.take_if(continues) {
+            (0..2).for_each(|axis| wheel.delta[axis] += held.delta[axis]);
         }
         release_wheel(&mut self.wheel);
-        self.wheel = Some(fields);
+        self.wheel = Some((surface, wheel, phase));
         if now >= self.wheel_reported_at + TIME_UNREPORTED {
             self.wheel_reported_at = now;
             release_wheel(&mut self.wheel);
@@ -435,32 +435,6 @@ impl Motion {
             .iter_mut()
             .filter(|(_, it)| it.total != it.reported)
             .for_each(|(id, it)| it.report(surface, *id));
-    }
-
-    /// For a frame that the next move of the fingers is late for.
-    pub fn anticipate(&mut self, now: f64) {
-        static IS_WANTED: LazyLock<bool> =
-            LazyLock::new(|| std::env::var("BUN_DESKTOP_ANTICIPATE").as_deref() == Ok("1"));
-        if !std::mem::replace(&mut self.is_move_shown, true) || !self.is_touched(now) || !*IS_WANTED
-        {
-            return;
-        }
-        let half = std::mem::take(&mut self.last_move).map(|it| it / 2.);
-        let Some(scroller) = self.latch.and_then(|it| self.scroller(it.id?)).copied() else {
-            return;
-        };
-        if let Some(scrolled) = self
-            .scrolled
-            .get_mut(&scroller.id)
-            .filter(|it| it.is_scrolling && half != [0.; 2])
-        {
-            diagnostics::note(Incident::Anticipated);
-            scrolled.total = Motion::clamp(
-                &scroller,
-                [0, 1].map(|axis| scrolled.total[axis] + half[axis]),
-            );
-            self.anticipated = half;
-        }
     }
 
     pub fn is_touched(&self, now: f64) -> bool {
@@ -554,11 +528,25 @@ impl Motion {
         Some((item, next))
     }
 
+    /// A frame that is out of step with the display leaves half of the way to the next one. That one would have nothing to show, and
+    /// all the others would be out of step too.
+    pub fn follow(&mut self, is_in_step: bool) {
+        for it in self.scrolled.values_mut() {
+            for (shown, total) in it.shown.iter_mut().zip(it.total) {
+                *shown = if is_in_step || (total - *shown).abs() < 1. {
+                    total
+                } else {
+                    shown.midpoint(total)
+                };
+            }
+        }
+    }
+
     /// Returns whether that changed `scene`.
     pub fn advance(&mut self, surface: u32, scene: &mut Scene, now: f64) -> bool {
         self.next_of_scrolls = self.advance_scrolls(surface, now);
         self.moving.clear();
-        let (mut has_changed, mut moving) = (false, FastMap::default());
+        let (mut has_changed, mut moving, mut moved) = (false, FastMap::default(), Vec::new());
         for (driver, reach) in self.tables.drivers.iter().zip(&self.reaches) {
             let index = self.first_item + driver.item as usize;
             let Some(item) = scene.items.get_mut(index) else {
@@ -569,13 +557,14 @@ impl Motion {
             };
             let differs = std::mem::replace(item, driven) != driven;
             if differs && matches!(driven, Item::PushTransform(_)) {
-                scene.index_around(index);
+                moved.push(index);
             }
             match driver.source {
                 Source::Time { .. } => drop(moving.insert(index, (*reach, next, differs))),
                 _ => has_changed |= differs,
             }
         }
+        scene.index_around(moved);
         if !moving.is_empty() {
             walk(scene, |index, matrix, clip| {
                 let Some((reach, next, differs)) = moving.get(&index) else {
@@ -600,10 +589,46 @@ impl Motion {
         self.next = own.fold(self.next_of_scrolls, |all, (_, next)| all.or(*next));
     }
 
+    /// The items that are different in the next frame, in their order.
+    #[cfg(not(target_os = "macos"))]
+    pub fn in_motion(&self) -> Vec<usize> {
+        self.moving
+            .iter()
+            .filter(|it| matches!(it.1, Next::Frame | Next::Leisurely))
+            .map(|it| it.0)
+            .collect()
+    }
+
     #[cfg(target_os = "macos")]
     pub fn set_lifted(&mut self, items: Vec<usize>) {
         self.lifted = items;
         self.find_next();
+    }
+
+    /// Where the contents of what is being scrolled are seen.
+    #[cfg(target_os = "macos")]
+    pub fn port(&mut self, scene: &Scene) -> Option<Rect> {
+        let is_scrolling = |id: &u32| self.scrolled.get(id).is_some_and(|it| it.is_scrolling);
+        let held = self
+            .drag
+            .map(|it| it.id)
+            .into_iter()
+            .chain(self.latch.and_then(|it| it.id));
+        let id = held.chain(self.scrolled.keys().copied()).find(is_scrolling);
+        self.port = id.map(|id| {
+            self.port.filter(|it| it.0 == id).unwrap_or_else(|| {
+                let follows = |it: &&Driver| matches!(it.source, Source::Scroll { scroller } if self.tables.scrollers.get(scroller as usize).is_some_and(|it| it.id == id));
+                let items: Vec<_> = self.tables.drivers.iter().filter(follows).map(|it| self.first_item + it.item as usize).collect();
+                let mut port = Rect::default();
+                walk(scene, |index, _, clip| {
+                    if items.contains(&index) {
+                        port = union(port, clip);
+                    }
+                });
+                (id, port)
+            })
+        });
+        self.port.map(|it| it.1)
     }
 
     /// What goes on for a while, and is not moved twice.
@@ -773,14 +798,11 @@ impl Motion {
                 0.
             }
         };
-        let (by, shown) = (
-            [0, 1].map(|axis| f64::from(allowed(axis))),
-            std::mem::take(&mut self.anticipated),
+        let to = Motion::clamp(
+            &scroller,
+            [0, 1].map(|axis| from[axis] + f64::from(allowed(axis))),
         );
-        let left = |axis: usize| by[axis] - shown[axis].clamp(by[axis].min(0.), by[axis].max(0.));
-        let to = Motion::clamp(&scroller, [0, 1].map(|axis| from[axis] + left(axis)));
         if !glides {
-            (self.last_move, self.is_move_shown) = (by, false);
             (scrolled.total, scrolled.glide) = (to, None);
             self.is_touched_until = now + crate::host::interval().as_secs_f64() * 2500.;
         } else if to != from {
@@ -792,7 +814,7 @@ impl Motion {
     }
 
     pub fn begin_gesture(&mut self) -> bool {
-        (self.trend, self.anticipated) = Default::default();
+        self.trend = Default::default();
         self.latch = None;
         false
     }

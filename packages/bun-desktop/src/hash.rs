@@ -1,9 +1,10 @@
 //! A hash that is quick for small keys, and that does not resist an attacker.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
 pub type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FastHasher>>;
+pub type FastSet<T> = HashSet<T, BuildHasherDefault<FastHasher>>;
 
 #[derive(Clone, Default)]
 pub struct FastHasher(u64);

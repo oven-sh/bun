@@ -14,6 +14,7 @@ const expected: string[] = [
   // It answers false, always.
   // `globalThis.TypeError` and `Function.prototype.call`, each kept in a variable.
   // Read by a pattern: `const { subject, subjectaltname: altNames } = cert`.
+  "node/tls.ts subject",
   "node/tls.ts subjectaltname",
 ];
 

@@ -285,6 +285,8 @@ impl Composer {
 
 // ───────────────────────────── global shortcuts ─────────────────────────────
 
+use crate::protocol::{self, Chord};
+
 #[derive(Clone, Copy, PartialEq)]
 pub struct HotKey {
     code: u8,
@@ -292,9 +294,8 @@ pub struct HotKey {
 }
 
 impl HotKey {
-    /// "ctrl+shift+p"
-    pub fn parse(accelerator: &str, keymap: &Keymap) -> Result<HotKey> {
-        let (held, name) = accelerator.rsplit_once('+').unwrap_or(("", accelerator));
+    pub fn new(chord: &Chord, keymap: &Keymap) -> Result<HotKey> {
+        let name = &*chord.key;
         let mut characters = name.chars();
         let labelled = characters
             .next()
@@ -309,10 +310,10 @@ impl HotKey {
         let at_position =
             || (8..=255).find(|it| keys::dom_code(u32::from(it - 8)).eq_ignore_ascii_case(&code));
         let masks = [
-            ("shift", SHIFT),
-            ("ctrl", CONTROL),
-            ("alt", ALT),
-            ("super", SUPER),
+            (protocol::SHIFT, SHIFT),
+            (protocol::CONTROL, CONTROL),
+            (protocol::ALT, ALT),
+            (protocol::META, SUPER),
         ];
         Ok(HotKey {
             code: labelled
@@ -321,7 +322,7 @@ impl HotKey {
                 .context("there is no such key")?,
             modifiers: masks
                 .iter()
-                .filter(|it| held.split('+').any(|name| name == it.0))
+                .filter(|it| chord.modifiers & it.0 != 0)
                 .map(|it| it.1)
                 .sum(),
         })
@@ -332,10 +333,6 @@ impl HotKey {
             code,
             modifiers: state & (SHIFT | CONTROL | ALT | SUPER),
         }
-    }
-
-    pub fn id(self) -> u32 {
-        u32::from(self.modifiers) << 8 | u32::from(self.code)
     }
 
     fn with_locks(self) -> [u16; 4] {

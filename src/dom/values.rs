@@ -4,6 +4,7 @@ use core::cell::{Cell, RefCell};
 use std::io::Write as _;
 use std::rc::Rc;
 
+use bun_css::Token;
 use bun_css::css_parser::{Parser, ParserInput, ParserOpts};
 
 use crate::abi::FontMetrics;
@@ -29,6 +30,12 @@ thread_local! {
 }
 
 pub(crate) fn with_parser<R>(source: &[u8], parse: impl FnOnce(&mut P) -> R) -> R {
+    let (mut parse, mut parsed) = (Some(parse), None);
+    run_parser(source, &mut |p| parsed = parse.take().map(|it| it(p)));
+    parsed.expect("it is called")
+}
+
+fn run_parser(source: &[u8], parse: &mut dyn FnMut(&mut P)) {
     USES.set(USES.get() + source.len() + 64);
     if USES.get() > 1 << 15 {
         release_parser_memory();
@@ -36,16 +43,23 @@ pub(crate) fn with_parser<R>(source: &[u8], parse: impl FnOnce(&mut P) -> R) -> 
     ARENA.with_borrow(|arena| {
         let mut input = ParserInput::new(source, arena);
         let flags = ParserOpts::CLIP_COLORS | ParserOpts::RAW_URL_TOKENS;
-        parse(&mut Parser::new(&mut input, None, flags, None))
-    })
+        parse(&mut Parser::new(&mut input, None, flags, None));
+    });
 }
 
 /// `None` if `parse` leaves anything over.
 pub(crate) fn parse_all<R>(source: &[u8], parse: impl FnOnce(&mut P) -> Option<R>) -> Option<R> {
-    with_parser(source, |p| parse(p).filter(|_| p.is_exhausted()))
+    with_parser(source, |p| {
+        let parsed = parse(p)?;
+        p.skip_whitespace();
+        (p.position() >= source.len()).then_some(parsed)
+    })
 }
 
 pub(crate) fn release_parser_memory() {
+    if USES.get() == 0 {
+        return;
+    }
     ARENA.with(|arena| {
         if let Ok(mut arena) = arena.try_borrow_mut() {
             USES.set(0);
@@ -78,11 +92,20 @@ pub(crate) fn nested<'b, R>(
 }
 
 pub(crate) fn ident<'b>(p: &mut P<'_, 'b>) -> Option<&'b [u8]> {
-    attempt(p, |p| p.expect_ident().ok())
+    attempt(p, |p| {
+        if let Token::Ident(name) = *p.next().ok()? {
+            Some(name)
+        } else {
+            None
+        }
+    })
 }
 
 pub(crate) fn keyword(p: &mut P, name: &str) -> bool {
-    attempt(p, |p| p.expect_ident_matching(name.as_bytes()).ok()).is_some()
+    attempt(p, |p| {
+        matches!(p.next().ok()?, Token::Ident(it) if eq(it, name)).then_some(())
+    })
+    .is_some()
 }
 
 pub(crate) fn function<'b>(p: &mut P<'_, 'b>) -> Option<&'b [u8]> {
@@ -230,11 +253,11 @@ pub(crate) fn write_double(value: f64, out: &mut Out) {
     }
 }
 
-thread_local! {
-    static ZOOM: Cell<f32> = const { Cell::new(1.0) };
-}
+#[thread_local]
+static ZOOM: Cell<f32> = Cell::new(1.0);
 
 /// Lets `write` take the zoom out of lengths.
+#[inline]
 pub(crate) fn with_zoom<R>(zoom: f32, run: impl FnOnce() -> R) -> R {
     let outer = ZOOM.replace(zoom);
     let result = run();
@@ -282,7 +305,11 @@ bitflags::bitflags! {
         const ROOT = 1;
         const VIEWPORT = 1 << 1;
         /// Fonts, `color`, `color-scheme` or `zoom` of the element or of its parent.
-        const INHERITED = 1 << 2;
+        const INHERITED = 1 << 2 | Self::SCHEME.bits();
+        /// Whether it is dark.
+        const SCHEME = 1 << 12;
+        /// A property of `Groups::ink` that is set has turned out to depend on the parent's.
+        const INK = 1 << 13;
         const CONTAINER = 1 << 3;
         const ATTRIBUTES = 1 << 4;
         const SIBLINGS = 1 << 5;
@@ -295,10 +322,12 @@ bitflags::bitflags! {
         const FONT_UNITS = 1 << 11;
         const ANCHOR = 1 << 9;
         const MATH_FONT_SIZE = 1 << 10;
+        /// While colors are forced.
+        const SYSTEM_COLOR = 1 << 14;
 
         /// The same for all elements.
         const OF_DOCUMENT = Self::ROOT.bits() | Self::VIEWPORT.bits() | Self::ABSOLUTE_FONT_SIZE.bits()
-            | Self::FONT_SIZE_KEYWORD.bits() | Self::ANCHOR.bits();
+            | Self::FONT_SIZE_KEYWORD.bits() | Self::ANCHOR.bits() | Self::SYSTEM_COLOR.bits();
     }
 }
 
@@ -361,9 +390,10 @@ pub(crate) struct Ctx<'a> {
     pub(crate) siblings: &'a dyn Fn() -> (usize, usize),
     pub(crate) element: u32,
     pub(crate) color: Rgba,
-    pub(crate) accent: u32,
+    pub(crate) highlight: u32,
     /// With `accent-color`.
     pub(crate) dark: bool,
+    pub(crate) forces_colors: bool,
     pub(crate) zoom: f32,
     pub(crate) flow: Flow,
     pub(crate) base_url: &'a [u8],
@@ -392,7 +422,8 @@ impl Ctx<'_> {
             siblings: &|| (1, 1),
             element: 0,
             color: Rgba::BLACK,
-            accent: 0xff,
+            highlight: 0xff,
+            forces_colors: false,
             dark: false,
             zoom: 1.0,
             flow: Flow::DEFAULT,
@@ -461,6 +492,9 @@ impl Ctx<'_> {
     }
 
     pub(crate) fn url(&self, url: &[u8]) -> Str {
+        if self.base_url == SELF_CONTAINED && !url.starts_with(b"data:") {
+            return Str::default();
+        }
         if self.base_url.is_empty()
             || url.is_empty()
             || url.starts_with(b"data:")
@@ -581,7 +615,7 @@ macro_rules! numeric {
                 $parse.map($name)
             }
             fn write(&self, out: &mut Out) {
-                write_number(self.0 * $scale, out);
+                write_number(if $unit == "px" { self.0 / written_zoom() } else { self.0 * $scale }, out);
                 out.extend_from_slice($unit.as_bytes());
             }
             fn lerp(&self, to: &Self, t: Mixing) -> Option<Self> {
@@ -752,12 +786,12 @@ impl Node {
     /// Of a length that is computed.
     pub(crate) fn resolve(
         &self,
-        basis: f32,
+        percent_basis: f32,
         size: f32,
         anchor: &dyn Fn(&crate::calc::Anchor) -> Option<f32>,
     ) -> Option<f32> {
         self.evaluate(&Inputs {
-            basis: basis.into(),
+            basis: percent_basis.into(),
             keywords: &[size.into()],
             anchor,
         })
@@ -1366,6 +1400,23 @@ pub(crate) fn link<'a>(p: &mut P<'_, 'a>) -> Option<(&'a [u8], &'a [u8])> {
         })
 }
 
+/// The base URL of a style sheet that gets nothing from elsewhere.
+pub(crate) const SELF_CONTAINED: &[u8] = b"data:";
+
+/// Ends the base URL of a style sheet that was fetched from there. A serialized URL has no spaces in its fragment.
+pub(crate) const FETCHED: &[u8] = b"# ";
+
+/// What `request` has made, for a use that reveals the pixels.
+pub(crate) fn with_cors(request: &Str) -> Str {
+    let (url, rest) = bun_core::strings::split_once_char(request.as_bytes(), 0)
+        .unwrap_or((request.as_bytes(), b""));
+    if url.starts_with(b"data:") {
+        Rc::clone(request)
+    } else {
+        format!("{}\0cross-origin(anonymous) {}", text(url), text(rest)).into()
+    }
+}
+
 /// If it has modifiers, they and the referrer follow, each after a 0.
 pub(crate) fn request(url: &[u8], modifiers: &[u8], cx: &Ctx) -> Str {
     match modifiers.trim_ascii() {
@@ -1374,7 +1425,7 @@ pub(crate) fn request(url: &[u8], modifiers: &[u8], cx: &Ctx) -> Str {
             "{}\0{}\0{}",
             cx.url(url),
             text(modifiers),
-            text(cx.base_url)
+            text(cx.base_url.strip_suffix(FETCHED).unwrap_or_default())
         )
         .into(),
     }

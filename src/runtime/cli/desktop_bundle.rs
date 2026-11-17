@@ -26,10 +26,10 @@ macro_rules! fail {
     };
 }
 
-/// `src/js/internal/desktop/app.ts` reads it. It also tells a bundle of an earlier build from another directory.
+/// `src/desktop/paths.rs` reads it. It also tells a bundle of an earlier build from another directory.
 const MANIFEST: &[u8] = b"desktop.json";
 
-const KEYS: [&[u8]; 11] = [
+const KEYS: [&[u8]; 12] = [
     b"name",
     b"identifier",
     b"version",
@@ -41,6 +41,7 @@ const KEYS: [&[u8]; 11] = [
     b"fileAssociations",
     b"resources",
     b"infoPlist",
+    b"dom",
 ];
 
 /// The suffix of `public.app-category.*`, and freedesktop.org's categories.
@@ -84,6 +85,7 @@ pub(crate) struct DesktopBundle {
     /// As the summary of the build shows it.
     pub(crate) shown_path: Vec<u8>,
     pub(crate) executable: Vec<u8>,
+    pub(crate) starts_in_window: bool,
     root: Vec<u8>,
     library: Vec<u8>,
     files: Vec<GeneratedFile>,
@@ -301,7 +303,7 @@ fn words(name: &[u8]) -> Vec<u8> {
     joined
 }
 
-/// The same as `identifier` in `src/js/internal/desktop/app.ts`.
+/// The same as `identifier` in `src/desktop/paths.rs`.
 fn default_identifier(name: &[u8]) -> Vec<u8> {
     [&b"sh.bun.app."[..], &words(name)].concat()
 }
@@ -943,6 +945,14 @@ impl DesktopBundle {
         check_version(version)?;
         let description = (layers.string("description")?).or_else(|| in_package(b"description"));
         let copyright = layers.string("copyright")?;
+        let starts_in_window = match layers.get("dom") {
+            None => false,
+            Some(Setting {
+                value: JsonValue::Boolean(value),
+                ..
+            }) => *value,
+            Some(setting) => fail!("{} must be a boolean", setting.label),
+        };
         check_text("The description", description.unwrap_or_default())?;
         check_text("The copyright", copyright.unwrap_or_default())?;
         let category = match layers.string("category")? {
@@ -1130,6 +1140,7 @@ impl DesktopBundle {
         Ok(DesktopBundle {
             shown_path,
             executable,
+            starts_in_window,
             root,
             library: layout.library,
             files,

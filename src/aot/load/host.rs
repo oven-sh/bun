@@ -1974,7 +1974,10 @@ impl CodeHost for LoadHost<'_> {
         let input = BuiltinUseInput {
             names: self.input.builtin_names,
             platform: self.input.platform,
-            replaced: &load.replaced_builtins,
+            replaced: match self.input.options.aot.has_realms_of_the_web {
+                true => crate::load::globals_of_the_web::absent_or_different(),
+                false => &load.replaced_builtins,
+            },
             runs_tests: load.runs_tests,
             holds_language: false,
             is_text_asked: !self.has_file_that_asks_for_what_unseen_code_finds(),

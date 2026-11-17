@@ -62,6 +62,15 @@ pub(crate) fn attempt<R>(run: impl FnOnce() -> R) -> Option<R> {
     Some(run())
 }
 
+/// For what recurses as deep as the tree is. A script may have left little.
+#[inline]
+pub(crate) fn need_stack() {
+    assert!(
+        bun_core::StackCheck::init().is_safe_to_recurse(),
+        "out of stack"
+    );
+}
+
 impl Document {
     /// Forgets all that follows from the tree and the style sheets. It may be in a state that cannot be dropped.
     pub(crate) fn start_over(&mut self) {
@@ -81,9 +90,11 @@ impl Document {
             boxes.clear();
         }
         self.ordinals.clear();
+        self.anchor_index = None;
         self.queries = Default::default();
         self.animations.watched.clear();
         self.measuring = 0;
+        (self.is_burying, self.left_behind) = (false, None);
         self.is_measuring_stroke.set(false);
         self.is_measuring_text.set(false);
         self.svg_size_in_layout.set(None);

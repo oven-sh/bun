@@ -4221,6 +4221,8 @@ declare module "bun" {
     resources?: (string | { from: string; to?: string })[];
     /** Keys to add to or replace in `Info.plist`. `null` removes a key. */
     infoPlist?: Record<string, unknown>;
+    /** The program starts in a window, like with `--preload=bun:desktop/dom`. */
+    dom?: boolean;
   }
 
   /**
@@ -9954,9 +9956,9 @@ declare module "bun" {
   }
 
   /**
-   * Decode, transform and re-encode images. Ships its own JPEG and PNG
-   * codecs, and WebP via statically-linked libwebp; resize and rotate are
-   * SIMD kernels — no native module install, no `sharp`.
+   * Decode, transform and re-encode images. Ships its own JPEG, PNG and
+   * WebP codecs; resize and rotate are SIMD kernels — no native module
+   * install, no `sharp`.
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a

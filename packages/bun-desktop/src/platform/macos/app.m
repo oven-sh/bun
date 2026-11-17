@@ -1,32 +1,17 @@
 // The application and its run loop.
-#define _DARWIN_UNLIMITED_SELECT
 #import "bridge.h"
+#import <sys/event.h>
 #import <sys/sysctl.h>
 
-id parse(const void* json, size_t length)
-{
-    NSData* data = [NSData dataWithBytesNoCopy:(void*)json length:length freeWhenDone:NO];
-    return [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingFragmentsAllowed error:nil];
-}
-
-NSData* serialize(id value)
-{
-    return [NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingFragmentsAllowed error:nil];
-}
-
-char* answer(id (^body)(void))
+char* attempt(void (^body)(void))
 {
     @autoreleasepool {
-        NSData* json;
         @try {
-            id value = body();
-            if (!value)
-                return NULL;
-            json = serialize(@{ @"value" : value });
+            body();
+            return NULL;
         } @catch (NSException* exception) {
-            json = serialize(@{ @"error" : exception.reason ?: exception.name });
+            return strdup((exception.reason ?: exception.name).UTF8String);
         }
-        return strndup(json.bytes, json.length);
     }
 }
 
@@ -35,40 +20,41 @@ void fail(NSString* message)
     @throw [NSException exceptionWithName:@"BunDesktop" reason:message userInfo:nil];
 }
 
-void emit(NSDictionary* event)
+NSString* stringIfAny(BDText text)
 {
-    NSData* json = [NSJSONSerialization isValidJSONObject:event] ? serialize(event) : nil;
-    bd_emit(json.bytes, json.length);
+    size_t marks = 0, length = text.bytes.length;
+    while (length - marks >= 3 && !memcmp(text.bytes.start + marks, "\xEF\xBB\xBF", 3))
+        marks += 3;
+    NSString* rest = length ? [[NSString alloc] initWithBytes:text.bytes.start + marks length:length - marks encoding:NSUTF8StringEncoding] : nil;
+    // It would take the first one for a byte order mark.
+    return marks && rest ? [[@"" stringByPaddingToLength:marks / 3 withString:@"\uFEFF" startingAtIndex:0] stringByAppendingString:rest] : rest;
 }
 
-void emitToApp(NSString* name, id value) { emit(@{ @"t" : @"app", @"e" : name, @"v" : value ?: NSNull.null }); }
-void reply(uint64_t number, id value) { emit(@{ @"t" : @"reply", @"id" : @(number), @"value" : value ?: NSNull.null }); }
+NSString* string(BDText text) { return stringIfAny(text) ?: @""; }
+NSData* dataIfAny(BDListu8 bytes) { return bytes.length ? [NSData dataWithBytes:bytes.start length:bytes.length] : nil; }
 
-NSData* takeBlob(id blob)
+NSArray<NSString*>* strings(BDListText texts)
 {
-    if (!number(blob))
-        return nil;
-    BDBytes bytes = bun_desktop_take_blob([blob unsignedIntValue]);
-    NSData* data = bytes.length ? [NSData dataWithBytes:bytes.start length:bytes.length] : nil;
-    bun_desktop_free(bytes);
-    return data;
+    NSMutableArray* all = [NSMutableArray new];
+    forEach(it, texts) [all addObject:string(*it)];
+    return all;
 }
 
-NSNumber* putBlob(NSData* data) { return @(bun_desktop_put_blob(data.bytes, data.length)); }
-
-id member(id object, id key)
+BDListu8 bytesOf(NSData* data)
 {
-    if ([object isKindOfClass:NSDictionary.class])
-        return object[key];
-    NSUInteger index = [number(key) unsignedIntegerValue];
-    return index < list(object).count ? object[index] : nil;
+    BDListu8 bytes = { bd_allocate(data.length, 1), data.length, data.length };
+    [data getBytes:bytes.start length:bytes.length];
+    return bytes;
 }
 
-NSString* text(id value) { return [value isKindOfClass:NSString.class] && [value length] ? value : nil; }
-NSArray* list(id value) { return [value isKindOfClass:NSArray.class] ? value : nil; }
-NSNumber* number(id value) { return [value isKindOfClass:NSNumber.class] ? value : nil; }
-bool isTrue(id value) { return value == (id)kCFBooleanTrue; }
-bool isFalse(id value) { return value == (id)kCFBooleanFalse; }
+BDText textOf(NSString* string) { return (BDText) { bytesOf([string dataUsingEncoding:NSUTF8StringEncoding allowLossyConversion:YES]) }; }
+
+BDListText textsOf(NSArray<NSString*>* strings)
+{
+    BDListText texts = listOf(Text, strings.count);
+    forEach(it, texts) *it = textOf(strings[it - texts.start]);
+    return texts;
+}
 
 CGFloat primaryHeight(void) { return NSScreen.screens.firstObject.frame.size.height; }
 
@@ -104,20 +90,19 @@ static void wasWoken(CFFileDescriptorRef descriptor, CFOptionFlags flags, void* 
     CFFileDescriptorEnableCallBacks(descriptor, kCFFileDescriptorReadCallBack);
 }
 
-/// Until it is readable. A `CFFileDescriptor` goes off when a kqueue has nothing to report.
+/// Until it is readable. `select` on a kqueue waits for whoever is reading it with the lock of the descriptor table held, which
+/// the reader needs to drop a one-shot event: neither returns, nor can the process be killed. Another kqueue only looks at the count.
 static void watchSource(int descriptor)
 {
-    static dispatch_semaphore_t wanted;
-    if (!wanted) {
-        wanted = dispatch_semaphore_create(0);
+    static int watcher = -1;
+    if (watcher < 0) {
+        watcher = kqueue();
         CFRunLoopSourceContext context = { .perform = sourceIsReady };
         CFRunLoopSourceRef ready = CFRunLoopSourceCreate(NULL, 0, &context);
         CFRunLoopAddSource(CFRunLoopGetMain(), ready, kCFRunLoopCommonModes);
         NSThread* thread = [[NSThread alloc] initWithBlock:^{
-            uint32_t* set = calloc(descriptor / 32 + 1, 4);
-            while (!dispatch_semaphore_wait(wanted, DISPATCH_TIME_FOREVER)) {
-                set[descriptor / 32] = 1u << descriptor % 32;
-                select(descriptor + 1, (fd_set*)set, NULL, NULL, NULL);
+            struct kevent event;
+            while (kevent(watcher, NULL, 0, &event, 1, NULL) >= 0 || errno == EINTR) {
                 CFRunLoopSourceSignal(ready);
                 CFRunLoopWakeUp(CFRunLoopGetMain());
             }
@@ -127,7 +112,9 @@ static void watchSource(int descriptor)
     }
     if (!isWatchingSource) {
         isWatchingSource = true;
-        dispatch_semaphore_signal(wanted);
+        struct kevent once;
+        EV_SET(&once, descriptor, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, NULL);
+        kevent(watcher, &once, 1, NULL, 0, NULL);
     }
 }
 
@@ -299,7 +286,7 @@ static NSDictionary<NSNumber*, NSData*>* describeDisplays(void)
     BDDisplay displays[32];
     NSMutableDictionary* all = [NSMutableDictionary new];
     for (size_t index = bd_displays(displays, 32); index--;)
-        all[@(displays[index].identifier)] = [NSData dataWithBytes:displays + index length:sizeof(BDDisplay)];
+        all[@(displays[index].id)] = [NSData dataWithBytes:displays + index length:sizeof(BDDisplay)];
     return all;
 }
 
@@ -339,7 +326,7 @@ void cancelQuit(void)
 /// Quit in the Dock, and logging out, ask JavaScript, which may refuse and otherwise exits the process itself.
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender
 {
-    emitToApp(@"quit", nil);
+    emit(BDSystemEventQuit);
     NSAppleEventDescriptor* event = NSAppleEventManager.sharedAppleEventManager.currentAppleEvent;
     isTerminating = [event attributeDescriptorForKeyword:kAEQuitReason] || [event paramDescriptorForKeyword:kAEQuitReason];
     return isTerminating ? NSTerminateLater : NSTerminateCancel;
@@ -347,29 +334,41 @@ void cancelQuit(void)
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication*)sender hasVisibleWindows:(BOOL)hasVisibleWindows
 {
-    emitToApp(@"activate", hasVisibleWindows ? @YES : @NO);
+    emit(BDSystemEventActivate, .activate = { hasVisibleWindows });
     return hasVisibleWindows;
 }
 
 - (void)application:(NSApplication*)application openURLs:(NSArray<NSURL*>*)urls
 {
-    emitToApp(@"open-urls", [urls valueForKey:@"absoluteString"]);
+    emit(BDSystemEventOpenUrls, .openUrls = textsOf([urls valueForKey:@"absoluteString"]));
 }
 
-- (void)applicationDidBecomeActive:(NSNotification*)notification { emitToApp(@"did-become-active", nil); }
-- (void)applicationDidResignActive:(NSNotification*)notification { emitToApp(@"did-resign-active", nil); }
+- (void)applicationDidBecomeActive:(NSNotification*)notification
+{
+    updateSecureInput();
+    emit(BDSystemEventBecameActive);
+}
+
+- (void)applicationDidResignActive:(NSNotification*)notification
+{
+    updateSecureInput();
+    emit(BDSystemEventResignedActive);
+}
+
 - (BOOL)applicationSupportsSecureRestorableState:(NSApplication*)application { return YES; }
 - (NSMenu*)applicationDockMenu:(NSApplication*)sender { return dockMenu(); }
 
 - (void)applicationDidChangeScreenParameters:(NSNotification*)notification
 {
     NSDictionary *before = knownDisplays, *now = knownDisplays = describeDisplays();
+    if (![now isEqual:before])
+        displaysChanged();
     for (NSNumber* display in before)
         if (!now[display])
-            emitToApp(@"display-removed", display);
+            emit(BDSystemEventDisplayRemoved, .displayRemoved = display.unsignedLongLongValue);
     for (NSNumber* display in now)
         if (![now[display] isEqual:before[display]])
-            emitToApp(before[display] ? @"display-metrics-changed" : @"display-added", display);
+            emit(before[display] ? BDSystemEventDisplayChanged : BDSystemEventDisplayAdded, .displayAdded = display.unsignedLongLongValue);
 }
 
 // The text fields of panels respond to the first four before this does.
@@ -395,11 +394,12 @@ void bd_create_application(void)
         traceLaunch("loaded");
         [NSUserDefaults.standardUserDefaults registerDefaults:@{
             @"ApplePersistence" : @NO, // Windows are not restored.
+            @"NSApplicationUpdateCycleEnabled" : @NO, // It holds scroll events back for half a frame.
             @"NSAutoFillHeuristicControllerEnabled" : @NO, // It holds up every key.
             @"NSFullScreenMenuItemEverywhere" : @NO,
             @"NSTreatUnknownArgumentsAsOpen" : @"NO",
         }];
-        [NSApplication sharedApplication];
+        [BunDesktopApplication sharedApplication];
         traceLaunch("there is an application");
     }
 }
@@ -430,7 +430,7 @@ void bd_launch(bool isAccessory)
     static BunDesktopDelegate* delegate;
     static id activity __attribute__((unused));
     @autoreleasepool {
-        NSApplication.sharedApplication.delegate = delegate = [BunDesktopDelegate new];
+        BunDesktopApplication.sharedApplication.delegate = delegate = [BunDesktopDelegate new];
         NSWindow.allowsAutomaticWindowTabbing = NO;
         NSApplicationActivationPolicy policy = isAccessory ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular;
         if (NSApp.activationPolicy != policy)
@@ -439,19 +439,21 @@ void bd_launch(bool isAccessory)
         knownDisplays = describeDisplays();
         NSNotificationCenter *own = NSNotificationCenter.defaultCenter, *workspace = NSWorkspace.sharedWorkspace.notificationCenter;
         void (^settingsChanged)(void) = ^{
-            emitToApp(@"system-settings", systemSettings());
+            emit(BDSystemEventSettings, .settings = bd_settings());
         };
         observe(own, NSPreferredScrollerStyleDidChangeNotification, settingsChanged);
         observe(own, NSSystemColorsDidChangeNotification, settingsChanged);
         observe(workspace, NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification, settingsChanged);
+        if ([NSApp isKindOfClass:BunDesktopApplication.class])
+            [NSApp watchForScreenReaders];
         observe(workspace, NSWorkspaceWillSleepNotification, ^{
-            emitToApp(@"suspend", nil);
+            emit(BDSystemEventSuspend);
         });
         observe(workspace, NSWorkspaceDidWakeNotification, ^{
-            emitToApp(@"resume", nil);
+            emit(BDSystemEventResume);
         });
         observe(own, NSProcessInfoThermalStateDidChangeNotification, ^{
-            emitToApp(@"thermal-state-change", thermalState());
+            emit(BDSystemEventThermal, .thermal = thermalState());
         });
         // App Nap would slow down everything that runs behind a covered window.
         traceLaunch("windows can be opened");
@@ -487,27 +489,4 @@ void bd_hide_cursor_until_it_moves(void)
 {
     if (isLaunched)
         [NSCursor setHiddenUntilMouseMoves:YES];
-}
-
-/// All sorts of programs look into windows, without a need for everything that a page has.
-bool hasAssistiveTechnology(void)
-{
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    bool isEnhanced = [number([NSApp accessibilityAttributeValue:@"AXEnhancedUserInterface"]) boolValue];
-#pragma clang diagnostic pop
-    NSWorkspace* workspace = NSWorkspace.sharedWorkspace;
-    return isEnhanced || workspace.isVoiceOverEnabled || workspace.isSwitchControlEnabled;
-}
-
-char* bd_command(const char* command, const void* json, size_t length, uint64_t replyNumber)
-{
-    return answer(^id {
-        NSString* name = @(command);
-        id arguments = parse(json, length), result = nil;
-        if (!systemCommand(name, arguments, replyNumber, &result) && !menuCommand(name, arguments, replyNumber, &result)
-            && !dialogCommand(name, arguments, replyNumber))
-            fail([@"unknown command " stringByAppendingString:name]);
-        return result;
-    });
 }

@@ -8,7 +8,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -81,6 +81,7 @@ if (values.pack) {
   mkdirSync(join(staging, "package", "bin"), { recursive: true });
   replace(built, join(staging, "package", "bin", libraryName));
   copyFileSync(join(root, "LICENSE.md"), join(staging, "package", "LICENSE.md"));
+  cpSync(join(root, "packages", "bun-desktop", "licenses"), join(staging, "package", "licenses"), { recursive: true });
   const manifest = {
     name: `@oven/${name}`,
     version,

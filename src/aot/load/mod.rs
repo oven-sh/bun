@@ -11,6 +11,7 @@ pub(crate) mod fold_inputs;
 #[cfg(test)]
 mod format_grid;
 pub(crate) mod globals_of_a_window;
+pub(crate) mod globals_of_the_web;
 pub(crate) mod hoisted_mocks;
 pub(crate) mod host;
 pub(crate) mod import_functions;

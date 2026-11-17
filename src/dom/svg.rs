@@ -7,11 +7,11 @@ use crate::abi::{Matrix, Rect, RoundedRect};
 use crate::boxes::{BoxId, Kind};
 use crate::document::Document;
 use crate::geometry::translation;
-use crate::name::{Name, is_name, name};
+use crate::name::{Map, Name, Set, is_name, name};
 use crate::path::{Numbers, Path, at_distance, distance};
 use crate::properties::{Id, Style};
 use crate::svg_values::*;
-use crate::tree::{Element, Namespace, NodeId};
+use crate::tree::{Element, Namespace, NodeId, Tree};
 use crate::types::*;
 use crate::values::{Css, Ctx, Lp, Size, parse_all};
 
@@ -66,10 +66,7 @@ pub(crate) fn parse_transform(source: &str) -> Option<Matrix> {
     while !rest.is_empty() {
         let (function, after) = bun_core::strings::split_once_char(rest, b')')?;
         let (name, arguments) = bun_core::strings::split_once_char(function, b'(')?;
-        let one = match (
-            name.trim_ascii(),
-            &Numbers::all(crate::values::text(arguments))?[..],
-        ) {
+        let one = match (name.trim_ascii(), &Numbers::few(arguments)?[..]) {
             (b"matrix", [a, b, c, d, e, f]) => [*a, *b, *c, *d, *e, *f],
             (b"translate", [x]) => translation([*x, 0.0]),
             (b"translate", [x, y]) => translation([*x, *y]),
@@ -335,6 +332,46 @@ pub(crate) enum Bounds {
     Ink,
 }
 
+#[derive(Default)]
+pub(crate) struct Ids {
+    answers: Map<(NodeId, Name), Option<NodeId>>,
+    wanted: Set<Name>,
+    found: Map<NodeId, Name>,
+    /// The first element with each `id`, until the next change.
+    of_scope: Map<NodeId, Map<Name, NodeId>>,
+}
+
+impl Ids {
+    #[inline]
+    pub(crate) fn tree_changed(&mut self) {
+        self.of_scope.clear();
+    }
+
+    fn look_up(&mut self, tree: &Tree, scope: NodeId, id: Name) -> Option<NodeId> {
+        if let Some(known) = self.answers.get(&(scope, id)) {
+            return *known;
+        }
+        let found = [scope, crate::tree::DOCUMENT]
+            .into_iter()
+            .find_map(|scope| {
+                let all = self.of_scope.entry(scope).or_insert_with(|| {
+                    let mut all = Map::default();
+                    for (node, element) in tree.descendants(scope).filter_map(|it| {
+                        Some((it, tree.element(it).filter(|it| it.id != Name::NONE)?))
+                    }) {
+                        all.entry(element.id).or_insert(node);
+                    }
+                    all
+                });
+                all.get(&id).copied()
+            });
+        self.answers.insert((scope, id), found);
+        self.wanted.insert(id);
+        self.found.extend(found.map(|it| (it, id)));
+        found
+    }
+}
+
 impl Document {
     pub(crate) fn outer_svg(&self, mut id: NodeId) -> Option<NodeId> {
         self.tree
@@ -354,10 +391,14 @@ impl Document {
         let Some(outer) = self.outer_svg(id) else {
             return;
         };
+        self.svg_changes = self.svg_changes.wrapping_add(1);
         if self.tree.style(outer).is_some() {
             self.repaint(outer);
         }
-        if let Some(users) = self.referenced_svgs.get_mut().remove(&outer) {
+        if let Some(users) = Some(self.referenced_svgs.get_mut())
+            .filter(|it| !it.is_empty())
+            .and_then(|it| it.remove(&outer))
+        {
             self.svg_generation += 1;
             for user in users {
                 if !self.tree.contains(user) {
@@ -373,12 +414,40 @@ impl Document {
             }
         }
         if let Some(own) = self.own_box(outer) {
-            *self.boxes[own].svg.get_mut() = None;
-            self.boxes.mark_ink(own);
+            if !self.boxes.recordings.get_mut().is_empty() {
+                self.boxes.recordings.get_mut().remove(&own);
+            }
+            if self.boxes[own].overflow.contains(&Overflow::Visible)
+                || self.blends_in_svg.get()
+                || !self.boxes[own].children.is_empty()
+            {
+                self.boxes.mark_ink(own);
+            }
             if !self.boxes[own].children.is_empty() {
                 self.relayout(outer);
             }
         }
+    }
+
+    /// False if it takes more than other colors for the shapes.
+    pub(crate) fn svg_colors_changed(&mut self, id: NodeId) -> bool {
+        let Some((outer, own)) = self
+            .outer_svg(id)
+            .and_then(|it| Some((it, self.own_box(it)?)))
+        else {
+            return false;
+        };
+        let is_enough = self
+            .boxes
+            .recordings
+            .get_mut()
+            .get(&own)
+            .is_some_and(crate::svg_paint::Recording::can_be_tinted)
+            && !self.referenced_svgs.get_mut().contains_key(&outer);
+        if is_enough {
+            self.retouch(own, crate::segments::Retouch::SHAPES);
+        }
+        is_enough
     }
 
     /// The element that the URL refers to.
@@ -392,16 +461,7 @@ impl Document {
     pub(crate) fn svg_element_by_id(&self, from: NodeId, id: Name) -> Option<NodeId> {
         let own = self.tree[from].scope;
         self.svg_references.set(true);
-        let find = |scope| {
-            self.tree
-                .descendants(scope)
-                .find(|it| self.tree.element(*it).is_some_and(|it| it.id == id))
-        };
-        let found = *self
-            .svg_ids
-            .borrow_mut()
-            .entry((own, id))
-            .or_insert_with(|| find(own).or_else(|| find(crate::tree::DOCUMENT)));
+        let found = self.svg_ids.borrow_mut().look_up(&self.tree, own, id);
         let user = self.outer_svg(from).unwrap_or(from);
         self.referenced_svgs
             .borrow_mut()
@@ -445,33 +505,33 @@ impl Document {
     /// The element has come, or its `id` has changed.
     pub(crate) fn id_changed(&mut self, id: NodeId) {
         let name = self.tree.element(id).map(|it| it.id);
-        if self.svg_ids.get_mut().iter().any(|it| {
-            Some(it.0.1) == name && *it.1 != Some(id) || Some(it.0.1) != name && *it.1 == Some(id)
-        }) {
+        let ids = self.svg_ids.get_mut();
+        ids.tree_changed();
+        if ids.found.get(&id).map_or_else(
+            || name.is_some_and(|it| ids.wanted.contains(&it)),
+            |it| Some(*it) != name,
+        ) {
             self.forget_svg_references();
         }
     }
 
     pub(crate) fn nodes_removed(&mut self, ids: &[NodeId]) {
-        if self
-            .svg_ids
-            .get_mut()
-            .values()
-            .flatten()
-            .any(|it| ids.contains(it))
-        {
+        let known = self.svg_ids.get_mut();
+        known.tree_changed();
+        if !known.found.is_empty() && ids.iter().any(|it| known.found.contains_key(it)) {
             self.forget_svg_references();
         }
     }
 
     fn forget_svg_references(&mut self) {
-        self.svg_ids.get_mut().clear();
+        self.svg_ids.take();
         self.smil.needs_update = !self.smil.is_empty();
         self.referenced_svgs.get_mut().clear();
         self.referenced_svg_changed();
     }
 
     pub(crate) fn referenced_svg_changed(&mut self) {
+        self.svg_changes = self.svg_changes.wrapping_add(1);
         self.svg_generation += 1;
         self.pictures.discard();
         if !self.referenced_svgs.get_mut().is_empty() {
@@ -706,6 +766,40 @@ impl Document {
             .collect()
     }
 
+    /// Those that are rendered.
+    pub(crate) fn foreign_objects_in(&self, svg: NodeId) -> Vec<NodeId> {
+        let (mut found, mut waiting) = (Vec::new(), vec![svg]);
+        while let Some(id) = waiting.pop() {
+            let Some(element) = self
+                .tree
+                .element(id)
+                .filter(|it| it.namespace == Namespace::Svg)
+            else {
+                continue;
+            };
+            let (passes, start) = (
+                |it: &NodeId| {
+                    self.tree
+                        .element(*it)
+                        .is_some_and(|it| it.namespace == Namespace::Svg && passes_tests(it))
+                },
+                waiting.len(),
+            );
+            match element.tag {
+                tag if tag == name!("foreignObject") => found.push(id),
+                tag if tag == name!("switch") => {
+                    waiting.extend(self.tree.element_children(id).find(passes))
+                }
+                tag if is_name!(tag, "svg" | "g" | "a") => {
+                    waiting.extend(self.tree.element_children(id).filter(passes))
+                }
+                _ => {}
+            }
+            waiting[start..].reverse();
+        }
+        found
+    }
+
     fn outer_box(&self, node: &Node) -> Option<BoxId> {
         self.own_box(node.id)
             .filter(|it| node.uses.is_none() && self.boxes[*it].kind == Kind::Svg)
@@ -864,7 +958,7 @@ impl Document {
                     known.clear();
                 }
                 known
-                    .entry(Name::new(data.as_bytes()))
+                    .entry_ref(data)
                     .or_insert_with(|| Path::parse(data))
                     .clone()
             }
@@ -1169,23 +1263,27 @@ impl Document {
         }
     }
 
+    pub(crate) fn svg_transform_reference(&self, node: &Node) -> Rect {
+        self.svg_reference_box(
+            node,
+            match node.style.effects.transform_box {
+                TransformBox::ViewBox => BoxArea::ViewBox,
+                TransformBox::FillBox | TransformBox::ContentBox => BoxArea::FillBox,
+                _ if node.style.shape.vector_effect == VectorEffect::NonScalingStroke => {
+                    BoxArea::FillBox
+                }
+                TransformBox::StrokeBox | TransformBox::BorderBox => BoxArea::StrokeBox,
+            },
+        )
+    }
+
     pub(crate) fn svg_transform(&self, node: &Node) -> Matrix {
         let style = &node.style;
         let motion = self.smil.effects.motions.get(&node.id).copied();
         if !style.has_transform() || self.outer_box(node).is_some() {
             return motion.unwrap_or(IDENTITY);
         }
-        let mut reference = self.svg_reference_box(
-            node,
-            match style.effects.transform_box {
-                TransformBox::ViewBox => BoxArea::ViewBox,
-                TransformBox::FillBox | TransformBox::ContentBox => BoxArea::FillBox,
-                _ if style.shape.vector_effect == VectorEffect::NonScalingStroke => {
-                    BoxArea::FillBox
-                }
-                TransformBox::StrokeBox | TransformBox::BorderBox => BoxArea::StrokeBox,
-            },
-        );
+        let mut reference = self.svg_transform_reference(node);
         if node.tag == name!("use") && style.effects.transform_box != TransformBox::ViewBox {
             reference = reference.moved(node.position());
         }
@@ -1322,6 +1420,15 @@ impl Document {
         )
     }
 
+    /// https://svgwg.org/svg2-draft/render.html#TermNeverRenderedElement, or in one.
+    pub(crate) fn is_never_rendered(&self, id: NodeId) -> bool {
+        let path = core::iter::once(id)
+            .chain(self.tree.flat_ancestors(id))
+            .map_while(|it| self.tree.element(it));
+        path.take_while(|it| it.namespace == Namespace::Svg)
+            .any(|it| !is_graphic(it) && !is_name!(it.tag, "tspan" | "textPath"))
+    }
+
     pub(crate) fn svg_element_rect(&self, id: NodeId) -> Option<(BoxId, Rect)> {
         let outer = self.own_box(self.outer_svg(id)?)?;
         let is_shown = |it: &Element| is_graphic(it) || is_name!(it.tag, "tspan" | "textPath");
@@ -1343,7 +1450,7 @@ impl Document {
     pub(crate) fn svg_point_at_length(&self, id: NodeId, distance: f32) -> [f32; 3] {
         let path = self
             .svg_node(id)
-            .and_then(|it| self.svg_path(&it))
+            .and_then(|it| self.rendered_path(&it))
             .unwrap_or_default();
         let [x, y] = at_distance(&path.pieces(), distance)
             .map(|it| it.0)
@@ -1380,9 +1487,17 @@ impl Document {
     }
 
     pub(crate) fn is_in_stroke(&self, node: &Node, path: &Path, point: [f32; 2]) -> bool {
-        let (reach, pieces, svg) = (node.stroke_width() / 2.0, path.pieces(), &node.style.svg);
-        let scale = self.path_scale(node.id, path);
-        let dashes: Vec<_> = svg
+        self.pen(node, path).covers(path, point)
+    }
+
+    fn pen(&self, node: &Node, path: &Path) -> Pen {
+        let svg = &node.style.svg;
+        let scale = if svg.dasharray.0.0.is_empty() {
+            1.0
+        } else {
+            self.path_scale(node.id, path)
+        };
+        let dashes = svg
             .dasharray
             .0
             .0
@@ -1390,10 +1505,55 @@ impl Document {
             .chain(svg.dasharray.0.0.iter())
             .map(|it| node.resolve(&it.0, 2) * scale)
             .collect();
-        let (period, mut start) = (
-            dashes.iter().sum::<f32>(),
-            node.resolve(&svg.dashoffset.0, 2) * scale,
-        );
+        let dash_offset = node.resolve(&svg.dashoffset.0, 2) * scale;
+        Pen {
+            reach: node.stroke_width() / 2.0,
+            linecap: svg.linecap,
+            linejoin: svg.linejoin,
+            miterlimit: svg.miterlimit.0,
+            dashes,
+            dash_offset,
+        }
+    }
+}
+
+struct Pen {
+    reach: f32,
+    linecap: LineCap,
+    linejoin: LineJoin,
+    miterlimit: f32,
+    dashes: Vec<f32>,
+    dash_offset: f32,
+}
+
+impl Pen {
+    /// How far from the path it gets, along a segment and at its ends.
+    fn limits(&self) -> [f32; 2] {
+        let near = self.reach
+            * if self.linecap == LineCap::Square {
+                1.42
+            } else {
+                1.01
+            };
+        [
+            near,
+            near.max(if self.linejoin == LineJoin::Miter {
+                self.reach * self.miterlimit
+            } else {
+                0.0
+            }),
+        ]
+    }
+
+    fn covers(&self, path: &Path, point: [f32; 2]) -> bool {
+        let (svg, reach, dashes, [near, far]) = (self, self.reach, &self.dashes, self.limits());
+        let (period, mut start) = (dashes.iter().sum::<f32>(), self.dash_offset);
+        let mut pieces = if period > 0.0 {
+            path.pieces()
+        } else {
+            path.pieces_near(point, near, far)
+        };
+        pieces.dedup_by(|it, before| it.from == before.to && it.length() < 1e-4);
         let cap = if svg.linecap == LineCap::Butt {
             0.0
         } else {
@@ -1445,7 +1605,7 @@ impl Document {
                         ((1.0 + ux * vx + uy * vy) / 2.0).max(0.0).sqrt(),
                     );
                     let is_mitered =
-                        svg.linejoin == LineJoin::Miter && half * svg.miterlimit.0 >= 1.0;
+                        svg.linejoin == LineJoin::Miter && half * svg.miterlimit >= 1.0;
                     let outwards =
                         (px * (ux - vx) + py * (uy - vy)) / (ux - vx).hypot(uy - vy).max(1e-9);
                     across <= reach
@@ -1466,6 +1626,187 @@ impl Document {
             is_near && is_drawn(start - length + along.min(length).max(0.0))
         })
     }
+}
+
+enum Form {
+    Rect(Rect),
+    Circle([f32; 2], f32),
+    Path(Path),
+}
+
+enum Test {
+    /// In its own user space.
+    Shape {
+        form: Form,
+        fill: Option<FillRule>,
+        stroke: Option<Pen>,
+    },
+    /// With all that is in it, in the user space around it.
+    Element { viewport: [f32; 2], depth: u32 },
+}
+
+struct Target {
+    id: NodeId,
+    from_box: Matrix,
+    test: Test,
+}
+
+/// What can be hit in an `svg`, from the top.
+#[derive(Default)]
+pub(crate) struct Targets {
+    made_for: (NodeId, u32, u32),
+    /// The edges of what each can cover, relative to the border box.
+    limits: Vec<[f32; 4]>,
+    all: Vec<Target>,
+}
+
+impl Form {
+    fn is_hit(&self, fill: Option<FillRule>, stroke: Option<&Pen>, point: [f32; 2]) -> bool {
+        const TOUCHING: f32 = 1e-4;
+        let (reach, [x, y]) = (stroke.map(|it| it.reach), point);
+        let outside = match self {
+            Form::Rect(it) => (it.x - x)
+                .max(x - it.right())
+                .max(it.y - y)
+                .max(y - it.bottom()),
+            Form::Circle(center, radius) => {
+                ((x - center[0]).powi(2) + (y - center[1]).powi(2)).sqrt() - radius
+            }
+            Form::Path(path) => {
+                return fill.is_some_and(|it| path.contains(point, it == FillRule::Evenodd))
+                    || stroke.is_some_and(|it| it.covers(path, point));
+            }
+        };
+        fill.is_some() && outside < TOUCHING || reach.is_some_and(|it| outside.abs() <= it)
+    }
+}
+
+/// Whether the fill and the stroke can be hit.
+fn sensitive_parts(style: &Style) -> [bool; 2] {
+    use PointerEvents as P;
+    let events = style.ink.pointer_events;
+    let needs_visibility = matches!(
+        events,
+        P::Auto | P::VisiblePainted | P::VisibleFill | P::VisibleStroke | P::Visible
+    );
+    let needs_paint = matches!(events, P::Auto | P::VisiblePainted | P::Painted);
+    let is_on = events != P::None && (style.is_visible() || !needs_visibility);
+    let fills = !matches!(events, P::Stroke | P::VisibleStroke)
+        && !(needs_paint && style.svg.fill == SvgPaint::None);
+    let strokes = !matches!(events, P::Fill | P::VisibleFill)
+        && !(needs_paint && style.svg.stroke == SvgPaint::None);
+    [is_on && fills, is_on && strokes]
+}
+
+impl Document {
+    /// `None` if there is something in an instance that takes its element to test.
+    fn collect_targets(parent: &Node, to_box: &Matrix, out: &mut Targets) -> Option<()> {
+        for child in parent.document.svg_children(parent).iter().rev() {
+            let (document, style, before) = (child.document, &child.style, out.all.len());
+            let is_plain = style.effects.clip_path.0.is_none()
+                && style.shape.vector_effect == VectorEffect::None
+                && style.ink.pointer_events != PointerEvents::BoundingBox
+                && !child.establishes_viewport()
+                && !is_name!(child.tag, "text" | "image");
+            if is_plain {
+                let Some(matrix) = document
+                    .svg_to_parent(child)
+                    .map(|it| multiply(to_box, &it))
+                else {
+                    continue;
+                };
+                if !child.is_container() {
+                    document.add_shape(child, &matrix, out);
+                    continue;
+                }
+                if Document::collect_targets(child, &matrix, out).is_some() {
+                    continue;
+                }
+            }
+            child.uses.is_none().then_some(())?;
+            out.all.truncate(before);
+            out.limits.truncate(before);
+            if let Some(from_box) = invert(to_box) {
+                out.all.push(Target {
+                    id: child.id,
+                    from_box,
+                    test: Test::Element {
+                        viewport: child.viewport,
+                        depth: child.depth,
+                    },
+                });
+                out.limits.push([f32::MIN, f32::MIN, f32::MAX, f32::MAX]);
+            }
+        }
+        Some(())
+    }
+
+    fn add_shape(&self, node: &Node, to_box: &Matrix, out: &mut Targets) -> Option<()> {
+        let [fills, strokes] = Some(sensitive_parts(&node.style)).filter(|it| *it != [false; 2])?;
+        let (path, from_box) = (self.rendered_path(node)?, invert(to_box)?);
+        let (bounds, stroke) = (path.bounds()?, strokes.then(|| self.pen(node, &path)));
+        let is_solid = stroke.as_ref().is_none_or(|it| it.dashes.is_empty());
+        let has_square_corners = stroke
+            .as_ref()
+            .is_none_or(|it| it.linejoin == LineJoin::Miter && it.miterlimit >= SQRT_2);
+        let (form, reach) = match (
+            path.as_rect(),
+            stroke.as_ref().map_or([0.0; 2], |it| {
+                [
+                    it.reach,
+                    it.limits()[usize::from(node.tag != name!("ellipse"))],
+                ]
+            }),
+        ) {
+            (Some(rect), [reach, _]) if is_solid && has_square_corners && !rect.is_empty() => {
+                (Form::Rect(rect), reach)
+            }
+            (_, [reach, _]) if is_solid && node.tag == name!("circle") => (
+                Form::Circle(
+                    [
+                        bounds.x + bounds.width / 2.0,
+                        bounds.y + bounds.height / 2.0,
+                    ],
+                    bounds.width / 2.0,
+                ),
+                reach,
+            ),
+            (_, [_, far]) => (Form::Path(path), far),
+        };
+        let limits = bounds.grown(reach + 1e-3).transformed(to_box);
+        let id = core::iter::successors(node.uses.as_ref(), |it| it.outer.as_ref())
+            .last()
+            .map_or(node.id, |it| it.id);
+        out.limits
+            .push([limits.x, limits.y, limits.right(), limits.bottom()]);
+        out.all.push(Target {
+            id,
+            from_box,
+            test: Test::Shape {
+                form,
+                fill: fills.then_some(node.style.svg.fill_rule),
+                stroke,
+            },
+        });
+        Some(())
+    }
+
+    fn svg_targets(&self, id: NodeId) -> Option<Rc<Targets>> {
+        let made_for = (id, self.layout_version, self.svg_changes);
+        if self.svg_targets.borrow().made_for != made_for {
+            let (svg, mut targets) = (
+                self.svg_node(id)?,
+                Targets {
+                    made_for,
+                    ..Targets::default()
+                },
+            );
+            self.reset_svg_budget();
+            Document::collect_targets(&svg, &self.svg_matrix(id), &mut targets);
+            self.svg_targets.replace(Rc::new(targets));
+        }
+        Some(Rc::clone(&self.svg_targets.borrow()))
+    }
 
     fn svg_hit(&self, node: &Node, point: [f32; 2]) -> Option<NodeId> {
         use PointerEvents as P;
@@ -1483,15 +1824,21 @@ impl Document {
             .filter(|_| events != P::BoundingBox)
         else {
             let is_box = events == P::BoundingBox || node.tag == name!("image");
-            return (is_box && self.svg_bounds(node, Bounds::Fill)?.contains(point))
-                .then_some(node.id);
+            return (is_box
+                && self
+                    .svg_bounds(node, Bounds::Fill)?
+                    .grown(1e-4)
+                    .contains(point))
+            .then_some(node.id);
         };
-        let needs_paint = matches!(events, P::Auto | P::VisiblePainted | P::Painted);
-        let strokes = !matches!(events, P::Fill | P::VisibleFill)
-            && !(needs_paint && style.svg.stroke == SvgPaint::None);
-        let fills = !matches!(events, P::Stroke | P::VisibleStroke)
-            && !(needs_paint && style.svg.fill == SvgPaint::None);
-        let is_hit = strokes && self.is_in_stroke(node, &path, point)
+        let [fills, strokes] = sensitive_parts(style);
+        let is_in_stroke = || match style.shape.vector_effect {
+            VectorEffect::NonScalingStroke if node.uses.is_none() => {
+                self.svg_contains(node.id, point, true)
+            }
+            _ => self.is_in_stroke(node, &path, point),
+        };
+        let is_hit = strokes && is_in_stroke()
             || fills && path.contains(point, style.svg.fill_rule == FillRule::Evenodd);
         is_hit.then_some(node.id)
     }
@@ -1540,7 +1887,22 @@ impl Document {
                     }
                 })
         };
-        invert(&self.clip_matrix(clip, reference)).is_some_and(|it| {
+        let outer = match clip.style.effects.clip_path.0.as_deref() {
+            Some((Shape::Url(url), _)) => self
+                .svg_resource(clip.id, url, name!("clipPath"))
+                .filter(|_| clip.depth < MAX_DEPTH && self.spend_svg_budget()),
+            _ => None,
+        };
+        outer.is_none_or(|it| {
+            it.document.clip_contains(
+                &Node {
+                    depth: clip.depth + MAX_DEPTH / 8,
+                    ..it
+                },
+                reference,
+                point,
+            )
+        }) && invert(&self.clip_matrix(clip, reference)).is_some_and(|it| {
             self.svg_children(clip)
                 .iter()
                 .any(|child| inside(child, apply(&it, point)))
@@ -1598,53 +1960,93 @@ impl Document {
             .into_path()
     }
 
-    /// From the top.
-    fn svg_hits(parent: &Node, point: [f32; 2], out: &mut Vec<NodeId>) {
-        for child in parent.document.svg_children(parent).iter().rev() {
-            let document = child.document;
-            if child.establishes_viewport()
-                && child.clips_overflow()
-                && !invert(&document.svg_transform(child))
-                    .is_some_and(|it| document.viewport_rect(child).contains(apply(&it, point)))
-            {
-                continue;
+    /// From the top. `point` is in the user space around it.
+    fn svg_hits(node: &Node, point: [f32; 2], out: &mut Vec<NodeId>) {
+        let document = node.document;
+        if node.establishes_viewport()
+            && node.clips_overflow()
+            && !invert(&document.svg_transform(node))
+                .is_some_and(|it| document.viewport_rect(node).contains(apply(&it, point)))
+        {
+            return;
+        }
+        let Some(point) = document
+            .svg_to_parent(node)
+            .and_then(|it| invert(&it))
+            .map(|it| apply(&it, point))
+        else {
+            return;
+        };
+        if document.is_unclipped(node, point) {
+            if node.is_container() {
+                document
+                    .svg_children(node)
+                    .iter()
+                    .rev()
+                    .for_each(|it| Document::svg_hits(it, point, out));
             }
-            let Some(point) = document
-                .svg_to_parent(child)
-                .and_then(|it| invert(&it))
-                .map(|it| apply(&it, point))
-            else {
-                continue;
-            };
-            if document.is_unclipped(child, point) {
-                if child.is_container() {
-                    Document::svg_hits(child, point, out);
-                }
-                let host =
-                    core::iter::successors(child.uses.as_ref(), |it| it.outer.as_ref()).last();
-                out.extend(
-                    document
-                        .svg_hit(child, point)
-                        .map(|it| host.map_or(it, |it| it.id)),
-                );
-            }
+            let host = core::iter::successors(node.uses.as_ref(), |it| it.outer.as_ref()).last();
+            out.extend(
+                document
+                    .svg_hit(node, point)
+                    .map(|it| host.map_or(it, |it| it.id)),
+            );
         }
     }
 
     /// In front of `node`, if it is an `svg`.
-    pub(crate) fn svg_elements_at(&self, node: NodeId, point: [f32; 2]) -> Vec<NodeId> {
-        let mut found = Vec::new();
-        if self
+    pub(crate) fn svg_elements_at(
+        &self,
+        node: NodeId,
+        point: [f32; 2],
+    ) -> impl Iterator<Item = NodeId> + '_ {
+        let own = self
             .own_box(node)
-            .is_some_and(|it| self.boxes[it].kind == Kind::Svg)
-            && let Some((svg, inverse)) = self
-                .svg_node(node)
-                .zip(self.svg_screen_matrix(node).and_then(|it| invert(&it)))
-        {
-            self.reset_svg_budget();
-            Document::svg_hits(&svg, apply(&inverse, point), &mut found);
-            found.dedup();
-        }
-        found
+            .filter(|it| self.boxes[*it].kind == Kind::Svg);
+        let placed = own.and_then(|it| {
+            Some((
+                self.svg_targets(node)?,
+                apply(&invert(&self.to_viewport(it))?, point),
+            ))
+        });
+        let (mut next, mut found, mut last) = (0, Vec::new(), 0);
+        let all = core::iter::from_fn(move || {
+            let (targets, [x, y]) = placed.as_ref()?;
+            while found.is_empty() {
+                next += targets.limits[next..]
+                    .iter()
+                    .position(|it| *x >= it[0] && *y >= it[1] && *x <= it[2] && *y <= it[3])?
+                    + 1;
+                let Target { id, from_box, test } = &targets.all[next - 1];
+                let point = apply(from_box, [*x, *y]);
+                match test {
+                    Test::Shape { form, fill, stroke }
+                        if form.is_hit(*fill, stroke.as_ref(), point) =>
+                    {
+                        return Some(*id);
+                    }
+                    Test::Shape { .. } => {}
+                    &Test::Element { viewport, depth } => {
+                        let (id, element) = (*id, self.tree.element(*id)?);
+                        let node = Node {
+                            document: self,
+                            id,
+                            element,
+                            tag: element.tag,
+                            style: self.style_on_demand(id)?,
+                            viewport,
+                            uses: None,
+                            size: [None; 2],
+                            depth,
+                        };
+                        self.reset_svg_budget();
+                        Document::svg_hits(&node, point, &mut found);
+                        found.reverse();
+                    }
+                }
+            }
+            found.pop()
+        });
+        all.filter(move |it| core::mem::replace(&mut last, *it) != *it)
     }
 }

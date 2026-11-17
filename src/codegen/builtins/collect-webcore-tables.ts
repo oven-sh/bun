@@ -621,13 +621,13 @@ export const tablesReadByNobody: readonly string[] = [
   "ImportMetaObjectPrototypeValues", // ImportMetaObject.cpp
   "JSBigIntStatsPrototypeTableValues", // NodeFSStatBinding.cpp
   "JSBunRequestPrototypeValues", // JSBunRequest.cpp
+  "JSDOMFileInPagesPrototypeTableValues", // JSDOMFile.cpp: `File` is another object in a page
   "JSBundlerPluginHashTable", // JSBundlerPlugin.cpp
   "JSConnectionsListPrototypeTableValues", // node/http/JSConnectionsListPrototype.cpp
   "JSCookieMapPrototypeTableValues", // webcore/JSCookieMap.cpp
   "JSCookiePrototypeTableValues", // webcore/JSCookie.cpp
   "JSDatabaseSyncPrototypeTableValues", // sqlite/NodeSqlite.cpp
   "JSDirentPrototypeTableValues", // NodeDirent.cpp
-  "JSHTTPParserPrototypeTableValues", // node/http/JSHTTPParserPrototype.cpp
   "JSHashPrototypeTableValues", // node/crypto/JSHash.cpp
   "JSHmacPrototypeTableValues", // node/crypto/JSHmac.cpp
   "JSMIMEParamsPrototypeTableValues", // webcore/JSMIMEParams.cpp

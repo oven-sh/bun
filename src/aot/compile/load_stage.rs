@@ -652,6 +652,7 @@ impl<'a> Build<'a> {
             &atoms,
             self.platform,
             options.aot.runs_in_place || options.load.runs_tests,
+            options.aot.has_realms_of_the_web,
         );
         let shared = SharedLoadInputs {
             disk: &disk,

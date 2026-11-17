@@ -51,9 +51,11 @@ template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLE
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        if (!value.isString() && !value.inherits<JSC::StringObject>()) {
-            ctx.throwNotString(lexicalGlobalObject, throwScope);
-            return {};
+        if constexpr (!requires { Ctx::followsWebIDL; }) {
+            if (!value.isString() && !value.inherits<JSC::StringObject>()) {
+                ctx.throwNotString(lexicalGlobalObject, throwScope);
+                return {};
+            }
         }
         auto result = parseEnumeration<T>(lexicalGlobalObject, value);
         RETURN_IF_EXCEPTION(throwScope, {});

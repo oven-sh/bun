@@ -69,6 +69,7 @@ impl Feature {
         let mut numeric = |p: &mut P, kind, syntax| {
             let state = p.state();
             out.extend(definition(syntax)?.write_from(p, Mode::Specified)?);
+            (!delim(p, b'/')).then_some(())?;
             p.reset(&state);
             let (start, node) = (p.position(), Node::parse(p, &Options::new(kind)));
             node.filter(|_| !crate::calc::has_random(p.slice_from(start)))

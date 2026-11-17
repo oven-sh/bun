@@ -1,8 +1,10 @@
 #pragma once
+#include "Bindgen/ExternTraits.h"
 #include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 // WebCore's. In quotes it would be this file.
 #include <IDLTypes.h>
+#include <JavaScriptCore/JSCellButterfly.h>
 #include <JavaScriptCore/ArgList.h>
 #include <concepts>
 #include <cstddef>
@@ -175,11 +177,50 @@ struct IDLRawString : WebCore::IDLType<JSC::JSString*> {
     static JSC::JSString* nullValue() { return nullptr; }
 };
 
+enum class WebString : uint8_t {
+    DOMString,
+    USVString,
+    ByteString,
+};
+
+// What `ToString` gives, as the cell.
+template<WebString, bool nullToEmpty>
+struct IDLWebString : IDLRawString {};
+
+template<typename IDL>
+struct IDLStringImplOf : WebCore::IDLType<JSStringAndImpl> {
+    using SequenceStorageType = void;
+    using NullableType = JSStringAndImpl;
+    using NullableInnerParameterType = JSStringAndImpl;
+    static JSStringAndImpl nullValue() { return {}; }
+};
+template<typename IDL>
+struct IDLAtomOf : IDLStringImplOf<IDL> {};
+
 // An object as the `JSValue` itself. See IDLRawAny.
 struct IDLRawObject : IDLRawAny {};
 
 // An array as the `JSValue` itself. See IDLRawAny.
 struct IDLRawArray : IDLRawAny {};
+
+// As IDLArray, from any iterable.
+template<typename IDL>
+struct IDLSequenceVector : IDLArray<IDL> {};
+
+// One kind of buffer or view. See IDLRawAny.
+template<typename JSClass, bool allowShared>
+struct IDLRawBuffer : IDLRawAny {};
+
+// The converted elements, each `asElement`. Not an array: haveABadTime() moves the elements of those.
+struct IDLList : WebCore::IDLType<JSC::JSCellButterfly*> {
+    using SequenceStorageType = void;
+    using NullableType = JSC::JSCellButterfly*;
+    using NullableInnerParameterType = JSC::JSCellButterfly*;
+    static JSC::JSCellButterfly* nullValue() { return nullptr; }
+};
+template<typename IDL> struct IDLSequenceList : IDLList {};
+// Keys and values alternate.
+template<typename Key, typename IDL> struct IDLRecordList : IDLList {};
 
 // An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
 template<typename JSClass>

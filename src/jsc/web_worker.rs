@@ -55,7 +55,7 @@ use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WT
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_io::KeepAlive;
 
-use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
+use crate::virtual_machine::{self, MainEntryPoint, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, LogJsc};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
@@ -208,6 +208,7 @@ pub enum Status {
 // round-tripped from `create()`; it is only ever handed back to C++.
 unsafe extern "C" {
     safe fn WebWorker__workerThreadStarted(proxy: *mut c_void);
+    safe fn WebWorker__hasNativeEntry(proxy: *mut c_void) -> bool;
     safe fn WebWorker__workerGlobalScopeStarted(proxy: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__workerGlobalScopeDestroyed(
         proxy: *mut c_void,
@@ -237,7 +238,6 @@ unsafe extern "C" {
     safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__releaseUnusedPagesOfThread();
     safe fn Bun__AOT__didStartThread();
-    safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `run` can take the API lock and abandon
     // it with the VM — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
@@ -375,7 +375,7 @@ impl WebWorker {
         exec_argv_len: usize,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
-    ) -> *mut WebWorker {
+    ) -> Option<bun_ptr::RefPtr<WebWorker>> {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
 
@@ -430,13 +430,14 @@ impl WebWorker {
                 }
             };
             // preloads dropped by RAII.
-            return core::ptr::null_mut();
+            return None;
         }
 
         // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
         let specifier = spec_slice.slice();
         let is_text = specifier.starts_with(b"data:") || specifier.starts_with(b"blob:");
         let runs_apart = match is_text {
+            _ if WebWorker__hasNativeEntry(proxy) => false,
             true => crate::compiled_program::runs_worker_of_text_apart(),
             false => crate::compiled_program::runs_worker_from_disk_apart(),
         };
@@ -473,7 +474,7 @@ impl WebWorker {
                     message.extend_from_slice(arg.as_bytes());
                     *error_message = BunString::clone_utf8(&message);
                     *error_is_invalid_exec_argv = true;
-                    return core::ptr::null_mut();
+                    return None;
                 }
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
@@ -493,7 +494,7 @@ impl WebWorker {
                 Ok(loader) => loader,
                 Err(_) => {
                     *error_message = BunString::static_("Out of memory");
-                    return core::ptr::null_mut();
+                    return None;
                 }
             }
         };
@@ -584,14 +585,13 @@ impl WebWorker {
                 worker_ref.thread_start.set(None);
                 worker_ref.parent_poll_ref.unref(bun_io::js_vm_ctx());
                 *error_message = BunString::static_("Failed to spawn worker thread");
-                return core::ptr::null_mut();
+                return None;
             }
         }
-        let worker = worker.into_raw();
         parent
             .child_workers
-            .with_mut(|children| children.push(worker));
-        worker
+            .with_mut(|children| children.push(worker.as_ptr()));
+        Some(worker)
     }
 
     /// Spawn the thread and hand it `thread_start`, which stays where it is unless that succeeds. Parent thread.
@@ -889,9 +889,7 @@ impl WebWorker {
         if !self.name.is_empty() {
             bun_core::output::Source::configure_named_thread(self.name.as_zstr());
         } else {
-            bun_core::output::Source::configure_named_thread(bun_core::ZStr::from_static(
-                b"Worker\0",
-            ));
+            bun_core::output::Source::configure_named_thread(bun_core::zstr!("Worker"));
         }
 
         let exit_code = self.run(init);
@@ -994,7 +992,7 @@ impl WebWorker {
             return Ok(vm);
         }
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         Ok(vm)
     }
 
@@ -1023,7 +1021,12 @@ impl WebWorker {
             .with_mut(|preload| preload.clone_from(&self.preloads));
 
         // The parent only stored the raw specifier.
-        let path = match resolve_entry_point_specifier(vm, &self.unresolved_specifier, dot_slash) {
+        let resolved = (!WebWorker__hasNativeEntry(self.messaging_proxy))
+            .then(|| resolve_entry_point_specifier(vm, &self.unresolved_specifier, dot_slash));
+        if resolved.is_none() {
+            vm.main_entry_point.set(MainEntryPoint::Native);
+        }
+        let path = match resolved.transpose() {
             Ok(p) => p,
             Err(unresolved) => {
                 vm.exit_handler.exit_code.set(1);
@@ -1038,7 +1041,9 @@ impl WebWorker {
             }
         };
 
-        if crate::compiled_program::refuses_start_of_worker_at(path) {
+        if let Some(path) = path
+            && crate::compiled_program::refuses_start_of_worker_at(path)
+        {
             vm.exit_handler.exit_code.set(1);
             let message = [
                 &b"Cannot start a Worker at '"[..],
@@ -1240,14 +1245,6 @@ impl WebWorker {
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",
-            self.execution_context_id
-        );
-        // This thread's C++ thread_local destructors are not guaranteed to run
-        // before the process exits, so free the HPACK scratch buffer that any
-        // http2 session on this thread allocated.
-        Bun__freeSharedHeaderBufferForThreadExit();
-        log!(
-            "[{}] shutdown: thread state freed",
             self.execution_context_id
         );
         exit_code

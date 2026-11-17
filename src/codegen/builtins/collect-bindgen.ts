@@ -6,15 +6,22 @@ import {
   cppExtern,
   cppFunctionSymbol,
   cppNamespaceSymbol,
+  exposureOf,
   externType,
+  generatedNamesOf,
   getterHostFunctionName,
   getterSymbolName,
   hasThunk,
+  isAssignable,
+  isUnforgeable,
+  lengthOfConstructor,
+  membersOf,
   methodHostFunctionName,
   methodSymbolName,
   pathOfBoundNamespace,
   setterSymbolName,
   thunkSymbol,
+  visibleBase,
   type SchemaFile,
 } from "../bindgen-emit.ts";
 import {
@@ -23,19 +30,26 @@ import {
   ClassType,
   Constant,
   DictionaryType,
+  EnumerationType,
   FunctionDefinition,
   Getter,
   InternalFieldAccessor,
+  ListType,
   Method,
   OptionalType,
   RefType,
   RestType,
+  SequenceType,
   Signature,
   Type,
+  UnionType,
+  UnitType,
+  callableType,
   memberIdentifier,
   symbolDescription,
   type Builtin,
   type ClassMember,
+  type ModuleDefinition,
   type NamespaceDefinition,
   type OverloadDispatch,
   type ValueKind,
@@ -51,6 +65,7 @@ import {
   type SignatureDeclaration,
   type SourcedDeclaration,
 } from "./declarations.ts";
+import { desktopFeatures } from "./host/external-values.ts";
 import * as b from "./lib.ts";
 import { compareBytes, joinPath, parsePath, pathOfClassMember, pathOfNativeBinding } from "./paths.ts";
 import {
@@ -185,6 +200,9 @@ function getKindType(kind: Kind): b.TableType {
       return b.union(b.instance("TypedArray"), b.instance("DataView"));
     case "callable":
       return createStrictType({ type: "Function" });
+    case "iterable":
+    case "object":
+      return createStrictType({ type: "Object" });
     case "other":
       return b.any;
   }
@@ -323,17 +341,24 @@ function computeReceiverUses(signature: Signature, className: string | null): re
   const changesReceiver = signature instanceof Method && signature.receiver === "mut";
   if (signature instanceof Method && saysResult(signature.returns) && !changesReceiver) {
     const mayAnswerReceiver =
-      signature.passThis && className !== null && mayHoldInstanceOf(signature.returns.resultType, className);
+      (signature.passThis || signature.isWeb) &&
+      className !== null &&
+      mayHoldInstanceOf(signature.returns.resultType, className);
     return mayAnswerReceiver ? [...b.retainedByNativeCode, b.returned] : b.retainedByNativeCode;
   }
   if (signature.capability === "js") return [b.everything];
   // A function that is no member of a class has a receiver only if its body is handed `this`.
-  if (!(signature instanceof Method) || signature.passThis) return usesWithoutJavaScript;
+  if (!(signature instanceof Method) || signature.passThis || signature.isWeb) return usesWithoutJavaScript;
   return [b.readsContents(), b.writesContents()];
 }
 
-function createReceiver(signature: Signature, type: ParameterType | null, className: string | null): Receiver | null {
-  return type === null ? null : { type, uses: computeReceiverUses(signature, className) };
+function createReceiver(
+  signature: Signature,
+  type: ParameterType | null,
+  className: string | null,
+  uses = computeReceiverUses(signature, className),
+): Receiver | null {
+  return type === null ? null : { type, uses };
 }
 
 function isImmediate(spec: TypeSpec): boolean {
@@ -369,16 +394,37 @@ function leavesCellsAlone(type: Type, converted: TypeSpec): boolean {
   return isImmediate(converted) || (type.isReadInPlace && Bun.deepEquals(converted, type.directForm?.type));
 }
 
+// A sequence, a record or a union of Web IDL, at any depth: what converting it reads and calls depends on what it finds.
+const isConvertedByWhatItHolds = (type: Type): boolean =>
+  [...collectParts([type])].some(
+    part => part instanceof ListType || part instanceof SequenceType || (part instanceof UnionType && part.isWebIDL),
+  );
+
 // The wrapper goes over a list by the @@iterator that the operand has.
 const iteratesOperand = ({ args }: Signature): boolean =>
   args.some(({ type }) => findContainers(type).some(container => container instanceof ArrayType));
 
+// The table takes what native code keeps to be called by it only if the member runs JavaScript.
+const takesCallback = ({ args, isWeb }: Signature): boolean =>
+  isWeb && args.some(({ type }) => collectParts([type]).has(callableType));
+
 function capabilityOf(signature: Signature, result: TypeSpec, converted: readonly TypeSpec[]): Capability {
   const { args, capability } = signature;
-  if (iteratesOperand(signature)) return "js";
+  if (takesCallback(signature)) return "js";
+  if (iteratesOperand(signature) || args.some(({ type }) => isConvertedByWhatItHolds(type))) return "js";
   const touchesNoCell =
     isImmediate(result) && args.every(({ type }, index) => leavesCellsAlone(type, converted[index]));
   return capability === "none" && !touchesNoCell ? "heap" : capability;
+}
+
+// The wrapper goes from left to right, and does not get to the arguments behind one that it refuses.
+function mayStopBeforeConversion({ args, isWeb }: Signature): boolean {
+  if (!isWeb && args.some(({ type }) => type instanceof EnumerationType && type.isWebIDL)) return true;
+  const first = args.findIndex(({ type }) => type.canRefuse || isConvertedByWhatItHolds(type));
+  return (
+    first !== -1 &&
+    args.slice(first + 1).some(({ type }) => conversionProtocols[type.parameterType.conversion].includes("ToPrimitive"))
+  );
 }
 
 // A member of a class that runs JavaScript reads and writes whatever that does, and nothing is said of it beside that.
@@ -388,14 +434,15 @@ function createField(
   result: TypeSpec,
   isOfClass = signature instanceof Method,
 ): DeclaredField {
-  const { args, capability, columns } = signature;
+  const { args, columns } = signature;
+  const isOpen = args.some(({ type }) => isConvertedByWhatItHolds(type));
+  const capability = isOpen || takesCallback(signature) ? "js" : signature.capability;
   const isRead = signature instanceof Method && saysResult(signature.returns);
   const uses = { ...columns.uses } as Record<string, readonly UseSpec[]>;
   for (const { name, type } of args) {
-    uses[name] = [
-      ...(columns.uses?.[name] ?? computeBodyUses(type, capability, isRead)),
-      ...computeConversionUses(type),
-    ];
+    uses[name] = isConvertedByWhatItHolds(type)
+      ? [b.everything]
+      : [...(columns.uses?.[name] ?? computeBodyUses(type, capability, isRead)), ...computeConversionUses(type)];
   }
   if (receiver !== null) uses.this ??= receiver.uses;
   else if (isRead && signature.receiver !== "static") uses.this ??= b.retainedByNativeCode;
@@ -423,7 +470,10 @@ function createField(
     ),
     runsOnlyOperandCode:
       columns.runsOnlyOperandCode ?? ((capability !== "js" && iteratesOperand(signature)) || undefined),
+    readsStateBeforeConversions:
+      columns.readsStateBeforeConversions ?? (mayStopBeforeConversion(signature) || undefined),
     throws:
+      isOpen ||
       signature.throws ||
       isHeld(signature) ||
       signature.requiredArguments > 0 ||
@@ -548,13 +598,31 @@ function createFields(general: DeclaredField, signature: Signature, thunk: strin
   return { fields: [specialCase, general], narrowed };
 }
 
+/** An argument that is left out is none of the values that the thunk of a member of an interface is entered with, unless that takes anything. */
+const needsCounting = ({ isWeb, args, requiredArguments }: Signature): boolean =>
+  isWeb
+    ? args.slice(0, requiredArguments).some(({ type }) => type.takesUndefined || type.directForm === null)
+    : requiredArguments > 0;
+
 function collectFunction(
   fn: FunctionDefinition,
   path: BuiltinPath,
   receiver: ParameterType | null,
   thunkOf: (signature: Signature) => string | null,
   className: string | null = null,
+  usesOfReceiver?: readonly UseSpec[],
 ): Declaration[] {
+  const isUnderPrototype = parsePath(path).at(-2) === "prototype";
+  // The table has no words for a call that returns for an operand that it refuses.
+  const rejectsOperands = ({ rejects, args }: Signature) =>
+    rejects && (className !== null || args.some(({ type }) => type.canRefuse));
+  if (fn.signatures.some(rejectsOperands)) {
+    const runsUnseenCode = fn.signatures.some(signature => signature.columns.runsUnseenCode);
+    return [
+      ...setMemberParts(declareMember(path, !isUnderPrototype, b.otherwiseBy(b.hostCall)), { length: fn.length }),
+      ...b.extend(path, { runsUnseenCode }),
+    ];
+  }
   const resultOf = (signature: Signature): TypeSpec => {
     const result = resultTypeOf(signature, fn);
     const ignoresOtherReceivers =
@@ -563,10 +631,10 @@ function collectFunction(
   };
   const overloads = fn.signatures.map(signature =>
     createFields(
-      createField(signature, createReceiver(signature, receiver, className), resultOf(signature)),
+      createField(signature, createReceiver(signature, receiver, className, usesOfReceiver), resultOf(signature)),
       signature,
       // The host function counts the arguments and turns what is thrown into a rejected promise. The thunk does neither.
-      signature.requiredArguments > 0 || signature.rejects ? null : thunkOf(signature),
+      needsCounting(signature) || signature.rejects ? null : thunkOf(signature),
     ),
   );
   const fields = overloads.flatMap(overload => overload.fields);
@@ -589,7 +657,6 @@ function collectFunction(
       { signature: fields.indexOf(own[0]) },
     );
   };
-  const isUnderPrototype = parsePath(path).at(-2) === "prototype";
   const written = isUnread ? [...fields, b.otherwiseBy(b.hostCall)] : fields;
   return setMemberParts(isUnderPrototype ? b.method(path, written) : b.fn(path, written), {
     length: fn.length,
@@ -664,11 +731,12 @@ function usesOfGetterReceiver(passesWrapper: boolean, result: TypeSpec): readonl
 const isLocked = (type: ClassType): boolean => type.columns.lockedMembers?.includes("prototype") ?? false;
 /** JavaScript holds an instance itself, and no function that is bound to one. */
 const hasInstanceReceiver = (type: ClassType): boolean => !type.forBind;
-const headerOf = (type: ClassType): string => `Generated${type.origin!.namespace}.h`;
+const headerOf = (type: ClassType): string =>
+  type.web ? "GeneratedBindings+Interfaces.h" : `Generated${type.origin!.namespace}.h`;
 
 // The getter of the table casts its receiver and calls this thunk. What it holds the answer to in a build with assertions, compiled code tests itself.
 function directEntryOfGetter(type: ClassType, getter: Getter): DirectEntrySpec | undefined {
-  if (getter.internalField !== undefined) return undefined;
+  if (getter.internalField !== undefined || getter.family || getter.web.rejects) return undefined;
   const symbol = getterSymbolName(type, getter);
   return {
     symbol,
@@ -680,14 +748,14 @@ function directEntryOfGetter(type: ClassType, getter: Getter): DirectEntrySpec |
 
 // The setter of the table does the same for a store.
 function directEntryOfSetter(type: ClassType, getter: Getter): DirectEntrySpec | undefined {
-  const form = getter.type.directForm;
-  if (form?.value !== "Value") return undefined;
+  const form = getter.setterType.directForm;
+  if (form?.value !== "Value" || getter.family) return undefined;
   const native = setterSymbolName(type, getter);
   const symbol = `AOT__${native}`;
   return {
     symbol,
     declaration: [
-      `extern "C" SYSV_ABI bool ${native}(JSC::JSGlobalObject*, JSC::JSCell*, ${externType(getter.type)});`,
+      `extern "C" SYSV_ABI bool ${native}(JSC::JSGlobalObject*, JSC::JSCell*, ${externType(getter.setterType)});`,
       `static SYSV_ABI JSC::EncodedJSValue ${symbol}(JSC::JSGlobalObject* globalObject, JSC::JSCell* thisObject, ${form.cppType} value)`,
       `{`,
       `    return ${native}(globalObject, thisObject, value) ? JSC::JSValue::encode(JSC::jsUndefined()) : JSC::encodedJSValue();`,
@@ -704,16 +772,20 @@ type SymbolColumns = Pick<
 >;
 
 // The function takes its receiver for an instance without a test: the engine tests that before it enters a getter of the table.
-function symbolColumnsOfAccessor(type: ClassType, accessor: Getter | InternalFieldAccessor): SymbolColumns {
+function symbolColumnsOfAccessor(
+  type: ClassType,
+  accessor: Getter | InternalFieldAccessor,
+  owner: ClassType,
+): SymbolColumns {
   const getter = accessor instanceof Getter ? accessor : null;
   if (getter?.isStatic || !hasInstanceReceiver(type)) return {};
   const symbol = getterHostFunctionName(type, accessor);
   return {
     nativeSymbols: [...(getter?.columns.nativeSymbols ?? []), symbol],
     customGetter: symbol,
-    directEntryOfGetter: getter === null ? undefined : directEntryOfGetter(type, getter),
+    directEntryOfGetter: getter === null ? undefined : directEntryOfGetter(owner, getter),
     // A store is resolved only where the accessor cannot be replaced.
-    directEntryOfSetter: getter?.hasSetter && isLocked(type) ? directEntryOfSetter(type, getter) : undefined,
+    directEntryOfSetter: getter?.hasSetter && isLocked(type) ? directEntryOfSetter(owner, getter) : undefined,
   };
 }
 
@@ -740,29 +812,42 @@ function createStructureMember(
 const declareMember = (path: BuiltinPath, isStatic: boolean, field: b.Field): Declaration[] =>
   isStatic ? b.static(path, field) : b.method(path, field);
 
+/** The own properties of an instance come and go with what native code holds. */
+const hasSpecialOperations = (type: ClassType): boolean =>
+  type.specialOperations.length > 0 || (!!type.base && hasSpecialOperations(type.base));
+
 /** Any value that is assigned is kept, or handed to a setter that somebody has read if the getter says what it answers. */
-const setterTakingAnything = (isRead: boolean, isStatic: boolean): b.SetterOptions => ({
+const setterTakingAnything = (isRead: boolean, isStatic: boolean, receiver: readonly UseSpec[]): b.SetterOptions => ({
   value: b.any,
   capability: "js",
   throws: true,
-  uses: isRead ? { ...(isStatic ? {} : { this: b.retainedByNativeCode }), value: b.retainedByNativeCode } : undefined,
+  uses: isRead ? { ...(isStatic ? {} : { this: receiver }), value: b.retainedByNativeCode } : undefined,
 });
 
 // The field that a read of the property finds the answer in, once it is there. A property that can be redefined may be something else.
 function cachedFieldOf(type: ClassType, accessor: Getter | InternalFieldAccessor): string | null {
   if (accessor.internalField === undefined || !hasInstanceReceiver(type)) return null;
   const isConfigurable = (accessor instanceof Getter ? accessor.configurable : undefined) ?? type.configurable;
-  return isConfigurable ? null : accessor.internalField;
+  return isConfigurable && !(type.web && isLocked(type)) ? null : accessor.internalField;
 }
 
-function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccessor, path: BuiltinPath): Declaration[] {
+function collectAccessor(
+  type: ClassType,
+  accessor: Getter | InternalFieldAccessor,
+  path: BuiltinPath,
+  owner: ClassType,
+): Declaration[] {
   const getter = accessor instanceof Getter ? accessor : null;
   const isStatic = getter?.isStatic ?? false;
   const columns = getter?.columns ?? {};
   const cachedField = cachedFieldOf(type, accessor);
   const isRead = getter !== null && saysResult(getter.type);
-  const runsNoJavaScript = isRead || cachedField !== null || (getter !== null && getter.capability !== "js");
-  const symbolColumns = symbolColumnsOfAccessor(type, accessor);
+  const reachesWrapper = (getter?.passThis ?? false) || type.web !== undefined;
+  const runsNoJavaScript =
+    (isRead && !(type.web && getter.capability === "js")) ||
+    cachedField !== null ||
+    (getter !== null && getter.capability !== "js");
+  const symbolColumns = symbolColumnsOfAccessor(type, accessor, owner);
   if (!runsNoJavaScript && Object.keys(columns).length === 0) {
     return [createStructureMember(path, "Accessor", null, symbolColumns)];
   }
@@ -770,9 +855,8 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
   const result = accessor.internalField === undefined ? written : computeCachedResult(written);
   const isPure = getter?.isPure ?? false;
   const touchesNoCell = getter !== null && getter.capability === "none" && !getter.passThis && isImmediate(result);
-  const isAssignable = accessor.hasSetter || (getter?.writable ?? false);
   const isGetterHeld = getter !== null && checkedWordsOf(getter.type) !== null;
-  const usesOfReceiver = isPure ? [b.readsContents()] : usesOfGetterReceiver(getter?.passThis ?? false, result);
+  const usesOfReceiver = isPure ? [b.readsContents()] : usesOfGetterReceiver(reachesWrapper, result);
   return declareMember(path, isStatic, {
     ...columns,
     ...symbolColumns,
@@ -781,7 +865,9 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
     // A property that takes any value answers with it.
     resultIsDeclaredOnly: (getter !== null && getter.writable && checkedWordsOf(getter.type) !== null) || undefined,
     resultIsHeld: isGetterHeld || undefined,
-    setter: isAssignable ? setterTakingAnything(isRead, isStatic) : undefined,
+    setter: isAssignable(accessor)
+      ? setterTakingAnything(isRead, isStatic, hasSpecialOperations(type) ? [b.everything] : b.retainedByNativeCode)
+      : undefined,
     capability: touchesNoCell ? "none" : runsNoJavaScript ? "heap" : "js",
     throws: getter === null || getter.capability === "js" || getter.throws || isGetterHeld,
     uses: isStatic
@@ -794,14 +880,14 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
     implementation:
       cachedField === null
         ? columns.implementation
-        : { how: "CachedGetter", cppClass: type.cpp, member: `m_${cachedField}` },
+        : { how: "CachedGetter", cppClass: type.holderOfField(cachedField)!.cpp, member: `m_${cachedField}` },
   });
 }
 
 /** A property that can be redefined may hold something else. */
-function collectConstant(type: ClassType, constant: Constant, path: BuiltinPath): Declaration[] {
+function collectConstant(type: ClassType, constant: Constant, path: BuiltinPath, isStatic: boolean): Declaration[] {
   const isConfigurable = constant.configurable ?? type.configurable;
-  return b.method(path, isConfigurable ? b.property(b.any) : b.constant(constant.value));
+  return declareMember(path, isStatic, isConfigurable ? b.property(b.any) : b.constant(constant.value));
 }
 
 function collectBuiltin(type: ClassType, builtin: Builtin, path: BuiltinPath): Declaration[] {
@@ -820,12 +906,26 @@ function directEntryOfMethod(type: ClassType, fn: FunctionDefinition): DirectEnt
   };
 }
 
-function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinPath, isStatic: boolean): Declaration[] {
-  if (member instanceof Getter || member instanceof InternalFieldAccessor) return collectAccessor(type, member, path);
-  if (member instanceof Constant) return collectConstant(type, member, path);
+function collectClassMember(
+  type: ClassType,
+  member: ClassMember,
+  path: BuiltinPath,
+  isStatic: boolean,
+  owner = type,
+): Declaration[] {
+  if (member instanceof Getter && member.web.privateSymbol !== undefined) return [];
+  if (member instanceof Getter || member instanceof InternalFieldAccessor)
+    return collectAccessor(type, member, path, owner);
+  if (member instanceof Constant) return collectConstant(type, member, path, isStatic);
   if (!(member instanceof FunctionDefinition)) return collectBuiltin(type, member, path);
   const methods = member.signatures as readonly Method[];
   if (methods.some(method => method.privateSymbol !== undefined)) return [];
+  // The table has no words for a choice by the number of arguments, or for receivers that another function gets.
+  const changesOwnProperties =
+    hasSpecialOperations(type) && methods.some(method => method.web.ceReactions || method.returns instanceof UnitType);
+  const runsJavaScript = methods.every(method => method.capability === "js");
+  if (member.isDispatchedByCount || methods[0].otherReceivers || (changesOwnProperties && !runsJavaScript))
+    return setMemberParts(declareMember(path, isStatic, b.otherwiseBy(b.hostCall)), { length: member.length });
   if (isStatic) return collectFunction(member, path, null, signature => methodSymbolName(type, signature as Method));
   if (!hasInstanceReceiver(type)) return collectFunction(member, path, null, () => null);
   // The host function answers undefined for a receiver that is no instance, and the thunk takes an instance.
@@ -833,8 +933,9 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
     return collectFunction(member, path, b.any.parameter, () => null, type.name);
   // The thunk of a function that `protoCaller` calls takes other arguments, and its host function reads the callee, which a frame of values lacks.
   if (type.protoCaller !== undefined) return collectFunction(member, path, type.parameterType, () => null, type.name);
-  const thunkOf = (signature: Signature) => methodSymbolName(type, signature as Method);
-  return collectFunction(member, path, type.parameterType, thunkOf, type.name).map(declaration =>
+  const thunkOf = (signature: Signature) => methodSymbolName(owner, signature as Method);
+  const usesOfReceiver = changesOwnProperties ? [b.everything] : undefined;
+  return collectFunction(member, path, type.parameterType, thunkOf, type.name, usesOfReceiver).map(declaration =>
     declaration.declares === "Member"
       ? { ...declaration, columns: { ...declaration.columns, directEntryOfMethod: directEntryOfMethod(type, member) } }
       : declaration,
@@ -844,9 +945,30 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
 const pathOfMember = (classPath: BuiltinPath, side: "static" | "proto", name: string): BuiltinPath =>
   pathOfClassMember(classPath, side, name === "@@inspectCustom" ? `@@@${symbolDescription(name)}` : name);
 
-function prototypeBaseOf(type: ClassType): BuiltinPath | null {
-  if (type.forBind || type.callInstance) return "Function.prototype";
-  return type.prototypeBase === "Error" ? "Error.prototype" : null;
+/** What it inherits from, if that is no interface. */
+function foreignBaseOf(type: ClassType): ClassType["prototypeBase"] {
+  if (type.web && visibleBase(type)) return undefined;
+  return type.prototypeBase ?? (type.web && type.base ? foreignBaseOf(type.base) : undefined);
+}
+
+// As setupInterface() in JSInterface.cpp.
+function collectInheritance(type: ClassType, path: BuiltinPath): Declaration[] {
+  const prototype = joinPath([path, "prototype"]);
+  if (type.forBind || type.callInstance) return b.inherits(prototype, "Function.prototype");
+  if (type.web?.options.namedPropertiesObject) return b.inheritsFromUnknown(prototype);
+  switch (foreignBaseOf(type)) {
+    case undefined:
+    case "DOMException":
+      return [];
+    case "Error":
+      return b.inherits(prototype, "Error.prototype");
+    case "Iterator":
+    case "AsyncIterator":
+      return b.inheritsFromUnknown(prototype);
+    default:
+      if (!type.web) return [];
+      return [...b.inheritsFromUnknown(prototype), ...(type.construct ? b.inheritsFromUnknown(path) : [])];
+  }
 }
 
 // A class is written `%Name%`, whether or not something holds its constructor: declareRoots() in build-entries.ts finds the global or the member of a native module that has its name.
@@ -871,29 +993,66 @@ function collectConstruction(type: ClassType): DeclaredField | undefined {
   if (construct === null) return undefined;
   if (type.illegalConstructor)
     return { ...createField(construct, null, b.never.spec, true), capability: "heap", throws: true };
+  if (construct.constructs.passNewTarget || type.web?.constructorOverloads) {
+    const anyArguments = new Signature({ args: { values: new AnyType().variadic }, capability: "js", throws: true });
+    return createField(anyArguments, null, b.object.spec, true);
+  }
   const instance = b.instance(name);
   // A constructor that makes the object itself can keep it.
   return createField(construct, null, (type.passStructure ? instance : instance.fresh).spec, true);
 }
 
-function collectClass(type: ClassType, joins: Joins): Declaration[] {
+/** An instance that gets a name which it announces, and which hides a member, leaves the structure of its class. */
+const overridesBuiltIns = (type: ClassType | undefined): boolean => {
+  const named = type?.web?.options.named;
+  return named ? !!named.overrideBuiltIns && !named.announcesNames : !!type && overridesBuiltIns(type.base);
+};
+
+/** What is on the prototype of an interface in every realm is described. The rest is named. */
+function collectPrototypeOfInterface(type: ClassType, path: BuiltinPath): Declaration[] {
+  const named = (name: string, isAccessor: boolean) => {
+    const member = pathOfMember(path, "proto", name);
+    return isAccessor ? [createStructureMember(member, "Accessor", null)] : b.method(member, b.property(b.any));
+  };
+  if (!type.membersInTable)
+    return type.membersThatHideRows.flatMap(member => named(member.name, member instanceof Getter));
+  return [
+    ...membersOf(type).flatMap(({ member, owner }) => {
+      if (isUnforgeable(member)) return [];
+      if (member instanceof Getter && member.family?.isByName) return named(member.name, true);
+      if (exposureOf(member, owner) !== "") return named(member.name, member instanceof Getter);
+      return collectClassMember(type, member, pathOfMember(path, "proto", member.name), false, owner);
+    }),
+    ...generatedNamesOf(type).flatMap(name => named(name, name === "size")),
+  ];
+}
+
+const featuresOfFile = (file: ModuleDefinition | null): readonly string[] =>
+  file?.feature === undefined ? [] : file.feature === desktopFeatures[0] ? desktopFeatures : [file.feature];
+
+function collectClass(type: ClassType, joins: Joins, file: ModuleDefinition | null): Declaration[] {
+  const usesFeature = type.web ? featuresOfFile(file) : [];
+  const hasMembers = type.membersInTable;
   const { construct, name, cpp } = type;
   const { path, constructorPath } = pathOfClass(type, joins);
-  const prototypeBase = prototypeBaseOf(type);
   const ofInstances = hasInstanceReceiver(type);
   const declared = b.class(path, {
     types: [...(constructorPath === undefined ? [] : [b.exactType(constructorPath)]), b.exactType(`$Bindgen.${name}`)],
     stateHeap: externalStateHeap,
     ...type.columns,
-    extends: type.base?.name,
+    extends: foreignBaseOf(type) === "DOMException" ? "DOMException" : (type.web ? visibleBase(type) : type.base)?.name,
     instanceCppClass: ofInstances ? b.cppClass(cpp, headerOf(type)) : undefined,
     prototypeCppExpression: ofInstances ? `Bun::Bindgen::prototypeForClass<${cpp}>(globalObject)` : undefined,
-    instanceStructureCppExpression: ofInstances
-      ? `globalObject->m_bindgenAdditions.m_classes[${cpp}::classIndex].getConcurrently()`
-      : undefined,
+    instanceStructureCppExpression: type.web
+      ? `Bun::Bindgen::structureForInterfaceConcurrently(globalObject, ${cpp}::interfaceNumber)`
+      : ofInstances
+        ? `globalObject->m_bindgenAdditions.m_classes[${cpp}::classIndex].getConcurrently()`
+        : undefined,
     hasConstructor: construct !== null,
     construct: collectConstruction(type),
-    prototypeListsAllMembers: true,
+    // A lookup ends at the interface that extends none: what no prototype has can be a named or an unforgeable property.
+    prototypeListsAllMembers: hasMembers && (!type.web || (!!visibleBase(type) && !type.web.attributesByName)),
+    ...(overridesBuiltIns(type) ? { isNeverPristine: true } : {}),
   });
   const byName = (left: ClassMember, right: ClassMember) => compareBytes(left.name, right.name);
   const binding = pathOfConstructorBinding(type);
@@ -909,18 +1068,31 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       : []),
     ...setMemberParts(
       declared.map(declaration => (declaration.declares === "Class" ? { ...declaration, name } : declaration)),
-      { length: construct === null ? null : (construct.length ?? construct.requiredCount) },
+      {
+        length:
+          construct === null
+            ? null
+            : type.web
+              ? lengthOfConstructor(type)
+              : (construct.length ?? construct.requiredCount),
+      },
     ),
-    ...(prototypeBase === null ? [] : b.inherits(joinPath([path, "prototype"]), prototypeBase)),
+    ...collectInheritance(type, path),
     // setup${name}ClassStructure() in bindgen-emit.ts puts these on the prototype beside the members of the schema, and nothing else.
     ...["@@toStringTag", ...(type.prototypeBase === "Error" ? ["name"] : [])]
       .map(member => pathOfMember(path, "proto", member))
       .filter(member => !joins.writtenMembers.has(member))
       .flatMap(member => b.method(member, b.property(b.string))),
-    ...type.protoMembers
-      .toSorted(byName)
-      .flatMap(member => collectClassMember(type, member, pathOfMember(path, "proto", member.name), false)),
-    ...type.staticMembers
+    ...(type.web
+      ? collectPrototypeOfInterface(type, path)
+      : (hasMembers ? type.protoMembers : [])
+          .toSorted(byName)
+          .flatMap(member => collectClassMember(type, member, pathOfMember(path, "proto", member.name), false))),
+    ...(usesFeature.length > 0 ? b.extend(path, { usesFeature }) : []),
+    ...(hasMembers || type.staticMembers.length === 0 ? [] : b.extend(path, { hasUndeclaredMembers: true })),
+    // A member that does run such code says `runsUnseenCode`.
+    ...(type.web ? b.seenCodeOnly({ holders: [construct === null ? joinPath([path, "prototype"]) : path] }) : []),
+    ...(hasMembers ? type.staticMembers : [])
       .toSorted(byName)
       .flatMap(member => collectClassMember(type, member, pathOfMember(path, "static", member.name), true)),
   ];
@@ -994,6 +1166,7 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
   const placedFunctions = new Set<FunctionDefinition>();
   const declaredFunctions: FunctionDefinition[] = [];
   const declarations: Declaration[] = [];
+  const usesOfFile = featuresOfFile(schema.moduleDefinition);
   for (const namespace of schema.namespaces) {
     const path = joins.placements.get(cppNamespaceSymbol(namespace));
     const binding = pathOfNativeBinding("Bindgen", `${stem}.bind.ts`, namespace.name);
@@ -1005,7 +1178,7 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
     if (!isBound) continue;
     const boundPath = pathOfBoundNamespace(namespace);
     const header = `Generated${cppNamespace}.h`;
-    const usesFeature = joins.writtenFeatureUses.get(binding) ?? [];
+    const usesFeature = joins.writtenFeatureUses.get(binding) ?? usesOfFile;
     declarations.push(...tryCollect(() => collectBoundNamespace(namespace, boundPath, binding, header, usesFeature)));
   }
   for (const fn of schema.functions) {
@@ -1028,7 +1201,19 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
   }
   for (const type of schema.types) {
     if (!(type instanceof ClassType)) continue;
-    declarations.push(...tryCollect(() => collectClass(type, joins)));
+    if (type.web && type.web.kind !== "interface") continue;
+    if (type.isInTableOfBuiltins) {
+      declarations.push(...tryCollect(() => collectClass(type, joins, schema.moduleDefinition)));
+    } else if (joins.nativeBindings.has(pathOfConstructorBinding(type))) {
+      const getter = { getter: b.any, capability: "heap", implementation: b.generic, runsUnseenCode: false } as const;
+      declarations.push(...b.static(pathOfConstructorBinding(type), getter));
+    }
+  }
+  const classes = schema.types.filter(type => type instanceof ClassType);
+  for (const { name } of usesOfFile.length > 0 ? [...schema.namespaces, ...schema.functions, ...classes] : []) {
+    const binding = pathOfNativeBinding("Bindgen", `${stem}.bind.ts`, name);
+    if (!joins.nativeBindings.has(binding) || joins.writtenFeatureUses.has(binding)) continue;
+    declarations.push(...b.extend(binding, { usesFeature: usesOfFile }));
   }
   declarations.push(...declareLayoutsOfResults(declaredFunctions));
   return declarations;

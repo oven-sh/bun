@@ -4,7 +4,10 @@
 #![allow(dead_code, unreachable_pub)] // Each side uses its half.
 
 /// Bumped with every change to this file, to the library's exports, or to its JSON messages.
-pub const ABI_VERSION: u32 = 9;
+pub const ABI_VERSION: u32 = 23;
+
+#[path = "abi_accessibility.rs"]
+pub mod accessibility;
 
 #[repr(C)]
 pub struct Slice<T> {
@@ -68,6 +71,8 @@ pub const FONT_OBLIQUE: u8 = 2;
 pub const SYNTHESIZE_WEIGHT: u8 = 1;
 pub const SYNTHESIZE_STYLE: u8 = 2;
 pub const SYNTHESIZE_SMALL_CAPS: u8 = 4;
+/// The weight that macOS adds to text.
+pub const SYNTHESIZE_SMOOTHING: u8 = 8;
 
 /// Marks a name in [`FontDescription::families`] as a generic family, such as `sans-serif` or `system-ui`.
 pub const GENERIC_FAMILY: u8 = 1;
@@ -214,6 +219,42 @@ pub struct Glyph {
     pub y: f32,
 }
 
+pub const NO_GLYPH: u16 = u16::MAX;
+
+/// A cluster of one character at bidi level 0, whose glyph is at its origin.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Letter {
+    pub advance: f32,
+    pub glyph: u16,
+    pub flags: u8,
+    pub face: u8,
+}
+
+pub fn spell_out(text: &str, letters: &[Letter]) -> (Vec<Cluster>, Vec<Glyph>) {
+    let mut glyphs = Vec::with_capacity(letters.len());
+    let clusters = text.char_indices().zip(letters).map(|((start, _), it)| {
+        let first = glyphs.len() as u32;
+        glyphs.extend((it.glyph != NO_GLYPH).then_some(Glyph {
+            id: it.glyph.into(),
+            x: 0.0,
+            y: 0.0,
+        }));
+        Cluster {
+            start: start as u32,
+            advance: it.advance,
+            glyphs: Span {
+                start: first,
+                end: glyphs.len() as u32,
+            },
+            bidi_level: 0,
+            flags: it.flags,
+            face: it.face.into(),
+        }
+    });
+    (clusters.collect(), glyphs)
+}
+
 /// A font file with its variations and synthesis applied, at a size.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -231,6 +272,8 @@ pub struct ShapedText {
     /// In logical order.
     pub clusters: Slice<Cluster>,
     pub glyphs: Slice<Glyph>,
+    /// One for each character in place of `clusters` and `glyphs`, or none.
+    pub letters: Slice<Letter>,
     pub faces: Slice<Face>,
     /// 0 or 1: what `DIRECTION_AUTO` resolved to.
     pub base_level: u8,
@@ -743,6 +786,7 @@ pub struct Renderer {
         top: f32,
         bottom: f32,
     ) -> Slice<[f32; 2]>,
+    /// Without a list, only the scrollers have changed.
     pub submit_composited: unsafe extern "C" fn(
         surface: u32,
         list: *const DisplayList,
@@ -758,4 +802,8 @@ pub struct Renderer {
     /// An image of this size that shows the list, for `image.release` to release.
     pub record_image:
         unsafe extern "C" fn(list: *const DisplayList, width: f32, height: f32) -> u32,
+    /// `tree` is a surface, or an image with `TREE_OF_IMAGE`.
+    pub update_accessibility: unsafe extern "C" fn(tree: u32, update: *const accessibility::Update),
+    /// For tests, which ask what an assistive technology would. The result is valid until the next call.
+    pub inspect_accessibility: unsafe extern "C" fn(question: Slice<u8>) -> Slice<u8>,
 }

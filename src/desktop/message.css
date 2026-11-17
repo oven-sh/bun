@@ -1,0 +1,64 @@
+:root {
+  scrollbar-width: none;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+main {
+  display: flex;
+  gap: 14px;
+}
+i {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: #fff;
+  background: AccentColor;
+  font: 700 20px system-ui;
+}
+i:empty {
+  display: none;
+}
+.warning {
+  background: #d97706;
+}
+.error {
+  background: #dc2626;
+}
+div {
+  min-width: 0;
+  user-select: text;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+p {
+  margin: 4px 0 0;
+  opacity: 0.8;
+}
+label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+footer {
+  display: flex;
+  flex-flow: row-reverse wrap;
+  gap: 8px;
+}
+button {
+  min-width: 72px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font: inherit;
+}

@@ -9,9 +9,8 @@ use std::time::{Duration, Instant};
 use super::atom::{self, Name};
 use super::wire::{Bytes as _, Request};
 use super::{X11, dbus, event, mask};
-use crate::bridge;
 use crate::error::{Context as _, Result};
-use crate::json::{Value, json};
+use crate::protocol::{Clipboard, ClipboardPart, Text};
 
 const CHUNK: usize = 1 << 17;
 const IMAGES: [(Name, &str); 6] = [
@@ -146,8 +145,8 @@ impl X11 {
         }
     }
 
-    pub fn read_clipboard(&self, kind: &str) -> Value {
-        let selection = self.selection(kind == "selection");
+    pub fn read_selection(&self, part: ClipboardPart) -> Clipboard {
+        let selection = self.selection(part == ClipboardPart::Selection);
         let own = self
             .selections
             .owned
@@ -167,54 +166,62 @@ impl X11 {
             Some(own) => own.iter().find(|it| it.0 == target).map(|it| it.1.to_vec()),
             None => self.convert(selection, target, 0),
         };
-        let mut result = json!({});
         let text = [atom::UTF8_STRING, atom::PLAIN_UTF8]
             .into_iter()
-            .find_map(|it| read(self.atom(it)));
-        let text = text.map(|it| String::from_utf8_lossy(&it).into_owned());
-        if let Some(text) =
-            text.or_else(|| Some(read(atom::STRING)?.into_iter().map(char::from).collect()))
-        {
-            result["text"] = text.into();
+            .find_map(|it| read(self.atom(it)))
+            .map(|it| Text::lossy(&it));
+        let text = text
+            .or_else(|| {
+                Some(
+                    read(atom::STRING)?
+                        .into_iter()
+                        .map(char::from)
+                        .collect::<String>()
+                        .into(),
+                )
+            })
+            .into();
+        if part == ClipboardPart::Text {
+            return Clipboard {
+                text,
+                ..Clipboard::default()
+            };
         }
-        if kind == "text" {
-            return result;
-        }
-        if let Some(bytes) = read(self.atom(atom::HTML)) {
-            result["html"] = html(&bytes).into();
-        }
-        if let Some(list) = read(self.atom(atom::URI_LIST)) {
-            result["files"] = paths_in(&list)
+        let files = read(self.atom(atom::URI_LIST))
+            .map(|list| paths_in(&list))
+            .unwrap_or_default();
+        Clipboard {
+            text,
+            html: read(self.atom(atom::HTML))
+                .map(|bytes| html(&bytes).into())
+                .into(),
+            files: files
                 .iter()
-                .map(|it| it.to_string_lossy().into_owned())
-                .collect();
+                .map(|it| (*it.to_string_lossy()).into())
+                .collect(),
+            image: IMAGES
+                .iter()
+                .find_map(|(name, _)| read(self.atom(*name)))
+                .map(Into::into)
+                .into(),
         }
-        if let Some((bytes, kind)) = IMAGES
-            .iter()
-            .find_map(|(name, kind)| Some((read(self.atom(*name))?, *kind)))
-        {
-            result["type"] = kind.into();
-            result["image"] = bridge::put_blob(bytes).into();
-        }
-        result
     }
 
-    pub fn write_clipboard(&self, arguments: &Value) -> Result<()> {
+    pub fn write_clipboard(&self, from: Clipboard, is_selection: bool) -> Result<()> {
         let mut contents = Contents::new();
-        if !arguments["image"].is_null() {
-            let bytes = bridge::blob(&arguments["image"])?;
+        if let Some(bytes) = from.image.get().map(|it| it.into_vec()) {
             contents.push((
                 self.atom(image_type(&bytes).context("the image has an unknown format")?),
                 bytes.into(),
             ));
         }
-        if let Some(html) = arguments["html"].as_str() {
+        if let Some(html) = from.html.as_ref().map(|it| &**it) {
             let bytes = format!(
                 "<meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">{html}"
             );
             contents.push((self.atom(atom::HTML), bytes.into_bytes().into()));
         }
-        if let Some(text) = arguments["text"].as_str() {
+        if let Some(text) = from.text.as_ref() {
             let bytes = Rc::new(text.as_bytes().to_vec());
             let names = [atom::UTF8_STRING, atom::PLAIN_UTF8, atom::PLAIN, atom::TEXT];
             contents.extend(names.map(|name| (self.atom(name), bytes.clone())));
@@ -227,10 +234,7 @@ impl X11 {
                 ),
             ));
         }
-        let (selection, time) = (
-            self.selection(arguments["selection"] == true),
-            self.time.get(),
-        );
+        let (selection, time) = (self.selection(is_selection), self.time.get());
         let mut owned = self.selections.owned.borrow_mut();
         owned.retain(|it| it.0 != selection);
         owned.push((selection, time, contents));

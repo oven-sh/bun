@@ -4,15 +4,18 @@ use core::cell::{Cell, RefCell};
 use core::mem::ManuallyDrop;
 use std::rc::Rc;
 
+use crate::api::core::Atom;
+
 use bun_ast::E::JsonValue;
 use bun_core::strings;
 use bun_parsers::xml;
 
 use crate::abi::{Item, Rect, RoundedRect, Tile};
-use crate::document::{Document, Environment};
+use crate::document::{Document, Environment, Request};
 use crate::geometry::translation;
 use crate::name::{Map, Name, name};
 use crate::paint::{Painter, Picture, Space, square};
+use crate::sheet::{Sheet, Source};
 use crate::svg::{Node, percent_decoded, scaling, view_box};
 use crate::tree::{DOCUMENT, Data, Namespace, NodeId, Replaced, State};
 use crate::types::*;
@@ -22,7 +25,7 @@ use crate::values::{Ctx, Lp, Size, Str, text};
 const VECTOR: u32 = 1 << 31;
 use crate::recovery::attempt;
 
-const MAX_NESTING: u32 = 8;
+pub(crate) const MAX_NESTING: u32 = 8;
 
 #[derive(Clone, Copy, PartialEq)]
 struct Key {
@@ -46,7 +49,7 @@ struct Vector {
 }
 
 thread_local! {
-    static VECTORS: ManuallyDrop<RefCell<Map<u32, Rc<RefCell<Vector>>>>> = ManuallyDrop::default();
+    static VECTORS: ManuallyDrop<RefCell<Map<u32, Rc<RefCell<Vector>>>>> = bun_ui::lasting(|| drop(VECTORS.with(|it| it.take())));
     static LAST_ID: Cell<u32> = const { Cell::new(VECTOR) };
     static NESTING: Cell<u32> = const { Cell::new(0) };
 }
@@ -64,13 +67,16 @@ fn with_vector<R>(id: u32, visit: impl FnOnce(&mut Vector) -> R) -> Option<R> {
 struct Builder<'a> {
     document: Box<Document>,
     prefixes: Vec<(&'a [u8], &'a [u8])>,
-    sheets: Vec<u32>,
+    sheets: Vec<Rc<Sheet>>,
 }
 
 impl<'a> Builder<'a> {
     fn add(&mut self, node: &'a JsonValue, parent: NodeId, depth: u32) -> Option<()> {
         let id = match node {
-            JsonValue::String(data) => self.document.tree.create(Data::Text(data.slice().to_vec())),
+            JsonValue::String(data) => self
+                .document
+                .tree
+                .create(Data::Text(text(data.slice()).into())),
             JsonValue::Object(node) => match node.properties() {
                 [name, attributes, children] if depth < 512 => {
                     return self.add_element(
@@ -130,7 +136,9 @@ impl<'a> Builder<'a> {
             None if !prefix.is_empty() => return None,
             _ => Namespace::Other,
         };
-        let id = self.document.create_element(text(local), namespace);
+        let id = self
+            .document
+            .create_element(Atom::new(text(local)), namespace, None);
         for (name, value) in attributes {
             let prefixed = strings::split_once_char(name, b':').and_then(|(prefix, local)| {
                 Some((local, self.prefixes.iter().rfind(|it| it.0 == prefix)?.1))
@@ -165,8 +173,17 @@ impl<'a> Builder<'a> {
                 Rc::clone(&document.base_url),
                 attribute(name!("media")).unwrap_or_default().to_owned(),
             );
-            self.sheets
-                .push(document.create_sheet(&source, &base, media.as_bytes(), 0));
+            self.sheets.push(
+                document
+                    .compile_sheet(
+                        Source::copy_of(&source),
+                        &base,
+                        media.as_bytes(),
+                        0,
+                        Vec::new(),
+                    )
+                    .finish(),
+            );
         } else if let (b"img", Namespace::Html, Some(source)) =
             (local, namespace, attribute(name!("src")))
         {
@@ -184,7 +201,7 @@ fn parse(
     url: &[u8],
     font_scope: u32,
     images: &Map<Str, Option<Replaced>>,
-) -> Option<(Box<Document>, Vec<u32>)> {
+) -> Option<(Box<Document>, Vec<Rc<Sheet>>)> {
     let arena = bun_alloc::Arena::default();
     let mut allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _scope = allocator.enter();
@@ -237,7 +254,11 @@ impl Vector {
         document.natural = document.natural_size_of_root();
         const FILL: &[u8] = b":root{width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;\
             max-width:none!important;max-height:none!important;overflow:hidden!important}";
-        sheets.push(document.create_sheet(FILL, b"", b"", 0));
+        sheets.push(
+            document
+                .compile_sheet(Source::Mapped(FILL), &Rc::default(), b"", 0, Vec::new())
+                .finish(),
+        );
         document.set_sheets(DOCUMENT, &sheets);
         Some(document)
     }
@@ -258,6 +279,7 @@ impl Vector {
             viewport,
             scale,
             dark,
+            forces_colors: false,
             zoom: 1.0,
             root_font,
             generation,
@@ -307,11 +329,19 @@ pub(crate) fn release_vector(id: u32) {
 }
 
 /// Like `Document::requests`.
-pub(crate) fn vector_requests(id: u32) -> Vec<Str> {
+pub(crate) fn vector_requests(id: u32) -> Vec<Request> {
     let requests = with_vector(id, |vector| {
         let document = vector.document.as_mut()?;
         document.update_picture();
-        Some(document.requests.take())
+        let mut requests = document.requests.take();
+        requests.extend(
+            document
+                .take_font_urls(false)
+                .into_iter()
+                .filter(|it| it.starts_with("data:"))
+                .map(Request::Font),
+        );
+        Some(requests)
     });
     requests.flatten().unwrap_or_default()
 }
@@ -327,9 +357,12 @@ pub(crate) fn set_vector_image(id: u32, url: &str, image: Replaced) {
     });
 }
 
-pub(crate) fn vector_fonts_changed(id: u32) {
+pub(crate) fn set_vector_font(id: u32, url: &str, bytes: &[u8]) {
     with_vector(id, |vector| {
-        vector.document.iter_mut().for_each(|it| it.fonts_changed());
+        vector
+            .document
+            .iter_mut()
+            .for_each(|it| it.set_font(url, bytes));
         vector.pictures.clear();
     });
 }
@@ -368,9 +401,7 @@ impl Document {
             return crate::platform::image_alpha(image, size);
         }
         let recorded = self.record_vector(image, size.map(|it| it as f32));
-        self.requests
-            .borrow_mut()
-            .extend(["release".into(), recorded.to_string().into()]);
+        self.requests.borrow_mut().push(Request::Release(recorded));
         crate::platform::image_alpha(recorded, size)
     }
 
@@ -378,14 +409,17 @@ impl Document {
         let Some(root) = self.svg_node(self.tree.root_element()) else {
             return Replaced::default();
         };
-        let size = [&root.style.layout.width, &root.style.layout.height].map(|it| match it {
+        let mut size = [&root.style.layout.width, &root.style.layout.height].map(|it| match it {
             Size::Length(Lp::Px(length)) => Some(*length),
             _ => None,
         });
         let ratio = match size {
-            [Some(width), Some(height)] => (width > 0.0 && height > 0.0).then(|| width / height),
+            [Some(width), Some(height)] if width > 0.0 && height > 0.0 => Some(width / height),
             _ => crate::svg::ratio(root.element),
         };
+        if let ([Some(width), Some(0.0)], Some(ratio)) = (size, ratio) {
+            size[1] = Some(width / ratio);
+        }
         Replaced {
             image: 0,
             size,
@@ -480,7 +514,7 @@ impl Document {
             {
                 self.requests
                     .borrow_mut()
-                    .extend(["svg".into(), text(file).into()]);
+                    .push(Request::Svg(text(file).into()));
             }
             return None;
         };
@@ -523,7 +557,7 @@ impl Document {
         self.referenced_svg_changed();
     }
 
-    pub(crate) fn take_requests(&mut self) -> Vec<Str> {
+    pub(crate) fn take_requests(&mut self) -> Vec<Request> {
         let mut requests = self.requests.take();
         self.externals
             .values()
@@ -535,7 +569,7 @@ impl Document {
     pub(crate) fn has_requests(&self) -> bool {
         core::iter::once(self)
             .chain(self.externals.values().flatten().map(|it| &**it))
-            .any(|it| !it.requests.borrow().is_empty())
+            .any(|it| !it.requests.borrow().is_empty() || it.font_requests.is_some())
     }
 
     pub(crate) fn advance_vectors(&mut self, now: f64) {

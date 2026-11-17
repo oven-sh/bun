@@ -68,7 +68,11 @@ pub(crate) enum Term {
         text: Text,
         if_computed: bool,
     },
-    Hook(Hook, Box<Term>),
+    Hook {
+        hook: Hook,
+        only_writes: bool,
+        term: Box<Term>,
+    },
     Named(&'static Definition),
     Capture(Vec<Prop>, Box<Term>),
     Set(Prop, Text),
@@ -319,10 +323,26 @@ impl Compiler {
             let name = self.text();
             self.eat(" ");
             let term = self.term();
+            let only_writes = [
+                "alpha",
+                "fraction",
+                "limit",
+                "position",
+                "radii",
+                "rotate",
+                "scale",
+                "snap",
+                "translate",
+            ]
+            .contains(&name);
             return HOOKS
                 .iter()
                 .filter(|it| it.0 == name)
-                .fold(term, |term, hook| Term::Hook(hook.1, Box::new(term)));
+                .fold(term, |term, hook| Term::Hook {
+                    hook: hook.1,
+                    only_writes,
+                    term: Box::new(term),
+                });
         } else if self.eat("@") {
             let names = strings::split(self.until(b" =").as_bytes(), b",");
             let props: Vec<_> = names.filter_map(Prop::from_name).collect();
@@ -411,6 +431,8 @@ pub(crate) struct Matcher<'a> {
     /// Where the numbers and the colors are in the source, if that is asked for.
     leaves: Option<Vec<(Range<usize>, Option<Numeric>)>>,
     depth: u8,
+    /// Of the numbers, nothing has mattered but whether they are negative, zero or integers.
+    goes_by_shape: bool,
 }
 
 impl<'a> Matcher<'a> {
@@ -422,6 +444,7 @@ impl<'a> Matcher<'a> {
             captured: Vec::new(),
             leaves: None,
             depth: 0,
+            goes_by_shape: true,
         }
     }
 
@@ -505,12 +528,17 @@ impl<'a> Matcher<'a> {
 
     fn numeric(&mut self, it: &Numeric, p: &mut P) -> Option<()> {
         let state = p.state();
-        let is_fraction =
-            matches!(p.next().ok()?, Token::Number(number) if number.int_value.is_none());
-        (!(it.is_integer && is_fraction)).then_some(())?;
+        let token = *p.next().ok()?;
+        self.goes_by_shape &= !matches!(token, Token::Function(name) if !eq(name, "calc"));
+        (!(it.is_integer && matches!(token, Token::Number(number) if number.int_value.is_none())))
+            .then_some(())?;
         p.reset(&state);
         let node = Node::parse(p, &it.options)?;
         if let Node::Value(value, unit) = node {
+            self.goes_by_shape &= it.range[1] == f64::INFINITY
+                && (it.range[0] == f64::NEG_INFINITY
+                    || it.range[0] == 0.0
+                    || it.range[0] == 1.0 && it.is_integer);
             (it.range[0]..=it.range[1])
                 .contains(&unit.canonical(value, None).unwrap_or(value))
                 .then_some(())?;
@@ -603,6 +631,9 @@ impl<'a> Matcher<'a> {
             }
             Term::Numeric(it) => self.leaf(p, Some(*it), |this, p| this.numeric(it, p))?,
             Term::Color => self.leaf(p, None, |this, p| {
+                let state = p.state();
+                this.goes_by_shape &= !matches!(p.next().ok()?, Token::Function(name) if !name.starts_with(b"rgb") && !name.starts_with(b"hsl"));
+                p.reset(&state);
                 let color = Specified::parse(p)?;
                 match this.mode {
                     Mode::Computed(cx) => this.write(|out| color.compute(cx).write(out)),
@@ -613,13 +644,16 @@ impl<'a> Matcher<'a> {
             Term::Ident { is_dashed, except } => {
                 let name = p.expect_ident().ok()?;
                 let is_allowed = match is_dashed {
-                    true => name.starts_with(b"--") && name.len() > 2,
+                    true => name.starts_with(b"--"),
                     false => !is_reserved(name) && !except.iter().any(|it| eq(name, it)),
                 };
                 is_allowed.then_some(())?;
                 self.write(|out| write_ident(name, out));
             }
-            Term::Leaf(leaf) => leaf(self, p)?,
+            Term::Leaf(leaf) => {
+                self.goes_by_shape = false;
+                leaf(self, p)?;
+            }
             Term::Literal(b',') => {
                 p.expect_comma().ok()?;
                 if self.out.len() > self.group && self.out.last() != Some(&b',') {
@@ -646,8 +680,7 @@ impl<'a> Matcher<'a> {
             Term::OneOf(all) => all.iter().any(|it| self.matches(it, p)).then_some(())?,
             Term::AllOf(all) | Term::AnyOf(all) => {
                 let mut done = Vec::with_capacity(all.len());
-                self.unordered(all, matches!(term, Term::AllOf(_)), &mut done, p)
-                    .then_some(())?;
+                self.unordered(all, matches!(term, Term::AllOf(_)), &mut done, p).then_some(())?;
                 let fills = matches!(self.mode, Mode::Expanded);
                 if self.writes() && (fills || !done.is_sorted()) {
                     let written = self.out.split_off(start);
@@ -655,8 +688,7 @@ impl<'a> Matcher<'a> {
                         match (done.iter().position(|it| it.0 == index), term) {
                             (Some(at), _) => {
                                 let end = done.get(at + 1).map_or(written.len(), |it| it.1 - start);
-                                self.out
-                                    .extend_from_slice(&written[done[at].1 - start..end]);
+                                self.out.extend_from_slice(&written[done[at].1 - start..end]);
                             }
                             (None, Term::Omit { text, .. }) if fills => self.emit(text),
                             _ => {}
@@ -664,13 +696,7 @@ impl<'a> Matcher<'a> {
                     }
                 }
             }
-            Term::Repeat {
-                term,
-                min,
-                max,
-                commas,
-                sides,
-            } => {
+            Term::Repeat { term, min, max, commas, sides } => {
                 let (mut count, mut starts, is_layered) = (0, [0; 5], *commas && self.depth == 0);
                 while count < *max {
                     let (state, written) = (p.state(), self.out.len());
@@ -692,18 +718,14 @@ impl<'a> Matcher<'a> {
                 (count >= *min).then_some(())?;
                 if *sides && self.writes() {
                     starts[count] = self.out.len();
-                    let part =
-                        |out: &Out, index: usize| out[starts[index]..starts[index + 1]].to_vec();
+                    let part = |out: &Out, index: usize| out[starts[index]..starts[index + 1]].to_vec();
                     if let Mode::Expanded = self.mode {
                         for index in count..*max {
                             let same = part(&self.out, if index == 3 && count > 1 { 1 } else { 0 });
                             self.out.extend(same);
                         }
                     } else {
-                        while count > 1
-                            && part(&self.out, count - 1)
-                                == part(&self.out, (count - 1).saturating_sub(2))
-                        {
+                        while count > 1 && part(&self.out, count - 1) == part(&self.out, (count - 1).saturating_sub(2)) {
                             count -= 1;
                         }
                         self.out.truncate(starts[count]);
@@ -721,19 +743,13 @@ impl<'a> Matcher<'a> {
                 self.consume(inner, p)?;
                 (p.position() > position).then_some(())?;
             }
-            Term::Omit {
-                term,
-                text,
-                if_computed,
-            } => {
+            Term::Omit { term, text, if_computed } => {
                 self.consume(term, p)?;
                 match self.mode {
                     Mode::Expanded if self.out.len() == start => self.emit(text),
                     Mode::Expanded => {}
                     Mode::Specified if *if_computed => {}
-                    _ if self.out[start..].trim_ascii_start() == text.as_bytes() => {
-                        self.out.truncate(start)
-                    }
+                    _ if self.out[start..].trim_ascii_start() == text.as_bytes() => self.out.truncate(start),
                     _ => {}
                 }
             }
@@ -748,23 +764,17 @@ impl<'a> Matcher<'a> {
                     self.emit(text);
                 }
             }
-            Term::Hook(hook, inner) => {
+            Term::Hook { hook, only_writes, term } => {
+                self.goes_by_shape &= only_writes;
                 p.skip_whitespace();
                 let position = p.position();
-                self.consume(inner, p)?;
+                self.consume(term, p)?;
                 hook(self, start, p.slice_from(position))?;
             }
             Term::Named(definition) => self.consume(definition.term(), p)?,
             Term::Capture(props, inner) => {
                 let inner = match &**inner {
-                    Term::Named(definition)
-                        if let Term::Repeat {
-                            term, commas: true, ..
-                        } = definition.term()
-                            && self.group == usize::MAX =>
-                    {
-                        term
-                    }
+                    Term::Named(definition) if let Term::Repeat { term, commas: true, .. } = definition.term() && self.group == usize::MAX => term,
                     inner => inner,
                 };
                 if let [Prop::Short(_)] = props[..] {
@@ -773,11 +783,7 @@ impl<'a> Matcher<'a> {
                 p.skip_whitespace();
                 let position = p.position();
                 self.consume(inner, p)?;
-                self.captured.extend(
-                    props
-                        .iter()
-                        .map(|it| Captured::Source(*it, position..p.position())),
-                );
+                self.captured.extend(props.iter().map(|it| Captured::Source(*it, position..p.position())));
             }
             Term::Set(prop, text) => self.captured.push(Captured::Text(*prop, text)),
         }
@@ -825,10 +831,14 @@ impl Numeric {
 
 impl Definition {
     pub(crate) fn accepts(&self, source: &[u8]) -> bool {
-        parse_all(source, |p| {
-            Matcher::new(Mode::Check).consume(self.term(), p)
-        })
-        .is_some()
+        self.accepts_alike(source).is_some()
+    }
+
+    /// If it does, whether it does so for all that only differ by numbers with the same sign that are integers as well.
+    pub(crate) fn accepts_alike(&self, source: &[u8]) -> Option<bool> {
+        let mut matcher = Matcher::new(Mode::Check);
+        parse_all(source, |p| matcher.consume(self.term(), p))?;
+        Some(matcher.goes_by_shape)
     }
 
     /// Consumes what matches.
@@ -957,7 +967,7 @@ impl Writer<'_> {
                 self.write(term, out)?
             }
             Term::Repeat { term, min: 0, .. } => self.optional(term, out)?,
-            Term::Repeat { term, .. } | Term::NotEmpty(term) | Term::Hook(_, term) => {
+            Term::Repeat { term, .. } | Term::NotEmpty(term) | Term::Hook { term, .. } => {
                 self.write(term, out)?
             }
             Term::Set(prop, _) if *prop != Prop::Long(crate::properties::Id::GridAutoFlow) => {

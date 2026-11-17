@@ -12,7 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
-use bun_watcher::{Evictions, WatchEvent, WatchList, Watcher, WatcherContext};
+use bun_watcher::{Evictions, OwnedWatcher, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
     CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
@@ -417,7 +417,7 @@ fn hand_over(
 }
 
 struct WatchedFiles {
-    watcher: Arc<Watcher>,
+    watcher: OwnedWatcher,
     working_directory: Vec<u8>,
     paths: Guarded<Vec<Vec<u8>>>,
 }
@@ -649,19 +649,17 @@ fn create_shared_memory() -> Option<File> {
 
 #[cfg(target_os = "freebsd")]
 fn create_shared_memory() -> Option<File> {
-    // SAFETY: `SHM_ANON` stands in for a name and is not read.
-    let descriptor =
-        unsafe { libc::shm_open(libc::SHM_ANON, libc::O_RDWR | libc::O_CLOEXEC, 0o600) };
-    (descriptor >= 0).then(|| File::from_fd(Fd::from_native(descriptor)))
+    bun_sys::freebsd::create_shared_memory().map(File::from_fd)
 }
 
 #[cfg(unix)]
 fn create_unnamed_file(first: ProgramFile) -> Maybe<(File, ProgramFile)> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if first == ProgramFile::Memfd && bun_sys::can_use_memfd() {
-        if let Ok(descriptor) =
-            bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable)
-        {
+        if let Ok(descriptor) = bun_sys::memfd_create(
+            c"bun-compiled-program".into(),
+            bun_sys::MemfdFlags::Executable,
+        ) {
             return Ok((File::from_fd(descriptor), ProgramFile::Memfd));
         }
     }
@@ -751,8 +749,7 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: &[&[u8]]) -> bool {
         return false;
     }
     // A store to a page that there is no room for ends the process. With the room taken first, it is an error of this call.
-    // SAFETY: the system checks the descriptor and the range.
-    if unsafe { libc::fallocate(descriptor.native(), 0, 0, length as libc::off_t) } != 0 {
+    if !bun_sys::linux::fallocate(descriptor.native(), 0, length as i64) {
         return false;
     }
     let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
@@ -868,15 +865,6 @@ fn start_second_process(
     Global::exit(1)
 }
 
-#[cfg(windows)]
-const HANDLE_FLAG_INHERIT: u32 = 1;
-
-#[cfg(windows)]
-unsafe extern "system" {
-    fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
-    fn GetStartupInfoW(startup_info: *mut bun_sys::windows::STARTUPINFOW);
-}
-
 /// `block` is what a parent process hands to the C runtime of its child: a count, then a byte of flags for each
 /// descriptor, then a handle for each. The answer starts at descriptor 3.
 #[cfg(any(windows, test))]
@@ -897,23 +885,8 @@ fn list_open_extra_descriptors(block: &[u8]) -> Vec<bool> {
 
 #[cfg(windows)]
 fn list_inherited_extra_descriptors() -> Box<[bool]> {
-    // SAFETY: integers and null pointers are a valid STARTUPINFOW.
-    let mut startup_info: bun_sys::windows::STARTUPINFOW =
-        unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: the call fills the structure it is given.
-    unsafe { GetStartupInfoW(&mut startup_info) };
-    if startup_info.lpReserved2.is_null() {
-        return Box::default();
-    }
-    // SAFETY: the block is part of the parameters of this process, which are never freed.
-    let block = unsafe {
-        core::slice::from_raw_parts(
-            startup_info.lpReserved2,
-            usize::from(startup_info.cbReserved2),
-        )
-    };
     let is_still_open = |index: usize| Fd::from_uv(3 + index as i32).native() as isize > 0;
-    list_open_extra_descriptors(block)
+    list_open_extra_descriptors(bun_sys::windows::inherited_descriptors())
         .into_iter()
         .enumerate()
         .map(|(index, was_open)| was_open && is_still_open(index))
@@ -1015,8 +988,7 @@ fn start_second_process(
         }
     };
     let handle = file.fd().native();
-    // SAFETY: `handle` is open until `file` is dropped below.
-    unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) };
+    let _ = bun_sys::windows::make_inheritable(handle);
     let descriptor_text = (handle as usize).to_string();
     let arguments = second_process_arguments(
         typed,
@@ -1187,8 +1159,8 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
         Err(_) => path.to_vec(),
     };
     argv[0] = Box::leak(Box::new(ZBox::from_bytes(typed.unwrap_or(&file)))).as_zstr();
-    // SAFETY: no other thread has started.
-    unsafe { bun_core::set_argv(Vec::leak(argv)) };
+    static ARGV: bun_core::Once<&[&bun_core::ZStr]> = bun_core::Once::new();
+    bun_core::set_argv(ARGV.get_or_init(|| argv.leak()));
     // The program finds the environment that the launcher found.
     #[cfg(unix)]
     if has_launcher {

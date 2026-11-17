@@ -11,12 +11,21 @@ use crate::tree::{DOCUMENT, NodeId};
 use crate::types::*;
 
 #[derive(Clone, Copy)]
-enum Content {
+pub(crate) enum Content {
     Text,
     Replaced,
     Background,
     Vector,
     TransparentText,
+}
+
+pub(crate) struct Contentful {
+    pub(crate) node: NodeId,
+    pub(crate) content: Content,
+    pub(crate) image: u32,
+    pub(crate) visible: Rect,
+    /// Of the whole.
+    pub(crate) area: f32,
 }
 
 fn is_transparent(style: &Style) -> bool {
@@ -43,12 +52,18 @@ impl Document {
         node
     }
 
-    /// For what is in the viewport: the element, the kind, the image, the visible part, and the area of the whole.
-    /// Only for `only`, unless that is the document.
-    pub(crate) fn contentful(&self, only: NodeId) -> Vec<f64> {
+    /// What is in the viewport. Only for `only`, unless that is the document.
+    pub(crate) fn contentful(&self, only: NodeId) -> Vec<Contentful> {
         let mut found = Vec::new();
         let up = |it: &BoxId| Some(self.boxes[*it].parent).filter(|it| *it != 0);
         let path: Vec<_> = core::iter::successors(self.own_box(only), up).collect();
+        if path.is_empty() && only != DOCUMENT {
+            return found;
+        }
+        let hoisted: Vec<_> = path
+            .iter()
+            .filter(|it| self.boxes[**it].style.is_out_of_flow())
+            .collect();
         let shadow_root = self.tree.element(only).map_or(0, |it| it.shadow_root);
         let counts = |id| {
             only == DOCUMENT || {
@@ -64,18 +79,13 @@ impl Document {
                 let whole = rect.transformed(&matrix);
                 let visible = whole.intersection(&clip);
                 if !visible.is_empty() {
-                    found.extend([
-                        self.originator(id).into(),
-                        f64::from(content as u8),
-                        image.into(),
-                    ]);
-                    found.extend(
-                        visible
-                            .to_array()
-                            .into_iter()
-                            .chain([whole.width * whole.height])
-                            .map(f64::from),
-                    );
+                    found.push(Contentful {
+                        node: self.originator(id),
+                        content,
+                        image,
+                        visible,
+                        area: whole.width * whole.height,
+                    });
                 }
             };
             let is_wanted = counts(id);
@@ -144,19 +154,26 @@ impl Document {
                 .overflow_clip(id)
                 .filter(|_| id != VIEWPORT)
                 .map_or(clip, |it| it.transformed(&matrix).intersection(&clip));
-            let leads_there = |child: &&BoxId| {
-                if is_wanted {
-                    counts(**child)
-                } else {
-                    path.contains(child)
-                }
+            let in_flow = match is_wanted {
+                true => &it.children[..],
+                false => path
+                    .iter()
+                    .position(|it| *it == id)
+                    .map_or(&[][..], |it| &path[it.saturating_sub(1)..it]),
             };
-            let in_flow = it
-                .children
-                .iter()
-                .filter(leads_there)
-                .filter(|child| !self.boxes[**child].style.is_out_of_flow());
-            for &child in in_flow.chain(it.hoisted.iter().filter(leads_there)).rev() {
+            let in_flow = in_flow.iter().filter(|child| {
+                (!is_wanted || counts(**child)) && !self.boxes[**child].style.is_out_of_flow()
+            });
+            for &child in in_flow
+                .chain(it.hoisted.iter().filter(|child| {
+                    if is_wanted {
+                        counts(**child)
+                    } else {
+                        hoisted.contains(child)
+                    }
+                }))
+                .rev()
+            {
                 let matrix = if self.boxes[child].container == id {
                     multiply(&matrix, &self.to_container(child))
                 } else {

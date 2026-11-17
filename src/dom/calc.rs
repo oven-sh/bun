@@ -1,5 +1,6 @@
 //! Units and math functions.
 
+use crate::order::Order as _;
 use crate::properties::Prop;
 use bun_core::strings;
 use core::hash::BuildHasher;
@@ -656,8 +657,30 @@ impl Node {
 
     fn parse_at(p: &mut P, options: &Options, depth: u8) -> Option<Node> {
         attempt(p, |p| {
-            let state = p.state();
+            p.skip_whitespace();
+            let (state, start) = (p.state(), p.position());
             let token = *p.next().ok()?;
+            match token {
+                Token::Dimension(it) => {
+                    return Unit::from_name(it.unit)
+                        .filter(|it| it.kind() == options.kind)
+                        .map(|unit| {
+                            Node::Value(exact(p, start, it.unit.len(), it.num.value), unit)
+                        });
+                }
+                Token::Number(it) if options.kind == Kind::Number => {
+                    return Some(Node::Value(exact(p, start, 0, it.value), Unit::Number));
+                }
+                Token::Percentage { unit_value, .. }
+                    if options.percentages || options.kind == Kind::Percentage =>
+                {
+                    return Some(Node::Value(
+                        exact(p, start, 1, unit_value * 100.0),
+                        Unit::Percent,
+                    ));
+                }
+                _ => {}
+            }
             let is_keyword = matches!(token, Token::Ident(name) if options.keywords.iter().any(|it| eq(name, it)));
             (is_keyword || !matches!(token, Token::Ident(_) | Token::OpenParen)).then_some(())?;
             p.reset(&state);
@@ -695,7 +718,7 @@ impl Node {
         }
     }
 
-    fn any(&self, test: &dyn Fn(&Node) -> bool) -> bool {
+    pub(crate) fn any(&self, test: &dyn Fn(&Node) -> bool) -> bool {
         test(self) || self.operands().iter().any(|it| it.any(test))
     }
 
@@ -1154,7 +1177,7 @@ impl Node {
     pub(crate) fn write_inner(&self, out: &mut Out, is_operand: bool) {
         fn sorted(all: &[Node]) -> Vec<&Node> {
             let mut all: Vec<_> = all.iter().collect();
-            all.sort_by_key(|it| {
+            all.order_by_key(|it| {
                 if let Node::Value(_, unit) = it {
                     (false, unit.name())
                 } else {

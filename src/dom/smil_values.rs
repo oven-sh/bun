@@ -84,7 +84,7 @@ fn kind_of(target: &Element, name: &str) -> Option<(Kind, bool)> {
             specularConstant specularExponent stdDeviation surfaceScale tableValues values viewBox z",
         ),
         (Kind::Angle, "orient"),
-        (Kind::Path, "d"),
+        (Kind::Path, "d path"),
         (
             Kind::Transform,
             "transform gradientTransform patternTransform",
@@ -106,7 +106,7 @@ fn kind_of(target: &Element, name: &str) -> Option<(Kind, bool)> {
             is_number && (name.len() == 2 || is_name!(target.tag, "fePointLight" | "feSpotLight"));
         return Some((if is_number { Kind::Numbers } else { kind }, false));
     }
-    crate::hints::is_presentation_attribute(target, name).then_some(())?;
+    crate::hints::is_presentation_attribute(target, Name::new(name.as_bytes())).then_some(())?;
     let kinds = [
         (
             Kind::Color,
@@ -162,6 +162,13 @@ impl Value {
             }
             (Value::Path(a), Value::Path(b)) => mix_paths(a, b, of_self, of_other).map(Value::Path),
             _ => None,
+        }
+    }
+
+    fn towards(&self, next: &Value, fraction: f32) -> Option<Value> {
+        match self {
+            Value::Numbers(..) => self.sum(1.0, &next.sum(1.0, self, -1.0)?, fraction),
+            _ => self.sum(1.0 - fraction, next, fraction),
         }
     }
 
@@ -404,9 +411,14 @@ impl Document {
                 }
                 Value::Numbers(numbers, "")
             }),
-            Kind::Lengths(axis) => words()
-                .map(|it| self.parse_svg_length(target, it))
-                .collect::<Option<Vec<_>>>()
+            Kind::Lengths(axis) => self
+                .parse_svg_length(target, source)
+                .map(|it| vec![it])
+                .or_else(|| {
+                    words()
+                        .map(|it| self.parse_svg_length(target, it))
+                        .collect()
+                })
                 .map(|lengths| {
                     let fraction = |it: &Lp| {
                         if let Lp::Fraction(it) = it {
@@ -452,7 +464,13 @@ impl Document {
             Kind::Path => crate::path::normalize(source).map(|_| Value::Path(source.to_owned())),
             Kind::Text | Kind::Transform => None,
         };
-        let may_be_text = matches!(kind, Kind::Text | Kind::Color)
+        let is_paint = || {
+            Prop::from_name(name.as_bytes())
+                .and_then(|it| it.parse(source.as_bytes(), &Ctx::dummy(), false))
+                .is_some()
+        };
+        let may_be_text = kind == Kind::Text
+            || kind == Kind::Color && (source == "inherit" || is_paint())
             || kind == Kind::Angle && source.starts_with("auto")
             || has_word(
                 "font-size stroke-dasharray letter-spacing word-spacing",
@@ -524,7 +542,7 @@ impl Document {
         )?;
         let mut value = match values.get(index + 1).filter(|_| between > 0.0) {
             Some(next) => values[index]
-                .sum(1.0 - between, next, between)
+                .towards(next, between)
                 .unwrap_or_else(|| values[index + usize::from(between >= 0.5)].clone()),
             None => values[index].clone(),
         };
@@ -596,11 +614,8 @@ impl Document {
             },
             progress.fraction,
         )?;
-        let value = values[index].sum(
-            1.0 - between,
-            values.get(index + 1).unwrap_or(&values[index]),
-            between,
-        )?;
+        let value =
+            values[index].towards(values.get(index + 1).unwrap_or(&values[index]), between)?;
         let value = value.sum(
             1.0,
             values.last()?,
@@ -675,11 +690,7 @@ impl Document {
         let stops = match (has_points, values.is_empty()) {
             (true, _) => fractions(element, name!("keyPoints"))
                 .filter(|it| it.len() > 1 && element.has(name!("keyTimes")))?,
-            (false, true) if pace == Pace::Discrete => path
-                .distances()
-                .into_iter()
-                .map(|it| it / length.max(1e-9))
-                .collect(),
+            (false, true) if pace == Pace::Discrete => vec![0.0; path.verbs.len()],
             (false, true) => vec![0.0, 1.0],
             (false, false) => core::iter::once(0.0)
                 .chain(pieces.iter().scan(0.0, |sum, it| {
@@ -700,8 +711,14 @@ impl Document {
             *stops.get(index + 1).unwrap_or(&stops[index]),
             between,
         );
-        let ([x, y], radians) =
-            at_distance(&pieces, along * length).or_else(|| Some((path.start()?, 0.0)))?;
+        let ([x, y], radians) = match pace == Pace::Discrete && !has_points && values.is_empty() {
+            true => (
+                path.end_of_verb(index)?,
+                at_distance(&pieces, Path::from(&path.verbs[..=index]).length())
+                    .map_or(0.0, |it| it.1),
+            ),
+            false => at_distance(&pieces, along * length).or_else(|| Some((path.start()?, 0.0)))?,
+        };
         let (end, cycles) = (
             pieces.last().map_or([x, y], |it| it.to),
             if accumulates {
@@ -735,6 +752,7 @@ impl Document {
             Vec::<(NodeId, Str, bool, String)>::new(),
             Map::<NodeId, Matrix>::default(),
         );
+        let mut places = Map::<(NodeId, Name), usize>::default();
         for progress in contributing {
             let Some((target, element)) = self
                 .smil_target(progress.id)
@@ -776,12 +794,15 @@ impl Document {
             {
                 continue;
             }
-            let (known, key) = (
-                values
-                    .iter()
-                    .position(|it| (it.0, &it.1) == (target, &name)),
-                Name::new(name.as_bytes()),
-            );
+            if element.attribute(name!("attributeType")) == Some("CSS")
+                && !self.tree.element(target).is_some_and(|it| {
+                    crate::hints::is_presentation_attribute(it, Name::new(name.as_bytes()))
+                })
+            {
+                continue;
+            }
+            let key = Name::new(name.as_bytes());
+            let known = places.get(&(target, key)).copied();
             let underlying = match (known, self.smil.effects.bases.get(&(target, key))) {
                 (Some(known), _) => values[known].3.clone(),
                 _ if is_property => self.property_text(target, &name).unwrap_or_default(),
@@ -817,14 +838,14 @@ impl Document {
             };
             match (value, known) {
                 (Some(value), Some(known)) => values[known].3 = value,
-                (value, _) => values.extend(value.map(|it| (target, name, is_property, it))),
+                (Some(value), None) => {
+                    places.insert((target, key), values.len());
+                    values.push((target, name, is_property, value));
+                }
+                (None, _) => {}
             }
         }
-        let is_over = |key: &(NodeId, Name)| {
-            !values
-                .iter()
-                .any(|it| !it.2 && (it.0, Name::new(it.1.as_bytes())) == *key)
-        };
+        let is_over = |key: &(NodeId, Name)| places.get(key).is_none_or(|it| values[*it].2);
         let over: Vec<_> = self
             .smil
             .effects

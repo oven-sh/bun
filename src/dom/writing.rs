@@ -355,6 +355,7 @@ impl Document {
         })
     }
 
+    #[inline]
     pub(crate) fn from_lines(&self, id: BoxId, rect: Rect) -> Rect {
         self.line_matrix(id)
             .map_or(rect, |it| rect.transformed(&it))
@@ -368,6 +369,16 @@ impl Document {
 
     /// With the box turned for its own mode. Percentages of paddings still refer to `basis`.
     fn in_own_mode<T>(&mut self, id: BoxId, basis: f32, run: impl FnOnce(&mut Document) -> T) -> T {
+        let (original, outer) = self.enter_own_mode(id, basis);
+        let result = run(self);
+        self.turn(id, HorizontalTb);
+        self.boxes[id].style = original;
+        self.turn(id, outer);
+        result
+    }
+
+    /// The style and the mode to go back to.
+    fn enter_own_mode(&mut self, id: BoxId, basis: f32) -> (Rc<Style>, WritingMode) {
         let is_orthogonal = self.boxes[id].is_orthogonal();
         let outer = self.turn(id, HorizontalTb);
         let it = &mut self.boxes[id];
@@ -385,11 +396,7 @@ impl Document {
             }
         }
         self.turn(id, self.boxes[id].mode);
-        let result = run(self);
-        self.turn(id, HorizontalTb);
-        self.boxes[id].style = original;
-        self.turn(id, outer);
-        result
+        (original, outer)
     }
 
     /// The space along the lines of an orthogonal box whose containing block has no definite height.

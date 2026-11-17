@@ -1,0 +1,443 @@
+
+#data
+<p>One<p>Two
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       "One"
+|     <p>
+|       "Two"
+
+#data
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" 'x'><title>a&amp;b</title><body class=a class=b ID="&notit;&not">
+#errors
+#document
+| <!DOCTYPE html "-//W3C//DTD HTML 4.01//EN" "x">
+| <html>
+|   <head>
+|     <title>
+|       "a&b"
+|   <body>
+|     class="a"
+|     id="&notit;¬"
+
+#data
+<b><i><p>x</b>y</i>z
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       <i>
+|     <i>
+|     <p>
+|       <i>
+|         <b>
+|           "x"
+|         "y"
+|       "z"
+
+#data
+<a href=1><div><a href=2>x</div>y
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|       href="1"
+|     <div>
+|       <a>
+|         href="1"
+|       <a>
+|         href="2"
+|         "x"
+|     <a>
+|       href="2"
+|       "y"
+
+#data
+<b a><b a><b a><b a><p>x</p></b></b></b></b>y
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       a=""
+|       <b>
+|         a=""
+|         <b>
+|           a=""
+|           <b>
+|             a=""
+|             <p>
+|               "x"
+|     "y"
+
+#data
+<table> <tr>x<td>a<td>b</table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "x"
+|     <table>
+|       " "
+|       <tbody>
+|         <tr>
+|           <td>
+|             "a"
+|           <td>
+|             "b"
+
+#data
+<table><caption>c<col><tbody><tr><th>h<input type=hidden></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+|         "c"
+|       <colgroup>
+|         <col>
+|       <tbody>
+|         <tr>
+|           <th>
+|             "h"
+|             <input>
+|               type="hidden"
+
+#data
+<table> </>x</table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     " x"
+|     <table>
+
+#data
+<svg viewbox="0" xlink:href=a xmlns:xlink=b><foreignobject><p>a</p></foreignobject><![CDATA[<x>]]><lineargradient/><b>c
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       viewBox="0"
+|       xlink href="a"
+|       xmlns xlink="b"
+|       <svg foreignObject>
+|         <p>
+|           "a"
+|       "<x>"
+|       <svg linearGradient>
+|     <b>
+|       "c"
+
+#data
+<math definitionurl=a><mi><b>x</b><mglyph/></mi><annotation-xml encoding=TEXT/HTML><p>y
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       definitionURL="a"
+|       <math mi>
+|         <b>
+|           "x"
+|         <math mglyph>
+|       <math annotation-xml>
+|         encoding="TEXT/HTML"
+|         <p>
+|           "y"
+
+#data
+<template><tr><td>a</template><template><col></template>
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <tr>
+|           <td>
+|             "a"
+|     <template>
+|       content
+|         <col>
+|   <body>
+
+#data
+<select><option>a<optgroup><option>b<hr><input>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <option>
+|         "a"
+|       <optgroup>
+|         <option>
+|           "b"
+|       <hr>
+|     <input>
+
+#data
+<script><!--<script></script>--></script>x
+#errors
+#document
+| <html>
+|   <head>
+|     <script>
+|       "<!--<script></script>-->"
+|   <body>
+|     "x"
+
+#data
+<style>a</styl></style ><textarea>
+x&lt;</textarea><pre>
+
+y
+#errors
+#document
+| <html>
+|   <head>
+|     <style>
+|       "a</styl>"
+|   <body>
+|     <textarea>
+|       "x<"
+|     <pre>
+|       "
+y"
+
+#data
+<!--a--!><!--><!---><!-- b --
+#errors
+#document
+| <!-- a -->
+| <!--  -->
+| <!--  -->
+| <!--  b  -->
+| <html>
+|   <head>
+|   <body>
+
+#data
+<?a b?><?xml c?><?1><!x></ y>
+#errors
+#document
+| <?a b?>
+| <!-- ?xml c? -->
+| <!-- ?1 -->
+| <!-- x -->
+| <!--  y -->
+| <html>
+|   <head>
+|   <body>
+
+#data
+<frameset><frame>x <noframes>y</noframes></frameset></html><!--z-->
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+|     <frame>
+|     " "
+|     <noframes>
+|       "y"
+| <!-- z -->
+
+#data
+<head><noscript><link><p>x
+#errors
+#script-off
+#document
+| <html>
+|   <head>
+|     <noscript>
+|       <link>
+|   <body>
+|     <p>
+|       "x"
+
+#data
+<head><noscript><link><p>x
+#errors
+#script-on
+#document
+| <html>
+|   <head>
+|     <noscript>
+|       "<link><p>x"
+|   <body>
+
+#data
+</head><meta>x</body><!--a--></html><!--b--> y
+#errors
+#document
+| <html>
+|   <head>
+|     <meta>
+|   <body>
+|     "x y"
+|   <!-- a -->
+| <!-- b -->
+
+#data
+<ul><li>a<li>b<dl><dd>c<dt>d</ul><h1>e<h2>f</h1><button>g<button>h</br></p>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <ul>
+|       <li>
+|         "a"
+|       <li>
+|         "b"
+|         <dl>
+|           <dd>
+|             "c"
+|           <dt>
+|             "d"
+|     <h1>
+|       "e"
+|     <h2>
+|       "f"
+|     <button>
+|       "g"
+|     <button>
+|       "h"
+|       <br>
+|       <p>
+
+#data
+<ruby>a<rb>b<rtc>c<rt>d<rp>e</ruby><image><plaintext></plaintext>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <ruby>
+|       "a"
+|       <rb>
+|         "b"
+|       <rtc>
+|         "c"
+|         <rt>
+|           "d"
+|         <rp>
+|           "e"
+|     <img>
+|     <plaintext>
+|       "</plaintext>"
+
+#data
+&#x80;&#0;&#xD800;&#x110000;&#65&#;&NotEqualTilde;&ampx&bogus;
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "€���A&#;≂̸&x&bogus;"
+
+#data
+<form><div></form><form><input></div>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <form>
+|       <div>
+|         <form>
+|           <input>
+
+#data
+<X-É α=β>é</x-É>a
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <x-É>
+|       α="β"
+|       "é"
+|     "a"
+
+#data
+<td>a<td>b
+#errors
+#document-fragment
+tr
+#document
+| <td>
+|   "a"
+| <td>
+|   "b"
+
+#data
+</title>&amp;
+#errors
+#document-fragment
+title
+#document
+| "</title>&"
+
+#data
+<p></script>
+#errors
+#document-fragment
+script
+#document
+| "<p></script>"
+
+#data
+<path/><p>a
+#errors
+#document-fragment
+svg g
+#document
+| <svg path>
+| <p>
+|   "a"
+
+#data
+<html a><body b><frameset>x
+#errors
+#document-fragment
+div
+#document
+| "x"
+
+#data
+<tr><form><td>
+#errors
+#document-fragment
+template
+#document
+| <tr>
+|   <form>
+|   <td>
+
+#data
+<select><input>a
+#errors
+#document-fragment
+select
+#document
+| "a"

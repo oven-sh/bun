@@ -62,8 +62,9 @@ pub(crate) fn compile_to_executable(
     log_time_outside_stages("before the build");
     let bundler = request.bundler.take().expect("one call per request");
     let target = check_request(request)?;
-    if request.executable.desktop.is_some() {
+    if let Some(desktop) = request.executable.desktop {
         request.executable.flags |= Flags::LOADS_GRAPHICS_DRIVERS;
+        (request.executable.flags).set(Flags::STARTS_IN_WINDOW, desktop.starts_in_window);
         // SAFETY: the loader outlives the request, and the build has not started.
         let env = unsafe { &*request.executable.env };
         bun_standalone_graph::desktop::library_for(request.executable.target, env)
@@ -599,8 +600,10 @@ fn build_program(
         other_products: maps.chain(metafiles.filter_map(to_absolute)).collect(),
         ..request.options.clone()
     };
-    if request.executable.desktop.is_some() {
+    if let Some(desktop) = request.executable.desktop {
         options.option_words.push(Box::from(&b"several-realms"[..]));
+        options.has_realms_of_the_web = true;
+        options.starts_in_window = desktop.starts_in_window;
     }
     // Anything but an executable at that path is a file of the user's, which the program may name.
     let is_executable = |path: &[u8]| {

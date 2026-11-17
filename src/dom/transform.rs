@@ -3,7 +3,8 @@
 use std::rc::Rc;
 
 use crate::abi;
-use crate::calc::Kind;
+use crate::calc::{Kind, Node, Options};
+use crate::properties::Id;
 use crate::types::multiply;
 use crate::values::*;
 
@@ -62,9 +63,11 @@ pub(crate) fn extended(m: [f32; 6]) -> Matrix3d {
     all
 }
 
-pub(crate) fn write_matrix(m: &Matrix3d, out: &mut Out) {
+pub(crate) fn write_matrix(mut m: Matrix3d, out: &mut Out) {
+    let zoom = f64::from(crate::values::written_zoom());
+    (0..3).for_each(|it| (m[12 + it], m[3 + 4 * it]) = (m[12 + it] / zoom, m[3 + 4 * it] * zoom));
     let flat = [0, 1, 4, 5, 12, 13].map(|i| m[i]);
-    let (name, items) = if is_2d(m) {
+    let (name, items) = if is_2d(&m) {
         ("matrix(", &flat[..])
     } else {
         ("matrix3d(", &m[..])
@@ -109,18 +112,69 @@ fn sin_cos(degrees: f64) -> (f64, f64) {
     }
 }
 
-fn unit(axis: [f32; 3]) -> Option<[f64; 3]> {
-    let length = axis
-        .iter()
-        .fold(0.0, |all: f64, it| all.hypot((*it).into()));
-    (length > 0.0).then(|| axis.map(|it| f64::from(it) / length))
+fn unit(axis: [f64; 3]) -> Option<[f64; 3]> {
+    let length = axis.into_iter().fold(0.0, f64::hypot);
+    (length != 0.0).then(|| axis.map(|it| it / length))
+}
+
+/// Around an axis of any length.
+pub(crate) fn rotation_3d(axis: [f64; 3], degrees: f64) -> Matrix3d {
+    let mut m = IDENTITY_3D;
+    let (Some(axis), (sin, cos)) = (unit(axis), sin_cos(degrees)) else {
+        return m;
+    };
+    for (i, j, k) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] {
+        m[i * 5] = if axis[i].abs() == 1.0 {
+            1.0
+        } else {
+            cos + axis[i] * axis[i] * (1.0 - cos)
+        };
+        m[i * 4 + j] = axis[i] * axis[j] * (1.0 - cos) + axis[k] * sin;
+        m[j * 4 + i] = axis[i] * axis[j] * (1.0 - cos) - axis[k] * sin;
+    }
+    m
+}
+
+impl Name {
+    pub(crate) fn is_3d(self) -> bool {
+        self.name().ends_with(['Z', 'd'])
+            || matches!(self, Name::RotateX | Name::RotateY | Name::Perspective)
+    }
+}
+
+/// Each function of a value of `transform` with its arguments. `none` is no function, and no argument.
+pub(crate) fn specified_functions(source: &[u8]) -> Option<Vec<(Name, Vec<Node>)>> {
+    Id::Transform.syntax().accepts(source).then_some(())?;
+    parse_all(source, |p| {
+        let mut all = Vec::new();
+        while !keyword(p, "none") && !p.is_exhausted() {
+            let name = Name::from_name(function(p)?)?;
+            let kinds = [
+                Options::new(Kind::Number),
+                Options::LENGTH_PERCENTAGE,
+                Options::new(Kind::Angle),
+            ];
+            let argument = |p: &mut P| kinds.iter().find_map(|it| Node::parse(p, it));
+            all.push((
+                name,
+                nested(p, |p| {
+                    if keyword(p, "none") {
+                        Some(Vec::new())
+                    } else {
+                        commas(p, argument)
+                    }
+                })?,
+            ));
+        }
+        Some(all)
+    })
 }
 
 type Quaternion = [f64; 4];
 
 fn quaternion(axis: [f32; 3], degrees: f32) -> Quaternion {
     let (sin, cos) = (f64::from(degrees).to_radians() / 2.0).sin_cos();
-    unit(axis).map_or([0.0, 0.0, 0.0, 1.0], |[x, y, z]| {
+    unit(axis.map(f64::from)).map_or([0.0, 0.0, 0.0, 1.0], |[x, y, z]| {
         [x * sin, y * sin, z * sin, cos]
     })
 }
@@ -282,25 +336,14 @@ impl Transform {
                 (m[0], m[5], m[10]) = ((*x).into(), (*y).into(), (*z).into())
             }
             Transform::Rotate(_, axis, degrees) => {
-                let (Some(axis), (sin, cos)) = (
-                    unit(*axis),
-                    sin_cos(if degrees.abs() < MAX_DEGREES {
+                return rotation_3d(
+                    axis.map(f64::from),
+                    if degrees.abs() < MAX_DEGREES {
                         (*degrees).into()
                     } else {
                         0.0
-                    }),
-                ) else {
-                    return m;
-                };
-                for (i, j, k) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] {
-                    m[i * 5] = if axis[i].abs() == 1.0 {
-                        1.0
-                    } else {
-                        cos + axis[i] * axis[i] * (1.0 - cos)
-                    };
-                    m[i * 4 + j] = axis[i] * axis[j] * (1.0 - cos) + axis[k] * sin;
-                    m[j * 4 + i] = axis[i] * axis[j] * (1.0 - cos) - axis[k] * sin;
-                }
+                    },
+                );
             }
             Transform::Skew(_, x, y) => {
                 (m[4], m[1]) = (
@@ -360,9 +403,7 @@ impl Transform {
         match self {
             Transform::Translate(name, ..)
             | Transform::Scale(name, _)
-            | Transform::Rotate(name, ..) => {
-                name.name().ends_with(['Z', 'd']) || matches!(name, Name::RotateX | Name::RotateY)
-            }
+            | Transform::Rotate(name, ..) => name.is_3d(),
             Transform::Skew(..) => false,
             Transform::Perspective(_) => true,
             Transform::Matrix(matrix) => !is_2d(matrix),
@@ -424,9 +465,11 @@ impl Css for Transform {
                         Name::Matrix => extended(items.try_into().ok()?),
                         _ => <[f32; 16]>::try_from(items).ok()?.map(f64::from),
                     };
-                    matrix[12..15]
-                        .iter_mut()
-                        .for_each(|it| *it *= f64::from(cx.zoom));
+                    let zoom = f64::from(cx.zoom);
+                    (0..3).for_each(|it| {
+                        (matrix[12 + it], matrix[3 + 4 * it]) =
+                            (matrix[12 + it] * zoom, matrix[3 + 4 * it] / zoom)
+                    });
                     T::Matrix(Rc::new(matrix))
                 }
             })
@@ -440,7 +483,7 @@ impl Css for Transform {
             | T::Rotate(name, ..)
             | T::Skew(name, ..) => *name,
             T::Perspective(_) => Name::Perspective,
-            T::Matrix(_) | T::Deferred(_) => return write_matrix(&self.matrix_3d(0.0, 0.0), out),
+            T::Matrix(_) | T::Deferred(_) => return write_matrix(self.matrix_3d(0.0, 0.0), out),
         };
         let shown = |is_short: bool| match name.name().as_bytes().last() {
             Some(b'X') => 0..1,
@@ -507,13 +550,18 @@ impl Css for Transform {
             ),
             (T::Rotate(m, a, from), T::Rotate(n, b, to)) => {
                 let name = common(m, n, Name::Rotate, Name::Rotate3d);
-                let [from, to] =
-                    [(a, from), (b, to)].map(|it| if unit(*it.0).is_some() { *it.1 } else { 0.0 });
-                let are_parallel = unit(*a)
-                    .zip(unit(*b))
+                let [from, to] = [(a, from), (b, to)].map(|it| {
+                    if unit(it.0.map(f64::from)).is_some() {
+                        *it.1
+                    } else {
+                        0.0
+                    }
+                });
+                let are_parallel = unit(a.map(f64::from))
+                    .zip(unit(b.map(f64::from)))
                     .is_some_and(|(a, b)| (0..3).map(|i| a[i] * b[i]).sum::<f64>() > 1.0 - 1e-4);
                 if are_parallel || from == 0.0 || to == 0.0 {
-                    let axis = unit(if from == 0.0 { *b } else { *a })
+                    let axis = unit((if from == 0.0 { b } else { a }).map(f64::from))
                         .filter(|_| from != 0.0 || to != 0.0);
                     return Some(T::Rotate(
                         name,
@@ -522,8 +570,8 @@ impl Css for Transform {
                     ));
                 }
                 let [x, y, z, w] = blend_quaternions(quaternion(*a, from), quaternion(*b, to), t);
-                let axis =
-                    unit([x, y, z].map(|it| it as f32)).map_or(Z_AXIS, |it| it.map(|it| it as f32));
+                let axis = unit([x, y, z].map(|it| f64::from(it as f32)))
+                    .map_or(Z_AXIS, |it| it.map(|it| it as f32));
                 T::Rotate(
                     name,
                     axis,
@@ -544,6 +592,33 @@ impl Css for Transform {
 pub(crate) struct Transforms(pub(crate) NoneOrSpaces<Transform>);
 
 impl Transforms {
+    /// What `of_hint` reads, and no author can declare.
+    pub(crate) fn hint(matrix: &abi::Matrix) -> [u8; 49] {
+        core::array::from_fn(|at| {
+            if at == 0 {
+                1
+            } else {
+                b'a' + (matrix[(at - 1) / 8].to_bits() >> ((at - 1) % 8 * 4) & 15) as u8
+            }
+        })
+    }
+
+    pub(crate) fn of_hint(source: &[u8], zoom: f32) -> Option<Transforms> {
+        let (&[a, b, c, d, e, f], []) = source.strip_prefix(&[1])?.as_chunks::<8>() else {
+            return None;
+        };
+        let [a, b, c, d, e, f] = [a, b, c, d, e, f].map(|it| {
+            f32::from_bits(it.iter().rev().fold(0, |all, it| {
+                all << 4 | u32::from(it.wrapping_sub(b'a') & 15)
+            }))
+        });
+        let moved = Transform::Translate(Name::Translate, Lp::Px(e * zoom), Lp::Px(f * zoom), 0.0);
+        Some(Transforms(NoneOrSpaces(Rc::new([
+            moved,
+            Transform::Matrix(Rc::new(extended([a, b, c, d, 0.0, 0.0]))),
+        ]))))
+    }
+
     pub(crate) fn matrix_3d(&self, width: f32, height: f32) -> Matrix3d {
         self.0.iter().fold(IDENTITY_3D, |all, one| {
             multiply_3d(&all, &one.matrix_3d(width, height))

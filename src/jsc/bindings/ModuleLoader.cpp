@@ -1,4 +1,6 @@
 #include "root.h"
+#include "InternalModuleRegistry.h"
+#include "SyntheticModuleType.h"
 
 #include "headers-handwritten.h"
 #include "CodeGenerationFromStrings.h"

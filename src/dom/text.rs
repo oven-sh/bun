@@ -4,15 +4,16 @@ use core::ops::Range;
 
 use smallvec::SmallVec;
 
-use crate::abi::{Face, Glyph, Item, LineStyle, Rect, RoundedRect, Span};
+use crate::abi::{Face, Glyph, Item, LineStyle, NO_GLYPH, Rect, RoundedRect, Span};
 use crate::background::Frame;
 use crate::boxes::{BoxId, Kind};
 use crate::editing::Mark;
 use crate::inline::{COMBINED, Inline, ItemKind, OPENING, UPRIGHT};
 use crate::lines::{Fragment, FragmentKind, Line, em_box};
+use crate::order::Order as _;
 use crate::paint::{Painter, Space, alpha, resolve_padding, rounded, square};
 use crate::platform::Shaped;
-use crate::properties::{Id, Style, Value};
+use crate::properties::{Id, Paints, Style, Value};
 use crate::selector::Pseudo;
 use crate::svg_values::PaintKind;
 use crate::tree::NodeId;
@@ -35,23 +36,28 @@ struct Marked {
     background: u32,
     color: Option<u32>,
     style: Option<Style>,
+    is_selected: bool,
     is_composing: bool,
     is_misspelled: bool,
 }
 
 fn visible_lines(inline: &Inline) -> &[Line] {
-    &inline.lines.lines[..inline
-        .lines
-        .visible
-        .unwrap_or(usize::MAX)
-        .min(inline.lines.lines.len())]
+    &inline.lines.lines
+        [..(inline.lines.visible.unwrap_or(u32::MAX) as usize).min(inline.lines.lines.len())]
 }
 
 impl<'a> Painter<'a> {
-    fn block_decorations(&self, mut id: BoxId) -> Decorations<'a> {
-        let (boxes, mut found) = (&self.document.boxes, Decorations::new());
+    fn block_decorations(&mut self, lines: BoxId) -> Decorations<'a> {
+        let (boxes, mut found, mut id) = (
+            &self.document.boxes,
+            Decorations::new(),
+            self.document.boxes[lines].parent,
+        );
         while id != 0 {
             let it = &boxes[id];
+            if core::mem::replace(&mut self.undecorated[usize::from(it.depth) % 32], id) == id {
+                break;
+            }
             if !it.style.paint.decoration_line.is_empty() {
                 found.push(&it.style);
             }
@@ -63,11 +69,15 @@ impl<'a> Painter<'a> {
             }
             id = it.parent;
         }
+        if !found.is_empty() {
+            self.undecorated = [0; _];
+        }
         found
     }
 
     /// The fragments that are in the inline element `layer`, or in none.
-    pub(crate) fn lines(&mut self, id: BoxId, layer: NodeId, physical: &Space) {
+    /// `also`: items that are in other layers.
+    pub(crate) fn lines(&mut self, id: BoxId, layer: NodeId, also: Range<usize>, physical: &Space) {
         let (document, space) = (self.document, &self.along_lines(id, physical));
         let Some(inline) = document.boxes[id].inline.as_deref() else {
             return;
@@ -88,7 +98,38 @@ impl<'a> Painter<'a> {
                 item.node
             }
         };
+        let (block, has_marks) = (document.inherited_style(id), !document.marks.is_empty());
+        let mut is_plain = layer == 0
+            && decorations.is_empty()
+            && inline.first_line.is_none()
+            && alpha(block.ink.text_fill_color.resolve(block.color())) > 0;
+        if document.environment.forces_colors
+            && layer == 0
+            && block.is_visible()
+            && block.takes_forced_colors()
+        {
+            is_plain = false;
+            self.backplates(inline, block, space);
+        }
+        let far = inline
+            .outset
+            .get()
+            .filter(|_| document.boxes[id].children.is_empty() && inline.first_line.is_none())
+            .map(|it| it + 64.0);
         for line in visible_lines(inline) {
+            let is_far = |it: &Fragment, reach: f32| {
+                it.y + space.origin[1] - reach > space.visible.bottom()
+                    || it.y + it.height + space.origin[1] + reach < space.visible.y
+            };
+            if far.is_some_and(|reach| {
+                inline
+                    .lines
+                    .fragments_of(line)
+                    .iter()
+                    .all(|it| is_far(it, reach))
+            }) {
+                continue;
+            }
             let truncation = line.clamp.as_ref().or(line.overflow.as_ref());
             let first_line = inline
                 .first_line
@@ -132,13 +173,13 @@ impl<'a> Painter<'a> {
                 .lines
                 .fragments_of(line)
                 .iter()
-                .filter(|it| it.layer == layer)
+                .filter(|it| it.layer == layer || also.contains(&(it.item as usize)))
                 .collect();
             if fragments
                 .first()
                 .is_some_and(|it| matches!(it.kind, FragmentKind::Box(..)))
             {
-                fragments.sort_by_key(|it| it.item);
+                fragments.order_by_key(|it| it.item);
             }
             for fragment in fragments {
                 let item = &inline.items[fragment.item as usize];
@@ -146,6 +187,15 @@ impl<'a> Painter<'a> {
                     document.current_style(item),
                     fragment.rect().moved(space.origin),
                 );
+                let has_effects = style.paints().contains(Paints::TEXT_EFFECTS)
+                    || has_marks && !document.marks.of(item.node).is_empty();
+                is_plain &= !has_effects
+                    && item.parent == 0
+                    && std::rc::Rc::ptr_eq(style, block)
+                    && !matches!(
+                        fragment.kind,
+                        FragmentKind::Atomic(_) | FragmentKind::Box(..)
+                    );
                 if let FragmentKind::Atomic(child) = fragment.kind {
                     if truncation.is_none_or(|it| it.shows(fragment.x, fragment.width, line.rtl)) {
                         if self.document.marks.is_selected(item.node) {
@@ -184,17 +234,26 @@ impl<'a> Painter<'a> {
                     }
                     _ => {
                         self.hit(node_of(item), style, square(rect), space);
-                        self.text(
-                            inline,
-                            line,
-                            fragment,
-                            style,
-                            (
-                                &decorations,
-                                first_line.unwrap_or_else(|| document.inherited_style(id)),
+                        match has_effects || item.parent != 0 || !decorations.is_empty() {
+                            true => self.text(
+                                inline,
+                                line,
+                                fragment,
+                                style,
+                                (&decorations, first_line.unwrap_or(block)),
+                                space,
                             ),
-                            space,
-                        );
+                            false => self.glyphs(
+                                inline,
+                                line,
+                                fragment,
+                                0..u32::MAX,
+                                style.ink.text_fill_color.resolve(style.color()),
+                                0.0,
+                                space.origin,
+                                space,
+                            ),
+                        }
                     }
                 }
             }
@@ -217,6 +276,9 @@ impl<'a> Painter<'a> {
         }
         if layer == 0 && !is_under_text {
             self.caret_in(id, physical);
+        }
+        if is_plain {
+            self.note_plain_text();
         }
     }
 
@@ -441,14 +503,14 @@ impl<'a> Painter<'a> {
 
     fn shaped(&mut self, shaped: &Shaped, origin: [f32; 2], color: u32, space: &Space) {
         let mut x = origin[0];
-        for cluster in &shaped.clusters {
+        for cluster in shaped.clusters() {
             let (face, start) = (
                 &shaped.faces[usize::from(cluster.face)],
                 self.out.glyphs.len() as u32,
             );
             self.out
                 .glyphs
-                .extend_from_slice(&shaped.glyphs[cluster.glyphs.range()]);
+                .extend_from_slice(&shaped.glyphs()[cluster.glyphs.range()]);
             let glyphs = Span {
                 start,
                 end: self.out.glyphs.len() as u32,
@@ -489,6 +551,7 @@ impl<'a> Painter<'a> {
         space: &Space,
     ) {
         if let FragmentKind::Text { clusters, .. } = &fragment.kind
+            && inline.clusters.letters(clusters).is_none()
             && inline.clusters[clusters.start as usize].flags & (UPRIGHT | COMBINED) != 0
         {
             return self.upright_glyphs(inline, line, fragment, only, color, blur, origin, space);
@@ -583,7 +646,7 @@ impl<'a> Painter<'a> {
         };
         let (color, width) = (
             color.unwrap_or_else(|| own.resolve(style.color())),
-            mark.clusters.iter().map(|it| it.advance).sum::<f32>(),
+            mark.clusters().iter().map(|it| it.advance).sum::<f32>(),
         );
         let metrics = self.document.fonts.metrics(style.font_id, face.size);
         let ([up, down], [own_up, own_down]) = (
@@ -600,7 +663,6 @@ impl<'a> Painter<'a> {
             style.has_central_baseline(),
         );
         for (at, left, advance) in inline
-            .lines
             .positions(fragment)
             .filter(|it| only.contains(&it.0) && it.2 > 0.0)
         {
@@ -698,7 +760,8 @@ impl<'a> Painter<'a> {
             inline.paragraph_of(clusters.start),
             &inline.items[fragment.item as usize].style,
         );
-        let shaped = |at: u32| &paragraph.shaped.clusters[(at - paragraph.first_cluster) as usize];
+        let shaped =
+            |at: u32| &paragraph.shaped.clusters()[(at - paragraph.first_cluster) as usize];
         let width = |at: u32| shaped(at).advance - style.letter_spacing();
         let (first, size) = (&inline.clusters[clusters.start as usize], style.font.size.0);
         let (face, is_combined) = (
@@ -718,12 +781,12 @@ impl<'a> Painter<'a> {
         ];
         let space = self.transformed(&[0.0, -scale, 1.0, 0.0, at[0], at[1]], space);
         let (start, mut x) = (self.out.glyphs.len() as u32, -total / 2.0);
-        for (at, left, _) in inline.lines.positions(fragment) {
+        for (at, left, _) in inline.positions(fragment) {
             let [dx, dy] = match is_combined {
                 true => [x, (size + face.ascent - face.descent) / 2.0],
                 false => [0.0, left - fragment.x - trimmed(inline, line, fragment, at)],
             };
-            let glyphs = paragraph.shaped.glyphs[shaped(at).glyphs.range()]
+            let glyphs = paragraph.shaped.glyphs()[shaped(at).glyphs.range()]
                 .iter()
                 .filter(|_| only.contains(&at));
             self.out.glyphs.extend(glyphs.map(|it| Glyph {
@@ -763,7 +826,12 @@ impl<'a> Painter<'a> {
         origin: [f32; 2],
         space: &Space,
     ) -> Option<(Face, Span)> {
-        let FragmentKind::Text { clusters, rtl } = &fragment.kind else {
+        let FragmentKind::Text {
+            clusters,
+            rtl,
+            hidden,
+        } = &fragment.kind
+        else {
             return None;
         };
         let (shaped, start) = (
@@ -776,7 +844,44 @@ impl<'a> Painter<'a> {
             .grown(fragment.height * 4.0 + blur)
             .span(0)
             .map(|it| it - origin[0]);
-        for (at, left, advance) in inline.lines.positions(fragment) {
+        if let (Some(letters), None, []) = (
+            inline.clusters.letters(clusters),
+            truncation,
+            &inline.lines.advances[..],
+        ) {
+            let (mut left, shown) = (
+                fragment.x,
+                clusters.start..clusters.end - u32::from(*hidden),
+            );
+            let is_whole = only.start <= shown.start
+                && shown.end <= only.end
+                && near <= left
+                && left + fragment.width + 1.0 <= far;
+            self.out
+                .glyphs
+                .reserve(if is_whole { shown.len() } else { 0 });
+            for (it, at) in letters.iter().zip(shown) {
+                if it.glyph != NO_GLYPH
+                    && (is_whole || only.contains(&at) && left + it.advance >= near && left <= far)
+                {
+                    self.out.glyphs.push(Glyph {
+                        id: it.glyph.into(),
+                        x: left - fragment.x,
+                        y: 0.0,
+                    });
+                }
+                left += it.advance;
+            }
+            let glyphs = Span {
+                start,
+                end: self.out.glyphs.len() as u32,
+            };
+            return (glyphs.end > start).then_some((
+                *shaped.faces.get(usize::from(letters.first()?.face))?,
+                glyphs,
+            ));
+        }
+        for (at, left, advance) in inline.positions(fragment) {
             let cluster = &inline.clusters[at as usize];
             if only.contains(&at)
                 && left + advance >= near
@@ -792,11 +897,11 @@ impl<'a> Painter<'a> {
                             && next.advance > 0.0
                     });
                     x -= joined
-                        .map(|it| inline.lines.advances[it as usize])
+                        .map(|it| inline.advance(core::slice::from_ref(fragment), it))
                         .sum::<f32>();
                 }
                 self.out.glyphs.extend(
-                    shaped.glyphs[cluster.glyphs.range()]
+                    shaped.glyphs()[cluster.glyphs.range()]
                         .iter()
                         .map(|it| Glyph { x: it.x + x, ..*it }),
                 );
@@ -813,14 +918,43 @@ impl<'a> Painter<'a> {
             .then_some((*face, glyphs))
     }
 
+    /// They keep text legible on an image.
+    #[cold]
+    fn backplates(&mut self, inline: &Inline, block: &Style, space: &Space) {
+        for line in visible_lines(inline) {
+            let texts = inline
+                .for_line(line)
+                .lines
+                .fragments_of(line)
+                .iter()
+                .filter(|it| matches!(it.kind, FragmentKind::Text { .. }));
+            if let Some(all) = texts.map(Fragment::rect).reduce(|a, b| a.union(&b)) {
+                self.fill(
+                    square(self.snap_rect(all.moved(space.origin))),
+                    crate::color::forced(b"canvas", block.dark),
+                    space,
+                );
+            }
+        }
+    }
+
     /// The background, and the color of the text.
     fn selection_colors(&self, style: &Style) -> (u32, Option<u32>) {
         let environment = &self.document.environment;
+        if environment.forces_colors {
+            return (
+                crate::color::forced(b"highlight", style.dark),
+                Some(crate::color::forced(b"highlighttext", style.dark)),
+            );
+        }
         match (cfg!(target_os = "macos"), environment.is_active, style.dark) {
-            (true, true, false) => (0x80bc_fe99, None),
-            (true, true, true) => (0x3f63_8bcc, None),
+            (true, true, false) => (
+                crate::color::blended_with_white(environment.highlight[0]),
+                None,
+            ),
+            (true, true, true) => (environment.highlight[1] & !0xff | 0xcc, None),
             (true, false, false) => (0xc4c4_c499, None),
-            (true, false, true) => (0x4646_46cc, None),
+            (true, false, true) => (0x0404_04cc, None),
             (false, true, false) => (0x3367_d1ff, Some(0xffff_ffff)),
             (false, true, true) => (0x0539_a3ff, Some(0xffff_ffff)),
             (false, false, _) => (0xc8c8_c8ff, Some(0x3232_32ff)),
@@ -834,13 +968,9 @@ impl<'a> Painter<'a> {
         clusters: &Range<u32>,
     ) -> Option<[f32; 2]> {
         let truncation = line.clamp.as_ref().or(line.overflow.as_ref());
-        let shown = inline
-            .lines
-            .positions(fragment)
-            .filter(|(at, left, advance)| {
-                clusters.contains(at)
-                    && truncation.is_none_or(|it| it.shows(*left, *advance, line.rtl))
-            });
+        let shown = inline.positions(fragment).filter(|(at, left, advance)| {
+            clusters.contains(at) && truncation.is_none_or(|it| it.shows(*left, *advance, line.rtl))
+        });
         shown
             .map(|it| [it.1, it.1 + it.2])
             .reduce(|a, b| [a[0].min(b[0]), a[1].max(b[1])])
@@ -904,7 +1034,10 @@ impl<'a> Painter<'a> {
                 }
                 Mark::Selection => {
                     let last = clusters.end - 1;
-                    let FragmentKind::Text { clusters: all, rtl } = &fragment.kind else {
+                    let FragmentKind::Text {
+                        clusters: all, rtl, ..
+                    } = &fragment.kind
+                    else {
                         continue;
                     };
                     let is_after = |it: &Fragment| match &it.kind {
@@ -958,6 +1091,7 @@ impl<'a> Painter<'a> {
                 background,
                 color,
                 style: custom,
+                is_selected: *mark == Mark::Selection,
                 is_composing: *mark == Mark::Composition,
                 is_misspelled,
             });
@@ -1347,15 +1481,27 @@ impl<'a> Painter<'a> {
             painter.emphasis_marks(inline, line, fragment, &run, style, highlighted, space);
             decorate(painter, DecorationLine::LINE_THROUGH);
         };
+        let inside = |at: u32| at.clamp(clusters.start, clusters.end);
+        if self.skips_what_is_not_selected() {
+            for it in marked.iter().filter(|it| it.is_selected) {
+                let run = inside(it.clusters.start)..inside(it.clusters.end);
+                self.paint_selected(
+                    inline.items[fragment.item as usize].node,
+                    it.rect,
+                    space,
+                    |painter| paint(painter, run, &[]),
+                );
+            }
+            return;
+        }
         if marked.is_empty() {
             return paint(self, clusters.clone(), &[]);
         }
-        let inside = |at: u32| at.clamp(clusters.start, clusters.end);
         let edges = marked
             .iter()
             .flat_map(|it| [inside(it.clusters.start), inside(it.clusters.end)]);
         let mut edges: SmallVec<[u32; 4]> = edges.chain([clusters.start, clusters.end]).collect();
-        edges.sort_unstable();
+        edges.order_by(Ord::cmp);
         edges.dedup();
         let over = |at: u32| {
             marked

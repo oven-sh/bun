@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "DOMIsoSubspaces.h"
 #include "GeneratedBindings+Counts.h"
 
 #include <wtf/FastMalloc.h>
@@ -74,6 +75,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSWebView { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
+    GCClient::IsoSubspace* m_clientSubspaceForInterface[numberOfInterfaceSubspaces] {};
     /* --- bun --- */
 
     GCClient::IsoSubspace* m_clientSubspaceForDOMException { nullptr };
@@ -158,6 +160,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForWorkerGlobalScope { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForBakeGlobalScope { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForWebGlobalObject { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForAbortController { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForAbortSignal { nullptr };
@@ -177,6 +180,5 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForBunRequest { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForJSConnectionsList { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSHTTPParser { nullptr };
 };
 } // namespace WebCore

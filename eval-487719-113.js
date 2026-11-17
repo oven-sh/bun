@@ -1,1 +1,0 @@
-process.argv.splice(1, 1);import * as contents from './abcd.html?url'; console.log(JSON.stringify(contents));

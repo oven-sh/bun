@@ -18,8 +18,9 @@ use crate::geometry::translation;
 use crate::inline::ItemKind;
 use crate::lines::FragmentKind;
 use crate::name::{Map, is_name};
+use crate::order::Order as _;
 use crate::path::Path;
-use crate::properties::{Id, Style, WillChange};
+use crate::properties::{Id, Paints, Style, WillChange};
 use crate::scroll::Part;
 use crate::segments::{Layers, Painted, Segments};
 use crate::selector::Pseudo;
@@ -175,7 +176,7 @@ enum Foreground {
 #[derive(Default)]
 struct Phases {
     floats: Vec<(BoxId, Space)>,
-    foreground: Vec<(Foreground, BoxId, Space)>,
+    foreground: smallvec::SmallVec<[(Foreground, BoxId, Space); 2]>,
     outlines: Vec<(BoxId, Space)>,
 }
 
@@ -201,6 +202,10 @@ pub(crate) struct Painter<'a> {
     pub(crate) painted_node: NodeId,
     /// For a view transition.
     pub(crate) captures: NodeId,
+    /// If nothing else is painted: what it covers so far.
+    pub(crate) selected: Option<Rect>,
+    /// By their depth, boxes that pass on no text decorations.
+    pub(crate) undecorated: [BoxId; 32],
 }
 
 pub(crate) fn alpha(color: u32) -> u32 {
@@ -237,14 +242,20 @@ pub(crate) fn fit(rect: Rect, mut radii: Radii) -> RoundedRect {
 }
 
 pub(crate) fn with_corners(rect: Rect, basis: [f32; 2], corners: [&Corner; 4]) -> RoundedRect {
+    let radii = |it: &Corner| [it.0.0.resolve(basis[0]), it.1.0.resolve(basis[1])];
     fit(
         rect,
-        corners.map(|it| [it.0.0.resolve(basis[0]), it.1.0.resolve(basis[1])]),
+        [
+            radii(corners[0]),
+            radii(corners[1]),
+            radii(corners[2]),
+            radii(corners[3]),
+        ],
     )
 }
 
 pub(crate) fn rounded(rect: Rect, style: &Style) -> RoundedRect {
-    if style.is_bare() {
+    if !style.paints().contains(Paints::RADII) {
         return square(rect);
     }
     let p = &style.paint;
@@ -257,10 +268,15 @@ pub(crate) fn rounded(rect: Rect, style: &Style) -> RoundedRect {
 
 impl RoundedRect {
     pub(crate) fn shrunk(&self, [top, right, bottom, left]: [f32; 4]) -> RoundedRect {
-        let by = [[left, top], [right, top], [right, bottom], [left, bottom]];
-        let radii = [0, 1, 2, 3].map(|corner| {
-            [0, 1].map(|axis| (self.radii[corner][axis] - by[corner][axis]).max(0.0))
-        });
+        let (by, mut radii) = (
+            [left, top, right, top, right, bottom, left, bottom],
+            self.radii,
+        );
+        radii
+            .as_flattened_mut()
+            .iter_mut()
+            .zip(by)
+            .for_each(|(it, by)| *it = (*it - by).max(0.0));
         fit(self.rect.shrunk([top, right, bottom, left]), radii)
     }
 
@@ -284,7 +300,11 @@ impl RoundedRect {
     }
 
     pub(crate) fn spread(&self, by: f32) -> RoundedRect {
-        self.outset([by; 4])
+        if by == 0.0 {
+            *self
+        } else {
+            self.outset([by; 4])
+        }
     }
 
     fn contains(&self, point: [f32; 2]) -> bool {
@@ -340,7 +360,7 @@ fn filter_extent(style: &Style) -> f32 {
     extents.sum()
 }
 
-fn decoration_extent(style: &Style) -> f32 {
+pub(crate) fn decoration_extent(style: &Style) -> f32 {
     if style.is_bare() {
         return 1.0;
     }
@@ -381,17 +401,22 @@ impl Document {
         }
         let mut contents = self.extent(id);
         if !it.scrolls() {
-            let own = it
-                .children
-                .iter()
-                .filter(|child| !self.boxes[**child].style.is_out_of_flow());
-            for child in own
-                .chain(&it.hoisted)
-                .chain((it.outside_marker != 0).then_some(&it.outside_marker))
-                .filter(|it| !self.is_plane(**it))
-            {
-                let at = self.boxes[*child].layout.location;
-                contents = contents.union(&self.outer_ink(*child).moved([at.x, at.y]));
+            let mut add = |child: BoxId, is_in_flow: bool| {
+                let own = &self.boxes[child];
+                let ink = match own.is_quiet() {
+                    true => self.ink(child),
+                    false if is_in_flow && own.style.is_out_of_flow() || self.is_plane(child) => {
+                        return;
+                    }
+                    false => self.outer_ink(child),
+                };
+                contents =
+                    contents.union(&ink.moved([own.layout.location.x, own.layout.location.y]));
+            };
+            it.children.iter().for_each(|it| add(*it, true));
+            it.hoisted.iter().for_each(|it| add(*it, false));
+            if it.outside_marker != 0 {
+                add(it.outside_marker, false);
             }
             for (inline, fragment) in it.inline.iter().flat_map(|it| {
                 it.lines
@@ -402,22 +427,15 @@ impl Document {
                 let style = self.current_style(&inline.items[fragment.item as usize]);
                 let extent = match fragment.kind {
                     FragmentKind::Box(..) => decoration_extent(style) + filter_extent(style),
-                    _ => {
-                        style.font.size.0.max(self.decoration_reach)
-                            + style.text_stroke_width()
-                            + shadow_extent(&style.ink.text_shadow.0)
-                    }
+                    _ => self.extent_of_text(style),
                 };
                 contents = contents.union(&self.from_lines(id, fragment.rect()).grown(extent));
             }
             if it.kind == Kind::Svg && it.overflow == [Overflow::Visible; 2] {
                 contents = contents.union(&self.svg_ink(it.node).unwrap_or_default());
             }
-            if let Some(image) = self
-                .tree
-                .element(it.node)
-                .and_then(|it| it.replaced)
-                .filter(|_| it.kind == Kind::Replaced)
+            if it.kind == Kind::Replaced
+                && let Some(image) = self.tree.element(it.node).and_then(|it| it.replaced)
             {
                 let rect = object_rect(&it.style, image, Rect::new(self.content_box(id)));
                 contents = contents.union(&if is_snapshot(image.image) {
@@ -426,17 +444,94 @@ impl Document {
                     rect
                 });
             }
-            contents = self
-                .overflow_clip(id)
-                .map_or(contents, |clip| contents.intersection(&clip));
+            if it.overflow != [Overflow::Visible; 2] || !it.is_quiet() {
+                contents = self
+                    .overflow_clip(id)
+                    .map_or(contents, |clip| contents.intersection(&clip));
+            }
         }
         if it.has_legend {
             let at = self.boxes[it.children[0]].layout.location;
             contents = contents.union(&self.outer_ink(it.children[0]).moved([at.x, at.y]));
         }
-        let ink = contents.union(&self.decorated(id, self.extent(id)).grown(it.border()[0]));
-        it.ink.set(Some(ink));
+        let decorated = if it.is_quiet() {
+            self.extent(id).grown(it.style.fixed().outset)
+        } else {
+            self.decorated(id, self.extent(id))
+        };
+        let ink = contents.union(&decorated.grown(it.border()[0]));
+        it.ink.set(ink);
         ink
+    }
+
+    fn extent_of_text(&self, style: &Style) -> f32 {
+        style.font.size.0.max(self.decoration_reach)
+            + style.text_stroke_width()
+            + shadow_extent(&style.ink.text_shadow.0)
+    }
+
+    /// Of lines that have no boxes in them. `fragments` is what they cover, if that is more than their bounds.
+    #[inline]
+    pub(crate) fn note_extents_of_lines(&self, id: BoxId, fragments: Option<Rect>) {
+        let it = &self.boxes[id];
+        let Some(inline) = &it.inline else { return };
+        let outset = inline.outset.get().unwrap_or_else(|| {
+            let around = &self.boxes[it.parent].style;
+            let outset = |item: &crate::inline::Item| match item.kind {
+                ItemKind::Close(_) => 0.0,
+                ItemKind::Open(_) => {
+                    decoration_extent(self.current_style(item))
+                        + filter_extent(self.current_style(item))
+                }
+                _ => self.extent_of_text(if Rc::ptr_eq(&item.style, around) {
+                    around
+                } else {
+                    self.current_style(item)
+                }),
+            };
+            let outset = inline.items.iter().map(outset).fold(0.0, f32::max);
+            inline.outset.set(Some(outset));
+            outset
+        });
+        let (whole, bounds) = (
+            Rect::new([0.0, 0.0, it.layout.size.width, it.layout.size.height]),
+            inline.lines.bounds,
+        );
+        let reach = Some(bounds.intersection(&crate::scroll::FAR))
+            .filter(|it| !it.is_empty())
+            .map_or(whole, |it| whole.union(&it));
+        it.reach.set(reach);
+        it.spread.set(reach);
+        it.ink
+            .set(whole.union(&fragments.unwrap_or(bounds).grown(outset)));
+        self.note_layers(
+            id,
+            if inline.has_layers {
+                Layers::empty()
+            } else {
+                Layers::KNOWN
+            },
+        );
+    }
+
+    /// Of a quiet box that does not scroll. `inside` has those of its children, which are quiet.
+    #[inline]
+    pub(crate) fn note_layers(&self, id: BoxId, inside: Layers) {
+        let (it, parent) = (&self.boxes[id], &self.boxes[self.boxes[id].parent]);
+        let passed_on = Layers::KNOWN
+            | Layers::HAS_BACKDROP
+            | Layers::HAS_LEVEL
+            | Layers::HAS_RAISED
+            | Layers::HAS_BLEND;
+        if inside.contains(Layers::KNOWN)
+            && !inside.intersects(Layers::IS_LAYER | Layers::IS_STACKING_CONTEXT)
+            && it.parent != VIEWPORT
+            && !parent.splits_layers
+            && parent.kind != Kind::Lines
+            && self.view_transitions.is_empty()
+        {
+            it.painted.layers.set(inside & passed_on);
+        }
     }
 
     fn rounded_overflow_clip(&self, id: BoxId, outline: RoundedRect) -> RoundedRect {
@@ -457,8 +552,14 @@ impl Document {
     }
 
     pub(crate) fn outer_ink(&self, id: BoxId) -> Rect {
+        if self.boxes[id].is_quiet() && !self.has_depth.get() {
+            return self.ink(id);
+        }
         if self.is_in_depth(id) {
             return crate::three_d::EVERYWHERE;
+        }
+        if self.boxes[id].is_quiet() {
+            return self.ink(id);
         }
         let ink = self.filtered(
             self.boxes[id].node,
@@ -479,6 +580,9 @@ impl Document {
     /// What the decorations cover. `rect` is where the border box is.
     fn decorated(&self, id: BoxId, rect: Rect) -> Rect {
         let style = &self.boxes[id].style;
+        if !style.paints().contains(Paints::SHAPES) {
+            return rect.grown(style.fixed().outset);
+        }
         match style
             .other_if_set(Id::BorderShape)
             .map(|_| self.frame_of(id, rect))
@@ -493,14 +597,44 @@ impl Document {
 
     /// `rect` is where the border box is.
     pub(crate) fn frame_of(&self, id: BoxId, rect: Rect) -> Frame {
+        self.frame_with(id, rounded(rect, &self.boxes[id].style))
+    }
+
+    fn frame_with(&self, id: BoxId, shape: RoundedRect) -> Frame {
         let (it, padding) = (&self.boxes[id], self.boxes[id].layout.padding);
         Frame {
-            shape: rounded(rect, &it.style),
+            shape,
             border: it.border(),
             padding: [padding.top, padding.right, padding.bottom, padding.left],
             scrolled: None,
             whole: None,
         }
+    }
+
+    fn has_plain_decorations(&self, id: BoxId) -> bool {
+        let (it, paints) = (&self.boxes[id], self.boxes[id].style.paints());
+        matches!(it.kind, Kind::Block | Kind::Flex | Kind::Grid)
+            && !it.has_legend
+            && it.collapsed.is_none()
+            && it.style.look == Look::None
+            && !paints.intersects(Paints::PICTURES | Paints::SHAPES)
+            && !(paints.contains(Paints::LAYERS)
+                && it
+                    .style
+                    .background
+                    .clip
+                    .iter()
+                    .any(|it| matches!(it.0, BoxArea::Text | BoxArea::BorderAreaAndText)))
+    }
+
+    /// For more than the decorations and the text.
+    pub(crate) fn uses_color_elsewhere(&self, id: BoxId) -> bool {
+        let it = &self.boxes[id];
+        it.style.outline_width() > 0.0
+            || it.scrollbars != [false; 2]
+            || it.style.look != Look::None
+            || !it.is_quiet()
+                && (it.style.has_effects() || !it.style.effects.backdrop_filter.0.is_empty())
     }
 
     fn z_index_applies(&self, id: BoxId) -> bool {
@@ -513,6 +647,91 @@ impl Document {
         if it.painted.layers.get().contains(Layers::KNOWN) {
             return it.painted.layers.get();
         }
+        let parent = &self.boxes[it.parent];
+        let mut layers = match it.is_quiet()
+            && it.parent != VIEWPORT
+            && !parent.splits_layers
+            && parent.kind != Kind::Lines
+            && self.view_transitions.is_empty()
+        {
+            true if it.scrolls() => Layers::KNOWN | Layers::SCROLLS,
+            true => Layers::KNOWN,
+            false => self.own_layers(id),
+        };
+        for item in it
+            .inline
+            .iter()
+            .filter(|it| it.has_layers)
+            .flat_map(|it| &it.items)
+        {
+            if matches!(item.kind, ItemKind::Open(_)) && crate::inline::is_layer(&item.style) {
+                let is_raised = item.style.is_positioned()
+                    && self
+                        .current_style(item)
+                        .paint
+                        .z_index
+                        .0
+                        .is_some_and(|it| it != 0);
+                layers |= if is_raised {
+                    Layers::HAS_RAISED
+                } else {
+                    Layers::HAS_LEVEL
+                };
+            }
+        }
+        let blends = |style: &Rc<Style>| style.effects.blend != Blend::Normal;
+        let inline = it
+            .inline
+            .iter()
+            .filter(|it| it.has_layers)
+            .flat_map(|it| &it.items);
+        let in_svg = || {
+            self.tree
+                .descendants(it.node)
+                .filter_map(|it| self.tree.style(it))
+                .any(blends)
+        };
+        let has_blend = inline
+            .filter(|it| matches!(it.kind, ItemKind::Open(_)))
+            .any(|it| blends(self.current_style(it)))
+            || it.kind == Kind::Svg && self.blends_in_svg.get() && in_svg();
+        layers.set(Layers::HAS_BLEND, has_blend);
+        for id in &it.children {
+            if !self.boxes[*id].is_quiet() {
+                let style = &self.boxes[*id].style;
+                layers |= if blends(style) {
+                    Layers::HAS_BLEND
+                } else {
+                    Layers::empty()
+                };
+                layers |= if style.effects.backdrop_filter.0.is_empty() {
+                    Layers::empty()
+                } else {
+                    Layers::HAS_BACKDROP
+                };
+            }
+            if it.is_replaced() {
+                continue;
+            }
+            let child = self.layers(*id);
+            layers |= child & Layers::HAS_BACKDROP;
+            if child.contains(Layers::IS_LAYER) {
+                layers |= if child.contains(Layers::IS_RAISED) {
+                    Layers::HAS_RAISED
+                } else {
+                    Layers::HAS_LEVEL
+                };
+            }
+            if !child.contains(Layers::IS_STACKING_CONTEXT) {
+                layers |= child & (Layers::HAS_LEVEL | Layers::HAS_RAISED | Layers::HAS_BLEND);
+            }
+        }
+        it.painted.layers.set(layers);
+        layers
+    }
+
+    fn own_layers(&self, id: BoxId) -> Layers {
+        let it = &self.boxes[id];
         let (mut layers, z_index_applies) = (Layers::KNOWN, self.z_index_applies(id));
         let around = self.split_stacking_contexts(id).last().map(|it| it.1);
         layers.set(
@@ -560,70 +779,6 @@ impl Document {
             Layers::SNAPS,
             moves || it.style.contain().contains(Contain::PAINT),
         );
-        for item in it
-            .inline
-            .iter()
-            .filter(|it| it.has_layers)
-            .flat_map(|it| &it.items)
-        {
-            if matches!(item.kind, ItemKind::Open(_)) && crate::inline::is_layer(&item.style) {
-                let is_raised = item.style.is_positioned()
-                    && self
-                        .current_style(item)
-                        .paint
-                        .z_index
-                        .0
-                        .is_some_and(|it| it != 0);
-                layers |= if is_raised {
-                    Layers::HAS_RAISED
-                } else {
-                    Layers::HAS_LEVEL
-                };
-            }
-        }
-        let blends = |style: &Rc<Style>| style.effects.blend != Blend::Normal;
-        let inline = it
-            .inline
-            .iter()
-            .filter(|it| it.has_layers)
-            .flat_map(|it| &it.items);
-        let in_svg = || {
-            self.tree
-                .descendants(it.node)
-                .filter_map(|it| self.tree.style(it))
-                .any(blends)
-        };
-        let has_blend = inline
-            .filter(|it| matches!(it.kind, ItemKind::Open(_)))
-            .any(|it| blends(self.current_style(it)))
-            || it.kind == Kind::Svg && self.blends_in_svg.get() && in_svg()
-            || it.children.iter().any(|it| blends(&self.boxes[*it].style));
-        layers.set(Layers::HAS_BLEND, has_blend);
-        layers.set(
-            Layers::HAS_BACKDROP,
-            it.children
-                .iter()
-                .any(|it| !self.boxes[*it].style.effects.backdrop_filter.0.is_empty()),
-        );
-        for child in it
-            .children
-            .iter()
-            .filter(|_| it.kind != Kind::Svg)
-            .map(|it| self.layers(*it))
-        {
-            layers |= child & Layers::HAS_BACKDROP;
-            if child.contains(Layers::IS_LAYER) {
-                layers |= if child.contains(Layers::IS_RAISED) {
-                    Layers::HAS_RAISED
-                } else {
-                    Layers::HAS_LEVEL
-                };
-            }
-            if !child.contains(Layers::IS_STACKING_CONTEXT) {
-                layers |= child & (Layers::HAS_LEVEL | Layers::HAS_RAISED | Layers::HAS_BLEND);
-            }
-        }
-        it.painted.layers.set(layers);
         layers
     }
 
@@ -703,10 +858,18 @@ impl Document {
 
     pub(crate) fn submit(&mut self, surface: u32) {
         let (zoom, is_composited) = (self.environment.zoom, self.compositor.is_on);
-        if self.update_picture().is_submitted {
+        let (has_shifted, is_submitted) = (
+            core::mem::take(&mut self.compositor.has_shifted),
+            self.update_picture().is_submitted,
+        );
+        if is_submitted && !has_shifted {
             return;
         }
-        let regions = self.regions_in_tree_order();
+        let regions = if is_submitted {
+            Vec::new()
+        } else {
+            self.regions_in_tree_order()
+        };
         let picture = self.update_picture();
         picture.is_submitted = true;
         if let Some(renderer) = crate::platform::renderer() {
@@ -725,7 +888,11 @@ impl Document {
                 match is_composited {
                     true => (renderer.submit_composited)(
                         surface,
-                        &raw const list,
+                        if is_submitted {
+                            core::ptr::null()
+                        } else {
+                            &raw const list
+                        },
                         &raw const compositing,
                     ),
                     false => (renderer.submit)(surface, &raw const list),
@@ -752,7 +919,7 @@ impl Document {
         let mut found: Vec<_> = all
             .filter(|(region, _)| drags.iter().any(|it| overlap(&it.rect, &region.rect)))
             .collect();
-        found.sort_by_cached_key(|(_, node)| {
+        found.order_by_cached_key(|(_, node)| {
             let ancestors =
                 core::iter::successors(Some(**node), |it| Some(self.tree.parent_or_host(*it)))
                     .take_while(|it| *it != 0 && self.tree.contains(*it));
@@ -851,7 +1018,10 @@ impl Document {
             .flat_map(move |picture| {
                 let local = move |link: &Link| match self.has_depth.get() {
                     true => picture.to_local(link, point),
-                    false => Some(apply(&invert(&link.matrix)?, point)),
+                    false => Some(
+                        apply(&invert(&link.matrix)?, point)
+                            .map(|it| (it * 4096.0).round() / 4096.0),
+                    ),
                 };
                 let mut last = (u32::MAX, None);
                 let mut is_hit = move |hit: &Hit| {
@@ -897,10 +1067,16 @@ impl Document {
 
     /// From the top, with the generated ones.
     pub(crate) fn nodes_at(&self, point: [f32; 2]) -> impl Iterator<Item = NodeId> + '_ {
-        self.hits(point).flat_map(move |target| match target {
-            Target::Node(node) => vec![node],
-            Target::InSvg(node) => self.svg_elements_at(node, point),
-            Target::Scrollbar(id, _) => vec![self.scrollbar_owner(id)],
+        self.hits(point).flat_map(move |target| {
+            let (own, svg) = match target {
+                Target::Node(node) => (Some(node), None),
+                Target::InSvg(node) => (None, Some(node)),
+                Target::Scrollbar(id, _) => (Some(self.scrollbar_owner(id)), None),
+            };
+            own.into_iter().chain(
+                svg.into_iter()
+                    .flat_map(move |it| self.svg_elements_at(it, point)),
+            )
         })
     }
 
@@ -993,6 +1169,7 @@ impl Picture {
         self.verbs
             .iter()
             .for_each(|it| _ = writeln!(out, "Verb {it:?}"));
+        self.stops.iter().for_each(|it| _ = writeln!(out, "{it:?}"));
         out
     }
 
@@ -1069,6 +1246,8 @@ impl<'a> Painter<'a> {
             is_volatile: false,
             painted_node: 0,
             captures: 0,
+            selected: None,
+            undecorated: [0; _],
         }
     }
 
@@ -1096,6 +1275,8 @@ impl<'a> Painter<'a> {
             is_volatile: false,
             painted_node: 0,
             captures: 0,
+            selected: None,
+            undecorated: [0; _],
         }
     }
 
@@ -1245,6 +1426,8 @@ impl<'a> Painter<'a> {
         let scale = self.document.environment.scale;
         if self.svg.is_on {
             value
+        } else if scale == 1.0 || scale == 2.0 {
+            (value * scale).round() * (1.5 - scale / 2.0)
         } else {
             (value * scale).round() / scale
         }
@@ -1259,7 +1442,14 @@ impl<'a> Painter<'a> {
         )
     }
 
+    #[inline]
     pub(crate) fn enter(&mut self, target: u32) {
+        if self.current != target {
+            self.change_link(target);
+        }
+    }
+
+    fn change_link(&mut self, target: u32) {
         let (links, mut to, mut pushes) = (
             &self.out.links,
             target,
@@ -1572,11 +1762,11 @@ impl<'a> Painter<'a> {
     /// `contents` is the space of the contents of its parent.
     pub(crate) fn place(&self, id: BoxId, contents: &Space) -> Space {
         let it = &self.document.boxes[id];
-        let container = self
-            .contents
-            .get(&it.container)
-            .filter(|_| it.container != it.parent)
-            .unwrap_or(contents);
+        let container = if it.container == it.parent {
+            contents
+        } else {
+            self.contents.get(&it.container).unwrap_or(contents)
+        };
         let offset = self.document.offset_in_container(id);
         if self.document.is_fixed_to_viewport(id) {
             let visible = self.document.client_box(VIEWPORT);
@@ -1608,12 +1798,15 @@ impl<'a> Painter<'a> {
     fn content_space(&mut self, id: BoxId, space: &Space) -> Space {
         let (document, mut contents) = (self.document, *space);
         let it = &document.boxes[id];
-        let clip = document.overflow_clip(id);
-        if clip.is_none() && it.hoisted.is_empty() {
+        if it.overflow == [Overflow::Visible; 2] && it.style.is_plain() && it.hoisted.is_empty() {
             return contents;
         }
         if let Some(known) = self.contents.get(&id) {
             return *known;
+        }
+        let clip = document.overflow_clip(id);
+        if clip.is_none() && it.hoisted.is_empty() {
+            return contents;
         }
         if let Some((clip, pieces)) = clip
             .and_then(|_| document.pieces(id))
@@ -1643,14 +1836,18 @@ impl<'a> Painter<'a> {
             } else {
                 self.snap_rect(clip.moved(space.origin))
             };
-            let outline = rounded(
-                self.snap_rect(document.border_box(id).moved(space.origin)),
-                &it.style,
-            );
-            let frame = document.frame_of(id, outline.rect);
-            let follows_corners = !it.overflow.contains(&Overflow::Visible)
-                || it.style.contain().contains(Contain::PAINT);
-            if let Some(contour) = Contour::of(&it.style, &frame).filter(|_| follows_corners) {
+            let follows_corners = it.style.paints().intersects(Paints::RADII | Paints::SHAPES)
+                && (!it.overflow.contains(&Overflow::Visible)
+                    || it.style.contain().contains(Contain::PAINT));
+            let frame = follows_corners.then(|| {
+                document.frame_of(
+                    id,
+                    self.snap_rect(document.border_box(id).moved(space.origin)),
+                )
+            });
+            if let Some((frame, contour)) =
+                frame.and_then(|frame| Some((frame, Contour::of(&it.style, &frame)?)))
+            {
                 let edge = match it.style.effects.clip_margin {
                     _ if document.covers_contents(id, &contour) => Edge::Within(0.5),
                     _ if it.scrolls() && !it.is_replaced() => Edge::Inner(0.0),
@@ -1659,8 +1856,11 @@ impl<'a> Painter<'a> {
                     ClipMargin(_, margin) => Edge::Inner(-margin),
                 };
                 self.clip_inside(&contour, &frame, edge, &mut contents);
-            } else if outline.radii != Radii::default() && follows_corners {
-                self.clip(document.rounded_overflow_clip(id, outline), &mut contents);
+            } else if let Some(frame) = frame.filter(|it| it.shape.radii != Radii::default()) {
+                self.clip(
+                    document.rounded_overflow_clip(id, frame.shape),
+                    &mut contents,
+                );
             }
             let scroller = document.composited_scroller(id, space.scroller);
             if scroller.is_some() || contents.visible.intersection(&rect) != contents.visible {
@@ -1856,9 +2056,10 @@ impl<'a> Painter<'a> {
     }
 
     pub(crate) fn paint_segment(&mut self, id: BoxId, kind: Painted, space: Space) {
+        crate::recovery::need_stack();
         self.segment(id, kind, &space, |painter| match kind {
             Painted::StackingContext => painter.placed_stacking_context(id, space, false),
-            Painted::Lines => painter.lines(id, 0, &space),
+            Painted::Lines => painter.lines(id, 0, 0..0, &space),
             Painted::Inside => painter.level_layers(id, &space),
             Painted::Atomic | Painted::Positioned => {
                 painter.decorations(id, &space);
@@ -2074,6 +2275,9 @@ impl<'a> Painter<'a> {
                 bounds,
                 &outer,
             );
+            if !clips_with_mask {
+                self.note_layer(id);
+            }
             if let Some((sampled, source)) = fades.filter(|_| !self.is_hidden) {
                 let (samples, is_nested) = (
                     self.samples(sampled.opacities.iter().copied()),
@@ -2106,7 +2310,7 @@ impl<'a> Painter<'a> {
             Layers::HAS_LEVEL | Layers::HAS_RAISED,
             &mut layers,
         );
-        layers.sort_by_key(|it| it.0);
+        layers.order_by_key(|it| it.0);
         let (below, above) = layers.split_at(layers.partition_point(|it| it.0 < 0));
         self.decorations(id, &space);
         below.iter().for_each(|it| self.layer(it.1, it.2));
@@ -2394,11 +2598,11 @@ impl<'a> Painter<'a> {
                 Layers::HAS_LEVEL | Layers::HAS_RAISED,
                 &mut layers,
             );
-            layers.sort_by_key(|it| it.0);
+            layers.order_by_key(|it| it.0);
         }
         let (below, above) = layers.split_at(layers.partition_point(|it| it.0 < 0));
         below.iter().for_each(|it| self.layer(it.1, it.2));
-        self.lines(id, node, &space);
+        self.lines(id, node, 0..0, &space);
         above.iter().for_each(|it| self.layer(it.1, it.2));
         self.end_effects(&first, &effects, &pieces, &space);
         self.is_hidden = was_hidden;
@@ -2466,8 +2670,13 @@ impl<'a> Painter<'a> {
         self.resizer(id, space);
         for (id, space) in phases.outlines.iter().chain([&(id, *space)]) {
             let style = &self.document.boxes[*id].style;
-            if style.other_if_set(Id::BorderShape).is_some() {
+            if style.paints().contains(Paints::SHAPES)
+                && style.other_if_set(Id::BorderShape).is_some()
+            {
                 self.border_over_contents(*id, *space);
+            }
+            if style.outline_width() <= 0.0 {
+                continue;
             }
             match self.document.pieces(*id) {
                 Some(pieces) => pieces
@@ -2497,6 +2706,7 @@ impl<'a> Painter<'a> {
     }
 
     fn backgrounds(&mut self, id: BoxId, space: &Space, phases: &mut Phases) {
+        crate::recovery::need_stack();
         let document = self.document;
         let it = &document.boxes[id];
         let contents = self.content_space(id, space);
@@ -2527,17 +2737,37 @@ impl<'a> Painter<'a> {
                 return;
             }
         }
+        let scroll = if it.scrolls() {
+            document.scroll_offset(it.node)
+        } else {
+            [0.0; 2]
+        };
+        let is_simple = !it.has_legend && !document.has_depth.get();
         for child in it.children.iter().copied() {
-            let (own, space) = (
-                &document.boxes[child],
-                self.place(
-                    child,
-                    if it.has_legend && child == it.children[0] {
-                        space
-                    } else {
-                        &contents
-                    },
-                ),
+            let own = &document.boxes[child];
+            // What follows comes down to this for most of a long list.
+            if is_simple && own.kind != Kind::RowGroup && !own.is_in_inline {
+                if document.is_layer(child) {
+                    continue;
+                }
+                let at = [
+                    contents.origin[0] + (own.layout.location.x - scroll[0]),
+                    contents.origin[1] + (own.layout.location.y - scroll[1]),
+                ];
+                if own.container == id
+                    && !document.ink(child).moved(at).touches(&contents.visible)
+                    && !own.cache.has_escapees()
+                {
+                    continue;
+                }
+            }
+            let space = self.place(
+                child,
+                if it.has_legend && child == it.children[0] {
+                    space
+                } else {
+                    &contents
+                },
             );
             if own.kind == Kind::RowGroup {
                 let moved = |[x, y]: &[f32; 2]| Space {
@@ -2824,16 +3054,7 @@ impl<'a> Painter<'a> {
         self.painted_node = it.node;
         let shape = rounded(self.snap_rect(rect), &it.style);
         if matches!(it.kind, Kind::Row | Kind::RowGroup) {
-        } else if [
-            Id::BorderShape,
-            Id::CornerTopLeftShape,
-            Id::CornerTopRightShape,
-            Id::CornerBottomRightShape,
-            Id::CornerBottomLeftShape,
-        ]
-        .iter()
-        .all(|id| it.style.other_if_set(*id).is_none())
-        {
+        } else if !it.style.paints().contains(Paints::SHAPES) {
             self.hit(it.node, &it.style, shape, space);
         } else {
             let (frame, mut inside) = (document.frame_of(id, shape.rect), *space);
@@ -2874,6 +3095,25 @@ impl<'a> Painter<'a> {
                 drag: it.style.ink.app_region == AppRegion::Drag,
             });
             self.out.region_nodes.push(it.node);
+        }
+        let has_background = it.node != self.out.canvas_source && !document.tree.is_root(it.node);
+        if has_background && document.has_plain_decorations(id) {
+            self.note_decorations(id, space, |painter| {
+                if !it.style.is_bare() {
+                    painter.frame_and_border(
+                        &it.style,
+                        &Frame {
+                            scrolled: it.scrolls().then_some(id),
+                            ..document.frame_with(id, shape)
+                        },
+                        space,
+                    );
+                }
+            });
+            if it.children.is_empty() {
+                self.caret_in(id, space);
+            }
+            return;
         }
         let padding = it.layout.padding;
         let frame = Frame {
@@ -2985,6 +3225,37 @@ impl<'a> Painter<'a> {
         }
     }
 
+    fn frame_and_border(&mut self, style: &Style, frame: &Frame, space: &Space) {
+        self.frame(style, frame, true, space, &mut |_| {});
+        self.border(style, frame, space);
+    }
+
+    /// Whether they are plain and need nothing but items and gradient stops.
+    pub(crate) fn decorate_plainly(&mut self, id: BoxId, space: &Space) -> bool {
+        let document = self.document;
+        document.has_plain_decorations(id) && {
+            self.frame_and_border(
+                &document.boxes[id].style,
+                &document.frame_of(
+                    id,
+                    self.snap_rect(document.border_box(id).moved(space.origin)),
+                ),
+                space,
+            );
+            let out = &self.out;
+            let is_plain = out.links.len() == 1
+                && out.filters.is_empty()
+                && out.verbs.is_empty()
+                && out.bytes.is_empty();
+            if !is_plain {
+                self.enter(0);
+                self.out.links.truncate(1);
+                (self.out.filters, self.out.verbs, self.out.bytes) = Default::default();
+            }
+            is_plain
+        }
+    }
+
     /// The background of a row, a column or a group of them. The space is that of `around`, which has the cells.
     fn behind_cells(&mut self, part: BoxId, around: BoxId, space: &Space) {
         let document = self.document;
@@ -3015,9 +3286,9 @@ impl<'a> Painter<'a> {
                 .collect();
         }
         let ([from, to], is_rtl) = (whole.span(axis), document.boxes[around].style.is_rtl());
-        for (cell, rect) in cells
+        for (id, cell, rect) in cells
             .into_iter()
-            .map(|it| (&document.boxes[it], rect_of(it)))
+            .map(|it| (it, &document.boxes[it], rect_of(it)))
         {
             let start = if is_rtl {
                 rect.span(axis)[1] - 0.01
@@ -3036,7 +3307,22 @@ impl<'a> Painter<'a> {
                     scrolled: None,
                     whole,
                 };
-                self.background(style, &frame, None, space, &mut |_| {});
+                let (contour, inside) = (
+                    Contour::of(&cell.style, &document.frame_of(id, frame.shape.rect)),
+                    Space {
+                        origin: [rect.x, rect.y],
+                        ..*space
+                    },
+                );
+                self.background(
+                    style,
+                    &frame,
+                    contour
+                        .as_ref()
+                        .filter(|it| !matches!(it, Contour::Corners(..))),
+                    space,
+                    &mut |painter| painter.text_mask(id, &inside),
+                );
             }
         }
     }
@@ -3076,7 +3362,8 @@ impl<'a> Painter<'a> {
     }
 
     pub(crate) fn border(&mut self, style: &Style, frame: &Frame, space: &Space) {
-        if style.is_bare() && frame.border == [0.0; 4] {
+        if frame.border == [0.0; 4] && !style.paints().intersects(Paints::PICTURES | Paints::SHAPES)
+        {
             return;
         }
         let p = &style.paint;
@@ -3252,12 +3539,28 @@ impl<'a> Painter<'a> {
     }
 
     fn replaced(&mut self, id: BoxId, space: &Space) {
+        self.replaced_content(id, space);
+        let it = &self.document.boxes[id];
+        if let (Kind::Replaced, false, &[controls]) = (it.kind, it.is_skipped, &it.children[..]) {
+            let contents = self.content_space(id, space);
+            self.stacking_context(controls, self.place(controls, &contents));
+        }
+    }
+
+    fn replaced_content(&mut self, id: BoxId, space: &Space) {
         let document = self.document;
         let it = &document.boxes[id];
         let (style, content) = (
             &it.style,
             Rect::new(document.content_box(id)).moved(space.origin),
         );
+        if self.skips_what_is_not_selected() {
+            return if document.marks.is_selected(it.node) {
+                self.paint_selected(it.node, content, space, |painter| {
+                    painter.replaced_content(id, space)
+                })
+            };
+        }
         if let Some(image) = document
             .tree
             .element(it.node)
@@ -3474,10 +3777,9 @@ impl<'a> Painter<'a> {
     fn scrollbars(&mut self, id: BoxId, space: &Space) {
         let document = self.document;
         let it = &document.boxes[id];
-        let Some(style) = document
-            .tree
-            .style(document.scrollbar_owner(id))
-            .filter(|_| it.scrollbars != [false; 2])
+        let Some(style) = (it.scrollbars != [false; 2])
+            .then(|| document.tree.style(document.scrollbar_owner(id)))
+            .flatten()
         else {
             return;
         };
@@ -3493,6 +3795,10 @@ impl<'a> Painter<'a> {
             self.clip(outline.shrunk(it.border()), &mut space);
         }
         let (default_thumb, default_track) = match (cfg!(target_os = "macos"), style.dark) {
+            (_, is_dark) if document.environment.forces_colors => (
+                crate::color::forced(b"buttontext", is_dark),
+                crate::color::forced(b"buttonface", is_dark),
+            ),
             (true, true) => (0x6b6b_6bff, 0x2b2b_2bff),
             (true, false) => (0xc1c1_c1ff, 0xfafa_faff),
             (false, true) => (0x9f9f_9fff, 0x2c2c_2cff),

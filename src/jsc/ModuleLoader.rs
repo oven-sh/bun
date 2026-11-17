@@ -21,6 +21,8 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 #[derive(Default)]
 pub struct ModuleLoader {
     pub transpile_source_code_arena: crate::JsCell<Option<Box<ArenaAllocator>>>,
+    /// Taken while a module is printed, and put back so that the next one reuses its buffer.
+    pub source_code_printer: core::cell::Cell<Option<Box<bun_js_printer::BufferPrinter>>>,
     pub eval_source: core::cell::OnceCell<Box<bun_ast::Source<'static>>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: core::cell::Cell<Option<&'static [u8]>>,
@@ -111,8 +113,6 @@ pub struct TranspileExtra<'a> {
     /// `Cell`s so the `.wasm` re-entry can change them and recurse.
     pub loader: core::cell::Cell<bun_ast::Loader>,
     pub module_type: core::cell::Cell<bun_bundler::options::ModuleType>,
-    /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null.
-    pub source_code_printer: *mut bun_js_printer::BufferPrinter,
 }
 
 unsafe extern "Rust" {

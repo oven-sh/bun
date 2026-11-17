@@ -1,46 +1,14 @@
 // What the UI library borrows from the libraries that are linked into Bun. See src/runtime/desktop/host_abi.rs.
 #include "root.h"
+#include <wtf/DateMath.h>
 
+#include "DesktopICU.h"
 #include <brotli/decode.h>
 #include <unicode/uchar.h>
 #include <unicode/utext.h>
 #include <unicode/utf16.h>
 #include <unicode/utf8.h>
 #include <zlib.h>
-
-#if __has_include(<unicode/ubidi.h>)
-#include <unicode/ubidi.h>
-#include <unicode/ubrk.h>
-#include <unicode/unorm2.h>
-#include <unicode/uscript.h>
-#else
-// macOS: libicucore has these, under these names, and the SDK has no header for them.
-extern "C" {
-typedef struct UBiDi UBiDi;
-typedef struct UBreakIterator UBreakIterator;
-typedef struct UNormalizer2 UNormalizer2;
-typedef uint8_t UBiDiLevel;
-typedef int32_t UScriptCode;
-typedef enum { UBRK_CHARACTER = 0,
-    UBRK_LINE = 2 } UBreakIteratorType;
-constexpr UBiDiLevel UBIDI_DEFAULT_LTR = 0xfe;
-constexpr int32_t UBRK_DONE = -1;
-UBiDi* ubidi_open();
-void ubidi_close(UBiDi*);
-void ubidi_setPara(UBiDi*, const UChar* text, int32_t length, UBiDiLevel, UBiDiLevel* embeddingLevels, UErrorCode*);
-const UBiDiLevel* ubidi_getLevels(UBiDi*, UErrorCode*);
-UBiDiLevel ubidi_getParaLevel(const UBiDi*);
-UBreakIterator* ubrk_open(UBreakIteratorType, const char* locale, const UChar* text, int32_t length, UErrorCode*);
-void ubrk_close(UBreakIterator*);
-void ubrk_setUText(UBreakIterator*, UText*, UErrorCode*);
-int32_t ubrk_next(UBreakIterator*);
-const UNormalizer2* unorm2_getNFCInstance(UErrorCode*);
-int32_t unorm2_getRawDecomposition(const UNormalizer2*, UChar32, UChar* decomposition, int32_t capacity, UErrorCode*);
-UChar32 unorm2_composePair(const UNormalizer2*, UChar32, UChar32);
-UScriptCode uscript_getScript(UChar32, UErrorCode*);
-const char* uscript_getShortName(UScriptCode);
-}
-#endif
 
 extern "C" void* Bun__DesktopHost__inflateBegin()
 {
@@ -102,6 +70,11 @@ extern "C" uint32_t Bun__DesktopHost__mirror(uint32_t character)
     return u_charMirror(character);
 }
 
+extern "C" double Bun__DesktopHost__localTimeOffset(double time)
+{
+    return WTF::calculateLocalTimeOffset(time).offset;
+}
+
 extern "C" uint64_t Bun__DesktopHost__decompose(uint32_t character)
 {
     UErrorCode status = U_ZERO_ERROR;
@@ -126,7 +99,7 @@ extern "C" uint32_t Bun__DesktopHost__compose(uint32_t first, uint32_t second)
 
 extern "C" size_t Bun__DesktopHost__findBreaks(uint8_t kind, const uint8_t* text, size_t length, uint32_t* offsets)
 {
-    static constexpr std::array<std::pair<UBreakIteratorType, const char*>, 7> kinds { {
+    static constexpr std::array<std::pair<UBreakIteratorType, const char*>, 8> kinds { {
         { UBRK_CHARACTER, "en" },
         { UBRK_LINE, "en@lb=normal" },
         { UBRK_LINE, "en@lb=loose" },
@@ -134,6 +107,7 @@ extern "C" size_t Bun__DesktopHost__findBreaks(uint8_t kind, const uint8_t* text
         { UBRK_LINE, "zh@lb=normal" },
         { UBRK_LINE, "zh@lb=loose" },
         { UBRK_LINE, "zh@lb=strict" },
+        { UBRK_WORD, "en" },
     } };
     using Iterator = std::unique_ptr<UBreakIterator, decltype([](UBreakIterator* iterator) { ubrk_close(iterator); })>;
     static thread_local std::array<Iterator, kinds.size()> iterators;

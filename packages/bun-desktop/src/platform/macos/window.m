@@ -2,6 +2,7 @@
 #import "bridge.h"
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
+#import <Quartz/Quartz.h>
 #import <objc/message.h>
 
 @interface BunDesktopWindow : NSWindow
@@ -30,9 +31,10 @@ static bool isFocusable(NSWindow* window) { return ((BunDesktopView*)window.dele
 
 static NSMutableDictionary<NSNumber*, BunDesktopView*>* views;
 
-static uint8_t modifiersOf(NSEvent* event)
+static NSPasteboardType const draggedByPage = @"sh.bun.desktop.drag";
+
+static uint8_t modifiersOf(NSEventModifierFlags flags)
 {
-    NSEventModifierFlags flags = event.modifierFlags;
     return (flags & NSEventModifierFlagShift ? 1 : 0) | (flags & NSEventModifierFlagControl ? 2 : 0) | (flags & NSEventModifierFlagOption ? 4 : 0)
         | (flags & NSEventModifierFlagCommand ? 8 : 0) | (flags & NSEventModifierFlagCapsLock ? 32 : 0);
 }
@@ -56,7 +58,7 @@ static void reportKey(NSEvent* event)
             characters = event.modifierFlags & NSEventModifierFlagShift ? latin.uppercaseString : latin;
     }
     uint32_t symbol = characters.length ? lastCharacter(characters) : UINT32_MAX;
-    bd_raw_key(event.type == NSEventTypeKeyDown, event.isARepeat, event.keyCode, symbol, modifiersOf(event));
+    bd_raw_key(event.type == NSEventTypeKeyDown, event.isARepeat, event.keyCode, symbol, modifiersOf(event.modifierFlags));
 }
 
 static BDRange toRange(NSRange range)
@@ -93,6 +95,27 @@ static NSCursor* cursorAt(uint8_t index)
     return cursors[index];
 }
 
+/// AppKit does not if its loop has not run since the sheet or panel was shown.
+void giveFocusBack(NSWindow* window)
+{
+    void (^focus)(void) = ^{
+        if (NSApp.isActive && window.isVisible && !NSApp.keyWindow.isVisible)
+            [window makeKeyWindow];
+    };
+    focus();
+    whenIdle(focus);
+}
+
+static void endSheet(NSWindow* sheet)
+{
+    NSWindow* parent = sheet.sheetParent;
+    if (!parent)
+        return;
+    [parent endSheet:sheet];
+    [sheet orderOut:nil];
+    giveFocusBack(parent);
+}
+
 static void setStyle(NSWindow* window, NSWindowStyleMask bit, bool isOn)
 {
     if (!!(window.styleMask & bit) != isOn)
@@ -124,9 +147,10 @@ static bool isFullscreen(NSWindow* window) { return window.styleMask & NSWindowS
 
 @implementation BunDesktopClock {
     CVDisplayLinkRef link;
+    CGDirectDisplayID display;
     CFRunLoopSourceRef ticks;
     /// Refreshes are not worth waking up for until then.
-    _Atomic CFTimeInterval restsUntil;
+    _Atomic CFTimeInterval restsUntil, lastRefresh;
     NSHashTable<BunDesktopView*>* listeners;
 }
 
@@ -137,6 +161,7 @@ static CVReturn displayIsReady(CVDisplayLinkRef link, const CVTimeStamp* now, co
     CVOptionFlags* out, void* context)
 {
     __unsafe_unretained BunDesktopClock* clock = (__bridge BunDesktopClock*)context;
+    clock->lastRefresh = CACurrentMediaTime();
     if (CACurrentMediaTime() < clock->restsUntil)
         return kCVReturnSuccess;
     clock->restsUntil = CACurrentMediaTime() + 0.011;
@@ -162,6 +187,7 @@ static void tickAll(void* clock)
     BunDesktopClock* clock = [BunDesktopClock new];
     if (CVDisplayLinkCreateWithCGDisplay(display.unsignedIntValue, &clock->link))
         return nil;
+    clock->display = display.unsignedIntValue;
     clock->listeners = NSHashTable.weakObjectsHashTable;
     CFRunLoopSourceContext context = { .info = (__bridge void*)clock, .perform = tickAll };
     clock->ticks = CFRunLoopSourceCreate(NULL, 1, &context);
@@ -173,10 +199,21 @@ static void tickAll(void* clock)
 
 - (void)hurry { restsUntil = 0; }
 
+/// A display that has slept or was set up again may no longer call.
+- (bool)hasStalled { return CACurrentMediaTime() - lastRefresh > 0.25 && CVDisplayLinkIsRunning(link); }
+
 - (bool)add:(BunDesktopView*)view
 {
     [listeners addObject:view];
-    return CVDisplayLinkIsRunning(link) || !CVDisplayLinkStart(link);
+    if (self.hasStalled) {
+        bd_trace("the display has stopped calling", CACurrentMediaTime() - lastRefresh);
+        CVDisplayLinkStop(link);
+        CVDisplayLinkSetCurrentCGDisplay(link, display);
+    }
+    if (CVDisplayLinkIsRunning(link))
+        return true;
+    lastRefresh = CACurrentMediaTime();
+    return !CVDisplayLinkStart(link);
 }
 
 - (void)remove:(BunDesktopView*)view
@@ -195,9 +232,11 @@ static void tickAll(void* clock)
     NSWindow* owned;
     NSVisualEffectView* effect;
     NSView* imitation;
-    NSString* background;
-    NSNumber* backgroundColor;
-    NSArray* trafficLights;
+    BDBackground background;
+    BDMaybeu32 backgroundColor;
+    /// What the window had when a background was asked for. An addon may have changed it since, to put a color behind glass.
+    NSColor* claimedColor;
+    BDMaybePoint trafficLights;
     bool ownsTitleBar, opensFullscreen, isClosing, isFullscreenable, isVisibleOnFullscreen;
     bool isChangingSpace, hadHiddenButtons;
     void (^afterChangingSpace)(void);
@@ -206,47 +245,60 @@ static void tickAll(void* clock)
 
     BunDesktopClock* clock;
     bool wantsFrame, isAwake, wasSeen, wasVisible;
+    CFTimeInterval lastScroll;
     int idleTicks;
     CFTimeInterval lastFrame;
 
     NSCursor* cursor;
     NSEvent* lastPress;
-    bool hasMouse;
+    float aspectRatio;
+    BDSize beyondAspectRatio;
+    NSInteger attention;
+    NSURL* previewed;
+    NSString* previewTitle;
+    bool hasMouse, isPressed;
+    /// What the page has begun.
+    bool isDragging, isDragInside, wasDropped;
+    NSDragOperation allowedElsewhere;
 
     NSEvent *sentEquivalent, *lastKey;
     bool hasCommitted;
     bool isInKeyDown, keyIsPending, wasComposing, isComposing, ignoresInputMethod, hadTextInput;
 
-    BunDesktopTree* tree;
 }
 
-+ (BunDesktopView*)withNumber:(id)identifier { return number(identifier) ? views[identifier] : nil; }
++ (BunDesktopView*)withNumber:(uint32_t)number { return views[@(number)]; }
 
-- (instancetype)initWithOptions:(NSDictionary*)options
+- (instancetype)initWithOptions:(const BDWindowOptions*)options
 {
     traceLaunch("a window is wanted");
-    NSRect content = NSMakeRect(0, 0, [options[@"width"] doubleValue], [options[@"height"] doubleValue]);
+    NSRect content = NSMakeRect(0, 0, options->width, options->height);
     self = [super initWithFrame:content];
-    _number = [options[@"id"] unsignedIntValue];
+    _number = options->id;
     _isFocusable = true;
     cursor = NSCursor.arrowCursor;
-    bool hasFrame = isTrue(options[@"frame"]), floats = [@[ @"popup", @"floating" ] containsObject:options[@"kind"]];
-    ownsTitleBar = !hasFrame || isTrue(options[@"hiddenTitleBar"]);
-    opensFullscreen = isTrue(options[@"fullscreen"]);
-    trafficLights = list(options[@"trafficLightPosition"]);
+    bool hasFrame = options->frame, floats = options->kind == BDWindowKindPopup || options->kind == BDWindowKindFloating;
+    ownsTitleBar = !hasFrame || options->hiddenTitleBar;
+    opensFullscreen = options->fullscreen;
+    trafficLights = options->trafficLightPosition;
     NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-        | (isTrue(options[@"minimizable"]) ? NSWindowStyleMaskMiniaturizable : 0) | (isTrue(options[@"resizable"]) ? NSWindowStyleMaskResizable : 0)
+        | (options->minimizable ? NSWindowStyleMaskMiniaturizable : 0) | (options->resizable ? NSWindowStyleMaskResizable : 0)
         | (ownsTitleBar ? NSWindowStyleMaskFullSizeContentView : 0) | (floats ? NSWindowStyleMaskNonactivatingPanel : 0);
     Class class = floats ? BunDesktopPanel.class : BunDesktopWindow.class;
     NSWindow* window = owned = [[class alloc] initWithContentRect:content styleMask:style backing:NSBackingStoreBuffered defer:NO];
     window.releasedWhenClosed = NO;
     window.restorable = NO;
     window.hidesOnDeactivate = NO;
-    window.tabbingMode = NSWindowTabbingModeDisallowed;
+    if (stringIfAny(options->tabbingIdentifier)) {
+        NSWindow.allowsAutomaticWindowTabbing = YES;
+        window.tabbingIdentifier = string(options->tabbingIdentifier);
+    } else
+        window.tabbingMode = NSWindowTabbingModeDisallowed;
     window.animationBehavior = NSWindowAnimationBehaviorNone;
-    window.title = text(options[@"title"]) ?: @"";
-    window.movable = isTrue(options[@"movable"]);
-    window.contentMinSize = NSMakeSize([options[@"minWidth"] doubleValue], [options[@"minHeight"] doubleValue]);
+    window.title = string(options->title);
+    window.movable = options->movable;
+    window.minSize = NSMakeSize(options->minWidth, options->minHeight);
+    [window setFrame:content display:NO];
     if (ownsTitleBar) {
         window.titlebarAppearsTransparent = YES;
         window.titleVisibility = NSWindowTitleHidden;
@@ -254,11 +306,11 @@ static void tickAll(void* clock)
     for (NSButton* button in buttonsOf(window))
         button.hidden = !hasFrame;
     if (floats) {
-        window.level = [options[@"kind"] isEqual:@"popup"] ? NSPopUpMenuWindowLevel : NSFloatingWindowLevel;
+        window.level = options->kind == BDWindowKindPopup ? NSPopUpMenuWindowLevel : NSFloatingWindowLevel;
         window.animationBehavior = NSWindowAnimationBehaviorUtilityWindow;
         window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
     }
-    [window setFrameTopLeftPoint:NSMakePoint(number(options[@"x"]).doubleValue, primaryHeight() - number(options[@"y"]).doubleValue)];
+    [window setFrameTopLeftPoint:NSMakePoint(options->x.has ? options->x.value : 0, primaryHeight() - (options->y.has ? options->y.value : 0))];
 
     self.frame = window.contentView.bounds;
     self.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -270,11 +322,11 @@ static void tickAll(void* clock)
     [window makeFirstResponder:self];
     NSTrackingAreaOptions tracking = NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect;
     [self addTrackingArea:[[NSTrackingArea alloc] initWithRect:NSZeroRect options:tracking owner:self userInfo:nil]];
-    [self registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
-    background = options[@"background"];
-    backgroundColor = number(options[@"backgroundColor"]);
+    [self registerForDraggedTypes:@[ NSPasteboardTypeFileURL, draggedByPage ]];
+    background = options->background;
+    backgroundColor = options->backgroundColor;
     [self paintBackground];
-    if (isTrue(options[@"maximized"]))
+    if (options->maximized)
         [window zoom:nil];
     _frequency = window.screen.maximumFramesPerSecond;
     [self placeTrafficLights];
@@ -290,8 +342,10 @@ static void tickAll(void* clock)
     isClosing = true;
     [self stopLinkForGood];
     views[@(_number)] = nil;
-    NSWindow *window = owned, *parent = window.sheetParent;
+    NSWindow* window = owned;
     owned = nil;
+    _isFocusable = false;
+    endSheet(window);
     if (window.attachedSheet)
         [window endSheet:window.attachedSheet];
     // AppKit may be in the middle of telling it something.
@@ -302,24 +356,23 @@ static void tickAll(void* clock)
     whenIdle(^{
         [self unlessChangingSpace:^{
             [window close];
-            if (parent.isVisible && NSApp.isActive && !NSApp.keyWindow)
-                [parent makeKeyWindow];
             window.delegate = nil;
             [self removeFromSuperview];
         }];
     });
 }
 
-- (void)report:(BDWindowEvent)event
+- (void)report:(BDReport)event
 {
     if (!isClosing)
         bd_window_event(_number, event);
 }
 
-- (void)emit:(NSString*)event value:(id)value
+#define event(...) ((BDWindowEvent) { __VA_ARGS__ })
+- (void)send:(BDWindowEvent)event
 {
     if (!isClosing)
-        emit(@{ @"t" : @"window", @"w" : @(_number), @"e" : event, @"v" : value });
+        bd_emit_to_window(_number, &event);
 }
 
 - (bool)isMaximized
@@ -380,21 +433,41 @@ static void describe(NSView* view, NSView* root, NSMutableArray* parts)
     return parts;
 }
 
-- (void)imitateBackdrop:(NSArray<NSArray<NSNumber*>*>*)parts
+/// What it stands for does not have quite its color.
+- (void)fadeImitation
 {
-    [imitation removeFromSuperview];
+    NSView* old = imitation;
     imitation = nil;
-    if (!parts.count)
+    if (!old)
+        return;
+    for (NSView* part in old.subviews)
+        if ([part isKindOfClass:NSVisualEffectView.class])
+            return [old removeFromSuperview];
+    CABasicAnimation* fading = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    fading.fromValue = @1;
+    fading.toValue = @0;
+    fading.duration = 0.12;
+    fading.fillMode = kCAFillModeForwards;
+    fading.removedOnCompletion = NO;
+    [old.layer addAnimation:fading forKey:nil];
+    [old performSelector:@selector(removeFromSuperview) withObject:nil afterDelay:0.2 inModes:@[ NSRunLoopCommonModes ]];
+}
+
+- (void)imitateBackdrop:(const BDBackdropPart*)parts count:(size_t)count
+{
+    [self fadeImitation];
+    if (!count)
         return;
     imitation = [[NSView alloc] initWithFrame:self.frame];
+    imitation.wantsLayer = YES;
     bool blurs = false;
-    for (NSArray<NSNumber*>* part in parts) {
-        NSRect frame = NSMakeRect(part[0].doubleValue, part[1].doubleValue, part[2].doubleValue, part[3].doubleValue);
-        if (part.count > 4) {
+    for (const BDBackdropPart* part = parts; part < parts + count; part++) {
+        const double *edges = part->frame.at, *color = part->color.value.at;
+        NSRect frame = NSMakeRect(edges[0], edges[1], edges[2], edges[3]);
+        if (part->color.has) {
             NSView* view = [[NSView alloc] initWithFrame:frame];
             view.wantsLayer = YES;
-            view.layer.backgroundColor =
-                [NSColor colorWithSRGBRed:part[4].doubleValue green:part[5].doubleValue blue:part[6].doubleValue alpha:part[7].doubleValue].CGColor;
+            view.layer.backgroundColor = [NSColor colorWithSRGBRed:color[0] green:color[1] blue:color[2] alpha:color[3]].CGColor;
             [imitation addSubview:view];
         } else if (!blurs) {
             blurs = true;
@@ -478,22 +551,27 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     }
 }
 
+- (void)claimBackground { claimedColor = owned.backgroundColor; }
+
 - (void)paintBackground
 {
-    bool isOpaque = [background isEqual:@"opaque"];
-    uint32_t color = backgroundColor.unsignedIntValue;
-    owned.opaque = isOpaque;
-    // The blur hides it, and the shadow of a clear window is computed again for every frame.
-    if ([background hasPrefix:@"blurred:"])
-        owned.backgroundColor = NSColor.windowBackgroundColor;
-    else if (!isOpaque)
-        owned.backgroundColor = NSColor.clearColor;
-    else if (backgroundColor)
-        owned.backgroundColor = [NSColor colorWithSRGBRed:(color >> 24) / 255. green:(color >> 16 & 255) / 255. blue:(color >> 8 & 255) / 255. alpha:(color & 255) / 255.];
-    else
-        owned.backgroundColor = NSColor.windowBackgroundColor;
-    NSArray* parts = [background componentsSeparatedByString:@":"];
-    if (parts.count != 3) {
+    bool isOpaque = background.tag == BDBackgroundOpaque;
+    uint32_t color = backgroundColor.value;
+    if (!claimedColor || [claimedColor isEqual:owned.backgroundColor]) {
+        owned.opaque = isOpaque;
+        // The blur hides it, and the shadow of a clear window is computed again for every frame.
+        if (background.tag == BDBackgroundBlurred)
+            owned.backgroundColor = NSColor.windowBackgroundColor;
+        else if (!isOpaque)
+            owned.backgroundColor = NSColor.clearColor;
+        else if (backgroundColor.has)
+            owned.backgroundColor = [NSColor colorWithSRGBRed:(color >> 24) / 255. green:(color >> 16 & 255) / 255. blue:(color >> 8 & 255) / 255. alpha:(color & 255) / 255.];
+        else
+            owned.backgroundColor = NSColor.windowBackgroundColor;
+        [self claimBackground];
+    } else
+        bd_trace("the color of the window is left alone", 0);
+    if (background.tag != BDBackgroundBlurred) {
         [effect removeFromSuperview];
         effect = nil;
         return;
@@ -504,28 +582,30 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         effect.blendingMode = NSVisualEffectBlendingModeBehindWindow;
         [owned.contentView addSubview:effect positioned:NSWindowBelow relativeTo:nil];
     }
-    NSNumber* material = @{
-        @"titlebar" : @(NSVisualEffectMaterialTitlebar), @"selection" : @(NSVisualEffectMaterialSelection),
-        @"menu" : @(NSVisualEffectMaterialMenu), @"popover" : @(NSVisualEffectMaterialPopover),
-        @"sidebar" : @(NSVisualEffectMaterialSidebar), @"header" : @(NSVisualEffectMaterialHeaderView),
-        @"sheet" : @(NSVisualEffectMaterialSheet), @"window" : @(NSVisualEffectMaterialWindowBackground),
-        @"hud" : @(NSVisualEffectMaterialHUDWindow), @"fullscreen-ui" : @(NSVisualEffectMaterialFullScreenUI),
-        @"tooltip" : @(NSVisualEffectMaterialToolTip), @"content" : @(NSVisualEffectMaterialContentBackground),
-        @"under-page" : @(NSVisualEffectMaterialUnderPageBackground),
-    }[parts[1]];
-    effect.material = material ? material.integerValue : NSVisualEffectMaterialUnderWindowBackground;
-    effect.state = [parts[2] isEqual:@"active"] ? NSVisualEffectStateActive
-        : [parts[2] isEqual:@"inactive"]        ? NSVisualEffectStateInactive
-                                                : NSVisualEffectStateFollowsWindowActiveState;
+    static const NSVisualEffectMaterial materials[] = {
+        [BDMaterialUnderWindow] = NSVisualEffectMaterialUnderWindowBackground, [BDMaterialTitlebar] = NSVisualEffectMaterialTitlebar,
+        [BDMaterialSelection] = NSVisualEffectMaterialSelection, [BDMaterialMenu] = NSVisualEffectMaterialMenu,
+        [BDMaterialPopover] = NSVisualEffectMaterialPopover, [BDMaterialSidebar] = NSVisualEffectMaterialSidebar,
+        [BDMaterialHeader] = NSVisualEffectMaterialHeaderView, [BDMaterialSheet] = NSVisualEffectMaterialSheet,
+        [BDMaterialWindow] = NSVisualEffectMaterialWindowBackground, [BDMaterialHud] = NSVisualEffectMaterialHUDWindow,
+        [BDMaterialFullscreenUi] = NSVisualEffectMaterialFullScreenUI, [BDMaterialTooltip] = NSVisualEffectMaterialToolTip,
+        [BDMaterialContent] = NSVisualEffectMaterialContentBackground, [BDMaterialUnderPage] = NSVisualEffectMaterialUnderPageBackground,
+    };
+    static const NSVisualEffectState states[] = {
+        [BDEffectStateFollowsWindow] = NSVisualEffectStateFollowsWindowActiveState, [BDEffectStateActive] = NSVisualEffectStateActive,
+        [BDEffectStateInactive] = NSVisualEffectStateInactive,
+    };
+    effect.material = materials[background.blurred.material];
+    effect.state = states[background.blurred.state];
 }
 
 /// AppKit puts them back whenever it lays out the title bar.
 - (void)placeTrafficLights
 {
     NSArray<NSButton*>* buttons = buttonsOf(owned);
-    if (!trafficLights || !buttons || isFullscreen(owned))
+    if (!trafficLights.has || !buttons || isFullscreen(owned))
         return;
-    CGFloat x = [trafficLights[0] doubleValue], y = [trafficLights[1] doubleValue];
+    CGFloat x = trafficLights.value.x, y = trafficLights.value.y;
     CGFloat step = NSMinX(buttons[1].frame) - NSMinX(buttons[0].frame), height = buttons[0].frame.size.height + 2 * y;
     NSView* bar = buttons[0].superview.superview;
     bar.frame = NSMakeRect(0, bar.superview.bounds.size.height - height, bar.frame.size.width, height);
@@ -587,6 +667,8 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     wantsFrame = true;
     if (!isLeisurely)
         [clock hurry];
+    if (isAwake && clock.hasStalled)
+        [self startLink];
     if (isAwake)
         return;
     isAwake = true;
@@ -595,7 +677,11 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
             return;
         if (CACurrentMediaTime() - self->lastFrame < 0.03 || !self.needsFrames)
             return [self startLink];
-        self->isAwake = false;
+        // The next frame follows, and the link takes its time to start.
+        if (CACurrentMediaTime() - self->lastScroll < 0.03)
+            [self startLink];
+        else
+            self->isAwake = false;
         [self tick:nil];
     });
 }
@@ -640,14 +726,34 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 - (void)windowDidBecomeKey:(NSNotification*)notification
 {
     [self placeTrafficLights];
+    updateSecureInput();
     [self report:BDActivated];
 }
 
 - (void)windowDidResignKey:(NSNotification*)notification
 {
     [self placeTrafficLights];
+    updateSecureInput();
     [self report:BDDeactivated];
 }
+
+- (NSSize)windowWillResize:(NSWindow*)window toSize:(NSSize)size
+{
+    if (aspectRatio <= 0)
+        return size;
+    CGFloat width = beyondAspectRatio.width, height = beyondAspectRatio.height + window.frame.size.height - self.bounds.size.height;
+    return NSMakeSize(round((size.height - height) * aspectRatio + width), size.height);
+}
+
+- (void)newWindowForTab:(id)sender { [self send:event(BDWindowEventNewTab)]; }
+
+- (BOOL)acceptsPreviewPanelControl:(QLPreviewPanel*)panel { return previewed != nil; }
+- (void)beginPreviewPanelControl:(QLPreviewPanel*)panel { panel.dataSource = (id)self; }
+- (void)endPreviewPanelControl:(QLPreviewPanel*)panel { panel.dataSource = nil; }
+- (NSInteger)numberOfPreviewItemsInPreviewPanel:(QLPreviewPanel*)panel { return 1; }
+- (id)previewPanel:(QLPreviewPanel*)panel previewItemAtIndex:(NSInteger)index { return self; }
+- (NSURL*)previewItemURL { return previewed; }
+- (NSString*)previewItemTitle { return previewTitle; }
 
 - (void)windowDidBecomeMain:(NSNotification*)notification { [self placeTrafficLights]; }
 - (void)windowDidResignMain:(NSNotification*)notification { [self placeTrafficLights]; }
@@ -664,7 +770,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 /// They would jump.
 - (void)setTrafficLightsHidden:(bool)isHidden
 {
-    if (trafficLights)
+    if (trafficLights.has)
         buttonsOf(owned).firstObject.superview.superview.hidden = isHidden;
     [self placeTrafficLights];
 }
@@ -708,7 +814,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 {
     [self didChangeSpace];
     [self report:BDMoved];
-    [self emit:@"fullscreen" value:@YES];
+    [self send:event(BDWindowEventFullscreen, .fullscreen = true)];
 }
 
 - (void)windowDidExitFullScreen:(NSNotification*)notification
@@ -716,25 +822,25 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     [self didChangeSpace];
     [self setTrafficLightsHidden:false];
     [self report:BDMoved];
-    [self emit:@"fullscreen" value:@NO];
+    [self send:event(BDWindowEventFullscreen, .fullscreen = false)];
 }
 
 
 - (void)windowDidMiniaturize:(NSNotification*)notification
 {
-    [self emit:@"minimized" value:@YES];
+    [self send:event(BDWindowEventMinimized, .minimized = true)];
     [self visibilityMayHaveChanged];
 }
 
 - (void)windowDidDeminiaturize:(NSNotification*)notification
 {
-    [self emit:@"minimized" value:@NO];
+    [self send:event(BDWindowEventMinimized, .minimized = false)];
     [self visibilityMayHaveChanged];
 }
 
-- (void)windowWillStartLiveResize:(NSNotification*)notification { [self emit:@"resizing" value:@YES]; }
-- (void)windowDidEndLiveResize:(NSNotification*)notification { [self emit:@"resizing" value:@NO]; }
-- (void)windowWillMove:(NSNotification*)notification { [self emit:@"moving" value:@YES]; }
+- (void)windowWillStartLiveResize:(NSNotification*)notification { [self send:event(BDWindowEventResizing, .resizing = true)]; }
+- (void)windowDidEndLiveResize:(NSNotification*)notification { [self send:event(BDWindowEventResizing, .resizing = false)]; }
+- (void)windowWillMove:(NSNotification*)notification { [self send:event(BDWindowEventMoving)]; }
 
 - (void)viewDidChangeEffectiveAppearance
 {
@@ -781,142 +887,183 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     [owned makeFirstResponder:self];
 }
 
-- (void)setStyle:(NSDictionary*)style
+- (void)setStyle:(const BDWindowStyle*)style
 {
     NSWindow* window = owned;
-    void (^flag)(NSString*, void (^)(bool)) = ^(NSString* key, void (^set)(bool)) {
-        if (number(style[key]))
-            set([style[key] boolValue]);
-    };
     __block NSWindowCollectionBehavior behavior = window.collectionBehavior;
     void (^behave)(NSWindowCollectionBehavior, bool) = ^(NSWindowCollectionBehavior bit, bool isOn) {
         behavior = isOn ? behavior | bit : behavior & ~bit;
     };
-    flag(@"shadow", ^(bool isOn) { window.hasShadow = isOn; });
-    flag(@"movable", ^(bool isOn) { window.movable = isOn; });
-    flag(@"focusable", ^(bool isOn) { self.isFocusable = isOn; });
-    flag(@"closable", ^(bool isOn) { setStyle(window, NSWindowStyleMaskClosable, isOn); });
-    flag(@"minimizable", ^(bool isOn) { setStyle(window, NSWindowStyleMaskMiniaturizable, isOn); });
-    flag(@"buttons", ^(bool isOn) { [buttonsOf(window) setValue:@(!isOn) forKey:@"hidden"]; });
-    if (isFalse(style[@"roundedCorners"])) {
+#define with(name) for (bool isOn = style->name.value, once = style->name.has; once; once = false)
+    with(shadow) window.hasShadow = isOn;
+    with(movable) window.movable = isOn;
+    with(focusable) self.isFocusable = isOn;
+    with(closable) setStyle(window, NSWindowStyleMaskClosable, isOn);
+    with(minimizable) setStyle(window, NSWindowStyleMaskMiniaturizable, isOn);
+    with(buttons) [buttonsOf(window) setValue:@(!isOn) forKey:@"hidden"];
+    with(roundedCorners) if (!isOn) {
         setStyle(window, NSWindowStyleMaskTitled, false);
         [window makeFirstResponder:self];
     }
-    flag(@"fullScreenable", ^(bool isOn) { self->isFullscreenable = isOn; });
-    flag(@"visibleOnFullScreen", ^(bool isOn) { self->isVisibleOnFullscreen = isOn; });
-    if (style[@"fullScreenable"] || style[@"visibleOnFullScreen"]) {
+    with(fullScreenable) isFullscreenable = isOn;
+    with(visibleOnFullScreen) isVisibleOnFullscreen = isOn;
+    if (style->fullScreenable.has || style->visibleOnFullScreen.has) {
         behave(NSWindowCollectionBehaviorFullScreenPrimary, isFullscreenable && !isVisibleOnFullscreen);
         behave(NSWindowCollectionBehaviorFullScreenAuxiliary, !isFullscreenable || isVisibleOnFullscreen);
     }
-    flag(@"hiddenInMissionControl", ^(bool isOn) {
+    with(hiddenInMissionControl) {
         behave(NSWindowCollectionBehaviorManaged | NSWindowCollectionBehaviorStationary, false);
         behave(NSWindowCollectionBehaviorTransient, isOn);
-    });
+    }
     window.collectionBehavior = behavior;
-    flag(@"zoomable", ^(bool isOn) { [window standardWindowButton:NSWindowZoomButton].enabled = isOn; });
-    if (number(style[@"level"]))
-        window.level = [style[@"level"] integerValue];
+    with(isInWindowMenu) window.excludedFromWindowsMenu = !isOn;
+    with(zoomable) [window standardWindowButton:NSWindowZoomButton].enabled = isOn;
+    if (style->level.has)
+        window.level = style->level.value;
 }
 
-- (id)command:(NSString*)name value:(id)value other:(NSWindow*)other
+- (void)setFullscreen:(bool)isOn
 {
     NSWindow* window = owned;
-    bool isOn = isTrue(value);
-    double (^at)(id, int) = ^(id values, int index) {
-        return number(member(values, @(index))).doubleValue;
-    };
-#define is(command) [name isEqual:@command]
-    if (is("isMinimized"))
-        return window.isMiniaturized ? @YES : @NO;
-    if (is("windowNumber"))
-        return @(window.windowNumber);
-    if (is("describeBackdrop"))
-        return self.describeBackdrop;
-    if (is("imitateBackdrop"))
-        [self imitateBackdrop:list(value)];
-    else if (is("title"))
-        window.title = text(value) ?: @"";
-    else if (is("background") || is("backgroundColor")) {
-        background = is("background") ? value : background;
-        backgroundColor = is("background") ? backgroundColor : number(value);
+    opensFullscreen = isOn && !window.isVisible;
+    if (!opensFullscreen)
+        [self unlessChangingSpace:^{
+            if (isFullscreen(window) != isOn)
+                [window toggleFullScreen:nil];
+        }];
+}
+
+- (void)lookUp:(NSString*)words
+{
+    NSPoint mouse = owned.mouseLocationOutsideOfEventStream;
+    whenIdle(^{
+        [self showDefinitionForAttributedString:[[NSAttributedString alloc] initWithString:words] atPoint:mouse];
+    });
+}
+
+- (void)execute:(const BDWindowCommand*)command
+{
+    NSWindow* window = owned;
+    switch (command->tag) {
+    case BDWindowCommandDestroy:
+    case BDWindowCommandShow:
+    case BDWindowCommandHide:
+    case BDWindowCommandSkipTaskbar: break;
+    case BDWindowCommandTitle: window.title = string(command->title); break;
+    case BDWindowCommandBackground:
+        background = command->background;
         [self paintBackground];
-    } else if (is("size"))
-        window.contentSize = NSMakeSize(at(value, 0), at(value, 1));
-    else if (is("position"))
-        window.frameTopLeftPoint = NSMakePoint(at(value, 0), primaryHeight() - at(value, 1));
-    else if (is("bounds")) {
-        NSRect frame = [window frameRectForContentRect:NSMakeRect(0, 0, at(value, 2), at(value, 3))];
-        frame.origin = NSMakePoint(at(value, 0), primaryHeight() - at(value, 1) - frame.size.height);
-        [window setFrame:frame display:YES animate:isTrue(member(value, @4))];
-    } else if (is("limits")) {
-        window.contentMinSize = NSMakeSize(at(value[@"min"], 0), at(value[@"min"], 1));
-        window.contentMaxSize = list(value[@"max"]) ? NSMakeSize(at(value[@"max"], 0), at(value[@"max"], 1)) : NSMakeSize(FLT_MAX, FLT_MAX);
-        setStyle(window, NSWindowStyleMaskResizable, isTrue(value[@"resizable"]));
-    } else if (is("style"))
-        [self setStyle:value];
-    else if (is("moveTop"))
-        [window orderFrontRegardless];
-    else if (is("focus")) {
+        break;
+    case BDWindowCommandBackgroundColor:
+        backgroundColor = command->backgroundColor;
+        [self paintBackground];
+        break;
+    case BDWindowCommandSize: {
+        NSRect frame = window.frame;
+        [window setFrame:NSMakeRect(frame.origin.x, NSMaxY(frame) - command->size.height, command->size.width, command->size.height) display:YES];
+        break;
+    }
+    case BDWindowCommandPosition: window.frameTopLeftPoint = NSMakePoint(command->position.x, primaryHeight() - command->position.y); break;
+    case BDWindowCommandBounds: {
+        BDRect bounds = command->bounds.bounds;
+        NSRect frame = NSMakeRect(bounds.x, primaryHeight() - bounds.y - bounds.height, bounds.width, bounds.height);
+        [window setFrame:frame display:YES animate:command->bounds.animates];
+        break;
+    }
+    case BDWindowCommandLimits: {
+        BDSize min = command->limits.min, max = command->limits.max.has ? command->limits.max.value : (BDSize) { FLT_MAX, FLT_MAX };
+        window.minSize = NSMakeSize(min.width, min.height);
+        window.maxSize = NSMakeSize(max.width, max.height);
+        setStyle(window, NSWindowStyleMaskResizable, command->limits.isResizable);
+        break;
+    }
+    case BDWindowCommandStyle: [self setStyle:&command->style]; break;
+    case BDWindowCommandMoveTop: [window orderFrontRegardless]; break;
+    case BDWindowCommandFocus:
         activateFor(window, false);
         [window makeKeyAndOrderFront:nil];
-    } else if (is("sheet")) {
-        activateFor(other, true);
-        [other beginSheet:window completionHandler:nil];
+        break;
+    case BDWindowCommandShowAsSheet: {
+        NSWindow* parent = views[@(command->showAsSheet)].window;
+        activateFor(parent, true);
+        [parent beginSheet:window completionHandler:nil];
         [self visibilityMayHaveChanged];
-    } else if (is("parent")) {
-        [window.sheetParent endSheet:window];
+        break;
+    }
+    case BDWindowCommandParent:
+        endSheet(window);
         [window.parentWindow removeChildWindow:window];
-        if (window.isVisible)
-            [other addChildWindow:window ordered:NSWindowAbove];
-    } else if (is("minimize"))
+        if (window.isVisible && command->parent.has)
+            [views[@(command->parent.value)].window addChildWindow:window ordered:NSWindowAbove];
+        break;
+    case BDWindowCommandMinimize: {
         [self unlessChangingSpace:^{
             [window miniaturize:nil];
         }];
-    else if (is("restore"))
-        [window deminiaturize:nil];
-    else if (is("maximize")) {
-        if (self.isMaximized != isOn)
+        break;
+    }
+    case BDWindowCommandRestore: [window deminiaturize:nil]; break;
+    case BDWindowCommandMaximize:
+        if (self.isMaximized != command->maximize)
             [window zoom:nil];
-    } else if (is("fullscreen")) {
-        opensFullscreen = isOn && !window.isVisible;
-        if (!opensFullscreen)
-            [self unlessChangingSpace:^{
-                if (isFullscreen(window) != isOn)
-                    [window toggleFullScreen:nil];
-            }];
-    } else if (is("simpleFullscreen"))
-        [self setSimpleFullscreen:isOn];
-    else if (is("alwaysOnTop"))
-        window.level = isOn ? NSFloatingWindowLevel : NSNormalWindowLevel;
-    else if (is("allWorkspaces"))
-        window.collectionBehavior = (window.collectionBehavior & ~NSWindowCollectionBehaviorCanJoinAllSpaces) | (isOn ? NSWindowCollectionBehaviorCanJoinAllSpaces : 0);
-    else if (is("contentProtection"))
-        window.sharingType = isOn ? NSWindowSharingNone : NSWindowSharingReadOnly;
-    else if (is("opacity"))
-        window.alphaValue = fmax(0, fmin(number(value).doubleValue, 1));
-    else if (is("ignoreMouseEvents"))
-        window.ignoresMouseEvents = isOn;
-    else if (is("attention")) {
-        if (!window.isKeyWindow)
-            [NSApp requestUserAttention:NSInformationalRequest];
-    } else if (is("beep"))
-        NSBeep();
-    else if (is("edited"))
-        window.documentEdited = isOn;
-    else if (is("representedFilename"))
-        window.representedFilename = text(value) ?: @"";
-    else if (is("trafficLightPosition"))
-        trafficLights = list(value);
-    else if (is("characterPalette"))
-        [NSApp orderFrontCharacterPalette:nil];
-    else if (is("lookUp")) {
-        NSPoint mouse = window.mouseLocationOutsideOfEventStream;
-        whenIdle(^{
-            [self showDefinitionForAttributedString:[[NSAttributedString alloc] initWithString:text(value) ?: @""] atPoint:mouse];
-        });
+        break;
+    case BDWindowCommandFullscreen: [self setFullscreen:command->fullscreen]; break;
+    case BDWindowCommandSimpleFullscreen: [self setSimpleFullscreen:command->simpleFullscreen]; break;
+    case BDWindowCommandAlwaysOnTop: window.level = command->alwaysOnTop ? NSFloatingWindowLevel : NSNormalWindowLevel; break;
+    case BDWindowCommandAllWorkspaces:
+        window.collectionBehavior = (window.collectionBehavior & ~NSWindowCollectionBehaviorCanJoinAllSpaces)
+            | (command->allWorkspaces ? NSWindowCollectionBehaviorCanJoinAllSpaces : 0);
+        break;
+    case BDWindowCommandContentProtection: window.sharingType = command->contentProtection ? NSWindowSharingNone : NSWindowSharingReadOnly; break;
+    case BDWindowCommandOpacity: window.alphaValue = fmax(0, fmin(command->opacity, 1)); break;
+    case BDWindowCommandIgnoreMouseEvents: window.ignoresMouseEvents = command->ignoreMouseEvents; break;
+    case BDWindowCommandAttention:
+        [NSApp cancelUserAttentionRequest:attention];
+        attention = command->attention && !window.isKeyWindow ? [NSApp requestUserAttention:NSCriticalRequest] : 0;
+        break;
+    case BDWindowCommandBlur:
+        if (window.isVisible) {
+            [window orderOut:nil];
+            [window orderBack:nil];
+        }
+        break;
+    case BDWindowCommandMoveAbove: [window orderWindow:NSWindowAbove relativeTo:command->moveAbove]; break;
+    case BDWindowCommandAspectRatio:
+        aspectRatio = command->aspectRatio.ratio;
+        beyondAspectRatio = command->aspectRatio.extra;
+        if (aspectRatio > 0)
+            window.contentAspectRatio = NSMakeSize(aspectRatio, 1);
+        else
+            window.resizeIncrements = NSMakeSize(1, 1);
+        break;
+    case BDWindowCommandInvalidateShadow: [window invalidateShadow]; break;
+    case BDWindowCommandTabAction: [NSApp sendAction:NSSelectorFromString(string(command->tabAction)) to:window from:nil]; break;
+    case BDWindowCommandAddTab: {
+        NSWindow* tab = views[@(command->addTab)].window;
+        if (tab)
+            [window addTabbedWindow:tab ordered:NSWindowAbove];
+        break;
+    }
+    case BDWindowCommandPreview: {
+        previewed = [NSURL fileURLWithPath:string(command->preview.path)];
+        previewTitle = string(command->preview.name);
+        QLPreviewPanel* panel = [classIn(@"Quartz", @"QLPreviewPanel") sharedPreviewPanel];
+        [panel makeKeyAndOrderFront:nil];
+        [panel reloadData];
+        break;
+    }
+    case BDWindowCommandClosePreview:
+        if ([NSClassFromString(@"QLPreviewPanel") sharedPreviewPanelExists])
+            [[NSClassFromString(@"QLPreviewPanel") sharedPreviewPanel] close];
+        break;
+    case BDWindowCommandBeep: NSBeep(); break;
+    case BDWindowCommandEdited: window.documentEdited = command->edited; break;
+    case BDWindowCommandRepresentedFilename: window.representedFilename = string(command->representedFilename); break;
+    case BDWindowCommandTrafficLights: trafficLights = (BDMaybePoint) { true, command->trafficLights }; break;
+    case BDWindowCommandCharacterPalette: [NSApp orderFrontCharacterPalette:nil]; break;
+    case BDWindowCommandLookUp: [self lookUp:string(command->lookUp)]; break;
     }
     [self placeTrafficLights];
-    return nil;
 }
 
 - (void)titleWasDoubleClicked
@@ -950,7 +1097,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 - (void)send:(BDInputKind)kind event:(NSEvent*)event
 {
     BDInput input = [self input:kind at:event.locationInWindow];
-    input.modifiers = modifiersOf(event);
+    input.modifiers = modifiersOf(event.modifierFlags);
     if (kind == BDMouseDown || kind == BDMouseUp) {
         input.button = event.buttonNumber == 1 ? 2 : event.buttonNumber == 2 ? 1 : MIN(event.buttonNumber, 4);
         input.clicks = MAX(event.clickCount, 1);
@@ -964,7 +1111,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         input.deltaY = kind == BDScroll ? event.scrollingDeltaY : 0;
     }
     if (!isClosing)
-        bd_input(_number, &input, NULL);
+        bd_input(_number, &input, (BDListText) {});
 }
 
 - (BOOL)acceptsFirstMouse:(NSEvent*)event
@@ -975,19 +1122,27 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 
 - (void)mouseDown:(NSEvent*)event
 {
+    bd_trace("mouseDown", CACurrentMediaTime() - event.timestamp);
     lastPress = event;
+    isPressed = true;
     // The palette of accents and the candidates go away. What was composed goes where the caret is now.
     bool waits = self.hasMarkedText;
     if (!waits)
         [self send:BDMouseDown event:event];
     [self.inputContext handleEvent:event];
+    bd_trace("the input method is done", CACurrentMediaTime() - event.timestamp);
     if (waits)
         [self send:BDMouseDown event:event];
 }
 
 - (void)rightMouseDown:(NSEvent*)event { [self send:BDMouseDown event:event]; }
 - (void)otherMouseDown:(NSEvent*)event { [self send:BDMouseDown event:event]; }
-- (void)mouseUp:(NSEvent*)event { [self send:BDMouseUp event:event]; }
+- (void)mouseUp:(NSEvent*)event
+{
+    bd_trace("mouseUp", CACurrentMediaTime() - event.timestamp);
+    isPressed = false;
+    [self send:BDMouseUp event:event];
+}
 - (void)rightMouseUp:(NSEvent*)event { [self send:BDMouseUp event:event]; }
 - (void)otherMouseUp:(NSEvent*)event { [self send:BDMouseUp event:event]; }
 - (void)mouseDragged:(NSEvent*)event { [self send:BDMouseMove event:event]; }
@@ -996,6 +1151,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 - (void)scrollWheel:(NSEvent*)event
 {
     bd_trace("scroll event", NSProcessInfo.processInfo.systemUptime - event.timestamp);
+    lastScroll = CACurrentMediaTime();
     [self send:BDScroll event:event];
 }
 - (void)magnifyWithEvent:(NSEvent*)event { [self send:BDPinch event:event]; }
@@ -1024,7 +1180,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 - (void)swipeWithEvent:(NSEvent*)event
 {
     if (event.deltaX || event.deltaY)
-        [self emit:@"swipe" value:event.deltaX > 0 ? @"left" : event.deltaX < 0 ? @"right" : event.deltaY > 0 ? @"up" : @"down"];
+        [self send:event(BDWindowEventSwipe, .swipe = event.deltaX > 0 ? BDDirectionLeft : event.deltaX < 0 ? BDDirectionRight : event.deltaY > 0 ? BDDirectionUp : BDDirectionDown)];
 }
 
 - (void)resetCursorRects { [self addCursorRect:self.bounds cursor:cursor]; }
@@ -1034,6 +1190,9 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     if (cursor == cursorAt(index))
         return;
     cursor = cursorAt(index);
+    // AppKit shows what a drop would do.
+    if (isDragging)
+        return;
     [owned invalidateCursorRectsForView:self];
     if (hasMouse)
         [cursor set];
@@ -1042,20 +1201,103 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 - (void)send:(BDInputKind)kind drag:(id<NSDraggingInfo>)drag
 {
     BDInput input = [self input:kind at:drag.draggingLocation];
-    NSString* paths;
-    if (kind == BDDragEnter) {
-        NSArray* files = [drag.draggingPasteboard readObjectsForClasses:@[ NSURL.class ] options:@{ NSPasteboardURLReadingFileURLsOnlyKey : @YES }];
-        paths = [[NSString alloc] initWithData:serialize([files valueForKey:@"path"] ?: @[]) encoding:NSUTF8StringEncoding];
-    }
+    NSArray* files;
+    if (kind == BDDragEnter)
+        files = [drag.draggingPasteboard readObjectsForClasses:@[ NSURL.class ] options:@{ NSPasteboardURLReadingFileURLsOnlyKey : @YES }];
     if (!isClosing)
-        bd_input(_number, &input, paths.UTF8String);
+        bd_input(_number, &input, textsOf([files valueForKey:@"path"]));
 }
 
-- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)drag { return [self send:BDDragEnter drag:drag], NSDragOperationCopy; }
-- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)drag { return [self send:BDDragOver drag:drag], NSDragOperationCopy; }
-- (void)draggingExited:(id<NSDraggingInfo>)drag { [self send:BDDragLeave drag:drag]; }
-- (void)draggingEnded:(id<NSDraggingInfo>)drag { [self send:BDDragLeave drag:drag]; }
-- (BOOL)performDragOperation:(id<NSDraggingInfo>)drag { return [self send:BDDrop drag:drag], YES; }
+/// There are no events of the mouse in the meantime.
+- (void)send:(BDInputKind)kind whileDraggingAt:(NSPoint)inWindow
+{
+    BDInput input = [self input:kind at:inWindow];
+    input.modifiers = modifiersOf(NSEvent.modifierFlags);
+    input.flag = input.clicks = 1;
+    if (!isClosing)
+        bd_input(_number, &input, (BDListText) {});
+}
+
+- (NSDragOperation)handle:(BDInputKind)kind drag:(id<NSDraggingInfo>)drag
+{
+    if (drag.draggingSource != self) {
+        [self send:kind drag:drag];
+        return [drag.draggingPasteboard availableTypeFromArray:@[ NSPasteboardTypeFileURL ]] ? NSDragOperationCopy : NSDragOperationNone;
+    }
+    isDragInside = kind != BDDragLeave;
+    if (isDragInside && !wasDropped)
+        [self send:kind == BDDrop ? BDMouseUp : BDMouseMove whileDraggingAt:drag.draggingLocation];
+    wasDropped |= kind == BDDrop;
+    return cursor == cursorAt(BDCursorDragCopy) ? NSDragOperationCopy
+        : cursor == cursorAt(BDCursorDragLink)  ? NSDragOperationLink
+        : cursor == cursorAt(BDCursorClosedHand) ? NSDragOperationMove
+                                                 : NSDragOperationNone;
+}
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)drag { return [self handle:BDDragEnter drag:drag]; }
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)drag { return [self handle:BDDragOver drag:drag]; }
+- (void)draggingExited:(id<NSDraggingInfo>)drag { [self handle:BDDragLeave drag:drag]; }
+- (void)draggingEnded:(id<NSDraggingInfo>)drag { [self handle:BDDragLeave drag:drag]; }
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)drag { return [self handle:BDDrop drag:drag], YES; }
+
+- (void)beginDrag:(const BDDragged*)dragged image:(NSImage*)image
+{
+    NSPasteboardItem* contents = [NSPasteboardItem new];
+    [contents setString:@"" forType:draggedByPage];
+    if (dragged->text.bytes.length)
+        [contents setString:string(dragged->text) forType:NSPasteboardTypeString];
+    if (dragged->html.bytes.length)
+        [contents setString:[@"<meta charset='utf-8'>" stringByAppendingString:string(dragged->html)] forType:NSPasteboardTypeHTML];
+    if (dragged->url.bytes.length)
+        [contents setString:string(dragged->url) forType:NSPasteboardTypeURL];
+    NSDragOperation allowed = (dragged->copies ? NSDragOperationCopy : 0) | (dragged->links ? NSDragOperationLink : 0);
+    BDRect area = dragged->area;
+    soon(^{
+        // It may be over, or not be done with the mouse.
+        if (self->isClosing || !self->isPressed || !(NSEvent.pressedMouseButtons & 1))
+            return;
+        NSPoint inWindow = self->owned.mouseLocationOutsideOfEventStream, at = [self convertPoint:inWindow fromView:nil];
+        NSDraggingItem* item = [[NSDraggingItem alloc] initWithPasteboardWriter:contents];
+        [item setDraggingFrame:NSMakeRect(at.x + area.x, at.y - area.y - area.height, MAX(area.width, 1), MAX(area.height, 1)) contents:image];
+        NSEvent* event = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged location:inWindow modifierFlags:0
+                                           timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:self->owned.windowNumber
+                                             context:nil eventNumber:0 clickCount:1 pressure:1];
+        self->isPressed = self->wasDropped = false;
+        self->isDragging = true;
+        self->isDragInside = NSPointInRect(at, self.bounds);
+        self->allowedElsewhere = allowed;
+        [self beginDraggingSessionWithItems:@[ item ] event:event source:self];
+    });
+}
+
+- (NSDragOperation)draggingSession:(NSDraggingSession*)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context
+{
+    return context == NSDraggingContextWithinApplication ? NSDragOperationCopy | NSDragOperationLink | NSDragOperationMove : allowedElsewhere;
+}
+
+/// Something may be in front of the window.
+- (void)dragIsElsewhere:(NSPoint)onScreen
+{
+    NSPoint inWindow = [owned convertPointFromScreen:onScreen];
+    bool isOverPage = NSPointInRect([self convertPoint:inWindow fromView:nil], self.bounds);
+    [self send:BDMouseMove whileDraggingAt:isOverPage ? NSMakePoint(-1e4, 1e4) : inWindow];
+}
+
+- (void)draggingSession:(NSDraggingSession*)session movedToPoint:(NSPoint)point
+{
+    if (!isDragInside)
+        [self dragIsElsewhere:point];
+}
+
+- (void)draggingSession:(NSDraggingSession*)session endedAtPoint:(NSPoint)point operation:(NSDragOperation)operation
+{
+    isDragging = false;
+    [owned invalidateCursorRectsForView:self];
+    if (wasDropped)
+        return;
+    [self dragIsElsewhere:point];
+    [self send:BDMouseUp whileDraggingAt:[owned convertPointFromScreen:point]];
+}
 
 // ───────────────────────────── keys ─────────────────────────────
 
@@ -1090,7 +1332,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         NSString* typed = event.characters;
         bool types = !isShortcut(event) && typed.length && ([typed characterAtIndex:0] & 0xFF00) != 0xF700;
         if (!bd_key(true) && types)
-            bd_text_insert(_number, toRange(NSMakeRange(NSNotFound, 0)), typed.UTF8String);
+            bd_text_insert(_number, toRange(NSMakeRange(NSNotFound, 0)), typed.UTF8String ?: "");
         return;
     }
     isInKeyDown = keyIsPending = true;
@@ -1120,13 +1362,25 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         { 0x01, 1 << 18 }, { 0x04, 1 << 17 }, { 0x40, 1 << 19 }, { 0x2000, 1 << 18 }, { 1 << 23, 1 << 23 } };
     NSUInteger flags = event.modifierFlags;
     if (event.type == NSEventTypeFlagsChanged && event.keyCode >= 0x36 && event.keyCode <= 0x3F)
-        bd_raw_key(flags & masks[event.keyCode - 0x36][!(flags & 0x207F)], false, event.keyCode, 0, modifiersOf(event));
+        bd_raw_key(flags & masks[event.keyCode - 0x36][!(flags & 0x207F)], false, event.keyCode, 0, modifiersOf(event.modifierFlags));
 }
 
-- (NSTextInputContext*)inputContext { return bd_text_is_enabled(_number) ? super.inputContext : nil; }
+- (NSTextInputContext*)inputContext { return !_hasMenu && bd_text_is_enabled(_number) ? super.inputContext : nil; }
+
+/// The first key after a pop-up menu skips the input method, unless its context is activated again.
+- (void)setHasMenu:(bool)hasMenu
+{
+    [NSObject cancelPreviousPerformRequestsWithTarget:super.inputContext selector:@selector(invalidateCharacterCoordinates) object:nil];
+    _hasMenu = hasMenu;
+    [NSApp updateWindows];
+    [self textInputChanged];
+}
 
 - (void)textInputChanged
 {
+    if (_hasMenu || isClosing)
+        return;
+    updateSecureInput();
     NSTextInputContext* context = super.inputContext;
     if (isComposing && !self.hasMarkedText) {
         isComposing = false;
@@ -1197,9 +1451,9 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     if (proposed.location == NSNotFound)
         return nil;
     BDRange range = { proposed.location, proposed.location + MIN(proposed.length, 1 << 30) };
-    BDBytes bytes = bd_text(_number, &range);
-    NSString* string = [NSString stringWithCharacters:(unichar*)bytes.start length:bytes.length / 2];
-    bun_desktop_free(bytes);
+    BDListu16 units = bd_text(_number, &range);
+    NSString* string = [NSString stringWithCharacters:units.start length:units.length];
+    bd_free_units(units);
     if (actual)
         *actual = fromRange(range);
     return string.length ? [[NSAttributedString alloc] initWithString:string] : nil;
@@ -1216,21 +1470,21 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 
 // ───────────────────────────── accessibility ─────────────────────────────
 
-- (BunDesktopTree*)examinedTree
-{
-    if (!!tree != hasAssistiveTechnology()) {
-        tree = tree ? nil : [[BunDesktopTree alloc] initWithView:self];
-        [self report:tree ? BDIsExamined : BDIsNotExamined];
-    }
-    return tree;
-}
-
-- (void)setTree:(NSDictionary*)update { [tree update:update]; }
 - (BOOL)isAccessibilityElement { return YES; }
 - (NSAccessibilityRole)accessibilityRole { return NSAccessibilityGroupRole; }
-- (NSArray*)accessibilityChildren { return self.examinedTree.roots ?: @[]; }
-- (id)accessibilityFocusedUIElement { return self.examinedTree.focus ?: self; }
-- (id)accessibilityHitTest:(NSPoint)point { return [self.examinedTree at:point] ?: self; }
+- (id)accessibilityFocusedUIElement { return CFBridgingRelease(bd_accessibility_focus(_number)) ?: self; }
+
+- (NSArray*)accessibilityChildren
+{
+    bd_accessibility_was_used(_number);
+    return CFBridgingRelease(bd_accessibility_roots(_number)) ?: @[];
+}
+
+- (id)accessibilityHitTest:(NSPoint)point
+{
+    bd_accessibility_was_used(_number);
+    return accessibleAt(_number, 0, point) ?: self;
+}
 
 @end
 
@@ -1238,11 +1492,11 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 
 #define view ((__bridge BunDesktopView*)pointer)
 
-void* bd_window_open(const void* json, size_t length)
+void* bd_window_open(const BDWindowOptions* options)
 {
     @autoreleasepool {
         @try {
-            return (__bridge_retained void*)[[BunDesktopView alloc] initWithOptions:parse(json, length)];
+            return (__bridge_retained void*)[[BunDesktopView alloc] initWithOptions:options];
         } @catch (NSException* exception) {
             bd_log(exception.description.UTF8String);
             return NULL;
@@ -1250,18 +1504,50 @@ void* bd_window_open(const void* json, size_t length)
     }
 }
 
-char* bd_window_command(void* pointer, const char* name, const void* json, size_t length, uint32_t other)
+char* bd_window_command(void* pointer, const BDWindowCommand* command)
 {
-    return answer(^id {
-        return [view command:@(name) value:parse(json, length) other:views[@(other)].window];
+    return attempt(^{
+        [view execute:command];
     });
 }
 
-typedef enum : uint8_t { Close, Hide, Show, ShowAndFocus, TextInputChanged, StartMove, TitleWasDoubleClicked } Action;
+BDListBackdropPart bd_window_describe_backdrop(void* pointer)
+{
+    @autoreleasepool {
+        NSArray<NSArray<NSNumber*>*>* found = view.describeBackdrop;
+        BDListBackdropPart parts = listOf(BackdropPart, found.count);
+        forEach(part, parts) {
+            NSArray<NSNumber*>* numbers = found[part - parts.start];
+            part->color.has = numbers.count > 4;
+            for (int index = 0; index < numbers.count; index++)
+                (index < 4 ? part->frame.at : part->color.value.at)[index % 4] = numbers[index].doubleValue;
+        }
+        return parts;
+    }
+}
+
+void displaysChanged(void)
+{
+    for (BunDesktopView* it in views.allValues)
+        [it windowDidChangeScreen:[NSNotification notificationWithName:NSWindowDidChangeScreenNotification object:it.window]];
+}
+
+void bd_window_imitate_backdrop(void* pointer, const BDBackdropPart* parts, size_t count)
+{
+    free(attempt(^{
+        [view imitateBackdrop:parts count:count];
+        [view placeTrafficLights];
+    }));
+}
+
+bool bd_window_is_minimized(void* pointer) { return view.window.isMiniaturized; }
+uint64_t bd_window_number(void* pointer) { return view.window.windowNumber; }
+
+typedef enum : uint8_t { Close, Hide, Show, ShowAndFocus, TextInputChanged, StartMove, TitleWasDoubleClicked, ClaimBackground } Action;
 
 void bd_window_act(void* pointer, Action action)
 {
-    char* error = answer(^id {
+    char* error = attempt(^{
         switch (action) {
         case Close: [view close]; break;
         case Hide: [view setVisible:false focus:false]; break;
@@ -1270,8 +1556,8 @@ void bd_window_act(void* pointer, Action action)
         case TextInputChanged: [view textInputChanged]; break;
         case StartMove: [view startMove]; break;
         case TitleWasDoubleClicked: [view titleWasDoubleClicked]; break;
+        case ClaimBackground: [view claimBackground]; break;
         }
-        return nil;
     });
     if (error)
         bd_log(error);
@@ -1298,12 +1584,22 @@ void bd_window_set_cursor(void* pointer, uint8_t index)
     }
 }
 
-void bd_window_set_tree(void* pointer, const void* json, size_t length)
+void bd_window_begin_drag(void* pointer, const BDDragged* dragged, const uint8_t* rgba, uint32_t width, uint32_t height)
 {
-    free(answer(^id {
-        [view setTree:parse(json, length)];
-        return nil;
-    }));
+    @autoreleasepool {
+        NSImage* image;
+        if (rgba) {
+            NSBitmapImageRep* pixels = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:width pixelsHigh:height bitsPerSample:8
+                                                                          samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace
+                                                                              bytesPerRow:width * 4 bitsPerPixel:32];
+            memcpy(pixels.bitmapData, rgba, (size_t)width * height * 4);
+            image = [[NSImage alloc] initWithSize:NSMakeSize(dragged->area.width, dragged->area.height)];
+            pixels = [pixels bitmapImageRepByRetaggingWithColorSpace:NSColorSpace.sRGBColorSpace];
+            pixels.size = image.size;
+            [image addRepresentation:pixels];
+        }
+        [view beginDrag:dragged image:image];
+    }
 }
 
 float bd_window_frequency(void* pointer) { return view.frequency; }

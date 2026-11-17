@@ -29,8 +29,6 @@ pub(crate) fn freemem() -> u64 {
 
 mod _impl {
     use super::*;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    use bun_core::ZStr;
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
@@ -289,19 +287,11 @@ mod _impl {
             let cpu = values.get_index(global_this, cpu_index as u32)?;
 
             let mut path_buf = [0u8; 128];
-            let path: &ZStr = {
-                let mut cursor = &mut path_buf[..];
-                write!(
-                    cursor,
-                    "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq\0",
-                    cpu_index
-                )
-                .map_err(|_| crate::Error::fmt)?;
-                let remaining = cursor.len();
-                let written = path_buf.len() - remaining;
-                // SAFETY: we wrote a NUL terminator at path_buf[written-1]
-                ZStr::from_buf(&path_buf[..], written - 1)
-            };
+            let path = bun_core::fmt::buf_print_z(
+                &mut path_buf,
+                format_args!("/sys/devices/system/cpu/cpu{cpu_index}/cpufreq/scaling_cur_freq"),
+            )
+            .map_err(|_| crate::Error::fmt)?;
             if let Ok(file) = bun_sys::File::open(path, bun_sys::O::RDONLY, 0) {
                 // file closed on Drop
 
@@ -654,11 +644,8 @@ mod _impl {
         let global = cx.global();
         #[cfg(windows)]
         {
-            let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
-            windows::libuv::uv__winsock_ensure();
-            // SAFETY: valid buffer
-            if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
-                return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
+            if let Some(name) = windows::GetHostNameW(&mut [0; 129]) {
+                return BunString::clone_utf16(name).into_js(global);
             }
 
             return Ok(global.common_strings().unknown());
@@ -1384,11 +1371,4 @@ fn parse_u64(s: &[u8]) -> crate::Result<u64> {
 #[inline]
 fn parse_u32(s: &[u8]) -> crate::Result<u32> {
     bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
-}
-
-#[cfg(windows)]
-#[inline]
-fn slice_to_nul_u16(buf: &[u16]) -> &[u16] {
-    let nul = bun_core::strings::index_of_scalar(buf, 0).unwrap_or(buf.len());
-    &buf[..nul]
 }

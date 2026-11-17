@@ -9,9 +9,10 @@ use crate::boxes::{BoxId, Kind};
 use crate::document::Document;
 use crate::fragment::{Band, Breaks, Member};
 use crate::layout::{
-    AutoSize, Edges, Input, Output, Room, Widths, auto_margins, distribute, gap, is_relative,
-    margin, resolve_if_definite, sizes, unit,
+    AutoSize, Edges, Input, Output, Room, Traits, Widths, auto_margins, clamp, distribute, gap,
+    is_relative, margin, resolve_if_definite, sizes, unit,
 };
+use crate::order::Order as _;
 use crate::positioned::{Edge, halves};
 use crate::properties::Style;
 use crate::types::*;
@@ -548,6 +549,23 @@ fn place_items(
         axes[axis].lines.before = -first as usize;
         counts[axis] = (last - first).max(widest) as usize;
     }
+    if placements
+        .iter()
+        .all(|it| matches!(it, [Placement::Span(1), Placement::Span(1)]))
+    {
+        let area = |index: usize| {
+            [0, 1]
+                .map(|axis| {
+                    if axis == minor {
+                        index % counts[minor]
+                    } else {
+                        index / counts[minor]
+                    }
+                })
+                .map(|it| it..it + 1)
+        };
+        return (0..placements.len()).map(area).collect();
+    }
     let range = |placement: &[Placement; 2], axis: usize| match placement[axis] {
         Placement::Lines(start, end) => {
             let before = axes[axis].lines.before as i32;
@@ -705,7 +723,7 @@ impl Sized {
 
 /// Adds to the second numbers equal shares of `space`, up to the first. Returns what is left.
 fn share_equally(shares: &mut [(f32, f32, usize)], mut space: f32) -> f32 {
-    shares.sort_by(|a, b| a.0.total_cmp(&b.0));
+    shares.order_by(|a, b| a.0.total_cmp(&b.0));
     let count = shares.len();
     for (index, (potential, increase, _)) in shares.iter_mut().enumerate() {
         let share = if index + 1 == count {
@@ -765,7 +783,7 @@ fn plan_increases(
             _ => true,
         };
         let has_preferred = shares.iter().any(|it| prefers(&tracks[it.2]));
-        shares.sort_by_key(|it| has_preferred && !prefers(&tracks[it.2]));
+        shares.order_by_key(|it| has_preferred && !prefers(&tracks[it.2]));
         let count = shares
             .iter()
             .filter(|it| !has_preferred || prefers(&tracks[it.2]))
@@ -805,9 +823,11 @@ fn find_fr(tracks: &[Sized], space: f32, gap: f32) -> f64 {
             .map(f64::from)
             .sum::<f64>();
         let next = f64::from(left.max(0.0)) / factors.max(1.0);
-        if tracks.iter().all(|it| {
-            is_flexible(it).is_none_or(|flex| f64::from(flex) * next >= f64::from(it.base))
-        }) {
+        if next.is_infinite()
+            || tracks.iter().all(|it| {
+                is_flexible(it).is_none_or(|flex| f64::from(flex) * next >= f64::from(it.base))
+            })
+        {
             return next;
         }
         fr = next;
@@ -851,6 +871,15 @@ impl Document {
         let placements: Vec<_> = in_flow()
             .map(|child| {
                 let style = &self.boxes[child].style;
+                if self.boxes[child].kind != Kind::Grid
+                    && [0, 1].iter().all(|axis| {
+                        grid_lines(style, *axis)
+                            .iter()
+                            .all(|it| **it == GridLine::Auto)
+                    })
+                {
+                    return [Placement::Span(1), Placement::Span(1)];
+                }
                 [0, 1].map(|axis| {
                     let ([start, end], lines) = (grid_lines(style, axis), &axes[axis].lines);
                     let own = axis ^ self.crosses(id, child);
@@ -965,6 +994,7 @@ impl Document {
         item: &Item,
         size: [Result<f32, [f32; 2]>; 2],
     ) -> Grid {
+        crate::recovery::need_stack();
         let names =
             [0, 1].map(|own| self.names_for_subgrid(parent, axes, item, own ^ item.crosses));
         let inherited = [0, 1].map(|own| {
@@ -1151,6 +1181,33 @@ impl Document {
         area: [Option<f32>; 2],
     ) -> (Edges, Room, f32) {
         let it = &self.boxes[id];
+        if let Some(fixed) = it.fixed_sizes().filter(|fixed| {
+            it.kind != Kind::Grid && !fixed.traits.contains(Traits::HAS_AUTO_MARGIN)
+        }) && let ([true, fills], Some(width)) = (
+            align.map(|it| matches!(it.0, AlignName::Normal | AlignName::Stretch)),
+            area[0],
+        ) {
+            let (margins, edges) = (fixed.margin.sums(), (fixed.border + fixed.padding).sums());
+            let available = [
+                Some((width - margins[0]).max(0.0)),
+                area[1].map(|it| (it - margins[1]).max(0.0)),
+            ];
+            let height = available[1]
+                .filter(|_| fills && fixed.height.is_none())
+                .map(|it| clamp(it.max(edges[1]), fixed.limits[1]));
+            let width = fixed
+                .width
+                .unwrap_or_else(|| (width - margins[0]).max(edges[0]));
+            return (
+                fixed.margin,
+                Room {
+                    available,
+                    basis: area,
+                    height,
+                },
+                clamp(width, fixed.limits[0]),
+            );
+        }
         let is_subgrid =
             [0, 1].map(|axis| self.is_subgrid(id, axis ^ usize::from(it.is_orthogonal())));
         let margin = margin(&it.style, area[0].unwrap_or(0.0));
@@ -1406,7 +1463,17 @@ impl Document {
                 .intersects(Contain::SIZE | Contain::INLINE_SIZE),
             _ => grid.style.contain().contains(Contain::SIZE),
         };
-        if definite.is_some() || !is_contained {
+        let steps = [
+            Step::IntrinsicMinimums,
+            Step::ContentMinimums,
+            Step::MaxContentMinimums,
+            Step::IntrinsicMaximums,
+            Step::MaxContentMaximums,
+        ];
+        let matters = steps.map(|step| tracks.iter().any(|it| it.is_affected(step)));
+        if definite.map_or(!is_contained, |_| {
+            matters != [false; 5] || own.has_baselines
+        }) {
             self.contributors(
                 grid,
                 axis,
@@ -1433,7 +1500,9 @@ impl Document {
                 it.span.len()
             }
         };
-        contributors.sort_by_key(|it| group(it, &tracks));
+        if !contributors.is_sorted_by_key(|it| group(it, &tracks)) {
+            contributors.order_by_key(|it| group(it, &tracks));
+        }
         let mut rest = &mut contributors[..];
         while let Some(first) = rest.first() {
             let key = group(first, &tracks);
@@ -1443,16 +1512,12 @@ impl Document {
                     .count(),
             );
             rest = others;
-            let steps = [
-                Step::IntrinsicMinimums,
-                Step::ContentMinimums,
-                Step::MaxContentMinimums,
-                Step::IntrinsicMaximums,
-                Step::MaxContentMaximums,
-            ];
             let only_flexible = key == usize::MAX;
-            for step in &steps[..if only_flexible { 3 } else { 5 }] {
-                for it in members.iter_mut() {
+            for (step, matters) in steps[..if only_flexible { 3 } else { 5 }]
+                .iter()
+                .zip(matters)
+            {
+                for it in members.iter_mut().filter(|_| matters) {
                     let spanned = &mut tracks[it.span.clone()];
                     if !spanned
                         .iter()
@@ -1590,7 +1655,13 @@ impl Document {
             );
             if item.inheriting(axis).is_some() {
                 let (tracks, span) = (&grid.axes[axis], item.area[axis].clone());
-                let outer = &tracks.positions[span.clone()];
+                let Some(outer) = tracks
+                    .positions
+                    .get(span.clone())
+                    .filter(|it| !it.is_empty())
+                else {
+                    continue;
+                };
                 let (first, last, count) = (outer[0][0], outer[outer.len() - 1][1], outer.len());
                 let (edges, is_opposite) = (
                     self.subgrid_edges(&grid.style, item, axis, area[0].unwrap_or(0.0)),
@@ -1858,6 +1929,7 @@ impl Document {
         uses_height
     }
 
+    #[inline(never)]
     pub(crate) fn lay_out_grid(
         &mut self,
         id: BoxId,
@@ -1955,6 +2027,9 @@ impl Document {
         };
         let mut candidates = [None::<((usize, usize, usize), f32)>; 2];
         let [columns, rows] = [0, 1].map(|axis| grid.axes[axis].positions.len());
+        let (first_row, last_row) = grid.items.iter().fold((usize::MAX, 0), |all, it| {
+            (all.0.min(it.area[1].start), all.1.max(it.area[1].end))
+        });
         let mut members = Vec::new();
         for item in &grid.items {
             self.inherit(&grid, item);
@@ -1978,12 +2053,22 @@ impl Document {
                 None,
             );
             let mut shared = [None; 2];
+            let has_auto_margin = style.fixed().traits.contains(Traits::HAS_AUTO_MARGIN);
             let at = [(0, own_width), (1, own.height)].map(|(axis, own_size)| {
                 let (margins, free) = (
                     margin.along(axis),
                     size[axis] - own_size - margin.sums()[axis],
                 );
-                let before = match auto_margins(&style, axis) {
+                let before = match if has_auto_margin {
+                    auto_margins(&style, axis)
+                } else {
+                    [false; 2]
+                } {
+                    [false, false]
+                        if matches!(align[axis].0, AlignName::Normal | AlignName::Stretch) =>
+                    {
+                        0.0
+                    }
                     [false, false] => match align[axis].resolved(
                         axis,
                         rtl,
@@ -2070,6 +2155,9 @@ impl Document {
                     moves_alone: false,
                 });
             }
+            if item.area[1].start != first_row && item.area[1].end != last_row {
+                continue;
+            }
             for (which, baseline) in self.boxes[item.id]
                 .baselines_for(&grid.style, &own)
                 .into_iter()
@@ -2131,7 +2219,7 @@ impl Document {
                 )
             };
             let mut bands: Vec<_> = rows.iter().map(band).collect();
-            members.sort_by_key(|it| it.bands[0]);
+            members.order_by_key(|it| it.bands[0]);
             self.fragment_bands(id, &mut flow, &mut bands, &mut members, 0..rows.len());
             for (row, band) in rows.iter_mut().zip(&bands) {
                 *row = [

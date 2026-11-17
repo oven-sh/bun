@@ -1,7 +1,9 @@
 //! AppKit, through the Objective-C in `macos/`.
 
+mod accessibility;
+
 use std::cell::Cell;
-use std::ffi::{CStr, CString, c_char, c_void};
+use std::ffi::{CStr, c_char, c_void};
 use std::ops::{Deref, Range};
 use std::ptr::NonNull;
 use std::rc::Rc;
@@ -10,10 +12,15 @@ use std::time::{Duration, Instant};
 use super::{Cursor, Display, Edge, Geometry, Icon, Input, Phase, Platform, Point, RawKey, Window};
 use crate::abi::Rect;
 use crate::error::{Context as _, Result, bail};
+use crate::gfx::Pixmap;
 use crate::input::{self, TextInput};
-use crate::json::{Serialize as _, Value, json, parse};
+use crate::protocol::{
+    Application, BackdropPart, Clipboard, ClipboardPart, Dragged, Event as Queued, List, Maybe,
+    PreferenceCommand, PreferenceValue, Reply, SystemCommand, SystemEvent, SystemRequest,
+    SystemSettings, SystemState, Text, WindowCommand, WindowEvent,
+};
 use crate::window::{self, Options};
-use crate::{Bytes, accessibility, bridge, guard};
+use crate::{bridge, guard};
 
 #[repr(u8)]
 enum Action {
@@ -24,6 +31,7 @@ enum Action {
     TextInputChanged,
     StartMove,
     TitleWasDoubleClicked,
+    ClaimBackground,
 }
 
 unsafe extern "C" {
@@ -39,21 +47,48 @@ unsafe extern "C" {
     safe fn bd_did_send_key();
     safe fn bd_hide_cursor_until_it_moves();
     fn bd_displays(displays: *mut Display, capacity: usize) -> usize;
-    fn bd_command(name: *const c_char, json: *const u8, length: usize, reply: u64) -> *mut c_char;
-    fn bd_window_open(json: *const u8, length: usize) -> Option<Object>;
-    fn bd_window_command(
-        view: &c_void,
-        name: *const c_char,
-        json: *const u8,
-        length: usize,
-        other: u32,
+    safe fn bd_command(command: &SystemCommand) -> *mut c_char;
+    safe fn bd_request(reply: u32, request: &SystemRequest) -> *mut c_char;
+    safe fn bd_state() -> SystemState;
+    safe fn bd_settings() -> SystemSettings;
+    safe fn bd_cursor_position() -> Point;
+    safe fn bd_idle_seconds() -> f64;
+    safe fn bd_is_on_battery() -> bool;
+    safe fn bd_is_hidden() -> bool;
+    safe fn bd_opens_at_login() -> bool;
+    safe fn bd_is_trusted_for_accessibility(prompts: bool) -> bool;
+    safe fn bd_bounce(is_critical: bool) -> i32;
+    safe fn bd_tray_bounds(tray: u32) -> Rect;
+    safe fn bd_read_clipboard(part: ClipboardPart, empty: &mut Clipboard);
+    fn bd_application_for(url: *const u8, length: usize, nothing: &mut Maybe<Application>);
+    fn bd_file_icon(path: *const u8, length: usize, side: u32) -> List<u8>;
+    fn bd_named_image(name: *const u8, length: usize) -> List<u8>;
+    safe fn bd_preference(key: &Text, nothing: &mut Maybe<PreferenceValue>);
+    safe fn bd_answer(question: &crate::protocol::Question) -> Maybe<u32>;
+    safe fn bd_run_as_root(
+        prompt: &Text,
+        commands: &List<List<Text>>,
+        said: &mut Text,
     ) -> *mut c_char;
+    safe fn bd_change_preference(command: &PreferenceCommand) -> *mut c_char;
+    safe fn bd_window_open(options: &Options) -> Option<Object>;
+    safe fn bd_window_command(view: &c_void, command: &WindowCommand) -> *mut c_char;
+    safe fn bd_window_is_minimized(view: &c_void) -> bool;
+    safe fn bd_window_number(view: &c_void) -> u64;
+    safe fn bd_window_describe_backdrop(view: &c_void) -> List<BackdropPart>;
+    fn bd_window_imitate_backdrop(view: &c_void, parts: *const BackdropPart, count: usize);
     safe fn bd_window_act(view: &c_void, action: Action);
     safe fn bd_window_geometry(view: &c_void) -> Geometry;
     safe fn bd_window_frequency(view: &c_void) -> f32;
     safe fn bd_window_mouse(view: &c_void) -> Rect;
     safe fn bd_window_set_cursor(view: &c_void, cursor: Cursor);
-    fn bd_window_set_tree(view: &c_void, json: *const u8, length: usize);
+    fn bd_window_begin_drag(
+        view: &c_void,
+        dragged: &Dragged,
+        rgba: *const u8,
+        width: u32,
+        height: u32,
+    );
     safe fn bd_window_is_active(view: &c_void) -> bool;
     safe fn bd_window_is_visible(view: &c_void) -> bool;
     safe fn bd_window_request_frame(view: &c_void, is_leisurely: bool);
@@ -101,17 +136,13 @@ pub unsafe fn take_string(string: *mut c_char) -> String {
 }
 
 /// # Safety
-/// It is what `answer` in app.m returned.
-pub unsafe fn answer(json: *mut c_char) -> Result<Value> {
-    if json.is_null() {
-        return Ok(Value::Null);
+/// It is what `attempt` in app.m returned.
+pub unsafe fn failure(message: *mut c_char) -> Result<()> {
+    if !message.is_null() {
+        // SAFETY: the caller's contract.
+        bail!("{}", unsafe { take_string(message) });
     }
-    // SAFETY: the caller's contract.
-    let mut answer = parse(unsafe { take_string(json) }.as_bytes())?;
-    match answer["error"].as_str() {
-        Some(error) => bail!("{error}"),
-        None => Ok(answer["value"].take()),
-    }
+    Ok(())
 }
 
 /// Before anything else asks for it.
@@ -135,17 +166,30 @@ pub fn hide_cursor_until_it_moves() {
     bd_hide_cursor_until_it_moves();
 }
 
-pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-    let (name, json) = (CString::new(name)?, arguments.to_string());
-    // SAFETY: the strings outlive the call.
-    unsafe {
-        answer(bd_command(
-            name.as_ptr(),
-            json.as_ptr(),
-            json.len(),
-            reply.unwrap_or(0),
-        ))
-    }
+pub fn request(id: u32, request: &SystemRequest) -> Result<()> {
+    // SAFETY: from `attempt`.
+    unsafe { failure(bd_request(id, request)) }
+}
+
+pub fn preference(key: &Text) -> Maybe<PreferenceValue> {
+    let mut found = Maybe::No;
+    bd_preference(key, &mut found);
+    found
+}
+
+pub fn answer(question: &crate::protocol::Question) -> Maybe<u32> {
+    bd_answer(question)
+}
+
+pub fn run_as_root(prompt: &Text, commands: &List<List<Text>>) -> Result<Text> {
+    let mut said = Text::default();
+    // SAFETY: from `attempt`.
+    unsafe { failure(bd_run_as_root(prompt, commands, &mut said)) }.map(|()| said)
+}
+
+pub fn change_preference(command: &PreferenceCommand) -> Result<()> {
+    // SAFETY: from `attempt`.
+    unsafe { failure(bd_change_preference(command)) }
 }
 
 pub fn finish_launching() {
@@ -163,15 +207,8 @@ pub fn start(is_accessory: bool) -> Result<Box<dyn Platform>> {
 struct AppKit;
 
 impl Platform for AppKit {
-    fn name(&self) -> &'static str {
-        ""
-    }
-
     fn open_window(&self, options: &Options, _: Option<&Icon>) -> Result<Rc<dyn Window>> {
-        let json = options.to_json().to_string();
-        // SAFETY: as above.
-        let view = unsafe { bd_window_open(json.as_ptr(), json.len()) }
-            .context("the window could not be opened")?;
+        let view = bd_window_open(options).context("the window could not be opened")?;
         Ok(Rc::new(View {
             view,
             last_drawn: Cell::new(None),
@@ -194,8 +231,84 @@ impl Platform for AppKit {
         bd_set_dark(is_dark.map_or(-1, i32::from));
     }
 
-    fn command(&self, name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-        command(name, arguments, reply)
+    fn command(&self, command: SystemCommand) -> Result<()> {
+        // SAFETY: from `attempt`.
+        unsafe { failure(bd_command(&command)) }
+    }
+
+    fn request(&self, id: u32, it: SystemRequest) -> Result<()> {
+        request(id, &it)
+    }
+
+    fn state(&self) -> SystemState {
+        bd_state()
+    }
+
+    fn settings(&self) -> SystemSettings {
+        bd_settings()
+    }
+
+    fn cursor_position(&self) -> Result<Point> {
+        Ok(bd_cursor_position())
+    }
+
+    fn idle_seconds(&self) -> Result<f64> {
+        Ok(bd_idle_seconds())
+    }
+
+    fn is_on_battery(&self) -> bool {
+        bd_is_on_battery()
+    }
+
+    fn is_hidden(&self) -> bool {
+        bd_is_hidden()
+    }
+
+    fn opens_at_login(&self) -> bool {
+        bd_opens_at_login()
+    }
+
+    fn is_trusted_for_accessibility(&self, prompts: bool) -> bool {
+        bd_is_trusted_for_accessibility(prompts)
+    }
+
+    fn bounce(&self, is_critical: bool) -> i32 {
+        bd_bounce(is_critical)
+    }
+
+    fn tray_bounds(&self, tray: u32) -> Rect {
+        bd_tray_bounds(tray)
+    }
+
+    fn read_clipboard(&self, part: ClipboardPart) -> Clipboard {
+        let mut contents = Clipboard::default();
+        bd_read_clipboard(part, &mut contents);
+        contents
+    }
+
+    fn application_for(&self, url: &str) -> Option<Application> {
+        let mut found = Maybe::No;
+        // SAFETY: the parts of a string.
+        unsafe { bd_application_for(url.as_ptr(), url.len(), &mut found) };
+        found.get()
+    }
+
+    fn file_icon(&self, path: &str, side: u32) -> Vec<u8> {
+        // SAFETY: as above.
+        unsafe { bd_file_icon(path.as_ptr(), path.len(), side) }.into_vec()
+    }
+
+    fn named_image(&self, name: &str) -> Vec<u8> {
+        // SAFETY: as above.
+        unsafe { bd_named_image(name.as_ptr(), name.len()) }.into_vec()
+    }
+
+    fn has_screen_reader(&self) -> bool {
+        accessibility::has_screen_reader()
+    }
+
+    fn accessibility_changed(&self, events: &[crate::accessibility::Event]) {
+        accessibility::post(events);
     }
 
     fn shut_down(&self, _: bool) {
@@ -277,6 +390,18 @@ impl Window for View {
         bd_window_set_cursor(&self.view, cursor);
     }
 
+    fn begin_drag(&self, dragged: &Dragged, image: Option<&Pixmap>) {
+        let (rgba, width, height) = image.map_or((std::ptr::null(), 0, 0), |it| {
+            (it.data().as_ptr(), it.width(), it.height())
+        });
+        // SAFETY: there are that many pixels, which it copies.
+        unsafe { bd_window_begin_drag(&self.view, dragged, rgba, width, height) };
+    }
+
+    fn claim_background(&self) {
+        bd_window_act(&self.view, Action::ClaimBackground);
+    }
+
     fn text_input_changed(&self) {
         bd_window_act(&self.view, Action::TextInputChanged);
     }
@@ -293,26 +418,26 @@ impl Window for View {
         bd_window_act(&self.view, Action::TitleWasDoubleClicked);
     }
 
-    fn set_accessibility_tree(&self, tree: &accessibility::Update) {
-        let json =
-            json!({ "roots": tree.roots, "nodes": tree.nodes, "focus": tree.focus }).to_string();
-        // SAFETY: as above.
-        unsafe { bd_window_set_tree(&self.view, json.as_ptr(), json.len()) };
+    fn command(&self, command: &WindowCommand) -> Result<()> {
+        // SAFETY: from `attempt`.
+        unsafe { failure(bd_window_command(&self.view, command)) }
     }
 
-    fn command(&self, name: &str, value: &Value, other: Option<&dyn Window>) -> Result<Value> {
-        let (name, json) = (CString::new(name)?, value.to_string());
-        let other = other.and(value.as_u64()).unwrap_or(0) as u32;
-        // SAFETY: as above.
-        unsafe {
-            answer(bd_window_command(
-                &self.view,
-                name.as_ptr(),
-                json.as_ptr(),
-                json.len(),
-                other,
-            ))
-        }
+    fn is_minimized(&self) -> bool {
+        bd_window_is_minimized(&self.view)
+    }
+
+    fn number(&self) -> u64 {
+        bd_window_number(&self.view)
+    }
+
+    fn describe_backdrop(&self) -> Vec<BackdropPart> {
+        bd_window_describe_backdrop(&self.view).into_vec()
+    }
+
+    fn imitate_backdrop(&self, parts: &[BackdropPart]) {
+        // SAFETY: the parts of a slice.
+        unsafe { bd_window_imitate_backdrop(&self.view, parts.as_ptr(), parts.len()) };
     }
 
     fn handle(&self) -> u64 {
@@ -329,11 +454,33 @@ unsafe fn borrow<'a>(string: *const c_char) -> std::borrow::Cow<'a, str> {
     unsafe { CStr::from_ptr(string) }.to_string_lossy()
 }
 
+/// The allocators do not care for the alignment of what is freed.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn bd_emit(json: *const u8, length: usize) {
-    // SAFETY: the bytes of an `NSData`.
-    let event = parse(unsafe { crate::borrow(json, length) });
-    guard("error", (), || event.into_iter().for_each(bridge::emit));
+extern "C" fn bd_allocate(count: usize, size: usize) -> *mut c_void {
+    Box::leak(vec![0u64; (count * size).div_ceil(8)].into_boxed_slice())
+        .as_mut_ptr()
+        .cast()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn bd_emit(event: *const SystemEvent) {
+    // SAFETY: it moves.
+    guard("error", (), || bridge::emit_system(unsafe { event.read() }));
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn bd_emit_to_window(id: u32, event: &WindowEvent) {
+    guard("error", (), || {
+        bridge::emit(Queued::Window { id, event: *event })
+    });
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn bd_reply(id: u32, reply: *const Reply) {
+    // SAFETY: it moves.
+    guard("error", (), || {
+        bridge::reply(id, Ok(unsafe { reply.read() }))
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -352,8 +499,7 @@ extern "C" fn bd_window_event(id: u32, event: u8) {
         5 => window::visibility_changed(id),
         6 => window::close_requested(id),
         7 => window::was_closed(id),
-        8 => window::appearance_changed(),
-        _ => accessibility::set_active(id, event == 9),
+        _ => window::appearance_changed(),
     });
 }
 
@@ -372,7 +518,7 @@ struct Event {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn bd_input(window: u32, event: &Event, paths: *const c_char) {
+extern "C" fn bd_input(window: u32, event: &Event, paths: List<Text>) {
     let Event {
         button,
         modifiers,
@@ -418,22 +564,12 @@ unsafe extern "C" fn bd_input(window: u32, event: &Event, paths: *const c_char) 
         5 => Input::Pinch {
             at,
             delta: delta_x,
-            phase,
             modifiers,
         },
-        6 => {
-            // SAFETY: this kind comes with them.
-            let paths = parse(unsafe { borrow(paths) }.as_bytes()).unwrap_or_default();
-            let paths = paths
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str);
-            Input::DragEnter {
-                at,
-                paths: paths.map(Into::into).collect(),
-            }
-        }
+        6 => Input::DragEnter {
+            at,
+            paths: paths.iter().map(|it| (**it).into()).collect(),
+        },
         7 => Input::DragOver { at },
         8 => Input::Drop { at },
         _ => Input::DragLeave,
@@ -507,6 +643,11 @@ extern "C" fn bd_text_is_enabled(window: u32) -> bool {
 }
 
 #[unsafe(no_mangle)]
+extern "C" fn bd_text_is_secret(window: u32) -> bool {
+    TextInput(window).is_secret()
+}
+
+#[unsafe(no_mangle)]
 extern "C" fn bd_text_range(window: u32, composing: bool) -> Span {
     Span::new(if composing {
         TextInput(window).composing()
@@ -521,17 +662,17 @@ extern "C" fn bd_text_caret(window: u32) -> Rect {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn bd_text(window: u32, range: &mut Span) -> Bytes {
+extern "C" fn bd_text(window: u32, range: &mut Span) -> List<u16> {
     let (text, found) = range
         .get()
         .and_then(|range| TextInput(window).text(range))
         .unwrap_or_default();
     *range = Span::new(Some(found));
-    text.into_iter()
-        .flat_map(u16::to_ne_bytes)
-        .collect::<Vec<_>>()
-        .into()
+    text.into()
 }
+
+#[unsafe(no_mangle)]
+extern "C" fn bd_free_units(_: List<u16>) {}
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn bd_text_insert(window: u32, range: Span, text: *const c_char) {
@@ -557,15 +698,4 @@ unsafe extern "C" fn bd_text_compose(
 #[unsafe(no_mangle)]
 extern "C" fn bd_text_end_composition(window: u32) {
     guard("error", (), || TextInput(window).end_composition());
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn bd_accessibility_action(
-    node: u64,
-    action: *const c_char,
-    json: *const c_char,
-) {
-    // SAFETY: strings.
-    let (action, json) = unsafe { (borrow(action), borrow(json)) };
-    accessibility::perform(node, &action, parse(json.as_bytes()).unwrap_or_default());
 }

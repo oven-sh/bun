@@ -14,6 +14,7 @@ use crate::condition::{self, Actual, Condition, Feature, Subject};
 use crate::grammar::{Mode, definition, is_reserved, split_list};
 use crate::hooks::words;
 use crate::name::{Map, Name, Set};
+use crate::order::Order as _;
 use crate::scan::{self, Next};
 use crate::sheet::{ContainerQuery, Declared, Wide};
 use crate::tree::NodeId;
@@ -77,8 +78,8 @@ pub(crate) struct Inherited {
 
 fn filter_bit(name: Name) -> (usize, u64) {
     (
-        (name.bits() >> 1 & 1) as usize,
-        1 << (name.bits() >> 2 & 63),
+        (name.bits() >> 4 & 1) as usize,
+        1 << (name.bits() >> 5 & 63),
     )
 }
 
@@ -107,7 +108,7 @@ impl Inherited {
                 entries.extend(layer.entries.iter().cloned());
                 parent = layer.parent.as_ref();
             }
-            entries.sort_by_key(|entry| entry.0);
+            entries.order_by_key(|entry| entry.0);
             entries.dedup_by_key(|entry| entry.0);
         }
         let is_same = |it: &Inherited| {
@@ -834,7 +835,7 @@ fn call(lookup: &mut dyn Lookup, name: &str, arguments: &[Template]) -> Option<T
             .iter()
             .all(|it| it.default.is_some()))
     .then_some(())?;
-    let key = Name::new(&Rc::as_ptr(&function).addr().to_le_bytes());
+    let key = Name::new(&Rc::as_ptr(&function).addr().to_le_bytes()).salted(10);
     guarded(lookup, key, |caller| {
         let mut frame = Frame {
             caller,
@@ -907,7 +908,20 @@ pub(crate) struct Template(Vec<Part>);
 pub(crate) struct Stack {
     keys: smallvec::SmallVec<[Name; 8]>,
     cycle: Option<usize>,
+    /// Where the cycle starts that what has last been resolved is in, if that is still being resolved.
+    pub(crate) open_cycle: Option<Name>,
     has_queried_tainted: bool,
+    /// Since the first of `keys`.
+    resolved: u32,
+}
+
+impl Stack {
+    /// Whether `key` is being resolved, which makes a cycle.
+    pub(crate) fn reaches(&mut self, key: Name) -> bool {
+        let at = self.keys.iter().position(|it| *it == key);
+        self.cycle = self.cycle.into_iter().chain(at).min();
+        at.is_some()
+    }
 }
 
 /// `None` if what `key` stands for depends on itself.
@@ -916,28 +930,48 @@ pub(crate) fn guarded<L: Lookup + ?Sized>(
     key: Name,
     resolve: impl FnOnce(&mut L) -> Option<Text>,
 ) -> Option<Text> {
-    let stack = lookup.stack();
+    let outer = enter(lookup.stack(), key)?;
+    let value = resolve(lookup);
+    let is_in_cycle = leave(lookup.stack(), outer.0);
+    value.filter(|_| !is_in_cycle)
+}
+
+struct OuterCycle(Option<usize>);
+
+fn enter(stack: &mut Stack, key: Name) -> Option<OuterCycle> {
     let depth = stack.keys.len();
+    stack.resolved = if depth == 0 {
+        0
+    } else {
+        stack.resolved.saturating_add(1)
+    };
     if let Some(at) = stack
         .keys
         .iter()
         .position(|it| *it == key)
-        .or_else(|| (depth > 256).then_some(0))
+        .or_else(|| (depth > 256 || stack.resolved > 1 << 14).then_some(0))
     {
-        stack.cycle = Some(stack.cycle.map_or(at, |it| it.min(at)));
+        (stack.cycle, stack.open_cycle) = (
+            Some(stack.cycle.map_or(at, |it| it.min(at))),
+            stack.keys.get(at).copied(),
+        );
         return None;
     }
     stack.keys.push(key);
-    let outer = stack.cycle.take();
-    let value = resolve(lookup);
-    let stack = lookup.stack();
+    Some(OuterCycle(stack.cycle.take()))
+}
+
+/// Whether the key that is left depends on itself.
+fn leave(stack: &mut Stack, outer: Option<usize>) -> bool {
     stack.keys.pop();
+    let depth = stack.keys.len();
     let cycle = stack.cycle.filter(|it| *it <= depth);
+    stack.open_cycle = cycle.and_then(|it| stack.keys.get(it).copied());
     stack.cycle = outer
         .into_iter()
         .chain(cycle.filter(|it| *it < depth))
         .min();
-    value.filter(|_| cycle.is_none())
+    cycle.is_some()
 }
 
 pub(crate) trait Lookup {
@@ -1165,10 +1199,15 @@ fn arguments(p: &mut P, depth: u8) -> Option<Vec<Template>> {
                 (!p.is_exhausted()).then(|| template(p, depth, Delimiters::NONE))?
             }),
             None => {
-                let (state, is_empty) = (p.state(), matches!(p.next(), Ok(Token::Comma) | Err(_)));
+                let state = p.state();
+                let is_valid = match p.next().copied() {
+                    Ok(Token::Comma) | Err(_) => false,
+                    Ok(Token::Ident(name)) if name.starts_with(b"--") => p.expect_colon().is_err(),
+                    Ok(_) => true,
+                };
                 p.reset(&state);
                 template(p, depth, Delimiters::COMMA | Delimiters::CURLY_BRACKET)
-                    .filter(|_| !is_empty)
+                    .filter(|_| is_valid)
             }
         }
     })

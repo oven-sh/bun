@@ -9,6 +9,7 @@ use bun_css::properties::font::{FontFamily, FontStretch as CssFontStretch, Gener
 use crate::abi;
 use crate::calc::{Kind, Node, Options};
 use crate::counter_style::CounterStyle;
+use crate::order::Order as _;
 pub(crate) use crate::transform::{
     Rotate, Scale, Transform, TransformOrigin, Transforms, Translate,
 };
@@ -67,7 +68,7 @@ keywords! {
     FieldSizing { Fixed = "fixed", Content = "content" }
     Resize { None = "none", Both = "both", Horizontal = "horizontal", Vertical = "vertical", Block = "block", Inline = "inline" }
     BoxArea { BorderBox = "border-box" | "border", StrokeBox = "stroke-box", ViewBox = "view-box", FillBox = "fill-box", PaddingBox = "padding-box" | "padding",
-        ContentBox = "content-box" | "content", Text = "text", BorderArea = "border-area", NoClip = "no-clip", MarginBox = "margin-box" }
+        ContentBox = "content-box" | "content", Text = "text", BorderArea = "border-area", BorderAreaAndText = "border-area text", NoClip = "no-clip", MarginBox = "margin-box" }
     Attachment { Scroll = "scroll", Fixed = "fixed", Local = "local" }
     RepeatKind { Repeat = "repeat", Space = "space", Round = "round", NoRepeat = "no-repeat" }
     DecorationStyle { Solid = "solid", Double = "double", Dotted = "dotted", Dashed = "dashed", Wavy = "wavy" }
@@ -109,7 +110,7 @@ keywords! {
         Menulist = "menulist", MenulistButton = "menulist-button", Listbox = "listbox", Searchfield = "searchfield",
         Textarea = "textarea", Meter = "meter", ProgressBar = "progress-bar", BaseSelect = "base-select" }
     Extent { ClosestSide = "closest-side", FarthestSide = "farthest-side", ClosestCorner = "closest-corner", FarthestCorner = "farthest-corner" }
-    Interactivity { Auto = "auto", Inert = "inert", InertSubtree = "-internal-inert", Escapes = "-internal-escapes" }
+    Interactivity { Auto = "auto", Inert = "inert", InertSubtree = "-internal-inert", AutoInInertSubtree = "-internal-auto", Escapes = "-internal-escapes" }
     SkipInk { Auto = "auto", None = "none", All = "all" }
     InterpolateSize { NumericOnly = "numeric-only", AllowKeywords = "allow-keywords" }
     OverlayKind { None = "none", Auto = "auto" }
@@ -667,7 +668,7 @@ pub(crate) struct AspectRatio {
 impl AspectRatio {
     pub(crate) fn value(self) -> Option<f32> {
         let [width, height] = self.ratio?;
-        (width > 0.0 && height > 0.0).then(|| width / height)
+        (width > 0.0 && height > 0.0).then_some(width / height)
     }
 }
 
@@ -935,6 +936,16 @@ pub(crate) enum FontStyle {
     Oblique(f32),
 }
 
+impl FontStyle {
+    pub(crate) fn slope(self) -> f32 {
+        match self {
+            FontStyle::Normal => 0.0,
+            FontStyle::Italic => crate::font_face::FontFace::ITALIC,
+            FontStyle::Oblique(angle) => angle,
+        }
+    }
+}
+
 impl Css for FontStyle {
     fn parse(p: &mut P, cx: &Ctx) -> Option<FontStyle> {
         Some(match () {
@@ -1027,7 +1038,7 @@ impl Css for FontSettings {
             .rev()
             .copied()
             .collect();
-        all.sort_by_key(|it| it.tag);
+        all.order_by_key(|it| it.tag);
         all.dedup_by_key(|it| it.tag);
         Some(FontSettings(NormalOrCommas(all.into())))
     }
@@ -1360,7 +1371,7 @@ impl Gradient {
                 Some((at, Color::parse(p, cx)?))
             })?);
         }
-        stops.sort_by(|a, b| a.0.total_cmp(&b.0));
+        stops.order_by(|a, b| a.0.total_cmp(&b.0));
         let stops = stops
             .into_iter()
             .map(|(at, color)| Stop {
@@ -1510,7 +1521,7 @@ impl Image {
             .filter(|it| it.2 && it.1 > 0.0)
             .map(|it| (it.0, it.1))
             .collect();
-        options.sort_by(|a, b| a.1.total_cmp(&b.1));
+        options.order_by(|a, b| a.1.total_cmp(&b.1));
         options.dedup_by(|a, b| a.1 == b.1);
         Some(Image::Set(options.into()))
     }
@@ -1559,6 +1570,25 @@ impl Css for Image {
             Image::Gradient(gradient) => out.extend_from_slice(gradient.source.as_bytes()),
             Image::Set(_) | Image::Fade(_) => {}
         }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct ClipArea(pub(crate) BoxArea);
+
+impl Css for ClipArea {
+    fn parse(p: &mut P, cx: &Ctx) -> Option<ClipArea> {
+        let first = BoxArea::parse(p, cx)?;
+        let is_both = first == BoxArea::BorderArea && keyword(p, "text")
+            || first == BoxArea::Text && keyword(p, "border-area");
+        Some(ClipArea(if is_both {
+            BoxArea::BorderAreaAndText
+        } else {
+            first
+        }))
+    }
+    fn write(&self, out: &mut Out) {
+        self.0.write(out);
     }
 }
 
@@ -1781,6 +1811,30 @@ pub(crate) enum Filter {
 }
 
 impl Filter {
+    /// `None` for a URL.
+    pub(crate) fn function(&self, scale: f32, current_color: u32) -> Option<abi::Filter> {
+        Some(match self {
+            Filter::Url(_) => return None,
+            Filter::DropShadow(it) => abi::Filter::DropShadow {
+                offset: it.offset.map(|it| it * scale),
+                blur: it.blur * scale,
+                color: it.color.resolve(current_color),
+            },
+            Filter::Amount(FilterName::Blur, radius) => abi::Filter::Blur(radius * scale),
+            Filter::Amount(name, amount) => (match name {
+                FilterName::Blur => abi::Filter::Blur,
+                FilterName::Brightness => abi::Filter::Brightness,
+                FilterName::Contrast => abi::Filter::Contrast,
+                FilterName::Grayscale => abi::Filter::Grayscale,
+                FilterName::HueRotate => abi::Filter::HueRotate,
+                FilterName::Invert => abi::Filter::Invert,
+                FilterName::Opacity => abi::Filter::Opacity,
+                FilterName::Saturate => abi::Filter::Saturate,
+                FilterName::Sepia => abi::Filter::Sepia,
+            })(*amount),
+        })
+    }
+
     fn neutral(&self) -> Filter {
         use FilterName as F;
         match self {
@@ -1833,7 +1887,14 @@ impl Css for Filter {
             Filter::Amount(name, amount) => {
                 name.write(out);
                 out.push(b'(');
-                write_number(*amount, out);
+                write_number(
+                    if *name == FilterName::Blur {
+                        amount / crate::values::written_zoom()
+                    } else {
+                        *amount
+                    },
+                    out,
+                );
                 out.extend_from_slice(match name {
                     FilterName::Blur => b"px",
                     FilterName::HueRotate => b"deg",
@@ -2900,7 +2961,7 @@ impl Easing {
                     return t;
                 }
                 let next = points
-                    .partition_point(|point| f64::from(point[0]) <= t)
+                    .partition_point(|point| point[0] <= t as f32)
                     .clamp(1, points.len() - 1);
                 let [[x0, y0], [x1, y1]] =
                     [points[next - 1], points[next]].map(|it| it.map(f64::from));
@@ -2981,10 +3042,15 @@ impl Easing {
 fn linear_points(p: &mut P, cx: &Ctx) -> Option<Rc<[[f32; 2]]>> {
     let mut points: Vec<(Option<f32>, f32)> = Vec::new();
     loop {
-        let before = percentage(p, cx);
+        let before = [percentage(p, cx), percentage(p, cx)];
         let output = number(p, cx)?;
-        points.push((before.or_else(|| percentage(p, cx)), output));
-        if let Some(input) = percentage(p, cx) {
+        let [first, second] = if before[0].is_some() {
+            before
+        } else {
+            [percentage(p, cx), percentage(p, cx)]
+        };
+        points.push((first, output));
+        if let Some(input) = second {
             points.push((Some(input), output));
         }
         if !comma(p) {

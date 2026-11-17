@@ -9,12 +9,12 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use crate::abi::Rect;
+use crate::abi_graphics::Decoded;
 use crate::codec::{self, Format, Rgba};
-use crate::error::{Context as _, Result, bail};
+use crate::error::{Context as _, Result};
 use crate::gfx::{Pixmap, Transform};
 use crate::hash::FastMap;
 use crate::icc::Conversion;
-use crate::json::{Value, json};
 use crate::paint::cpu::Painter;
 use crate::paint::raster::{Clip, IntRect, Layer, demultiply, multiply};
 use crate::paint::scene::{Frame, Scene};
@@ -523,6 +523,26 @@ fn with_frame<R>(
     }
 }
 
+/// Releases it.
+pub fn take_recording(id: u32, width: i32, height: i32) -> Option<Pixmap> {
+    let image = IMAGES.lock().remove(&id)?;
+    let (Image::Svg(svg), mut layer) = (&*image, Layer::new(IntRect::new(0, 0, width, height))?)
+    else {
+        return None;
+    };
+    svg.draw(
+        &mut layer,
+        Rect {
+            x: 0.,
+            y: 0.,
+            width: width as f32,
+            height: height as f32,
+        },
+        &Transform::identity(),
+    );
+    Some(layer.pixmap)
+}
+
 pub fn alpha(id: u32, width: u32, height: u32) -> Option<Vec<u8>> {
     with(id, &Frame::new(1., false), |content, _| match content {
         Content::Svg(svg) => {
@@ -555,6 +575,11 @@ pub fn alpha(id: u32, width: u32, height: u32) -> Option<Vec<u8>> {
 
 pub fn insert(pixmap: Pixmap) -> u32 {
     let id = next_id();
+    insert_as(id, pixmap);
+    id
+}
+
+pub fn insert_as(id: u32, pixmap: Pixmap) {
     IMAGES.lock().insert(
         id,
         Arc::new(Image::Bitmap(Bitmap::new(
@@ -562,7 +587,10 @@ pub fn insert(pixmap: Pixmap) -> u32 {
             None,
         ))),
     );
-    id
+}
+
+pub fn release(id: u32) {
+    drop(IMAGES.lock().remove(&id));
 }
 
 pub fn pixmap_from_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> Option<Pixmap> {
@@ -692,8 +720,8 @@ fn decode_at(bytes: &[u8], whole: Size, size: Size) -> Option<Pixmap> {
     })
 }
 
-fn decode(bytes: Vec<u8>, is_oriented: bool) -> Result<Value> {
-    let orientation = u32::from(codec::orientation(&bytes));
+pub fn decode(bytes: Vec<u8>, is_oriented: bool) -> Result<Decoded> {
+    let orientation = codec::orientation(&bytes);
     let bitmap = match size_to_defer(&bytes).filter(|_| is_oriented) {
         Some(size) => Bitmap::deferred(size, bytes).context("out of memory")?,
         None => Bitmap::new(
@@ -704,49 +732,29 @@ fn decode(bytes: Vec<u8>, is_oriented: bool) -> Result<Value> {
     let (id, (width, height)) = (next_id(), bitmap.size);
     IMAGES.lock().insert(id, Arc::new(Image::Bitmap(bitmap)));
     drop_pixels(DECODED_BYTES);
-    Ok(json!({ "id": id, "width": width, "height": height, "orientation": orientation }))
+    Ok(Decoded {
+        id,
+        size: [width, height],
+        orientation,
+    })
 }
 
-pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-    match name {
-        "decode" => {
-            let (reply, bytes) = (
-                reply.context("the command needs a reply id")?,
-                bridge::blob(&arguments["blob"])?,
-            );
-            let is_oriented = arguments["isOriented"] != false;
-            bridge::in_background(reply, move || decode(bytes, is_oriented));
-        }
-        "decodeSync" => return decode(bridge::blob(&arguments["blob"])?, true),
-        "open" => {
-            let bytes = bridge::blob(&arguments["blob"])?;
-            let Some((width, height)) = size_to_defer(&bytes) else {
-                return Ok(Value::Null);
-            };
-            let orientation = u32::from(codec::orientation(&bytes));
-            let (id, number) = (next_id(), |name: &str| {
-                arguments[name].as_f64().unwrap_or(1.) as f32
-            });
-            IMAGES.lock().insert(
-                id,
-                Arc::new(Image::Bitmap(
-                    Bitmap::deferred((width, height), bytes).context("out of memory")?,
-                )),
-            );
-            let likely = likely_size((width, height), number("density"), number("scale"));
-            expect_all([(id, [likely.0 as f32, likely.1 as f32])].into_iter());
-            return Ok(
-                json!({ "id": id, "width": width, "height": height, "orientation": orientation }),
-            );
-        }
-        "release" => drop(
-            IMAGES
-                .lock()
-                .remove(&(arguments["id"].as_u64().unwrap_or(0) as u32)),
-        ),
-        _ => bail!("unknown command image.{name}"),
-    }
-    Ok(Value::Null)
+pub fn open(bytes: &[u8], density: f32, scale: f32) -> Option<Decoded> {
+    let ((width, height), id) = (size_to_defer(bytes)?, next_id());
+    IMAGES.lock().insert(
+        id,
+        Arc::new(Image::Bitmap(Bitmap::deferred(
+            (width, height),
+            bytes.to_vec(),
+        )?)),
+    );
+    let likely = likely_size((width, height), density, scale);
+    expect_all([(id, [likely.0 as f32, likely.1 as f32])].into_iter());
+    Some(Decoded {
+        id,
+        size: [width, height],
+        orientation: codec::orientation(bytes),
+    })
 }
 
 type ReducedKey = (u32, u32, Size);

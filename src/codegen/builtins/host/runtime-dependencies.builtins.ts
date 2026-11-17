@@ -663,6 +663,12 @@ const nativeCalls = [
       },
       { file: "src/runtime/ipc.rs", caller: "on_ack_nack", onBehalfOf: channelUsers },
       { file: "src/runtime/timer/Timer.rs", caller: "warn_invalid_countdown", onBehalfOf: timersWithOtherDelays },
+      {
+        file: "src/desktop/modules.rs",
+        caller: "warn_about_rejections",
+        onBehalfOf: ["native:Bindgen:desktop_modules.bind.ts:modules"],
+      },
+      { file: "src/ui/lib.rs", caller: "warn", onBehalfOf: ["native:Bindgen:desktop_modules.bind.ts:modules"] },
     ],
   }),
   b.nativeCalls({
@@ -827,6 +833,8 @@ const undeclaredNativeCode = "%UndeclaredNativeCode%";
 export default b.declarations(
   b.namespace(undeclaredNativeCode, {}, { callsFunctions: warningFunctionsOfUndeclaredCode }),
   b.namespace(warningsOfRejections, {}, { listsAllMembers: true }),
+  // No text can name it: the build does for a program whose global object is a window.
+  b.namespace("%WindowOfProgram%", {}, { listsAllMembers: true }),
   b.namespace(interpretedFiles, {}, { callsFunctions: functionsOfInterpreter }),
   b.namespace(interpretedAsyncFiles, {}, { callsFunctions: asyncFunctionsOfInterpreter }),
   ...nativeCalls,

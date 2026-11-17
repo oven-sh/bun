@@ -1,5 +1,8 @@
 //! Points, transforms, paths and pixels.
 
+use std::alloc::{Layout, alloc_zeroed};
+use std::ptr::NonNull;
+
 use std::ops::{Add, Mul, Neg, Sub};
 
 #[path = "gfx/stroke.rs"]
@@ -240,6 +243,7 @@ pub trait PathBuilder {
         self.add(Command::LineTo(to.into()))
     }
 
+    #[cfg(target_os = "macos")]
     fn quad_to(&mut self, a: impl Into<Point>, to: impl Into<Point>) -> &mut Self {
         self.add(Command::QuadTo(a.into(), to.into()))
     }
@@ -335,11 +339,16 @@ impl Pixmap {
         fits.then(|| width as usize * height as usize * 4)
     }
 
+    /// `None` if it is empty, or if there is no memory.
     pub fn new(width: u32, height: u32) -> Option<Pixmap> {
+        let len = Pixmap::len(width, height)?;
+        // SAFETY: the size is not zero.
+        let bytes = NonNull::new(unsafe { alloc_zeroed(Layout::array::<u8>(len).ok()?) })?;
+        // SAFETY: the global allocator has made it with the layout of that many bytes, which are initialized.
         Some(Pixmap {
             width,
             height,
-            data: vec![0; Pixmap::len(width, height)?],
+            data: unsafe { Vec::from_raw_parts(bytes.as_ptr(), len, len) },
         })
     }
 
@@ -365,10 +374,6 @@ impl Pixmap {
 
     pub fn data_mut(&mut self) -> &mut [u8] {
         &mut self.data
-    }
-
-    pub fn take(self) -> Vec<u8> {
-        self.data
     }
 
     /// The part of the rectangle that is inside.

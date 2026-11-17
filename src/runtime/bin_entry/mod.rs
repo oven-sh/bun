@@ -166,6 +166,16 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         Bun__askForAddressSpaceToStart();
     }
 
+    #[cfg(unix)]
+    bun_removable_features::call_removable_or!(
+        Desktop,
+        ReturnDefault,
+        {},
+        crate::desktop::main_thread::install_update_if_asked,
+        // SAFETY: fn contract.
+        unsafe { core::slice::from_raw_parts(argv, argc as usize) }
+    );
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives

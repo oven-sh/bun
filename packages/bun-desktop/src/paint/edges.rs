@@ -2,7 +2,7 @@
 //! makes horizontal stems of glyphs crisp in Chromium.
 
 use super::raster::{Coverage, IntRect, map_point};
-use crate::gfx::{Command, Path, Point, Transform};
+use crate::gfx::{Command, Point, Transform};
 use crate::small_vec::SmallVec;
 
 type Points = SmallVec<Point, 8>;
@@ -68,18 +68,6 @@ fn cubic([a, b, c, d]: [Point; 4]) -> Points {
     points
 }
 
-fn add<const N: usize>(mut curve: [Point; N], flatten: fn([Point; N]) -> Points, to: &mut Path) {
-    let rises = curve[0].y > curve[N - 1].y;
-    if rises {
-        curve.reverse();
-    }
-    let mut points = flatten(curve);
-    if rises {
-        points.reverse();
-    }
-    to.extend(points.into_iter().map(Command::LineTo));
-}
-
 /// Where between 0 and 1 `a t² + b t + c` is zero, ascending.
 fn roots(a: f32, b: f32, c: f32) -> SmallVec<f32, 2> {
     let discriminant = b * b - 4. * a * c;
@@ -95,72 +83,6 @@ fn roots(a: f32, b: f32, c: f32) -> SmallVec<f32, 2> {
     roots
 }
 
-fn flatten(path: &[Command], matrix: &Transform) -> Path {
-    const FAR: f32 = 1e7;
-    let map = |point: Point| {
-        let (x, y) = map_point(matrix, point.x, point.y);
-        let [x, y] = [x, y].map(|it| {
-            if it.is_nan() {
-                -FAR
-            } else {
-                it.clamp(-FAR, FAR)
-            }
-        });
-        Point::new(x, y)
-    };
-    let (mut lines, mut current) = (Path::with_capacity(path.len() * 3), Point::ZERO);
-    for command in path {
-        match *command {
-            Command::MoveTo(to) => {
-                current = map(to);
-                lines.push(Command::MoveTo(Point::new(current.x, snap(current.y))));
-            }
-            Command::LineTo(to) => {
-                current = map(to);
-                lines.push(Command::LineTo(Point::new(current.x, snap(current.y))));
-            }
-            Command::QuadTo(b, c) => {
-                let (a, b, c) = (current, map(b), map(c));
-                let t = (a.y - b.y) / (a.y - 2. * b.y + c.y);
-                if t > 0. && t < 1. {
-                    let (ab, bc) = (lerp(a, b, t), lerp(b, c, t));
-                    let turn = lerp(ab, bc, t);
-                    add([a, Point::new(ab.x, turn.y), turn], quadratic, &mut lines);
-                    add([turn, Point::new(bc.x, turn.y), c], quadratic, &mut lines);
-                } else {
-                    add([a, b, c], quadratic, &mut lines);
-                }
-                current = c;
-            }
-            Command::CurveTo(b, c, d) => {
-                let [mut a, mut b, mut c, d] = [current, map(b), map(c), map(d)];
-                let turns = roots(
-                    d.y - a.y + 3. * (b.y - c.y),
-                    2. * (a.y - 2. * b.y + c.y),
-                    b.y - a.y,
-                );
-                let mut done = 0.;
-                for turn in turns {
-                    let t = (turn - done) / (1. - done);
-                    let (ab, bc, cd) = (lerp(a, b, t), lerp(b, c, t), lerp(c, d, t));
-                    let (abc, bcd) = (lerp(ab, bc, t), lerp(bc, cd, t));
-                    let middle = lerp(abc, bcd, t);
-                    add(
-                        [a, ab, Point::new(abc.x, middle.y), middle],
-                        cubic,
-                        &mut lines,
-                    );
-                    (a, b, c, done) = (middle, Point::new(bcd.x, middle.y), cd, turn);
-                }
-                add([a, b, c, d], cubic, &mut lines);
-                current = d;
-            }
-            Command::Close => lines.push(Command::Close),
-        }
-    }
-    lines
-}
-
 struct Edge {
     /// In quarters of a pixel.
     top: i32,
@@ -168,6 +90,200 @@ struct Edge {
     x: f32,
     step: f32,
     winding: i32,
+}
+
+impl Edge {
+    fn after(&self, quarters: f32) -> f32 {
+        self.x + self.step * quarters
+    }
+}
+
+/// Those that matter in an area.
+pub struct Edges<'a> {
+    matrix: &'a Transform,
+    area: IntRect,
+    list: Vec<Edge>,
+    /// How what is left of the area changes the winding from one quarter of a row to the next.
+    turns: Vec<i32>,
+    /// In quarters of rows.
+    length: u64,
+}
+
+impl<'a> Edges<'a> {
+    /// With more, nothing is filled.
+    const MAX_COUNT: usize = 1 << 22;
+    const MAX_LENGTH: u64 = 1 << 29;
+    const MAX_SORTED_LENGTH: u64 = 1 << 23;
+
+    pub fn new(matrix: &'a Transform, area: IntRect) -> Self {
+        Edges {
+            matrix,
+            area,
+            list: Vec::new(),
+            turns: Vec::new(),
+            length: 0,
+        }
+    }
+
+    fn line(&mut self, from: Point, to: Point) {
+        let (upper, lower, winding) = if from.y < to.y {
+            (from, to, 1)
+        } else {
+            (to, from, -1)
+        };
+        let (top, bottom, first) = (
+            (upper.y * 4.) as i32,
+            (lower.y * 4.) as i32,
+            self.area.top * 4,
+        );
+        let (start, end) = (top.max(first), bottom.min(self.area.bottom * 4));
+        if start >= end || upper.x.min(lower.x) >= self.area.right as f32 {
+            return;
+        }
+        if upper.x.max(lower.x) <= self.area.left as f32 {
+            self.turns.resize(self.area.height() * 4 + 1, 0);
+            self.turns[(start - first) as usize] += winding;
+            self.turns[(end - first) as usize] -= winding;
+        } else if self.list.len() < Self::MAX_COUNT {
+            let step = (lower.x - upper.x) / (bottom - top) as f32;
+            self.list.push(Edge {
+                top,
+                bottom,
+                x: upper.x - self.area.left as f32,
+                step,
+                winding,
+            });
+            self.length += (end - start) as u64;
+        }
+    }
+
+    /// It does not turn around.
+    fn curve<const N: usize>(&mut self, mut curve: [Point; N], flatten: fn([Point; N]) -> Points) {
+        let rises = curve[0].y > curve[N - 1].y;
+        if rises {
+            curve.reverse();
+        }
+        for pair in flatten(curve).windows(2) {
+            self.line(pair[usize::from(rises)], pair[usize::from(!rises)]);
+        }
+    }
+
+    /// Whether the line between its ends does as well.
+    fn is_outside(&self, curve: &[Point]) -> bool {
+        let IntRect {
+            left,
+            top,
+            right,
+            bottom,
+        } = self.area;
+        curve.iter().all(|it| it.x <= left as f32)
+            || curve.iter().all(|it| it.x >= right as f32)
+            || curve.iter().all(|it| it.y <= top as f32)
+            || curve.iter().all(|it| it.y >= bottom as f32)
+    }
+
+    pub fn add(&mut self, path: &[Command]) {
+        const FAR: f32 = 1e7;
+        let matrix = self.matrix;
+        let map = |point: Point| {
+            let (x, y) = map_point(matrix, point.x, point.y);
+            let [x, y] = [x, y].map(|it| {
+                if it.is_nan() {
+                    -FAR
+                } else {
+                    it.clamp(-FAR, FAR)
+                }
+            });
+            Point::new(x, y)
+        };
+        let snapped = |it: Point| Point::new(it.x, snap(it.y));
+        let (mut start, mut current) = (Point::ZERO, Point::ZERO);
+        for command in path.iter().chain([&Command::Close]) {
+            if self.list.len() == Self::MAX_COUNT {
+                return;
+            }
+            let from = current;
+            match *command {
+                Command::MoveTo(to) => {
+                    self.line(snapped(from), snapped(start));
+                    (start, current) = (map(to), map(to));
+                    continue;
+                }
+                Command::Close => current = start,
+                Command::LineTo(to) => current = map(to),
+                Command::QuadTo(b, c) => {
+                    let (a, b, c) = (from, map(b), map(c));
+                    current = c;
+                    if !self.is_outside(&[a, b, c]) {
+                        let t = (a.y - b.y) / (a.y - 2. * b.y + c.y);
+                        if t > 0. && t < 1. {
+                            let (ab, bc) = (lerp(a, b, t), lerp(b, c, t));
+                            let turn = lerp(ab, bc, t);
+                            self.curve([a, Point::new(ab.x, turn.y), turn], quadratic);
+                            self.curve([turn, Point::new(bc.x, turn.y), c], quadratic);
+                        } else {
+                            self.curve([a, b, c], quadratic);
+                        }
+                        continue;
+                    }
+                }
+                Command::CurveTo(b, c, d) => {
+                    let [mut a, mut b, mut c, d] = [from, map(b), map(c), map(d)];
+                    current = d;
+                    if !self.is_outside(&[a, b, c, d]) {
+                        let turns = roots(
+                            d.y - a.y + 3. * (b.y - c.y),
+                            2. * (a.y - 2. * b.y + c.y),
+                            b.y - a.y,
+                        );
+                        let mut done = 0.;
+                        for turn in turns {
+                            let t = (turn - done) / (1. - done);
+                            let (ab, bc, cd) = (lerp(a, b, t), lerp(b, c, t), lerp(c, d, t));
+                            let (abc, bcd) = (lerp(ab, bc, t), lerp(bc, cd, t));
+                            let middle = lerp(abc, bcd, t);
+                            self.curve([a, ab, Point::new(abc.x, middle.y), middle], cubic);
+                            (a, b, c, done) = (middle, Point::new(bcd.x, middle.y), cd, turn);
+                        }
+                        self.curve([a, b, c, d], cubic);
+                        continue;
+                    }
+                }
+            }
+            self.line(snapped(from), snapped(current));
+        }
+    }
+
+    pub fn fill(self, is_inside: impl Fn(i32) -> bool) -> Coverage {
+        let Edges {
+            area,
+            list: mut edges,
+            turns,
+            length,
+            ..
+        } = self;
+        let mut coverage = Coverage::filled(area, 0);
+        if edges.len() == Self::MAX_COUNT || length > Self::MAX_LENGTH {
+            return coverage;
+        }
+        let (mut top, mut winding) = (0, 0);
+        for (bottom, turn) in (area.top * 4..).zip(turns).filter(|it| it.1 != 0) {
+            edges.extend((winding != 0).then_some(Edge {
+                top,
+                bottom,
+                x: -1.,
+                step: 0.,
+                winding,
+            }));
+            (top, winding) = (bottom, winding + turn);
+        }
+        edges.sort_unstable_by_key(|edge| std::cmp::Reverse(edge.top));
+        match length > Self::MAX_SORTED_LENGTH {
+            true => sample(edges, is_inside, &mut coverage),
+            false => measure(edges, is_inside, &mut coverage),
+        }
+        coverage
+    }
 }
 
 /// Adds what is right of a line that goes from `from` to `to` and `height` down, as differences between neighbors.
@@ -240,63 +356,108 @@ pub fn fill_where(
     matrix: &Transform,
     area: IntRect,
 ) -> Coverage {
-    let (mut edges, mut start, mut current) = (Vec::new(), Point::ZERO, Point::ZERO);
-    let mut line = |from: Point, to: Point| {
-        let (upper, lower, winding) = if from.y < to.y {
-            (from, to, 1)
-        } else {
-            (to, from, -1)
-        };
-        let (top, bottom) = ((upper.y * 4.) as i32, (lower.y * 4.) as i32);
-        if top < bottom {
-            let step = (lower.x - upper.x) / (bottom - top) as f32;
-            edges.push(Edge {
-                top,
-                bottom,
-                x: upper.x - area.left as f32,
-                step,
-                winding,
-            });
-        }
-    };
-    for command in flatten(path, matrix).into_iter().chain([Command::Close]) {
-        match command {
-            Command::MoveTo(to) => {
-                line(current, start);
-                (start, current) = (to, to);
-            }
-            Command::LineTo(to) => line(std::mem::replace(&mut current, to), to),
-            _ => line(std::mem::replace(&mut current, start), start),
-        }
-    }
-    edges.sort_unstable_by_key(|edge| std::cmp::Reverse(edge.top));
+    let mut edges = Edges::new(matrix, area);
+    edges.add(path);
+    edges.fill(is_inside)
+}
 
-    let mut coverage = Coverage::filled(area, 0);
-    let (mut active, mut sums) = (Vec::<Edge>::new(), vec![0.; area.width() + 2]);
-    for (y, row) in (area.top..).zip(coverage.data.chunks_mut(area.width().max(1))) {
-        for quarter in y * 4..y * 4 + 4 {
-            while let Some(mut edge) = edges.pop_if(|edge| edge.top <= quarter) {
-                edge.x += edge.step * (quarter - edge.top) as f32;
-                active.push(edge);
+fn advance(active: &mut Vec<Edge>, waiting: &mut Vec<Edge>, quarter: i32) {
+    active.retain(|edge| edge.bottom > quarter);
+    while let Some(mut edge) = waiting.pop_if(|edge| edge.top <= quarter) {
+        edge.x += edge.step * (quarter - edge.top) as f32;
+        active.push(edge);
+    }
+}
+
+/// Most are in order.
+fn sort(active: &mut [Edge]) {
+    let mut swaps_left = active.len() * 4 + 64;
+    for next in 1..active.len() {
+        let (middle, mut at) = (active[next].after(0.5), next);
+        while at > 0 && active[at - 1].after(0.5) > middle {
+            active.swap(at - 1, at);
+            at -= 1;
+        }
+        let Some(left) = swaps_left.checked_sub(next - at) else {
+            return active.sort_by(|a, b| a.after(0.5).total_cmp(&b.after(0.5)));
+        };
+        swaps_left = left;
+    }
+}
+
+fn measure(mut edges: Vec<Edge>, is_inside: impl Fn(i32) -> bool, coverage: &mut Coverage) {
+    let area = coverage.rect;
+    let (mut active, mut sums, width) =
+        (Vec::new(), vec![0.; area.width() + 2], area.width().max(1));
+    let mut repeats_until = i32::MIN;
+    for (y, start) in (area.top..).zip((0..coverage.data.len()).step_by(width)) {
+        let (mut quarter, end) = (y * 4, y * 4 + 4);
+        if end <= repeats_until {
+            coverage.data.copy_within(start - width..start, start);
+            continue;
+        }
+        while quarter < end {
+            advance(&mut active, &mut edges, quarter);
+            sort(&mut active);
+            let change = active
+                .iter()
+                .fold(edges.last().map_or(i32::MAX, |it| it.top), |first, it| {
+                    first.min(it.bottom)
+                });
+            let mut count = (change.min(end) - quarter) as f32;
+            let side = |x: f32| (x < 0., x > width as f32);
+            if count > 1.
+                && (active.iter().any(|it| side(it.x) != side(it.after(count)))
+                    || active
+                        .windows(2)
+                        .any(|it| it[0].after(count - 0.5) > it[1].after(count - 0.5)))
+            {
+                count = 1.;
             }
-            active.retain(|edge| edge.bottom > quarter);
-            active.sort_by(|a, b| (a.x + a.step / 2.).total_cmp(&(b.x + b.step / 2.)));
+            if count == 4. && active.iter().all(|it| it.step == 0.) {
+                repeats_until = change;
+            }
             let mut winding = 0;
             for edge in &mut active {
-                let was_inside = is_inside(winding);
-                winding += edge.winding;
+                let (was_inside, from) = (is_inside(winding), edge.x);
+                (winding, edge.x) = (winding + edge.winding, edge.after(count));
                 if was_inside != is_inside(winding) {
                     accumulate(
                         &mut sums,
+                        from,
                         edge.x,
-                        edge.x + edge.step,
-                        if was_inside { -0.25 } else { 0.25 },
+                        if was_inside { -0.25 } else { 0.25 } * count,
                     );
                 }
+            }
+            quarter += count as i32;
+        }
+        add_up(
+            &mut sums,
+            &mut coverage.data[start..start + area.width()],
+            |sum| (sum * 255. + 0.5) as u8,
+        );
+    }
+}
+
+/// At 16 points of each pixel, which takes no sorting.
+fn sample(mut edges: Vec<Edge>, is_inside: impl Fn(i32) -> bool, coverage: &mut Coverage) {
+    let area = coverage.rect;
+    let (mut active, mut turns) = (Vec::new(), vec![0; area.width() * 4 + 4]);
+    for (y, row) in (area.top..).zip(coverage.data.chunks_mut(area.width().max(1))) {
+        for quarter in y * 4..y * 4 + 4 {
+            advance(&mut active, &mut edges, quarter);
+            for edge in &mut active {
+                turns[((edge.after(0.5) * 4. + 0.5) as usize).min(row.len() * 4)] += edge.winding;
                 edge.x += edge.step;
             }
+            let mut winding = 0;
+            for (value, turns) in row.iter_mut().zip(turns.as_chunks_mut::<4>().0) {
+                for turn in turns {
+                    winding += std::mem::take(turn);
+                    *value = value.saturating_add(if is_inside(winding) { 16 } else { 0 });
+                }
+            }
         }
-        add_up(&mut sums, row, |sum| (sum * 255. + 0.5) as u8);
     }
-    coverage
 }

@@ -204,6 +204,7 @@ impl Target {
         afterwards: Option<Request>,
     ) -> Result<()> {
         if let Some(fence) = self.fence.take() {
+            self.x.read(0);
             self.x.reply(fence)?;
         }
         let fits = |Buffer { capacity, .. }: &Buffer| {

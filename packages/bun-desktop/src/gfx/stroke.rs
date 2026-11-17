@@ -3,7 +3,7 @@
 //! Derived from `SkStroke`, `SkDash` and `SkContourMeasure` in Skia, and their port in tiny-skia.
 //! Copyright (c) 2011 Google Inc., (c) 2020 Yevhenii Reizner. BSD 3-Clause, see `licenses/skia.txt`.
 
-use std::f32::consts::FRAC_1_SQRT_2;
+use std::f32::consts::{FRAC_1_SQRT_2, SQRT_2};
 
 use super::{Command, Path, PathBuilder as _, Point, Transform};
 
@@ -166,6 +166,104 @@ fn contours(path: &[Command], mut take: impl FnMut(&Contour)) {
     }
 }
 
+/// What a path has to touch for its stroke to show, after `matrix`.
+struct Window<'a> {
+    matrix: &'a Transform,
+    low: Point,
+    high: Point,
+}
+
+impl Window<'_> {
+    fn may_touch(&self, points: &[Point]) -> bool {
+        let sides = |it: Point| {
+            u8::from(it.x < self.low.x)
+                | u8::from(it.x > self.high.x) << 1
+                | u8::from(it.y < self.low.y) << 2
+                | u8::from(it.y > self.high.y) << 3
+        };
+        points
+            .iter()
+            .fold(15, |all, it| all & sides(self.matrix.map(*it)))
+            == 0
+    }
+
+    /// From where to where between 0 and 1 the line is inside, if that is ascending.
+    fn clip(&self, line: [Point; 2]) -> [f32; 2] {
+        let [a, b] = line.map(|it| self.matrix.map(it));
+        [
+            (a.x, b.x, self.low.x, self.high.x),
+            (a.y, b.y, self.low.y, self.high.y),
+        ]
+        .into_iter()
+        .fold([0., 1.], |[from, to], (a, b, low, high)| {
+            let (first, second) = ((low - a) / (b - a), (high - a) / (b - a));
+            [from.max(first.min(second)), to.min(first.max(second))]
+        })
+    }
+
+    /// The contour without the segments that do not show.
+    fn parts(&self, contour: &Contour, mut take: impl FnMut(&Contour)) {
+        let Some(far) = contour
+            .segments
+            .iter()
+            .position(|it| !self.may_touch(it.points()))
+        else {
+            return take(contour);
+        };
+        let (before, after) = contour
+            .segments
+            .split_at(if contour.is_closed { far } else { 0 });
+        let mut part = Contour {
+            start: contour.start,
+            segments: Vec::new(),
+            is_closed: false,
+        };
+        for segment in after.iter().chain(before).map(Some).chain([None]) {
+            match segment.filter(|it| self.may_touch(it.points())) {
+                Some(segment) => part.segments.push(*segment),
+                None if part.segments.is_empty() => {}
+                None => {
+                    part.start = part.segments[0].points()[0];
+                    take(&part);
+                    part.segments.clear();
+                }
+            }
+        }
+    }
+
+    /// From where to where along the contour it shows.
+    fn stretches(&self, contour: &Contour, marks: &[Mark]) -> Vec<[f32; 2]> {
+        let (mut stretches, mut start) = (Vec::<[f32; 2]>::new(), 0.);
+        for marks in marks.chunk_by(|a, b| a.segment == b.segment) {
+            let (segment, end) = (
+                contour.segments[marks[0].segment],
+                marks[marks.len() - 1].distance,
+            );
+            let [from, to] = match segment {
+                _ if !self.may_touch(segment.points()) => [1., 0.],
+                Segment::Line(line) => self.clip(line),
+                _ => [0., 1.],
+            };
+            if from <= to {
+                let [from, to] = [
+                    start + (end - start) * from,
+                    if to < 1. {
+                        start + (end - start) * to
+                    } else {
+                        end
+                    },
+                ];
+                match stretches.last_mut() {
+                    Some(last) if last[1] >= from => last[1] = to,
+                    _ => stretches.push([from, to]),
+                }
+            }
+            start = end;
+        }
+        stretches
+    }
+}
+
 fn distance(a: Point, b: Point) -> f32 {
     (a - b).dot(a - b).sqrt()
 }
@@ -260,7 +358,14 @@ fn add_between(
     }
 }
 
-fn dashed(path: &[Command], dashes: &[f32], offset: f32, resolution: f32) -> Path {
+/// `None` if there are too many.
+fn dashed(
+    path: &[Command],
+    dashes: &[f32],
+    offset: f32,
+    resolution: f32,
+    window: &Window,
+) -> Option<Path> {
     let period: f32 = dashes.iter().sum();
     let (mut first, mut phase) = (0, offset.rem_euclid(period));
     while first < dashes.len() && (phase > dashes[first] || phase == dashes[first] && phase != 0.) {
@@ -269,43 +374,61 @@ fn dashed(path: &[Command], dashes: &[f32], offset: f32, resolution: f32) -> Pat
     let (first, first_length) = dashes
         .get(first)
         .map_or((0, dashes[0]), |it| (first, it - phase));
-    let (mut result, mut count) = (Path::new(), 0.);
+    let (mut result, mut count, whole) = (
+        Path::new(),
+        0.,
+        dashes.iter().copied().map(f64::from).sum::<f64>(),
+    );
     contours(path, |contour| {
         let marks = measure(contour, 0.5 / resolution);
         let Some(length) = marks.last().map(|it| it.distance) else {
             return;
         };
-        count += length * (dashes.len() / 2) as f32 / period;
-        if count.is_nan() || count > MAX_PIECES as f32 {
-            return result.clear();
+        let stretches = window.stretches(contour, &marks);
+        count += stretches
+            .iter()
+            .map(|[from, to]| ((to - from) / period + 2.) * (dashes.len() / 2) as f32)
+            .sum::<f32>();
+        if f64::from(length) * dashes.len() as f64 > whole * 1e12 {
+            count = f32::INFINITY;
         }
-        let (mut at, mut dash, mut index, mut was_added) =
+        if count.is_nan() || count > MAX_PIECES as f32 {
+            return;
+        }
+        let (mut at, mut dash, mut index, mut is_at_end) =
             (0., f64::from(first_length), first, false);
-        while at < f64::from(length) {
-            was_added = index % 2 == 0 && !(contour.is_closed && at == 0. && index == first);
-            if was_added {
-                add_between(
-                    contour,
-                    &marks,
-                    [at as f32, ((at + dash) as f32).min(length)],
-                    true,
-                    &mut result,
-                );
+        for [from, to] in stretches.iter().map(|it| it.map(f64::from)) {
+            while at < f64::from(length) && at <= to {
+                let (is_first, skipped) =
+                    (at == 0. && index == first, ((from - at) / whole).floor());
+                if !is_first && skipped >= 1. {
+                    at += skipped * whole;
+                }
+                is_at_end = index % 2 == 0 && !(contour.is_closed && is_first) && at + dash >= from;
+                if is_at_end {
+                    add_between(
+                        contour,
+                        &marks,
+                        [at as f32, ((at + dash) as f32).min(length)],
+                        true,
+                        &mut result,
+                    );
+                }
+                (at, index) = (at + dash, (index + 1) % dashes.len());
+                dash = dashes[index].into();
             }
-            (at, index) = (at + dash, (index + 1) % dashes.len());
-            dash = dashes[index].into();
         }
         if contour.is_closed && first % 2 == 0 {
             add_between(
                 contour,
                 &marks,
                 [0., first_length.min(length)],
-                !was_added,
+                !is_at_end || at < f64::from(length),
                 &mut result,
             );
         }
     });
-    result
+    (count <= MAX_PIECES as f32).then_some(result)
 }
 
 fn end_of(path: &[Command]) -> Point {
@@ -390,6 +513,11 @@ struct End {
 
 impl Stroker {
     fn join(&mut self, join: Join, before: End, after: End) {
+        let join = if join == Join::Round && self.pieces_left == 0 {
+            Join::Bevel
+        } else {
+            join
+        };
         let (dot, pivot) = (before.normal.dot(after.normal), after.at);
         if join != Join::Bevel && 1. - dot <= NEARLY_ZERO {
             return;
@@ -410,7 +538,11 @@ impl Stroker {
         let (sine, mut is_at_end) = (((1. + dot) / 2.).sqrt(), false);
         match join {
             Join::Round => {
-                let (mut from, turn) = (from, |it: Point| Point::new(-it.y, it.x) * sign);
+                let (mut from, turn, count) = (
+                    from,
+                    |it: Point| Point::new(-it.y, it.x) * sign,
+                    outer.len(),
+                );
                 while from.dot(to) < NEARLY_ZERO {
                     conic_to(
                         outer,
@@ -430,6 +562,7 @@ impl Stroker {
                         ((1. + cosine) / 2.).sqrt(),
                     );
                 }
+                self.pieces_left = self.pieces_left.saturating_sub(outer.len() - count);
                 is_at_end = true;
             }
             Join::Miter if !turns_around && sine >= self.least_sine => {
@@ -459,20 +592,22 @@ impl Stroker {
         inner.line_to(pivot).line_to(pivot - to * self.radius);
     }
 
-    fn cap(&self, path: &mut Path, end: End, to: Point) {
-        let (normal, at) = (end.normal * self.radius, end.at);
+    fn cap(&mut self, path: &mut Path, end: End, to: Point) {
+        let (normal, at, count) = (end.normal * self.radius, end.at, path.len());
         let tip = at + Point::new(-normal.y, normal.x);
         match self.cap {
             Cap::Butt => path.push(Command::LineTo(to)),
+            Cap::Round if self.pieces_left == 0 => path.push(Command::LineTo(to)),
             Cap::Round => {
                 conic_to(path, tip + normal, tip, FRAC_1_SQRT_2);
                 conic_to(path, tip - normal, to, FRAC_1_SQRT_2);
+                self.pieces_left = self.pieces_left.saturating_sub(path.len() - count);
             }
             Cap::Square if end.is_line => {
                 replace_end(path, tip + normal);
                 path.line_to(tip - normal);
             }
-            Cap::Square => drop(path.line_to(tip + normal).line_to(tip - normal).line_to(to)),
+            Cap::Square => _ = path.line_to(tip + normal).line_to(tip - normal).line_to(to),
         }
     }
 
@@ -536,7 +671,7 @@ impl Stroker {
         match self.beside(curve, [from, to], side) {
             Some(command) => self.sides[side].push(command),
             None if depth == 0 || self.pieces_left == 0 => {
-                drop(self.sides[side].line_to(self.ray(curve, to, side)[1]))
+                _ = self.sides[side].line_to(self.ray(curve, to, side)[1])
             }
             None => {
                 self.follow(curve, [from, (from + to) / 2.], side, depth - 1);
@@ -545,7 +680,7 @@ impl Stroker {
         }
     }
 
-    fn contour(&mut self, contour: &Contour, result: &mut Path) {
+    fn contour(&mut self, contour: &Contour, take: &mut dyn FnMut(&[Command])) {
         let mut ends: Option<(End, End)> = None;
         let normal = |along: Point| unit(along).map(|it| Point::new(it.y, -it.x));
         let mut add =
@@ -667,7 +802,7 @@ impl Stroker {
         }
         let [mut left, right] = std::mem::take(&mut self.sides);
         match is_closed {
-            true => drop(left.close().move_to(end_of(&right))),
+            true => _ = left.close().move_to(end_of(&right)),
             false => self.cap(&mut left, last, end_of(&right)),
         }
         for index in (1..right.len()).rev() {
@@ -689,7 +824,9 @@ impl Stroker {
                 start,
             );
         }
-        result.append(left.close());
+        take(left.close());
+        self.sides = [left, right];
+        self.sides.iter_mut().for_each(Vec::clear);
     }
 }
 
@@ -705,8 +842,17 @@ impl Stroke<'_> {
         }
     }
 
-    /// As precise as it has to be for `matrix`, which it is filled with.
-    pub fn outline(&self, path: &[Command], matrix: &Transform) -> Path {
+    /// In parts, as precise as it has to be for `matrix`, which it is filled with, and then only right between the corners.
+    pub fn outline(
+        &self,
+        path: &[Command],
+        matrix: &Transform,
+        [low, high]: [Point; 2],
+        take: &mut dyn FnMut(&[Command]),
+    ) {
+        if !(self.width > 0. && self.width.is_finite()) {
+            return;
+        }
         let (x, y) = matrix.get_scale();
         let resolution = Some(x.max(y))
             .filter(|it| it.is_finite() && *it > 0.)
@@ -715,8 +861,22 @@ impl Stroke<'_> {
         let is_dashed = self.dashes.len().is_multiple_of(2)
             && self.dashes.iter().all(|it| *it >= 0.)
             && period > 0.;
-        let dashed = (is_dashed && (period + self.dash_offset).is_finite())
-            .then(|| dashed(path, self.dashes, self.dash_offset, resolution));
+        let reach = self.width / 2.
+            * if self.join == Join::Miter {
+                self.miter_limit.max(SQRT_2)
+            } else {
+                SQRT_2
+            }
+            * x.hypot(y)
+            + 1.;
+        let window = Window {
+            matrix,
+            low: low - Point::new(reach, reach),
+            high: high + Point::new(reach, reach),
+        };
+        let dashed = (is_dashed && (period + self.dash_offset).is_finite()).then(|| {
+            dashed(path, self.dashes, self.dash_offset, resolution, &window).unwrap_or_default()
+        });
         let mut stroker = Stroker {
             radius: self.width / 2.,
             cap: self.cap,
@@ -728,14 +888,10 @@ impl Stroke<'_> {
             least_sine: 1. / self.miter_limit,
             tolerance: 0.25 / resolution,
             sides: Default::default(),
-            pieces_left: MAX_PIECES,
+            pieces_left: MAX_PIECES * 2,
         };
-        let mut result = Path::new();
-        if self.width > 0. && self.width.is_finite() {
-            contours(dashed.as_deref().unwrap_or(path), |contour| {
-                stroker.contour(contour, &mut result)
-            });
-        }
-        result
+        contours(dashed.as_deref().unwrap_or(path), |contour| {
+            window.parts(contour, |part| stroker.contour(part, take))
+        });
     }
 }

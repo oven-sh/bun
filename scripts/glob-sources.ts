@@ -62,7 +62,14 @@ const patterns = {
   },
   /** Rust that can call a function of the runtime's JavaScript, scanned by that generator beside the C++ above */
   nativeCallSites: {
-    paths: ["src/jsc/**/*.rs", "src/runtime/**/*.rs", "src/uws/**/*.rs", "src/*_jsc/**/*.rs"],
+    paths: [
+      "src/desktop/**/*.rs",
+      "src/jsc/**/*.rs",
+      "src/runtime/**/*.rs",
+      "src/ui/**/*.rs",
+      "src/uws/**/*.rs",
+      "src/*_jsc/**/*.rs",
+    ],
   },
   /** declarations of what `--trim` can remove */
   removableFeatures: {
@@ -136,14 +143,13 @@ const patterns = {
   aotNativeTests: {
     paths: ["test/aot/native/*.cpp"],
   },
-  /** all `*.c` compiled into bun (usockets, llhttp, uv polyfills) */
+  /** all `*.c` compiled into bun (usockets, uv polyfills) */
   c: {
     paths: [
       "packages/bun-usockets/src/*.c",
       "packages/bun-usockets/src/eventing/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
-      "src/jsc/bindings/node/http/llhttp/*.c",
     ],
   },
 } satisfies Record<string, SourcePattern>;

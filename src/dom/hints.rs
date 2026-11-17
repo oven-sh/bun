@@ -2,7 +2,6 @@
 
 use crate::document::Document;
 use crate::name::{Name, is_name, name};
-use crate::properties::Prop;
 use crate::selector::key;
 use crate::tree::{Data, Element, Flags, Namespace, NodeId, State};
 use crate::values::Out;
@@ -24,24 +23,25 @@ static PRESENTATION_ATTRIBUTES: std::sync::LazyLock<crate::name::Set<Name>> =
             .collect()
     });
 
-pub(crate) fn is_presentation_attribute(element: &Element, name: &str) -> bool {
-    match name {
-        "x" | "y" | "width" | "height" => is_name!(
+pub(crate) fn is_presentation_attribute(element: &Element, name: Name) -> bool {
+    match () {
+        () if is_name!(name, "d" | "id" | "style" | "class") => false,
+        () if is_name!(name, "x" | "y" | "width" | "height") => is_name!(
             element.tag,
             "svg" | "rect" | "image" | "foreignObject" | "use" | "symbol"
         ),
-        "cx" | "cy" => is_name!(element.tag, "circle" | "ellipse"),
-        "rx" | "ry" => is_name!(element.tag, "rect" | "ellipse"),
-        "r" => element.tag == name!("circle"),
-        "fill"
-            if is_name!(
+        () if is_name!(name, "cx" | "cy") => is_name!(element.tag, "circle" | "ellipse"),
+        () if is_name!(name, "rx" | "ry") => is_name!(element.tag, "rect" | "ellipse"),
+        () if name == name!("r") => element.tag == name!("circle"),
+        () if name == name!("fill")
+            && is_name!(
                 element.tag,
                 "animate" | "set" | "animateMotion" | "animateTransform"
             ) =>
         {
             false
         }
-        _ => PRESENTATION_ATTRIBUTES.contains(&Name::new(name.as_bytes())),
+        () => PRESENTATION_ATTRIBUTES.contains(&name),
     }
 }
 
@@ -72,9 +72,11 @@ impl Element {
     }
 
     fn direction(&self) -> Option<Direction> {
-        let value = self
-            .attribute(name!("dir"))
-            .filter(|_| self.namespace == Namespace::Html)?;
+        let value = &*self
+            .attributes_besides_class()
+            .find(|it| it.name == name!("dir"))
+            .filter(|_| self.namespace == Namespace::Html)?
+            .value;
         let keywords = [
             ("ltr", Direction::Ltr),
             ("rtl", Direction::Rtl),
@@ -111,7 +113,7 @@ fn leading_number(value: &str) -> (&str, &str) {
     value.split_at(value.bytes().take_while(u8::is_ascii_digit).count())
 }
 
-fn non_negative_integer(value: &str) -> Option<u32> {
+pub(crate) fn non_negative_integer(value: &str) -> Option<u32> {
     let value = value.trim_ascii_start();
     let digits = leading_number(
         value
@@ -327,7 +329,7 @@ fn html_hints(element: &Element, table: Option<&Element>, declare: &mut dyn FnMu
                     .for_each(|it| declare(it, &format!("{number}{unit}")));
             }
         };
-        match &*attribute.qualified {
+        match &*attribute.qualified() {
             name @ ("width" | "height") if is_embedded || is_name!(tag, "video" | "marquee") => {
                 length(&[name], true)
             }
@@ -591,9 +593,13 @@ fn html_hints(element: &Element, table: Option<&Element>, declare: &mut dyn FnMu
 fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out {
     let mut out = Out::new();
     let mut declare = |property: &str, value: &str| {
-        let declaration = format!("{property}:{value};");
-        if crate::scan::is_one_declaration(declaration.as_bytes()) {
-            out.extend(declaration.bytes());
+        let start = out.len();
+        out.reserve(96);
+        [property, ":", value, ";"]
+            .into_iter()
+            .for_each(|it| out.extend_from_slice(it.as_bytes()));
+        if !crate::scan::is_one_declaration(&out[start..]) {
+            out.truncate(start);
         }
     };
     if let Some(language) = element
@@ -609,22 +615,23 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
         );
     }
     if element.namespace == Namespace::Svg {
-        if !is_outer_svg {
-            declare("transform-origin", "0 0");
-        }
         for attribute in element
             .attributes
             .iter()
-            .filter(|it| is_presentation_attribute(element, &it.qualified))
+            .filter(|it| is_presentation_attribute(element, it.name))
         {
             let unit = |it: &str| {
-                if it.parse::<f32>().is_ok_and(f32::is_finite) {
-                    format!("{it}px ")
-                } else {
-                    format!("{it} ")
-                }
+                [
+                    it,
+                    if it.parse::<f32>().is_ok_and(f32::is_finite) {
+                        "px "
+                    } else {
+                        " "
+                    },
+                ]
+                .concat()
             };
-            match &*attribute.qualified {
+            match &*attribute.qualified() {
                 "width" | "height"
                     if !is_outer_svg && is_name!(element.tag, "svg" | "symbol" | "use") => {}
                 name @ ("font-size" | "letter-spacing" | "word-spacing" | "transform-origin"
@@ -661,10 +668,12 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
                 name => declare(name, &attribute.value),
             }
         }
-        if let Some([a, b, c, d, e, f]) = crate::svg::transform_attribute(element) {
+        if let Some(matrix) =
+            crate::svg::transform_attribute(element).filter(|it| it.iter().all(|it| it.is_finite()))
+        {
             declare(
                 "transform",
-                &format!("translate({e}px,{f}px) matrix({a},{b},{c},{d},0,0)"),
+                crate::values::text(&crate::transform::Transforms::hint(&matrix)),
             );
         }
         match element.attribute(name!("space http://www.w3.org/XML/1998/namespace")) {
@@ -681,7 +690,7 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
     out
 }
 
-pub(crate) fn can_be_hint(element: &Element, name: Name, qualified: &str) -> bool {
+pub(crate) fn can_be_hint(element: &Element, name: Name) -> bool {
     is_name!(
         name,
         "lang"
@@ -719,10 +728,11 @@ pub(crate) fn can_be_hint(element: &Element, name: Name, qualified: &str) -> boo
             | "height source"
     ) || element.namespace == Namespace::MathMl
         || element.namespace == Namespace::Svg
-            && (Prop::from_name(qualified.as_bytes()).is_some()
+            && (is_presentation_attribute(element, name)
                 || is_name!(
                     name,
-                    "gradientTransform"
+                    "transform"
+                        | "gradientTransform"
                         | "patternTransform"
                         | "space http://www.w3.org/XML/1998/namespace"
                 ))
@@ -781,12 +791,12 @@ impl Document {
         let source = hints(element, table, is_outer_svg);
         let block = self
             .styles
-            .block(&source, Default::default(), &self.base_url);
+            .block(&source, crate::sheet::Within::Hints, &self.base_url);
         if let Some(element) = self.tree.element_mut(id)
             && element.hints.as_ref().map(std::rc::Rc::as_ptr)
                 != block.as_ref().map(std::rc::Rc::as_ptr)
         {
-            element.hints = block;
+            element.rare_mut().hints = block;
             self.tree.mark_style(id, Flags::REMATCH);
         }
     }
@@ -796,9 +806,7 @@ impl Document {
         let mut at = self.tree[root].first_child;
         while at != 0 {
             let mut next = match &self.tree[at].data {
-                Data::Text(text) if let Some(found) = text_direction(crate::values::text(text)) => {
-                    return Some(found);
-                }
+                Data::Text(text) if let Some(found) = text_direction(text) => return Some(found),
                 Data::Element(it) if it.isolates_direction() => 0,
                 Data::Element(it)
                     if it.pseudo == crate::selector::Pseudo::Part(name!("placeholder")) =>
@@ -847,7 +855,7 @@ impl Document {
             .assigned
             .iter()
             .find_map(|it| match &self.tree[*it].data {
-                Data::Text(text) => text_direction(crate::values::text(text)),
+                Data::Text(text) => text_direction(text),
                 Data::Element(child) if !child.isolates_direction() => {
                     self.contained_direction(*it)
                 }
@@ -894,7 +902,34 @@ impl Document {
     fn derived_state(&self, id: NodeId, element: &Element) -> State {
         let (tag, mut state) = (element.html_tag(), State::empty());
         let parent = self.tree.element(self.tree.parent_or_host(id));
-        let inherited = parent.map_or(State::empty(), |it| it.state);
+        let of_document = if self.is_in_design_mode {
+            State::READ_WRITE
+        } else {
+            State::empty()
+        };
+        let inherited = parent.map_or(of_document, |it| it.state);
+        if !is_name!(
+            element.tag,
+            "a" | "area"
+                | "details"
+                | "dialog"
+                | "bdi"
+                | "button"
+                | "input"
+                | "select"
+                | "textarea"
+                | "fieldset"
+                | "optgroup"
+                | "option"
+        ) && !element
+            .state
+            .intersects(State::PICKER_OPEN | State::FORM_ASSOCIATED)
+            && !element
+                .attributes_besides_class()
+                .any(|it| is_name!(it.name, "dir" | "contenteditable"))
+        {
+            return inherited & (State::READ_WRITE | State::RTL);
+        }
         state.set(
             State::LINK,
             is_name!(element.tag, "a" | "area")
@@ -968,16 +1003,28 @@ impl Document {
     pub(crate) fn update_derived_state(&mut self, id: NodeId, whole_subtree: bool) {
         let (mut pending, mut next) = (Vec::new(), Some(id));
         while let Some(id) = next {
-            self.derive_state(id, whole_subtree, &mut pending);
+            if self
+                .derive_state(id, false)
+                .intersects(State::READ_WRITE | State::RTL)
+                || whole_subtree
+            {
+                let shadow_root = self.tree.element(id).map_or(0, |it| it.shadow_root);
+                pending.extend(
+                    self.tree
+                        .element_children(id)
+                        .chain(self.tree.element_children(shadow_root)),
+                );
+            }
             next = pending.pop();
         }
     }
 
-    fn derive_state(&mut self, id: NodeId, whole_subtree: bool, pending: &mut Vec<NodeId>) {
+    /// Returns what has changed. `is_new`: it has just been inserted, which `children_changed` is going to be told.
+    pub(crate) fn derive_state(&mut self, id: NodeId, is_new: bool) -> State {
         let Some(element) = self.tree.element(id) else {
-            return;
+            return State::empty();
         };
-        let (before, after) = (element.state & DERIVED, self.derived_state(id, element));
+        let toggled = (element.state & DERIVED) ^ self.derived_state(id, element);
         if element.has_auto_direction() {
             self.tree[id].set(Flags::AUTO_DIRECTION);
             self.has_auto_direction = true;
@@ -985,8 +1032,15 @@ impl Document {
             self.tree[id].unset(Flags::AUTO_DIRECTION);
         }
         let shadow_root = element.shadow_root;
-        self.change_state(id, before ^ after);
-        if self.has_auto_direction && shadow_root != 0 && (before ^ after).contains(State::RTL) {
+        match is_new && self.accessibility.is_none() {
+            true => self
+                .tree
+                .element_mut(id)
+                .into_iter()
+                .for_each(|it| it.state ^= toggled),
+            false => self.change_state(id, toggled),
+        }
+        if self.has_auto_direction && shadow_root != 0 && toggled.contains(State::RTL) {
             let slots: Vec<_> = self
                 .tree
                 .descendants(shadow_root)
@@ -1001,19 +1055,19 @@ impl Document {
                 self.text_changed_in(parent);
             }
         }
-        if whole_subtree || (before ^ after).intersects(State::READ_WRITE | State::RTL) {
-            pending.extend(
-                self.tree
-                    .element_children(id)
-                    .chain(self.tree.element_children(shadow_root)),
-            );
-        }
+        toggled
     }
 
     pub(crate) fn change_state(&mut self, id: NodeId, toggled: State) {
-        if let Some(element) = self.tree.element_mut(id) {
+        if let Some(accessibility) = &mut self.accessibility {
+            accessibility.state_changed(id, toggled);
+        }
+        if let Some(element) = (!toggled.is_empty())
+            .then(|| self.tree.element_mut(id))
+            .flatten()
+        {
             element.state ^= toggled;
-            if element.pseudo != crate::selector::Pseudo::None && !toggled.is_empty() {
+            if element.pseudo != crate::selector::Pseudo::None {
                 self.tree.mark_style(id, Flags::REMATCH);
             }
         }
@@ -1026,6 +1080,9 @@ impl Document {
     }
 
     pub(crate) fn text_changed_in(&mut self, parent: NodeId) {
+        if let Some(accessibility) = &mut self.accessibility {
+            accessibility.contents_changed(parent);
+        }
         let mut at = if self.has_auto_direction { parent } else { 0 };
         while at != 0 {
             if self.tree[at].has(Flags::AUTO_DIRECTION) {

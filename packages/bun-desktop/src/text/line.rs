@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use super::{Shaped, face, glyph_path, shape};
-use crate::abi::{Cluster, Face, Glyph, GlyphExtent, Rect, TextRun};
+use crate::abi::{Cluster, Face, Glyph, GlyphExtent, Rect, TextRun, spell_out};
 use crate::gfx::{self, Fill, Transform};
 use crate::hash::FastMap;
 use crate::paint::raster::{Coverage, IntRect, Path};
@@ -32,14 +32,21 @@ impl Line {
     pub fn new(text: &str, run: TextRun, direction: u8) -> Line {
         let mut shaped = Shaped::default();
         shape(text, &[run], direction, &mut shaped);
-        let mut line = Line {
-            width: 0.,
-            runs: Vec::new(),
-        };
+        if !shaped.letters.is_empty() {
+            (shaped.clusters, shaped.glyphs) = spell_out(text, &shaped.letters);
+        }
+        let (mut line, mut width) = (
+            Line {
+                width: 0.,
+                runs: Vec::new(),
+            },
+            0.,
+        );
         for index in visual_order(&shaped.clusters) {
             let cluster = shaped.clusters[index];
             let mut x = line.width;
-            line.width += cluster.advance;
+            width += f64::from(cluster.advance);
+            line.width = width as f32;
             if cluster.bidi_level & 1 == 1 {
                 let rest_of_ligature = shaped.clusters[index + 1..].iter();
                 let rest_of_ligature =
@@ -78,13 +85,28 @@ impl Line {
     }
 
     pub fn ink_bounds(&self) -> Rect {
-        let bounds = gfx::bounds(&self.path());
-        let (mut left, mut top, mut right, mut bottom) = (
-            bounds.x,
-            bounds.y,
-            bounds.x + bounds.width,
-            bounds.y + bounds.height,
-        );
+        let inked = self.runs.iter().flat_map(|(run, glyphs)| {
+            glyphs
+                .iter()
+                .filter_map(|it| Some((it, glyph_bounds(run.id, run.size, it.id)?)))
+        });
+        let edges = inked.map(|(glyph, [left, top, right, bottom])| {
+            [
+                left + glyph.x,
+                top + glyph.y,
+                right + glyph.x,
+                bottom + glyph.y,
+            ]
+        });
+        let union = |a: [f32; 4], b: [f32; 4]| {
+            [
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]
+        };
+        let [mut left, mut top, mut right, mut bottom] = edges.reduce(union).unwrap_or_default();
         for (run, glyphs) in &self.runs {
             let Some(face) = face(run.id).filter(|face| face.file.has_color) else {
                 continue;
@@ -104,6 +126,30 @@ impl Line {
             height: bottom - top,
         }
     }
+}
+
+/// The left, top, right and bottom edge, unless it is blank.
+fn glyph_bounds(face_id: u32, size: f32, glyph: u32) -> Option<[f32; 4]> {
+    thread_local! {
+        static KNOWN: RefCell<FastMap<[u32; 3], Option<[f32; 4]>>> = RefCell::default();
+    }
+    KNOWN.with_borrow_mut(|known| {
+        if known.len() > 4096 {
+            known.clear();
+        }
+        *known
+            .entry([face_id, size.to_bits(), glyph])
+            .or_insert_with(|| {
+                let path = glyph_path(face(face_id)?, glyph, size);
+                let Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                } = gfx::bounds(&path);
+                (!path.is_empty()).then_some([x, y, x + width, y + height])
+            })
+    })
 }
 
 fn ink_span(

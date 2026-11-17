@@ -5,11 +5,12 @@ use crate::gfx::{Pixmap, Transform};
 use crate::hash::FastMap;
 use crate::small_vec::SmallVec;
 
+use super::blur::MAX_SIGMA_OF_SHADOWS;
 use super::cpu::{self, GlyphKey, GlyphPlacer, Painter, gradient_axis};
 use super::digest::{self, Digest};
-use super::filter;
 use super::raster::{
     Clip, IntRect, Layer, Paint, average_scale, has_radii, map_rect, multiply, premultiply,
+    swap_red_and_blue,
 };
 use super::scene::{Frame, Scene, cross_fades, tile_bounds};
 use super::software::{self, Atlas, Compositor, Sprite as Tile};
@@ -27,7 +28,7 @@ const BUDGET: i64 = 3 << 20;
 const MAX_SIDE: i32 = 2048;
 const GLYPHS_PER_MASK: usize = 24;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Kind {
     Quad {
         color: u32,
@@ -36,7 +37,15 @@ pub enum Kind {
     },
     Mask(Tile, u32),
     Image(Tile),
+    /// A whole texture with `TURNED_EDGE` transparent pixels around what it shows.
+    Turned {
+        texture: u32,
+        id: u32,
+        to_texels: Transform,
+    },
 }
+
+pub(super) const TURNED_EDGE: i32 = 2;
 
 /// In device pixels.
 #[derive(Clone, Copy)]
@@ -60,6 +69,17 @@ impl Primitive {
             run: 0,
             kind,
         }
+    }
+
+    pub(super) fn looks_like(&self, other: &Primitive) -> bool {
+        (self.clip, self.bounds, self.kind, self.radii, self.opacity)
+            == (
+                other.clip,
+                other.bounds,
+                other.kind,
+                other.radii,
+                other.opacity,
+            )
     }
 
     fn visible(&self) -> IntRect {
@@ -232,27 +252,43 @@ fn bgra(layer: &Layer, rect: IntRect) -> Vec<u8> {
             layer
                 .row(y, rect.left, rect.right)
                 .iter()
-                .map(|&[r, g, b, a]| [b, g, r, a]),
+                .copied()
+                .map(swap_red_and_blue),
         );
     }
     pixels.into_flattened()
 }
 
 fn painted_rect(layer: &Layer) -> IntRect {
-    let (mut painted, rect) = (IntRect::default(), layer.rect);
-    for y in rect.top..rect.bottom {
-        let row = layer.row(y, rect.left, rect.right);
-        if let Some(first) = row.iter().position(|pixel| pixel[3] != 0) {
-            let last = row.iter().rposition(|pixel| pixel[3] != 0).unwrap_or(first);
-            painted = painted.union(IntRect::new(
-                rect.left + first as i32,
-                y,
-                rect.left + last as i32 + 1,
-                y + 1,
-            ));
-        }
+    let rect = layer.rect;
+    let is_painted = |y: &i32| {
+        layer
+            .row(*y, rect.left, rect.right)
+            .iter()
+            .fold(0, |all, it| all | u32::from_le_bytes(*it))
+            >> 24
+            != 0
+    };
+    let (Some(top), Some(last)) = (
+        (rect.top..rect.bottom).find(is_painted),
+        (rect.top..rect.bottom).rfind(is_painted),
+    ) else {
+        return IntRect::default();
+    };
+    let (mut left, mut right) = (rect.right, rect.left);
+    for y in top..=last {
+        left = layer
+            .row(y, rect.left, left)
+            .iter()
+            .position(|it| it[3] != 0)
+            .map_or(left, |it| rect.left + it as i32);
+        right = layer
+            .row(y, right, rect.right)
+            .iter()
+            .rposition(|it| it[3] != 0)
+            .map_or(right, |it| right + it as i32 + 1);
     }
-    painted
+    IntRect::new(left, top, right, last + 1)
 }
 
 /// `part` is relative to the tile's origin.
@@ -452,6 +488,29 @@ fn corner_rects(shape: &RoundedRect) -> [IntRect; 4] {
     ]
 }
 
+fn is_within_curve(shape: &RoundedRect, corner: usize, area: IntRect) -> bool {
+    let (
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        },
+        [rx, ry],
+    ) = (shape.rect, shape.radii[corner]);
+    let across = if matches!(corner, 0 | 3) {
+        x + rx - area.left as f32
+    } else {
+        area.right as f32 - (x + width - rx)
+    };
+    let down = if corner < 2 {
+        y + ry - area.top as f32
+    } else {
+        area.bottom as f32 - (y + height - ry)
+    };
+    (across / rx).powi(2) + (down / ry).powi(2) < 0.99
+}
+
 fn is_axis_aligned(matrix: &Transform) -> bool {
     matrix.kx.abs() < 1e-5 && matrix.ky.abs() < 1e-5 && matrix.sx > 0. && matrix.sy > 0.
 }
@@ -474,6 +533,8 @@ fn is_identity(filter: &Filter) -> bool {
 /// Where a scene goes in the window.
 pub struct Placement<'a> {
     pub movers: &'a [Mover<'a>],
+    /// Sorted indices of items.
+    pub in_motion: &'a [usize],
     pub origin: (i32, i32),
     pub clip: IntRect,
     /// What is behind the scene.
@@ -819,7 +880,8 @@ impl Flattener<'_> {
         let mut is_touched = [false; 4];
         for primitive in &mut self.cache.primitives[first..] {
             let visible = primitive.visible();
-            let touches = corners.map(|corner| corner.overlaps(visible));
+            let touches = [0, 1, 2, 3]
+                .map(|it| corners[it].overlaps(visible) && !is_within_curve(shape, it, visible));
             if touches == [false; 4] {
                 continue;
             }
@@ -1009,6 +1071,58 @@ impl Flattener<'_> {
         Some(())
     }
 
+    /// What is turning is painted once, upright.
+    fn turn(&mut self, index: usize, matrix: &Transform, clip: IntRect) -> Option<()> {
+        const MAX_STEP: f32 = 4.;
+        let Painter { scene, frame, .. } = self.painter;
+        let next = self.placement.in_motion.binary_search(&index).ok()? + 1;
+        self.placement
+            .in_motion
+            .get(next)
+            .is_none_or(|it| *it >= scene.end(index))
+            .then_some(())?;
+        let (x, y) = matrix.get_scale();
+        let scale = frame.scale * (x.max(y) / frame.scale / 1.1).log2().ceil().exp2();
+        let upright = Transform::from_scale(scale, scale);
+        let to_upright = upright.pre_concat(matrix.invert()?);
+        let area = IntRect::around(map_rect(&upright, scene.content_bounds(index)));
+        let steps = [to_upright.sx, to_upright.kx, to_upright.ky, to_upright.sy];
+        let is_small =
+            area.area() <= WHOLE_AREA && area.width().max(area.height()) <= MAX_SIDE as usize;
+        (is_small && steps.iter().all(|it| it.abs() <= MAX_STEP)).then_some(())?;
+        let mut digest = Digest::new(area);
+        digest.matrix(&upright);
+        digest.range(&self.painter, scene.content(index), &upright, area);
+        digest.value("upright");
+        let sprite = self.raster(digest.finish(), area, false, |painter| {
+            let mut layer = Layer::new(area)?;
+            painter.paint(scene.content(index), &mut layer, &upright, &Clip::new(area));
+            layer.copy(
+                Some(painted_rect(&layer))
+                    .filter(|it| !it.is_empty())?
+                    .outset(TURNED_EDGE),
+            )
+        });
+        if let Some(Sprite { tile, rect }) = sprite {
+            let rect = rect.offset(area.left, area.top);
+            let bounds = IntRect::around(map_rect(
+                &matrix.pre_scale(1. / scale, 1. / scale),
+                rect.outset(1 - TURNED_EDGE).to_rect(),
+            ));
+            let to_texels = to_upright.post_translate(-rect.left as f32, -rect.top as f32);
+            self.push(Primitive::new(
+                bounds.to_rect(),
+                clip,
+                Kind::Turned {
+                    texture: tile.texture,
+                    id: tile.id,
+                    to_texels,
+                },
+            ));
+        }
+        Some(())
+    }
+
     /// `matrix` is axis aligned.
     fn item(&mut self, index: usize, matrix: &Transform, clip: IntRect) {
         let Painter { scene, frame, .. } = self.painter;
@@ -1027,6 +1141,7 @@ impl Flattener<'_> {
             }
             Item::PushTransform(by) => match frame.concat(matrix, by) {
                 inner if is_axis_aligned(&inner) => self.range(scene.content(index), &inner, clip),
+                inner if self.turn(index, &inner, clip).is_some() => {}
                 _ => self.rasterize_all(index, matrix, clip),
             },
             Item::PushLayer { .. } => self.layer(index, matrix, clip),
@@ -1194,6 +1309,19 @@ impl Flattener<'_> {
                 return;
             }
             if let Some(radii) = circular_radii(&shape).filter(|_| border == [top; 4]) {
+                if let (Item::Fill { color: fill, .. }, Some(last)) = (
+                    scene.items[index.saturating_sub(1)],
+                    self.cache.primitives.last_mut(),
+                ) && matches!(last.kind, Kind::Quad { color, border: [0., 0., 0., 0.], .. } if color == fill && fill & 0xFF != 0)
+                    && (last.bounds, last.radii, last.clip) == (rect, radii, clip)
+                {
+                    last.kind = Kind::Quad {
+                        color: fill,
+                        border_color: color,
+                        border,
+                    };
+                    return;
+                }
                 let kind = Kind::Quad {
                     color: 0,
                     border_color: color,
@@ -1236,7 +1364,8 @@ impl Flattener<'_> {
                 inset: false,
                 ..
             } if blur * frame.scale >= scales_from => {
-                let scale = frame.scale / (blur * frame.scale / 8.).floor();
+                let scale = frame.scale
+                    / ((blur * frame.scale).min(MAX_SIGMA_OF_SHADOWS * 2.) / 8.).floor();
                 Transform::from_scale(scale, scale)
             }
             Item::Shadow { blur: 2.0.., .. } if !frame.is_translation(matrix) => {
@@ -1244,7 +1373,7 @@ impl Flattener<'_> {
             }
             _ => *matrix,
         };
-        let stretch = Stretch::of(&self.painter, index, &raster_matrix);
+        let stretch = Stretch::of(&self.painter, index, &raster_matrix, matrix);
         let stretch =
             stretch.filter(|it| it.area.width().max(it.area.height()) <= MAX_SIDE as usize);
         let (Some(stretch), Some(inverse)) = (stretch, raster_matrix.invert()) else {
@@ -1509,7 +1638,9 @@ impl Flattener<'_> {
         let area = self.area_to_rasterize(index, matrix, clip);
         let needed = area.outset(
             cpu::filter_reach(scene.filters(filters), matrix)
-                + self.painter.reach_of_backdrops(index, matrix),
+                + self
+                    .painter
+                    .reach_of_backdrops(scene.content(index), matrix),
         );
         let mut digest = Digest::new(area);
         digest.matrix(matrix);
@@ -1822,7 +1953,6 @@ impl Flattener<'_> {
         };
         let reduction = ((filters.iter().map(blur).fold(0., f32::max) / 2.) as i32).clamp(1, 8);
         let shown = IntRect::nearest(shape.rect).intersect(self.placement.clip);
-        let reach = cpu::filter_reach(filters, matrix);
         let (mut digest, render) = self.scene_before(first, index, shown, reduction);
         digest.filters(self.painter.scene, matrix, filters);
         let key = digest.finish();
@@ -1838,11 +1968,11 @@ impl Flattener<'_> {
         let rendered = (!self.cache.rasters.contains_key(&key))
             .then(render)
             .flatten();
-        let sprite = self.raster(key, IntRect::default(), false, |_| {
-            let (behind, factor) = (rendered?, 1. / reduction as f32);
-            let mut layer = cpu::mirror_edges(&behind, reach / reduction + 1)?;
-            filter::apply(&mut layer, filters, &matrix.post_scale(factor, factor));
-            layer.copy(behind.rect.outset(1))
+        let sprite = self.raster(key, IntRect::default(), false, |painter| {
+            let (mut layer, factor) = (rendered?, 1. / reduction as f32);
+            let behind = layer.rect;
+            painter.filter_backdrop(&mut layer, filters, &matrix.post_scale(factor, factor));
+            cpu::mirror_edges(&layer.copy(behind)?, 1)
         });
         let Some(sprite) = sprite else { return };
         let part = IntRect::new(

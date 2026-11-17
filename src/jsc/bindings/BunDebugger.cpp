@@ -1,4 +1,5 @@
 #include "root.h"
+#include "InternalModuleRegistry.h"
 
 #include "BunDebugger.h"
 #include "BunCompiledModules.h"

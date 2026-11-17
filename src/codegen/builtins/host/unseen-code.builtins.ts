@@ -29,15 +29,7 @@ const moduleLoaders = [
   "process.getBuiltinModule",
 ];
 
-const textEvaluators = [
-  "%NodeVMBinding%.Module",
-  "%NodeVMBinding%.Script",
-  "%NodeVMBinding%.compileFunction",
-  "native:NewCppFunction:DesktopRealm.cpp:jsFunctionCreateDesktopRealm",
-  "native:NewCppFunction:DesktopRealm.cpp:jsFunctionDesktopRealmEvaluate",
-  "native:NewCppFunction:DesktopRealm.cpp:jsFunctionDesktopRealmImport",
-  "native:NewCppFunction:DesktopRealm.cpp:jsFunctionDesktopRealmRunCompiled",
-];
+const textEvaluators = ["%NodeVMBinding%.Module", "%NodeVMBinding%.Script", "%NodeVMBinding%.compileFunction"];
 
 const heapEnumerators = ["bun:jsc.getProtectedObjects"];
 
@@ -100,7 +92,6 @@ const classesWithConstructor = [
   "%BlockList%",
   "%BuildMessage%",
   "%Crypto%",
-  "%DesktopEngine%",
   "%Dirent%",
   "%ELDHistogram%",
   "%Expect%",
@@ -111,10 +102,12 @@ const classesWithConstructor = [
   "%FrameworkFileSystemRouter%",
   "%H2FrameParser%",
   "%HTMLRewriter%",
+  "%HTTPParser%",
   "%Histogram%",
   "%Image%",
   "%Immediate%",
   "%NativeBrotli%",
+  "%NativeImage%",
   "%NativeZlib%",
   "%NativeZstd%",
   "%NetworkSink%",
@@ -143,6 +136,7 @@ const prototypesWithoutConstructor = [
   "%BunRequest%.prototype",
   "%BytesInternalReadableStreamSource%.prototype",
   "%Comment%.prototype",
+  "%IncomingBody%.prototype",
   "%CronJob%.prototype",
   "%DNSResolver%.prototype",
   "%DebugHTTPSServer%.prototype",
@@ -268,13 +262,13 @@ const moduleNamespaces = [
 
 const nativeFiles = [
   "CallSite.cpp",
-  "DesktopLazy.cpp",
   "DesktopRealm.cpp",
   "DesktopWindow.cpp",
   "EventDispatcher.cpp",
   "InternalForTesting.cpp",
   "InternalModuleRegistry.cpp",
   "IsolatedModuleCache.cpp",
+  "IsolatedWorld.cpp",
   "JSCTestingHelpers.cpp",
   "JSEventTarget.cpp",
   "JSEventTargetNode.cpp",
@@ -293,11 +287,13 @@ const nativeFiles = [
   "NodeValidator.cpp",
   "Path.cpp",
   "ProcessBindingTTYWrap.cpp",
+  "RealmBridge.cpp",
   "StructuredClone.cpp",
   "TestEnvironment.cpp",
   "Undici.cpp",
   "UtilInspect.cpp",
   "ZigSourceProvider.cpp",
+  "bindgen_interface_test.bind.ts",
   "bindgen_test.bind.ts",
   "declared_results_testing.bind.ts",
   "decodeURIComponentSIMD.cpp",

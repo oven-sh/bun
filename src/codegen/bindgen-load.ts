@@ -5,6 +5,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { SchemaFile } from "./bindgen-emit.ts";
 import {
+  ClassType,
+  DictionaryType,
+  EnumerationType,
   FunctionDefinition,
   ModuleDefinition,
   NamedType,
@@ -45,6 +48,10 @@ export async function loadSchemaFile(source: string): Promise<SchemaFile> {
       if ((value.origin && value.origin.stem !== stem) || result.types.includes(value)) continue;
       // As rustc's lint has it, digits can be separated: SHA512_256.
       assert(/^[A-Z][A-Za-z0-9]*(?:(?<=\d)_\d+)*$/.test(name), `${stem}.bind.ts: type names are PascalCase: ${name}`);
+      assert(
+        !(value instanceof ClassType && value.web) || value.name === name,
+        `${stem}.bind.ts: ${value.name} is exported as ${name}`,
+      );
       value.name = name;
       value.origin = origin;
       result.types.push(value);
@@ -52,6 +59,13 @@ export async function loadSchemaFile(source: string): Promise<SchemaFile> {
       throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function, a namespace or b.module()`);
     }
   }
+  for (const type of result.types)
+    if (type instanceof ClassType)
+      type.membersInTable = type.web?.options.membersInTable ?? result.moduleDefinition?.membersInTable ?? true;
+  const isWeb = (type: NamedType) =>
+    type instanceof ClassType ? !!type.web : type instanceof DictionaryType && !!type.options.webidl;
+  if (result.types.some(isWeb))
+    for (const type of result.types) if (type instanceof EnumerationType) type.isWebIDL = true;
   const names = new Set<string>();
   for (const { name } of [...result.functions, ...result.namespaces]) {
     assert(!names.has(name), `${stem}.bind.ts: two of its functions and namespaces are named ${name}`);

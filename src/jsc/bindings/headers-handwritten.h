@@ -435,7 +435,7 @@ typedef struct {
     bool pinned;
 } Bun__ArrayBuffer;
 
-#include "SyntheticModuleType.h"
+enum SyntheticModuleType : uint32_t;
 
 extern "C" const char* Bun__userAgent;
 

@@ -3,6 +3,7 @@
 use crate::abi::{Item, Matrix, Outline, Rect};
 use crate::boxes::{BoxId, VIEWPORT};
 use crate::document::Document;
+use crate::order::Order as _;
 use crate::paint::{Painter, Space};
 use crate::path::Path;
 use crate::properties::{Id, Style, WillChange};
@@ -340,9 +341,9 @@ impl Document {
         )
     }
 
-    pub(crate) fn offset_in(&self, id: BoxId, ancestor: BoxId) -> [f32; 2] {
-        let inside = core::iter::once(id)
-            .chain(self.boxes.containers(id))
+    pub(crate) fn offset_in(&self, descendant: BoxId, ancestor: BoxId) -> [f32; 2] {
+        let inside = core::iter::once(descendant)
+            .chain(self.boxes.containers(descendant))
             .take_while(|it| *it != ancestor && *it != VIEWPORT);
         inside
             .map(|it| self.offset_in_container(it))
@@ -380,7 +381,7 @@ impl Document {
         Path::polygon(
             project(&all, rect)
                 .iter()
-                .map(|it| [it[0] as f32, it[1] as f32]),
+                .map(|it| [it[0], it[1]].map(|it| it.clamp(-1e7, 1e7) as f32)),
             true,
         )
         .bounds()
@@ -415,7 +416,7 @@ impl Document {
             children.extend(own.into_iter().filter(|it| self.is_plane(*it)));
             pending.extend(anonymous.into_iter().rev());
         }
-        children.sort_by_key(|it| self.boxes[*it].style.paint.z_index.0.unwrap_or(0));
+        children.order_by_key(|it| self.boxes[*it].style.paint.z_index.0.unwrap_or(0));
         for child in children {
             let [x, y] = self.offset_in(child, id);
             self.gather_planes(child, [origin[0] + x, origin[1] + y], &inner, out);

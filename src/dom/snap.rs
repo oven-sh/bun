@@ -4,6 +4,7 @@ use crate::abi::{Matrix, Rect};
 use crate::boxes::BoxId;
 use crate::document::Document;
 use crate::inline::ItemKind;
+use crate::order::Order as _;
 use crate::properties::{Id, Style};
 use crate::scroll::{Alignment, scroll_margin};
 use crate::tree::{DOCUMENT, NodeId, State};
@@ -150,7 +151,7 @@ impl Snapper<'_> {
             .map(|it| it.rect.span(axis))
             .filter(|it| overlaps(*it, [start, end]) && (it[0] > start || it[1] < end))
             .collect();
-        intruders.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        intruders.order_by(|a, b| a[0].total_cmp(&b[0]));
         let mut free = start;
         let gaps = intruders.into_iter().chain([[end; 2]]).map(|it| {
             let gap = [free, it[0]];
@@ -419,29 +420,65 @@ impl Document {
                 visit(column, style, &|| rect.transformed(&multiply(matrix, &own)));
             }
         }
-        for child in self.boxes[id].children.iter().copied() {
-            let it = &self.boxes[child];
-            let matrix = match it.container == id {
-                true => multiply(matrix, &self.to_container(child)),
-                false => {
-                    let Some(own) = self.to_scroller(child, scroller) else {
-                        continue;
-                    };
-                    multiply(
-                        &crate::geometry::translation(
-                            self.scroll_offset(self.boxes[scroller].node),
-                        ),
-                        &own,
-                    )
-                }
-            };
-            if it.node != 0 {
-                visit(it.node, &it.style, &|| {
-                    self.extent(child).transformed(&matrix)
-                });
+        self.boxes[id]
+            .children
+            .iter()
+            .for_each(|it| self.visit_scrolled_child(*it, Some((id, matrix)), scroller, visit));
+    }
+
+    fn visit_scrolled_child(
+        &self,
+        child: BoxId,
+        parent: Option<(BoxId, &Matrix)>,
+        scroller: BoxId,
+        visit: &mut dyn FnMut(NodeId, &Style, &dyn Fn() -> Rect),
+    ) {
+        let it = &self.boxes[child];
+        let matrix = match parent.filter(|parent| parent.0 == it.container) {
+            Some((_, matrix)) => multiply(matrix, &self.to_container(child)),
+            None => {
+                let Some(own) = self.to_scroller(child, scroller) else {
+                    return;
+                };
+                multiply(
+                    &crate::geometry::translation(self.scroll_offset(self.boxes[scroller].node)),
+                    &own,
+                )
             }
-            if !it.scrolls() {
-                self.visit_scrolled(child, &matrix, scroller, visit);
+        };
+        if it.node != 0 {
+            visit(it.node, &it.style, &|| {
+                self.extent(child).transformed(&matrix)
+            });
+        }
+        match it.scrolls() {
+            true => self.visit_escapees(child, scroller, visit),
+            false => self.visit_scrolled(child, &matrix, scroller, visit),
+        }
+    }
+
+    /// `id` scrolls, or something between it and `scroller` scrolls it.
+    fn visit_escapees(
+        &self,
+        id: BoxId,
+        scroller: BoxId,
+        visit: &mut dyn FnMut(NodeId, &Style, &dyn Fn() -> Rect),
+    ) {
+        for child in self.boxes[id]
+            .children
+            .iter()
+            .copied()
+            .take_while(|_| self.boxes[id].cache.has_escapees())
+        {
+            match self.boxes[child].container != id
+                && self
+                    .boxes
+                    .containers(child)
+                    .find(|it| *it == scroller || self.boxes[*it].scrolls())
+                    == Some(scroller)
+            {
+                true => self.visit_scrolled_child(child, None, scroller, visit),
+                false => self.visit_escapees(child, scroller, visit),
             }
         }
     }

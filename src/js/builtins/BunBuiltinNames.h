@@ -55,7 +55,6 @@ using namespace JSC;
     macro(bytes) \
     macro(cancel) \
     macro(checks) \
-    macro(cloner) \
     macro(close) \
     macro(cmd) \
     macro(code) \

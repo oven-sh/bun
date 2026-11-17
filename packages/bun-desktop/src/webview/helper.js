@@ -171,7 +171,7 @@ function forwardEvents(emitter, kind, id, before = () => {}) {
   emitter.emit = function (name, ...args) {
     if (typeof name !== "string" || notForwarded.test(name)) return emit.call(this, name, ...args);
     const [event] = args;
-    before(event);
+    before(event, name, args[1]);
     const isEvent = typeof event?.preventDefault === "function";
     const details = {};
     if (isEvent) {
@@ -207,7 +207,7 @@ function sendState(view) {
     pid: it.getOSProcessId(),
     entries: history.getAllEntries().map(({ url, title }) => ({ url, title })),
     index: history.getActiveIndex(),
-    frames: it.mainFrame.framesInSubtree.map(describeFrame),
+    frames: it.mainFrame.isDestroyed() ? [] : it.mainFrame.framesInSubtree.map(describeFrame),
     focusedFrame: it.focusedFrame && idOf(it.focusedFrame),
   };
   if (view.isFrame) state.url = state.entries = undefined;
@@ -494,7 +494,7 @@ const targets = {
   window: id => views.get(id)?.window,
   session: id => sessions.get(id),
   object: id => objects.get(id),
-  module: name => ({ app, clipboard, systemPreferences: electron.systemPreferences })[name],
+  module: name => electron[name],
 };
 
 let mediaWindow;
@@ -574,11 +574,11 @@ const commands = {
     await it.clearStorageData({ storages: ["cookies"] });
     await commands.cookies(id, cookies, []);
     it.cookies.on("changed", (_, cookie, cause, removed) => send("cookie", id, cookie, cause, removed));
-    it.on("will-download", (_, item) => {
+    forwardEvents(it, "session", id, (_, event, item) => {
+      if (event !== "will-download") return;
       for (const name of ["updated", "done"]) item.on(name, (_, state) => send("download", item, name, state));
       item.once("done", () => objects.delete(ids.get(item)));
     });
-    forwardEvents(it, "session", id);
     forwardEvents(it.extensions, "extensions", id);
     forwardEvents(it.serviceWorkers, "serviceWorkers", id, details => sendWorkers(id, details?.versionId));
   },
@@ -596,7 +596,13 @@ const commands = {
     send("reply", reply, false);
   },
   handler(id, name, isSet, isSync, options) {
-    const handler = (...args) => (isSync ? ask : send)("handler", id, name, args);
+    const handler = (...args) => {
+      if (!isSync) return send("handler", id, name, args);
+      // The answer to a document whose navigation is not committed yet is lost unless it is given at once.
+      const { result, calls } = ask("handler", id, name, args);
+      for (const call of calls) commands.call(0, ...call);
+      return result;
+    };
     sessions.get(id)[name](isSet ? handler : null, options);
     if (name === "setCertificateVerifyProc") networks.get(id)[name](isSet ? handler : null);
   },
@@ -691,7 +697,10 @@ const commands = {
 
 const settings = readAnswer();
 app.setName(settings.name);
+fs.mkdirSync(settings.directory, { recursive: true });
 app.setPath("userData", settings.directory);
+// The sandbox of the network service lets it write below this, and nowhere else.
+app.setPath("sessionData", path.dirname(settings.directory));
 if (settings.userAgent) app.userAgentFallback = settings.userAgent;
 app.enableSandbox();
 if (process.platform === "darwin") app.setActivationPolicy("accessory");

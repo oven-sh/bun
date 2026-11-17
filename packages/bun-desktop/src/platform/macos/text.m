@@ -9,7 +9,7 @@ static char* copyOf(CFTypeRef owned)
 {
     @autoreleasepool {
         id value = CFBridgingRelease(owned);
-        NSString* string = list(value) ? [value componentsJoinedByString:@"\n"] : [value isKindOfClass:NSURL.class] ? [value path] : value;
+        NSString* string = [value isKindOfClass:NSArray.class] ? [value componentsJoinedByString:@"\n"] : [value isKindOfClass:NSURL.class] ? [value path] : value;
         return strdup(string.UTF8String ?: "");
     }
 }
@@ -71,7 +71,7 @@ double bd_font_weight(CTFontRef font)
 {
     @autoreleasepool {
         NSDictionary* traits = CFBridgingRelease(CTFontCopyTraits(font));
-        return number(traits[(id)kCTFontWeightTrait]).doubleValue;
+        return [traits[(id)kCTFontWeightTrait] doubleValue];
     }
 }
 
@@ -105,6 +105,32 @@ BDRect bd_glyph_bounds(CTFontRef font, uint16_t glyph)
 {
     CGRect bounds = CTFontGetBoundingRectsForGlyphs(font, kCTFontOrientationHorizontal, &glyph, NULL, 1);
     return (BDRect) { bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height };
+}
+
+uint16_t bd_font_glyph(CTFontRef font, uint16_t character)
+{
+    CGGlyph glyph = 0;
+    CTFontGetGlyphsForCharacters(font, &character, &glyph, 1);
+    return glyph;
+}
+
+/// Onto opaque pixels. `y` is from the bottom.
+void bd_glyph_draw_black(CTFontRef font, uint16_t glyph, double x, double y, void* pixels, size_t width, size_t height, bool isSmoothed)
+{
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(pixels, width, height, 8, width * 4, space, kCGBitmapByteOrder32Host | (CGBitmapInfo)kCGImageAlphaNoneSkipFirst);
+    CGColorSpaceRelease(space);
+    if (context) {
+        CGContextSetAllowsFontSubpixelQuantization(context, false);
+        CGContextSetShouldSubpixelQuantizeFonts(context, false);
+        CGContextSetAllowsFontSubpixelPositioning(context, true);
+        CGContextSetShouldSubpixelPositionFonts(context, true);
+        CGContextSetShouldSmoothFonts(context, isSmoothed);
+        CGContextSetGrayFillColor(context, 0, 1);
+        CGPoint position = { x, y };
+        CTFontDrawGlyphs(font, &glyph, &position, 1, context);
+        CGContextRelease(context);
+    }
 }
 
 /// Premultiplied RGBA. `y` is from the bottom.

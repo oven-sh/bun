@@ -1,6 +1,6 @@
 //! `clip-path`, `filter` and `mask`, for boxes and for the elements in an `svg`.
 
-use crate::abi::{self, BlendMode, Item, Matrix, Outline, Rect, RoundedRect, Span};
+use crate::abi::{BlendMode, Item, Matrix, Outline, Rect, RoundedRect, Span};
 use crate::background::Frame;
 use crate::contour::{Contour, Edge};
 use crate::document::Document;
@@ -394,51 +394,35 @@ impl<'a> Painter<'a> {
             false,
         );
         for filter in filters.0.iter() {
-            self.out.filters.push(match filter {
-                Filter::Url(url) => {
-                    let viewport = match &subject.areas {
-                        Areas::Css(frame, _) => [frame.shape.rect.width, frame.shape.rect.height]
-                            .map(|it| it / subject.style.zoom),
-                        Areas::Svg(node) => node.viewport,
-                    };
-                    let (document, is_backdrop) = (
-                        subject.document,
-                        core::ptr::eq(filters, &raw const subject.style.effects.backdrop_filter),
-                    );
-                    let is_seen = |frame: &NodeId| {
-                        is_backdrop
-                            || *frame == subject.node
-                            || document
-                                .tree
-                                .flat_ancestors(*frame)
-                                .any(|it| it == subject.node)
-                    };
-                    let found = document
-                        .filter_element(subject.node, url, viewport)
-                        .filter(|_| !document.foreign_frames.iter().any(is_seen));
-                    found
-                        .into_iter()
-                        .for_each(|it| self.svg_filter(&it, subject, &mut inputs, &mut is_tainted));
-                    continue;
-                }
-                Filter::DropShadow(it) => abi::Filter::DropShadow {
-                    offset: it.offset.map(|it| it * scale),
-                    blur: it.blur * scale,
-                    color: it.color.resolve(subject.style.color()),
-                },
-                Filter::Amount(FilterName::Blur, radius) => abi::Filter::Blur(radius * scale),
-                Filter::Amount(name, amount) => (match name {
-                    FilterName::Blur => abi::Filter::Blur,
-                    FilterName::Brightness => abi::Filter::Brightness,
-                    FilterName::Contrast => abi::Filter::Contrast,
-                    FilterName::Grayscale => abi::Filter::Grayscale,
-                    FilterName::HueRotate => abi::Filter::HueRotate,
-                    FilterName::Invert => abi::Filter::Invert,
-                    FilterName::Opacity => abi::Filter::Opacity,
-                    FilterName::Saturate => abi::Filter::Saturate,
-                    FilterName::Sepia => abi::Filter::Sepia,
-                })(*amount),
-            });
+            let Filter::Url(url) = filter else {
+                self.out
+                    .filters
+                    .extend(filter.function(scale, subject.style.color()));
+                continue;
+            };
+            let viewport = match &subject.areas {
+                Areas::Css(frame, _) => [frame.shape.rect.width, frame.shape.rect.height]
+                    .map(|it| it / subject.style.zoom),
+                Areas::Svg(node) => node.viewport,
+            };
+            let (document, is_backdrop) = (
+                subject.document,
+                core::ptr::eq(filters, &raw const subject.style.effects.backdrop_filter),
+            );
+            let is_seen = |frame: &NodeId| {
+                is_backdrop
+                    || *frame == subject.node
+                    || document
+                        .tree
+                        .flat_ancestors(*frame)
+                        .any(|it| it == subject.node)
+            };
+            let found = document
+                .filter_element(subject.node, url, viewport)
+                .filter(|_| !document.foreign_frames.iter().any(is_seen));
+            found
+                .into_iter()
+                .for_each(|it| self.svg_filter(&it, subject, &mut inputs, &mut is_tainted));
         }
         (
             Span {

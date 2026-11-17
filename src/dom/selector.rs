@@ -7,6 +7,7 @@ use bun_core::strings;
 use smallvec::SmallVec;
 
 use crate::name::{Map, Name, name};
+use crate::order::Order as _;
 use crate::tree::{Data, Element, Flags, Namespace, Node, NodeId, State, Tree};
 use crate::values::{Str, eq};
 
@@ -100,6 +101,9 @@ impl Pseudo {
         self == other
             || match (self, other) {
                 (Pseudo::Transition(a, Name::NONE), Pseudo::Transition(b, _)) => a == b,
+                (Pseudo::Part(a), Pseudo::Part(b)) => {
+                    (a, b) == (name!("-internal-cue-node"), name!("cue"))
+                }
                 (
                     Pseudo::Scroll(ScrollPart::Button(a, b)),
                     Pseudo::Scroll(ScrollPart::Button(c @ Some(_), d @ Some(_))),
@@ -198,6 +202,8 @@ impl Pseudo {
 
 /// What a selector can depend on, as a key of the indexes.
 pub(crate) mod key {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
 
     pub(crate) const STRUCTURE: Name = name!("structure").salted(6);
@@ -215,13 +221,40 @@ pub(crate) mod key {
         name.salted(3)
     }
     /// `Name::NONE` unless the attribute is of the kind that selectors tend to compare as a whole.
-    pub(crate) fn value(name: &[u8], value: &[u8]) -> Name {
-        match value.len() <= 48
-            && (name.starts_with(b"data-") || name.starts_with(b"aria-") || name == b"role")
-        {
-            true => Name::new(name).paired(Name::new(value)),
-            false => Name::NONE,
+    pub(crate) fn value(name: Name, spelled: &[u8], value: &[u8]) -> Name {
+        let has_keys =
+            spelled.starts_with(b"data-") || spelled.starts_with(b"aria-") || spelled == b"role";
+        has_keys
+            .then(|| short_value(name, value))
+            .flatten()
+            .unwrap_or(Name::NONE)
+    }
+
+    /// `value`, for a name that is known to have keys.
+    #[inline]
+    pub(crate) fn short_value(name: Name, value: &[u8]) -> Option<Name> {
+        (value.len() <= 48)
+            .then(|| Name::stand_in(crate::name::keyed_hash_of_bytes(name.bits(), value)).salted(8))
+    }
+
+    /// A bit for each `value` that was parsed.
+    static IN_SELECTORS: [AtomicU64; 128] = [const { AtomicU64::new(0) }; 128];
+
+    pub(crate) fn value_in_selector(name: Name, spelled: &[u8], value: &[u8]) -> Name {
+        let key = self::value(name, spelled, value);
+        if key != Name::NONE {
+            IN_SELECTORS[(key.bits() >> 16) as usize % 128]
+                .fetch_or(1 << (key.bits() >> 8 & 63), Ordering::Relaxed);
         }
+        key
+    }
+
+    pub(crate) fn is_in_selectors(key: Name) -> bool {
+        key != Name::NONE
+            && IN_SELECTORS[(key.bits() >> 16) as usize % 128].load(Ordering::Relaxed)
+                >> (key.bits() >> 8 & 63)
+                & 1
+                != 0
     }
     /// The name of the attribute that repeats an attribute in a namespace.
     pub(crate) fn namespaced(namespace: &[u8], local: &[u8]) -> Name {
@@ -287,6 +320,8 @@ pub(crate) enum Simple {
     CustomState(Name),
     /// Of `Tree::matched_part`
     TransitionClass(Name),
+    Cue(List),
+    RootOfCue,
     Root,
     Empty,
     Scope,
@@ -386,6 +421,113 @@ pub(crate) struct Selector {
     pub(crate) pseudo_state: State,
 }
 
+/// A compound of a selector that has no other combinators than those for children and descendants.
+pub(crate) struct Step<'a> {
+    /// `filter` of keys that are all required.
+    pub(crate) keys: u64,
+    tag: Name,
+    class: Name,
+    /// If there is more to it.
+    compound: Option<&'a Compound>,
+    is_child: bool,
+}
+
+impl Step<'_> {
+    pub(crate) fn all_of<'a>(
+        list: &'a [Selector],
+        matcher: &Matcher<'_>,
+    ) -> Option<SmallVec<[Step<'a>; 4]>> {
+        let [selector] = list else { return None };
+        (selector.pseudo == Pseudo::None && matcher.cut_at == 0 && matcher.host == 0)
+            .then_some(())?;
+        let step = |compound: &'a Compound| {
+            let mut step = Step {
+                keys: 0,
+                tag: Name::NONE,
+                class: Name::NONE,
+                compound: None,
+                is_child: compound.combinator == Combinator::Child,
+            };
+            for simple in &compound.simples {
+                match simple {
+                    Simple::Tag(name, lower) if name == lower => {
+                        step.keys |= filter([key::tag(*name)].into_iter());
+                        step.tag = *name;
+                    }
+                    Simple::Class(class) => {
+                        step.keys |= filter([key::class(*class)].into_iter());
+                        step.compound = step
+                            .compound
+                            .or_else(|| (step.class != Name::NONE).then_some(compound));
+                        step.class = *class;
+                    }
+                    Simple::Scope => return None,
+                    _ => step.compound = Some(compound),
+                }
+            }
+            matches!(
+                compound.combinator,
+                Combinator::None | Combinator::Child | Combinator::Descendant
+            )
+            .then_some(step)
+        };
+        selector.compounds.iter().map(step).collect()
+    }
+
+    #[inline(always)]
+    fn fits(&self, matcher: &Matcher<'_>, id: NodeId) -> bool {
+        let node = &matcher.tree[id];
+        node.keys & self.keys == self.keys
+            && node.element().is_some_and(|it| {
+                (self.tag == Name::NONE || it.tag == self.tag)
+                    && (self.class == Name::NONE || it.classes().contains(&self.class))
+            })
+            && self.compound.is_none_or(|it| matcher.compound(it, id))
+    }
+
+    #[inline]
+    pub(crate) fn lead_to(steps: &[Step<'_>], matcher: &Matcher<'_>, id: NodeId) -> bool {
+        let [first, rest @ ..] = steps else {
+            return false;
+        };
+        if !first.fits(matcher, id) {
+            return false;
+        }
+        let (mut index, mut at, mut is_child, mut retry) = (0, id, first.is_child, (0, 0));
+        while let Some(step) = rest.get(index) {
+            at = matcher.tree[at].parent;
+            if at == 0 {
+                return false;
+            }
+            if step.fits(matcher, at) {
+                retry = if is_child { retry } else { (index, at) };
+                (index, is_child) = (index + 1, step.is_child);
+            } else if is_child {
+                ((index, at), is_child) = (retry, false);
+                if at == 0 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+pub(crate) fn tests_state(list: &[Selector]) -> bool {
+    list.iter()
+        .flat_map(|it| &it.compounds)
+        .flat_map(|it| &it.simples)
+        .any(|simple| match simple {
+            Simple::Nth(_, Some(list))
+            | Simple::Is(list)
+            | Simple::Not(list)
+            | Simple::Host(Some(list))
+            | Simple::HostContext(list) => tests_state(list),
+            Simple::Has(has) => tests_state(&has.relatives),
+            _ => matches!(simple, Simple::State(_) | Simple::NotState(_)),
+        })
+}
+
 /// Whether it has at most `budget` simple selectors, with what `&` stands for counted each time.
 pub(crate) fn fits(list: &[Selector], budget: &mut u32) -> bool {
     list.iter()
@@ -482,7 +624,7 @@ impl Compound {
                 for selector in list.iter() {
                     keys.extend(selector.compounds[0].keys()?);
                 }
-                keys.sort_unstable();
+                keys.order_by(Ord::cmp);
                 keys.dedup();
                 Some(keys)
             }
@@ -543,7 +685,7 @@ impl Selector {
                     && (is_last || list[0].compounds.len() == 1))
             });
             let Some(found) = found else {
-                compound.simples.sort_by_key(Simple::cost);
+                compound.simples.order_by_key(Simple::cost);
                 compound.required = compound.key().map_or(0, Bloom::hash);
                 compound.filter = filter(compound.keys().into_iter().flatten());
                 index += 1;
@@ -564,32 +706,7 @@ impl Selector {
     /// Reports each key, where the subject is, and a key that the same element has to have.
     /// Whether `Dependencies::signature` tells if it matches.
     pub(crate) fn follows_from_signature(&self) -> bool {
-        self.compounds.iter().all(|compound| {
-            matches!(
-                compound.combinator,
-                Combinator::None | Combinator::Child | Combinator::Descendant
-            ) && compound.simples.iter().all(|it| match it {
-                Simple::Class(_)
-                | Simple::Id(_)
-                | Simple::Tag(..)
-                | Simple::Exists(..)
-                | Simple::State(_)
-                | Simple::NotState(_) => true,
-                Simple::CustomState(_)
-                | Simple::Root
-                | Simple::Scope
-                | Simple::Never
-                | Simple::Html
-                | Simple::InHtml
-                | Simple::Math
-                | Simple::Namespace(_) => true,
-                Simple::Attribute(test) => !crate::name::is_name!(test.names.1, "style" | "id"),
-                Simple::Is(list) | Simple::Not(list) => {
-                    list.iter().all(Selector::follows_from_signature)
-                }
-                _ => false,
-            })
-        })
+        self.compounds.iter().all(Compound::follows_from_signature)
     }
 
     /// Those that have no key for the value.
@@ -599,6 +716,7 @@ impl Selector {
                 Simple::Attribute(test) if test.key == Name::NONE => {
                     out.extend([test.names.0, test.names.1])
                 }
+                Simple::Lang(_) => out.extend(LANGUAGES),
                 Simple::Is(list) | Simple::Not(list) => {
                     list.iter().for_each(|it| it.compared_attributes(out))
                 }
@@ -668,12 +786,10 @@ impl Selector {
                         report(key::attribute(name!("\0")), relation, with);
                     }
                     Simple::Lang(_) => {
-                        report(
-                            key::attribute(name!("lang")),
-                            relation | Relation::DESCENDANT,
-                            Name::NONE,
-                        );
-                        report(key::attribute(name!("lang")), relation, Name::NONE);
+                        for key in LANGUAGES.map(key::attribute) {
+                            report(key, relation | Relation::DESCENDANT, Name::NONE);
+                            report(key, relation, Name::NONE);
+                        }
                     }
                     Simple::State(state) | Simple::NotState(state) => {
                         state
@@ -809,16 +925,80 @@ fn filter_bit(hash: u32) -> u64 {
     1 << (hash & 63)
 }
 
+const LANGUAGES: [Name; 2] = [
+    name!("lang"),
+    name!("lang http://www.w3.org/XML/1998/namespace"),
+];
+
+/// `filter` of `key::of_element`
+pub(crate) fn filter_of(element: &Element) -> u64 {
+    let bit = |key: Name| {
+        if key == Name::NONE {
+            0
+        } else {
+            filter_bit(Bloom::hash(key))
+        }
+    };
+    let own = element.classes.as_ref().map_or(0, |it| it.filter)
+        | bit(key::tag(element.tag))
+        | if element.id == Name::NONE {
+            0
+        } else {
+            bit(key::id(element.id))
+        };
+    element.attributes.iter().fold(own, |all, it| {
+        all | bit(key::attribute(it.name)) | bit(it.key)
+    })
+}
+
 /// A bit for each key.
 pub(crate) fn filter(keys: impl Iterator<Item = Name>) -> u64 {
     keys.fold(0, |all, key| all | filter_bit(Bloom::hash(key)))
+}
+
+impl Simple {
+    fn follows_from_signature(&self) -> bool {
+        match self {
+            Simple::Class(_)
+            | Simple::Id(_)
+            | Simple::Tag(..)
+            | Simple::Exists(..)
+            | Simple::State(_)
+            | Simple::NotState(_)
+            | Simple::Lang(_)
+            | Simple::Host(None) => true,
+            Simple::CustomState(_)
+            | Simple::Root
+            | Simple::Scope
+            | Simple::Never
+            | Simple::Html
+            | Simple::InHtml
+            | Simple::Math
+            | Simple::Namespace(_) => true,
+            Simple::Attribute(test) => !crate::name::is_name!(test.names.1, "style" | "id"),
+            Simple::Is(list) | Simple::Not(list) => {
+                list.iter().all(Selector::follows_from_signature)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Compound {
+    fn follows_from_signature(&self) -> bool {
+        matches!(
+            self.combinator,
+            Combinator::None | Combinator::Child | Combinator::Descendant
+        ) && self.simples.iter().all(Simple::follows_from_signature)
+    }
 }
 
 /// The answer to whether an ancestor matches the compounds.
 #[derive(Clone, Copy, Default)]
 struct Search {
     compounds: usize,
-    scope: NodeId,
+    /// With the host.
+    scope: (NodeId, NodeId),
     /// If one does, which. Otherwise where the search started.
     node: NodeId,
     visit: u32,
@@ -828,24 +1008,32 @@ struct Search {
 
 /// What is known of the ancestors of the element that is being styled.
 pub(crate) struct Bloom {
-    counters: Box<[u8; 1 << 14]>,
-    pushed: Vec<u32>,
+    counters: Box<[Cell<u8>; 1 << 14]>,
+    /// What has been counted, and for each of the first of `known` how much of it was there before.
+    pushed: RefCell<(Vec<u32>, Vec<u32>)>,
+    /// All of `known` are. Otherwise the ancestors may have anything.
+    is_counted: Cell<bool>,
     searches: Box<[Cell<Search>; 512]>,
     last_visit: u32,
     traversal: u32,
     /// The ancestors.
     path: Vec<NodeId>,
-    /// What the counters know, with `Node::visit` and the length of `pushed` before it. It outlives the traversal.
-    known: Vec<(NodeId, u32, u32)>,
+    /// With `Node::visit`. It outlives the traversal.
+    known: Vec<(NodeId, u32)>,
     /// How many of `path` and `known` are the same.
     same: usize,
     /// For the first of `path`, with what they were made from.
     signatures: RefCell<(usize, Vec<Name>)>,
     pub(crate) last_signature: Cell<((NodeId, usize), Name)>,
+    /// What `generated_by_rules` would say of the element that was matched last.
+    pub(crate) last_generated: Cell<Option<(NodeId, u8)>>,
+    /// The last element whose rules follow from its signature, also those that generate something.
+    pub(crate) last_decided: Cell<NodeId>,
 }
 
 impl Bloom {
     /// `sign` adds an element to the signature of its ancestors.
+    #[inline]
     pub(crate) fn signature_of_path(
         &self,
         version: usize,
@@ -863,8 +1051,9 @@ impl Bloom {
 
     pub(crate) fn new() -> Bloom {
         Bloom {
-            counters: Box::new([0; 1 << 14]),
-            pushed: Vec::new(),
+            counters: Box::new([const { Cell::new(0) }; 1 << 14]),
+            pushed: RefCell::default(),
+            is_counted: Cell::new(true),
             searches: Box::new(core::array::from_fn(|_| Cell::default())),
             last_visit: 0,
             traversal: 0,
@@ -873,6 +1062,8 @@ impl Bloom {
             same: 0,
             signatures: RefCell::default(),
             last_signature: Cell::default(),
+            last_generated: Cell::default(),
+            last_decided: Cell::default(),
         }
     }
 
@@ -884,6 +1075,8 @@ impl Bloom {
         self.traversal += 1;
         self.signatures.get_mut().1.clear();
         self.last_signature.take();
+        self.last_generated.take();
+        self.last_decided.take();
     }
 
     fn hash(key: Name) -> u32 {
@@ -898,6 +1091,10 @@ impl Bloom {
         self.path
             .last()
             .is_some_and(|it| *it == tree.flat_parent(id))
+    }
+
+    pub(crate) fn innermost(&self) -> NodeId {
+        self.path.last().copied().unwrap_or(0)
     }
 
     pub(crate) fn depth(&self) -> usize {
@@ -915,49 +1112,68 @@ impl Bloom {
     }
 
     /// Before it is used.
+    #[inline]
     pub(crate) fn update(&mut self, tree: &Tree) -> &Bloom {
+        if (self.path.len(), self.known.len()) != (self.same, self.same) {
+            self.follow_path(tree);
+        }
+        self
+    }
+
+    fn follow_path(&mut self, tree: &Tree) {
         let pairs = self.path[self.same..].iter().zip(&self.known[self.same..]);
         self.same += pairs
-            .take_while(|(id, known)| **id == known.0 && tree[known.0].visit.get() == known.1)
+            .take_while(|(id, known)| **id == known.0 && tree.visit(known.0).get() == known.1)
             .count();
-        if let Some(mark) = self.known.get(self.same).map(|it| it.2) {
-            for (id, visit, _) in self.known.drain(self.same..) {
-                if tree[id].visit.get() == visit {
-                    tree[id].visit.set(0);
-                }
+        for (id, visit) in self.known.drain(self.same..) {
+            if tree.visit(id).get() == visit {
+                tree.visit(id).set(0);
             }
-            for slot in self.pushed.drain(mark as usize..).flat_map(Bloom::slots) {
-                if self.counters[slot] != u8::MAX {
-                    self.counters[slot] -= 1;
-                }
+        }
+        let (pushed, marks) = self.pushed.get_mut();
+        if let Some(mark) = marks.get(self.same).copied() {
+            marks.truncate(self.same);
+            for slot in pushed.drain(mark as usize..).flat_map(Bloom::slots) {
+                self.counters[slot].update(|it| it - u8::from(it != u8::MAX));
             }
         }
         for id in &self.path[self.same..] {
             self.last_visit += 1;
-            tree[*id].visit.set(self.last_visit);
-            self.known
-                .push((*id, self.last_visit, self.pushed.len() as u32));
+            tree.visit(*id).set(self.last_visit);
+            self.known.push((*id, self.last_visit));
+        }
+        self.is_counted.set(marks.len() == self.known.len());
+        self.same = self.path.len();
+    }
+
+    /// Before it is asked many questions.
+    pub(crate) fn count(&self, tree: &Tree) {
+        if self.is_counted.replace(true) {
+            return;
+        }
+        let (pushed, marks) = &mut *self.pushed.borrow_mut();
+        for (id, _) in &self.known[marks.len()..] {
+            marks.push(pushed.len() as u32);
             for hash in tree
                 .element(*id)
                 .into_iter()
                 .flat_map(key::of_element)
                 .map(Bloom::hash)
             {
-                self.pushed.push(hash);
-                for slot in Bloom::slots(hash) {
-                    self.counters[slot] = self.counters[slot].saturating_add(1);
-                }
+                pushed.push(hash);
+                Bloom::slots(hash)
+                    .into_iter()
+                    .for_each(|slot| self.counters[slot].update(|it| it.saturating_add(1)));
             }
         }
-        self.same = self.path.len();
-        self
     }
 
     fn may_have_one(&self, hash: u32) -> bool {
         hash == 0
+            || !self.is_counted.get()
             || Bloom::slots(hash)
                 .iter()
-                .all(|slot| self.counters[*slot] != 0)
+                .all(|slot| self.counters[*slot].get() != 0)
     }
 
     fn may_match(&self, compound: &Compound) -> bool {
@@ -978,11 +1194,7 @@ impl Bloom {
     }
 
     pub(crate) fn may_have(&self, hashes: &[u32; 3]) -> bool {
-        (hashes.iter().take_while(|hash| **hash != 0)).all(|hash| {
-            Bloom::slots(*hash)
-                .iter()
-                .all(|slot| self.counters[*slot] != 0)
-        })
+        hashes.iter().all(|hash| self.may_have_one(*hash))
     }
 }
 
@@ -994,6 +1206,54 @@ pub(crate) struct HasResult {
 
 /// What `:has()` has answered, for as long as that holds.
 pub(crate) type HasResults = RefCell<Map<NodeId, Vec<HasResult>>>;
+
+/// How many of the children that count are before each of them.
+type Indices = Rc<Map<NodeId, u32>>;
+
+/// What holds until the tree changes.
+#[derive(Default)]
+pub(crate) struct Found {
+    /// By what counts, and by the parent and the nodes that the matcher refers to.
+    indices: RefCell<Map<(u64, [NodeId; 5], bool), (Indices, Option<List>)>>,
+    /// An element, and how many are before it.
+    last_child: Cell<(NodeId, usize)>,
+    pub(crate) selections: RefCell<Vec<crate::bindings::Selected>>,
+    /// The first match, by `Of::key` and the root, as of `cleared`.
+    firsts: [Cell<(u64, NodeId, u32, crate::bindings::Cell)>; 32],
+    cleared: Cell<u32>,
+    /// Of elements that have no style, as of `rules::last_version`.
+    pub(crate) rules: RefCell<Map<NodeId, (u32, Rc<crate::cascade::RuleList>)>>,
+    pub(crate) hidden: RefCell<Map<NodeId, crate::cascade::Hidden>>,
+}
+
+impl Found {
+    pub(crate) fn clear(&self) {
+        self.indices.take();
+        self.last_child.take();
+        self.selections.take();
+        self.rules.take();
+        self.hidden.take();
+        self.cleared.update(|it| it.wrapping_add(1));
+        if self.cleared.get() == 0 {
+            self.firsts.iter().for_each(|it| _ = it.take());
+        }
+    }
+
+    #[inline]
+    pub(crate) fn first(&self, key: u64, root: NodeId) -> Option<crate::bindings::Cell> {
+        let known = self.firsts[(key ^ u64::from(root)) as usize % 32].get();
+        ((known.0, known.1, known.2) == (key, root, self.cleared.get())).then_some(known.3)
+    }
+
+    pub(crate) fn note_first(&self, key: u64, root: NodeId, first: crate::bindings::Cell) {
+        self.firsts[(key ^ u64::from(root)) as usize % 32].set((
+            key,
+            root,
+            self.cleared.get(),
+            first,
+        ));
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Matcher<'a> {
@@ -1065,11 +1325,44 @@ impl<'a> Matcher<'a> {
         }
     }
 
-    fn chain(&self, compounds: &[Compound], id: NodeId) -> Outcome {
-        let (compound, rest) = (&compounds[0], &compounds[1..]);
-        if !self.compound(compound, id) {
-            return Outcome::TryAnotherSibling;
+    /// Whether they can match an element that has the same signature.
+    pub(crate) fn may_match(&self, compounds: &[Compound], id: NodeId) -> bool {
+        let Some(element) = self.tree.element(id).filter(|_| id != self.host) else {
+            return true;
+        };
+        let (compound, rest, above) = (&compounds[0], &compounds[1..], |id: &NodeId| {
+            Some(self.parent(*id)).filter(|it| *it != 0)
+        });
+        compound.simples.iter().all(|it| match it {
+            _ if it.follows_from_signature() => self.simple(it, element, id),
+            Simple::Is(list) => list.iter().any(|it| self.may_match(&it.compounds, id)),
+            _ => true,
+        }) && match compound.combinator {
+            _ if rest.is_empty() => true,
+            Combinator::Child | Combinator::Descendant
+                if rest.iter().all(Compound::follows_from_signature) =>
+            {
+                self.beyond(compounds, id) == Outcome::Matched
+            }
+            Combinator::Child => above(&id).is_some_and(|it| self.may_match(rest, it)),
+            Combinator::Descendant => {
+                core::iter::successors(above(&id), above).any(|it| self.may_match(&rest[..1], it))
+            }
+            _ => true,
         }
+    }
+
+    fn chain(&self, compounds: &[Compound], id: NodeId) -> Outcome {
+        match self.compound(&compounds[0], id) {
+            true => self.beyond(compounds, id),
+            false => Outcome::TryAnotherSibling,
+        }
+    }
+
+    /// `id` matches the first.
+    #[inline]
+    fn beyond(&self, compounds: &[Compound], id: NodeId) -> Outcome {
+        let (compound, rest) = (&compounds[0], &compounds[1..]);
         let exhausted = match compound.combinator {
             Combinator::None => return Outcome::Matched,
             Combinator::Slot => {
@@ -1213,16 +1506,16 @@ impl<'a> Matcher<'a> {
             return Some(Outcome::Failed);
         }
         let parent = self.parent(id);
-        let (address, from) = (compounds.as_ptr().addr(), self.tree[parent].visit.get());
+        let (address, from) = (compounds.as_ptr().addr(), self.tree.visit(parent).get());
         (from != 0).then_some(())?;
         let slot = &bloom.searches[(address >> 4 ^ address >> 13) % bloom.searches.len()];
         let known = slot.get();
         let is_known = (known.compounds, known.scope, known.traversal)
-            == (address, self.scope, bloom.traversal);
+            == (address, (self.host, self.scope), bloom.traversal);
         if is_known
             && known.found
             && known.visit <= from
-            && self.tree[known.node].visit.get() == known.visit
+            && self.tree.visit(known.node).get() == known.visit
         {
             return Some(Outcome::Matched);
         }
@@ -1236,13 +1529,13 @@ impl<'a> Matcher<'a> {
             0
         };
         let mut at = parent;
-        while at != 0 && self.tree[at].visit.get().wrapping_sub(1) >= failed {
+        while at != 0 && self.tree.visit(at).get().wrapping_sub(1) >= failed {
             match self.chain(compounds, at) {
                 Outcome::Matched => {
-                    let visit = self.tree[at].visit.get();
+                    let visit = self.tree.visit(at).get();
                     slot.set(Search {
                         compounds: address,
-                        scope: self.scope,
+                        scope: (self.host, self.scope),
                         node: at,
                         visit,
                         found: true,
@@ -1256,7 +1549,7 @@ impl<'a> Matcher<'a> {
         }
         slot.set(Search {
             compounds: address,
-            scope: self.scope,
+            scope: (self.host, self.scope),
             node: parent,
             visit: from,
             found: false,
@@ -1276,10 +1569,11 @@ impl<'a> Matcher<'a> {
         if id == self.host {
             return self.featureless(compound, element, id) == Some(true);
         }
-        compound
-            .simples
-            .iter()
-            .all(|simple| self.simple(simple, element, id))
+        compound.simples.iter().all(|simple| match simple {
+            Simple::Class(class) => element.classes().iter().any(|it| it == class),
+            Simple::Tag(name, lower) if name == lower => element.tag == *name,
+            _ => self.simple(simple, element, id),
+        })
     }
 
     fn simple(&self, simple: &Simple, element: &Element, id: NodeId) -> bool {
@@ -1295,20 +1589,24 @@ impl<'a> Matcher<'a> {
             Simple::Tag(name, lower) => element.tag == pick(*name, *lower),
             Simple::Exists(name, lower) => element.has(pick(*name, *lower)),
             Simple::Attribute(test) if test.key != Name::NONE => {
-                element.attributes.iter().any(|it| it.key == test.key)
+                element.attributes.iter().any(|it| {
+                    it.key == test.key
+                        && it.name == test.names.0
+                        && *it.value.as_bytes() == *test.value
+                })
             }
             Simple::Attribute(test) => (element.attribute(pick(test.names.0, test.names.1)))
                 .is_some_and(|value| test.matches(value.as_bytes(), is_html)),
             Simple::Namespace(namespace) => element.namespace_uri() == &**namespace,
             Simple::AnyNamespace(it) => element.attributes.iter().any(|attribute| {
-                let local = strings::split_once_char(attribute.qualified.as_bytes(), b' ');
+                let qualified = attribute.qualified();
+                let local = strings::split_once_char(qualified.as_bytes(), b' ');
                 (local.is_some_and(|local| {
                     local.0 == &*it.0 || is_html && local.0 == &*it.0.to_ascii_lowercase()
                 }) || attribute.name == pick(Name::new(&it.0), it.1))
-                    && it
-                        .2
-                        .as_ref()
-                        .is_none_or(|test| test.matches(attribute.value.as_bytes(), is_html))
+                    && it.2.as_ref().is_none_or(|test| {
+                        test.matches(element.value_of(attribute).as_bytes(), is_html)
+                    })
             }),
             Simple::State(state) => element.state.contains(*state),
             Simple::NotState(state) => !element.state.intersects(*state),
@@ -1317,6 +1615,8 @@ impl<'a> Matcher<'a> {
                 .tree
                 .element(self.tree.matched_part.get())
                 .is_some_and(|it| it.custom_states.contains(class)),
+            Simple::Cue(list) => self.any(list, self.tree.matched_part.get()),
+            Simple::RootOfCue => self.tree.is_root_of_cue(id),
             Simple::Root => self.tree.is_root_of_any(id),
             Simple::Scope if self.scope == 0 => self.tree.is_root(id),
             Simple::Scope => id == self.scope,
@@ -1352,6 +1652,7 @@ impl<'a> Matcher<'a> {
                         .or_else(|| {
                             element.attribute(name!("lang")).filter(|_| {
                                 matches!(element.namespace, Namespace::Html | Namespace::Svg)
+                                    || element.pseudo != Pseudo::None
                             })
                         }) {
                         Some(language) => break language,
@@ -1362,7 +1663,7 @@ impl<'a> Matcher<'a> {
                     .iter()
                     .any(|range| dash_match(language.as_bytes(), range, true))
             }
-            Simple::Nth(data, of) => self.nth(*data, of.as_deref(), element, id),
+            Simple::Nth(data, of) => self.nth(*data, of.as_ref(), element, id),
             Simple::Part(_) => element.has(name!("part")),
             Simple::Host(list) => {
                 id == self.host && list.as_ref().is_none_or(|list| outside().any(list, id))
@@ -1438,7 +1739,7 @@ impl<'a> Matcher<'a> {
         })
     }
 
-    fn nth(&self, data: Nth, of: Option<&[Selector]>, element: &Element, id: NodeId) -> bool {
+    fn nth(&self, data: Nth, of: Option<&List>, element: &Element, id: NodeId) -> bool {
         let of_type = matches!(
             data.kind,
             NthKind::OfType | NthKind::LastOfType | NthKind::OnlyOfType
@@ -1450,6 +1751,15 @@ impl<'a> Matcher<'a> {
             Flags::CHILD_INDEX
         };
         self.note(self.tree[id].parent, flag);
+        if is_edge {
+            let (is_first, is_last) = (
+                || self.tree.previous_elements(id).next().is_none(),
+                || self.tree.next_elements(id).next().is_none(),
+            );
+            return id == self.cut_at
+                || (data.kind == NthKind::LastChild || is_first())
+                    && (data.kind == NthKind::Child || is_last());
+        }
         if of.is_some_and(|list| !self.any(list, id)) {
             return false;
         }
@@ -1462,26 +1772,94 @@ impl<'a> Matcher<'a> {
                     })
             }
         };
-        let limit = if id == self.cut_at {
-            0
-        } else if data.a <= 0 {
-            data.b.max(0) as usize
-        } else {
-            usize::MAX
+        let (parent, limit) = (
+            self.tree[id].parent,
+            if id == self.cut_at {
+                0
+            } else if data.a <= 0 {
+                data.b.max(0) as usize
+            } else {
+                usize::MAX
+            },
+        );
+        let indices = |makes: bool| {
+            let what = of.map_or_else(
+                || {
+                    if of_type {
+                        element.tag.salted(element.namespace as u64).bits()
+                    } else {
+                        0
+                    }
+                },
+                |it| (it.as_ptr().addr() as u64) << 4 | 15,
+            );
+            let key = (
+                what,
+                [parent, self.host, self.scope, self.cut_at, self.anchor],
+                self.notes,
+            );
+            let known = self
+                .tree
+                .found()
+                .indices
+                .borrow()
+                .get(&key)
+                .map(|it| Rc::clone(&it.0));
+            known.or_else(|| {
+                let indices: Indices = Rc::new(makes.then(|| {
+                    self.tree
+                        .element_children(parent)
+                        .filter(counts)
+                        .zip(0..)
+                        .collect()
+                })?);
+                self.tree
+                    .found()
+                    .indices
+                    .borrow_mut()
+                    .insert(key, (Rc::clone(&indices), of.cloned()));
+                Some(indices)
+            })
+        };
+        let can_index =
+            limit != 0 && parent != 0 && (!of_type || element.namespace != Namespace::Other);
+        let count = |siblings: &mut dyn Iterator<Item = NodeId>,
+                     from_index: fn(usize, usize) -> usize| {
+            let look_up = |all: Indices| {
+                all.get(&id)
+                    .map_or(0, |it| from_index(*it as usize, all.len()).min(limit))
+            };
+            if let Some(all) = can_index.then(|| indices(of.is_some())).flatten() {
+                return look_up(all);
+            }
+            let found = (&mut *siblings)
+                .take(if can_index { 24 } else { usize::MAX })
+                .filter(counts)
+                .take(limit)
+                .count();
+            if found == limit || siblings.next().is_none() {
+                found
+            } else {
+                indices(true).map_or(0, look_up)
+            }
         };
         let before = || {
-            self.tree
-                .previous_elements(id)
-                .filter(counts)
-                .take(limit)
-                .count()
+            let count = || count(&mut self.tree.previous_elements(id), |index, _| index);
+            if of.is_some() || of_type || limit != usize::MAX {
+                return count();
+            }
+            let index = match self.tree.found().last_child.get() {
+                (last, index) if last == id => index,
+                (last, index) if self.tree.previous_elements(id).next() == Some(last) => index + 1,
+                _ => count(),
+            };
+            self.tree.found().last_child.set((id, index));
+            index
         };
         let after = || {
-            self.tree
-                .next_elements(id)
-                .filter(counts)
-                .take(limit)
-                .count()
+            count(&mut self.tree.next_elements(id), |index, all| {
+                all - index - 1
+            })
         };
         let index = 1 + match data.kind {
             NthKind::Child | NthKind::OfType => before(),

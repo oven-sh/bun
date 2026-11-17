@@ -1,5 +1,7 @@
 #include "root.h"
 #include "Bindgen/JSWrapper.h"
+#include "InternalModuleRegistry.h"
+#include <JavaScriptCore/ErrorHandlingScope.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -69,6 +71,26 @@ JSObject* createClassPrototype(VM& vm, JSGlobalObject* globalObject, JSObject* p
     JSObject* prototype = JSFinalObject::create(vm, structure);
     Bun::reifyStaticPropertyTable(vm, info, tableValues, *prototype);
     return prototype;
+}
+
+JSObject* eventEmitterConstructor(JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    ErrorHandlingScope reservedStack(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* global = defaultGlobalObject(globalObject);
+    JSValue constructor = BUN_REQUIRE_INTERNAL_MODULE(global, NodeEvents, "bun:desktop/electron");
+    scope.releaseAssertNoExceptionExceptTermination();
+    return asObject(constructor);
+}
+
+JSObject* eventEmitterPrototype(JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue prototype = eventEmitterConstructor(globalObject)->get(globalObject, vm.propertyNames->prototype);
+    scope.releaseAssertNoExceptionExceptTermination();
+    return asObject(prototype);
 }
 
 Structure* structureForClass(JSGlobalObject* globalObject, unsigned classIndex)

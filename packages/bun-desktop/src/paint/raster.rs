@@ -1,7 +1,9 @@
 //! Pixels: coverage masks, premultiplied RGBA layers, and what blends them.
 
+use std::iter::once;
 use std::rc::Rc;
 
+use super::blur::blur;
 use super::{blend, edges};
 use crate::abi::{Matrix, Rect, RoundedRect};
 pub use crate::gfx::Path;
@@ -332,6 +334,18 @@ pub fn over(target: Pixel, source: Pixel) -> Pixel {
     std::array::from_fn(|channel| source[channel].saturating_add(kept[channel]))
 }
 
+/// Returns what the function of `wide.rs` does, if it can run.
+macro_rules! prefer_wide {
+    ($name:ident($($argument:expr),*)) => {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if super::wide::is_available() {
+            // SAFETY: the processor has the instructions.
+            return unsafe { super::wide::$name($($argument),*) };
+        }
+    };
+}
+pub(super) use prefer_wide;
+
 /// Written so that it compiles to vector instructions.
 #[inline(always)]
 fn over_four(target: &mut [Pixel; 4], source: &[Pixel; 4]) {
@@ -374,7 +388,16 @@ fn scale_four(pixels: &[Pixel; 4], by: [u8; 4]) -> [Pixel; 4] {
     scaled
 }
 
+pub fn fill_rows_through<'a>(
+    rows: impl Iterator<Item = (&'a mut [Pixel], &'a [u8])>,
+    color: Pixel,
+) {
+    prefer_wide!(fill_through(rows, color));
+    rows.for_each(|(row, coverage)| fill_through(row, color, &coverage[..row.len()]));
+}
+
 pub fn fill_through(row: &mut [Pixel], color: Pixel, coverage: &[u8]) {
+    prefer_wide!(fill_through(once((row, coverage)), color));
     let ((runs, rest), (covered_runs, covered_rest)) = (row.as_chunks_mut(), coverage.as_chunks());
     for (pixels, coverage) in runs
         .iter_mut()
@@ -391,10 +414,76 @@ pub fn fill_through(row: &mut [Pixel], color: Pixel, coverage: &[u8]) {
         .for_each(|(pixel, by)| *pixel = over(*pixel, scale(color, *by)));
 }
 
+/// The colors of a box.
+pub struct Outlined {
+    pub fill: Pixel,
+    pub border: Pixel,
+    both: Pixel,
+}
+
+impl Outlined {
+    pub fn new(fill: Pixel, border: Pixel) -> Outlined {
+        Outlined {
+            fill,
+            border,
+            both: over(fill, border),
+        }
+    }
+
+    /// For a pixel of which so much is inside of the outer edge, and outside of the inner one.
+    #[inline(always)]
+    pub fn at(&self, coverage: [u8; 2]) -> Pixel {
+        match coverage {
+            [0, _] => [0; 4],
+            [255, 0] => self.fill,
+            [255, 255] => self.both,
+            [outer, inner] => scale(over(self.fill, scale(self.border, inner)), outer),
+        }
+    }
+
+    #[inline(always)]
+    pub fn over(&self, pixel: Pixel, coverage: [u8; 2]) -> Pixel {
+        match self.at(coverage) {
+            [0, 0, 0, 0] => pixel,
+            color @ [.., 255] => color,
+            color => over(pixel, color),
+        }
+    }
+}
+
+#[inline]
+pub fn fill_outlined(row: &mut [Pixel], colors: &Outlined, coverage: &[[u8; 2]]) {
+    if row.len() > 1 {
+        prefer_wide!(fill_outlined(row, colors, coverage));
+    }
+    row.iter_mut()
+        .zip(coverage)
+        .for_each(|(pixel, coverage)| *pixel = colors.over(*pixel, *coverage));
+}
+
+#[inline(always)]
 pub fn set_row(row: &mut [Pixel], color: Pixel) {
-    let (runs, rest) = row.as_chunks_mut();
-    runs.fill([color; 8]);
-    rest.fill(color);
+    row.as_chunks_mut().0.fill([color; 8]);
+    match row.last_chunk_mut() {
+        Some(last) => *last = [color; 8],
+        None => row.fill(color),
+    }
+}
+
+pub fn set_rows<'a>(rows: impl Iterator<Item = &'a mut [Pixel]>, color: Pixel) {
+    prefer_wide!(set(rows, color));
+    rows.for_each(|row| set_row(row, color));
+}
+
+pub fn fill_rows<'a>(rows: impl Iterator<Item = &'a mut [Pixel]>, color: Pixel) {
+    match color[3] {
+        255 => set_rows(rows, color),
+        0 => rows.for_each(drop),
+        _ => {
+            prefer_wide!(tint(rows, color));
+            rows.for_each(|row| fill_row(row, color));
+        }
+    }
 }
 
 pub fn fill_row(row: &mut [Pixel], color: Pixel) {
@@ -402,6 +491,7 @@ pub fn fill_row(row: &mut [Pixel], color: Pixel) {
         255 => set_row(row, color),
         0 => {}
         _ => {
+            prefer_wide!(tint(once(row), color));
             let (runs, rest) = row.as_chunks_mut::<8>();
             let (mut before, mut after) = ([[0; 4]; 8], [color; 8]);
             for pixels in runs {
@@ -421,7 +511,13 @@ pub fn fill_row(row: &mut [Pixel], color: Pixel) {
     }
 }
 
+pub fn blend_rows<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], &'a [Pixel])>, by: u8) {
+    prefer_wide!(blend(rows, by));
+    rows.for_each(|(row, colors)| blend_row(row, &colors[..row.len()], by));
+}
+
 pub fn blend_row(row: &mut [Pixel], colors: &[Pixel], by: u8) {
+    prefer_wide!(blend(once((row, colors)), by));
     let ((runs, rest), (color_runs, color_rest)) = (row.as_chunks_mut(), colors.as_chunks());
     let shown = runs
         .iter_mut()
@@ -439,6 +535,18 @@ pub fn blend_row(row: &mut [Pixel], colors: &[Pixel], by: u8) {
     rest.iter_mut()
         .zip(color_rest)
         .for_each(|(pixel, color)| *pixel = over(*pixel, scale(*color, by)));
+}
+
+pub fn stamp<'a>(runs: impl Iterator<Item = &'a mut [Pixel; 8]>, colors: [Pixel; 8]) {
+    prefer_wide!(stamp(runs, colors));
+    runs.for_each(|run| blend_row(run, &colors, 255));
+}
+
+/// Between RGBA and BGRA.
+#[inline]
+pub fn swap_red_and_blue(pixel: Pixel) -> Pixel {
+    let bits = u32::from_le_bytes(pixel);
+    (bits & 0xFF00_FF00 | (bits & 0x00FF_00FF).rotate_left(16)).to_le_bytes()
 }
 
 /// Zero outside of `rect`.
@@ -470,7 +578,17 @@ impl Coverage {
             _ if area.is_empty() || !matrix.is_finite() => Coverage::filled(area, 0),
             Style::Fill(rule) => edges::fill(path, rule == Fill::EvenOdd, matrix, area),
             Style::Stroke(stroke) => {
-                edges::fill(&stroke.outline(path, matrix), false, matrix, area)
+                let (mut edges, corners) = (
+                    edges::Edges::new(matrix, area),
+                    [(area.left, area.top), (area.right, area.bottom)],
+                );
+                stroke.outline(
+                    path,
+                    matrix,
+                    corners.map(|(x, y)| Point::new(x as f32, y as f32)),
+                    &mut |part| edges.add(part),
+                );
+                edges.fill(|winding| winding != 0)
             }
         }
     }
@@ -554,6 +672,15 @@ impl Coverage {
         }
     }
 
+    pub fn clear(&mut self, rect: IntRect) {
+        let (all, rect) = (self.rect, rect.intersect(self.rect));
+        for y in (rect.top..rect.bottom).filter(|_| !rect.is_empty()) {
+            self.data[(y - all.top) as usize * all.width() + (rect.left - all.left) as usize..]
+                [..rect.width()]
+                .fill(0);
+        }
+    }
+
     pub fn intersect(&mut self, other: &Coverage) {
         self.combine(other, multiply);
     }
@@ -584,8 +711,15 @@ impl Coverage {
         self.data.iter_mut().for_each(|value| *value = 255 - *value);
     }
 
-    pub fn blur(&mut self, sigma: f32) {
-        blur::<1>(&mut self.data, self.rect.width(), [sigma; 2]);
+    pub fn blurred(&self, sigma: f32, rect: IntRect) -> Coverage {
+        let mut result = Coverage::filled(rect, 0);
+        blur::<1>(
+            (self.data.as_chunks().0, self.rect),
+            (result.data.as_chunks_mut().0, result.rect),
+            [sigma; 2],
+            false,
+        );
+        result
     }
 }
 
@@ -630,6 +764,12 @@ pub enum Paint<'a> {
     Solid(Pixel),
     /// Writes the pixels of row `y` from column `x` on.
     Shader(&'a dyn Fn(i32, i32, &mut [Pixel])),
+}
+
+pub enum Rows<'a> {
+    Same(Pixel),
+    /// With where its corner is, and an opacity.
+    Of(&'a Pixmap, [i32; 2], u8),
 }
 
 pub struct Layer {
@@ -711,7 +851,6 @@ impl Layer {
             };
             let row = self.row_mut(y, area.left, area.right);
             match (paint, coverage) {
-                (Paint::Solid(color @ [.., 255]), None) => row.fill(*color),
                 (Paint::Solid(color), None) => fill_row(row, *color),
                 (Paint::Solid(color), Some(coverage)) => fill_through(row, *color, coverage),
                 (Paint::Shader(shade), coverage) => {
@@ -738,6 +877,92 @@ impl Layer {
         }
     }
 
+    fn rows_mut(&mut self, area: IntRect) -> impl Iterator<Item = &mut [Pixel]> {
+        let (width, start, above) = (
+            self.rect.width(),
+            (area.left - self.rect.left) as usize,
+            (area.top - self.rect.top) as usize,
+        );
+        self.pixels_mut()
+            .chunks_exact_mut(width)
+            .skip(above)
+            .take(area.height())
+            .map(move |it| &mut it[start..start + area.width()])
+    }
+
+    /// Source-over. Its edges need not be between pixels.
+    pub fn fill_rect(&mut self, rect: Rect, color: Pixel, clip: IntRect) {
+        let [left, top, right, bottom] =
+            [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height]
+                .map(|it| floor(it.clamp(-4e6, 4e6) * 256.));
+        let area = IntRect::new(left >> 8, top >> 8, (right + 255) >> 8, (bottom + 255) >> 8)
+            .intersect(clip)
+            .intersect(self.rect);
+        if area.is_empty() || color == [0; 4] {
+            return;
+        }
+        let part = |at: i32, start: i32, end: i32| end.min((at + 1) << 8) - start.max(at << 8);
+        let [first, last] = [
+            ((top + 255) >> 8).clamp(area.top, area.bottom),
+            (bottom >> 8).clamp(area.top, area.bottom),
+        ];
+        for band in [
+            IntRect {
+                bottom: first,
+                ..area
+            },
+            IntRect {
+                top: first,
+                bottom: last,
+                ..area
+            },
+            IntRect {
+                top: last.max(first),
+                ..area
+            },
+        ] {
+            if band.is_empty() {
+                continue;
+            }
+            let down = part(band.top, top, bottom);
+            let at = |x: i32| scale(color, ((part(x, left, right) * down - 1).max(0) >> 8) as u8);
+            if area.width() <= 8 && self.rect.width() >= 8 {
+                let start = area.left.min(self.rect.right - 8);
+                let colors = std::array::from_fn(|it| {
+                    Some(start + it as i32)
+                        .filter(|x| (area.left..area.right).contains(x))
+                        .map_or([0; 4], at)
+                });
+                stamp(
+                    self.rows_mut(IntRect {
+                        left: start,
+                        right: start + 8,
+                        ..band
+                    })
+                    .filter_map(|it| it.first_chunk_mut()),
+                    colors,
+                );
+                continue;
+            }
+            let ([start, end], middle) = (
+                [at(area.left), at(area.right - 1)],
+                scale(color, ((256 * down - 1) >> 8) as u8),
+            );
+            let [before, after] = [start, end].map(|it| usize::from(it != middle));
+            let inside = self.rows_mut(band).map(|row| {
+                let (last, length) = (row.len() - 1, row.len());
+                if before > 0 {
+                    row[0] = over(row[0], start);
+                }
+                if after > 0 && last >= before {
+                    row[last] = over(row[last], end);
+                }
+                &mut row[before..(length - after).max(before)]
+            });
+            fill_rows(inside, middle);
+        }
+    }
+
     pub fn fill_coverage(&mut self, coverage: &Coverage, clip: &Clip, paint: &Paint) {
         self.fill(coverage.rect, Some(&coverage.data), clip, paint);
     }
@@ -749,6 +974,9 @@ impl Layer {
         let clip = clip.within_rect(source.rect);
         match shape {
             Some(shape) => self.fill_coverage(shape, &clip, &Paint::Shader(&copy)),
+            None if clip.mask.is_none() => {
+                self.draw_with_mode(source, blend::Mode::SourceOver, &clip)
+            }
             None => self.fill(source.rect, None, &clip, &Paint::Shader(&copy)),
         }
     }
@@ -799,33 +1027,102 @@ impl Layer {
 
     /// For any mode: blends all of the clip, with `source` transparent outside of its bounds.
     pub fn draw_with_mode(&mut self, source: &Layer, mode: blend::Mode, clip: &Clip) {
-        let area = clip.rect.intersect(self.rect);
-        let (Some(mut blended), Some(source)) = (self.copy(area), source.copy(area)) else {
-            return;
-        };
-        blend::blend(blended.pixels_mut(), source.pixels(), mode);
-        self.replace(&blended, clip);
+        self.combine(
+            source.rect,
+            &Rows::Of(&source.pixmap, [source.rect.left, source.rect.top], 255),
+            mode,
+            clip,
+        );
     }
 
-    /// Interpolates towards `source` by the clip's coverage.
-    pub fn replace(&mut self, source: &Layer, clip: &Clip) {
-        let area = clip.rect.intersect(self.rect).intersect(source.rect);
+    /// Likewise, for the part of `source` that is in `rect`.
+    pub fn combine(&mut self, rect: IntRect, source: &Rows, mode: blend::Mode, clip: &Clip) {
+        let area = clip.rect.intersect(self.rect);
         if area.is_empty() {
             return;
         }
-        for y in area.top..area.bottom {
-            let (from, row) = (
-                source.row(y, area.left, area.right),
-                self.row_mut(y, area.left, area.right),
+        if mode.clears_backdrop() {
+            area.without(rect).for_each(|it| {
+                self.combine_within(it, &Rows::Same([0; 4]), blend::Mode::Source, clip)
+            });
+        }
+        let IntRect {
+            left,
+            top,
+            right,
+            bottom,
+        } = area.intersect(rect);
+        if left < right {
+            self.combine_within(
+                IntRect {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                },
+                source,
+                mode,
+                clip,
             );
-            let Some(mask) = &clip.mask else {
-                row.copy_from_slice(from);
+        }
+    }
+
+    fn combine_within(&mut self, area: IntRect, source: &Rows, mode: blend::Mode, clip: &Clip) {
+        let (
+            IntRect {
+                left,
+                top,
+                right,
+                bottom,
+            },
+            mask,
+        ) = (
+            area,
+            clip.mask.as_ref().filter(|_| !clip.open.contains(area)),
+        );
+        let (mut colors, mut blended) = (Vec::new(), Vec::new());
+        if let Rows::Same(color) = *source {
+            if mode == blend::Mode::Source && mask.is_none() {
+                return set_rows(self.rows_mut(area), color);
+            }
+            colors.resize(area.width(), color);
+        }
+        if let (&Rows::Of(pixmap, [x, y], by), blend::Mode::SourceOver, None) = (source, mode, mask)
+        {
+            let pixels = pixmap
+                .data()
+                .as_chunks()
+                .0
+                .chunks_exact(pixmap.width() as usize)
+                .skip((top - y) as usize);
+            return blend_rows(
+                self.rows_mut(area)
+                    .zip(pixels.map(|it| &it[(left - x) as usize..])),
+                by,
+            );
+        }
+        for y in top..bottom {
+            let row = self.row_mut(y, left, right);
+            let mut above = &colors[..];
+            if let Rows::Of(pixmap, [x0, y0], by) = *source {
+                let pixels = &pixmap.data().as_chunks().0
+                    [(y - y0) as usize * pixmap.width() as usize + (left - x0) as usize..]
+                    [..row.len()];
+                above = pixels;
+                if by != 255 {
+                    colors.clear();
+                    colors.extend(pixels.iter().map(|it| scale(*it, by)));
+                    above = &colors;
+                }
+            }
+            let Some(mask) = mask else {
+                blend::blend(row, above, mode);
                 continue;
             };
-            for ((pixel, from), coverage) in row
-                .iter_mut()
-                .zip(from)
-                .zip(mask.row(y, area.left, area.right))
+            row.clone_into(&mut blended);
+            blend::blend(&mut blended, above, mode);
+            for ((pixel, from), coverage) in
+                row.iter_mut().zip(&blended).zip(mask.row(y, left, right))
             {
                 for (channel, from) in pixel.iter_mut().zip(from) {
                     *channel = multiply(*from, *coverage)
@@ -835,136 +1132,32 @@ impl Layer {
         }
     }
 
-    pub fn blur(&mut self, sigma: f32) {
-        self.blur_by([sigma; 2]);
+    /// Interpolates towards `source` by the clip's coverage.
+    pub fn replace(&mut self, source: &Layer, clip: &Clip) {
+        self.draw_with_mode(source, blend::Mode::Source, &clip.within_rect(source.rect));
     }
 
-    pub fn blur_by(&mut self, sigma: [f32; 2]) {
-        let width = self.rect.width();
-        blur::<4>(self.pixmap.data_mut(), width, sigma);
-    }
-}
-
-/// How far a blur reaches.
-pub fn blur_extent(sigma: f32) -> i32 {
-    (sigma * 3.).ceil().clamp(0., 4096.) as i32
-}
-
-fn gaussian_line<const N: usize>(line: &[[f32; N]], output: &mut [[f32; N]], kernel: &[f32]) {
-    let radius = kernel.len() / 2;
-    for (index, output) in output.iter_mut().enumerate() {
-        let first = index.saturating_sub(radius);
-        let window = &line[first..(index + radius + 1).min(line.len())];
-        *output = [0.; N];
-        for (value, weight) in window.iter().zip(&kernel[first + radius - index..]) {
-            for channel in 0..N {
-                output[channel] += value[channel] * weight;
-            }
-        }
-    }
-}
-
-/// Averages `before + 1 + after` values.
-fn box_line<const N: usize>(
-    line: &[[f32; N]],
-    output: &mut [[f32; N]],
-    before: usize,
-    after: usize,
-) {
-    let (mut sum, scale) = ([0.; N], 1. / (before + 1 + after) as f32);
-    let change = |sum: &mut [f32; N], value: Option<&[f32; N]>, sign: f32| {
-        if let Some(value) = value {
-            for channel in 0..N {
-                sum[channel] += value[channel] * sign;
-            }
-        }
-    };
-    (0..after.min(line.len())).for_each(|index| change(&mut sum, line.get(index), 1.));
-    for (index, output) in output.iter_mut().enumerate() {
-        change(&mut sum, line.get(index + after), 1.);
-        *output = sum.map(|channel| channel * scale);
-        change(
-            &mut sum,
-            index.checked_sub(before).map(|index| &line[index]),
-            -1.,
+    pub fn blurred(&self, sigma: [f32; 2], rect: IntRect) -> Option<Layer> {
+        let mut result = Layer::new(rect)?;
+        blur(
+            (self.pixels(), self.rect),
+            (result.pixels_mut(), rect),
+            sigma,
+            false,
         );
+        Some(result)
     }
-}
 
-fn blur<const N: usize>(data: &mut [u8], width: usize, [x, y]: [f32; 2]) {
-    if !data.is_empty() {
-        let pixels: &mut [[u8; N]] = data.as_chunks_mut().0;
-        let height = pixels.len() / width;
-        // Three boxes that wide leave less than half a step.
-        if x > width as f32 * 5. || y > height as f32 * 5. {
-            return pixels.fill([0; N]);
-        }
-        blur_lines(pixels, [height, width, 1, width], x);
-        blur_lines(pixels, [width, height, width, 1], y);
-    }
-}
-
-fn blur_lines<const N: usize>(
-    pixels: &mut [[u8; N]],
-    [count, length, step, stride]: [usize; 4],
-    sigma: f32,
-) {
-    const EXACT_UP_TO: f32 = 4.;
-    if sigma < 0.05 || sigma.is_nan() {
-        return;
-    }
-    let radius = if sigma <= EXACT_UP_TO {
-        blur_extent(sigma)
-    } else {
-        0
-    };
-    let kernel = (-radius..=radius).map(|at| (-(at * at) as f32 / (2. * sigma * sigma)).exp());
-    let mut kernel: Vec<f32> = kernel.collect();
-    let total: f32 = kernel.iter().sum();
-    kernel.iter_mut().for_each(|weight| *weight /= total);
-    // https://drafts.fxtf.org/filter-effects/#feGaussianBlurElement
-    let window = (sigma * 3. * (2. * std::f32::consts::PI).sqrt() / 4. + 0.5).min(1e9) as usize;
-    let half = window / 2;
-    let passes = match window % 2 {
-        1 => [(half, half); 3],
-        _ => [
-            (half, half.saturating_sub(1)),
-            (half.saturating_sub(1), half),
-            (half, half),
-        ],
-    };
-
-    {
-        let (mut line, mut output) = (vec![[0.; N]; length], vec![[0.; N]; length]);
-        let (mut previous_input, mut previous_output) = (Vec::new(), Vec::new());
-        for index in 0..count {
-            let at = |position: usize| index * stride + position * step;
-            // The lines through the middle of a box are all the same.
-            if index > 0
-                && (0..length).all(|position| pixels[at(position)] == previous_input[position])
-            {
-                (0..length).for_each(|position| pixels[at(position)] = previous_output[position]);
-                continue;
-            }
-            previous_input.clear();
-            previous_input.extend((0..length).map(|position| pixels[at(position)]));
-            for (value, pixel) in line.iter_mut().zip(&previous_input) {
-                *value = pixel.map(f32::from);
-            }
-            if sigma <= EXACT_UP_TO {
-                gaussian_line(&line, &mut output, &kernel);
-            } else {
-                box_line(&line, &mut output, passes[0].0, passes[0].1);
-                box_line(&output, &mut line, passes[1].0, passes[1].1);
-                box_line(&line, &mut output, passes[2].0, passes[2].1);
-            }
-            previous_output.clear();
-            previous_output.extend(
-                output
-                    .iter()
-                    .map(|value| value.map(|channel| (channel + 0.5) as u8)),
+    /// As if it were mirrored at its edges.
+    pub fn blur_mirrored(&mut self, sigma: f32) {
+        if let Some(mut result) = Layer::new(self.rect) {
+            blur(
+                (self.pixels(), self.rect),
+                (result.pixels_mut(), self.rect),
+                [sigma; 2],
+                true,
             );
-            (0..length).for_each(|position| pixels[at(position)] = previous_output[position]);
+            *self = result;
         }
     }
 }

@@ -9,6 +9,7 @@ value. `keep=`: what is written if everything could be left out.
 <number+> = <number [0,inf]>
 <np+> = <number [0,inf]> | <percentage [0,inf]>
 <factor> = <number> | ^fraction <percentage>
+<alpha> = ^alpha <factor>
 <angle0> = <angle> | <zero-angle>
 <ratio> = <number+> [ / <number+> | +/_1 ]
 <line-width> = thin>>1px | medium>>3px | thick>>5px | ^snap <length+>
@@ -49,7 +50,7 @@ value. `keep=`: what is written if everything could be left out.
 <oldest> = [ linear , <old-point> , <old-point> | radial , <old-point> , <number+> , <old-point> , <number+> ] [ , [ from( <color> ) | to( <color> ) | ^old-stop color-stop( <alpha> , <color> ) ] ]*
 <old-point> = [ left>0% | center>50% | right>100% | <number> | <percentage> ] [ top>0% | center>50% | bottom>100% | <number> | <percentage> ]
 
-<basic-shape> = inset( <lp>{1,4}s <round> ) | circle( <shape-radius>?~closest-side <shape-at>? ) | ellipse( <shape-radius>{2}?~closest-side_closest-side <shape-at>? ) | polygon( [ [ <fill-rule> || [ round <length+> ]~round_0px ] , ]? [ <lp> <lp> ]# ) | ^to-inset rect( [ <lp> | auto ]{4} <round> ) | ^to-inset xywh( <lp>{2} <lp+>{2} <round> ) | path( [ <fill-rule> , ]? %<path-data> ) | shape( <fill-rule>? from <position> , <shape-command># )
+<basic-shape> = inset( <lp>{1,4}s <round> ) | circle( <shape-radius>?~closest-side <shape-at>? ) | ellipse( <shape-radius>{2}?~closest-side_closest-side <shape-at>? ) | polygon( [ [ <fill-rule> [ round <length+> ]?~round_0px | [ round <length+> ]~round_0px ] , ]? [ <lp> <lp> ]# ) | ^to-inset rect( [ <lp> | auto ]{4} <round> ) | ^to-inset xywh( <lp>{2} <lp+>{2} <round> ) | path( [ <fill-rule> , ]? %<path-data> ) | shape( <fill-rule>? from <position> , <shape-command># )
 <shape-radius> = <lp+> | closest-side | farthest-side
 <shape-at> = at <position>
 <fill-rule> = [ nonzero | evenodd ]~nonzero
@@ -480,12 +481,12 @@ shape-image-threshold i=0 ~ = <alpha>
 shape-margin i=0px ~ = <lp+>
 shape-outside ~ = none | <image> | [ <basic-shape> || <shape-box>~margin-box ]=margin-box
 shape-rendering = auto | optimizespeed | crispedges | geometricprecision
-size i=auto x = auto | <length+>{1,2} | [ a3 | a4 | a5 | b4 | b5 | jis-b4 | jis-b5 | ledger | legal | letter ] || [ portrait | landscape ]~portrait
+size i=auto x = auto | <length+>{1,2} | [ [ a3 | a4 | a5 | b4 | b5 | jis-b4 | jis-b5 | ledger | legal | letter ] || [ portrait | landscape ]~portrait ]=portrait
 speak i=normal = none | normal | spell-out | digits | literal-punctuation | no-punctuation
 stop-color i=black = <color>
 stop-opacity = <alpha>
 stroke = <paint>
-stroke-dasharray # = none | ^dashes [ [ <number+> | <lp+> ] [ , ]? ]+
+stroke-dasharray = none | ^dashes [ [ <number+> | <lp+> ] [ , ]? ]+
 stroke-dashoffset = <svg-length>
 stroke-linecap = butt | round | square
 stroke-linejoin = miter | round | bevel
@@ -574,6 +575,7 @@ zoom = normal | <np+>
 -webkit-column-break-inside : break-inside = @break-inside [ auto | avoid ]
 -webkit-mask-box-image : -webkit-mask-box-image-source -webkit-mask-box-image-slice -webkit-mask-box-image-width -webkit-mask-box-image-outset -webkit-mask-box-image-repeat cfull = <'-webkit-mask-box-image-source'> || <'-webkit-mask-box-image-slice'> [ / [ <'-webkit-mask-box-image-width'>? [ / <'-webkit-mask-box-image-outset'> ]? ]! ]? || <'-webkit-mask-box-image-repeat'>
 -webkit-mask-composite : mask-composite = [ [ clear | source-in | destination-in ] @mask-composite=intersect | [ source-out | destination-out ] @mask-composite=subtract | xor @mask-composite=exclude | [ copy | source-over | source-atop | destination-over | destination-atop | plus-lighter ] @mask-composite=add | <'mask-composite'> ]#
+-webkit-perspective : perspective = @perspective [ none | <length+> | ^px <number+> ]
 -webkit-text-stroke : -webkit-text-stroke-width -webkit-text-stroke-color cfull = <'-webkit-text-stroke-width'> || <'-webkit-text-stroke-color'>
 animation : animation-duration animation-timing-function animation-delay animation-iteration-count animation-direction animation-fill-mode animation-play-state animation-name animation-timeline! animation-range-start! animation-range-end! full keep=animation-name = [ <'animation-duration'> || <'animation-timing-function'> || <'animation-delay'> || <'animation-iteration-count'> || <'animation-direction'> || <'animation-fill-mode'> || <'animation-play-state'> || <'animation-name'> ]#
 animation-range : animation-range-start animation-range-end=? = [ <'animation-range-start'> <'animation-range-end'>? ]#
@@ -711,7 +713,7 @@ white-space : white-space-collapse text-wrap-mode = normal | pre @white-space-co
 @counter-style/pad = <integer [0,inf]> && <symbol>
 @counter-style/prefix = <symbol>
 @counter-style/range = auto | [ ^ascending <range-bound>{2} ]#
-@counter-style/speak-as = auto | bullets | numbers | words | ^counter-style <custom-ident -none -spell-out>
+@counter-style/speak-as = auto | bullets | numbers | words | spell-out | ^counter-style <custom-ident -none>
 @counter-style/suffix = <symbol>
 @counter-style/symbols = <symbol>+
 @counter-style/system = cyclic | numeric | alphabetic | symbolic | additive | fixed [ <integer> | +1 ] | extends ^counter-style <custom-ident -none>

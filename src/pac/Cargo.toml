@@ -1,0 +1,15 @@
+[package]
+name = "bun_pac"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_yarr.workspace = true

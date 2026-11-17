@@ -413,16 +413,11 @@ impl StatWatcher {
     /// Pool thread → JS thread, where `hop` runs unless the VM is tearing down.
     fn post_to_js_thread(this: RefPtr<Self>, hop: StatWatcherHop, ticket: &bun_jsc::Ticket) {
         this.pending_hop.set(hop as u8);
-        ticket.post(ConcurrentTask::create(Task::init(this.into_raw())));
+        ticket.post(ConcurrentTask::create(Task::from_ref::<Self>(this)));
     }
 
     /// JS thread dispatch of a [`post_to_js_thread`](Self::post_to_js_thread) hop.
-    ///
-    /// # Safety
-    /// `this` is the watcher the pool posted (ref held for the hop).
-    pub(crate) unsafe fn run_hop(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
-        // SAFETY: fn contract.
-        let this = unsafe { RefPtr::from_raw(this) };
+    pub(crate) fn run_hop(this: RefPtr<Self>) -> bun_event_loop::JsResult<()> {
         match this.pending_hop.get() {
             x if x == StatWatcherHop::InitialStatSuccess as u8 => {
                 Self::initial_stat_success_on_main_thread(this)
@@ -655,7 +650,7 @@ impl StatWatcher {
             this.poll_ref.ref_(this.ctx.loop_ctx());
         }
 
-        let js_this = js::to_js(this.clone().into_raw(), &args.global_this);
+        let js_this = js::to_js(this.clone(), &args.global_this);
         this.this_value
             .set(JsRef::init_strong(js_this, &args.global_this));
         js::listener_set_cached(js_this, &args.global_this, args.listener);
@@ -775,16 +770,13 @@ pub(crate) enum StatWatcherHop {
     Changed = 3,
 }
 
-impl bun_event_loop::Taskable for StatWatcher {
+impl bun_event_loop::RefTask for StatWatcher {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StatWatcherHop;
-    /// A continuation the pool posted: drop the ref it carries.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        drop(unsafe { RefPtr::from_raw(this) });
-    }
+    type Ref = RefPtr<Self>;
+    fn release_unrun(_: Self::Ref) {}
     /// The watcher closes with the context that started it (`abort_handle`); a hop that arrives
     /// afterwards finds it closed.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

@@ -145,6 +145,7 @@ fn make_client<'a>(
     HTTPClient {
         result_callback,
         method,
+        browser: None,
         header_entries,
         header_buf,
         url,
@@ -616,7 +617,7 @@ impl InFlightRequest {
         }
 
         // Release HTTP-thread resources before another thread gets the request.
-        this.client.close_proxy_tunnel(false);
+        this.client.proxy_tunnel = None;
         this.client.custom_ssl_ctx = None;
         this.client.state = InternalState::default();
 

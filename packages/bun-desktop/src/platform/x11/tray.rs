@@ -6,7 +6,9 @@ use std::rc::Rc;
 use super::dbus::{Bus, DAEMON, Kind, Message, PROPERTIES, Value};
 use crate::bridge;
 use crate::error::{Context as _, Result};
-use crate::json::{Value as Json, json};
+use crate::protocol::{
+    Icon, List, Maybe, MenuItem, MenuItemKind, Point, SystemEvent, TrayCommand, TrayEvent,
+};
 
 const ITEM_PATH: &str = "/StatusNotifierItem";
 const ITEM: &str = "org.kde.StatusNotifierItem";
@@ -19,13 +21,13 @@ const WATCHER: [&str; 3] = [
 ];
 
 struct State {
-    id: u64,
+    id: u32,
     name: String,
     service: String,
     icon: Value,
     tooltip: String,
     title: String,
-    menu: Json,
+    menu: MenuItem,
     revision: u32,
 }
 
@@ -34,9 +36,9 @@ pub struct Tray {
     state: Rc<RefCell<State>>,
 }
 
-fn pixmaps(blob: &Json) -> Result<Value> {
-    let image = crate::images::decode_still(&bridge::blob(blob)?)
-        .context("could not decode the tray icon")?;
+fn pixmaps(icon: &Icon) -> Result<Value> {
+    let image =
+        crate::images::decode_still(&icon.bytes).context("could not decode the tray icon")?;
     let (width, height) = (
         Value::I32(image.width as i32),
         Value::I32(image.height as i32),
@@ -54,48 +56,53 @@ fn pixmaps(blob: &Json) -> Result<Value> {
     ))
 }
 
-fn children(item: &Json) -> impl Iterator<Item = &Json> {
-    item["submenu"].as_array().into_iter().flatten()
+fn root(items: List<MenuItem>) -> MenuItem {
+    MenuItem {
+        is_enabled: true,
+        submenu: Maybe::Yes(items),
+        ..MenuItem::default()
+    }
 }
 
-fn find(item: &Json, id: i64) -> Option<&Json> {
-    if item["id"].as_i64() == Some(id) {
+fn children(item: &MenuItem) -> impl Iterator<Item = &MenuItem> {
+    item.submenu.as_ref().into_iter().flat_map(|it| it.iter())
+}
+
+fn find(item: &MenuItem, id: i64) -> Option<&MenuItem> {
+    if i64::from(item.id) == id {
         Some(item)
     } else {
         children(item).find_map(|child| find(child, id))
     }
 }
 
-fn properties(item: &Json) -> Value {
-    let toggle = match item["type"].as_str() {
-        Some("checkbox") => Some("checkmark"),
-        Some("radio") => Some("radio"),
+fn properties(item: &MenuItem) -> Value {
+    let toggle = match item.kind {
+        MenuItemKind::Checkbox => Some("checkmark"),
+        MenuItemKind::Radio => Some("radio"),
         _ => None,
     };
     let all = [
         (
             "type",
-            (item["type"] == "separator").then(|| "separator".into()),
+            (item.kind == MenuItemKind::Separator).then(|| "separator".into()),
         ),
         // An underscore marks the access key.
         (
             "label",
-            item["label"]
-                .as_str()
+            item.label
+                .unless_empty()
                 .map(|it| it.replace('_', "__").as_str().into()),
         ),
-        (
-            "enabled",
-            (item["enabled"] == false).then_some(Value::Bool(false)),
-        ),
+        ("enabled", (!item.is_enabled).then_some(Value::Bool(false))),
         (
             "children-display",
-            item["submenu"].is_array().then(|| "submenu".into()),
+            item.submenu.as_ref().map(|_| "submenu".into()),
         ),
         ("toggle-type", toggle.map(Value::from)),
         (
             "toggle-state",
-            toggle.map(|_| Value::I32((item["checked"] == true).into())),
+            toggle.map(|_| Value::I32(item.is_checked.into())),
         ),
     ];
     Value::options(
@@ -104,11 +111,11 @@ fn properties(item: &Json) -> Value {
     )
 }
 
-fn layout(item: &Json, depth: i64) -> Value {
+fn layout(item: &MenuItem, depth: i64) -> Value {
     let below = children(item)
         .filter(|_| depth != 0)
         .map(|child| layout(child, depth - 1).variant());
-    let id = Value::I32(item["id"].as_i64().unwrap_or(0) as i32);
+    let id = Value::I32(item.id as i32);
     Value::Struct(vec![
         id,
         properties(item),
@@ -159,11 +166,12 @@ impl State {
     }
 
     fn menu_event(&self, event: &Value) {
-        let (id, no_item) = (event.at(0).number().unwrap_or(0), |item: &Json| {
-            item["enabled"] == false
-        });
-        if event.at(1).str() == "clicked" && !find(&self.menu, id).is_none_or(no_item) {
-            bridge::emit(json!({ "t": "menu", "id": id }));
+        let item = find(&self.menu, event.at(0).number().unwrap_or(0));
+        if let Some(item) = item.filter(|it| it.is_enabled && event.at(1).str() == "clicked") {
+            bridge::emit_system(SystemEvent::Menu {
+                item: item.id,
+                is_by_key: false,
+            });
         }
     }
 
@@ -176,18 +184,23 @@ impl State {
                 .then(|| vec![value.clone()])
                 .ok_or(INVALID)
         };
-        let clicked = |event: &str| {
-            bridge::emit(
-                json!({ "t": "tray", "id": self.id, "e": event, "x": number(0), "y": number(1) }),
-            );
+        let clicked = |event| {
+            bridge::emit_system(SystemEvent::Tray {
+                id: self.id,
+                event,
+                at: Point {
+                    x: number(0) as f32,
+                    y: number(1) as f32,
+                },
+            });
             Vec::new()
         };
         Ok(match call.member.as_str() {
             "Get" => return existing(self.properties(&call.path).get(body.at(1).str())),
             "GetAll" => vec![self.properties(&call.path)],
-            "Activate" => clicked("click"),
-            "SecondaryActivate" => clicked("middle-click"),
-            "ContextMenu" => clicked("right-click"),
+            "Activate" => clicked(TrayEvent::Click),
+            "SecondaryActivate" => clicked(TrayEvent::MiddleClick),
+            "ContextMenu" => clicked(TrayEvent::RightClick),
             "Scroll" | "Ping" => Vec::new(),
             "GetLayout" => vec![
                 Value::U32(self.revision),
@@ -233,17 +246,16 @@ impl State {
 }
 
 impl Tray {
-    pub fn new(arguments: &Json) -> Result<Tray> {
-        let id = arguments["id"].as_u64().unwrap_or(0);
+    pub fn new(id: u32, name: String, icon: &Icon) -> Result<Tray> {
         let service = format!("{ITEM}-{}-{id}", std::process::id());
         let state = Rc::new(RefCell::new(State {
             id,
-            name: arguments["name"].as_str().unwrap_or("").into(),
+            name,
             service: service.clone(),
-            icon: pixmaps(&arguments["value"])?,
+            icon: pixmaps(icon)?,
             tooltip: String::new(),
             title: String::new(),
-            menu: json!({ "id": 0, "submenu": [] }),
+            menu: root(List::new()),
             revision: 0,
         }));
         let bus = Bus::session()?;
@@ -282,24 +294,23 @@ impl Tray {
         Ok(Tray { bus, state })
     }
 
-    pub fn change(&self, what: &str, value: &Json) -> Result<()> {
+    pub fn change(&self, change: TrayCommand) -> Result<()> {
         let mut state = self.state.borrow_mut();
-        let signal = match what {
-            "image" => {
-                state.icon = pixmaps(value)?;
+        let signal = match change {
+            TrayCommand::Icon(icon) => {
+                state.icon = pixmaps(&icon)?;
                 "NewIcon"
             }
-            "tooltip" => {
-                state.tooltip = value.as_str().unwrap_or("").into();
+            TrayCommand::ToolTip(text) => {
+                state.tooltip = text.into_string();
                 "NewToolTip"
             }
-            "title" => {
-                state.title = value.as_str().unwrap_or("").into();
+            TrayCommand::Title(text) => {
+                state.title = text.into_string();
                 "NewTitle"
             }
-            "menu" => {
-                state.menu =
-                    json!({ "id": 0, "submenu": value.as_array().cloned().unwrap_or_default() });
+            TrayCommand::Menu(items) => {
+                state.menu = root(items.get().unwrap_or_default());
                 state.revision += 1;
                 self.bus.emit(
                     MENU_PATH,
@@ -309,7 +320,7 @@ impl Tray {
                 );
                 return Ok(());
             }
-            _ => return Ok(()),
+            TrayCommand::Create { .. } | TrayCommand::Destroy => return Ok(()),
         };
         self.bus.emit(ITEM_PATH, ITEM, signal, Vec::new());
         Ok(())

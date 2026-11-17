@@ -14,6 +14,7 @@ import type { BuiltinPath, NativeCallKind } from "./vocabulary.ts";
 
 export interface Guard {
   feature: string;
+  /** Its key, or its id. */
   builtin: number;
 }
 
@@ -49,7 +50,7 @@ export class Guards {
 
   #add(entry: BuiltinEntry): void {
     const feature = guardFeatureOf(entry);
-    const guard = feature === undefined ? null : { feature, builtin: entry.id };
+    const guard = feature === undefined ? null : { feature, builtin: entry.key ?? entry.id };
     const symbols =
       entry.creationSymbol === undefined ? entry.nativeSymbols : [...entry.nativeSymbols, entry.creationSymbol];
     for (const symbol of symbols) {

@@ -71,7 +71,8 @@ impl Look {
             tag if tag == name!("progress") => Look::Progress,
             tag if tag == name!("meter") => Look::Meter,
             tag if tag == name!("select") => match element.attribute(name!("size")) {
-                None | Some("0" | "1") if !element.has(name!("multiple")) => Look::MenuList,
+                Some("1") => Look::MenuList,
+                None | Some("0") if !element.has(name!("multiple")) => Look::MenuList,
                 _ => Look::ListBox,
             },
             tag if tag == name!("input") => match element.input_type() {
@@ -168,6 +169,30 @@ const DARK: Palette = Palette {
     button_fill: [0x6b6b_6bff, 0x7b7b_7bff, 0x6161_61ff, 0x3636_36ff],
     lighten: 0x3b3b_3bff,
 };
+
+fn forced_palette(is_dark: bool) -> Palette {
+    let [text, face, highlight, gray] = [
+        &b"buttontext"[..],
+        b"buttonface",
+        b"accentcolor",
+        b"graytext",
+    ]
+    .map(|it| crate::color::forced(it, is_dark));
+    let (border, accent) = (
+        [text, highlight, highlight, gray],
+        [highlight, highlight, highlight, gray],
+    );
+    Palette {
+        border,
+        accent,
+        slider: accent,
+        background: [face; 4],
+        fill: [face; 4],
+        button_border: border,
+        button_fill: [face; 4],
+        lighten: face,
+    }
+}
 
 const DISABLED: usize = 3;
 
@@ -382,12 +407,7 @@ impl Painter<'_> {
         };
         let is_checked = state.contains(State::CHECKED);
         let is_mixed = look == Look::Checkbox && state.contains(State::INDETERMINATE);
-        let custom = style
-            .ink
-            .accent_color
-            .0
-            .map(|it| it.resolve(style.color()))
-            .filter(|it| alpha(*it) > 0);
+        let custom = style.ink.accent_color.0.map(|it| it.resolve(style.color()));
         let custom = custom.map(|it| {
             mix_colors(
                 if style.dark { 0x1212_12ff } else { 0xffff_ffff },
@@ -395,11 +415,16 @@ impl Painter<'_> {
                 alpha(it) as f32 / 255.0,
             )
         });
-        let (own, other) = if style.dark {
-            (&DARK, &LIGHT)
-        } else {
-            (&LIGHT, &DARK)
-        };
+        let forced = (document.environment.forces_colors && style.takes_forced_colors())
+            .then(|| forced_palette(style.dark));
+        let (own, other) = forced.as_ref().map_or(
+            if style.dark {
+                (&DARK, &LIGHT)
+            } else {
+                (&LIGHT, &DARK)
+            },
+            |it| (it, it),
+        );
         let against = |palette: &Palette| {
             if look.is_checkable() {
                 palette.background[0]
@@ -436,7 +461,7 @@ impl Painter<'_> {
             base(painter, shape, shade, palette.fill[shade]);
             painter.clip(shape, &mut inside);
             painter.fill(value, accented(&palette.slider, shade), &inside);
-            let border = if shade == DISABLED {
+            let border = if shade == DISABLED || forced.is_some() {
                 palette.border[shade]
             } else {
                 palette.border[shade] & !0xff | 0x80

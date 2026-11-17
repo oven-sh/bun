@@ -13,9 +13,10 @@ use crate::document::Document;
 use crate::inline::{Inline, Item, ItemKind};
 use crate::lines::{FragmentKind, Line};
 use crate::name::{Map, Name, is_name, name};
+use crate::order::Order as _;
 use crate::properties::Style;
 use crate::selector::Pseudo;
-use crate::tree::{DOCUMENT, Data, NodeId, State};
+use crate::tree::{DOCUMENT, Data, Gone, Namespace, NodeId, State};
 use crate::types::*;
 
 /// In text, a UTF-8 offset. Else the child after the point, or 0.
@@ -54,14 +55,13 @@ impl Marks {
         self.by_node.is_empty()
     }
 
-    pub(crate) fn forget(&mut self, id: NodeId) {
-        self.styles.get_mut().remove(&id);
-        let survives = |range: &Range| range.iter().all(|it| it.node != id && it.offset != id);
-        let is_in_text = |range: &Range| range.iter().all(|it| it.node != id);
-        self.selection = self.selection.filter(|it| survives(it) || is_in_text(it));
+    pub(crate) fn forget(&mut self, gone: &Gone) {
+        gone.leave_map(self.styles.get_mut());
+        let survives = |range: &Range| range.iter().all(|it| !gone.has(it.node));
+        self.selection = self.selection.filter(survives);
         self.highlights
             .iter_mut()
-            .for_each(|it| it.2.retain(is_in_text));
+            .for_each(|it| it.2.retain(survives));
     }
 
     pub(crate) fn of(&self, node: NodeId) -> &[(Span<u32>, Mark)] {
@@ -138,7 +138,7 @@ impl Inline {
             return (end, false);
         }
         let has_collapsed = self.clusters[end as usize - 1].flags & CLUSTER_SPACE != 0
-            && self.lines.advances[end as usize - 1] == 0.0;
+            && self.advance(self.lines.fragments_of(line), end - 1) == 0.0;
         if self.is_newline(end - 1) || has_collapsed {
             (end - 1, false)
         } else {
@@ -153,10 +153,16 @@ impl Inline {
                 .next()
                 .unwrap_or(' ')
         };
-        let is_word = |it: char| it.is_alphanumeric() || it == '_';
-        let (own, is_inside) = (character(cluster), || {
-            cluster > 0 && is_word(character(cluster - 1)) && is_word(character(cluster + 1))
-        });
+        let own = character(cluster);
+        let is_between = |is: fn(char) -> bool| {
+            cluster > 0 && is(character(cluster - 1)) && is(character(cluster + 1))
+        };
+        let is_word = match own {
+            '\'' | '’' => is_between(char::is_alphabetic) || is_between(char::is_numeric),
+            '·' => is_between(char::is_alphabetic),
+            '.' | ',' | ';' => is_between(char::is_numeric),
+            _ => own.is_alphanumeric() || own == '_',
+        };
         match own {
             '\u{ac00}'..='\u{d7a3}' => Class::Hangul,
             '\u{3400}'..='\u{9fff}' | '\u{f900}'..='\u{faff}' | '\u{20000}'..='\u{3ffff}' => {
@@ -166,9 +172,7 @@ impl Inline {
             '\u{30a1}'..='\u{30fa}' | '\u{30fc}'..='\u{30ff}' | '\u{ff66}'..='\u{ff9f}' => {
                 Class::Katakana
             }
-            _ if is_word(own) || matches!(own, '\'' | '’' | '.' | ':') && is_inside() => {
-                Class::Word
-            }
+            _ if is_word => Class::Word,
             _ if own.is_whitespace() => Class::Space,
             _ => Class::Other,
         }
@@ -364,6 +368,9 @@ impl Document {
     }
 
     fn edge_place(&self, id: NodeId, last: bool) -> Option<Place> {
+        if self.is_locked(id) {
+            return None;
+        }
         if let Some((lines, item)) = self.as_leaf(id) {
             let at = if last {
                 item.clusters.end.min(self.inline(lines)?.last_place())
@@ -412,57 +419,55 @@ impl Document {
         })
     }
 
-    fn place_of(&self, point: Point, upstream: bool) -> Option<Place> {
-        if self.tree[point.node].text().is_some() {
-            let Some((lines, item)) = self.as_leaf(point.node) else {
-                return self.place_of(
-                    Point {
-                        node: self.tree[point.node].parent,
+    /// The lines of skipped contents are for the text that they had.
+    fn place_of(&self, mut point: Point, upstream: bool) -> Option<Place> {
+        while !self.is_locked(point.node) {
+            let node = &self.tree[point.node];
+            if node.text().is_some() {
+                let Some((lines, item)) = self.as_leaf(point.node) else {
+                    point = Point {
+                        node: node.parent,
                         offset: point.node,
-                    },
+                    };
+                    continue;
+                };
+                let inline = self.inline(lines)?;
+                let at = inline
+                    .cluster_at(inline.text_offset(item, point.offset))
+                    .min(inline.last_place());
+                return Some(Place {
+                    lines,
+                    at,
                     upstream,
-                );
+                });
+            }
+            let children: SmallVec<[NodeId; 8]> = match node.data {
+                Data::ShadowRoot { .. } => self.tree.children(point.node).collect(),
+                _ => self.tree.flat_children(point.node).collect(),
             };
-            let inline = self.inline(lines)?;
-            let at = inline
-                .cluster_at(inline.text_offset(item, point.offset))
-                .min(inline.last_place());
-            return Some(Place {
-                lines,
-                at,
-                upstream,
-            });
-        }
-        let children: SmallVec<[NodeId; 8]> = match self.tree[point.node].data {
-            Data::ShadowRoot { .. } => self.tree.children(point.node).collect(),
-            _ => self.tree.flat_children(point.node).collect(),
-        };
-        let (before, after) = children.split_at(
-            children
-                .iter()
-                .position(|it| *it == point.offset)
-                .unwrap_or(children.len()),
-        );
-        (after.iter().find_map(|it| self.edge_place(*it, false)))
-            .or_else(|| {
-                before
+            let (before, after) = children.split_at(
+                children
                     .iter()
-                    .rev()
-                    .find_map(|it| self.edge_place(*it, true))
-            })
-            .or_else(|| self.empty_place(point.node))
-            .map(|place| Place { upstream, ..place })
-            .or_else(|| {
-                let parent = Some(self.tree[point.node].parent)
-                    .filter(|it| *it != 0 && self.own_box(point.node).is_none())?;
-                self.place_of(
-                    Point {
-                        node: parent,
-                        offset: self.tree[point.node].next,
-                    },
-                    upstream,
-                )
-            })
+                    .position(|it| *it == point.offset)
+                    .unwrap_or(children.len()),
+            );
+            let found = (after.iter().find_map(|it| self.edge_place(*it, false)))
+                .or_else(|| {
+                    before
+                        .iter()
+                        .rev()
+                        .find_map(|it| self.edge_place(*it, true))
+                })
+                .or_else(|| self.empty_place(point.node));
+            if found.is_some() || node.parent == 0 || self.own_box(point.node).is_some() {
+                return found.map(|place| Place { upstream, ..place });
+            }
+            point = Point {
+                node: node.parent,
+                offset: node.next,
+            };
+        }
+        None
     }
 
     fn is_generated(&self, node: NodeId) -> bool {
@@ -584,11 +589,9 @@ impl Document {
                 .fragments_of(line)
                 .iter()
                 .find_map(|fragment| match &fragment.kind {
-                    FragmentKind::Text { clusters, rtl } if clusters.contains(&cluster) => {
-                        let (_, left, advance) = inline
-                            .lines
-                            .positions(fragment)
-                            .find(|it| it.0 == cluster)?;
+                    FragmentKind::Text { clusters, rtl, .. } if clusters.contains(&cluster) => {
+                        let (_, left, advance) =
+                            inline.positions(fragment).find(|it| it.0 == cluster)?;
                         Some([
                             left + if is_after != *rtl { advance } else { 0.0 },
                             fragment.y,
@@ -715,7 +718,6 @@ impl Document {
             .filter(|it| matches!(it.kind, FragmentKind::Text { .. }))
             .find_map(|fragment| {
                 let (_, x, advance) = inline
-                    .lines
                     .positions(fragment)
                     .find(|it| it.0 == place.at && it.2 > 0.0)?;
                 Some(Rect::new([x, fragment.y, advance, fragment.height]))
@@ -754,7 +756,6 @@ impl Document {
             ));
             let is_inside_island = self.island(lines, inline, item).is_some();
             let pieces = inline
-                .lines
                 .positions(fragment)
                 .chain(atomic)
                 .filter(move |it| !is_inside_island || it.0 == item.clusters.start);
@@ -822,6 +823,7 @@ impl Document {
                 if let FragmentKind::Atomic(child) = fragment.kind
                     && fragment.rect().contains([x, y])
                     && !self.is_generated(self.boxes[child].node)
+                    && self.boxes[child].kind != Kind::Replaced
                     && self.boxes[child].style.is_editable() == it.style.is_editable()
                     && let Some(found) = self.point_in_box(child, point)
                 {
@@ -855,7 +857,7 @@ impl Document {
             })
             .filter(|child| !self.is_generated(self.boxes[*child].node))
             .collect();
-        candidates.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
+        candidates.order_by(|a, b| distance(a).total_cmp(&distance(b)));
         let found = candidates.into_iter().find_map(|child| {
             let own = &self.boxes[child];
             if own.is_replaced() || it.style.is_editable() && !own.style.is_editable() {
@@ -896,7 +898,40 @@ impl Document {
         })
     }
 
-    pub(crate) fn point_at(&self, root: NodeId, point: [f32; 2]) -> Option<(Point, bool)> {
+    /// Also in what cannot be selected.
+    pub(crate) fn any_point_at(&self, point: [f32; 2]) -> Option<Point> {
+        let hit = self.nodes_at(point).next().unwrap_or(DOCUMENT);
+        if self
+            .tree
+            .element(hit)
+            .is_some_and(|it| it.namespace == Namespace::Svg || it.tag == name!("canvas"))
+        {
+            return Some(Point {
+                node: hit,
+                offset: self.tree[hit].first_child,
+            });
+        }
+        let (found, start) = (
+            self.nearest_point(DOCUMENT, point)?.0,
+            Point {
+                node: hit,
+                offset: 0,
+            },
+        );
+        let place = |it: Point| self.place_of(it, false).map(|it| (it.lines, it.at));
+        Some(
+            if self.tree[hit].text().is_some()
+                && !self.is_generated(hit)
+                && place(start) == place(found)
+            {
+                start
+            } else {
+                found
+            },
+        )
+    }
+
+    fn nearest_point(&self, root: NodeId, point: [f32; 2]) -> Option<(Point, bool)> {
         let is_inside =
             |id: &NodeId| *id == root || self.tree.flat_ancestors(*id).any(|it| it == root);
         let hit = self
@@ -904,6 +939,13 @@ impl Document {
             .next()
             .filter(is_inside)
             .unwrap_or(root);
+        let hit = self
+            .tree
+            .flat_ancestors(hit)
+            .find(|it| {
+                self.boxes[self.tree[*it].layout_box].kind == Kind::Replaced && is_inside(it)
+            })
+            .unwrap_or(hit);
         let is_editable = |id: NodeId| self.tree.style(id).is_some_and(|it| it.is_editable());
         let mut around = core::iter::once(hit).chain(self.tree.flat_ancestors(hit));
         let start = around.find_map(|it| {
@@ -915,7 +957,11 @@ impl Document {
                 .then_some(id)
         });
         let found = self.point_in_box(start?, point)?;
-        let found = (self.inside(root, found.0), found.1);
+        Some((self.inside(root, found.0), found.1))
+    }
+
+    pub(crate) fn point_at(&self, root: NodeId, point: [f32; 2]) -> Option<(Point, bool)> {
+        let found = self.nearest_point(root, point)?;
         let Some(place) = self
             .place_of(found.0, found.1)
             .filter(|it| !self.is_selectable(it.lines, it.at..it.at + 1))
@@ -949,6 +995,7 @@ impl Document {
         let mut leaves = self
             .tree
             .descendants(root)
+            .filter(|it| !self.is_locked(*it))
             .filter_map(|it| self.as_leaf(it));
         let leaf = if is_before {
             leaves.next()
@@ -985,7 +1032,8 @@ impl Document {
             .peekable();
         items.peek().is_none()
             || items
-                .any(|it| it.style.ink.user_select != UserSelect::None || it.style.is_editable())
+                .map(|it| self.current_style(it))
+                .any(|it| it.ink.user_select != UserSelect::None || it.is_editable())
     }
 
     fn selectable_beside(&self, root: NodeId, place: Place, forward: bool) -> Option<Place> {
@@ -1260,8 +1308,13 @@ impl Document {
             offset: inline.node_offset(it, inline.offset_of(start)),
         });
         let end = Place { at: end, ..place };
+        let is_editable = |it: Place| self.boxes[it.lines].style.is_editable();
+        let next = || {
+            self.selectable_beside(root, end, true)
+                .filter(|it| is_editable(*it) == is_editable(end))
+        };
         let end = if granularity == 1 {
-            self.selectable_beside(root, end, true).unwrap_or(end)
+            next().unwrap_or(end)
         } else {
             end
         };
@@ -1288,18 +1341,25 @@ impl Document {
             }
             Visit::Text(span) => {
                 let Some((lines, item)) = self.as_leaf(id) else {
-                    return;
+                    return rects.extend(self.svg_text_rects(id, &span).into_iter().flatten());
                 };
                 let (Some(inline), matrix) = (self.inline(lines), self.lines_to_viewport(lines))
                 else {
                     return;
                 };
+                let place = |it: Rect| match self.has_depth.get() {
+                    true => self.map_to_viewport(
+                        lines,
+                        self.line_matrix(lines)
+                            .map_or(it, |turn| it.transformed(&turn)),
+                    ),
+                    false => it.transformed(&matrix),
+                };
                 if range[0] == range[1] {
                     let caret = self
                         .place_of(range[0], false)
                         .and_then(|it| self.caret_at(it));
-                    return rects
-                        .extend(caret.map(|it| Rect { width: 0.0, ..it }.transformed(&matrix)));
+                    return rects.extend(caret.map(|it| place(Rect { width: 0.0, ..it })));
                 }
                 let clusters = inline.cluster_at(inline.text_offset(item, span.start))
                     ..inline.cluster_at(inline.text_offset(item, span.end));
@@ -1310,21 +1370,17 @@ impl Document {
                     .filter(|it| inline.items[it.item as usize].node == id)
                 {
                     let inside = inline
-                        .lines
                         .positions(fragment)
                         .filter(|it| clusters.contains(&it.0));
                     if let Some([left, right]) = inside
                         .map(|it| [it.1, it.1 + it.2])
                         .reduce(|a, b| [a[0].min(b[0]), a[1].max(b[1])])
                     {
-                        rects.push(
-                            Rect {
-                                x: left,
-                                width: right - left,
-                                ..fragment.rect()
-                            }
-                            .transformed(&matrix),
-                        );
+                        rects.push(place(Rect {
+                            x: left,
+                            width: right - left,
+                            ..fragment.rect()
+                        }));
                     }
                 }
             }
@@ -1347,6 +1403,14 @@ impl Document {
                 .iter()
                 .rfind(blocks)
                 .is_some_and(|top| !self.tree.flat_ancestors(id).any(|it| it == *top))
+    }
+
+    pub(crate) fn inner_text_if_rendered(&mut self, id: NodeId) -> Option<Vec<u8>> {
+        const HAS_BOX_OR_STANDS_FOR_ONE: u32 = 1 | 1 << 6 | 1 << 8;
+        self.catch_up_with_compositor();
+        self.update_layout_for(id);
+        (self.style_bits(id, HAS_BOX_OR_STANDS_FOR_ONE) & HAS_BOX_OR_STANDS_FOR_ONE != 0)
+            .then(|| self.inner_text(id))
     }
 
     pub(crate) fn inner_text(&self, id: NodeId) -> Vec<u8> {

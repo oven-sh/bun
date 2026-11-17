@@ -6,16 +6,17 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::abi::Rect;
-use crate::bridge::Kind;
 use crate::cover;
-use crate::error::{Context as _, Result, bail};
 use crate::frame::{self, Part};
 use crate::hash::FastMap;
-use crate::json::{Value, json};
 use crate::keys;
 use crate::motion::Motion;
 use crate::paint::scene::Scene;
 use crate::platform::{Cursor, Input, Modifiers, Phase, Point, RawKey, Window, WindowButton};
+use crate::protocol::{
+    self as ui, DragPhase, InputField, Located, Maybe, MouseAction, Synthetic, SyntheticKey,
+    WindowCommand,
+};
 use crate::window::{self, WindowState};
 use crate::{accessibility, bridge, host, surface};
 
@@ -71,9 +72,16 @@ thread_local! {
 
 // ───────────────────────────── focus ─────────────────────────────
 
-fn emit_focus(surface: Option<u32>, event: &str) {
+fn emit_focus(surface: Option<u32>, has_focus: bool) {
     if let Some(surface) = surface {
-        bridge::emit(json!({ "t": event, "s": surface }));
+        bridge::emit_input(
+            surface,
+            if has_focus {
+                ui::Input::Focus
+            } else {
+                ui::Input::Blur
+            },
+        );
     }
 }
 
@@ -81,12 +89,12 @@ pub fn focus(state: &WindowState, surface: Option<u32>) {
     let before = state.focused_surface.replace(surface);
     if before != surface {
         if state.is_active.get() {
-            emit_focus(before, "blur");
-            emit_focus(surface, "focus");
+            emit_focus(before, false);
+            emit_focus(surface, true);
         }
         window::refresh(state.id);
         act(state, |window| window.text_input_changed());
-        accessibility::update(state);
+        accessibility::window_changed(state);
     }
 }
 
@@ -94,14 +102,12 @@ pub fn activation_changed(state: &WindowState, is_active: bool) {
     if state.is_active.replace(is_active) == is_active {
         return;
     }
+    accessibility::window_changed(state);
     if is_active {
         ACTIVE_WINDOW.set(Some(state.id));
     }
     PRESSED.take();
-    emit_focus(
-        state.focused_surface.get(),
-        if is_active { "focus" } else { "blur" },
-    );
+    emit_focus(state.focused_surface.get(), is_active);
 }
 
 pub fn forget_surface(state: &WindowState, id: u32) {
@@ -135,6 +141,9 @@ fn emit_key(
     if let Some(bit) = keys::modifier_bit(&key) {
         bits = if down { bits | bit } else { bits & !bit };
     }
+    if down {
+        accessibility::key_pressed(code, bits);
+    }
     let was_down = PRESSED.with_borrow_mut(|pressed| match down {
         // It does not report keys that are released while Command is down.
         true if cfg!(target_os = "macos") && bits & 8 != 0 => false,
@@ -161,22 +170,19 @@ fn emit_key(
     crate::platform::macos::did_send_key();
     let is_repeat = is_held || (was_down && !code.is_empty());
     let is_composing = with_ime(state, |ime, _| ime.composing.is_some()).unwrap_or(false);
-    let (key, location, code) = (
-        bridge::name(&key),
-        keys::location(code).into(),
-        bridge::name(code),
+    let (key, location, code) = (key.into(), keys::location(code), code.into());
+    bridge::emit_input(
+        surface,
+        ui::Input::Key(ui::Key {
+            key,
+            code,
+            location,
+            modifiers: bits,
+            is_down: down,
+            is_repeat,
+            is_composing,
+        }),
     );
-    let fields = [
-        surface.into(),
-        down.into(),
-        key,
-        code,
-        location,
-        is_repeat.into(),
-        bits.into(),
-        is_composing.into(),
-    ];
-    bridge::emit_numbers(Kind::Key, &fields, false);
 }
 
 fn emit_raw_key(raw: RawKey) {
@@ -224,6 +230,7 @@ pub fn key(down: bool) -> bool {
 #[derive(Default)]
 pub struct Ime {
     is_enabled: bool,
+    is_secret: bool,
     text: Vec<u16>,
     selection: Range<usize>,
     composing: Option<Range<usize>>,
@@ -239,29 +246,34 @@ impl Ime {
         (self.is_enabled && self.text.is_empty()).then_some(self.caret)
     }
 
-    pub fn parse(value: &Value) -> Ime {
-        let text: Vec<u16> = value["text"]
-            .as_str()
-            .unwrap_or("")
-            .encode_utf16()
-            .collect();
-        let range = |value: &Value| {
-            let [a, b] =
-                [0, 1].map(|index| Some((value[index].as_u64()? as usize).min(text.len())));
-            Some(a?.min(b?)..a?.max(b?))
-        };
-        let number = |key: &str| value["rect"][key].as_f64().unwrap_or(0.) as f32;
-        Ime {
-            is_enabled: value["enabled"] == true,
-            selection: range(&value["selection"]).unwrap_or_default(),
-            composing: range(&value["composing"]),
-            caret: Rect {
-                x: number("x"),
-                y: number("y"),
-                width: number("width"),
-                height: number("height"),
-            },
+    pub fn new(field: Maybe<InputField>) -> Ime {
+        let Maybe::Yes(InputField {
             text,
+            selection,
+            composing,
+            caret,
+        }) = field
+        else {
+            return Ime::default();
+        };
+        let range = |ends: [u32; 2]| {
+            let [a, b] = ends.map(|it| (it as usize).min(text.len()));
+            a.min(b)..a.max(b)
+        };
+        Ime {
+            is_enabled: true,
+            is_secret: false,
+            selection: range(selection),
+            composing: composing.get().map(range),
+            caret,
+            text: text.into_vec(),
+        }
+    }
+
+    pub fn for_password() -> Ime {
+        Ime {
+            is_secret: true,
+            ..Ime::default()
         }
     }
 
@@ -299,7 +311,7 @@ fn with_ime<R>(state: &WindowState, f: impl FnOnce(&mut Ime, Rect) -> R) -> Opti
 pub fn ime_changed(state: &WindowState, before: &Ime, surface: u32) {
     let has_changed = surface::get(surface).is_some_and(|it| {
         let now = &it.borrow().ime;
-        before.is_enabled != now.is_enabled
+        (before.is_enabled, before.is_secret) != (now.is_enabled, now.is_secret)
             || now.is_enabled && (before.caret, &before.composing) != (now.caret, &now.composing)
     });
     if has_changed {
@@ -307,13 +319,14 @@ pub fn ime_changed(state: &WindowState, before: &Ime, surface: u32) {
     }
 }
 
-fn emit_text_event(state: &WindowState, mut event: Value, range: Option<Range<usize>>) {
-    bridge::will_edit_text();
-    event["s"] = json!(state.key_target());
-    if let Some(range) = range {
-        event["range"] = json!([range.start, range.end]);
+fn ends(range: Range<usize>) -> [u32; 2] {
+    [range.start as u32, range.end as u32]
+}
+
+fn emit_text_event(state: &WindowState, input: ui::Input) {
+    if let Some(surface) = state.key_target() {
+        bridge::emit_input(surface, input);
     }
-    bridge::emit(event);
 }
 
 pub fn report_key_taken_by_ime() {
@@ -354,19 +367,16 @@ fn insert_text(state: &WindowState, range: Option<Range<usize>>, text: &str) {
     if state.cover.get().is_some() {
         cover::typed(text, matches!(range, Some(None)));
     }
-    match (range.flatten(), state.key_target()) {
-        (None, Some(surface)) if is_typed && text.chars().count() == 1 => {
-            bridge::will_edit_text();
-            bridge::emit_numbers(Kind::Text, &[surface.into(), bridge::name(text)], false)
-        }
-        (range, _) => emit_text_event(
-            state,
-            json!({ "t": "text", "text": text, "key": is_typed }),
-            range,
-        ),
-    }
+    emit_text_event(
+        state,
+        ui::Input::Text {
+            text: text.into(),
+            is_typed,
+            range: range.flatten().map(ends).into(),
+        },
+    );
     if was_composing {
-        emit_text_event(state, json!({ "t": "composeEnd" }), None);
+        emit_text_event(state, ui::Input::EndComposition);
     }
 }
 
@@ -381,6 +391,11 @@ impl TextInput {
 
     pub fn is_enabled(self) -> bool {
         self.with(|ime, _| ime.is_enabled) == Some(true)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn is_secret(self) -> bool {
+        self.with(|ime, _| ime.is_secret) == Some(true)
     }
 
     #[cfg(target_os = "macos")]
@@ -446,9 +461,15 @@ impl TextInput {
             ime.composing = Some(marked);
             range
         });
-        let event =
-            json!({ "t": "compose", "text": text, "selection": [selection.start, selection.end] });
-        emit_text_event(&state, event, range.flatten());
+        let (selection, range) = (ends(selection), range.flatten().map(ends).into());
+        emit_text_event(
+            &state,
+            ui::Input::Compose {
+                text: text.into(),
+                selection,
+                range,
+            },
+        );
     }
 
     /// What is being composed stays as it is.
@@ -458,7 +479,7 @@ impl TextInput {
             window::state(self.0),
             self.with(|ime, _| ime.composing.take().is_some()),
         ) {
-            emit_text_event(&state, json!({ "t": "composeEnd" }), None);
+            emit_text_event(&state, ui::Input::EndComposition);
         }
     }
 }
@@ -491,8 +512,7 @@ pub fn accepts_first_mouse(state: &WindowState, position: Point) -> bool {
         || matches!(target_at(state, position), Target::Frame(_))
 }
 
-/// The surface, the position in it and on the screen, and the modifiers.
-fn located(state: &WindowState, id: u32, position: Point, modifiers: Modifiers) -> [f64; 6] {
+fn located(state: &WindowState, id: u32, position: Point, modifiers: Modifiers) -> Located {
     let Point { x, y } = position;
     let (rect, origin) = (
         surface::get(id)
@@ -500,50 +520,47 @@ fn located(state: &WindowState, id: u32, position: Point, modifiers: Modifiers) 
             .unwrap_or_default(),
         state.metrics.get().origin,
     );
-    let [x, y, screen_x, screen_y] =
-        [x - rect.x, y - rect.y, x + origin.0, y + origin.1].map(f64::from);
-    [id.into(), x, y, screen_x, screen_y, modifiers.into()]
-}
-
-/// Adds a bit to the modifiers if the engine is not to scroll.
-fn offer(mut at: [f64; 6], f: impl FnOnce(&mut Motion, &Scene, [f32; 2]) -> bool) -> [f64; 6] {
-    if surface::with_motion(at[0] as u32, at[1], at[2], f) {
-        at[5] += 256.;
+    Located {
+        x: x - rect.x,
+        y: y - rect.y,
+        screen_x: x + origin.0,
+        screen_y: y + origin.1,
+        modifiers,
+        is_handled: false,
     }
-    at
 }
 
-fn emit_located(
-    kind: Kind,
-    [a, b, c, d, e, f]: [f64; 6],
-    [g, h, i, j]: [f64; 4],
-    is_replaceable: bool,
+fn offer(id: u32, at: Located, f: impl FnOnce(&mut Motion, &Scene, [f32; 2]) -> bool) -> Located {
+    Located {
+        is_handled: surface::with_motion(id, at.x, at.y, f),
+        ..at
+    }
+}
+
+fn emit_mouse(
+    state: &WindowState,
+    id: u32,
+    action: MouseAction,
+    at: Located,
+    button: u8,
+    clicks: u32,
 ) {
-    bridge::emit_numbers(kind, &[a, b, c, d, e, f, g, h, i, j], is_replaceable);
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Mouse {
-    Move,
-    Down,
-    Up,
-    Leave,
-}
-
-fn emit_mouse(state: &WindowState, action: Mouse, at: [f64; 6], button: u8, clicks: u32) {
-    surface::change_motion(at[0] as u32, |motion| {
+    surface::change_motion(id, |motion| {
         motion.release_wheel();
-        if action == Mouse::Down {
-            motion.report_scrolls(at[0] as u32);
+        if action == MouseAction::Down {
+            motion.report_scrolls(id);
         }
     });
-    let fields = [
-        (action as u8).into(),
-        button.into(),
-        state.pointer.buttons.get().into(),
-        clicks.into(),
-    ];
-    emit_located(Kind::Mouse, at, fields, action == Mouse::Move);
+    bridge::emit_input(
+        id,
+        ui::Input::Mouse(ui::Mouse {
+            at,
+            action,
+            button,
+            buttons: state.pointer.buttons.get(),
+            clicks,
+        }),
+    );
 }
 
 pub fn cursor_changed(state: &WindowState) {
@@ -556,7 +573,8 @@ fn hover(state: &WindowState, target: Target, position: Point, modifiers: Modifi
         if let Target::Surface(id) = before {
             emit_mouse(
                 state,
-                Mouse::Leave,
+                id,
+                MouseAction::Leave,
                 located(state, id, position, modifiers),
                 0,
                 0,
@@ -586,11 +604,7 @@ fn act(state: &WindowState, f: impl FnOnce(&dyn Window)) {
 }
 
 fn toggle_maximized(window: &dyn Window) {
-    bridge::report(
-        window
-            .command("maximize", &json!(!window.geometry().is_maximized), None)
-            .map(drop),
-    );
+    bridge::report(window.command(&WindowCommand::Maximize(!window.geometry().is_maximized)));
 }
 
 fn release_pointer(state: &WindowState) {
@@ -613,16 +627,16 @@ fn mouse_down(state: &WindowState, position: Point, button: u8, clicks: u32, mod
         (Target::Surface(id), button) => {
             cover::stop_echo();
             if let Some(kept) = state.kept_cover.get().filter(|kept| *kept != id) {
-                bridge::emit(json!({ "t": "outside", "s": kept }));
+                bridge::emit_input(kept, ui::Input::Outside);
             }
             if surface::is_focusable(id) {
                 focus(state, Some(id));
             }
             let at = located(state, id, position, modifiers);
-            let at = offer(at, |motion, scene, position| {
+            let at = offer(id, at, |motion, scene, position| {
                 button == LEFT && motion.press(scene, position)
             });
-            return emit_mouse(state, Mouse::Down, at, button, clicks);
+            return emit_mouse(state, id, MouseAction::Down, at, button, clicks);
         }
         (Target::Frame(Part::Button(_)), _) => return window::refresh(state.id),
         (Target::Frame(Part::Edge(edge)), LEFT) => act(state, |window| window.start_resize(edge)),
@@ -646,21 +660,21 @@ fn mouse_up(state: &WindowState, position: Point, pressed: u8, clicks: u32, modi
         .set(pointer.buttons.get() & !button_bit(pressed));
     match captured.unwrap_or(under) {
         Target::Surface(id) => {
-            let at = offer(located(state, id, position, modifiers), |motion, _, _| {
-                motion.release()
-            });
-            emit_mouse(state, Mouse::Up, at, pressed, clicks);
+            let at = offer(
+                id,
+                located(state, id, position, modifiers),
+                |motion, _, _| motion.release(),
+            );
+            emit_mouse(state, id, MouseAction::Up, at, pressed, clicks);
         }
         Target::Frame(Part::Button(button)) if captured == Some(under) && pressed == LEFT => {
             window::refresh(state.id);
             match button {
                 WindowButton::Minimize => act(state, |window| {
-                    bridge::report(window.command("minimize", &Value::Null, None).map(drop))
+                    bridge::report(window.command(&WindowCommand::Minimize))
                 }),
                 WindowButton::Maximize => act(state, toggle_maximized),
-                WindowButton::Close => {
-                    bridge::emit(json!({ "t": "window", "w": state.id, "e": "close" }))
-                }
+                WindowButton::Close => window::close_requested(state.id),
             }
         }
         _ => {}
@@ -694,8 +708,9 @@ fn mouse_move(state: &WindowState, position: Point, is_pressed: bool, modifiers:
         let at = located(state, id, position, modifiers);
         emit_mouse(
             state,
-            Mouse::Move,
-            offer(at, |motion, _, position| motion.drag(position)),
+            id,
+            MouseAction::Move,
+            offer(id, at, |motion, _, position| motion.drag(position)),
             0,
             0,
         );
@@ -717,13 +732,13 @@ fn scroll(
     let [dx, dy] = [delta.x, delta.y].map(|it| if is_precise { it } else { it * PIXELS_PER_LINE });
     let at = located(state, id, position, modifiers);
     if phase == Phase::Started {
-        offer(at, |motion, _, _| motion.begin_gesture());
+        offer(id, at, |motion, _, _| motion.begin_gesture());
     }
     // There, momentum follows.
     if cfg!(target_os = "macos") && dx == 0. && dy == 0. {
         return;
     }
-    let at = offer(at, |motion, scene, position| {
+    let at = offer(id, at, |motion, scene, position| {
         let delta = if modifiers & keys::SHIFT != 0 && dx == 0. {
             [-dy, 0.]
         } else {
@@ -737,29 +752,23 @@ fn scroll(
         modifiers & (keys::CONTROL | keys::META) == 0
             && motion.wheel(scene, position, delta, !is_precise, ends, now)
     });
-    let fields = [
-        (0. - dx).into(),
-        (0. - dy).into(),
-        is_precise.into(),
-        (phase as u8).into(),
-    ];
-    if at[5] >= 256. {
-        let ([a, b, c, d, e, f], [g, h, i, j]) = (at, fields);
-        surface::change_motion(a as u32, |motion| {
-            motion.report_wheel(
-                [a, b, c, d, e, f, g, h, i, j],
-                surface::milliseconds(Instant::now()),
-            )
+    let wheel = ui::Wheel {
+        at,
+        delta: [(0. - dx).into(), (0. - dy).into()],
+        is_precise,
+    };
+    if at.is_handled {
+        surface::change_motion(id, |motion| {
+            motion.report_wheel(id, wheel, phase, surface::milliseconds(Instant::now()))
         });
-        return surface::catch_up(a as u32);
+        return surface::catch_up(id);
     }
     crate::diagnostics::note(crate::diagnostics::Incident::WheelLeftToScript);
-    surface::change_motion(at[0] as u32, Motion::release_wheel);
-    emit_located(Kind::Wheel, at, fields, false);
+    surface::change_motion(id, Motion::release_wheel);
+    bridge::emit_input(id, ui::Input::Wheel(wheel));
 }
 
-/// `last` is "over", "drop", or "" without a position.
-fn drag_files(state: &WindowState, position: Option<Point>, last: &str) {
+fn drag_files(state: &WindowState, position: Option<Point>, last: DragPhase) {
     let pointer = &state.pointer;
     if pointer.dragged_paths.borrow().is_empty() {
         return;
@@ -768,34 +777,30 @@ fn drag_files(state: &WindowState, position: Option<Point>, last: &str) {
         Target::Surface(id) => Some(id),
         _ => None,
     });
-    let event = |kind: &str, id: u32| {
-        let paths: Vec<_> = pointer
+    let emit = |phase: DragPhase, id: u32| {
+        let paths = pointer
             .dragged_paths
             .borrow()
             .iter()
-            .map(|it| it.to_string_lossy().into_owned())
+            .map(|it| (*it.to_string_lossy()).into())
             .collect();
-        let [_, x, y, screen_x, screen_y, _] = located(state, id, position.unwrap_or_default(), 0);
-        json!({ "t": "drag", "e": kind, "s": id, "x": x, "y": y, "sx": screen_x, "sy": screen_y, "paths": paths })
+        bridge::emit_input(
+            id,
+            ui::Input::Drag {
+                phase,
+                at: located(state, id, position.unwrap_or_default(), 0),
+                paths,
+            },
+        );
     };
     let before = pointer.dragged_over.replace(target);
     if before != target {
-        before
-            .into_iter()
-            .for_each(|id| bridge::emit(event("leave", id)));
-        target
-            .into_iter()
-            .for_each(|id| bridge::emit(event("enter", id)));
+        before.into_iter().for_each(|id| emit(DragPhase::Leave, id));
+        target.into_iter().for_each(|id| emit(DragPhase::Enter, id));
     }
-    match target {
-        Some(id) if last == "drop" => {
-            bridge::emit(event(last, id));
-            pointer.dragged_over.set(None);
-        }
-        Some(id) => bridge::emit_latest(event(last, id)),
-        None => {}
-    }
-    if last != "over" {
+    target.into_iter().for_each(|id| emit(last, id));
+    if last != DragPhase::Over {
+        pointer.dragged_over.set(None);
         pointer.dragged_paths.take();
     }
 }
@@ -835,102 +840,94 @@ pub fn handle(window: u32, event: Input) {
         Input::Pinch {
             at,
             delta,
-            phase,
             modifiers,
         } => {
             if let Target::Surface(id) = target_at(state, at) {
-                let fields = [delta.into(), (phase as u8).into(), 0., 0.];
-                emit_located(
-                    Kind::Pinch,
-                    located(state, id, at, modifiers),
-                    fields,
-                    false,
+                bridge::emit_input(
+                    id,
+                    ui::Input::Pinch {
+                        at: located(state, id, at, modifiers),
+                        delta,
+                    },
                 );
             }
         }
         Input::DragEnter { at, paths } => {
             state.pointer.dragged_paths.replace(paths);
-            drag_files(state, Some(at), "over");
+            drag_files(state, Some(at), DragPhase::Over);
         }
-        Input::DragOver { at } => drag_files(state, Some(at), "over"),
-        Input::Drop { at } => drag_files(state, Some(at), "drop"),
-        Input::DragLeave => drag_files(state, None, ""),
+        Input::DragOver { at } => drag_files(state, Some(at), DragPhase::Over),
+        Input::Drop { at } => drag_files(state, Some(at), DragPhase::Drop),
+        Input::DragLeave => drag_files(state, None, DragPhase::Leave),
     }
 }
 
 /// `webContents.sendInputEvent()`
-pub fn synthesize(state: &WindowState, event: &Value) -> Result<()> {
-    let number = |key: &str| event[key].as_f64().unwrap_or(0.) as f32;
+pub fn synthesize(state: &WindowState, modifiers: Modifiers, event: Synthetic) {
     let content = state.metrics.get().content;
-    let position = Point {
-        x: content.x + number("x"),
-        y: content.y + number("y"),
+    let in_window = |at: Point| Point {
+        x: content.x + at.x,
+        y: content.y + at.y,
     };
-    let modifiers = event["m"].as_u64().unwrap_or(0) as u8 & 15;
-    let button = event["button"].as_u64().filter(|it| *it <= 4).unwrap_or(0) as u8;
-    let clicks = event["clickCount"].as_u64().unwrap_or(1) as u32;
-    match event["type"].as_str().unwrap_or("") {
-        "mouseDown" => mouse_down(state, position, button, clicks, modifiers),
-        "mouseUp" => mouse_up(state, position, button, clicks, modifiers),
-        "mouseMove" => mouse_move(state, position, state.pointer.buttons.get() != 0, modifiers),
-        "mouseLeave" => hover(state, Target::Nothing, position, modifiers),
-        "mouseWheel" => {
-            let delta = Point {
-                x: -number("deltaX"),
-                y: -number("deltaY"),
-            };
-            scroll(state, position, delta, true, Phase::Moved, modifiers)
-        }
-        kind @ ("keyDown" | "keyUp") => {
-            let key = match event["key"].as_str() {
-                Some(key) => key.to_owned(),
-                None => {
-                    let name = event["chord"][0].as_str().context("the key is missing")?;
-                    keys::dom_key(
-                        name,
-                        event["chord"][1].as_u64().unwrap_or(0) as u8,
-                        event["text"].as_str(),
-                    )
-                }
-            };
-            let code = event["code"]
-                .as_str()
-                .map_or_else(|| keys::code_for_key(&key), str::to_owned);
-            let bits = event["m"]
-                .as_u64()
-                .or(event["chord"][1].as_u64())
-                .unwrap_or(0) as u8;
-            emit_key(
+    match event {
+        Synthetic::Mouse {
+            action,
+            at,
+            button,
+            clicks,
+        } => match action {
+            MouseAction::Down => mouse_down(state, in_window(at), button, clicks, modifiers),
+            MouseAction::Up => mouse_up(state, in_window(at), button, clicks, modifiers),
+            MouseAction::Move => mouse_move(
                 state,
-                kind == "keyDown",
-                key,
-                &code,
-                event["repeat"] == true,
-                bits,
-            );
-            if let Some(text) = event["text"].as_str().filter(|_| kind == "keyDown") {
+                in_window(at),
+                state.pointer.buttons.get() != 0,
+                modifiers,
+            ),
+            MouseAction::Leave => hover(state, Target::Nothing, in_window(at), modifiers),
+        },
+        Synthetic::Wheel { at, delta } => scroll(
+            state,
+            in_window(at),
+            Point {
+                x: -delta.x,
+                y: -delta.y,
+            },
+            true,
+            Phase::Moved,
+            modifiers,
+        ),
+        Synthetic::Key {
+            is_down,
+            is_repeat,
+            key,
+            code,
+            text,
+        } => {
+            let text = text.as_ref().map(|it| &**it);
+            let key = match key {
+                SyntheticKey::Named(key) => key.into_string(),
+                SyntheticKey::Labelled(label) => keys::dom_key(&label, modifiers, text),
+            };
+            let code = code
+                .get()
+                .map_or_else(|| keys::code_for_key(&key), ui::Text::into_string);
+            emit_key(state, is_down, key, &code, is_repeat, modifiers);
+            if let Some(text) = text.filter(|_| is_down) {
                 MAY_TYPE.set(true);
                 insert_text(state, None, text);
             }
         }
-        "char" => insert_text(
-            state,
-            None,
-            event["text"].as_str().context("the text is missing")?,
-        ),
-        "drop" => {
-            let files = event["files"].as_array().into_iter().flatten();
-            let paths = files.filter_map(Value::as_str).map(PathBuf::from).collect();
+        Synthetic::Text(text) => insert_text(state, None, &text),
+        Synthetic::Drop { at, paths } => {
             handle(
                 state.id,
                 Input::DragEnter {
-                    at: position,
-                    paths,
+                    at: in_window(at),
+                    paths: paths.iter().map(|it| PathBuf::from(&**it)).collect(),
                 },
             );
-            handle(state.id, Input::Drop { at: position });
+            handle(state.id, Input::Drop { at: in_window(at) });
         }
-        other => bail!("unknown input event {other}"),
     }
-    Ok(())
 }

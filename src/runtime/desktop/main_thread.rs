@@ -111,6 +111,27 @@ fn shows_nothing() -> bool {
         || env_var::ELECTRON_RUN_AS_NODE::get().is_some()
 }
 
+/// As root, so before anything looks at the environment. Does not return if it is.
+#[cfg(unix)]
+#[inline(never)]
+pub(crate) fn install_update_if_asked(arguments: &[*const core::ffi::c_char]) {
+    unsafe extern "C" {
+        fn Bun__Desktop__installUpdate(
+            directory: *const core::ffi::c_char,
+            app: *const core::ffi::c_char,
+        ) -> bool;
+    }
+    // SAFETY: those of `main`.
+    unsafe {
+        if let [_, mode, directory, app] = *arguments
+            && core::ffi::CStr::from_ptr(mode) == c"--bun-desktop-install-update"
+            && bun_standalone_graph::Graph::is_desktop_program()
+        {
+            libc::_exit(i32::from(!Bun__Desktop__installUpdate(directory, app)));
+        }
+    }
+}
+
 /// Does not return if it is.
 #[cfg(unix)]
 #[inline(never)]

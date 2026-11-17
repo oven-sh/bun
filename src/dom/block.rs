@@ -7,13 +7,15 @@ use crate::document::{Document, Quirks};
 use crate::float_area::FloatArea;
 use crate::fragment::{Breaks, Decision, Flow, Outcome};
 use crate::layout::{
-    AutoSize, Edges, Input, Output, Room, Strut, Widths, auto_margins, distribute, margin,
+    AutoSize, Edges, Input, Output, Room, Setting, Strut, Traits, Widths, auto_margins, clamp,
+    distribute, margin,
 };
 use crate::lines::relative_offset;
 use crate::name::{is_name, name};
 use crate::positioned::Edge;
 use crate::properties::{Id, Style};
 use crate::types::*;
+use crate::values::Size;
 
 struct Exclusion {
     is_left: bool,
@@ -21,6 +23,12 @@ struct Exclusion {
     x: f32,
     top: f32,
     bottom: f32,
+    /// Of the left and of the right ones up to this one.
+    lowest: [f32; 2],
+    /// Up to this one, none is above those before it.
+    is_in_order: bool,
+    /// Of those right before it that start where it does, and itself: the first index, the room they leave and the first bottom.
+    row: (usize, [f32; 2], f32),
     /// With the width of the margin box.
     area: Option<(Box<FloatArea>, f32)>,
 }
@@ -85,7 +93,13 @@ impl Floats {
     }
 
     pub(crate) fn are_in_the_way(&self) -> bool {
-        self.all.iter().any(|it| it.bottom > self.origin[1])
+        self.reach_below(0.0)
+    }
+
+    fn reach_below(&self, y: f32) -> bool {
+        self.all
+            .last()
+            .is_some_and(|it| it.lowest[0].max(it.lowest[1]) > self.origin[1] + y)
     }
 
     fn has_one_at(&self, y: f32) -> bool {
@@ -95,10 +109,13 @@ impl Floats {
     }
 
     pub(crate) fn clearance(&self, sides: [bool; 2]) -> Option<f32> {
-        let cleared = self.all.iter().filter(|it| sides[usize::from(!it.is_left)]);
-        cleared
-            .map(|it| it.bottom - self.origin[1])
-            .reduce(f32::max)
+        let [left, right] = [0, 1].map(|side| {
+            self.all
+                .last()
+                .filter(|_| sides[side])
+                .map_or(f32::NEG_INFINITY, |it| it.lowest[side])
+        });
+        Some(left.max(right) - self.origin[1]).filter(|it| *it != f32::NEG_INFINITY)
     }
 
     /// What is free between `left` and `right` from `y` down to `y + height`.
@@ -114,10 +131,30 @@ impl Floats {
         is_line: bool,
     ) -> Slot {
         let ([x, top], mut next) = (self.origin, None::<f32>);
-        for it in self
+        let above = self
             .all
+            .partition_point(|it| it.lowest[0].max(it.lowest[1]) - top <= y);
+        let (is_in_order, starts_above) = (
+            self.all.last().is_some_and(|it| it.is_in_order),
+            |it: &Exclusion| it.top - top <= y || it.top - top < y + height,
+        );
+        let row = self
+            .all
+            .last()
+            .filter(|it| !is_line && it.row.2 - top > y && starts_above(it))
+            .map(|it| it.row);
+        if let Some((_, edges, bottom)) = row {
+            (left, right, next) = (
+                left.max(edges[0] - x),
+                right.min(edges[1] - x),
+                Some(bottom - top),
+            );
+        }
+        for it in self.all[..row.map_or(self.all.len(), |it| it.0)]
             .iter()
-            .filter(|it| it.bottom - top > y && (it.top - top <= y || it.top - top < y + height))
+            .skip(above)
+            .take_while(|it| !is_in_order || starts_above(it))
+            .filter(|it| it.bottom - top > y && starts_above(it))
         {
             let (edge, end) = match is_line && it.area.is_some() {
                 true => (
@@ -146,14 +183,42 @@ impl Floats {
         }
     }
 
+    fn add(&mut self, mut new: Exclusion) {
+        new.lowest[usize::from(new.is_left)] = f32::NEG_INFINITY;
+        new.lowest = self.all.last().map_or(new.lowest, |it| {
+            [0, 1].map(|side| it.lowest[side].max(new.lowest[side]))
+        });
+        new.is_in_order = self
+            .all
+            .last()
+            .is_none_or(|it| it.is_in_order && it.top <= new.top);
+        let edges = if new.is_left {
+            [new.x, f32::INFINITY]
+        } else {
+            [f32::NEG_INFINITY, new.x]
+        };
+        new.row = match self.all.last().filter(|it| it.top == new.top) {
+            Some(Exclusion { row, .. }) => (
+                row.0,
+                [row.1[0].max(edges[0]), row.1[1].min(edges[1])],
+                row.2.min(new.bottom),
+            ),
+            None => (self.all.len(), edges, new.bottom),
+        };
+        self.all.push(new);
+    }
+
     /// Keeps lines out of `width` at one side.
     pub(crate) fn exclude(&mut self, is_left: bool, x: f32, [top, bottom]: [f32; 2]) {
         let (top, bottom) = (self.origin[1] + top, self.origin[1] + bottom);
-        self.all.push(Exclusion {
+        self.add(Exclusion {
             is_left,
             x: self.origin[0] + x,
             top,
             bottom,
+            lowest: [bottom; 2],
+            is_in_order: true,
+            row: Default::default(),
             area: None,
         });
     }
@@ -185,11 +250,14 @@ impl Floats {
             slot.x + slot.width - width
         };
         let (top, bottom) = (self.origin[1] + y, self.origin[1] + y + height);
-        self.all.push(Exclusion {
+        self.add(Exclusion {
             is_left,
             x: self.origin[0] + if is_left { x + width } else { x },
             top,
             bottom,
+            lowest: [bottom; 2],
+            is_in_order: true,
+            row: Default::default(),
             area: area.map(|it| (it, width)),
         });
         [x, y]
@@ -355,11 +423,11 @@ impl Document {
         parent: &Style,
         child: BoxId,
         available: f32,
-        width: f32,
+        child_width: f32,
         margin: &mut Edges,
     ) -> f32 {
         let (style, rtl) = (&self.boxes[child].style, parent.is_rtl());
-        let free = available - width - margin.sums()[0];
+        let free = available - child_width - margin.sums()[0];
         match auto_margins(style, 0) {
             _ if free <= 0.0 && style.layout.justify_self == Align::AUTO => {}
             [true, true] => (margin.left, margin.right) = crate::positioned::halves(free.max(0.0)),
@@ -383,19 +451,330 @@ impl Document {
                 };
                 let before = distribute(align, free, 1).0;
                 return if rtl {
-                    available - margin.right - width - before
+                    available - margin.right - child_width - before
                 } else {
                     margin.left + before
                 };
             }
         }
         if rtl {
-            available - margin.right - width
+            available - margin.right - child_width
         } else {
             margin.left
         }
     }
 
+    /// `lay_out_block` for what most blocks with text are.
+    fn lay_out_paragraph(
+        &mut self,
+        id: BoxId,
+        lines: BoxId,
+        input: &Input,
+        floats: Option<&mut Floats>,
+    ) -> Output {
+        let it = &self.boxes[id];
+        let (inset, mut own_floats) = (it.inset(input.basis.0), Floats::default());
+        let (is_at_top, basis) = (
+            floats.is_some() && inset.top == 0.0,
+            (
+                (input.width - inset.sums()[0]).max(0.0),
+                it.inner_height(input, inset),
+            ),
+        );
+        let own = self.lay_out(
+            lines,
+            Input {
+                width: basis.0,
+                basis,
+                ..Input::default()
+            },
+            Some(floats.unwrap_or(&mut own_floats)),
+        );
+        self.place_child(lines, [inset.left, inset.top], Edges::default(), basis);
+        let mut output = Output {
+            intrinsic: inset.top + own.height + inset.bottom,
+            ..Output::default()
+        };
+        self.absorb(lines, &own, &mut output);
+        (output.baselines, output.last_baseline) = (
+            own.baselines.map(|it| Some(inset.top + it?)),
+            own.last_baseline.map(|it| inset.top + it),
+        );
+        self.finish_block(
+            id,
+            input,
+            inset,
+            is_at_top && own.collapses_through,
+            output,
+            None,
+        )
+    }
+
+    /// `y` is that of a block and that of a line.
+    fn pass_out_of_flow(
+        &mut self,
+        id: BoxId,
+        index: usize,
+        range: [f32; 2],
+        y: [f32; 2],
+        floats: &Floats,
+    ) {
+        let (style, child) = (
+            Rc::clone(&self.boxes[id].style),
+            self.boxes[id].children[index],
+        );
+        self.set_static_position_in_flow(child, &style, range, y[0]);
+        if self.boxes[child].style.was_inline {
+            let (slot, rtl) = (floats.slot(range, y[1], 0.0), style.is_rtl());
+            let indent = if (index == 0) != style.text.indent.hangs {
+                crate::layout::resolve(&style.text.indent.length, range[1] - range[0])
+            } else {
+                0.0
+            };
+            let before = match (style.text.align, rtl) {
+                (TextAlign::Center | TextAlign::WebkitCenter, _) => (slot.width + indent) / 2.0,
+                (TextAlign::End, _)
+                | (TextAlign::Right | TextAlign::WebkitRight, false)
+                | (TextAlign::Left | TextAlign::WebkitLeft, true) => slot.width,
+                _ => indent,
+            };
+            self.boxes[child].static_position[0].0 = if rtl {
+                slot.x + slot.width - before
+            } else {
+                slot.x + before
+            };
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_plain_block(&self, id: BoxId, input: &Input, floats: Option<&Floats>) -> bool {
+        let it = &self.boxes[id];
+        let stays_below = |fixed: crate::layout::Fixed| {
+            fixed.traits.contains(Traits::HAS_FIXED_MARGIN)
+                && fixed.margin.top >= 0.0
+                && fixed.margin.bottom >= 0.0
+        };
+        it.kind == Kind::Block
+            && it.is_ordinary
+            && it.turned == it.mode
+            && !(it.has_legend
+                || it.is_skipped
+                || it.is_parking
+                || it.splits_layers
+                || input.is_restricted
+                || it.has_floats
+                || self.boxes.has_annotations)
+            && input.trim == [false; 2]
+            && it.style.fixed().traits.contains(Traits::IS_PLAIN_INSIDE)
+            && self.environment.quirks == Quirks::None
+            && self.boxes.is_unbroken(id)
+            && floats.is_none_or(|floats| {
+                floats.len() == 0
+                    || !floats.are_in_the_way()
+                        && it
+                            .children
+                            .iter()
+                            .all(|it| stays_below(self.boxes[*it].style.fixed()))
+            })
+    }
+
+    /// What `run_algorithm` comes to for most blocks.
+    #[inline(always)]
+    pub(crate) fn lay_out_plain_block(
+        &mut self,
+        id: BoxId,
+        input: &Input,
+        floats: Option<&mut Floats>,
+    ) -> Output {
+        let it = &mut self.boxes[id];
+        let (fixed, joins) = (it.style.fixed(), floats.is_some());
+        let border = if it.collapsed.is_some() {
+            Edges::new(it.border())
+        } else {
+            fixed.border
+        };
+        (it.layout.border, it.layout.padding, it.layout.size.width) =
+            (border, fixed.padding, input.width);
+        let inset = border + fixed.padding;
+        let definite = match input.height {
+            None => fixed.height.filter(|_| !input.ignores_height),
+            height => height.filter(|_| !input.is_indefinite),
+        };
+        let basis = (
+            (input.width - inset.sums()[0]).max(0.0),
+            definite.map(|it| (it - inset.sums()[1]).max(0.0)),
+        );
+        let (mut y, mut strut, mut at_top) =
+            (inset.top, Strut::default(), joins && inset.top == 0.0);
+        let (mut output, count) = (Output::default(), it.children.len());
+        let (mut contents, mut gathers) = (
+            crate::scroll::Contents::default(),
+            count > 8 && it.outside_marker == 0,
+        );
+        if count > 0 {
+            let mut own_floats = None;
+            let floats = floats.unwrap_or_else(|| own_floats.insert(Floats::default()));
+            let (rtl, align, justify) = (
+                it.style.is_rtl(),
+                it.style.text.align,
+                it.style.layout.justify_items,
+            );
+            let open = [at_top, joins && inset.bottom == 0.0];
+            let setting = Setting::new(basis, [open[0], open[1], false, rtl], align, justify);
+            let is_unaligned = justify == Align::NORMAL
+                && !matches!(
+                    align,
+                    TextAlign::WebkitCenter | TextAlign::WebkitLeft | TextAlign::WebkitRight
+                );
+            for index in 0..count {
+                let child = self.boxes[id].children[index];
+                let it = &self.boxes[child];
+                let (x, mut margin, own);
+                if it.kind == Kind::Lines {
+                    (x, margin) = (0.0, Edges::default());
+                    own = self.lay_out(
+                        child,
+                        Input {
+                            width: basis.0,
+                            basis,
+                            ..Input::default()
+                        },
+                        Some(floats),
+                    );
+                } else if it.style.is_out_of_flow() {
+                    (output.escapes, gathers) = (output.escapes | it.out_of_flow(), false);
+                    let next = if at_top { y } else { y + strut.sum() };
+                    self.pass_out_of_flow(
+                        id,
+                        index,
+                        [inset.left, inset.left + basis.0],
+                        [next; 2],
+                        floats,
+                    );
+                    continue;
+                } else if let Some(known) = self.settled(child, setting) {
+                    (x, margin, own) = known;
+                } else {
+                    let it = &self.boxes[child];
+                    let (fixed, joins) = (it.style.fixed(), it.joins_formatting_context);
+                    let input = if is_unaligned
+                        && it.is_ordinary
+                        && fixed.traits.contains(Traits::IS_PLAIN_OUTSIDE)
+                    {
+                        margin = fixed.margin;
+                        let width = match &it.style.layout.width {
+                            Size::Length(length) => {
+                                crate::layout::resolve(length, basis.0) + fixed.beside
+                            }
+                            _ => basis.0 - margin.sums()[0],
+                        };
+                        Input {
+                            width: clamp(
+                                width.max((fixed.border + fixed.padding).sums()[0]),
+                                fixed.limits[0],
+                            ),
+                            basis,
+                            ..Input::default()
+                        }
+                    } else {
+                        margin = crate::layout::margin(&it.style, basis.0);
+                        let (above, below) = (
+                            if open[0] { 0.0 } else { margin.top },
+                            if open[1] { 0.0 } else { margin.bottom },
+                        );
+                        let room = Room {
+                            available: [
+                                Some(basis.0 - margin.sums()[0]),
+                                basis.1.map(|it| it - above - below),
+                            ],
+                            basis: [Some(basis.0), basis.1],
+                            height: None,
+                        };
+                        let width = self.resolve_width(
+                            child,
+                            &room,
+                            it.auto_width_in(&self.boxes[id].style),
+                        );
+                        self.input_for(child, width, &room)
+                    };
+                    x = match is_unaligned
+                        && (fixed.traits & (Traits::IS_PLAIN_OUTSIDE | Traits::HAS_AUTO_MARGIN))
+                            .bits()
+                            == Traits::IS_PLAIN_OUTSIDE.bits()
+                    {
+                        true if rtl => basis.0 - margin.right - input.width,
+                        true => margin.left,
+                        false => self.align_in_flow(
+                            &self.boxes[id].style,
+                            child,
+                            basis.0,
+                            input.width,
+                            &mut margin,
+                        ),
+                    };
+                    own = self.lay_out(child, input, joins.then_some(&mut *floats));
+                    self.note_settled(child, setting, x);
+                }
+                let before = strut.with(margin.top).and(own.margins[0]);
+                let top = if at_top { y } else { y + before.sum() };
+                if own.collapses_through && self.boxes[child].joins_formatting_context {
+                    strut = before.with(margin.bottom);
+                } else {
+                    if core::mem::take(&mut at_top) {
+                        output.margins[0] = before;
+                    }
+                    (y, strut) = (top + own.height, own.margins[1].with(margin.bottom));
+                }
+                self.place_child(child, [inset.left + x, top], margin, basis);
+                gathers = gathers && contents.add(&self.boxes[child]);
+                self.absorb(child, &own, &mut output);
+                self.boxes[child].pass_baselines(top, margin.bottom, &own, &mut output);
+            }
+        }
+        let at_bottom = joins && inset.bottom == 0.0 && definite.is_none();
+        if !at_bottom && !at_top {
+            y += strut.sum();
+        }
+        output.intrinsic = y.max(inset.top) + inset.bottom;
+        if at_top || at_bottom {
+            output.margins[usize::from(!at_top)] = strut;
+        }
+        if self.boxes[id].parent_kind == Kind::Row && self.boxes[id].is_cell() {
+            let mut finished = self.finish_block(id, input, inset, false, output, None);
+            finished.last_baseline = if finished.baselines[0].is_none() {
+                finished.baselines[1]
+            } else {
+                finished.last_baseline
+            };
+            self.boxes[id].layout.size.height = finished.height;
+            self.lay_out_positioned(id, &mut finished, None);
+            return finished;
+        }
+        output.height = fixed.height_for(input, output.intrinsic);
+        output.collapses_through = at_top && output.height == 0.0;
+        if output.height != output.intrinsic {
+            output.margins[1] = Strut::default();
+        }
+        if output.baselines[0].is_none() {
+            output.last_baseline = output.baselines[1];
+        }
+        if gathers {
+            self.gathered.set(Some((id, contents)));
+        }
+        let it = &mut self.boxes[id];
+        it.layout.size.height = output.height;
+        it.forget_hoisted();
+        if it.outside_marker != 0 || !output.escapes.is_empty() {
+            let mut finished = output;
+            self.place_outside_marker(id, input, &mut finished);
+            self.boxes[id].layout.size.height = finished.height;
+            self.lay_out_positioned(id, &mut finished, None);
+            return finished;
+        }
+        output
+    }
+
+    #[inline(never)]
     pub(crate) fn lay_out_block(
         &mut self,
         id: BoxId,
@@ -404,6 +783,23 @@ impl Document {
         breaks: Option<&mut Breaks>,
     ) -> Output {
         let it = &self.boxes[id];
+        if let ([lines], None) = (&it.children[..], &breaks)
+            && self.boxes[*lines].kind == Kind::Lines
+            && !it.has_floats
+            && floats.as_ref().is_none_or(|it| !it.are_in_the_way())
+            && !self.boxes.has_annotations
+            && self.environment.quirks == Quirks::None
+            && input.trim == [false; 2]
+            && it.style.rare.box_trim == TextBoxTrim::None
+            && !it.splits_layers
+            && !it.is_clamped()
+            && self.boxes[*lines]
+                .inline
+                .as_ref()
+                .is_some_and(|it| it.label.is_some() || !it.text.is_empty())
+        {
+            return self.lay_out_paragraph(id, *lines, input, floats);
+        }
         let (style, inset, joins) = (
             Rc::clone(&it.style),
             it.inset(input.basis.0),
@@ -451,6 +847,20 @@ impl Document {
             self.boxes[id].passes_height && has_auto_height && !self.boxes[id].fills_parent;
         let mut flow = breaks.map(|it| self.flow(id, input, inset, it));
         let (mut upcoming, mut discards_margin) = (0, false);
+        let is_simple = flow.is_none()
+            && !self.boxes.has_annotations
+            && trim == [false; 2]
+            && !input.is_restricted
+            && self.environment.quirks != Quirks::All
+            && self.boxes[id].mode == crate::types::WritingMode::HorizontalTb
+            && !self.boxes[id].has_legend;
+        let open = [joins && inset.top == 0.0, joins && inset.bottom == 0.0];
+        let setting = Setting::new(
+            basis,
+            [open[0], open[1], passes_height, style.is_rtl()],
+            style.text.align,
+            style.layout.justify_items,
+        );
         while let Some(child) = self.boxes[id].children.get(upcoming).copied() {
             let (index, it) = (upcoming, &self.boxes[child]);
             upcoming += 1;
@@ -481,34 +891,13 @@ impl Document {
                 flow.iter_mut()
                     .for_each(|it| it.note_static_position(child));
                 output.escapes |= it.out_of_flow();
-                self.set_static_position_in_flow(
-                    child,
-                    &style,
+                self.pass_out_of_flow(
+                    id,
+                    index,
                     range,
-                    if id == VIEWPORT { inset.top } else { next },
+                    [if id == VIEWPORT { inset.top } else { next }, next],
+                    floats,
                 );
-                if self.boxes[child].style.was_inline {
-                    let (slot, rtl) = (floats.slot(range, next, 0.0), style.is_rtl());
-                    let indent = if (index == 0) != style.text.indent.hangs {
-                        crate::layout::resolve(&style.text.indent.length, basis.0)
-                    } else {
-                        0.0
-                    };
-                    let before = match (style.text.align, rtl) {
-                        (TextAlign::Center | TextAlign::WebkitCenter, _) => {
-                            (slot.width + indent) / 2.0
-                        }
-                        (TextAlign::End, _)
-                        | (TextAlign::Right | TextAlign::WebkitRight, false)
-                        | (TextAlign::Left | TextAlign::WebkitLeft, true) => slot.width,
-                        _ => indent,
-                    };
-                    self.boxes[child].static_position[0].0 = if rtl {
-                        slot.x + slot.width - before
-                    } else {
-                        slot.x + before
-                    };
-                }
                 continue;
             }
             if it.style.is_floating() {
@@ -557,8 +946,20 @@ impl Document {
                 self.absorb(child, &own, &mut output);
                 continue;
             }
-            let (mut margin, child_joins) =
-                (margin(&it.style, basis.0), it.joins_formatting_context);
+            let adds_floats = it.has_floats && it.joins_formatting_context;
+            let settled = if is_simple && !adds_floats {
+                self.settled(child, setting)
+            } else {
+                None
+            };
+            let settled = settled.filter(|it| {
+                !floats.reach_below(y.min(y + strut.with(it.1.top).and(it.2.margins[0]).sum()))
+            });
+            let it = &self.boxes[child];
+            let (mut margin, child_joins) = (
+                settled.map_or_else(|| margin(&it.style, basis.0), |it| it.1),
+                it.joins_formatting_context,
+            );
             if is_at_quirky_start
                 && it.has_default_margin(margin.top)
                 && !self.is_set_by_page(it.node, Id::MarginTop)
@@ -569,23 +970,11 @@ impl Document {
                 && is_name!(it.tag, "p" | "pre" | "listing" | "plaintext" | "xmp")
                 && it.has_default_margin(margin.bottom)
                 && !self.is_set_by_page(it.node, Id::MarginBottom);
-            let auto = match justify_self(&it.style, &style).0 {
-                _ if it.node == 0 && it.kind != Kind::Table => AutoSize::Fill,
-                AlignName::Normal
-                    if !it.shrinks_to_fit && !it.is_replaced() && !it.is_orthogonal() =>
-                {
-                    AutoSize::Fill
-                }
-                AlignName::Stretch if it.kind != Kind::Table => AutoSize::Stretch,
-                _ => AutoSize::Fit,
-            };
-            let [above, below] = [0, 1].map(|side| {
-                if joins && inset.along(1)[side] == 0.0 {
-                    0.0
-                } else {
-                    margin.along(1)[side]
-                }
-            });
+            let auto = it.auto_width_in(&style);
+            let (above, below) = (
+                if open[0] { 0.0 } else { margin.top },
+                if open[1] { 0.0 } else { margin.bottom },
+            );
             let available = [
                 Some(basis.0 - margin.sums()[0]),
                 basis
@@ -610,7 +999,11 @@ impl Document {
                 room.height =
                     Some(it.height_limits(&room, it.border_and_padding(basis.0).sums(), None)[0]);
             }
-            let clearance = floats.clearance(clears(&it.style));
+            let clearance = if floats.len() == 0 {
+                None
+            } else {
+                floats.clearance(clears(&it.style))
+            };
             let above = strut.with(margin.top);
             let position = |margins: Strut| {
                 let natural = if at_top || discards_margin {
@@ -622,7 +1015,10 @@ impl Document {
                     .filter(|it| *it > natural)
                     .map_or((natural, false), |it| (it, true))
             };
-            let child_trim = [trim[0], last == Some(child)].map(|side| side && !it.is_foreign());
+            let child_trim = [
+                trim[0] && !it.is_foreign(),
+                last == Some(child) && !it.is_foreign(),
+            ];
             let (x, mut top, mut is_cleared, own);
             let column_end = flow.as_ref().map_or(f32::INFINITY, |it| it.end());
             let (count, tally, mut outcome) = (
@@ -644,8 +1040,15 @@ impl Document {
                 }
                 _ => document.lay_out(child, input, floats),
             };
-            let depends_on_top = self.boxes.has_floats || tally.is_some();
-            if child_joins {
+            let depends_on_top = adds_floats || count > 0 || tally.is_some();
+            if let Some((known, _, output)) = settled {
+                (x, own) = (inset.left + known, output);
+                (top, is_cleared) = position(if child_joins {
+                    own.margins[0]
+                } else {
+                    Strut::default()
+                });
+            } else if child_joins {
                 let width = self.resolve_width(child, &room, auto);
                 let mut child_input = Input {
                     trim: child_trim,
@@ -737,6 +1140,9 @@ impl Document {
                     }
                 }
             }
+            if is_simple && settled.is_none() && !floats.reach_below(y.min(top)) {
+                self.note_settled(child, setting, x - inset.left);
+            }
             if let (Some(flow), Some(tally)) = (&mut flow, &tally) {
                 flow.is_separated |= top
                     > if at_top || discards_margin {
@@ -816,18 +1222,7 @@ impl Document {
             } else {
                 own.room_for_annotations
             };
-            if !it.is_replaced() {
-                let placed = |baseline: f32| top + it.clamp_baseline(baseline, own.height);
-                output.baselines[0] = output.baselines[0].or_else(|| own.baselines[0].map(placed));
-                output.last_baseline = own.last_baseline.map(placed).or(output.last_baseline);
-                let last = match it.kind {
-                    Kind::Table => None,
-                    Kind::Block if it.scrolls() => Some(own.height + margin.bottom),
-                    Kind::Block | Kind::Lines | Kind::Columns => own.baselines[1],
-                    _ => own.baselines[0],
-                };
-                output.baselines[1] = last.map(|it| top + it).or(output.baselines[1]);
-            }
+            it.pass_baselines(top, margin.bottom, &own, &mut output);
         }
 
         if ends_with_quirky_margin && !joins {
@@ -872,18 +1267,30 @@ impl Document {
         {
             output.intrinsic = bottom + inset.bottom;
         }
+        if at_top || at_bottom {
+            output.margins[usize::from(!at_top)] = strut;
+        }
+        self.finish_block(id, input, inset, at_top, output, flow)
+    }
+
+    fn finish_block(
+        &mut self,
+        id: BoxId,
+        input: &Input,
+        inset: Edges,
+        at_top: bool,
+        mut output: Output,
+        mut flow: Option<Flow>,
+    ) -> Output {
         if let Some(row) = input.row_baseline.filter(|_| {
             flow.as_ref()
                 .is_none_or(|it| it.is_whole(input.height.unwrap_or(0.0)))
         }) {
             let own = output.baselines[0]
-                .filter(|_| !style.contain().contains(Contain::LAYOUT))
+                .filter(|_| !self.boxes[id].style.contain().contains(Contain::LAYOUT))
                 .unwrap_or(output.intrinsic);
             self.shift_children(id, row - own, &mut output, flow.as_mut());
             output.intrinsic += row - own;
-        }
-        if at_top || at_bottom {
-            output.margins[usize::from(!at_top)] = strut;
         }
         self.finish_height(id, input, inset, &mut output);
         output.collapses_through = at_top && output.height == 0.0;
@@ -919,7 +1326,10 @@ impl Document {
             let child = self.boxes[id].children[index];
             let it = &mut self.boxes[child];
             it.layout.location.y += offset;
-            it.static_position[1].0 += offset;
+            if it.style.is_out_of_flow() {
+                it.static_position[1].0 += offset;
+                it.cache.settled = None;
+            }
             flow.iter_mut().for_each(|it| it.shift(child, offset));
         }
         self.boxes[id].forget_extents();
@@ -965,7 +1375,7 @@ impl Document {
                 .lines
                 .iter_mut()
                 .for_each(|line| line.clamp = None);
-            inline.lines.visible = (total > count && len >= remaining).then_some(remaining);
+            inline.lines.visible = (total > count && len >= remaining).then_some(remaining as u32);
             if total > count && (1..=len).contains(&remaining) {
                 let last = &inline.lines.lines[remaining - 1];
                 let (mut end, mut at) = (y + last.y + last.height, self.boxes[lines].parent);
@@ -983,7 +1393,13 @@ impl Document {
                     (top, at) = (top - it.layout.location.y, it.parent);
                 }
                 bottom = Some(end);
-                let truncation = self.truncate(&inline.lines, last, &self.boxes[lines].style, true);
+                let truncation = self.truncate(
+                    &inline.lines,
+                    &inline.clusters,
+                    last,
+                    &self.boxes[lines].style,
+                    true,
+                );
                 inline.lines.lines[remaining - 1].clamp = truncation;
             }
             remaining = remaining.saturating_sub(len);
@@ -1008,8 +1424,40 @@ impl Document {
     }
 }
 
-pub(crate) fn justify_self(style: &Style, parent: &Style) -> Align {
-    match (style.layout.justify_self, parent.layout.justify_items) {
+impl LayoutBox {
+    fn auto_width_in(&self, parent: &Style) -> AutoSize {
+        match justify_self(&self.style, parent).0 {
+            _ if self.node == 0 && self.kind != Kind::Table => AutoSize::Fill,
+            AlignName::Normal
+                if !self.shrinks_to_fit && !self.is_replaced() && !self.is_orthogonal() =>
+            {
+                AutoSize::Fill
+            }
+            AlignName::Stretch if self.kind != Kind::Table => AutoSize::Stretch,
+            _ => AutoSize::Fit,
+        }
+    }
+
+    /// To the block that it is in.
+    #[inline(always)]
+    fn pass_baselines(&self, top: f32, margin_bottom: f32, own: &Output, output: &mut Output) {
+        if !self.is_replaced() {
+            let placed = |baseline: f32| top + self.clamp_baseline(baseline, own.height);
+            output.baselines[0] = output.baselines[0].or_else(|| own.baselines[0].map(placed));
+            output.last_baseline = own.last_baseline.map(placed).or(output.last_baseline);
+            let last = match self.kind {
+                Kind::Table => None,
+                Kind::Block if self.scrolls() => Some(own.height + margin_bottom),
+                Kind::Block | Kind::Lines | Kind::Columns => own.baselines[1],
+                _ => own.baselines[0],
+            };
+            output.baselines[1] = last.map(|it| top + it).or(output.baselines[1]);
+        }
+    }
+}
+
+pub(crate) fn justify_self(item: &Style, parent: &Style) -> Align {
+    match (item.layout.justify_self, parent.layout.justify_items) {
         (Align::AUTO, items) => items,
         (own, _) => own,
     }

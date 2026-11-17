@@ -3,17 +3,22 @@
 use std::cell::{Cell, RefCell};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::mem::discriminant;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, UNIX_EPOCH};
 
 use crate::abi::{Glyph, Item, Rect, Region, RoundedRect, Span, TextRun, Tile};
-use crate::error::{Context, Result, bail, ensure};
-use crate::frame::Overlay;
+use crate::error::{Context, Result, ensure};
 use crate::gfx::Pixmap;
 use crate::host::thread;
-use crate::json::{Deserialize as _, Serialize as _, Value, json, record};
+use crate::json::{Deserialize, Serialize, Value, record};
 use crate::paint::raster::{IntRect, Layer, Pixel, demultiply};
 use crate::paint::scene::Scene;
+use crate::protocol::WindowCommand;
+use crate::protocol::{
+    BackdropPart, Background, Cover, CoverField, CoverPicture, EffectState, Material, Maybe,
+    Overlay, Point, Reply, SurfacePoint, SystemEvent, Text, Theme, Uncovered, WindowKind,
+};
 use crate::text::{Line, Recipe};
 use crate::window::{self, Options, WindowState};
 use crate::{app, bridge, images, input, surface};
@@ -27,15 +32,15 @@ record! {
         scale: f32,
         regions: Vec<([f32; 4], bool)>,
         options: Options,
-        theme: String,
+        theme: Theme,
         is_dark: bool,
-        displays: Value,
+        displays: Vec<[f32; 4]>,
         executable: (PathBuf, u64, u128),
         arguments: Vec<String>,
         variables: Vec<(String, Option<String>)>,
         field: Option<Field>,
-        /// What native addons have put behind the window's contents.
-        backdrop: Value,
+        /// What native addons have put behind the window's contents, or the color that the picture has for it.
+        backdrop: Vec<BackdropPart>,
     }
 }
 
@@ -56,6 +61,83 @@ record! {
     }
 }
 
+record!(for required Point { x: f32, y: f32, });
+record!(for required Overlay { height: f32, color: Maybe<u32>, symbol_color: Maybe<u32>, });
+record!(for required BackdropPart { frame: [f64; 4], color: Maybe<[f64; 4]>, });
+record!(for required Options {
+    id: u32, title: Text, x: Maybe<f32>, y: Maybe<f32>, width: f32, height: f32, min_width: f32, min_height: f32, show: bool, focus: bool,
+    frame: bool, hidden_title_bar: bool, traffic_light_position: Maybe<Point>, background: Background, background_color: Maybe<u32>,
+    resizable: bool, movable: bool, accept_first_mouse: bool, minimizable: bool, kind: WindowKind, maximized: bool, fullscreen: bool,
+    app_id: Text, overlay: Maybe<Overlay>, tabbing_identifier: Text,
+});
+
+macro_rules! numbered {
+    ($($name:ident: $($variant:ident)+;)+) => {$(
+        impl Serialize for $name {
+            fn to_json(&self) -> Value {
+                (*self as u8).into()
+            }
+        }
+
+        impl Deserialize for $name {
+            fn from_json(value: &Value) -> Result<Self> {
+                [$($name::$variant),+].into_iter().find(|it| *value == it.to_json()).context(stringify!($name))
+            }
+        }
+    )+};
+}
+
+numbered! {
+    Theme: System Light Dark;
+    WindowKind: Normal Dialog Floating Popup;
+    EffectState: FollowsWindow Active Inactive;
+    Material: UnderWindow Titlebar Selection Menu Popover Sidebar Header Sheet Window Hud FullscreenUi Tooltip Content UnderPage;
+}
+
+impl Serialize for Background {
+    fn to_json(&self) -> Value {
+        match *self {
+            Background::Blurred { material, state } => (material, state).to_json(),
+            other => (other == Background::Opaque).into(),
+        }
+    }
+}
+
+impl Deserialize for Background {
+    fn from_json(value: &Value) -> Result<Self> {
+        Ok(match value.as_bool() {
+            Some(true) => Background::Opaque,
+            Some(false) => Background::Transparent,
+            None => Deserialize::from_json(value)
+                .map(|(material, state)| Background::Blurred { material, state })?,
+        })
+    }
+}
+
+impl Serialize for Text {
+    fn to_json(&self) -> Value {
+        (**self).into()
+    }
+}
+
+impl Deserialize for Text {
+    fn from_json(value: &Value) -> Result<Self> {
+        String::from_json(value).map(Text::from)
+    }
+}
+
+impl<T: Serialize> Serialize for Maybe<T> {
+    fn to_json(&self) -> Value {
+        self.as_ref().to_json()
+    }
+}
+
+impl<T: Deserialize> Deserialize for Maybe<T> {
+    fn from_json(value: &Value) -> Result<Self> {
+        Option::from_json(value).map(Maybe::from)
+    }
+}
+
 struct Echo {
     field: Field,
     file: PathBuf,
@@ -65,6 +147,8 @@ struct Echo {
 }
 
 struct Shown {
+    /// The color of the backdrop, if that is all.
+    behind: Option<[f64; 4]>,
     window: u32,
     surface: u32,
     pieces: Vec<(IntRect, Piece<u32>)>,
@@ -85,6 +169,7 @@ thread_local! {
     pub static HAS_SET_THEME: Cell<bool> = const { Cell::new(false) };
     /// Keys that went down, and texts.
     static SENT: Cell<u32> = const { Cell::new(0) };
+    static POSTPONED: RefCell<Vec<WindowCommand>> = const { RefCell::new(Vec::new()) };
     pub static NEXT_OVERLAY: Cell<Option<Option<Overlay>>> = const { Cell::new(None) };
 }
 
@@ -284,13 +369,15 @@ fn arguments() -> Vec<String> {
         .collect()
 }
 
-fn displays() -> Value {
-    json!(
-        app::displays()
-            .iter()
-            .map(|display| app::rectangle(display.bounds))
-            .collect::<Vec<_>>()
-    )
+fn numbers(rect: Rect) -> [f32; 4] {
+    [rect.x, rect.y, rect.width, rect.height]
+}
+
+fn displays() -> Vec<[f32; 4]> {
+    app::displays()
+        .iter()
+        .map(|display| numbers(display.bounds))
+        .collect()
 }
 
 fn device(rect: Rect, scale: f32) -> IntRect {
@@ -306,7 +393,7 @@ fn device(rect: Rect, scale: f32) -> IntRect {
 fn paint(state: &WindowState, area: IntRect, backdrop: Option<u32>) -> Result<Layer> {
     let mut layer = Layer::new(area).context("the area is empty or too large")?;
     if let Some([r, g, b, 255]) = backdrop
-        .or(state.options.borrow().background_color)
+        .or(state.options.borrow().background_color.get())
         .map(u32::to_be_bytes)
     {
         layer.pixels_mut().fill([r, g, b, 255]);
@@ -315,10 +402,6 @@ fn paint(state: &WindowState, area: IntRect, backdrop: Option<u32>) -> Result<La
         surface.borrow().paint_in_window(&mut layer);
     }
     Ok(layer)
-}
-
-fn number(value: &Value) -> Result<u32> {
-    Ok(value.as_u64().context("expected a number")? as u32)
 }
 
 fn rect_from([x, y, width, height]: [f32; 4]) -> Rect {
@@ -497,14 +580,14 @@ pub fn typed(text: &str, is_at_caret: bool) {
 /// The font is that of the placeholder, which starts at the caret.
 fn field(
     state: &WindowState,
-    from: &Value,
+    from: CoverField,
     painted: &Layer,
 ) -> Option<(Field, Option<&'static [u8]>)> {
     let surface = surface::get(state.focused_surface.get()?)?;
     let surface = surface.borrow();
     let (caret, rect, zoom) = (
         surface.ime.caret_in_empty_field()?,
-        surface::parse_rect(&from["rect"])?,
+        from.rect,
         surface.scene.zoom,
     );
     let (local, caret_color) = surface.scene.items.iter().find_map(|item| match *item {
@@ -528,32 +611,31 @@ fn field(
     (!corner.is_empty() && surface::contains(rect, x + 1., top + 1.)).then_some(())?;
     let background = painted.row(corner.top, corner.right - 1, corner.right)[0];
     let field = Field {
-        rect: [rect.x, rect.y, rect.width, rect.height],
+        rect: numbers(rect),
         caret: [x, top, local.width * zoom, local.height * zoom],
         baseline: top + (y - local.y) * zoom,
         size: size / font.size_adjust,
         font,
         zoom,
-        letter_spacing: from["letterSpacing"].as_f64().unwrap_or(0.) as f32,
-        color: from["color"].as_u64().map_or(caret_color, |it| it as u32),
+        letter_spacing: from.letter_spacing,
+        color: from.color.get().unwrap_or(caret_color),
         caret_color,
         background: u32::from_be_bytes(background),
     };
     (background[3] == 255).then_some((field, file))
 }
 
-fn backdrop(window: u32, command: &str, value: &Value) -> Value {
-    let window = window::platform_window(window).filter(|_| cfg!(target_os = "macos"));
-    window
-        .and_then(|window| window.command(command, value, None).ok())
-        .unwrap_or_default()
+fn imitate_backdrop(window: u32, parts: &[BackdropPart]) {
+    window::platform_window(window).inspect(|window| window.imitate_backdrop(parts));
 }
 
-fn show(from: &Value) -> Result<()> {
-    let saved = Saved::deserialize(crate::json::parse(&fs::read(
-        from["path"].as_str().unwrap_or(""),
-    )?)?)?;
+fn try_to_show(description: &str, window: u32, surface: u32) -> Result<()> {
+    let saved = Saved::deserialize(crate::json::parse(&fs::read(description)?)?)?;
     ensure!(thread::exists(), "nothing draws while JavaScript runs");
+    ensure!(
+        !crate::host::platform()?.has_screen_reader(),
+        "a picture cannot be read out"
+    );
     ensure!(
         saved.executable == executable()? && saved.arguments == arguments(),
         "another launch"
@@ -571,14 +653,13 @@ fn show(from: &Value) -> Result<()> {
     // Linux tells the appearance later.
     let is_dark = app::is_dark();
     ensure!(
-        saved.theme != "system" || is_dark == saved.is_dark || cfg!(target_os = "linux"),
+        saved.theme != Theme::System || is_dark == saved.is_dark || cfg!(target_os = "linux"),
         "another appearance"
     );
-    if saved.theme != "system" {
-        app::set_theme_source(&saved.theme);
+    if saved.theme != Theme::System {
+        app::set_theme(saved.theme);
         HAS_SET_THEME.set(true);
     }
-    let (window, surface) = (number(&from["window"])?, number(&from["surface"])?);
     let pieces = picture.into_iter().map(|(area, piece)| match piece {
         Piece::Color(color) => (area, Piece::Color(color)),
         Piece::Image(pixmap) => (area, Piece::Image(images::insert(pixmap))),
@@ -591,7 +672,13 @@ fn show(from: &Value) -> Result<()> {
         text: String::new(),
         has_stopped: false,
     });
+    let behind = if let [only] = &saved.backdrop[..] {
+        only.color.get()
+    } else {
+        None
+    };
     let shown = Shown {
+        behind,
         window,
         surface,
         pieces: pieces.collect(),
@@ -627,29 +714,48 @@ fn show(from: &Value) -> Result<()> {
         id: window,
         show: true,
         focus: true,
-        cover: Some(surface),
         ..saved.options
     };
-    let created = window::create(options).and_then(|()| {
+    let created = window::create(options, None, Some(surface)).and_then(|()| {
         ensure!(
             window::state(window)?.metrics.get().scale == saved.scale,
             "another scale"
         );
-        backdrop(window, "imitateBackdrop", &saved.backdrop);
+        imitate_backdrop(window, &saved.backdrop);
         Ok(())
     });
     created.inspect_err(|_| discard())
 }
 
+pub fn show(description: &str, window: u32, surface: u32) {
+    if let Err(error) = try_to_show(description, window, surface) {
+        crate::diagnostics::log!("no launch cover: {error:#}");
+    }
+}
+
+/// Until the picture, which was made for the window as it is, is gone.
+pub fn postpone(command: WindowCommand) {
+    POSTPONED.with_borrow_mut(|all| {
+        all.retain(|it| discriminant(it) != discriminant(&command));
+        all.push(command);
+    });
+}
+
 /// The surfaces are drawn, and get the keys.
 fn lift(state: &WindowState) {
     if HAS_SET_THEME.take() {
-        bridge::emit_latest(json!({ "t": "theme", "dark": app::set_theme_source("system") }));
+        bridge::emit_system(SystemEvent::Theme {
+            is_dark: app::set_theme(Theme::System),
+        });
     }
     if state.cover.take().is_some() {
-        state.options.borrow_mut().overlay = NEXT_OVERLAY.take().flatten();
+        state.options.borrow_mut().overlay = NEXT_OVERLAY.take().flatten().into();
     }
     let window = state.id;
+    POSTPONED
+        .take()
+        .into_iter()
+        .for_each(|command| drop(app::obey(window, command)));
     app::after_command(move || {
         window::refresh(window);
         window::draw_now(window);
@@ -705,55 +811,52 @@ fn uncover() -> Option<u32> {
         input::forget_surface(&state, surface);
         lift(&state);
     }
-    surface::command("destroy", &json!({ "id": surface })).ok();
+    surface::destroy(surface);
     for (_, piece) in pieces {
         if let Piece::Image(image) = piece {
-            images::command("release", &json!({ "id": image }), None).ok();
+            images::release(image);
         }
     }
     Some(window)
 }
 
-fn discard() {
+pub fn discard() {
     uncover().map(window::destroy);
 }
 
 /// Whether the window that shows the picture is the one that `wanted` describes.
-fn adopt(wanted: Options) -> bool {
+pub fn adopt(wanted: &Options) -> bool {
     let state = SHOWN.with_borrow(|shown| window::state(shown.as_ref()?.window).ok());
     let shape = |it: &Options| {
         (
             it.frame,
             it.hidden_title_bar,
-            it.kind.clone(),
+            it.kind,
             it.fullscreen,
             it.width.round(),
             it.height.round(),
         )
     };
-    let is_at = |wanted: Option<f32>, saved: Option<f32>| {
-        wanted.is_none_or(|it| Some(it.round()) == saved.map(f32::round))
+    let is_at = |wanted: Maybe<f32>, saved: Maybe<f32>| {
+        wanted
+            .get()
+            .is_none_or(|it| Some(it.round()) == saved.get().map(f32::round))
     };
     let fits = state.is_some_and(|state| {
         let saved = state.options.borrow();
-        shape(&saved) == shape(&wanted) && is_at(wanted.x, saved.x) && is_at(wanted.y, saved.y)
+        shape(&saved) == shape(wanted) && is_at(wanted.x, saved.x) && is_at(wanted.y, saved.y)
     });
-    match fits {
-        true => drop(wanted.icon.and_then(bridge::take_blob)),
-        false => discard(),
+    if !fits {
+        discard();
     }
     fits
 }
 
 /// The surface at `point`, if it looks there like the picture.
-fn target(point: &Value) -> Option<Value> {
+fn target(Point { x, y }: Point) -> Option<SurfacePoint> {
     const REACH: f32 = 20.;
     let window = SHOWN.with_borrow(|shown| shown.as_ref().map(|it| it.window))?;
-    let (state, x, y) = (
-        window::state(window).ok()?,
-        point[0].as_f64()? as f32,
-        point[1].as_f64()? as f32,
-    );
+    let state = window::state(window).ok()?;
     let metrics = state.metrics.get();
     let around = Rect {
         x: x - REACH,
@@ -787,18 +890,24 @@ fn target(point: &Value) -> Option<Value> {
     let hit = from_the_top
         .find(|it| it.is_visible && !it.is_passthrough && surface::contains(it.rect, x, y))
         .filter(|_| is_same)?;
-    Some(json!({ "s": hit.id, "x": x - hit.rect.x, "y": y - hit.rect.y }))
+    Some(SurfacePoint {
+        surface: hit.id,
+        at: Point {
+            x: x - hit.rect.x,
+            y: y - hit.rect.y,
+        },
+    })
 }
 
 fn differs(path: &Path, bytes: &[u8]) -> bool {
     fs::read(path).ok().as_deref() != Some(bytes)
 }
 
-fn save(from: &Value, reply: u64) -> Result<()> {
-    let state = window::state(number(&from["window"])?)?;
+pub fn save(from: Cover, reply: u32) -> Result<()> {
+    let state = window::state(from.window)?;
     let (path, picture) = (
-        PathBuf::deserialize(&from["path"])?,
-        PathBuf::deserialize(&from["picture"])?,
+        PathBuf::from(&*from.description),
+        PathBuf::from(&*from.picture),
     );
     let metrics = state.metrics.get();
     let all = device(
@@ -810,24 +919,30 @@ fn save(from: &Value, reply: u64) -> Result<()> {
         },
         metrics.scale,
     );
-    let (size, part) = (
-        [all.width() as u32, all.height() as u32],
-        surface::parse_rect(&from["rect"]),
-    );
-    let painted = match from["keepsPicture"] == true {
-        true => None,
-        false => Some(paint(
-            &state,
-            part.map_or(all, |rect| device(rect, metrics.scale).intersect(all)),
-            number(&from["backdrop"]).ok(),
-        )?),
+    let size = [all.width() as u32, all.height() as u32];
+    let (painted, part, wanted_field) = match from.content {
+        CoverPicture::Kept => (None, None, None),
+        CoverPicture::Painted {
+            part,
+            backdrop,
+            field,
+        } => {
+            let area = part
+                .get()
+                .map_or(all, |rect| device(rect, metrics.scale).intersect(all));
+            (
+                Some(paint(&state, area, backdrop.get())?),
+                part.get(),
+                field.get(),
+            )
+        }
     };
     let (field, font) = painted
         .as_ref()
-        .and_then(|painted| field(&state, &from["field"], painted))
+        .zip(wanted_field)
+        .and_then(|(painted, wanted)| field(&state, wanted, painted))
         .unzip();
-    let wanted_field =
-        surface::parse_rect(&from["field"]["rect"]).map(|it| [it.x, it.y, it.width, it.height]);
+    let wanted_field = wanted_field.map(|it| numbers(it.rect));
     let mut regions = Vec::new();
     for surface in surface::in_window(&state) {
         let surface = surface.borrow();
@@ -855,30 +970,51 @@ fn save(from: &Value, reply: u64) -> Result<()> {
             }));
         }
     }
-    let mut options = state.options.borrow().to_json();
-    for (name, value) in from["options"].as_object().into_iter().flatten() {
-        options[name.as_str()] = value.clone();
-    }
-    let variables = Vec::<String>::deserialize(&from["variables"])?;
+    let options = Options {
+        x: Maybe::Yes(from.bounds.x),
+        y: Maybe::Yes(from.bounds.y),
+        width: from.bounds.width,
+        height: from.bounds.height,
+        maximized: from.is_maximized,
+        fullscreen: false,
+        traffic_light_position: from.traffic_light_position,
+        ..state.options.borrow().clone()
+    };
     let mut saved = Saved {
         picture,
         size,
         scale: metrics.scale,
         regions,
-        options: Options::deserialize(options)?,
-        theme: String::deserialize(&from["theme"])?,
+        options,
+        theme: from.theme,
         is_dark: app::is_dark(),
         displays: displays(),
         executable: executable()?,
         arguments: arguments(),
-        variables: variables
-            .into_iter()
-            .map(|name| (name.clone(), std::env::var(name).ok()))
+        variables: from
+            .variables
+            .iter()
+            .map(|name| (name.to_string(), std::env::var(&**name).ok()))
             .collect(),
         field,
-        backdrop: backdrop(state.id, "describeBackdrop", &Value::Null),
+        backdrop: window::platform_window(state.id)
+            .map(|it| it.describe_backdrop())
+            .unwrap_or_default(),
     };
-    bridge::in_background(reply, move || {
+    if let CoverPicture::Painted {
+        backdrop: Maybe::Yes(color),
+        ..
+    } = from.content
+        && color & 0xFF == 0xFF
+        && !saved.backdrop.is_empty()
+    {
+        let frame = [0., 0., metrics.width.into(), metrics.height.into()];
+        saved.backdrop = vec![BackdropPart {
+            frame,
+            color: Maybe::Yes(color.to_be_bytes().map(|it| f64::from(it) / 255.)),
+        }];
+    }
+    bridge::reply_later(reply, move || {
         if part.is_some() || painted.is_none() {
             let before = Saved::deserialize(crate::json::parse(&fs::read(&path)?)?)?;
             ensure!(
@@ -886,6 +1022,9 @@ fn save(from: &Value, reply: u64) -> Result<()> {
                 "the window has another size"
             );
             (saved.regions, saved.field) = (before.regions, before.field);
+            if painted.is_none() {
+                saved.backdrop = before.backdrop;
+            }
         } else if saved.field.is_none() && wanted_field.is_some() {
             // A window without the focus has no caret.
             let before = fs::read(&path)
@@ -917,63 +1056,78 @@ fn save(from: &Value, reply: u64) -> Result<()> {
             write_private(&saved.picture, &split(&painted))?;
         }
         write_private(&path, saved.to_json().to_string().as_bytes())?;
-        Ok(Value::Null)
+        Ok(Reply::Done)
     });
     Ok(())
 }
 
-pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
-    match name {
-        "show" => drop(
-            show(arguments)
-                .inspect_err(|error| crate::diagnostics::log!("no launch cover: {error:#}")),
-        ),
-        "adopt" => return Ok(adopt(Options::deserialize(arguments)?).into()),
-        "discard" => discard(),
-        "end" => {
-            let clicked = target(&arguments["point"]);
-            let kept: Vec<_> = arguments["keep"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(surface::parse_rect)
-                .collect();
-            let window = if kept.is_empty() {
-                uncover()
-            } else {
-                keep(kept)
-            };
-            window.map(|window| backdrop(window, "imitateBackdrop", &Value::Null));
-            let state = window.and_then(|window| window::state(window).ok());
-            let focused = state.as_ref().and_then(|state| state.focused_surface.get());
-            let next = clicked
-                .as_ref()
-                .and_then(|it| number(&it["s"]).ok())
-                .filter(|id| surface::is_focusable(*id));
-            if let (Some(state), Some(_)) = (state, next) {
-                input::focus(&state, next);
-            }
-            return Ok(json!({ "clicked": clicked, "focused": focused }));
-        }
-        "focused" => {
-            return Ok(json!(SHOWN.with_borrow(|shown| {
-                window::state(shown.as_ref()?.window)
-                    .ok()?
-                    .focused_surface
-                    .get()
-            })));
-        }
-        "sent" => return Ok(SENT.get().into()),
-        "fits" => return Ok(target(arguments).is_some().into()),
-        "acceptsText" => {
-            return Ok(surface::get(number(arguments)?)
-                .is_some_and(|it| it.borrow().ime.is_enabled())
-                .into());
-        }
-        "save" => save(arguments, reply.context("the command needs a reply id")?)?,
-        _ => bail!("unknown command cover.{name}"),
+/// What stays behind the parts of the picture that are kept.
+fn behind(kept: &[Rect]) -> Vec<BackdropPart> {
+    let found = SHOWN.with_borrow(|shown| {
+        Some((
+            shown.as_ref()?.behind?,
+            window::state(shown.as_ref()?.window)
+                .ok()?
+                .metrics
+                .get()
+                .height,
+        ))
+    });
+    let Some((color, all)) = found else {
+        return Vec::new();
+    };
+    let frame = |&Rect {
+                     x,
+                     y,
+                     width,
+                     height,
+                 }: &Rect| [x, all - y - height, width, height].map(f64::from);
+    kept.iter()
+        .map(|it| BackdropPart {
+            frame: frame(it),
+            color: Maybe::Yes(color),
+        })
+        .collect()
+}
+
+pub fn end(click: Option<Point>, kept: Vec<Rect>) -> Uncovered {
+    let clicked = click.and_then(target);
+    let behind = behind(&kept);
+    let window = if kept.is_empty() {
+        uncover()
+    } else {
+        keep(kept)
+    };
+    window.inspect(|window| imitate_backdrop(*window, &behind));
+    let state = window.and_then(|window| window::state(window).ok());
+    let focused = state.as_ref().and_then(|state| state.focused_surface.get());
+    let next = clicked
+        .map(|it| it.surface)
+        .filter(|id| surface::is_focusable(*id));
+    if let (Some(state), Some(_)) = (state, next) {
+        input::focus(&state, next);
     }
-    Ok(Value::Null)
+    Uncovered {
+        clicked: clicked.into(),
+        focused: focused.into(),
+    }
+}
+
+pub fn focused() -> Option<u32> {
+    SHOWN.with_borrow(|shown| {
+        window::state(shown.as_ref()?.window)
+            .ok()?
+            .focused_surface
+            .get()
+    })
+}
+
+pub fn sent() -> u32 {
+    SENT.get()
+}
+
+pub fn fits(point: Point) -> bool {
+    target(point).is_some()
 }
 
 #[cfg(test)]

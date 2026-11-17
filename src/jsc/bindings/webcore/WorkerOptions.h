@@ -28,6 +28,9 @@ struct WorkerOptions {
     // Blob URL.
     bool evalMode { false };
     Kind kind { Kind::Web };
+    // Runs on the thread instead of a module.
+    void (*nativeEntry)(JSC::JSGlobalObject*, uint32_t argument) { nullptr };
+    uint32_t argumentOfNativeEntry { 0 };
     // Serialized array containing [workerData, environmentData]
     // (environmentData is always a Map)
     RefPtr<SerializedScriptValue> workerDataAndEnvironmentData;

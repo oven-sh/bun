@@ -459,9 +459,14 @@ impl SendQueue {
         let Ok(bytes) = serialize(self.mode, global, value, kind) else {
             return SerializeAndSendResult::Failure;
         };
-        let callback = (callback.is_callable()).then(|| Strong::create(callback, global));
-        (self.outbox).with_mut(|outbox| outbox.push(bytes, handle, callback));
-        self.flush(false);
+        if self.is_close_reported() {
+            // Script ran the event loop while it serialized. Nothing would release what is queued now.
+            handle.inspect(|handle| handle.close_next_tick(global));
+        } else {
+            let callback = (callback.is_callable()).then(|| Strong::create(callback, global));
+            (self.outbox).with_mut(|outbox| outbox.push(bytes, handle, callback));
+            self.flush(false);
+        }
         if is_backed_up {
             return SerializeAndSendResult::Backoff;
         }

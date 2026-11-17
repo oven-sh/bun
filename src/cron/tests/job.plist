@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>Label</key>
+<string>bun.cron.my_Job-1</string>
+<key>ProgramArguments</key>
+<array>
+<string>/a&amp;b/&lt;bun&gt;</string>
+<string>run</string>
+<string>--cron-title=my_Job-1</string>
+<string>--cron-period=30 2 * * 1</string>
+<string>/&quot;it&apos;s&quot;/�.ts</string>
+</array>
+<key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>30</integer>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Weekday</key>
+        <integer>1</integer>
+    </dict>
+<key>StandardOutPath</key>
+<string>/tmp/bun.cron.my_Job-1.stdout.log</string>
+<key>StandardErrorPath</key>
+<string>/tmp/bun.cron.my_Job-1.stderr.log</string>
+</dict>
+</plist>

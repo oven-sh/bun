@@ -87,8 +87,9 @@ impl ImmediateObject {
     }
 
     fn call(&self, vm: &VirtualMachine, this: JSValue, thrown: Option<&mut JSValue>) -> bool {
-        let threw = js::callback_get_cached(this).is_some_and(|callback| {
-            let arguments = js::arguments_get_cached(this);
+        // It runs once, and can outlive that.
+        let threw = js::callback_take_cached(this, vm.global()).is_some_and(|callback| {
+            let arguments = js::arguments_take_cached(this, vm.global());
             js_timer::call(vm, self.id, this, callback, arguments, thrown)
         });
         self.phase.set(Phase::Done);

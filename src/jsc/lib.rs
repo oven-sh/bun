@@ -650,34 +650,6 @@ impl From<JsError> for crate::CrateError {
     }
 }
 
-/// Adapter for `(fmt, args)`-style throw helpers.
-///
-/// Call sites pass either `()`
-/// (no interpolation — message *is* the literal) or a pre-expanded
-/// `format_args!(..)` (interpolation already applied — message *is* the
-/// `Arguments` value). This trait dispatches both shapes onto the canonical
-/// [`JSGlobalObject::throw`] without requiring every caller to wrap a literal
-/// in `format_args!("")`.
-pub trait ThrowFmtArgs: Sized {
-    /// `globalThis.throw(fmt, args)` — throw a generic `Error`.
-    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError;
-}
-impl ThrowFmtArgs for () {
-    #[inline]
-    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError {
-        // No interpolation; the literal IS the message. Route
-        // through `throw` with an `Arguments` whose `as_str()` is `Some(fmt)`
-        // so `create_error_instance` hits its static-string fast path.
-        global.throw(format_args!("{fmt}"))
-    }
-}
-impl ThrowFmtArgs for core::fmt::Arguments<'_> {
-    #[inline]
-    fn dispatch_throw(self, global: &JSGlobalObject, _fmt: &'static str) -> JsError {
-        global.throw(self)
-    }
-}
-
 /// Debug-only binding-presence marker.
 /// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_io` /
 /// `bun_http_jsc` / `bun_event_loop` can call it without a `bun_jsc` cycle.
@@ -1031,15 +1003,6 @@ impl JSGlobalObject {
     // `vm_ptr()` lives in `JSGlobalObject.rs` (canonical impl block); the
     // duplicate that grew here during the port has been removed to avoid
     // E0034 multiple-applicable-items at every call site.
-
-    /// Two-arg shim for mechanically-ported `throw("fmt", .{…})` call sites.
-    /// Dispatches via [`ThrowFmtArgs`] so both `()` and `format_args!(..)`
-    /// callers reach [`JSGlobalObject::throw`] with the right `Arguments`.
-    #[doc(hidden)]
-    #[inline]
-    pub fn throw2(&self, fmt: &'static str, args: impl ThrowFmtArgs) -> JsError {
-        args.dispatch_throw(self, fmt)
-    }
 
     /// `globalThis.ERR(.INVALID_ARG_TYPE, fmt, args).toJS()` — Node-compat error
     /// builder. Returns the error JSValue; caller decides whether to throw or wrap.

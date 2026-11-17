@@ -9,7 +9,7 @@ use bun_jsc::{
     JsError, JsResult, JsThread, Strong, StrongCell,
 };
 
-use super::expect_core::expect_deferred::RunningEntry;
+use super::expect::expect_deferred::RunningEntry;
 use super::jest::Jest;
 use super::timers::fake_timers::{self, Stop};
 use crate::generated_bindgen::vi_wait as generated;

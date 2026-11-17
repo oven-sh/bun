@@ -2982,7 +2982,7 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_NativePromiseContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              // One feature for each kind of context the cell holds (NativePromiseContext::Tag).
-             runBodySharedByFeatures<Bun::Feature::Serve, Bun::Feature::HtmlRewriter, Bun::Feature::S3Client, Bun::Feature::Cron>([&]() ALWAYS_INLINE_LAMBDA {
+             runBodySharedByFeatures<Bun::Feature::Serve, Bun::Feature::HtmlRewriter, Bun::Feature::S3Client>([&]() ALWAYS_INLINE_LAMBDA {
                  init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
              });
          } },

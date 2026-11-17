@@ -2368,7 +2368,7 @@ describe.each(["tls", "https", "a stream"])("a context selected by server name, 
     });
 
     // Node ignores the context's own.
-    it("has those of the server's ciphers that it names too", async () => {
+    it("has the ciphers that it names itself", async () => {
       const clients = [{ ciphers: aes128 }, { ciphers: aes256 }, { ciphers: chacha }];
       expect({
         "no list on the server": await negotiate(by, {}, { ciphers: aes256 }, clients),
@@ -2381,8 +2381,8 @@ describe.each(["tls", "https", "a stream"])("a context selected by server name, 
         "none in both": await negotiate(by, { ciphers: aes128 }, { ciphers: aes256 }, clients),
       }).toEqual({
         "no list on the server": [refused, aes256, refused],
-        "some in both": [refused, aes256, refused],
-        "none in both": [refused, refused, refused],
+        "some in both": [refused, aes256, chacha],
+        "none in both": [refused, aes256, refused],
       });
     });
 

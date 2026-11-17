@@ -156,6 +156,8 @@ static int us_ctx_cache_ex_idx = -1;
  * ca/caFile options or a later addCACert): the per-socket client attach must
  * not replace such a store with the process-shared default roots. */
 static int us_ctx_user_ca_ex_idx = -1;
+/* Marks an SSL_CTX that was given a `ciphers` option. */
+static int us_ctx_user_ciphers_ex_idx = -1;
 /* The `sigalgs` option, owned: BoringSSL has no getter for it. */
 static int us_ctx_sigalgs_ex_idx = -1;
 static int us_ssl_rare_ex_idx = -1;
@@ -402,6 +404,7 @@ static void us_ex_idx_init(void) {
   us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_user_ciphers_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_sigalgs_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_sigalgs_free);
   us_ssl_rare_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_rare_free);
   us_ssl_bio_type = BIO_get_new_index() | BIO_TYPE_SOURCE_SINK;
@@ -1497,6 +1500,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   }
 
   if (options.ssl_ciphers) {
+    if (!SSL_CTX_set_ex_data(ssl_context.get(), us_ctx_user_ciphers_ex_idx, (void *)1)) Bun__outOfMemory();
     if (!SSL_CTX_set_cipher_list(ssl_context.get(), options.ssl_ciphers)) {
       /* Peek, don't consume: the caller decomposes the queued reason
        * (NO_CIPHER_MATCH, INVALID_COMMAND) into the JS error. */
@@ -3216,28 +3220,15 @@ void us_ssl_ctx_set_own_session_id_context(SSL_CTX *ctx) {
 
 static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello);
 
-static int us_ssl_ctx_has_cipher(const SSL_CTX *ctx, const SSL_CIPHER *cipher) {
-  const STACK_OF(SSL_CIPHER) *ciphers = SSL_CTX_get_ciphers(ctx);
+/* BoringSSL reads the ciphers from the SSL_CTX that `ssl` is on. */
+static void ssl_use_ciphers_of(SSL *ssl, const SSL_CTX *server) {
+  const STACK_OF(SSL_CIPHER) *ciphers = SSL_CTX_get_ciphers(server);
+  std::string list;
+  bool in_group = false;
   for (size_t i = 0; i < sk_SSL_CIPHER_num(ciphers); i++) {
-    if (sk_SSL_CIPHER_value(ciphers, i) == cipher) return 1;
-  }
-  return 0;
-}
-
-/* BoringSSL reads the ciphers from the SSL_CTX that `ssl` is on. Leaves it those of `server` that `selected` has too, in the order of `server`. */
-static void ssl_keep_server_ciphers(SSL *ssl, const SSL_CTX *server, const SSL_CTX *selected) {
-  const STACK_OF(SSL_CIPHER) *accepted = SSL_CTX_get_ciphers(server), *offered = SSL_CTX_get_ciphers(selected);
-  size_t count = sk_SSL_CIPHER_num(accepted), same = 0;
-  while (same < count && sk_SSL_CIPHER_value(accepted, same) == sk_SSL_CIPHER_value(offered, same)) same++;
-  if (same == count && count == sk_SSL_CIPHER_num(offered)) return;
-
-  std::string list, group;
-  for (size_t i = 0; i < count; i++) {
-    const SSL_CIPHER *cipher = sk_SSL_CIPHER_value(accepted, i);
-    if (us_ssl_ctx_has_cipher(selected, cipher)) (group += group.empty() ? '[' : '|') += SSL_CIPHER_get_name(cipher);
-    if (SSL_CTX_cipher_in_group(server, i) || group.empty()) continue;
-    (list += group) += "]:";
-    group.clear();
+    (list += in_group ? '|' : '[') += SSL_CIPHER_get_name(sk_SSL_CIPHER_value(ciphers, i));
+    in_group = SSL_CTX_cipher_in_group(server, i);
+    if (!in_group) list += "]:";
   }
   /* An empty list is reported as an error, and set. */
   SSL_set_cipher_list(ssl, list.c_str());
@@ -3245,7 +3236,7 @@ static void ssl_keep_server_ciphers(SSL *ssl, const SSL_CTX *server, const SSL_C
 }
 
 /* Every SNI context switch goes through here. The connection keeps the verify mode it inherited at accept,
- * and with `keeps_server_policy` the ciphers and the signature algorithms too, as in Node.
+ * and with `keeps_server_policy` the ciphers and the signature algorithms that `ctx` doesn't name itself.
  *
  * SSL_set_SSL_CTX also copies the context's session id context, which for
  * contexts built in Rust is the digest of their options
@@ -3271,9 +3262,11 @@ static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx, int keeps_server_p
   }
   SSL_set_SSL_CTX(ssl, ctx);
   if (keeps_server_policy) {
-    ssl_keep_server_ciphers(ssl, server.get(), ctx);
+    if (SSL_CTX_get_ex_data(server.get(), us_ctx_user_ciphers_ex_idx) && !SSL_CTX_get_ex_data(ctx, us_ctx_user_ciphers_ex_idx)) {
+      ssl_use_ciphers_of(ssl, server.get());
+    }
     const char *sigalgs = (const char *)SSL_CTX_get_ex_data(server.get(), us_ctx_sigalgs_ex_idx);
-    if (sigalgs && !SSL_set1_sigalgs_list(ssl, sigalgs)) Bun__outOfMemory();
+    if (sigalgs && !SSL_CTX_get_ex_data(ctx, us_ctx_sigalgs_ex_idx) && !SSL_set1_sigalgs_list(ssl, sigalgs)) Bun__outOfMemory();
   }
   size_t length;
   const uint8_t *selected = SSL_get0_session_id_context(ssl, &length);

@@ -253,6 +253,11 @@ export const lsquic: Dependency = {
     // A FIN in the middle of a DATA frame read as the end of the body. It is an
     // H3_FRAME_ERROR, as lsquic already has it for every other frame type.
     "patches/lsquic/fin-inside-data-frame.patch",
+    // STOP_SENDING drops the STREAM frames that are unsent or get lost, and got
+    // no RESET_STREAM in answer once the FIN was in one of them. The peer never
+    // learned the final size, so it kept the stream and its MAX_STREAMS credit
+    // until the connection ended. Applies on top of node-quic-accessors.
+    "patches/lsquic/stop-sending-after-fin.patch",
     // lsquic_http1x_if.c includes the header of ls-hpack, a submodule for gQUIC,
     // only for the lsxpack_header.h behind it.
     "patches/lsquic/http1x-lsxpack-include.patch",

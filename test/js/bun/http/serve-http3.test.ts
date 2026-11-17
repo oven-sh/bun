@@ -3359,6 +3359,34 @@ describe("Bun.serve HTTP/3 response body that fails after its first chunk", () =
       });
     });
   });
+
+  test("lets go of the stream while the request body is still on its way", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      development: false,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start: controller => controller.enqueue("a"),
+            async pull(controller) {
+              await released;
+              controller.error(new Error("boom"));
+            },
+          }),
+        ),
+    });
+    const body = Buffer.alloc(4 * 1024 * 1024, "x");
+    const responses = await Promise.all([0, 1, 2, 3].map(() => fetchH3(server.port!, "/", { method: "POST", body })));
+    release();
+    const results = await Promise.all(responses.map(res => res.text().catch(e => e.code)));
+    expect(results).toEqual(Array(4).fill("HTTP3StreamReset"));
+    // A stream whose final size never arrives holds the connection until its idle timeout.
+    await server.stop();
+  });
 });
 
 // After the client's STOP_SENDING, lsquic answers every write with -1. The stream doesn't

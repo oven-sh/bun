@@ -1195,9 +1195,11 @@ pub mod waiter_thread_posix {
 
                 let _ = bun_core::poll_once(&mut polls, i32::MAX);
             }
-            // Neither a new process nor an exit wakes this thread here.
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            std::thread::sleep(core::time::Duration::from_millis(1));
+            {
+                let mut signal = libc::SIGCHLD;
+                let _rc = bun_core::signal::sigwait(&bun_core::signal::empty_set(), &mut signal);
+            }
         }
     }
 }

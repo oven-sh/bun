@@ -1743,13 +1743,21 @@ mod draft {
         IS_RELOADING_PROCESS.load(Ordering::Relaxed)
     }
 
+    /// `SA_ONSTACK` if this call registered it.
+    #[cfg(unix)]
+    fn register_sigaltstack() -> c_int {
+        if DID_REGISTER_SIGALTSTACK.swap(true, Ordering::Relaxed) {
+            return 0;
+        }
+        // SAFETY: a static that nothing else names, and the swap gives it to one thread.
+        let is_registered = unsafe { signal::set_alternate_stack(SIGALTSTACK.get()) };
+        DID_REGISTER_SIGALTSTACK.store(is_registered, Ordering::Relaxed);
+        if is_registered { libc::SA_ONSTACK } else { 0 }
+    }
+
     #[cfg(unix)]
     fn install_posix_segfault_handler(flags: c_int) {
-        if !DID_REGISTER_SIGALTSTACK.swap(true, Ordering::Relaxed) {
-            // SAFETY: a static that nothing else names, and the swap gives it to one thread.
-            let is_registered = unsafe { signal::set_alternate_stack(SIGALTSTACK.get()) };
-            DID_REGISTER_SIGALTSTACK.store(is_registered, Ordering::Relaxed);
-        }
+        register_sigaltstack();
         let action = crash_action(flags);
         for signal in bun_core::CRASH_HANDLER_SIGNALS {
             // SAFETY: not in full, a report needs more than is async-signal-safe. The handler ends the process.
@@ -2148,8 +2156,11 @@ mod draft {
         }
 
         #[cfg(unix)]
-        for signal in bun_core::CRASH_HANDLER_SIGNALS {
-            signal::reset(signal);
+        {
+            let flags = register_sigaltstack();
+            for signal in bun_core::CRASH_HANDLER_SIGNALS {
+                signal::reset(signal, flags);
+            }
         }
     }
 
@@ -3173,7 +3184,7 @@ mod draft {
                 // `signal-exit` package does).
                 libc::SIGTRAP,
             ] {
-                signal::reset(s);
+                signal::reset(s, 0);
             }
 
             // We may be running inside the signal handler for `sig`, in which

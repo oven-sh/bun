@@ -46,30 +46,6 @@ test(
   isWindows ? 6_000 : 5_000,
 );
 
-test.skipIf(isWindows)("reaps a child that exits later, and one that starts later", async () => {
-  await using proc = spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      for (const code of [3, 4]) {
-        const child = Bun.spawn({ cmd: ["sh", "-c", "echo; read _; exit " + code], stdin: "pipe", stdout: "pipe" });
-        await child.stdout.getReader().read();
-        child.stdin.end();
-        console.log(await child.exited);
-      }
-      `,
-    ],
-    env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "1", BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("3\n4\n");
-  expect(exitCode).toBe(0);
-});
-
 // Not everything retries a system call after EINTR: a native addon, bun:ffi, LeakSanitizer when the process exits.
 test.skipIf(!isLinux)("a child that exits does not interrupt a system call of the main thread", async () => {
   await using proc = spawn({

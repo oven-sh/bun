@@ -9,6 +9,8 @@ unsafe extern "C" {
     pub safe fn raise(signal: c_int) -> c_int;
     /// `SIGALRM` arrives in that many seconds. 0 cancels it.
     pub safe fn alarm(seconds: c_uint) -> c_uint;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    pub safe fn sigwait(set: &libc::sigset_t, signal: &mut c_int) -> c_int;
     safe fn sigemptyset(set: &mut libc::sigset_t) -> c_int;
     safe fn sigaddset(set: &mut libc::sigset_t, signal: c_int) -> c_int;
     safe fn sigprocmask(
@@ -23,7 +25,12 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-fn empty_set() -> libc::sigset_t {
+/// BunSignalActions.cpp tells Bun from a library by the return address, which a tail call from a handler would lose.
+fn rule_out_tail_call<T>(result: T) {
+    core::hint::black_box(result);
+}
+
+pub fn empty_set() -> libc::sigset_t {
     let mut set = crate::ffi::zeroed();
     sigemptyset(&mut set);
     set
@@ -53,7 +60,7 @@ pub struct Blocked(libc::sigset_t, PhantomData<*const ()>);
 
 impl Drop for Blocked {
     fn drop(&mut self) {
-        sigprocmask(libc::SIG_SETMASK, &self.0, None);
+        rule_out_tail_call(sigprocmask(libc::SIG_SETMASK, &self.0, None));
     }
 }
 
@@ -104,10 +111,16 @@ impl Action {
         self.0.sa_flags
     }
 
-    /// Returns the action that it replaces.
-    ///
     /// SAFETY: it is sound for the handler to interrupt any code on any thread when `signal` arrives.
-    pub unsafe fn install(&self, signal: c_int) -> Option<Action> {
+    pub unsafe fn install(&self, signal: c_int) {
+        // SAFETY: it reads one `sigaction`. The caller answers for the handler.
+        rule_out_tail_call(unsafe { libc::sigaction(signal, &raw const self.0, ptr::null_mut()) });
+    }
+
+    /// Returns the action that `signal` had.
+    ///
+    /// SAFETY: as [`Self::install`].
+    pub unsafe fn replace(&self, signal: c_int) -> Option<Action> {
         // SAFETY: the caller's contract.
         unsafe { exchange(signal, Some(self)) }
     }
@@ -115,7 +128,6 @@ impl Action {
 
 /// SAFETY: as [`Action::install`].
 unsafe fn exchange(signal: c_int, action: Option<&Action>) -> Option<Action> {
-    // It also rules out a tail call: BunSignalActions.cpp tells Bun from a library by the return address.
     let mut previous: libc::sigaction = crate::ffi::zeroed();
     let action = action.map_or(ptr::null(), |action| &raw const action.0);
     // SAFETY: each pointer is null or valid for the call. The caller answers for the handler.
@@ -123,16 +135,22 @@ unsafe fn exchange(signal: c_int, action: Option<&Action>) -> Option<Action> {
     (rc == 0).then_some(Action(previous))
 }
 
-/// Gives `signal` its default action.
-pub fn reset(signal: c_int) {
+/// `sigaction` with `SIG_DFL`.
+pub fn reset(signal: c_int, flags: c_int) {
     // SAFETY: it has no handler.
-    unsafe { Action::new(libc::SIG_DFL, 0).install(signal) };
+    unsafe { Action::new(libc::SIG_DFL, flags).install(signal) };
+}
+
+/// `signal` with `SIG_DFL`.
+pub fn signal_default(signal: c_int) {
+    // SAFETY: it has no handler.
+    rule_out_tail_call(unsafe { libc::signal(signal, libc::SIG_DFL) });
 }
 
 /// From then on a write to a closed pipe or past the limit of the file size returns `EPIPE` or `EFBIG`.
 pub fn ignore_for_failed_writes() {
     for signal in [libc::SIGPIPE, libc::SIGXFSZ] {
-        // Not `sigaction`: BunSignalActions.cpp looks `signal` up at its first call, which must not be that of a handler.
+        // BunSignalActions.cpp looks `signal` up at its first call, which must not be that of a handler.
         // SAFETY: no handler, and not the signal of an instruction that must not be stepped over.
         unsafe { libc::signal(signal, libc::SIG_IGN) };
     }

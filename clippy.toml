@@ -52,6 +52,7 @@ disallowed-methods = [
   { path = "libc::sigprocmask", reason = "use bun_core::signal", allow-invalid = true },
   { path = "libc::pthread_sigmask", reason = "use bun_core::signal", allow-invalid = true },
   { path = "libc::sigaltstack", reason = "use bun_core::signal", allow-invalid = true },
+  { path = "libc::sigwait", reason = "use bun_core::signal", allow-invalid = true },
   { path = "libc::raise", reason = "use bun_core::signal", allow-invalid = true },
   { path = "libc::alarm", reason = "use bun_core::signal", allow-invalid = true },
   { path = "libc::signalfd", reason = "use bun_sys::linux::signalfd", allow-invalid = true },

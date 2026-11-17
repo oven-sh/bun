@@ -98,8 +98,10 @@ pub(crate) mod testing_apis {
             let installed = Action::call(sentry, SA_RESTART).blocking(SIGUSR2);
             // SAFETY: the handler does nothing, and the signal had `previous` until now.
             let readback = unsafe {
-                let previous = installed.install(SIGUSR2)?;
-                previous.install(SIGUSR2)?
+                let previous = installed.replace(SIGUSR2)?;
+                let readback = Action::of(SIGUSR2);
+                previous.install(SIGUSR2);
+                readback?
             };
             let handler_and_flags = |action: Action| SigactionHandlerAndFlags {
                 handler: action.handler(),

@@ -1116,7 +1116,7 @@ impl<'a> Repl<'a> {
                 .tty_state
                 .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
 
-            bun_core::signal::reset(libc::SIGINT);
+            bun_core::signal::reset(libc::SIGINT, 0);
         }
     }
 

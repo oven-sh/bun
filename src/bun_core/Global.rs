@@ -740,7 +740,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     #[cfg(unix)]
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         for signal in CRASH_HANDLER_SIGNALS {
-            crate::signal::reset(signal);
+            crate::signal::reset(signal, 0);
         }
     }
     #[cfg(windows)]
@@ -772,7 +772,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
 /// the signal (PID 1 in a pid namespace). Async-signal-safe.
 #[cfg(not(windows))]
 pub fn raise_default_action(sig: c_int) -> ! {
-    crate::signal::reset(sig);
+    crate::signal::reset(sig, libc::SA_RESETHAND);
     // raise() only makes a blocked signal pending, and `sig` is blocked inside its own handler.
     crate::signal::unblock(sig);
     let _ = crate::signal::raise(sig);

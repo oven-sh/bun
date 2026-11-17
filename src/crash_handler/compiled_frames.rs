@@ -69,9 +69,9 @@ fn describe(addresses: &[usize], buffer: &mut [u8]) -> usize {
 
 #[cfg(unix)]
 fn describe_or_end_process(addresses: &[usize], buffer: &mut [u8]) -> usize {
-    use bun_core::signal::{alarm, reset, unblock};
+    use bun_core::signal::{alarm, signal_default, unblock};
     // Whatever the program listens for, SIGALRM ends the process.
-    reset(libc::SIGALRM);
+    signal_default(libc::SIGALRM);
     unblock(libc::SIGALRM);
     alarm(SECONDS_TO_DESCRIBE_FRAMES);
     let length = describe(addresses, buffer);

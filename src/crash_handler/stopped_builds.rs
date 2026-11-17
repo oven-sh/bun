@@ -147,7 +147,7 @@ const INTERRUPTIONS: [c_int; 5] = [
 
 #[cfg(unix)]
 fn raise_with_default_action(signal: c_int) {
-    signal::reset(signal);
+    signal::signal_default(signal);
     // It is delivered when the handler returns.
     signal::raise(signal);
 }
@@ -168,7 +168,7 @@ fn set_reports_interruptions(reports: bool) {
             // SAFETY: the handler reads what `current_work` keeps for it, takes no lock and ends the process.
             unsafe { ours.install(signal) };
         } else if !reports && current == Some(ours.handler()) {
-            signal::reset(signal);
+            signal::reset(signal, libc::SA_RESTART);
         }
     }
 }

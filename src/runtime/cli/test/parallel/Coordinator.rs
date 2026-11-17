@@ -4,6 +4,8 @@
 //! the run loop entry live in `runner.rs`; this file is the per-run state
 //! and its methods.
 
+#[cfg(unix)]
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write as _;
 #[cfg(windows)]
@@ -1260,7 +1262,7 @@ pub(crate) mod abort_handler {
     pub(crate) static ABORT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
     #[cfg(unix)]
-    extern "C" fn posix_handler(sig: i32) {
+    extern "C" fn posix_handler(sig: i32, _: &libc::siginfo_t, _: *mut c_void) {
         ABORT_SIGNAL.store(sig, Ordering::Release);
     }
 
@@ -1301,7 +1303,7 @@ pub(crate) mod abort_handler {
             previous: [libc::SIGINT, libc::SIGTERM].map(|signal| {
                 // SAFETY: the handler only stores to an atomic.
                 (signal, unsafe {
-                    Action::call(posix_handler, 0).install(signal)
+                    Action::call_with_info(posix_handler, 0).replace(signal)
                 })
             }),
         }

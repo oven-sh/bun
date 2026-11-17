@@ -1,4 +1,6 @@
 use core::cell::Cell;
+#[cfg(unix)]
+use core::ffi::c_void;
 use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -677,7 +679,7 @@ pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 
 impl AbortHandler {
     #[cfg(unix)]
-    extern "C" fn posix_signal_handler(_: i32) {
+    extern "C" fn posix_signal_handler(_: i32, _: &libc::siginfo_t, _: *mut c_void) {
         SHOULD_ABORT.store(true, Ordering::SeqCst);
     }
 
@@ -696,7 +698,8 @@ impl AbortHandler {
         #[cfg(unix)]
         {
             let flags = libc::SA_RESTART | libc::SA_RESETHAND;
-            let action = bun_core::signal::Action::call(Self::posix_signal_handler, flags);
+            let action =
+                bun_core::signal::Action::call_with_info(Self::posix_signal_handler, flags);
             // SAFETY: the handler only stores to an atomic.
             unsafe { action.install(libc::SIGINT) };
         }

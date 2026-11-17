@@ -870,8 +870,12 @@ it.concurrent.each(["HELLO", "GET a"])(
           const received = [];
           socket.on("error", () => {});
           socket.on("close", () => console.log(received.join()));
+          let pending = "";
           socket.on("data", chunk => {
-            for (const [, name] of String(chunk).matchAll(/HELLO|GET\\r\\n\\$1\\r\\n(.)/g)) {
+            pending += chunk;
+            for (let match; (match = /HELLO|GET\\r\\n\\$1\\r\\n(.)/.exec(pending)); ) {
+              pending = pending.slice(match.index + match[0].length);
+              const name = match[1];
               const command = name ? "GET " + name : "HELLO";
               const answer = () => socket.write("+" + (name ?? "OK") + "\\r\\n");
               if (command === RENEGOTIATE_AT && !received.includes(command)) socket.renegotiate({}, answer);

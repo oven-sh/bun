@@ -32,21 +32,16 @@ type Socket = uws::AnySocket;
 pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
 
 impl JSValkeyClient {
-    /// For callers whose `this` is the wrapper, and for a connected client, which roots it.
-    fn wrapper(&self) -> JSValue {
-        self.this_value
-            .get()
-            .try_get()
-            .expect("an active client roots its wrapper")
+    /// `None` once the wrapper is dead: the socket read in which script closed the client can outlive it.
+    fn subscription_callback_map(&self) -> Option<&mut JSMap> {
+        let this_value = self.this_value.get().try_get()?;
+        let map = JSMap::from_js(js::subscription_callback_map_get_cached(this_value)?)?;
+        Some(JSMap::opaque_mut(map.as_ptr()))
     }
 
-    fn subscription_callback_map(&self) -> &mut JSMap {
-        let map = js::subscription_callback_map_get_cached(self.wrapper()).unwrap();
-        JSMap::opaque_mut(JSMap::from_js(map).unwrap().as_ptr())
-    }
-
-    fn has_subscriptions(&self) -> bool {
-        self.subscription_callback_map().size() > 0
+    /// Zero once the wrapper is gone: the handlers live on it.
+    fn subscription_count(&self) -> u32 {
+        self.subscription_callback_map().map_or(0, JSMap::size)
     }
 
     pub(crate) fn clear_receive_handlers(
@@ -54,8 +49,9 @@ impl JSValkeyClient {
         global_object: &JSGlobalObject,
         channel_name: JSValue,
     ) -> JsResult<()> {
-        let map = self.subscription_callback_map();
-        let _ = map.remove(global_object, channel_name)?;
+        if let Some(map) = self.subscription_callback_map() {
+            map.remove(global_object, channel_name)?;
+        }
         Ok(())
     }
 
@@ -63,7 +59,8 @@ impl JSValkeyClient {
         &self,
         global_object: &JSGlobalObject,
     ) -> JsResult<()> {
-        self.subscription_callback_map().clear(global_object)
+        self.subscription_callback_map()
+            .map_or(Ok(()), |map| map.clear(global_object))
     }
 
     /// Remove a specific receive handler.
@@ -78,7 +75,9 @@ impl JSValkeyClient {
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<Option<usize>> {
-        let map = self.subscription_callback_map();
+        let Some(map) = self.subscription_callback_map() else {
+            return Ok(None);
+        };
 
         let existing = map.get(global_object, channel_name)?;
         if existing.is_undefined_or_null() {
@@ -126,7 +125,9 @@ impl JSValkeyClient {
             this.send_next_command();
             this.update_poll_ref();
         });
-        let map = self.subscription_callback_map();
+        let Some(map) = self.subscription_callback_map() else {
+            return Ok(());
+        };
         let mut handlers = map.get(global_object, channel_name)?;
         if handlers.is_undefined() {
             handlers = JSArray::create_empty(global_object, 0)?;
@@ -143,9 +144,10 @@ impl JSValkeyClient {
         let channel = resp_value_to_js(channel, global_object)?;
         let message = resp_value_to_js(message, global_object)?;
 
-        let handlers = self
-            .subscription_callback_map()
-            .get(global_object, channel)?;
+        let handlers = match self.subscription_callback_map() {
+            Some(map) => map.get(global_object, channel)?,
+            None => JSValue::UNDEFINED,
+        };
         if !handlers.is_undefined() {
             let mut iter = handlers.array_iterator(global_object)?;
             while let Some(callback) = iter.next()? {
@@ -287,6 +289,7 @@ impl HasAutoFlusher for JSValkeyClient {
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: unregistered before `this` is freed.
         let this = unsafe { &*this };
+        let _guard = this.ref_guard();
         let has_more = this.client.with_mut(Client::batch);
         this.flush();
         this.auto_flusher.registered.set(has_more);
@@ -899,11 +902,11 @@ impl JSValkeyClient {
             }
             Event::Message(mut data) => self.on_message(&mut data),
             Event::Subscribed(acked) => {
-                let count = self.subscription_callback_map().size();
+                let count = self.subscription_count();
                 self.on_acked(acked, JSValue::js_number(f64::from(count)))
             }
             Event::Unsubscribed(acked) => {
-                if !self.has_subscriptions() {
+                if self.subscription_count() == 0 {
                     self.client.with_mut(Client::leave_subscriber_mode);
                 }
                 self.on_acked(acked, JSValue::UNDEFINED)
@@ -926,7 +929,7 @@ impl JSValkeyClient {
 
     fn take_connection_promise(&self, this_value: JSValue) -> Option<&mut JSPromise> {
         let promise = js::connection_promise_take_cached(this_value, &self.global_object)?;
-        Some(JSPromise::opaque_mut(promise.as_promise().unwrap()))
+        promise.as_promise().map(JSPromise::opaque_mut)
     }
 
     fn on_connected(&self, hello: &mut RESPValue) -> JsResult<()> {
@@ -934,7 +937,9 @@ impl JSValkeyClient {
         self.reset_connection_timeout();
 
         let global_object = &self.global_object;
-        let this_value = self.wrapper();
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return Ok(());
+        };
         let hello = match resp_value_to_js(hello, global_object) {
             Ok(hello) => hello,
             Err(err) if global_object.has_pending_termination_exception() => return Err(err),
@@ -1072,8 +1077,9 @@ impl JSValkeyClient {
     fn update_poll_ref(&self) {
         let client = self.client.get();
         let is_active = client.is_active();
-        let is_idle =
-            client.is_connected() && !client.has_pending_commands() && !self.has_subscriptions();
+        let is_idle = client.is_connected()
+            && !client.has_pending_commands()
+            && self.subscription_count() == 0;
         if is_active && !is_idle {
             self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
@@ -1304,6 +1310,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub(crate) fn on_writable(this: &JSValkeyClient, socket: SocketType<SSL>) {
         debug_assert!(*this.socket.get().socket() == socket.socket);
+        let _guard = this.ref_guard();
         this.send_next_command();
         this.update_poll_ref();
     }

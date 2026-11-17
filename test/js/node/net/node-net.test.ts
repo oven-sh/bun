@@ -1785,14 +1785,14 @@ describe("Socket fd adoption", () => {
   });
 
   // Nothing is read from it, so only a pending write may keep the process alive.
-  it("an open write-only socket doesn't keep the process alive", async () => {
+  it.each(["", ".ref()", ".unref().ref()"])("an open write-only socket%s doesn't keep the process alive", async ref => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const net = require("node:net");
-          const socket = new net.Socket({ fd: 1, readable: false, writable: true });
+          const socket = new net.Socket({ fd: 1, readable: false, writable: true })${ref};
           socket.write("done");
           process.on("exit", () => console.error(JSON.stringify({ destroyed: socket.destroyed })));
         `,

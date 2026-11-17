@@ -2397,7 +2397,10 @@ Socket.prototype.ref = function ref() {
     return this;
   }
   // Node has one handle under both sockets. Here the TLS socket that adopted the fd holds the loop.
-  (socket[kAdoptedTLSRaw] ?? socket).ref();
+  const tlsSocket = socket[kAdoptedTLSRaw];
+  if (tlsSocket) tlsSocket.ref();
+  // Once the reads are over, only a pending write holds the loop.
+  else if (!this[kended] || this[kWriteReq]) socket.ref();
   return this;
 };
 

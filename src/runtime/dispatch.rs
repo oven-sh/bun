@@ -1444,7 +1444,8 @@ pub(crate) unsafe fn fire_timer(
             [Valkey],
             (container: *mut Valkey = owner!(Valkey, reconnect_timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_reconnect_timer() }
+                unsafe { (*container).on_reconnect_timer() };
+                Ok(())
             }
         ),
         EventLoopTimerTag::SubprocessTimeout => {

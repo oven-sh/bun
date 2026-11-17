@@ -403,66 +403,45 @@ describe("Valkey: RESP push frame routing", () => {
     });
   });
 
-  describe("the acks for the later arguments of a request answer nothing", () => {
-    const acks = (kind: string, ...subjects: string[]) =>
-      Buffer.concat(subjects.map((subject, index) => ack(kind, subject, index + 1)));
+  describe("a subscription request never takes the reply to the command behind it", () => {
+    const values = ["k1", "k2", "k3"];
+    const replies = values.map(value => Buffer.from(bulk(value)));
+    const getAll = (client: Bun.RedisClient) => values.map(key => client.get(key));
 
-    test("subscribe([a, b]) then unsubscribe()", async () => {
-      await withMockClient([acks("subscribe", "a", "b"), acks("unsubscribe", "a", "b"), ok], async client => {
-        expect(await client.subscribe(["a", "b"], () => {})).toBe(2);
-        expect(await client.unsubscribe()).toBeUndefined();
-        expect(await client.set("key", "value")).toBe("OK");
-      });
-    });
-
-    test.each([[["a", "b"]], [undefined]])("unsubscribe(%j) then subscribe(c)", async channels => {
+    test.each([0, 3])("after fewer acks than arguments and %d other replies", async between => {
       const payloads = [
-        acks("subscribe", "a"),
-        acks("subscribe", "b"),
-        acks("unsubscribe", "a", "b"),
-        Buffer.concat([acks("subscribe", "c"), Buffer.from(`>3\r\n${bulk("message")}${bulk("c")}${bulk("hello")}`)]),
+        ack("punsubscribe", "a*", 0),
+        ...replies.slice(0, between),
+        ack("punsubscribe", "z*", 0),
+        ...replies,
       ];
       await withMockClient(payloads, async client => {
-        await client.subscribe("a", () => {});
-        await client.subscribe("b", () => {});
-        await (channels ? client.unsubscribe(channels) : client.unsubscribe());
-        const message = Promise.withResolvers<string>();
-        expect(await client.subscribe("c", message.resolve)).toBe(1);
-        expect(await message.promise).toBe("hello");
+        await client.punsubscribe("a*", "a*");
+        for (const key of values.slice(0, between)) expect(await client.get(key)).toBe(key);
+        const [request, ...rest] = [client.punsubscribe("z*"), ...getAll(client)];
+        expect(await request).toEqual({ type: "punsubscribe", data: ["z*", 0] });
+        expect(await Promise.all(rest)).toEqual(values);
       });
     });
 
-    test("pipelined pattern and shard requests", async () => {
-      const payloads = [acks("punsubscribe", "a*", "b*"), acks("punsubscribe", "c*"), acks("ssubscribe", "x")];
-      await withMockClient(payloads, async client => {
-        expect(
-          await Promise.all([
-            client.punsubscribe("a*", "b*"),
-            client.punsubscribe("c*"),
-            client.send("SSUBSCRIBE", ["x"]),
-          ]),
-        ).toEqual([
-          { type: "punsubscribe", data: ["a*", 1] },
-          { type: "punsubscribe", data: ["c*", 1] },
-          { type: "ssubscribe", data: ["x", 1] },
-        ]);
+    test.each([
+      ["SSUBSCRIBE", "subscribe", 0],
+      ["SUBSCRIBE", "unsubscribe", undefined],
+      ["SPSUBSCRIBE", "spsubscribe", { type: "spsubscribe", data: ["x", 1] }],
+    ])("%s acked as %s", async (command, kind, expected) => {
+      await withMockClient([ack(kind, "x", 1), ...replies], async client => {
+        const [request, ...rest] = [client.send(command, ["x"]), ...getAll(client)];
+        expect(await request).toEqual(expected);
+        expect(await Promise.all(rest)).toEqual(values);
       });
     });
   });
 
-  describe("a push of an unknown kind answers nothing", () => {
-    test("invalidate, in subscriber mode", async () => {
-      const invalidate = Buffer.from(`>2\r\n${bulk("invalidate")}*1\r\n${bulk("key")}+PONG\r\n`);
-      await withMockClient([ack("subscribe", "a", 1), invalidate], async client => {
-        await client.subscribe("a", () => {});
-        expect(await client.ping()).toBe("PONG");
-      });
-    });
-
-    test("ppsubscribe", async () => {
-      await withMockClient([Buffer.concat([ack("ppsubscribe", "a", 1), ok])], async client => {
-        expect(await client.set("key", "value")).toBe("OK");
-      });
+  test("a push of an unknown kind does not close a subscriber", async () => {
+    const invalidate = Buffer.from(`>2\r\n${bulk("invalidate")}*1\r\n${bulk("key")}+PONG\r\n`);
+    await withMockClient([ack("subscribe", "a", 1), invalidate], async client => {
+      await client.subscribe("a", () => {});
+      expect(await client.ping()).toBe("PONG");
     });
   });
 

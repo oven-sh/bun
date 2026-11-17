@@ -32,29 +32,21 @@ type Socket = uws::AnySocket;
 pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
 
 impl JSValkeyClient {
-    /// `None` while the wrapper is dead but unswept: `finalize()` has not run, socket callbacks still do.
-    fn try_subscription_callback_map(&self) -> Option<&mut JSMap> {
-        let parent_this = self.this_value.get().try_get()?;
-        let value_js = js::subscription_callback_map_get_cached(parent_this).unwrap();
-        let map = JSMap::from_js(value_js).unwrap();
-        Some(JSMap::opaque_mut(map.as_ptr()))
+    /// For callers whose `this` is the wrapper, and for a connected client, which roots it.
+    fn wrapper(&self) -> JSValue {
+        self.this_value
+            .get()
+            .try_get()
+            .expect("an active client roots its wrapper")
     }
 
-    /// For callers that know the wrapper is alive: their `this`, or it has handlers and so is held.
     fn subscription_callback_map(&self) -> &mut JSMap {
-        self.try_subscription_callback_map().expect("unreachable")
+        let map = js::subscription_callback_map_get_cached(self.wrapper()).unwrap();
+        JSMap::opaque_mut(JSMap::from_js(map).unwrap().as_ptr())
     }
 
-    /// Zero once the wrapper is gone: the handlers live on it.
-    fn channels_subscribed_to_count(&self) -> u32 {
-        self.try_subscription_callback_map()
-            .map_or(0, |map| map.size())
-    }
-
-    /// Whether any subscription handler is registered. Reads the JS wrapper,
-    /// so it is false once the wrapper is dead or finalized.
     fn has_subscriptions(&self) -> bool {
-        self.channels_subscribed_to_count() > 0
+        self.subscription_callback_map().size() > 0
     }
 
     pub(crate) fn clear_receive_handlers(
@@ -166,6 +158,7 @@ impl JSValkeyClient {
                 );
             }
         }
+        // Ahead of the microtasks that the caller's scope drains.
         self.send_next_command();
         Ok(())
     }
@@ -275,11 +268,6 @@ impl RefCountedTimer {
         self.held_ref.take()
     }
 }
-
-bun_event_loop::impl_timer_owner!(JSValkeyClient;
-    from_timer_ptr => timer,
-    from_reconnect_timer_ptr => reconnect_timer,
-);
 
 impl Drop for JSValkeyClient {
     fn drop(&mut self) {
@@ -690,11 +678,10 @@ impl JSValkeyClient {
         ))
     }
 
-    pub(crate) fn on_reconnect_timer(&self) -> JsResult<()> {
+    pub(crate) fn on_reconnect_timer(&self) {
         let _guard = self.ref_guard();
         let _timer_ref = self.reconnect_timer.take_fire_ref();
         self.reconnect();
-        Ok(())
     }
 
     /// The script that created the client is gone (its `Bun.ModuleGraph` was disposed).
@@ -744,7 +731,7 @@ impl JSValkeyClient {
             return None;
         }
 
-        let is_tls = self.tls != valkey::TLS::None;
+        let is_tls = !matches!(self.tls, valkey::TLS::None);
         let vm = self.vm;
         let loop_ = vm.uws_loop();
         let context = vm.context_of(self.context);
@@ -805,6 +792,7 @@ impl JSValkeyClient {
         }
     }
 
+    /// A write dispatches no socket event.
     fn flush(&self) {
         let output = self.client.get().output();
         if output.is_empty() {
@@ -889,6 +877,7 @@ impl JSValkeyClient {
         match event {
             Event::Ignored | Event::PatternMessage => Ok(()),
             Event::Broken { message, error } => {
+                debug!("failed: {}: {:?}", bstr::BStr::new(&message), error);
                 self.fail(valkey_error_to_js(global, &message, error))
             }
             Event::Connected(mut hello) => self.on_connected(&mut hello),
@@ -910,7 +899,7 @@ impl JSValkeyClient {
             }
             Event::Message(mut data) => self.on_message(&mut data),
             Event::Subscribed(acked) => {
-                let count = self.channels_subscribed_to_count();
+                let count = self.subscription_callback_map().size();
                 self.on_acked(acked, JSValue::js_number(f64::from(count)))
             }
             Event::Unsubscribed(acked) => {
@@ -924,6 +913,7 @@ impl JSValkeyClient {
 
     fn on_acked(&self, acked: Acked<JSPromiseStrong>, for_channel: JSValue) -> JsResult<()> {
         let global = &self.global_object;
+        // Ahead of the microtasks that the caller's scope drains.
         self.send_next_command();
         match acked {
             Acked::Nobody => Ok(()),
@@ -940,14 +930,11 @@ impl JSValkeyClient {
     }
 
     fn on_connected(&self, hello: &mut RESPValue) -> JsResult<()> {
-        debug_assert!(self.this_value.get().is_strong());
         // Now counting idle time, not connect time.
         self.reset_connection_timeout();
 
         let global_object = &self.global_object;
-        let Some(this_value) = self.this_value.get().try_get() else {
-            return Ok(());
-        };
+        let this_value = self.wrapper();
         let hello = match resp_value_to_js(hello, global_object) {
             Ok(hello) => hello,
             Err(err) if global_object.has_pending_termination_exception() => return Err(err),
@@ -1033,6 +1020,7 @@ impl JSValkeyClient {
                 in_flight,
             } => {
                 self.reject_all_as_closed(in_flight, "Connection closed")?;
+                debug!("reconnect in {}ms", delay_ms);
                 self.reconnect_timer.arm(self, delay_ms);
                 Ok(())
             }
@@ -1080,7 +1068,7 @@ impl JSValkeyClient {
         self.client.get().memory_cost()
     }
 
-    /// Keep the event loop alive, or don't keep it alive. Also valid once the JS wrapper is dead.
+    /// Keep the event loop alive, or don't keep it alive.
     fn update_poll_ref(&self) {
         let client = self.client.get();
         let is_active = client.is_active();

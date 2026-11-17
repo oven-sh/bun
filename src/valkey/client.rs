@@ -7,6 +7,9 @@ use bun_collections::OffsetByteList;
 use crate::command::{self, ACKS, Ack, Reply};
 use crate::valkey_protocol::{Push, RESPValue, RedisError, ReplyScanner, ScanResult, ValkeyReader};
 
+const FIRST_DELAY_MS: u32 = 50;
+const MAX_DELAY_MS: u32 = 2000;
+
 #[derive(Clone)]
 pub struct Config {
     pub username: Box<[u8]>,
@@ -43,13 +46,12 @@ enum State {
     Dialing,
     /// HELLO is written, and SELECT behind it if there is a database.
     Hello,
-    /// HELLO was accepted with this reply; the reply to SELECT is due.
-    Select(Box<RESPValue>),
-    /// With the acknowledgements still due for the request answered last.
-    Ready(Option<Acks>),
+    /// HELLO was accepted; the reply to SELECT is due.
+    Select,
+    Ready,
     /// The socket is closing, or the dial gave none: [`Client::lost`] is due.
     Ending(End),
-    /// Between two dials.
+    /// A dial is due, from the retry timer or from `connect()`.
     Backoff,
     /// Until [`Client::connect`].
     Closed,
@@ -65,17 +67,11 @@ enum End {
     Failed,
 }
 
-/// A subscription request draws one acknowledgement per argument; the first answers it.
-#[derive(Copy, Clone)]
-struct Acks {
-    kind: Ack,
-    following: u32,
-}
-
 #[derive(Copy, Clone)]
 enum Expect {
     Reply(Reply),
-    Acks(Acks),
+    /// Whichever acknowledgement comes next: a count would shift every later reply once a peer sent fewer.
+    Ack,
 }
 
 struct InFlight<P> {
@@ -111,7 +107,7 @@ pub enum Input<'a> {
 
 pub enum Event<P> {
     Ignored,
-    /// The handshake is over, with the reply to HELLO.
+    /// With the reply to HELLO.
     Connected(RESPValue),
     Resolved {
         promise: P,
@@ -123,6 +119,7 @@ pub enum Event<P> {
         message: Box<[u8]>,
     },
     Message(Vec<RESPValue>),
+    /// Has no listeners, but is a microtask checkpoint like a message.
     PatternMessage,
     Subscribed(Acked<P>),
     Unsubscribed(Acked<P>),
@@ -203,7 +200,11 @@ impl<P> Client<P> {
     }
 
     pub fn is_connected(&self) -> bool {
-        matches!(self.state, State::Ready(_))
+        matches!(self.state, State::Select | State::Ready)
+    }
+
+    fn is_ready(&self) -> bool {
+        matches!(self.state, State::Ready)
     }
 
     pub fn is_ending(&self) -> bool {
@@ -265,13 +266,14 @@ impl<P> Client<P> {
                 self.retries = 0;
                 self.state = State::Backoff;
             }
+            // The close of a dial without a TLS context is still due, and no retry can build one.
             State::Ending(End::Failed) => self.state = State::Ending(End::Final),
             State::Ending(End::Final) => self.state = State::Ending(End::Policy),
             State::Idle
             | State::Dialing
             | State::Hello
-            | State::Select(_)
-            | State::Ready(_)
+            | State::Select
+            | State::Ready
             | State::Ending(End::Policy) => {}
         }
     }
@@ -280,7 +282,7 @@ impl<P> Client<P> {
         let close = match self.state {
             State::Idle | State::Closed | State::Ending(End::Failed) => return Close::Nothing,
             State::Ending(End::Policy | End::Final) => Close::Nothing,
-            State::Dialing | State::Hello | State::Select(_) | State::Ready(_) => Close::Socket,
+            State::Dialing | State::Hello | State::Select | State::Ready => Close::Socket,
             State::Backoff => Close::Retry,
         };
         self.state = State::Ending(End::Final);
@@ -325,28 +327,31 @@ impl<P> Client<P> {
         }
     }
 
-    /// Gives up without a retry. `None` if it already has; else the caller rejects these and closes the socket.
+    /// Gives up the attempt, if there is one, without a retry: the caller rejects these and closes the socket.
+    #[must_use]
     pub fn fail(&mut self) -> Option<Vec<P>> {
-        self.state = match self.state {
-            State::Ending(End::Failed) | State::Closed => return None,
-            State::Idle | State::Backoff => State::Closed,
+        match self.state {
+            State::Idle | State::Backoff | State::Ending(End::Failed) | State::Closed => None,
             State::Dialing
             | State::Hello
-            | State::Select(_)
-            | State::Ready(_)
-            | State::Ending(End::Policy | End::Final) => State::Ending(End::Failed),
-        };
-        Some(self.take_pending())
+            | State::Select
+            | State::Ready
+            | State::Ending(End::Policy | End::Final) => {
+                self.state = State::Ending(End::Failed);
+                Some(self.take_pending())
+            }
+        }
     }
 
     /// The TLS session broke. `Some` if that counts as a lost connection and not as a failed handshake.
+    #[must_use]
     pub fn session_broke(&mut self) -> Option<Vec<P>> {
-        let greeted = matches!(self.state, State::Select(_) | State::Ready(_));
-        (greeted && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
+        (self.is_connected() && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
     }
 
     /// The socket closed, or there never was one.
     pub fn lost(&mut self, owner_is_gone: bool) -> Lost<P> {
+        debug_assert!(self.is_active() && !self.awaits_retry());
         self.output.clear_and_free();
         self.input.clear_and_free();
         self.scanner.reset();
@@ -359,7 +364,7 @@ impl<P> Client<P> {
             if self.retries <= self.config.max_retries {
                 self.state = State::Backoff;
                 return Lost::Retry {
-                    delay_ms: (50 << (self.retries.min(10) - 1)).min(2000),
+                    delay_ms: (FIRST_DELAY_MS << (self.retries.min(10) - 1)).min(MAX_DELAY_MS),
                     in_flight: self.take_in_flight(),
                 };
             }
@@ -404,10 +409,7 @@ impl<P> Client<P> {
         promise: P,
     ) -> Sent {
         let expect = match ACKS.get_ascii_case_insensitive(name) {
-            Some(&kind) => Expect::Acks(Acks {
-                kind,
-                following: args.len().saturating_sub(1) as u32,
-            }),
+            Some(_) => Expect::Ack,
             None => Expect::Reply(reply),
         };
         let request = InFlight { expect, promise };
@@ -415,7 +417,8 @@ impl<P> Client<P> {
         let batches = can_pipeline && self.config.enable_auto_pipelining;
         let connected = self.is_connected();
 
-        let goes_now = !batches && connected && self.queue.is_empty() && self.in_flight.is_empty();
+        let goes_now =
+            !batches && self.is_ready() && self.queue.is_empty() && self.in_flight.is_empty();
 
         let mut bytes = Vec::new();
         let out = if goes_now {
@@ -443,7 +446,7 @@ impl<P> Client<P> {
     /// Moves the head of the queue to [`Self::output`] if it travels alone. Whether [`Self::batch`] is due.
     #[must_use]
     pub fn advance(&mut self) -> bool {
-        if !self.output.is_empty() || !self.is_connected() {
+        if !self.output.is_empty() || !self.is_ready() {
             return false;
         }
         if self.in_flight.is_empty()
@@ -540,13 +543,10 @@ impl<P> Client<P> {
     }
 
     fn route(&mut self, value: RESPValue) -> Event<P> {
-        match &mut self.state {
-            State::Ready(_) => self.on_reply(value),
+        match self.state {
+            State::Ready => self.on_reply(value),
             State::Hello => self.on_hello(value),
-            State::Select(hello) => {
-                let hello = core::mem::replace(&mut **hello, RESPValue::Null);
-                self.on_select(value, hello)
-            }
+            State::Select => self.on_select(value),
             State::Idle | State::Dialing | State::Ending(_) | State::Backoff | State::Closed => {
                 Event::Ignored
             }
@@ -575,10 +575,6 @@ impl<P> Client<P> {
             {
                 broken(b"Server does not support RESP3", UnsupportedProtocol)
             }
-            RESPValue::SimpleString(_) | RESPValue::Map(_) if self.config.database > 0 => {
-                self.state = State::Select(Box::new(value));
-                Event::Ignored
-            }
             RESPValue::SimpleString(_) | RESPValue::Map(_) => self.connected(value),
             _ => broken(
                 b"Authentication failed with unexpected response",
@@ -587,9 +583,12 @@ impl<P> Client<P> {
         }
     }
 
-    fn on_select(&mut self, value: RESPValue, hello: RESPValue) -> Event<P> {
+    fn on_select(&mut self, value: RESPValue) -> Event<P> {
         match value {
-            RESPValue::SimpleString(text) if *text == *b"OK" => self.connected(hello),
+            RESPValue::SimpleString(text) if *text == *b"OK" => {
+                self.state = State::Ready;
+                Event::Ignored
+            }
             RESPValue::Error(message) => Event::Broken {
                 message,
                 error: RedisError::InvalidCommand,
@@ -606,23 +605,28 @@ impl<P> Client<P> {
     }
 
     fn connected(&mut self, hello: RESPValue) -> Event<P> {
-        self.state = State::Ready(None);
+        self.state = if self.config.database > 0 {
+            State::Select
+        } else {
+            State::Ready
+        };
         self.retries = 0;
         Event::Connected(hello)
     }
 
     fn on_reply(&mut self, value: RESPValue) -> Event<P> {
-        let value = match value {
-            RESPValue::Push(push) => return self.on_push(push),
+        match value {
+            RESPValue::Push(push) => self.on_push(push),
             // The request it answers stays in flight: `fail` rejects it first.
-            RESPValue::Error(message) if self.is_subscriber => {
-                return Event::Broken {
-                    message,
-                    error: RedisError::ServerError,
-                };
-            }
-            value => value,
-        };
+            RESPValue::Error(message) if self.is_subscriber => Event::Broken {
+                message,
+                error: RedisError::ServerError,
+            },
+            value => self.answer(value),
+        }
+    }
+
+    fn answer(&mut self, value: RESPValue) -> Event<P> {
         let Some(InFlight { expect, promise }) = self.in_flight.pop_front() else {
             return Event::Ignored;
         };
@@ -648,9 +652,12 @@ impl<P> Client<P> {
             kind => ACKS.get(kind),
         };
         let Some(&kind) = kind else {
-            return Event::Ignored;
+            return self.on_unknown_push(push);
         };
-        let acked = match self.take_acknowledged(kind) {
+        let request = self
+            .in_flight
+            .pop_front_if(|it| matches!(it.expect, Expect::Ack));
+        let acked = match request.map(|it| it.promise) {
             None if !self.is_subscriber => return Event::Ignored,
             None => Acked::Nobody,
             Some(promise) if matches!(kind, Ack::Subscribe | Ack::Unsubscribe) => {
@@ -667,18 +674,19 @@ impl<P> Client<P> {
         }
     }
 
-    fn take_acknowledged(&mut self, kind: Ack) -> Option<P> {
-        if let State::Ready(Some(owed)) = &mut self.state
-            && owed.kind == kind
-            && owed.following > 0
-        {
-            owed.following -= 1;
-            return None;
+    fn on_unknown_push(&mut self, push: Push) -> Event<P> {
+        // A second prefix (`spsubscribe`) counts as a reply.
+        if !matches!(&*push.kind, [b'p' | b's', rest @ ..] if ACKS.get(rest).is_some()) {
+            return Event::Ignored;
         }
-        match self.in_flight.front()?.expect {
-            Expect::Acks(acks) if acks.kind == kind => self.state = State::Ready(Some(acks)),
-            Expect::Acks(_) | Expect::Reply(_) => return None,
+        match self.in_flight.front().map(|it| it.expect) {
+            None | Some(Expect::Reply(_)) if !self.is_subscriber => {
+                self.answer(RESPValue::Push(push))
+            }
+            _ => broken(
+                b"Unexpected push message kind without promise",
+                RedisError::InvalidResponseType,
+            ),
         }
-        self.in_flight.pop_front().map(|it| it.promise)
     }
 }

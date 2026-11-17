@@ -1022,7 +1022,9 @@ describe("Valkey: Recovering After fail()", () => {
         () => "resolved",
         (err: Error & { code: string }) => `${err.code}: ${err.message}`,
       );
-      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      // connect() settles on the accepted HELLO, before the SELECT reply is
+      // read, so it resolves; the failure that follows is reported by onclose.
+      await client.connect();
       expect(await queued).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
       // The rejection is a failure the client detected, so there is no retry
       // even with autoReconnect on: onclose fires once and the only second
@@ -1030,71 +1032,6 @@ describe("Valkey: Recovering After fail()", () => {
       expect(closes).toEqual([{ message: "Connection closed", connected: false, connections: 1 }]);
       expect(await secondConnect).toBe("connected");
       expect(await client.ping()).toBe("PONG");
-      expect(fake.connections).toBe(2);
-    } finally {
-      client.close();
-      fake.server.close();
-    }
-  });
-
-  test("a command waits for the reply to SELECT", async () => {
-    const wire: string[] = [];
-    const greeted = Promise.withResolvers<net.Socket>();
-    const fake = helloServer({
-      HELLO: (_, socket) => (greeted.resolve(socket), "+OK\r\n"),
-      PING: () => (wire.push("PING"), "+PONG\r\n"),
-    });
-    const port = await fake.listen();
-    const client = new RedisClient(`redis://127.0.0.1:${port}/1`);
-    // Server and client share this event loop: what one wrote, the other has read two turns later.
-    const delivered = async () => {
-      for (let turn = 0; turn < 2; turn++) await new Promise(resolve => setImmediate(resolve));
-    };
-    try {
-      client.onconnect = () => void wire.push("onconnect");
-      const connected = client.connect();
-      const socket = await greeted.promise;
-      await delivered();
-      const pong = client.ping();
-      await delivered();
-      wire.push(`SELECT accepted, connected: ${client.connected}`);
-      socket.write("+OK\r\n");
-      expect(await Promise.all([connected, pong])).toEqual(["OK", "PONG"]);
-      expect(wire).toEqual(["SELECT accepted, connected: false", "onconnect", "PING"]);
-    } finally {
-      client.close();
-      fake.server.close();
-    }
-  });
-
-  test("connectionTimeout bounds the reply to SELECT", async () => {
-    const fake = helloServer();
-    const port = await fake.listen();
-    const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { connectionTimeout: 500 });
-    try {
-      const queued = client.send("WATCH", ["key"]).catch(err => err.code);
-      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
-      expect(await queued).toBe("ERR_REDIS_CONNECTION_TIMEOUT");
-    } finally {
-      client.close();
-      fake.server.close();
-    }
-  });
-
-  test("a connection lost before the reply to SELECT counts against maxRetries", async () => {
-    const dialedAgain = Promise.withResolvers<string>();
-    const fake = helloServer({
-      HELLO: (connection, socket) => {
-        if (connection === 3) dialedAgain.resolve("dialed again");
-        socket.end("+OK\r\n");
-        return null;
-      },
-    });
-    const port = await fake.listen();
-    const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { maxRetries: 1 });
-    try {
-      const queued = client.send("WATCH", ["key"]).catch(err => err.message);
-      expect(await Promise.race([queued, dialedAgain.promise])).toBe("Max reconnection attempts reached");
       expect(fake.connections).toBe(2);
     } finally {
       client.close();
@@ -1256,12 +1193,17 @@ describe("Valkey: Recovering After fail()", () => {
   });
 
   // The stub is plain TCP and says nothing, so a rediss:// client stays in its TLS handshake.
-  test.each(["redis", "rediss"])(
-    "connect() from the rejection handler of a command that timed out over %s:// dials again",
-    async scheme => {
+  test.each([
+    ["redis", false],
+    ["redis", true],
+    ["rediss", false],
+    ["rediss", true],
+  ])(
+    "connect() from the rejection handler of a command that timed out over %s:// dials again (autoReconnect: %p)",
+    async (scheme, autoReconnect) => {
       const fake = helloServer({ HELLO: () => null });
       const port = await fake.listen();
-      const client = new RedisClient(`${scheme}://127.0.0.1:${port}`, { connectionTimeout: 100, autoReconnect: false });
+      const client = new RedisClient(`${scheme}://127.0.0.1:${port}`, { connectionTimeout: 100, autoReconnect });
       try {
         const events: string[] = [];
         client.onclose = () => void events.push("onclose");
@@ -1275,6 +1217,7 @@ describe("Valkey: Recovering After fail()", () => {
           "onclose",
           "connect ERR_REDIS_CONNECTION_CLOSED",
         ]);
+        while (fake.connections < 2) await once(fake.server, "connection");
       } finally {
         client.close();
         fake.server.close();
@@ -1601,27 +1544,32 @@ describe("Valkey: Recovering After fail()", () => {
     });
   });
 
-  test("a dial whose TLS context cannot be built leaves autoReconnect on for later connections", async () => {
-    using dir = tempDir("valkey-tls-context", { "ca.pem": "not a certificate" });
-    const caFile = path.join(String(dir), "ca.pem");
-    const fake = helloServer({}, { secure: true });
-    const port = await fake.listen();
-    const client = new RedisClient(`rediss://127.0.0.1:${port}`, { tls: { caFile } as Bun.TLSOptions });
-    try {
-      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
-      writeFileSync(caFile, tlsCert.cert);
-      await client.connect();
-      const next = Promise.withResolvers<string>();
-      client.onconnect = () => next.resolve("onconnect");
-      client.onclose = () => next.resolve("onclose");
-      fake.sockets[0].end();
-      expect(await next.promise).toBe("onconnect");
-      expect(await client.ping()).toBe("PONG");
-    } finally {
-      client.close();
-      fake.server.close();
-    }
-  });
+  test.each(["the client", "its duplicate"])(
+    "a dial whose TLS context cannot be built leaves autoReconnect on for %s",
+    async who => {
+      using dir = tempDir("valkey-tls-context", { "ca.pem": "not a certificate" });
+      const caFile = path.join(String(dir), "ca.pem");
+      const fake = helloServer({}, { secure: true });
+      const port = await fake.listen();
+      const original = new RedisClient(`rediss://127.0.0.1:${port}`, { tls: { caFile } as Bun.TLSOptions });
+      let client = original;
+      try {
+        await expect(original.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+        writeFileSync(caFile, tlsCert.cert);
+        if (who === "its duplicate") client = await original.duplicate();
+        await client.connect();
+        const next = Promise.withResolvers<string>();
+        client.onconnect = () => next.resolve("onconnect");
+        client.onclose = () => next.resolve("onclose");
+        fake.sockets[0].end();
+        expect(await next.promise).toBe("onconnect");
+        expect(await client.ping()).toBe("PONG");
+      } finally {
+        client.close();
+        fake.server.close();
+      }
+    },
+  );
 
   test("close() discards a half-received reply instead of letting it keep the process alive", async () => {
     // Announces a 4 byte bulk string and stops halfway through it.

@@ -25,8 +25,6 @@ pub enum RedisError {
     ServerError,
 }
 
-bun_core::impl_tag_error!(RedisError);
-
 /// RESP protocol types
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -248,7 +248,12 @@ mod lifecycle {
         if client.never_dialed() {
             "idle"
         } else if client.is_connected() {
-            "ready"
+            it.log.clear();
+            it.read(":1\r\n");
+            match it.log[0].as_bytes()[0] {
+                b'b' => "select",
+                _ => "ready",
+            }
         } else if client.awaits_retry() {
             "backoff"
         } else if !client.is_active() {
@@ -263,11 +268,10 @@ mod lifecycle {
         } else {
             it.log.clear();
             it.start();
-            it.read("+OK\r\n");
-            match it.log[0].as_bytes()[0] {
-                b'w' => "dialing",
-                b'i' => "hello",
-                _ => "select",
+            if it.log.is_empty() {
+                "hello"
+            } else {
+                "dialing"
             }
         }
     }
@@ -338,7 +342,7 @@ mod lifecycle {
         assert_eq!(
             row(Driver::fail),
             [
-                "fail Some([]) -> closed",
+                "fail None -> =",
                 "fail Some([1, 2]) -> ending failed",
                 "fail Some([1, 2]) -> ending failed",
                 "fail Some([1, 2]) -> ending failed",
@@ -346,7 +350,7 @@ mod lifecycle {
                 "fail Some([1, 2]) -> ending failed",
                 "fail Some([1, 2]) -> ending failed",
                 "fail None -> =",
-                "fail Some([1, 2]) -> closed",
+                "fail None -> =",
                 "fail None -> =",
             ]
         );
@@ -354,9 +358,15 @@ mod lifecycle {
 
     #[test]
     fn lost() {
+        let lost = |it: &mut Driver| {
+            if it.client.is_active() && !it.client.awaits_retry() {
+                it.lost();
+            }
+        };
         assert_eq!(
-            row(Driver::lost)[1..8],
+            row(lost),
             [
+                " -> =",
                 "retry in 50 [] -> backoff",
                 "retry in 50 [] -> backoff",
                 "retry in 50 [] -> backoff",
@@ -364,6 +374,8 @@ mod lifecycle {
                 "retry in 50 [] -> backoff",
                 "closed [1, 2] Connection closed -> closed",
                 "closed [] Connection closed -> closed",
+                " -> =",
+                " -> =",
             ]
         );
     }
@@ -408,7 +420,7 @@ mod lifecycle {
     fn timeouts() {
         assert_eq!(
             STATES.map(|state| reach(state).client.timeout_ms()),
-            [10000, 10000, 10000, 10000, 7, 10000, 10000, 0, 10000, 0]
+            [10000, 10000, 10000, 7, 7, 10000, 10000, 0, 10000, 0]
         );
     }
 
@@ -435,9 +447,9 @@ mod lifecycle {
     }
 
     #[test]
-    fn retries_start_over_when_the_handshake_is_done() {
+    fn retries_start_over_when_hello_is_accepted() {
         let mut it = Driver::new(database(1));
-        for replies in [HELLO, HELLO, "+OK\r\n+OK\r\n"] {
+        for replies in ["", "", HELLO] {
             it.client.dial();
             it.start();
             it.read(replies);
@@ -466,13 +478,31 @@ mod lifecycle {
         });
         it.client.dial();
         it.start();
-        it.read(HELLO);
-        it.log.clear();
         it.send("GET k");
+        it.read(HELLO);
+        it.send("WATCH k");
+        it.read("+OK\r\n");
         assert_eq!(
             it.take(),
-            ["refuse #1: Connection is closed and offline queue is disabled"]
+            [
+                "write HELLO 3 SELECT 1",
+                "refuse #1: Connection is closed and offline queue is disabled",
+                "connected map of 1",
+                "ignored",
+                "write WATCH k",
+            ]
         );
+    }
+
+    #[test]
+    fn a_batch_does_not_wait_for_select() {
+        let mut it = Driver::new(database(1));
+        it.client.dial();
+        it.start();
+        it.read(HELLO);
+        it.send("GET k");
+        it.checkpoint();
+        assert_eq!(it.log.last().unwrap(), "write GET k");
     }
 }
 
@@ -505,6 +535,8 @@ mod handshake {
         for (db, replies, expected) in [
             (0, "+OK\r\n", "connected OK"),
             (0, HELLO, "connected map of 1"),
+            (0, "|0\r\n+OK\r\n", "connected OK"),
+            (1, "+OK\r\n|0\r\n+OK\r\n", "ignored"),
             (0, "%1\r\n$5\r\nproto\r\n:2\r\n", "connected map of 1"),
             (
                 0,
@@ -522,7 +554,7 @@ mod handshake {
                 ":1\r\n",
                 "broken AuthenticationFailed Authentication failed with unexpected response",
             ),
-            (1, "%0\r\n+OK\r\n", "connected map of 0"),
+            (1, "%0\r\n+OK\r\n", "ignored"),
             (1, "+OK\r\n-NO\r\n", "broken InvalidCommand NO"),
             (
                 1,
@@ -720,43 +752,46 @@ mod subscriptions {
     }
 
     #[test]
-    fn the_rest_of_the_acknowledgements_answer_nothing() {
+    fn an_acknowledgement_answers_the_subscription_request_at_the_head() {
         let mut it = Driver::connected(Config::default());
         it.send("SUBSCRIBE a b");
-        it.send("SUBSCRIBE c");
-        for channel in ["a", "b", "c"] {
+        it.send("UNSUBSCRIBE a");
+        it.send("PING");
+        for channel in ["a", "b"] {
             it.read(&push("subscribe", channel));
         }
+        it.read(&(push("unsubscribe", "a") + "+PONG\r\n"));
         assert_eq!(
             it.take(),
             [
                 "write SUBSCRIBE a b",
                 "subscribed #1",
-                "write SUBSCRIBE c",
-                "subscribed",
+                "write UNSUBSCRIBE a",
+                "write PING",
                 "subscribed #2",
+                "unsubscribed",
+                "resolve #3 PONG",
             ]
         );
     }
 
     #[test]
-    fn an_acknowledgement_answers_its_own_kind() {
-        let mut it = subscriber();
-        it.send("UNSUBSCRIBE");
-        it.read(&push("unsubscribe", "a"));
-        it.send("SUBSCRIBE c");
-        it.read(&push("unsubscribe", "b"));
-        it.read(&push("subscribe", "c"));
-        it.read(&push("message", "c"));
+    fn fewer_acknowledgements_than_arguments_shift_nothing() {
+        let mut it = Driver::connected(Config::default());
+        for command in ["PUNSUBSCRIBE a a", "PUNSUBSCRIBE z", "SSUBSCRIBE x", "PING"] {
+            it.send(command);
+        }
+        it.checkpoint();
+        it.log.clear();
+        it.read(&(push("punsubscribe", "a") + &push("punsubscribe", "z")));
+        it.read(&(push("subscribe", "x") + "+PONG\r\n"));
         assert_eq!(
             it.take(),
             [
-                "write UNSUBSCRIBE",
-                "unsubscribed #2",
-                "write SUBSCRIBE c",
-                "ignored",
+                "unsubscribed #1 >punsubscribe a",
+                "unsubscribed #2 >punsubscribe z",
                 "subscribed #3",
-                "message c",
+                "resolve #4 PONG",
             ]
         );
     }
@@ -764,18 +799,17 @@ mod subscriptions {
     #[test]
     fn patterns_and_shards() {
         let mut it = Driver::connected(Config::default());
-        for command in ["psubscribe a b", "PUNSUBSCRIBE a b", "SSUBSCRIBE x"] {
+        for command in ["psubscribe a", "PUNSUBSCRIBE a", "SSUBSCRIBE x y"] {
             it.send(command);
         }
         it.checkpoint();
         it.log.clear();
         for (kind, name) in [
             ("psubscribe", "a"),
-            ("psubscribe", "b"),
             ("pmessage", "a"),
             ("punsubscribe", "a"),
-            ("punsubscribe", "b"),
             ("ssubscribe", "x"),
+            ("ssubscribe", "y"),
             ("smessage", "x"),
         ] {
             it.read(&push(kind, name));
@@ -784,37 +818,56 @@ mod subscriptions {
             it.take(),
             [
                 "subscribed #1 >psubscribe a",
-                "subscribed",
                 "pattern message",
                 "unsubscribed #2 >punsubscribe a",
-                "ignored",
                 "subscribed #3 >ssubscribe x",
+                "subscribed",
                 "pattern message",
             ]
         );
     }
 
     #[test]
-    fn what_is_owed_ends_with_the_connection() {
-        let mut it = Driver::connected(Config::default());
-        it.send("SUBSCRIBE a b");
-        it.read(&push("subscribe", "a"));
+    fn subscriber_mode_outlasts_the_connection() {
+        let mut it = subscriber();
         it.lost();
         it.handshake();
         assert!(it.client.is_subscriber());
-        it.send("SUBSCRIBE c");
-        it.read(&push("subscribe", "c"));
-        assert_eq!(it.take(), ["write SUBSCRIBE c", "subscribed #2"]);
     }
 
     #[test]
-    fn inside_a_transaction_nothing_is_owed() {
+    fn inside_a_transaction_a_plain_reply_answers() {
         let mut it = Driver::connected(Config::default());
         it.send("SUBSCRIBE a b");
         it.read("+QUEUED\r\n");
-        it.send("SUBSCRIBE c");
-        it.read(&push("subscribe", "c"));
-        assert_eq!(it.log.last().unwrap(), "subscribed #2");
+        assert_eq!(it.log.last().unwrap(), "resolve #1 QUEUED");
+    }
+
+    #[test]
+    fn a_second_prefix_counts_as_a_reply() {
+        let mut it = Driver::connected(Config::default());
+        it.read(&push("spsubscribe", "k"));
+        it.send("X");
+        it.checkpoint();
+        it.read(&push("spsubscribe", "k"));
+        assert_eq!(
+            it.take(),
+            ["ignored", "write X", "resolve #1 >spsubscribe k"]
+        );
+
+        for (mut it, command, failed) in [
+            (subscriber(), "X", "fail Some([2])"),
+            (
+                Driver::connected(Config::default()),
+                "SUBSCRIBE k",
+                "fail Some([1])",
+            ),
+        ] {
+            it.send(command);
+            it.checkpoint();
+            it.read(&push("spsubscribe", "k"));
+            assert_eq!(it.log[2], failed);
+        }
     }
 
     #[test]
@@ -837,7 +890,7 @@ mod subscriptions {
 
     #[test]
     fn pushes_that_answer_nothing() {
-        for kind in ["invalidate", "ppsubscribe", "SUBSCRIBE"] {
+        for kind in ["invalidate", "SUBSCRIBE"] {
             for mut it in [subscriber(), Driver::connected(Config::default())] {
                 it.send("PING");
                 it.checkpoint();

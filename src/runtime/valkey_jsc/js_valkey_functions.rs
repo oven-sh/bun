@@ -1211,6 +1211,7 @@ impl JSValkeyClient {
         listener: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
+        // For the dial and the writes ahead of `send()`.
         let _guard = self.ref_guard();
 
         let (channel_or_many, handler_callback) = (channel.to_js(), listener.to_js());

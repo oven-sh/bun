@@ -65,14 +65,6 @@ impl TLS {
     }
 }
 
-// Call sites only ever compare against `TLS::None` / `TLS::Enabled`; `SSLConfig`
-// doesn't (and shouldn't) implement `PartialEq`, so compare by discriminant.
-impl PartialEq for TLS {
-    fn eq(&self, other: &Self) -> bool {
-        core::mem::discriminant(self) == core::mem::discriminant(other)
-    }
-}
-
 #[derive(Clone)]
 pub(crate) enum Address {
     Unix(Box<[u8]>),

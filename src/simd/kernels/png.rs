@@ -15,7 +15,7 @@ pub(crate) mod simd {
 
     fn load_pixel<const BPP: usize>(pixel: [u8; BPP]) -> U8 {
         let mut bytes = [0; 8];
-        bytes[..BPP].copy_from_slice(&pixel);
+        *bytes.first_chunk_mut().unwrap() = pixel;
         U64::from_first(u64::from_le_bytes(bytes)).bitcast()
     }
 

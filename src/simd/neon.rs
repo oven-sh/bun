@@ -2,7 +2,9 @@ use crate::isa::{bitmask_of, nearest_set};
 pub(crate) use crate::native::{load_shared, store_shared};
 pub(crate) use crate::portable::masked::*;
 pub use crate::portable::{bit_indices, prefix_xor};
+use crate::vector::{from_slice, to_array};
 use crate::{Int, opaque};
+use bun_simd_trusted::opaque16;
 use core::arch::aarch64::*;
 use core::array::from_fn;
 use core::simd::{ToBytes, prelude::*};
@@ -36,7 +38,7 @@ fn select_indices<T: Int<N>, const N: usize, I: crate::Isa>(
     static INDICES: [u8; 65] = core::array::from_fn(const |i| i as u8);
     masks.fold(u8x16::splat(none), |others, (mask, start)| {
         let is_set = mask.to_vector().first_bytes::<16>();
-        let indices = u8x16::from_slice(&INDICES[offset + start * size_of::<T>()..]);
+        let indices = from_slice(&INDICES[offset + start * size_of::<T>()..]);
         is_set & indices | !is_set & others
     })
 }
@@ -54,7 +56,7 @@ impl<const S: bool> crate::Isa for Neon<S> {
             return (mask.to_bitmask(), 1);
         }
         let nibbles = (u16x8::from_ne_bytes(mask.to_vector().first_bytes()) >> 4).cast::<u8>();
-        (u64::from_ne_bytes(nibbles.to_array()), 4 * size_of::<T>())
+        (u64::from_ne_bytes(to_array(nibbles)), 4 * size_of::<T>())
     }
 
     #[inline(always)]
@@ -90,9 +92,9 @@ impl<const S: bool> crate::Isa for Neon<S> {
             return (mask.to_bitmask() & !u64::MAX.unbounded_shl(lane as u32)).count_ones()
                 as usize;
         }
-        let ones = u8x16::from_slice(&STEP[16 - lane * size_of::<T>()..]);
+        let ones: u8x16 = from_slice(&STEP[16 - lane * size_of::<T>()..]);
         // LLVM would widen the lanes first.
-        let is_set = bun_simd_trusted::opaque16(mask.to_vector().first_bytes());
+        let is_set = opaque16(mask.to_vector().first_bytes());
         usize::from((is_set & ones).reduce_sum()) / size_of::<T>()
     }
 
@@ -135,8 +137,8 @@ impl<const S: bool> Lanes<u8, 16, S> {
     #[inline]
     #[target_feature(enable = "neon")]
     pub fn lookup2(self, upper: Self, indices: Self) -> Self {
-        let table = uint8x16x2_t(self.0.into(), upper.0.into());
-        Self::new(vqtbl2q_u8(table, indices.0.into()))
+        let both = uint8x16x2_t(self.0.into(), upper.0.into());
+        Self::new(vqtbl2q_u8(both, indices.0.into()))
     }
 
     #[inline]
@@ -222,6 +224,14 @@ impl<const S: bool> Lanes<i32, 4, S> {
         let (a, b) = (a.0.into(), b.0.into());
         let low = vmull_s16(vget_low_s16(a), vget_low_s16(b));
         Self::new(vpaddq_s32(low, vmull_high_s16(a, b)))
+    }
+}
+
+impl<const S: bool> Lanes<u32, 4, S> {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn distances(a: Lanes<u8, 16, S>, b: Lanes<u8, 16, S>) -> Self {
+        Self::new(vpaddlq_u16(vpaddlq_u8(a.abs_diff(b).0.into())))
     }
 }
 

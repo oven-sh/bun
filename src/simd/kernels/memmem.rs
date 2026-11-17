@@ -432,7 +432,7 @@ pub(crate) mod simd {
                 if has_paid {
                     cost += if is_early { 0 } else { COST_OF_CALL };
                 } else if misses.left > 0 {
-                    plan.pair.swap(0, 1);
+                    plan.pair = [plan.pair[1], plan.pair[0]];
                     // Close to the end, a ranking would not pay.
                     cost += stretch.min(starts - seen) / SCANNED_PER_STEP;
                     stretch = stretch.saturating_mul(4);
@@ -679,8 +679,15 @@ fn maximal_suffix<S: Unit, const FORWARD: bool>(needle: &[S], is_ascending: bool
     [start, period]
 }
 
-/// Where to split the needle, and its period if it has one.
-type Halves = (usize, Option<usize>);
+/// Where to split the needle. If only the right half matches: how far to move, and what matches then.
+type Halves = (usize, (usize, usize));
+
+fn halves(len: usize, [split, period]: [usize; 2], is_periodic: bool) -> Halves {
+    match is_periodic && split < period {
+        true => (split, (period, len - period)),
+        false => (split, (split.max(len - split) + 1, 0)),
+    }
+}
 
 #[inline(never)]
 fn halves_of<S: Unit, const FORWARD: bool>(needle: &[S]) -> Halves {
@@ -688,7 +695,7 @@ fn halves_of<S: Unit, const FORWARD: bool>(needle: &[S]) -> Halves {
     let [ascending, descending] = [true, false].map(|it| maximal_suffix::<S, FORWARD>(needle, it));
     let [split, period] = ascending.max(descending);
     let is_periodic = (0..split).all(|i| nth(needle, i) == nth(needle, period + i));
-    (split, is_periodic.then_some(period))
+    halves(needle.len(), [split, period], is_periodic)
 }
 
 /// The algorithm of Crochemore and Perrin, in linear time even if `needle` has changed since.
@@ -700,16 +707,10 @@ fn two_way<'a, S: Unit, const FORWARD: bool>(
         start: mut seen,
         end,
     }: Range<usize>,
-    (split, period): Halves,
+    (split, after_right_half): Halves,
     difference: Difference<S>,
 ) -> ControlFlow<Option<&'a S>, usize> {
-    let len = needle.len();
-    // How far to move if only the right half matches, and how much is known to match then.
-    let (shift, known_after_shift) = match period {
-        Some(period) if split < period => (period, len - period),
-        _ => (split.max(len - split) + 1, 0),
-    };
-    let (mut known, mut step) = (0, len);
+    let (len, mut known, mut step) = (needle.len(), 0, needle.len());
     // What is known has been paid for.
     while seen < end || known > 0 {
         let Some(left) = haystack.len().checked_sub(seen + len) else {
@@ -733,7 +734,7 @@ fn two_way<'a, S: Unit, const FORWARD: bool>(
         };
         (step, known) = match mismatch(split.max(known), len) {
             Some(n) => (n - split + 1, 0),
-            None if mismatch(known.min(split), split).is_some() => (shift, known_after_shift),
+            None if mismatch(known.min(split), split).is_some() => after_right_half,
             None => return Break(window.first()),
         };
         seen += step;
@@ -785,7 +786,8 @@ mod tests {
             needle[changed] = b'c';
             let (text, needle) = (turn(text.clone()), turn(needle));
             assert_eq!(find::<FORWARD>(&text, &needle), None);
-            black_box(with::<FORWARD>(&text, &needle, (split, Some(period))));
+            let before = halves(len, [split, period], true);
+            black_box(with::<FORWARD>(&text, &needle, before));
         }
         let text_in_steps = turn((0..64).cycle().take(len).collect());
         let needle = turn(
@@ -795,20 +797,17 @@ mod tests {
                 .collect(),
         );
         let (mut seen, difference) = (0, difference_by_units::<_, FORWARD>);
-        while let Continue(next) = two_way::<_, FORWARD>(
-            &text_in_steps,
-            &needle,
-            seen..seen + 64,
-            (63, Some(64)),
-            difference,
-        ) {
+        let before = halves(needle.len(), [63, 64], true);
+        while let Continue(next) =
+            two_way::<_, FORWARD>(&text_in_steps, &needle, seen..seen + 64, before, difference)
+        {
             seen = next;
         }
         let almost = [&text[1..len], b"c"].concat();
         let needle = turn([b"c", &text[..len]].concat());
         assert_eq!(find::<FORWARD>(&turn(almost.repeat(3)), &needle), None);
         let needle = turn([b"a", &almost[..], &almost].concat());
-        assert_eq!(halves_of::<_, FORWARD>(&needle), (len, None));
+        assert_eq!(halves_of::<_, FORWARD>(&needle), (len, (len + 2, 0)));
     }
 
     /// Does not end unless the time is linear.

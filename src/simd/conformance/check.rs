@@ -712,6 +712,141 @@ impl Round<'_> {
     }
 
     #[optimize(size)]
+    fn webp_macroblocks(&mut self) {
+        let (random, offset) = (&mut *self.random, self.offset);
+        let (non_zero, shift) = (
+            random.next() as u32 & random.next() as u32,
+            random.below(15),
+        );
+        let mut want: [[i16; 64]; 6] = from_fn(|y| {
+            let is_any = non_zero >> (4 * y) & 15 != 0;
+            from_fn(
+                |i| match non_zero >> (4 * y + i % 16 / 4) & 1 != 0 || !is_any {
+                    true => random.next() as i16 >> shift,
+                    false => 0,
+                },
+            )
+        });
+        let [a, b, c, ..] = &mut *self.rooms;
+        let got = &mut a.copy_of(&[want], offset)[0];
+        highway::webp::inverse_dct(&mut want, non_zero);
+        rust::webp::inverse_dct(got, non_zero);
+        self.failures.unless(want == *got, "webp::inverse_dct");
+
+        let alphabet = random.one_of(&[b"", &b"\0\xFF"[..], b"xyz{|}~\x7F\x80\x81\x82\x83\x84"]);
+        let edges = random.bytes(40, alphabet);
+        let (above, rest) = edges.split_first_chunk().unwrap();
+        let (right, left) = rest.split_first_chunk().unwrap();
+        let (left, residuals) = (left.first_chunk().unwrap(), want.first_chunk().unwrap());
+        let modes = &from_fn(|_| from_fn(|_| random.below(12) as u8));
+        let [mut want, mut got] = [[[7; 16]; 16]; 2];
+        highway::webp::reconstruct_subblocks(above, right, left, modes, residuals, &mut want);
+        rust::webp::reconstruct_subblocks(above, *right, left, modes, residuals, &mut got);
+        self.failures
+            .unless(want == got, "webp::reconstruct_subblocks");
+
+        let (count, gap, has_above) = (random.below(6), random.below(9), random.below(4) != 0);
+        let limits: Vec<_> = (0..count).map(|_| random.bytes(4, b"")).collect();
+        let shift = random.below(6);
+        for (kept, is_simple) in [(4, false), (2, true)] {
+            let strides = [16, 8, 8].map(|size| size * count + 8 + gap);
+            let lens = [(16, 0), (8, 1), (8, 2)].map(|(size, i)| (size + kept) * strides[i] + 4);
+            let mut want = lens.map(|len| random.bytes(len, alphabet));
+            let mut got =
+                [(&mut *a, 0), (b, 1), (c, 2)].map(|(it, i)| it.copy_of(&want[i], offset));
+            macro_rules! filter {
+                ($k:ident, $planes:ident) => {{
+                    let strength = |it: &Vec<u8>| $k::webp::FilterStrength {
+                        edge_limit: it[0] >> (shift / 2),
+                        interior_limit: it[1] >> shift,
+                        high_variance_threshold: it[2] >> (2 + shift),
+                        filters_inner_edges: it[3] > 80,
+                    };
+                    let (strengths, mut strides) =
+                        (Vec::from_iter(limits.iter().map(strength)), strides.iter());
+                    let [y, u, v] = $planes.each_mut().map(|samples| {
+                        let (samples, stride) = (&mut samples[..], *strides.next().unwrap());
+                        $k::webp::Plane {
+                            samples,
+                            stride,
+                            start: kept * stride + 4,
+                        }
+                    });
+                    match is_simple {
+                        true => $k::webp::filter_simply(y, &strengths, has_above),
+                        false => $k::webp::filter_normally([y, u, v], &strengths, has_above),
+                    }
+                }};
+            }
+            filter!(highway, want);
+            let fits = filter!(rust, got).is_some();
+            self.failures.unless(fits && want == got, "webp::filter");
+        }
+    }
+
+    #[optimize(size)]
+    fn webp_rows(&mut self) {
+        let (random, offset) = (&mut *self.random, self.offset);
+        let (width, alphabet) = (
+            random.below(200),
+            random.one_of(&[b"", &b"\0\x80\xFF"[..], b"\0\x01"]),
+        );
+        let padded = width.next_multiple_of(rust::webp::ROW_STEP);
+        let rows = [(); 4].map(|()| random.bytes(padded + 1, alphabet));
+        let mut want = [(); 2].map(|()| vec![7; 2 * padded]);
+        let [a, b, c, d, e, f] = &mut *self.rooms;
+        let mut got = [e, f].map(|room| room.copy_of(&want[0], offset));
+        highway::webp::upsample(
+            [&rows[0], &rows[1]],
+            want.each_mut().map(|it| &mut it[..]),
+            width,
+        );
+        let from = [&*a.copy_of(&rows[0], offset), b.copy_of(&rows[1], offset)];
+        let fits = rust::webp::upsample(from, got.each_mut().map(|it| &mut **it), width).is_some();
+        let is_same = (0..2).all(|i| want[i][..2 * width] == got[i][..2 * width]);
+        self.failures.unless(fits && is_same, "webp::upsample");
+
+        let (start, more) = (random.below(9), random.below(2 * width + 1));
+        let [mut want, mut got] = [(); 2].map(|()| {
+            let mut pixels = Vec::with_capacity(start + width.max(more));
+            pixels.resize(start + more, [7; 4]);
+            pixels
+        });
+        highway::webp::yuv_to_rgba(rows.each_ref().map(|it| &it[..]), &mut want, start, width);
+        let fenced = [(&mut *a, 0), (b, 1), (c, 2), (d, 3)];
+        let fenced = fenced.map(|(room, i)| &*room.copy_of(&rows[i][..padded], offset));
+        let fits = rust::webp::yuv_to_rgba(fenced, &mut got, start, width).is_some();
+        self.failures
+            .unless(fits && want == got, "webp::yuv_to_rgba");
+
+        let (width, bits) = (width + 1, random.below(7) as u32);
+        let mut want = random.bytes(4 * width, alphabet);
+        let mut above = random.bytes(4 * width, alphabet);
+        for i in 4..above.len() {
+            if i >> 5 & bits as usize & 1 != 0 {
+                above[i] = above[i - 4];
+            }
+        }
+        let tiles = random.bytes(4 * width.div_ceil(1 << bits), b"");
+        let (want, above, tiles) = (
+            want.as_chunks_mut().0,
+            above.as_chunks().0,
+            tiles.as_chunks().0,
+        );
+        let (got, fenced) = (a.copy_of(want, offset), b.copy_of(above, offset));
+        let fenced_tiles = c.copy_of(tiles, offset);
+        highway::webp::undo_prediction(want, above, tiles, bits);
+        let fits = rust::webp::undo_prediction(got, fenced, fenced_tiles, bits).is_some();
+        self.failures
+            .unless(fits && want == got, "webp::undo_prediction");
+        got.copy_from_slice(want);
+        highway::webp::undo_cross_color(want, tiles, bits);
+        let fits = rust::webp::undo_cross_color(got, fenced_tiles, bits).is_some();
+        self.failures
+            .unless(fits && want == got, "webp::undo_cross_color");
+    }
+
+    #[optimize(size)]
     fn some_mappings(&mut self) -> Vec<u8> {
         let (random, mut text) = (&mut *self.random, Vec::new());
         let (is_plain, has_sources) = (random.below(3) == 0, random.below(4) == 0);
@@ -861,6 +996,8 @@ pub(crate) fn run(seed: u64, rounds: u64) -> bool {
         round.png();
         round.jpeg_transforms();
         round.jpeg_colors();
+        round.webp_macroblocks();
+        round.webp_rows();
         round.failures.0.extend(webp_encoder::check(round.random));
         round.mappings();
         if number % 20 == 0 {

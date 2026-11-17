@@ -1,6 +1,7 @@
 //! The arithmetic of the VP8 encoder in `bun_webp`, which is that of libwebp (LICENSE.md):
 //! <https://github.com/webmproject/libwebp/tree/4fa21912338357f89e4fd51cf2368325b59e9bd9/src>
 #![allow(clippy::large_types_passed_by_value)] // vectors live in registers
+use crate::webp_decoder::rotate;
 use bun_simd::{Isa, Shuffle};
 use core::array::from_fn;
 
@@ -329,12 +330,6 @@ pub(crate) mod simd {
     }
 
     #[inline(always)]
-    fn zip32(a: I16, b: I16) -> [I16; 2] {
-        let (lower, upper) = a.bitcast::<U32>().interleave_in_blocks(b.bitcast());
-        [lower.bitcast(), upper.bitcast()]
-    }
-
-    #[inline(always)]
     fn zip64(a: I16, b: I16) -> [I16; 2] {
         let (lower, upper) = a.bitcast::<U64>().interleave_in_blocks(b.bitcast());
         [lower.bitcast(), upper.bitcast()]
@@ -348,10 +343,10 @@ pub(crate) mod simd {
     }
 
     #[inline(always)]
-    fn transposed([q0, q1, q2, q3]: Quad) -> Quad {
-        let ([a, c], [b, d]) = (zip32(q0, q2), zip32(q1, q3));
-        let ([t0, t1], [t2, t3]) = (zip32(a, b), zip32(c, d));
-        [t0, t1, t2, t3]
+    fn transposed(quad: Quad) -> Quad {
+        let mut pairs: [U32; 4] = quad.map(|it| it.bitcast());
+        rotate(&mut pairs, 2);
+        pairs.map(|it| it.bitcast())
     }
 
     #[inline(always)]
@@ -884,8 +879,8 @@ pub(crate) mod simd {
             let [first, second] = flagged.halves();
             flagged = U16::from_halves(first.interleave(second).into());
         }
-        let flagged = flagged.bitcast::<U8>().to_array();
-        out.ends[2 * PAIRS * FIRST..][..16].copy_from_slice(&flagged[..16]);
+        let flagged = x128::U8::from_slice(&flagged.bitcast::<U8>().to_array());
+        flagged.copy_to_slice(&mut out.ends[2 * PAIRS * FIRST..]);
         let last_end = (ends | magnitudes.simd_eq(MAX_SYMBOL).to_vector()).reduce_max();
 
         #[rustc_unroll(full)]

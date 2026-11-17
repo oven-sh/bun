@@ -1,5 +1,6 @@
 //! The definition of the ops that have intrinsics. Debug builds panic on input for which targets differ.
 use crate::{BitIndices, Int, Out, SharedOutU8, SharedU8};
+use bun_simd_trusted::{from_array, load_or_default};
 use core::array;
 use core::simd::{ToBytes, prelude::*};
 pub(crate) use masked::*;
@@ -32,7 +33,7 @@ impl<const N: usize, const B: usize> Lanes<u8, N, B> {
         }))
     }
 
-    /// The same for indices below 32. Those from 16 on are into `upper`.
+    /// The same for indices below 32. Those from 16 on go into `upper`.
     #[inline]
     pub fn lookup2(self, upper: Self, indices: Self) -> Self {
         Self::from_array(array::from_fn(|i| {
@@ -160,6 +161,16 @@ impl<const N: usize, const B: usize> Lanes<i32, N, B> {
     }
 }
 
+impl<const B: usize> Lanes<u32, 4, B> {
+    /// The sum of the absolute differences of each 4 lanes. The second and the last must be zero.
+    #[inline]
+    pub fn distances(a: Lanes<u8, 16, B>, b: Lanes<u8, 16, B>) -> Self {
+        let pairs: Self = Lanes::<u16, 8, B>::sums_of_2(a.abs_diff(b)).bitcast();
+        debug_assert!(pairs[1] | pairs[3] == 0);
+        (pairs & 0xFFFF) + (pairs >> 16)
+    }
+}
+
 impl<const N: usize, const B: usize> Lanes<u64, N, B> {
     #[inline]
     pub fn sums_of_8<const M: usize>(bytes: Lanes<u8, M, B>) -> Self
@@ -216,7 +227,7 @@ pub(crate) mod masked {
         for (to, from) in bytes[skipped..].iter_mut().zip(from) {
             *to = from.get();
         }
-        Simd::from_array(bytes)
+        from_array(bytes)
     }
 
     /// As many of the first or the last lanes as fit.
@@ -230,7 +241,7 @@ pub(crate) mod masked {
 
     #[inline(always)]
     pub(crate) fn load_to_last<T: Int<N>, const N: usize>(from: &[T]) -> u8x64 {
-        let first = Lanes::<T, N, 64>::new(Simd::load_or_default(from)).to_64_bytes();
+        let first = Lanes::<T, N, 64>::new(load_or_default(from)).to_64_bytes();
         rotate_bytes(first, size_of_val(from).wrapping_neg())
     }
 
@@ -243,7 +254,7 @@ pub(crate) mod masked {
     /// Lane `i` goes to lane `(i + by) % 64`.
     #[inline(always)]
     pub(crate) fn rotate_bytes(v: u8x64, by: usize) -> u8x64 {
-        Simd::from_array(array::from_fn(|i| v[i.wrapping_sub(by) % 64]))
+        from_array(array::from_fn(|i| v[i.wrapping_sub(by) % 64]))
     }
 }
 

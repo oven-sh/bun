@@ -154,7 +154,7 @@ describe("JSON — JS lexer SIMD string scanning", () => {
   });
 });
 
-describe("HTTP parsing — llhttp SSE4.2 PCMPESTRI", () => {
+describe("HTTP request head", () => {
   test("long headers", async () => {
     const longHeaderValue = Buffer.alloc(512, "v").toString();
     using server = Bun.serve({
@@ -465,9 +465,9 @@ describe("PNG codec: bun_simd runtime dispatch", () => {
 
 const webp = await loadCases();
 
-describe("WebP codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_webp_*.cpp are compiled for SSSE3 and AVX2 on x64, and webp-golden.test.ts gets to see
-  // the one that suits the machine. In small parts, for the sake of Intel SDE.
+describe("WebP codec: runtime dispatch", () => {
+  // The kernels are compiled twice on x64, and webp-golden.test.ts gets to see the copy that suits the machine. In small
+  // parts, for the sake of Intel SDE.
   const kinds = ["encoded", "random", "handmade", "changed", "extreme"];
   test.each(inParts(webp.decode, kinds, 20))("decode, part %#", async some => {
     expect(await decodeDifferences(some)).toBe("");

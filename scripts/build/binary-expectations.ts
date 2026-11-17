@@ -333,6 +333,10 @@ function forbiddenImports(cfg: Config): string[] {
     // from the shared libstdc++/libc++ legitimately).
     forbidden.push("__cxa_guard_*");
   }
+  if (cfg.linux && cfg.abi === "gnu") {
+    // glibc loads libgcc_s for it at its first use, which a hardened program refuses.
+    forbidden.push("pthread_exit");
+  }
   return forbidden;
 }
 
@@ -342,7 +346,7 @@ function forbiddenImports(cfg: Config): string[] {
  * static-build carve-out the way WTF's export macros do), so every bmalloc.lib
  * member the link pulls carries `-export:` directives. Remove once
  * oven-sh/WebKit builds bmalloc with BEXPORT empty (`-DBEXPORT=`); the export
- * check then holds bun.exe to the Node-API / V8 / libuv / llhttp set alone.
+ * check then holds bun.exe to the Node-API / V8 / libuv set alone.
  *
  * The 23 names, from `llvm-readobj --coff-exports` on a released
  * bun-windows-x64 bun.exe: 22 MSVC-mangled members of namespace bmalloc
@@ -603,14 +607,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
           // C++ ones under their MSVC-mangled names; symbols.def adds libuv.
-          // llhttp_*: node.exe exports llhttp's C API (its header dllexports
-          // on _WIN32) and so does bun.exe, from the same header.
           patterns: [
             "napi_*",
             "node_api_*",
             "?*@v8@@*",
             "?*@node@@*",
-            "llhttp_*",
             ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
             // The debug WebKit prebuilt's libpas exports its system-heap entry
             // points the same way (`-export:` directives in the archive

@@ -221,10 +221,9 @@ mod simd {
                 assert_eq!(x.saturating_add(y).to_array(), each(u8::saturating_add));
                 assert_eq!(x.saturating_sub(y).to_array(), each(u8::saturating_sub));
                 let (p, q): (I8, I8) = (x.bitcast(), y.bitcast());
-                let sums = each(|a, b| (a as i8).saturating_add(b as i8) as u8);
-                assert_eq!(p.saturating_add(q).cast::<u8>().to_array(), sums);
-                let differences = each(|a, b| (a as i8).saturating_sub(b as i8) as u8);
-                assert_eq!(p.saturating_sub(q).cast::<u8>().to_array(), differences);
+                let signed = |f: fn(i8, i8) -> i8| from_fn(|i| f(a[i] as i8, b[i] as i8));
+                assert_eq!(p.saturating_add(q).to_array(), signed(i8::saturating_add));
+                assert_eq!(p.saturating_sub(q).to_array(), signed(i8::saturating_sub));
                 assert_eq!(x.abs_diff(y).to_array(), each(u8::abs_diff));
                 let average = each(|a, b| (u16::from(a) + u16::from(b)).div_ceil(2) as u8);
                 assert_eq!(x.average_round(y).to_array(), average);
@@ -252,13 +251,14 @@ mod simd {
                     assert_eq!(got.to_array(), want);
                 }
             }
-            for (index, lane) in (0..32).flat_map(|it| (0..N).map(move |lane| (it, lane))) {
-                let (indices, tables) = (from_fn(|i| if i == lane { index } else { 19 }), [0, 99]);
-                let at = |i: usize| (usize::from(indices[i] / 16), usize::from(indices[i] % 16));
-                let want = from_fn(|i| distinct[i / 16 * 16 + at(i).1] - tables[at(i).0]);
-                let [lower, upper] = tables.map(|it| U8::load(&distinct) - it);
-                let got = lower.lookup2(upper, U8::load(black_box(&indices)));
-                assert_eq!(got.to_array(), want);
+            for (index, lane) in (0..32).flat_map(|index| (0..N).map(move |lane| (index, lane))) {
+                let indices = from_fn(|i| if i == lane { index } else { 31 - index });
+                let want = from_fn(|i| match usize::from(indices[i]) {
+                    index @ ..16 => distinct[i / 16 * 16 + index],
+                    index => !distinct[i / 16 * 16 + index - 16],
+                });
+                let (lower, indices) = (U8::load(&distinct), U8::load(black_box(&indices)));
+                assert_eq!(lower.lookup2(!lower, indices).to_array(), want);
             }
             for from in (0..=u16::MAX).step_by(N) {
                 let all: [u16; N] = black_box(from_fn(|i| from + i as u16));
@@ -342,19 +342,18 @@ mod simd {
             assert_eq!(x.saturating_add(y).to_array(), each(i16::saturating_add));
             assert_eq!(x.saturating_sub(y).to_array(), each(i16::saturating_sub));
             let (p, q): (U16, U16) = (x.bitcast(), y.bitcast());
-            let sums = each(|a, b| (a as u16).saturating_add(b as u16) as i16);
-            assert_eq!(p.saturating_add(q).cast::<i16>().to_array(), sums);
-            let differences = each(|a, b| (a as u16).saturating_sub(b as u16) as i16);
-            assert_eq!(p.saturating_sub(q).cast::<i16>().to_array(), differences);
-            assert_eq!(Some(x.reduce_max()), a.into_iter().max());
-            assert_eq!(Some(p.reduce_max()), p.to_array().into_iter().max());
             let got = y.simd_eq(0).select(0, x).mul_sign(y);
             assert_eq!(got.to_array(), each(|a, b| a.wrapping_mul(b.signum())));
+            assert_eq!(Some(x.reduce_max()), a.into_iter().max());
+            assert_eq!(Some(p.reduce_max()), p.to_array().into_iter().max());
+            let each = |f: fn(u16, u16) -> u16| from_fn(|i| f(a[i] as u16, b[i] as u16));
+            assert_eq!(p.saturating_add(q).to_array(), each(u16::saturating_add));
+            assert_eq!(p.saturating_sub(q).to_array(), each(u16::saturating_sub));
             let b = b.map(|b| b.max(-i16::MAX));
-            let want = from_fn(|i| ((i32::from(a[i]) * i32::from(b[i]) + (1 << 14)) >> 15) as i16);
-            assert_eq!(x.mul_q15(I16::load(&b)).to_array(), want);
             let want = from_fn(|i| ((i32::from(a[i]) * i32::from(b[i])) >> 16) as i16);
             assert_eq!(x.mul_high(I16::load(&b)).to_array(), want);
+            let want = from_fn(|i| ((i32::from(a[i]) * i32::from(b[i]) + (1 << 14)) >> 15) as i16);
+            assert_eq!(x.mul_q15(I16::load(&b)).to_array(), want);
             let [first, second] = x.halves();
             assert_eq!([first.to_array(), second.to_array()].concat(), a);
             assert_eq!(I16::from_halves([first, second]).to_array(), a);
@@ -493,6 +492,15 @@ mod simd {
             let (word, lanes) = (random.next(), from_fn(|_| random.next() as i16));
             assert_eq!(bun_simd::opaque(word), word);
             assert_eq!(isa::x128::I16::load(&lanes).opaque().to_array(), lanes);
+            let (a, b) = (random.lanes::<u8, 16>(), random.lanes::<u8, 16>());
+            let b = from_fn(|i| if i & 4 == 0 { b[i] } else { a[i] });
+            let sum = |i: usize| {
+                (4 * i..4 * i + 4)
+                    .map(|i| u32::from(a[i].abs_diff(b[i])))
+                    .sum()
+            };
+            let got = isa::x128::U32::distances(Vector::load(&a), Vector::load(&b));
+            assert_eq!(got.to_array(), from_fn(sum));
             any_lanes::<u8, 8>(random);
             any_lanes::<u8, 64>(random);
             any_lanes::<i32, 16>(random);

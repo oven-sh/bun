@@ -20,6 +20,7 @@ mod png;
 mod scanner;
 mod search;
 mod sourcemap;
+mod webp_decoder;
 mod webp_encoder;
 mod width;
 mod words;
@@ -82,7 +83,13 @@ pub use xml::simd::{
 pub use xxhash::XxHash64State;
 pub use xxhash::simd::{xxhash3_64_shared, xxhash32, xxhash32_shared, xxhash64, xxhash64_shared};
 
+/// `None` means that the arguments do not fit together. A part of the work may be done.
 pub mod webp {
+    pub use crate::webp_decoder::simd::{
+        filter_normally, filter_simply, inverse_dct, reconstruct_subblocks, undo_cross_color,
+        undo_prediction, upsample,
+    };
+    pub use crate::webp_decoder::{FilterStrength, Plane, ROW_SLACK, ROW_STEP, yuv_to_rgba};
     pub use crate::webp_encoder::simd::{
         analyze, convert, try_chroma_modes, try_diagonal_modes, try_luma_modes, try_straight_modes,
     };

@@ -1006,7 +1006,7 @@ describe("css modules", () => {
 
   test.concurrent.each([
     ["12px", "Invalid declaration"],
-    ["a, b", "Unexpected token: ,"],
+    ["a 12px", "Unexpected token: 12px"],
   ])("composes: %s in a module is an error, not an unparsed value", async (value, error) => {
     expect(await bundle({ "styles.module.css": `.a { top: 0 } .b { top: 1px } .c { composes: ${value} }` })).toEqual({
       logs: [error],

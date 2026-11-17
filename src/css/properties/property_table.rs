@@ -102,6 +102,7 @@ macro_rules! define_properties {
             }
 
             fn prefix_slot_mut(&mut self) -> Option<&mut VendorPrefix> {
+                // `$Prefix` is always `VendorPrefix`: it is captured to repeat over the prefixed rows.
                 match self {
                     $($(| PropertyId::$Variant(if_row_has!([$Prefix] { p } else {})))?)+ => Some(p),
                     _ => None,
@@ -599,11 +600,6 @@ impl<'bump> PropertyId<'bump> {
         if let Some(p) = self.prefix_slot_mut() {
             *p = targets.prefixes(*p, feature);
         }
-    }
-
-    #[inline]
-    pub(crate) fn deep_clone(&self, _arena: &bun_alloc::Arena) -> PropertyId<'bump> {
-        *self
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

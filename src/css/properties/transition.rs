@@ -259,7 +259,7 @@ mod transition_handler_body {
                         SmallList::<EasingFunction, 1>::init_capacity(val.len());
 
                     for item in val.slice() {
-                        properties.append(item.property.deep_clone(arena));
+                        properties.append(item.property);
                     }
                     handler_maybe_flush!(self, dest, context, properties, &properties, vp);
 
@@ -526,7 +526,7 @@ mod transition_handler_body {
             cycle_bump(&mut delays_idx, delays.len());
             cycle_bump(&mut timing_idx, timing_functions.len());
             let transition = Transition {
-                property: property_id.deep_clone(arena),
+                property: *property_id,
                 duration,
                 delay,
                 timing_function,

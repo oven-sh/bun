@@ -1361,7 +1361,7 @@ impl<'bump> UnparsedProperty<'bump> {
 
     pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
         UnparsedProperty {
-            property_id: self.property_id.deep_clone(bump),
+            property_id: self.property_id,
             value: self.value.deep_clone(bump),
         }
     }

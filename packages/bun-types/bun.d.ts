@@ -9081,6 +9081,11 @@ declare module "bun" {
      * };
      * ```
      *
+     * The module runs in the working directory of the process that registered it, with symlinks
+     * resolved. It does not run if that directory is later deleted, renamed or out of the
+     * scheduler's reach. The `preload` of a `bunfig.toml` in the directory runs too: register
+     * from a directory that only you can write to, or call `process.chdir()` first.
+     *
      * ### Cron expression syntax
      *
      * Five fields: `minute hour day-of-month month day-of-week`.
@@ -9115,7 +9120,8 @@ declare module "bun" {
      * {@link Bun.cron.remove} to unregister. The title is namespaced per user, so
      * different users can register jobs with the same title independently.
      *
-     * @param path Path to the module to run. Resolved relative to the calling file.
+     * @param path Path to the module to run, resolved relative to the calling file. It can also be a
+     *   `file://` URL, as a string (what `import.meta.resolve()` returns) or a `URL`.
      * @param schedule Cron expression or nickname (e.g. `"30 2 * * MON"`, `"@daily"`).
      * @param title Unique identifier for this job. Alphanumeric, hyphens, and underscores only —
      *   used directly in crontab markers, launchd service labels, and schtasks task names.
@@ -9137,7 +9143,7 @@ declare module "bun" {
      * @see {@link Bun.cron.remove} to unregister.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
+    (path: string | URL, schedule: CronWithAutocomplete, title: string): Promise<void>;
     /**
      * Remove a previously registered cron job by its title.
      *

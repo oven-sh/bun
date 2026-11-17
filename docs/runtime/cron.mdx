@@ -233,11 +233,16 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 
 ### Parameters
 
-| Parameter  | Type     | Description                                                |
-| ---------- | -------- | ---------------------------------------------------------- |
-| `path`     | `string` | Path to the script (resolved relative to caller)           |
-| `schedule` | `string` | Cron expression or nickname                                |
-| `title`    | `string` | Unique job identifier (alphanumeric, hyphens, underscores) |
+| Parameter  | Type            | Description                                                          |
+| ---------- | --------------- | -------------------------------------------------------------------- |
+| `path`     | `string \| URL` | Path to the script (resolved relative to caller), or a `file://` URL |
+| `schedule` | `string`        | Cron expression or nickname                                          |
+| `title`    | `string`        | Unique job identifier (alphanumeric, hyphens, underscores)           |
+
+```ts
+await Bun.cron(import.meta.resolve("./worker.ts"), "@daily", "my-job");
+await Bun.cron(new URL("./worker.ts", import.meta.url), "@daily", "my-job");
+```
 
 Re-registering with the same `title` overwrites the existing job in-place. Bun replaces the old schedule instead of duplicating it.
 
@@ -245,6 +250,17 @@ Re-registering with the same `title` overwrites the existing job in-place. Bun r
 await Bun.cron("./worker.ts", "0 * * * *", "my-job"); // every hour
 await Bun.cron("./worker.ts", "*/15 * * * *", "my-job"); // replaces: every 15 min
 ```
+
+### Working directory
+
+The job runs in the working directory of the process that registered it. It loads the `.env` and `bunfig.toml` of that directory, and relative paths start there. To choose another directory, call `process.chdir()` before `Bun.cron()`.
+
+Bun resolves symlinks in the directory when it registers the job. The script does not run if the directory is deleted or renamed later, or if the scheduler cannot enter it (a [mapped drive](#user-context) on Windows, a privacy-protected folder on macOS). Register the job again from another directory.
+
+<Warning>
+  A `preload` in `bunfig.toml` runs code. Whoever can write to the directory, or create it again after it is deleted,
+  can run code as you. Do not register a job from a shared or temporary directory such as `/tmp`.
+</Warning>
 
 ### The `scheduled()` handler
 
@@ -273,7 +289,7 @@ Bun uses [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) to regi
 The crontab entry looks like:
 
 ```
-<schedule> '<bun-path>' run --cron-title=<title> --cron-period='<schedule>' '<script-path>'
+<schedule> cd '<working-dir>' && '<bun-path>' run --cron-title=<title> --cron-period='<schedule>' '<script-path>'
 ```
 
 When the cron daemon fires the job, Bun imports your module and calls the `scheduled()` handler.

@@ -8,6 +8,8 @@ use bun_core::{CStringList, EncodedSlice, ZBox, strings};
 use bun_cron::{Registration, Title};
 use bun_io::{BufferedReader, IoEvent, JsKeepAlive, Owner, PollTag, ReadResult};
 use bun_jsc::bindgen::JsScope;
+use bun_jsc::bun_string_jsc::to_jsdomurl;
+use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
@@ -23,12 +25,24 @@ use scopeguard::ScopeGuard;
 #[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, ProcessHandle, SpawnOptions, Status, Stdio};
+use crate::generated_bindgen::cron::CronPath;
 use crate::jsc_hooks::runtime_state;
+use crate::node::PathLike;
+use crate::node::types::PathLikeExt as _;
 use backend::Step;
+
+/// XML reads `\r` as `\n`, Task Scheduler expands `%NAME%`, and a crontab line cannot quote any of the four.
+const REFUSED_IN_CWD: &[u8] = if cfg!(target_os = "macos") {
+    b"\n\r"
+} else if cfg!(windows) {
+    b"%"
+} else {
+    b"'%\n\r"
+};
 
 pub(crate) fn register(
     cx: &mut JsScope<'_>,
-    path: &[u8],
+    path: CronPath<'_>,
     schedule: &[u8],
     title: &[u8],
 ) -> JsResult<JSValue> {
@@ -36,7 +50,15 @@ pub(crate) fn register(
     let invalid = |message: &str| global.throw_invalid_arguments(format_args!("{message}"));
     let title = parse_title(global, title)?;
     let schedule = super::cron::parse_expression(global, schedule)?;
-    let script = resolve_script(global, path).ok_or_else(|| invalid("Failed to resolve path"))?;
+    let script = match path {
+        CronPath::Text(text) if text.starts_with(b"file://") => {
+            let url = to_jsdomurl(&bun_core::String::clone_utf8(text), global)?;
+            resolve_script(global, path_of_url(global, url)?.slice())
+        }
+        CronPath::Text(text) => resolve_script(global, text),
+        CronPath::Url(url) => resolve_script(global, path_of_url(global, url.to_js())?.slice()),
+    };
+    let script = script.ok_or_else(|| invalid("Failed to resolve path"))?;
 
     // The path goes into a crontab line, in single quotes.
     if let Some(byte) = strings::index_of_any(&script, b"'%\n\r").and_then(|i| script.get(i)) {
@@ -46,6 +68,19 @@ pub(crate) fn register(
             _ => "Path must not contain line breaks",
         }));
     }
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let Ok(cwd) = bun_core::getcwd(&mut cwd_buf).map(|cwd| cwd.as_bytes()) else {
+        return Err(global.throw(format_args!("Failed to get the working directory")));
+    };
+    if let Some(byte) = strings::index_of_any(cwd, REFUSED_IN_CWD).and_then(|i| cwd.get(i)) {
+        return Err(invalid(match byte {
+            b'\'' => "Working directory must not contain single quotes",
+            b'%' => "Working directory must not contain percent signs",
+            _ => "Working directory must not contain line breaks",
+        }));
+    }
+    let cwd =
+        core::str::from_utf8(cwd).map_err(|_| invalid("Working directory must be valid UTF-8"))?;
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(global.throw(format_args!("Failed to get bun executable path")));
     };
@@ -62,6 +97,7 @@ pub(crate) fn register(
         schedule,
         exe,
         script: &script,
+        cwd,
     });
     Ok(OsJob::start(global, first))
 }
@@ -78,6 +114,12 @@ fn parse_title(global: &JSGlobalObject, title: &[u8]) -> JsResult<Title> {
             "Cron title must contain only alphanumeric characters, hyphens, and underscores"
         ))
     })
+}
+
+/// With the checks and the errors of `node:fs`.
+fn path_of_url(global: &JSGlobalObject, url: JSValue) -> JsResult<PathLike<'static>> {
+    let mut arguments = ArgumentsSlice::init(global.bun_vm(), core::slice::from_ref(&url));
+    PathLike::from_js_required(global, &mut arguments, "path")
 }
 
 /// Relative to the file that called.

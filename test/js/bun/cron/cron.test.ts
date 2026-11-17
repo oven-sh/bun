@@ -745,6 +745,26 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     });
   });
 
+  // Across file systems this copies the executable, which is over 1 GB in a debug build.
+  test.serial("a line break in the path of the executable throws", { timeout: 60_000 }, async () => {
+    const { stdout, ...rest } = await run(`
+      const fs = require("node:fs");
+      try {
+        fs.linkSync(process.execPath, "a\\nb");
+      } catch {
+        fs.copyFileSync(process.execPath, "a\\nb");
+      }
+      const call = 'try { await Bun.cron("./job.ts", "@daily", "t") } catch (e) { console.log(e.message) }';
+      Bun.spawnSync(["./a\\nb", "-e", call], { stdout: "inherit", stderr: "inherit" });
+      fs.renameSync("a\\nb", "a\\rb");
+      Bun.spawnSync(["./a\\rb", "-e", call], { stdout: "inherit", stderr: "inherit" });
+    `);
+    const message = (name: string) =>
+      `Bun executable path '${name}' contains characters (', % or a line break) that cannot be safely embedded in a crontab entry\n`;
+    expect(stdout.replace(/'\/.*\//g, "'")).toBe(message("a\nb") + message("a\rb"));
+    expect(rest).toEqual({ stderr: "", table: untouched, tempFiles: 0, exitCode: 0 });
+  });
+
   const hasPidfd = (() => {
     if (!isLinux) return false;
     // Not reaped before the event loop runs again.

@@ -50,9 +50,9 @@ pub(crate) fn register(
         return Err(global.throw(format_args!("Failed to get bun executable path")));
     };
     let exe = exe.as_bytes();
-    if strings::contains_any(exe, b"'%") {
+    if strings::contains_any(exe, b"'%\n\r") {
         return Err(global.throw_invalid_arguments(format_args!(
-            "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
+            "Bun executable path '{}' contains characters (', % or a line break) that cannot be safely embedded in a crontab entry",
             BStr::new(exe)
         )));
     }

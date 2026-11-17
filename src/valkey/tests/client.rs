@@ -196,163 +196,164 @@ fn database(database: u32) -> Config {
 mod lifecycle {
     use super::*;
 
-    const STATES: [&str; 10] = [
-        "idle",
-        "dialing",
-        "hello",
-        "select",
-        "ready",
-        "ending policy",
-        "ending final",
-        "ending failed",
-        "backoff",
-        "closed",
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum State {
+        Idle,
+        Dialing,
+        Hello,
+        Select,
+        Ready,
+        EndingPolicy,
+        EndingFinal,
+        EndingFailed,
+        Backoff,
+        Closed,
+    }
+    use State::*;
+
+    const STATES: [State; 10] = [
+        Idle,
+        Dialing,
+        Hello,
+        Select,
+        Ready,
+        EndingPolicy,
+        EndingFinal,
+        EndingFailed,
+        Backoff,
+        Closed,
     ];
 
-    /// With a command queued wherever one can be.
-    fn reach(state: &str) -> Driver {
+    /// With commands 1 and 2 waiting wherever they can.
+    fn reach(state: State) -> Driver {
         let mut it = Driver::new(database(1));
-        if state != "idle" {
+        if state != Idle {
             it.client.dial();
             it.send("WATCH a");
             it.send("WATCH b");
         }
         match state {
-            "idle" | "dialing" => {}
-            "hello" | "select" | "ready" => {
+            Idle | Dialing => {}
+            Hello => it.start(),
+            Select => {
                 it.start();
-                if state != "hello" {
-                    it.read(HELLO);
-                }
-                if state == "ready" {
-                    it.read("+OK\r\n");
-                }
+                it.read(HELLO);
             }
-            "ending policy" => it.client.dial_failed(),
-            "ending final" => drop(it.client.close()),
-            "ending failed" => it.fail(),
-            "backoff" => it.lost(),
-            "closed" => {
+            Ready => {
+                it.start();
+                it.read(HELLO);
+                it.read("+OK\r\n");
+            }
+            EndingPolicy => it.client.dial_failed(),
+            EndingFinal => drop(it.client.close()),
+            EndingFailed => it.fail(),
+            Backoff => it.lost(),
+            Closed => {
                 it.fail();
                 it.lost();
             }
-            _ => unreachable!(),
         }
         it.log.clear();
         it
     }
 
-    /// Tells the states apart through what they do.
-    fn name(mut it: Driver) -> &'static str {
-        let client = &it.client;
-        if client.never_dialed() {
-            "idle"
-        } else if client.is_connected() {
-            it.log.clear();
+    /// The core keeps its state private, so this tells them apart through what they do.
+    fn state_of(mut it: Driver) -> State {
+        it.log.clear();
+        if it.client.never_dialed() {
+            Idle
+        } else if it.client.awaits_retry() {
+            Backoff
+        } else if it.client.is_connected() {
             it.read(":1\r\n");
-            match it.log[0].as_bytes()[0] {
-                b'b' => "select",
-                _ => "ready",
+            if it.log[0].starts_with("broken") {
+                Select
+            } else {
+                Ready
             }
-        } else if client.awaits_retry() {
-            "backoff"
-        } else if !client.is_active() {
-            "closed"
-        } else if client.is_ending() && client.rejection().is_some() {
-            "ending failed"
-        } else if client.is_ending() {
+        } else if !it.client.is_active() {
+            Closed
+        } else if it.client.is_ending() && it.client.rejection().is_some() {
+            EndingFailed
+        } else if it.client.is_ending() {
             match it.client.lost(false) {
-                Lost::ForGood { .. } => "ending final",
-                Lost::Retry { .. } => "ending policy",
+                Lost::ForGood { .. } => EndingFinal,
+                Lost::Retry { .. } => EndingPolicy,
             }
         } else {
-            it.log.clear();
             it.start();
-            if it.log.is_empty() {
-                "hello"
-            } else {
-                "dialing"
-            }
+            if it.log.is_empty() { Hello } else { Dialing }
         }
     }
 
-    fn row(event: impl Fn(&mut Driver)) -> [String; 10] {
-        STATES.map(|state| {
-            let mut it = reach(state);
+    /// Fires `event` in every state. A row is `(before, what happened, after)`; a state with no row ignores it.
+    #[track_caller]
+    fn check(event: impl Fn(&mut Driver), rows: &[(State, &str, State)]) {
+        let actual = STATES.map(|before| {
+            let mut it = reach(before);
             event(&mut it);
-            let did = it.take().join(", ");
-            let next = name(it);
-            format!("{did} -> {}", if next == state { "=" } else { next })
-        })
+            (before, it.take().join(", "), state_of(it))
+        });
+        let actual: Vec<_> = (actual.iter())
+            .map(|(before, did, after)| (*before, did.as_str(), *after))
+            .filter(|(before, did, after)| before != after || !did.is_empty())
+            .collect();
+        assert_eq!(actual, rows);
     }
 
     #[test]
     fn states_are_told_apart() {
-        assert_eq!(STATES.map(|state| name(reach(state))), STATES);
+        assert_eq!(STATES.map(|state| state_of(reach(state))), STATES);
     }
 
     #[test]
     fn connect() {
-        assert_eq!(
-            row(|it| it.client.connect()),
-            [
-                " -> =",
-                " -> =",
-                " -> =",
-                " -> =",
-                " -> =",
-                " -> =",
-                " -> ending policy",
-                " -> ending final",
-                " -> =",
-                " -> backoff",
-            ]
+        check(
+            |it| it.client.connect(),
+            &[
+                (EndingFinal, "", EndingPolicy),
+                (EndingFailed, "", EndingFinal),
+                (Closed, "", Backoff),
+            ],
         );
     }
 
     #[test]
     fn close() {
-        let close = |it: &mut Driver| {
-            let close = match it.client.close() {
-                Close::Nothing => "nothing",
-                Close::Socket => "socket",
-                Close::Retry => "retry",
-            };
-            it.log.push(close.into());
+        let close = |it: &mut Driver| match it.client.close() {
+            Close::Nothing => {}
+            Close::Socket => it.log.push("close the socket".into()),
+            Close::Retry => it.log.push("disarm the retry".into()),
         };
-        assert_eq!(
-            row(close),
-            [
-                "nothing -> =",
-                "socket -> ending final",
-                "socket -> ending final",
-                "socket -> ending final",
-                "socket -> ending final",
-                "nothing -> ending final",
-                "nothing -> =",
-                "nothing -> =",
-                "retry -> ending final",
-                "nothing -> =",
-            ]
+        check(
+            close,
+            &[
+                (Dialing, "close the socket", EndingFinal),
+                (Hello, "close the socket", EndingFinal),
+                (Select, "close the socket", EndingFinal),
+                (Ready, "close the socket", EndingFinal),
+                (EndingPolicy, "", EndingFinal),
+                (Backoff, "disarm the retry", EndingFinal),
+            ],
         );
     }
 
     #[test]
     fn fail() {
-        assert_eq!(
-            row(Driver::fail),
-            [
-                "fail None -> =",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail None -> =",
-                "fail None -> =",
-                "fail None -> =",
-            ]
+        check(
+            Driver::fail,
+            &[
+                (Idle, "fail None", Idle),
+                (Dialing, "fail Some([1, 2])", EndingFailed),
+                (Hello, "fail Some([1, 2])", EndingFailed),
+                (Select, "fail Some([1, 2])", EndingFailed),
+                (Ready, "fail Some([1, 2])", EndingFailed),
+                (EndingPolicy, "fail Some([1, 2])", EndingFailed),
+                (EndingFinal, "fail Some([1, 2])", EndingFailed),
+                (EndingFailed, "fail None", EndingFailed),
+                (Backoff, "fail None", Backoff),
+                (Closed, "fail None", Closed),
+            ],
         );
     }
 
@@ -363,51 +364,57 @@ mod lifecycle {
                 it.lost();
             }
         };
-        assert_eq!(
-            row(lost),
-            [
-                " -> =",
-                "retry in 50 [] -> backoff",
-                "retry in 50 [] -> backoff",
-                "retry in 50 [] -> backoff",
-                "retry in 50 [1] -> backoff",
-                "retry in 50 [] -> backoff",
-                "closed [1, 2] Connection closed -> closed",
-                "closed [] Connection closed -> closed",
-                " -> =",
-                " -> =",
-            ]
+        check(
+            lost,
+            &[
+                (Dialing, "retry in 50 []", Backoff),
+                (Hello, "retry in 50 []", Backoff),
+                (Select, "retry in 50 []", Backoff),
+                (Ready, "retry in 50 [1]", Backoff),
+                (EndingPolicy, "retry in 50 []", Backoff),
+                (EndingFinal, "closed [1, 2] Connection closed", Closed),
+                (EndingFailed, "closed [] Connection closed", Closed),
+            ],
         );
     }
 
     #[test]
     fn only_a_dial_says_hello() {
-        let mut expected = [" -> ="; 10];
-        expected[1] = "write HELLO 3 SELECT 1 -> hello";
-        assert_eq!(row(Driver::start), expected);
+        check(Driver::start, &[(Dialing, "write HELLO 3 SELECT 1", Hello)]);
     }
 
     #[test]
-    fn only_a_ready_client_writes_commands() {
+    fn a_command_waits_behind_the_queue_or_is_refused() {
         let send = |it: &mut Driver| {
             it.send("GET k");
             it.batch_is_due = true;
             it.advance();
             it.checkpoint();
         };
-        let mut expected = [" -> ="; 10];
-        expected[7] = "refuse #3: Connection has failed -> =";
-        expected[9] = "refuse #3: Connection has failed -> =";
-        assert_eq!(row(send), expected);
+        check(
+            send,
+            &[
+                (
+                    EndingFailed,
+                    "refuse #3: Connection has failed",
+                    EndingFailed,
+                ),
+                (Closed, "refuse #3: Connection has failed", Closed),
+            ],
+        );
     }
 
     #[test]
     fn a_broken_session_is_a_lost_connection_after_hello() {
-        let broke = STATES.map(|state| reach(state).client.session_broke());
-        let mut expected = [const { None }; 10];
-        expected[3] = Some(vec![]);
-        expected[4] = Some(vec![1]);
-        assert_eq!(broke, expected);
+        let broke = |it: &mut Driver| {
+            if let Some(in_flight) = it.client.session_broke() {
+                it.log.push(format!("reject {in_flight:?}"));
+            }
+        };
+        check(
+            broke,
+            &[(Select, "reject []", Select), (Ready, "reject [1]", Ready)],
+        );
 
         let mut it = Driver::connected(Config {
             enable_auto_reconnect: false,
@@ -419,8 +426,19 @@ mod lifecycle {
     #[test]
     fn timeouts() {
         assert_eq!(
-            STATES.map(|state| reach(state).client.timeout_ms()),
-            [10000, 10000, 10000, 7, 7, 10000, 10000, 0, 10000, 0]
+            STATES.map(|state| (state, reach(state).client.timeout_ms())),
+            [
+                (Idle, 10000),
+                (Dialing, 10000),
+                (Hello, 10000),
+                (Select, 7),
+                (Ready, 7),
+                (EndingPolicy, 10000),
+                (EndingFinal, 10000),
+                (EndingFailed, 0),
+                (Backoff, 10000),
+                (Closed, 0),
+            ]
         );
     }
 

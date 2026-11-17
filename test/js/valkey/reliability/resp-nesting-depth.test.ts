@@ -457,15 +457,20 @@ describe("Valkey: RESP push frame routing", () => {
           "-e",
           `
           const log = [];
+          let pending = "";
           process.on("uncaughtException", err => log.push("uncaught " + err.name));
           const server = Bun.listen({
             hostname: "127.0.0.1",
             port: 0,
             socket: {
               data(socket, chunk) {
-                if (chunk.includes("HELLO")) socket.write("+OK\\r\\n");
-                else if (chunk.includes("PING")) socket.end(${JSON.stringify(read)});
-                else socket.write(${JSON.stringify(String(ack("subscribe", "a", 1)))});
+                pending += chunk;
+                for (let match; (match = /\\n(HELLO|SUBSCRIBE|PING)\\r\\n/.exec(pending)); ) {
+                  pending = pending.slice(match.index + match[0].length);
+                  if (match[1] === "HELLO") socket.write("+OK\\r\\n");
+                  else if (match[1] === "PING") socket.end(${JSON.stringify(read)});
+                  else socket.write(${JSON.stringify(String(ack("subscribe", "a", 1)))});
+                }
               },
             },
           });

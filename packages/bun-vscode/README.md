@@ -50,7 +50,7 @@ Errors are cleared whenever you start typing, or whenever the extension detects 
 
 The extension can format your code and apply lint fixes using Bun's built-in language server. When you open a supported file (JavaScript, TypeScript, JSON, CSS, HTML, Markdown, YAML, and more) in a workspace folder that contains a `bunfig.toml`, `bun.lock`, or `bun.lockb`, the extension lazily starts `bun fmt --no-script --lsp` and connects to it over stdio. Nothing is started until such a file is opened.
 
-Once the server is running, VS Code's own formatting and code action settings work through it:
+Once the server is running, VS Code's own formatting and code action settings work through it. Formatting is on. Linting is off until you set `bun.lint.enable`:
 
 ```jsonc
 {
@@ -58,7 +58,8 @@ Once the server is running, VS Code's own formatting and code action settings wo
   "editor.formatOnSave": true,
   "editor.defaultFormatter": "oven.bun-vscode",
 
-  // Apply lint fixes on save.
+  // Report the problems that `bun lint` finds, and apply its fixes on save.
+  "bun.lint.enable": true,
   "editor.codeActionsOnSave": {
     "source.fixAll.bun": "explicit",
   },
@@ -76,11 +77,11 @@ The language server reads these settings:
   // If the extension should start Bun's language server (`bun fmt --lsp`) for formatting and lint fixes.
   "bun.lsp.enable": true,
 
-  // If the language server should report lint diagnostics and offer lint fixes. Needs a build of Bun that has `bun lint`.
-  "bun.lint.enable": true,
+  // If the language server should report lint diagnostics and offer lint fixes (`bun lint`).
+  "bun.lint.enable": false,
 
-  // When lint diagnostics are refreshed: "onType" or "onSave". Needs a build of Bun that has `bun lint`.
-  "bun.lint.run": "onType",
+  // When lint diagnostics are refreshed, if `bun.lint.enable` is on: "onSave" or "onType".
+  "bun.lint.run": "onSave",
 
   // If the language server should format documents.
   "bun.format.enable": true,
@@ -179,11 +180,11 @@ You can use the following configurations to customize the behavior of the Bun ex
   // If the extension should start Bun's language server (`bun fmt --lsp`) for formatting and lint fixes.
   "bun.lsp.enable": true,
 
-  // If the language server should report lint diagnostics and offer lint fixes. Needs a build of Bun that has `bun lint`.
-  "bun.lint.enable": true,
+  // If the language server should report lint diagnostics and offer lint fixes (`bun lint`).
+  "bun.lint.enable": false,
 
-  // When lint diagnostics are refreshed: "onType" or "onSave". Needs a build of Bun that has `bun lint`.
-  "bun.lint.run": "onType",
+  // When lint diagnostics are refreshed, if `bun.lint.enable` is on: "onSave" or "onType".
+  "bun.lint.run": "onSave",
 
   // If the language server should format documents.
   "bun.format.enable": true,

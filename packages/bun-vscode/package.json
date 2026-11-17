@@ -103,9 +103,9 @@
         },
         "bun.lint.enable": {
           "type": "boolean",
-          "description": "If the Bun language server should report lint diagnostics and fixes. Needs a build of Bun that has `bun lint`.",
+          "description": "If the Bun language server should report lint diagnostics and offer lint fixes (`bun lint`).",
           "scope": "window",
-          "default": true
+          "default": false
         },
         "bun.lint.run": {
           "type": "string",
@@ -117,9 +117,9 @@
             "Refresh lint diagnostics as you type.",
             "Refresh lint diagnostics when the file is saved."
           ],
-          "description": "When the Bun language server refreshes lint diagnostics. Needs a build of Bun that has `bun lint`.",
+          "description": "When the Bun language server refreshes lint diagnostics, if `bun.lint.enable` is on.",
           "scope": "window",
-          "default": "onType"
+          "default": "onSave"
         },
         "bun.format.enable": {
           "type": "boolean",

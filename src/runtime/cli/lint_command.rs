@@ -457,11 +457,11 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 }
 
 /// Prints the output of `bun lint`, `bun fmt` or `bun check` and returns the exit code. `stdout` is the requested
-/// output: the formatted text, the report, a list. It goes to `to_stdout`. `Output` drops write errors, and with exit
-/// code 0 a script like `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So
-/// that's an error here. A reader that has gone away (`| head`) isn't.
-pub(crate) fn print(to_stdout: bun_core::Fd, stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
-    let write_result = bun_sys::write_all_to_stdio(to_stdout, stdout);
+/// output: the formatted text, the report, a list. `Output` drops write errors, and with exit code 0 a script like
+/// `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So that's an error here.
+/// A reader that has gone away (`| head`) isn't.
+pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
+    let write_result = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
     let _ = Output::error_writer().write_all(stderr);
     let reader_is_gone = |error: &bun_sys::Error| {
         use bun_sys::E;
@@ -489,17 +489,6 @@ pub(crate) fn run_and_exit(
     cwd: Option<&[u8]>,
     run: impl FnOnce(&Environment) -> Outcome,
 ) -> ! {
-    run_and_exit_with(command, cwd, true, run)
-}
-
-/// `run_and_exit`, but `isolates_fd_1` says whether fd 1 becomes stderr for everything but the output. The rules'
-/// test runner writes its lines to fd 1 itself, so it keeps fd 1.
-fn run_and_exit_with(
-    command: &[u8],
-    cwd: Option<&[u8]>,
-    isolates_fd_1: bool,
-    run: impl FnOnce(&Environment) -> Outcome,
-) -> ! {
     disallow_code_generation_before(command);
     if let Some(cwd) = cwd_before(command) {
         change_directory(cwd);
@@ -518,21 +507,6 @@ fn run_and_exit_with(
         run_git(command)
     };
     let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
-    // Only the output goes to fd 1 as it was: it becomes stderr for the rest, like a plugin's `console.log`, before
-    // any VM starts. Windows keeps fd 1, so there a plugin's output still lands in the output.
-    #[cfg(unix)]
-    let to_stdout = if isolates_fd_1 {
-        (bun_sys::dup(bun_core::Fd::stdout()).ok())
-            .filter(|_| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).is_ok())
-            .unwrap_or_else(bun_core::Fd::stdout)
-    } else {
-        bun_core::Fd::stdout()
-    };
-    #[cfg(not(unix))]
-    let to_stdout = {
-        let _ = isolates_fd_1;
-        bun_core::Fd::stdout()
-    };
     let js_engine = super::lint_js::Engines::default();
     // `path.win32.resolve` needs it when a path is on a different drive than its base.
     bun_paths::fs::FileSystem::init(&working_directory());
@@ -546,8 +520,7 @@ fn run_and_exit_with(
             is_tty: Output::is_stderr_tty(),
             colors: Output::enable_ansi_colors_stderr(),
         },
-        to_stdout,
-        columns: columns_of,
+        columns: super::run_command::RunCommand::columns_of_stdout,
         is_ai_agent: Output::is_ai_agent(),
         is_github_action: Output::is_github_action(),
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
@@ -560,26 +533,9 @@ fn run_and_exit_with(
     };
     let outcome = run(&environment);
     // The report is the output. Everything else is printed separately.
-    let exit_code = print(
-        environment.to_stdout,
-        &outcome.stdout,
-        &outcome.stderr,
-        outcome.exit_code,
-    );
+    let exit_code = print(&outcome.stdout, &outcome.stderr, outcome.exit_code);
     js_engine.end_all();
     Global::exit(u32::from(exit_code));
-}
-
-/// Width of the terminal at `fd` in columns: `COLUMNS` if it's set, else what the terminal says, else 80.
-fn columns_of(fd: bun_core::Fd) -> u16 {
-    if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS"))
-        && let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10)
-        && n > 0
-    {
-        return n;
-    }
-    (bun_core::output::File::from(fd).winsize())
-        .map_or(80, |size| if size.col > 0 { size.col } else { 80 })
 }
 
 impl Realms for super::lint_js::Engines {
@@ -601,6 +557,15 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
     };
     let from_client = bun_core::Fd::stdin();
     let from_client = File::borrow(&from_client);
+    // Only the messages go to the client. On Unix fd 1 becomes stderr for the rest, like a plugin's `console.log`,
+    // before any VM starts. Windows keeps fd 1, so no plugin runs there.
+    #[cfg(unix)]
+    let to_client = (bun_sys::dup(bun_core::Fd::stdout()).ok())
+        .filter(|_| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).is_ok())
+        .unwrap_or_else(bun_core::Fd::stdout);
+    #[cfg(not(unix))]
+    let to_client = bun_core::Fd::stdout();
+    let to_client = File::borrow(&to_client);
     run_and_exit(command, None, |environment| {
         // Bun's own `--config=` precedes `command`, and is relative to where the process started, not to a folder;
         // neither half scans the other tool's flags for it.
@@ -609,15 +574,12 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
             bun_lint_driver::resolve_path(&environment.cwd, &path)
         });
         let config_path = config_path.as_deref();
-        // Only the messages go to the client: `run_and_exit` has made fd 1 stderr for the rest.
-        let to_client = File::borrow(&environment.to_stdout);
         bun_lint_driver::lsp::serve(
             args,
             environment,
             &Process {
                 read: &|buffer| from_client.read(buffer).unwrap_or(0),
                 write: &|message| _ = to_client.write_all(message),
-                // On Windows fd 1 still carries what a plugin prints, so no plugin runs there.
                 engines: &|| {
                     (!cfg!(windows))
                         .then(|| Box::new(super::lint_js::Engines::for_editor()) as Box<dyn Realms>)
@@ -640,7 +602,7 @@ impl LintCommand {
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
-            run_and_exit_with(b"lint", None, false, |environment| Outcome {
+            run_and_exit(b"lint", None, |environment| Outcome {
                 exit_code: u8::from(!bun_lint_driver::for_tests::run_eslint_tests(
                     rest,
                     environment,

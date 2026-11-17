@@ -259,7 +259,7 @@ With an oxlint config, `--tsconfig` does what it does in oxlint. It sets the `ts
 
 `bun fmt --no-script --lsp` is a language server that lints and formats: your editor starts it once, shows the problems of each open file as you type, offers their fixes, and applies `source.fixAll` and formatting on save. It reads the `bunfig.toml` and the ESLint or oxlint config of each workspace folder, as `bun lint` does there. `--no-script` keeps a `fmt` script in `package.json` from running instead. `bun lint --no-script --lsp` starts the same server with the flags of `bun lint`.
 
-The Bun extension for VS Code starts it for you. In Neovim:
+The Bun extension for VS Code starts it for you, and lints once you set `bun.lint.enable`. In Neovim:
 
 ```lua init.lua icon="file-code"
 vim.api.nvim_create_autocmd("FileType", {
@@ -302,6 +302,8 @@ name = "typescript"
 language-servers = [{ name = "typescript-language-server", except-features = ["format"] }, "bun"]
 auto-format = true
 ```
+
+The rules of [JavaScript plugins](/lint/plugins) run for the files of a workspace folder, and not on Windows. Where they do not run, the server says so once in its log and lints with the other rules.
 
 ## Git hooks
 

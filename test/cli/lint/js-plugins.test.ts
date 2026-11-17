@@ -1,15 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import {
-  autoInstallTempDir,
-  bunEnv,
-  bunExe,
-  isASAN,
-  isDebug,
-  isLinux,
-  isWindows,
-  normalizeBunSnapshot,
-  tempDir,
-} from "harness";
+import { autoInstallTempDir, bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
@@ -1191,53 +1181,9 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         },
         ["-f", "unix"],
       );
-      // Outside Windows, fd 1 is stderr while plugins run: only the report goes to stdout.
-      if (isWindows) {
-        expect(stdout).toBe("to stdout lint --threads 2 -f unix");
-        expect(stderr).toBe("to stderr");
-      } else {
-        expect(stdout).toBe("");
-        expect(stderr).toBe("to stdout lint --threads 2 -f unix\nto stderr");
-      }
+      expect(stdout).toBe("to stdout lint --threads 2 -f unix");
+      expect(stderr).toBe("to stderr");
       expect(exitCode).toBe(7);
-    },
-    timeout,
-  );
-
-  test(
-    "a plugin's console.log() goes to stderr, so the JSON report stays JSON",
-    async () => {
-      const plugin = `
-      export default {
-        meta: { name: "logs" },
-        rules: {
-          always: {
-            create(context) {
-              return {
-                Program(node) {
-                  console.log("logged by the plugin");
-                  context.report({ node, message: "reported" });
-                },
-              };
-            },
-          },
-        },
-      };`;
-      const { raw, stderr, exitCode } = await lint(
-        {
-          ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "logs/always": "error" } }),
-          "plugin.mjs": plugin,
-          "a.js": "1;\n",
-        },
-        ["-f", "json"],
-      );
-      if (isWindows) {
-        expect(raw).toStartWith("logged by the plugin\n");
-      } else {
-        expect(stderr).toBe("logged by the plugin");
-        expect(JSON.parse(raw).diagnostics.map((it: { message: string }) => it.message)).toEqual(["reported"]);
-      }
-      expect(exitCode).toBe(1);
     },
     timeout,
   );
@@ -1263,7 +1209,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
           },
         },
       };`;
-      const { stdout, stderr, exitCode } = await lint(
+      const { stdout, exitCode } = await lint(
         {
           ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "counts/files": "error" } }),
           "plugin.mjs": plugin,
@@ -1279,12 +1225,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         "",
         "2 problems",
       ]);
-      if (isWindows) {
-        expect(lines.slice(4)).toEqual(["exit after 2 files"]);
-      } else {
-        expect(lines.slice(4)).toEqual([]);
-        expect(stderr).toBe("exit after 2 files");
-      }
+      expect(lines.slice(4)).toEqual(["exit after 2 files"]);
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -1589,11 +1530,10 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         cwd: String(dir),
         stdin: "ignore",
         stdout: "pipe",
-        stderr: "pipe",
+        stderr: "ignore",
       });
-      // The debug log is written to fd 1, which is standard error for everything but the report on Unix.
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const steps = [...(stdout + stderr).matchAll(/a VM (begins|is made)/g)].map(it => it[1]);
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const steps = [...stdout.matchAll(/a VM (begins|is made)/g)].map(it => it[1]);
       // The number of engines depends on the number of cores.
       expect(steps.filter(it => it === "begins").length).toBe(steps.filter(it => it === "is made").length);
       expect(steps.slice(0, 2)).toEqual(["begins", "is made"]);

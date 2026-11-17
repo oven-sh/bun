@@ -50,7 +50,6 @@ impl Section {
         other: Option<&[u8]>,
         above: Option<&[u8]>,
         cwd: &[u8],
-        stdout: bun_core::Fd,
     ) -> Result<Vec<u8>, Vec<u8>> {
         if let Some(other) = other {
             let key = match paths::basename(other).starts_with(b"package.") {
@@ -69,7 +68,7 @@ impl Section {
         let before = match fs::read(&path) {
             Ok(before) => before,
             Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
-                fs::write_new(cwd, &path, &self.text(b"\n"), stdout)
+                fs::write_new(cwd, &path, &self.text(b"\n"))
                     .map_err(|why| cannot("write", &why))?;
                 return Ok(
                     format!("Created bunfig.toml with a [{}] section", self.name).into_bytes(),
@@ -125,7 +124,7 @@ impl Section {
         environment: &Environment,
     ) -> Outcome {
         let mut out = Outcome::default();
-        match self.try_add(other, above, &environment.cwd, environment.to_stdout) {
+        match self.try_add(other, above, &environment.cwd) {
             Ok(done) => out.stdout = [&done[..], b"\n"].concat(),
             Err(why) => {
                 write_error(&mut out.stderr, environment.stderr.colors, &why);

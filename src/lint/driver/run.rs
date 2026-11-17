@@ -81,11 +81,8 @@ pub struct Environment<'e> {
     pub cwd: Vec<u8>,
     pub stdout: Stream,
     pub stderr: Stream,
-    /// Where the output goes: fd 1 as it was when the process started. On Unix fd 1 itself is stderr by then, so what
-    /// a plugin prints can't get into the output.
-    pub to_stdout: bun_core::Fd,
-    /// Width of the terminal at `to_stdout`, in columns.
-    pub columns: fn(bun_core::Fd) -> u16,
+    /// Width of stdout's terminal, in columns.
+    pub columns: fn() -> u16,
     /// `Output::is_ai_agent()`
     pub is_ai_agent: bool,
     /// `Output::is_github_action()`
@@ -1574,7 +1571,7 @@ impl Run<'_> {
             color,
             links: color && to_terminal,
             width: match to_terminal {
-                true => (bun_core::output::File::from(environment.to_stdout).winsize())
+                true => (bun_core::output::File::from(bun_core::Fd::stdout()).winsize())
                     .map_or(0, |size| usize::from(size.col)),
                 false => 0,
             },
@@ -1628,8 +1625,7 @@ impl Run<'_> {
                     .concat(),
                 );
             }
-            if let Err(why) = fs::write_new(&environment.cwd, &path, &output, environment.to_stdout)
-            {
+            if let Err(why) = fs::write_new(&environment.cwd, &path, &output) {
                 return self.fail(
                     &[&b"There was a problem writing the output file:\n"[..], &why].concat(),
                 );
@@ -1786,12 +1782,12 @@ impl Run<'_> {
         let mut suppressed = Suppressions::load(&path)?;
         if writes {
             suppressed.suppress(results, cwd, options.suppress_rule.as_deref(), is_oxlint);
-            suppressed.save(cwd, &path, self.environment.to_stdout)?;
+            suppressed.save(cwd, &path)?;
         }
         let unused = suppressed.apply(results, cwd, is_oxlint);
         if options.prune_suppressions {
             suppressed.prune(&unused, cwd);
-            suppressed.save(cwd, &path, self.environment.to_stdout)?;
+            suppressed.save(cwd, &path)?;
             return Ok(Suppressed {
                 updated,
                 ..Suppressed::default()

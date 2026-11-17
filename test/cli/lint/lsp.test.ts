@@ -568,8 +568,14 @@ describe.concurrent("bun lint --lsp", () => {
           textDocument: { uri: uriOf(path), version: enable ? 3 : 2 },
           contentChanges: [{ text: enable ? "hello;\n" : "hello; hello;\n" }],
         });
-        const published = await client.diagnostics(path);
-        expect(published.params.version).toBe(enable ? 3 : 2);
+        // The version before may be linted again before the change is read: the publish for this one is awaited.
+        const version = enable ? 3 : 2;
+        const published = await client.notification(
+          it =>
+            it.method === "textDocument/publishDiagnostics" &&
+            it.params.uri === uriOf(path) &&
+            it.params.version === version,
+        );
         expect(published.params.diagnostics).toEqual(enable ? hello : [...hello, ...hello]);
       }
       expect((await client.request("shutdown")).result).toBeNull();

@@ -682,8 +682,8 @@ describe("registerLanguageServer", () => {
   });
 
   test("constructs the real LanguageClient over stdio without a --stdio flag by default", async () => {
-    setConfiguration("bun.lint.enable", false);
-    setConfiguration("bun.lint.run", "onSave");
+    setConfiguration("bun.lint.enable", true);
+    setConfiguration("bun.lint.run", "onType");
     setConfiguration("bun.format.enable", false);
     // Other bun.* keys must neither reach initializationOptions nor be synced.
     setConfiguration("bun.runtime", "bun");
@@ -706,7 +706,7 @@ describe("registerLanguageServer", () => {
     expect(client.serverOptions.options.cwd).toBe(WITH_MARKER);
     expect(client.clientOptions.documentSelector).toContainEqual({ scheme: "file", language: "typescript" });
     expect(client.clientOptions.initializationOptions).toEqual({
-      lint: { enable: false, run: "onSave" },
+      lint: { enable: true, run: "onType" },
       format: { enable: false },
     });
     expect(client.clientOptions.synchronize.configurationSection).toEqual(["bun.lint", "bun.format"]);
@@ -735,7 +735,7 @@ describe("registerLanguageServer", () => {
     expect(getOutputLines("Bun")).toHaveLength(1);
   });
 
-  test("sends the default lint and format settings when none are configured", async () => {
+  test("formats and does not lint when no setting is configured", async () => {
     const lsp = await loadLsp();
     const { context, probeVersion } = makeHarness();
     lsp.registerLanguageServer(context, { probeVersion });
@@ -746,7 +746,7 @@ describe("registerLanguageServer", () => {
     const [client] = FakeLanguageClient.instances;
     expect(client.started).toBe(1);
     expect(client.clientOptions.initializationOptions).toEqual({
-      lint: { enable: true, run: "onType" },
+      lint: { enable: false, run: "onSave" },
       format: { enable: true },
     });
     expect(client.clientOptions.synchronize.configurationSection).toEqual(["bun.lint", "bun.format"]);

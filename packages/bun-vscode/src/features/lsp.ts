@@ -100,8 +100,8 @@ function defaultCreateClient(server: ServerSpec, hooks: ClientHooks): LanguageCl
   const bun = vscode.workspace.getConfiguration("bun");
   const initializationOptions = {
     lint: {
-      enable: bun.get<boolean>("lint.enable", true),
-      run: bun.get<string>("lint.run", "onType"),
+      enable: bun.get<boolean>("lint.enable", false),
+      run: bun.get<string>("lint.run", "onSave"),
     },
     format: {
       enable: bun.get<boolean>("format.enable", true),

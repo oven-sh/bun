@@ -153,7 +153,7 @@ struct Caches<'h> {
     typescript_configs: ShardedMap<Vec<u8>, Vec<Vec<u8>>>,
     /// The resolution of a non-relative specifier, keyed by the `tsconfig.json`, the directory, the kind of import and
     /// the specifier.
-    non_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
+    non_relative: ShardedMap<Vec<u8>, Option<Vec<u8>>>,
     /// Maps a path to its real path, with symbolic links followed.
     real_paths: ShardedMap<Vec<u8>, Vec<u8>>,
     /// The closest `package.json`, by directory.
@@ -730,23 +730,22 @@ impl<'h> Graph<'h> {
         }
     }
 
-    /// Returns the path, and true if it was found in a `node_modules`.
     fn resolve_path(
         &self,
         from: &[u8],
         specifier: &[u8],
         is_require: bool,
-    ) -> Option<(Cow<'h, [u8]>, bool)> {
+    ) -> Option<Cow<'h, [u8]>> {
         // No system allows a path that long, and the lookup walks up directory by directory.
         if specifier.len() > 4096 {
             return None;
         }
         if let (Flavor::EslintPluginImport, Some(by)) = (self.flavor(), self.resolver.get()) {
             let found = (by.resolve)(self, typescript_path(from), specifier, is_require)?;
-            return Some((Cow::Owned(join(&self.store.cwd, &found)), false));
+            return Some(Cow::Owned(join(&self.store.cwd, &found)));
         }
         self.resolve_any_path(self.config_of(from), from, specifier, is_require)
-            .filter(|it| !self.flavor().resolves_as_node() || is_read_by_oxlint(&it.0))
+            .filter(|it| !self.flavor().resolves_as_node() || is_read_by_oxlint(it))
     }
 
     fn resolve_any_path(
@@ -755,7 +754,7 @@ impl<'h> Graph<'h> {
         from: &[u8],
         specifier: &[u8],
         is_require: bool,
-    ) -> Option<(Cow<'h, [u8]>, bool)> {
+    ) -> Option<Cow<'h, [u8]>> {
         let is_relative = specifier.starts_with(b"./")
             || specifier.starts_with(b"../")
             || matches!(specifier, b"." | b"..");
@@ -763,7 +762,7 @@ impl<'h> Graph<'h> {
             if self.flavor().resolves_as_node()
                 && let Some(found) = self.resolve_relative_as_node(from, specifier)
             {
-                return found.map(|it| (Cow::Owned(it), false));
+                return found.map(Cow::Owned);
             }
             return self.resolve_with_project(config, from, specifier, is_require);
         }
@@ -782,11 +781,11 @@ impl<'h> Graph<'h> {
             None => {
                 let found = self
                     .resolve_with_project(config, from, specifier, is_require)
-                    .map(|it| (it.0.into_owned(), it.1));
+                    .map(Cow::into_owned);
                 self.caches().non_relative.insert_ref(key, found)
             }
         };
-        found.as_ref().map(|it| (Cow::Owned(it.0.clone()), it.1))
+        found.as_ref().map(|it| Cow::Owned(it.clone()))
     }
 
     /// Resolves a relative specifier the way oxlint does, without going through TypeScript's resolution. The outer
@@ -845,7 +844,7 @@ impl<'h> Graph<'h> {
         from: &[u8],
         specifier: &[u8],
         is_require: bool,
-    ) -> Option<(Cow<'h, [u8]>, bool)> {
+    ) -> Option<Cow<'h, [u8]>> {
         let mode = if is_require {
             ResolutionMode::Require
         } else {
@@ -868,16 +867,12 @@ impl<'h> Graph<'h> {
                 base_url: base_url.map(Vec::as_slice),
             };
             let code = self.real(resolver.resolve_as_require(specifier, from, &how)?.0);
-            let is_external = is_in_package(&code);
-            return Some((Cow::Owned(code), is_external));
+            return Some(Cow::Owned(code));
         }
         let found = resolver
             .resolve_module_name(specifier, from, mode)
             .or_else(|| resolver.resolve_module_name(&join(base_url?, specifier), from, mode))?;
-        Some((
-            Cow::Borrowed(found.file_name),
-            found.is_external_library_import,
-        ))
+        Some(Cow::Borrowed(found.file_name))
     }
 
     /// Returns `path` with symbolic links followed.
@@ -905,9 +900,7 @@ impl<'h> Graph<'h> {
                 is_dynamic: it.kind == RequestKind::Dynamic,
                 is_only_importing_types: it.is_only_importing_types,
             };
-            let resolved = self
-                .resolve_path(&path, it.specifier, it.kind == RequestKind::Other)?
-                .0;
+            let resolved = self.resolve_path(&path, it.specifier, it.kind == RequestKind::Other)?;
             (!(it.may_reexport_itself && *resolved == *path)).then_some((
                 resolved,
                 declaration,
@@ -919,7 +912,7 @@ impl<'h> Graph<'h> {
             let found = requests.iter().filter_map(|it| {
                 self.resolve_path(&link, it.specifier, it.kind == RequestKind::Other)
             });
-            found.map(|it| it.0.into_owned()).collect()
+            found.map(Cow::into_owned).collect()
         };
         Recorded {
             requests: resolved.collect(),
@@ -1247,7 +1240,7 @@ impl Modules for Graph<'_> {
     fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved> {
         // Resolve from the file's own name, even if that's a link.
         let from = from_native(from);
-        let (path, _) = self.resolve_path(&from, specifier, is_require)?;
+        let path = self.resolve_path(&from, specifier, is_require)?;
         Some(Resolved {
             module: *self.complete.get()?.ids.get(&path[..])?,
         })
@@ -1295,7 +1288,7 @@ impl Modules for Graph<'_> {
                         .then(|| other(&[]))
                         .flatten();
                     if let Some(exact_file) = exact_file.filter(is_exact_name) {
-                        return Some((Cow::Owned(exact_file), false));
+                        return Some(Cow::Owned(exact_file));
                     }
                     let found = self.resolve_any_path(config, &real, specifier, is_require);
                     let added: &[&[u8]] = match is_script {
@@ -1304,7 +1297,7 @@ impl Modules for Graph<'_> {
                             b".ts", b".tsx", b".d.ts", b".js", b".jsx", b".json", b".node",
                         ],
                     };
-                    found.or_else(|| Some((Cow::Owned(other(added)?), false)))
+                    found.or_else(|| Some(Cow::Owned(other(added)?)))
                 });
                 // TypeScript doesn't append `.json` or `.node` to a name. Such a file is preferred to a directory.
                 let named = join(directory_of(&from), specifier);
@@ -1314,13 +1307,13 @@ impl Modules for Graph<'_> {
                     may_be_file && rest.is_some_and(|it| it.starts_with(b"/"))
                 };
                 match found {
-                    Some(found) if is_in_directory(&found.0) => {
+                    Some(found) if is_in_directory(&found) => {
                         let endings = [&b".json"[..], b".node"];
                         let mut files = endings.iter().map(|it| [&named[..], *it].concat());
                         let file = files.find(|it| self.store.disk().is_file(it));
-                        file.unwrap_or_else(|| found.0.into_owned())
+                        file.unwrap_or_else(|| found.into_owned())
                     }
-                    found => found?.0.into_owned(),
+                    found => found?.into_owned(),
                 }
             }
             Lookup::Node(extensions) => {

@@ -4019,14 +4019,6 @@ static bool isUncalledMockOfHookInPlaceOfFile(Zig::GlobalObject* globalObject, J
     });
 }
 
-static bool isMockOfHookBehindLoadedMock(Zig::GlobalObject* globalObject, JSModuleMock* ofPreload, JSModuleMock* mockOfHook, const String& specifier)
-{
-    if (ofPreload->isOfHook || ofPreload->state != JSModuleMock::State::Settled || !mockOfHook->isFromPreload || isBuiltinModuleKey(specifier) || isInNodeModules(specifier))
-        return false;
-    auto file = Bun::compiledModuleForPath(specifier);
-    return file && JSC::AOT::isESModule(*file) && JSC::AOT::isMockLoadedInPreload(globalObject, *file) && globalObject->onLoadPlugins.pendingCompiledMocks.containsIf([&](const auto& waiting) { return waiting.second.get() == mockOfHook; });
-}
-
 // Mirrors packagesToRestore in unmockModule(), for the module of a preload mock.
 static JSModuleMock* findPreloadMockToRestore(Zig::GlobalObject* globalObject, JSModuleMock* ended, const String& specifier)
 {
@@ -7747,7 +7739,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         String specifier = mock->specifier->tryGetValue().data;
 #if ENABLE(AOT)
         auto* mockOfHook = globalObject->vm().hasCompiledCode() ? registeredModuleMock(globalObject, specifier) : nullptr;
-        if (mockOfHook && mockOfHook != mock && !registeredAgain.contains(mockOfHook) && (isUncalledMockOfHookInPlaceOfFile(globalObject, mock, specifier, displacedMocks) || isMockOfHookBehindLoadedMock(globalObject, mock, mockOfHook, specifier))) {
+        if (mockOfHook && mockOfHook != mock && !registeredAgain.contains(mockOfHook) && isUncalledMockOfHookInPlaceOfFile(globalObject, mock, specifier, displacedMocks)) {
             unmockModule(globalObject, mockOfHook, specifier, evict);
             if (scope.exception()) [[unlikely]]
                 (void)scope.tryClearException();

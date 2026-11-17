@@ -111,6 +111,30 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
   }
 });
 
+test.concurrent.each([
+  ["callback", "setImmediate(() => held)"],
+  ["only argument", "setImmediate(noop, held)"],
+  ["arguments", "setImmediate(noop, held, 1)"],
+])("an Immediate that has run lets go of its %s", async (_, schedule) => {
+  const src = `
+    const refs = [];
+    const noop = () => {};
+    globalThis.immediates = Array.from({ length: 100 }, () => {
+      const held = {};
+      refs.push(new WeakRef(held));
+      return ${schedule};
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+    console.log(refs.filter(ref => ref.deref()).length);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(Number.parseInt(stdout)).toBeLessThan(10);
+  expect(exitCode).toBe(0);
+});
+
 describe.concurrent("AbortSignal.timeout is released when its wrapper is collected", () => {
   test("dropped signals without listeners free their native timer", async () => {
     const src = `

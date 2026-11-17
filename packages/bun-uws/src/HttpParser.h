@@ -846,7 +846,7 @@ struct HttpResponseData;
             // We can check 8 because:
             // 1. If it's "http://" that's 7 bytes, and it's supposed to at least have a trailing slash.
             // 2. If it's "https://" that's 8 bytes exactly.
-            if (data + 8 >= end) [[unlikely]] {
+            if (data + 8 > end) [[unlikely]] {
                 // if it's not at least 8 bytes, let's try again later
                 return -1;
             }

@@ -5341,7 +5341,7 @@ extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObje
 
 void GlobalObject::addDerivedRealm(JSC::JSGlobalObject* realm)
 {
-    if (!isBunTest)
+    if (!Bun__VM__isTestIsolationEnabled(bunVM()))
         return;
     if (m_derivedRealms.size() == m_derivedRealms.capacity())
         m_derivedRealms.removeAllMatching([](auto& derived) { return !derived; });

@@ -7,7 +7,10 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "JavaScriptCore/TopExceptionScope.h"
+#include "PathInlines.h"
 #include "ZigGlobalObject.h"
+#include "wtf/URL.h"
+#include "wtf/text/MakeString.h"
 #include "wtf/text/WTFString.h"
 
 #ifdef FUZZILLI_ENABLED
@@ -291,29 +294,31 @@ extern "C" void Bun__REPRL__resetCoverage() {}
 
 #endif // FUZZILLI_ENABLED
 
-// Runs one program as global code, for fuzzilli_command.rs. On a throw: false, with the JSC::Exception in *exception.
-extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__REPRL__evaluate(Zig::GlobalObject* globalObject, const unsigned char* source, size_t sourceLen, JSC::EncodedJSValue* exception)
+// Runs one program of fuzzilli_command.rs as global code of a file in `directory`. On a throw: false, with the thrown value in *thrown.
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__REPRL__evaluate(Zig::GlobalObject* globalObject, const unsigned char* source, size_t sourceLen, const unsigned char* directory, size_t directoryLen, JSC::EncodedJSValue* thrown)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // import() resolves against the origin, and looks again for a file the program wrote only if the origin is a path.
+    auto path = makeString(WTF::String::fromUTF8(std::span { directory, directoryLen }), PLATFORM_SEP_s, "[REPRL]"_s);
     JSC::SourceCode code = JSC::makeSource(
         WTF::String::fromUTF8ReplacingInvalidSequences(std::span { source, sourceLen }),
-        JSC::SourceOrigin {},
+        JSC::SourceOrigin { WTF::URL::fileURLWithFileSystemPath(path) },
         JSC::SourceTaintedOrigin::Untainted,
         "[REPRL]"_s,
         WTF::TextPosition(),
         JSC::SourceProviderSourceType::Program);
 
-    WTF::NakedPtr<JSC::Exception> thrown;
-    JSC::evaluate(globalObject, code, globalObject->globalThis(), thrown);
+    WTF::NakedPtr<JSC::Exception> exception;
+    JSC::evaluate(globalObject, code, globalObject->globalThis(), exception);
 
-    JSC::Exception* error = thrown.get();
+    JSC::Exception* error = exception.get();
     if (!error)
         error = scope.exception();
     if (!error)
         return true;
-    *exception = JSC::JSValue::encode(JSC::JSValue(error));
+    *thrown = JSC::JSValue::encode(error->value());
     scope.clearException();
     return false;
 }

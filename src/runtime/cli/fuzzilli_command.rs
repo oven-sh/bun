@@ -1,4 +1,4 @@
-//! `bun fuzzilli`: Fuzzilli's REPRL child (googleprojectzero/fuzzilli, Targets/README.md).
+//! `bun fuzzilli`: the REPRL child that Fuzzilli's `bun` profile starts (oven-sh/fuzzilli, BunProfile.swift).
 
 use bun_core::{Environment, Global};
 
@@ -32,13 +32,14 @@ impl FuzzilliCommand {
 
 #[cfg(unix)]
 mod reprl {
-    use bun_core::{EncodedSlice, Global, Output};
+    use bun_core::{Global, Output};
     use bun_jsc::JSValue;
     use bun_jsc::virtual_machine::{InitOptions, VirtualMachine};
     use bun_options_types::schema::api;
     use bun_sys::{self as sys, Fd, File};
 
-    use crate::cli::Command::ContextData;
+    use crate::cli::Arguments;
+    use crate::cli::Command::{ContextData, Tag};
     use crate::cli::run_command::RunCommand;
 
     unsafe extern "C" {
@@ -52,7 +53,7 @@ mod reprl {
     /// libreprl's `REPRL_MAX_DATA_SIZE`.
     const MAX_PROGRAM_SIZE: u64 = 16 << 20;
 
-    /// Per program, whose loop may never end by itself. Fuzzilli's own timeout is 2500 ms.
+    /// For the event loop of a program, and again for what the reset leaves in flight. Fuzzilli's own timeout is 2500 ms.
     const EVENT_LOOP_BUDGET_MS: i64 = 250;
 
     /// Runs first on every global. A real `process.execve` replaces the child.
@@ -68,6 +69,15 @@ mod reprl {
                 "<r><d>Example: fuzzilli --profile=bun /path/to/bun fuzzilli<r>"
             );
             Global::exit(1);
+        }
+
+        if !ctx.debug.loaded_bunfig {
+            Arguments::load_config_path(
+                Tag::RunCommand,
+                true,
+                bun_core::zstr!("bunfig.toml"),
+                ctx,
+            )?;
         }
 
         bun_jsc::initialize(bun_jsc::InitializeOptions::default());
@@ -96,24 +106,22 @@ mod reprl {
         }
         vm.load_extra_env();
         VirtualMachine::set_is_main_thread_vm(true);
+        // No main module loads here: every module that a program loads is an import.
+        vm.has_loaded.set(true);
 
-        let time_zone: &[u8] = vm.env_loader().get(b"TZ").unwrap_or(b"");
-        if !time_zone.is_empty() {
-            let _ = vm
-                .global()
-                .set_time_zone(&EncodedSlice::from_bytes(time_zone));
-        }
         // Programs are separated by the `bun test --isolate` reset.
+        let time_zone: &[u8] = vm.env_loader().get(b"TZ").unwrap_or(b"");
         let _ = vm.test_isolation_state.time_zone.set(Box::from(time_zone));
         vm.enable_test_isolation();
 
-        let _api_lock = vm.global().vm().get_api_lock();
+        let _api_lock = vm.jsc_vm().get_api_lock();
         serve(vm)
     }
 
     /// Handshake, then one program per `exec` until the control pipe closes.
     fn serve(vm: &VirtualMachine) -> ! {
-        prepare_global(vm);
+        // No program runs on the global of the boot: dead stack under this frame, which never returns, still points at it.
+        reset(vm);
 
         let control_in = File::borrow(&CONTROL_READ_FD);
         let control_out = File::borrow(&CONTROL_WRITE_FD);
@@ -156,10 +164,18 @@ mod reprl {
                 protocol_error(format_args!("could not read {} program bytes", size));
             }
 
-            let ok = execute(vm, &program);
+            let ok = run_program(vm, &program);
+            let is_reusable = reset(vm);
 
             // The fuzzer reads the program's output once it has the status.
             Output::flush();
+            if !is_reusable {
+                // libreprl takes the exit code of a child that leaves here as the status, and starts a new child.
+                bun_core::pretty_errorln!(
+                    "[REPRL] work of the program outlived the reset: this child ends"
+                );
+                exit(vm, if ok { 0 } else { 1 });
+            }
             let status: u32 = if ok { 0 } else { 1 << 8 };
             if control_out.write_all(&status.to_le_bytes()).is_err() {
                 protocol_error(format_args!("could not write the status"));
@@ -167,50 +183,56 @@ mod reprl {
             Bun__REPRL__resetCoverage();
         }
 
-        vm.exit_handler.exit_code.set(0);
+        exit(vm, 0)
+    }
+
+    fn exit(vm: &VirtualMachine, code: u8) -> ! {
+        Output::flush();
+        vm.exit_handler.exit_code.set(code);
         vm.on_exit();
         vm.global_exit()
     }
 
-    /// Runs one program, then resets the VM for the next. Returns success.
-    fn execute(vm: &VirtualMachine, source: &[u8]) -> bool {
-        let mut ok = evaluate(vm, source);
-
+    /// Runs one program and its event loop. Like `bun <file>`, an uncaught error or an unhandled rejection fails it.
+    fn run_program(vm: &VirtualMachine, source: &[u8]) -> bool {
+        if let Some(thrown) = evaluate(vm, source) {
+            let _ = vm.uncaught_exception(vm.global(), thrown, false);
+        }
         run_event_loop(vm);
         let _ = vm.global().handle_rejected_promises();
-        // Like `bun <file>`, uncaught errors and unhandled rejections fail it. What the reset makes it throw does not.
-        if vm.unhandled_error_counter.get() > 0 {
-            ok = false;
-        }
-
-        crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-        vm.exit_handler.exit_code.set(0);
-        vm.swap_global_for_test_isolation();
-        prepare_global(vm);
-
-        ok
+        vm.unhandled_error_counter.get() == 0
     }
 
-    /// Runs `source` as global code and prints what it throws. Returns whether it threw nothing.
-    fn evaluate(vm: &VirtualMachine, source: &[u8]) -> bool {
-        let mut exception = JSValue::ZERO;
-        // SAFETY: `vm.global` is the live global; `source` and `exception` outlive the call.
+    /// Retires the realm of the program and makes the global of the next one. Returns whether this child can run it.
+    fn reset(vm: &VirtualMachine) -> bool {
+        crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+        vm.swap_global_for_test_isolation();
+        vm.exit_handler.exit_code.set(0);
+        prepare_global(vm);
+        // Nothing of the next program exists yet: what holds the loop now, or throws, is what the reset could not stop.
+        run_event_loop(vm) && vm.unhandled_error_counter.get() == 0
+    }
+
+    /// Runs `source` as global code. Returns what it threw.
+    fn evaluate(vm: &VirtualMachine, source: &[u8]) -> Option<JSValue> {
+        let directory = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
+        let mut thrown = JSValue::ZERO;
+        // SAFETY: `vm.global` is the live global; the slices and `thrown` outlive the call.
         let ok = unsafe {
             bun_jsc::cpp::Bun__REPRL__evaluate(
                 vm.global.get(),
                 source.as_ptr(),
                 source.len(),
-                &raw mut exception,
+                directory.as_ptr(),
+                directory.len(),
+                &raw mut thrown,
             )
         };
-        if !ok {
-            vm.run_error_handler(exception, None);
-        }
-        ok
+        (!ok).then_some(thrown)
     }
 
-    /// The program's microtasks, timers and I/O, for at most `EVENT_LOOP_BUDGET_MS`.
-    fn run_event_loop(vm: &VirtualMachine) {
+    /// Runs the loop until nothing holds it. The budget caps each wait, not a callback or a microtask drain. Returns whether the loop ended.
+    fn run_event_loop(vm: &VirtualMachine) -> bool {
         let deadline = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
             .add_ms(EVENT_LOOP_BUDGET_MS);
 
@@ -218,12 +240,13 @@ mod reprl {
         while vm.is_event_loop_alive() {
             let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
             if !deadline.greater(&now) {
-                return;
+                return false;
             }
             let remaining = deadline.duration(&now);
             crate::jsc_hooks::auto_tick_active_with_max_wait(vm, Some(&remaining));
             vm.tick();
         }
+        true
     }
 
     /// `require`, `module`, `__filename`, `__dirname` and the prelude.
@@ -238,7 +261,9 @@ mod reprl {
                 vm.run_error_handler(exception, None);
             }
         }
-        evaluate(vm, PRELUDE);
+        if let Some(thrown) = evaluate(vm, PRELUDE) {
+            vm.run_error_handler(thrown, None);
+        }
     }
 
     #[cold]

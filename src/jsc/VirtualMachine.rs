@@ -5336,8 +5336,15 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__VM__useIsolationSourceProviderCache")]
     pub extern "C" fn use_isolation_source_provider_cache(&self) -> bool {
         self.test_isolation_enabled.get()
+            && isBunTest.load(core::sync::atomic::Ordering::Relaxed)
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false)
+    }
+
+    /// Whether [`swap_global_for_test_isolation`](Self::swap_global_for_test_isolation) retires the realms of this VM.
+    #[unsafe(export_name = "Bun__VM__isTestIsolationEnabled")]
+    pub extern "C" fn is_test_isolation_enabled(&self) -> bool {
+        self.test_isolation_enabled.get()
     }
 
     #[unsafe(export_name = "Bun__VM__isMainModule")]

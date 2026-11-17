@@ -2,12 +2,26 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 
-// `bun fuzzilli` is the REPRL child that the Fuzzilli fuzzer drives
-// (src/runtime/cli/fuzzilli_command.rs). The fuzzer talks to it over four
-// inherited descriptors: 100 (commands in), 101 (HELO + one u32 status per
-// program out), 102 (program source in) and 103 (FUZZILLI_PRINT out). Here all
-// four are pipes. The commands and the programs are written up front and the
-// command pipe is closed, so the child runs every program and leaves on EOF.
+// `bun fuzzilli` is the REPRL child that the Fuzzilli fuzzer starts with its `bun` profile
+// (oven-sh/fuzzilli, Sources/Fuzzilli/Profiles/BunProfile.swift). The loop is
+// src/runtime/cli/fuzzilli_command.rs. This is the contract between the two:
+//
+// - Four inherited descriptors: 100 (commands in), 101 (HELO, then one u32 status per program
+//   out), 102 (program source in) and 103 (FUZZILLI_PRINT out). The child reads 102 in sequence,
+//   so a driver that keeps one file there rewinds it before each program, as libreprl does.
+// - A command is `exec` and a u64 length. The status is 0, or 0x100 when the program threw, left
+//   an uncaught error in its event loop, or left an unhandled rejection. Fuzzilli keeps only
+//   programs with status 0.
+// - A program is global code on a fresh global object, with `require`, `module`, `__filename`
+//   and `__dirname`. Its event loop runs until it is empty, and no wait in it is longer than
+//   what is left of 250 ms (the profile's timeout is 2500 ms). Then the reset of
+//   `bun test --isolate` retires the realm and makes the next global.
+// - A child that the reset cannot clean (the event loop is still alive after it) exits in place
+//   of the status write, with exit code 0 or 1. libreprl reports that code as the status and
+//   starts a new child. The profile also starts a new child after 1000 programs.
+//
+// Here `Bun.spawn` makes the four descriptors. The commands and the programs are written up
+// front and the command descriptor is closed, so the child runs every program and leaves on EOF.
 //
 // The loop is compiled into fuzzilli, debug and ASAN builds only.
 const enabled = !isWindows && (isDebug || isASAN);
@@ -26,7 +40,19 @@ function owned(fd: number) {
   return { fd, close, [Symbol.dispose]: close };
 }
 
-async function runReprl(programs: string[]) {
+const lines = (text: string) => text.split("\n").filter(Boolean);
+
+// The errors on stderr: without the source excerpt that is printed above each one, and without
+// the coverage lines of a fuzzilli build.
+const errorLines = (stderr: string) =>
+  lines(stderr)
+    .filter(line => !/^\s*\d+ \| /.test(line) && !/^\s*\^+$/.test(line) && !line.startsWith("[COV] "))
+    .map(line => line.trim());
+
+async function runReprl(
+  programs: string[],
+  options: { env?: Record<string, string>; files?: Record<string, string> } = {},
+) {
   const sources = programs.map(p => Buffer.from(p, "utf8"));
   const control = [Buffer.from("HELO")];
   for (const source of sources) {
@@ -35,16 +61,16 @@ async function runReprl(programs: string[]) {
     control.push(Buffer.from("exec"), size);
   }
 
-  using dir = tempDir("fuzzilli-reprl", {});
-  // Descriptors 3 to 99 stay closed in the child. 100 to 103 are the REPRL pipes.
+  using dir = tempDir("fuzzilli-reprl", options.files ?? {});
+  // Descriptors 3 to 99 stay closed in the child. 100 to 103 are the REPRL descriptors.
   const unused = Array.from({ length: REPRL_CRFD - 3 }, () => "ignore" as const);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fuzzilli"],
-    env: bunEnv,
+    env: { ...bunEnv, ...options.env },
     cwd: String(dir),
     stdio: ["ignore", "pipe", "pipe", ...unused, "pipe", "pipe", "pipe", "pipe"],
   });
-  // Reading `stdio` makes the caller the owner of the pipe descriptors.
+  // Reading `stdio` makes the caller the owner of the descriptors.
   const fds = proc.stdio;
   using commands = owned(fds[REPRL_CRFD]!);
   using status = owned(fds[REPRL_CWFD]!);
@@ -65,11 +91,17 @@ async function runReprl(programs: string[]) {
   return {
     handshake: written.subarray(0, 4).toString("latin1"),
     statuses,
-    stdout: stdout.split("\n").filter(Boolean),
-    stderr,
+    stdout: lines(stdout),
+    stderr: errorLines(stderr),
     exitCode,
   };
 }
+
+// In a child whose event loop is empty, a timer without a reference never fires.
+const next = (name: string) =>
+  `setTimeout(() => console.log("the event loop was alive"), 1).unref(); console.log("${name}");`;
+
+const RECYCLED = "[REPRL] work of the program outlived the reset: this child ends";
 
 describe.skipIf(!enabled)("bun fuzzilli", () => {
   test.concurrent("every program runs on a fresh global object", async () => {
@@ -98,26 +130,29 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
       `,
     ]);
 
-    expect(result.handshake).toBe("HELO");
-    expect(result.stdout).toEqual([
-      "program 0 done",
-      JSON.stringify({
-        leaked: "undefined",
-        declared: "undefined",
-        hoisted: "undefined",
-        polluted: false,
-        push: 1,
-        getPrototypeOf: true,
-        require: "function",
-        module: "object",
-        filename: "string",
-      }),
-    ]);
-    expect(result.statuses).toEqual([0, 0]);
-    expect(result.exitCode).toBe(0);
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0, 0],
+      stdout: [
+        "program 0 done",
+        JSON.stringify({
+          leaked: "undefined",
+          declared: "undefined",
+          hoisted: "undefined",
+          polluted: false,
+          push: 1,
+          getPrototypeOf: true,
+          require: "function",
+          module: "object",
+          filename: "string",
+        }),
+      ],
+      stderr: [],
+      exitCode: 0,
+    });
   });
 
-  test.concurrent("status reports sync and async failures, and nothing a program schedules outlives it", async () => {
+  test.concurrent("the status reports what a program throws, in its own code or in its event loop", async () => {
     const result = await runReprl([
       /* 0 */ `throw new Error("sync failure");`,
       /* 1 */ `setTimeout(() => { throw new Error("timer failure"); }, 1);`,
@@ -127,20 +162,24 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
         Bun.serve({ port: 0, fetch: () => new Response("program 3") }).unref();
         queueMicrotask(() => console.log("microtask 3"));
       `,
-      /* 4 */ `
-        Bun.sleepSync(10);
-        setTimeout(() => console.log("timer 4"), 20);
-      `,
+      /* 4 */ `Bun.sleepSync(10); setTimeout(() => console.log("timer 4"), 20);`,
       /* 5 */ `console.log("ok 5");`,
     ]);
 
-    expect(result.handshake).toBe("HELO");
-    expect(result.stderr).toContain("sync failure");
-    expect(result.stderr).toContain("timer failure");
-    expect(result.stderr).toContain("rejection failure");
-    expect(result.stdout).toEqual(["microtask 3", "timer 4", "ok 5"]);
-    expect(result.statuses).toEqual([0x100, 0x100, 0x100, 0, 0, 0]);
-    expect(result.exitCode).toBe(0);
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0x100, 0x100, 0x100, 0, 0, 0],
+      stdout: ["microtask 3", "timer 4", "ok 5"],
+      stderr: [
+        "error: sync failure",
+        "at [REPRL]:1:7",
+        "error: timer failure",
+        "at <anonymous> ([REPRL]:1:52)",
+        "error: rejection failure",
+        "at [REPRL]:1:16",
+      ],
+      exitCode: 0,
+    });
   });
 
   test.concurrent("whatever a program throws or patches, it gets a status and the loop goes on", async () => {
@@ -152,26 +191,39 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
       /* 2 */ `queueMicrotask(() => { throw { toString() { throw new Error("unprintable"); } }; });`,
       /* 3 */ `Promise.reject(Symbol("async symbol"));`,
       /* 4 */ `(async () => { await null; throw new Error("rejected after await"); })();`,
-      /* 5 */ `
-        console.log = console.error = () => { throw new Error("patched console"); };
-        process.on = process.off = process.emit = process.removeListener = undefined;
-        process.removeAllListeners();
-        globalThis.Buffer = undefined;
-        require("node:fs").writeSync = () => { throw new Error("patched writeSync"); };
-        Object.defineProperty(globalThis, "Promise", { value: undefined });
-        Reflect.apply = Function.prototype.call = Function.prototype.apply = undefined;
-        queueMicrotask(() => { throw new Error("after patching"); });
-      `,
+      /* 5 */ [
+        `console.log = console.error = () => { throw new Error("patched console"); };`,
+        `process.on = process.off = process.emit = process.removeListener = undefined;`,
+        `process.removeAllListeners();`,
+        `globalThis.Buffer = undefined;`,
+        `require("node:fs").writeSync = () => { throw new Error("patched writeSync"); };`,
+        `Object.defineProperty(globalThis, "Promise", { value: undefined });`,
+        `Reflect.apply = Function.prototype.call = Function.prototype.apply = undefined;`,
+        `queueMicrotask(() => { throw new Error("after patching"); });`,
+      ].join(" "),
       /* 6 */ `console.log("ok 6");`,
     ]);
 
-    expect(result.stderr).toContain("sync symbol");
-    expect(result.stderr).toContain("async symbol");
-    expect(result.stderr).toContain("rejected after await");
-    expect(result.stderr).toContain("after patching");
-    expect(result.stdout).toEqual(["ok 6"]);
-    expect(result.statuses).toEqual([0x100, 0x100, 0x100, 0x100, 0x100, 0x100, 0]);
-    expect(result.exitCode).toBe(0);
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0x100, 0x100, 0x100, 0x100, 0x100, 0x100, 0],
+      stdout: ["ok 6"],
+      stderr: [
+        "error: sync symbol",
+        "Symbol(sync symbol)",
+        "F:",
+        "[Function: F]",
+        "error",
+        "at <anonymous> ([REPRL]:1:80)",
+        "error: async symbol",
+        "Symbol(async symbol)",
+        "error: rejected after await",
+        "at <anonymous> ([REPRL]:1:34)",
+        "error: after patching",
+        "at <anonymous> ([REPRL]:1:501)",
+      ],
+      exitCode: 0,
+    });
   });
 
   test.concurrent("a program that never ends its own event loop still reports a status", async () => {
@@ -197,46 +249,53 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
         }
         console.log("server stopped: " + stopped);
       `,
+      next("program 2"),
     ]);
 
-    expect(result.stdout).toEqual(["serving", "server stopped: true"]);
-    expect(result.statuses).toEqual([0, 0]);
-    expect(result.exitCode).toBe(0);
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0, 0, 0],
+      stdout: ["serving", "server stopped: true", "program 2"],
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a wait in the event loop of a program is never longer than its budget", async () => {
+    // The poll would sleep until the timer is due. Without the idle timer of the garbage
+    // collector, which ends a poll after a second, nothing else would wake it.
+    const result = await runReprl([`setTimeout(() => console.log("a minute later"), 60000);`, next("next program")], {
+      env: { BUN_GC_TIMER_DISABLE: "1" },
+    });
+
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0, 0],
+      stdout: ["next program"],
+      stderr: [],
+      exitCode: 0,
+    });
   });
 
   test.concurrent("what a handler throws while the reset closes its socket does not fail the program", async () => {
     // The status is decided when the program's slice of the event loop ends.
     // The program leaves both ends of a connection open. The reset closes
-    // them, and only then do the close handlers run and throw.
+    // them, and only then does the close handler run and throw.
     const result = await runReprl([
-      `
-        const server = Bun.listen({
-          hostname: "127.0.0.1",
-          port: 0,
-          socket: {
-            open() {},
-            data() {},
-            close() { throw new Error("server close handler"); },
-          },
-        });
-        Bun.connect({
-          hostname: "127.0.0.1",
-          port: server.port,
-          socket: {
-            open() { console.log("connected"); },
-            data() {},
-            close() { throw new Error("client close handler"); },
-          },
-        });
-      `,
-      `console.log("next program");`,
+      [
+        `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() {}, data() {}, close() { throw new Error("close handler"); } } });`,
+        `Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open() { console.log("connected"); }, data() {}, close() {} } });`,
+      ].join(" "),
+      next("next program"),
     ]);
 
-    expect(result.stdout).toEqual(["connected", "next program"]);
-    expect(result.stderr).toContain("server close handler");
-    expect(result.stderr).toContain("client close handler");
-    expect(result.statuses).toEqual([0, 0]);
-    expect(result.exitCode).toBe(0);
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0, 0],
+      stdout: ["connected", "next program"],
+      stderr: ["error: close handler", "at close ([REPRL]:1:109)"],
+      exitCode: 0,
+    });
   });
 
   test.concurrent("a Worker that is busy in JIT code when its program ends is stopped by the reset", async () => {
@@ -264,12 +323,151 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
         Atomics.wait(hot, 0, 0);
         console.log("worker is spinning");
       `,
-      `console.log("after the worker");`,
+      next("after the worker"),
     ]);
 
-    expect(result.stdout).toEqual(["worker is spinning", "after the worker"]);
-    expect(result.statuses).toEqual([0, 0]);
-    expect(result.exitCode).toBe(0);
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0, 0],
+      stdout: ["worker is spinning", "after the worker"],
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("the reset also retires the ShadowRealms and the node:vm contexts of a program", async () => {
+    // A channel in a ShadowRealm hears the next program, and a function of a node:vm context is
+    // called when the reset kills the subprocess. Neither may run after its program.
+    const result = await runReprl([
+      [
+        `new ShadowRealm().evaluate("globalThis.channel = new BroadcastChannel('reprl'); channel.onmessage = () => { throw new Error('handler in the ShadowRealm of program 0'); }; 1");`,
+        `const onExit = require("node:vm").runInNewContext("(function () { throw new Error('function in the context of program 0'); })");`,
+        `Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"], onExit });`,
+        `console.log("program 0");`,
+      ].join(" "),
+      `new BroadcastChannel("reprl").postMessage(1); console.log("program 1");`,
+      next("program 2"),
+    ]);
+
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0, 0, 0],
+      stdout: ["program 0", "program 1", "program 2"],
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a later garbage collection frees what the first program left on its global", async () => {
+    const result = await runReprl([
+      `globalThis.parked = new Bun.Glob("*.parked");`,
+      `1;`,
+      `1;`,
+      `Bun.gc(true); console.log(require("bun:jsc").heapStats().objectTypeCounts.Glob ?? 0);`,
+    ]);
+
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0, 0, 0, 0],
+      stdout: ["0"],
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+
+  describe.each([
+    ["passed", "", 0, []],
+    ["failed", ` throw new Error("and it fails");`, 1, ["error: and it fails", "at [REPRL]:1:101"]],
+  ] as const)("a program that %s and left work that the reset cannot stop", (_, suffix, exitCode, errors) => {
+    test.concurrent("ends the child, whose exit code is the status", async () => {
+      // The job stays on a thread of the pool until the process ends. libreprl takes the exit
+      // code of a child that leaves in place of a status as that status, and starts a new child.
+      const result = await runReprl([
+        `require("crypto").pbkdf2("a", "b", 2e9, 64, "sha512", () => {}); console.log("the job runs");${suffix}`,
+        `console.log("next program");`,
+      ]);
+
+      expect(result).toEqual({
+        handshake: "HELO",
+        statuses: [],
+        stdout: ["the job runs"],
+        stderr: [...errors, RECYCLED],
+        exitCode,
+      });
+    });
+  });
+
+  test.concurrent(
+    "the reset puts back the directory, the time zone, a proxy variable and the allocation limit",
+    async () => {
+      const observe = `console.log(JSON.stringify({ cwd: process.cwd(), offset: new Date(0).getTimezoneOffset(), proxy: String(process.env.HTTP_PROXY) }));`;
+      const result = await runReprl(
+        [
+          observe,
+          [
+            `process.chdir("/"); process.env.TZ = "Asia/Tokyo"; process.env.HTTP_PROXY = "http://127.0.0.1:1";`,
+            `require("bun:internal-for-testing").setSyntheticAllocationLimitForTesting(1 << 20);`,
+            `new Response(Buffer.alloc(2 << 20, 97)).text().catch(error => console.log(error.code));`,
+            `console.log(JSON.stringify({ cwd: process.cwd(), offset: new Date(0).getTimezoneOffset(), proxy: process.env.HTTP_PROXY }));`,
+          ].join(" "),
+          observe,
+          `new Response(Buffer.alloc(8 << 20, 97)).text().then(text => console.log(text.length));`,
+        ],
+        { env: { TZ: "Etc/UTC", HTTP_PROXY: "" } },
+      );
+
+      expect(result.stdout[0]).toBe(result.stdout[3]);
+      expect({ ...result, stdout: result.stdout.slice(1) }).toEqual({
+        handshake: "HELO",
+        statuses: [0, 0, 0, 0],
+        stdout: [
+          JSON.stringify({ cwd: "/", offset: -540, proxy: "http://127.0.0.1:1" }),
+          "ERR_STRING_TOO_LONG",
+          result.stdout[0],
+          String(8 << 20),
+        ],
+        stderr: [],
+        exitCode: 0,
+      });
+      expect(JSON.parse(result.stdout[0]!)).toEqual({ cwd: expect.any(String), offset: 0, proxy: "" });
+    },
+  );
+
+  test.concurrent("the end of a program is not the exit of the process", async () => {
+    // No `beforeExit` or `exit` listener runs, and an exit code that a program or its close
+    // handler sets is gone before the next program. Only a status of 0 or 0x100 goes out.
+    const result = await runReprl([
+      `process.on("beforeExit", () => console.log("beforeExit listener")); process.on("exit", () => console.log("exit listener")); process.exitCode = 3;`,
+      `console.log(JSON.stringify({ exitCode: String(process.exitCode), listeners: process.listenerCount("exit") + process.listenerCount("beforeExit") }));`,
+      [
+        `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() {}, data() {}, close() { process.exitCode = 8; } } });`,
+        `Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open() { console.log("connected"); }, data() {}, close() { process.exitCode = 9; } } });`,
+      ].join(" "),
+      `process.exit();`,
+    ]);
+
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0, 0, 0],
+      stdout: [JSON.stringify({ exitCode: "undefined", listeners: 0 }), "connected"],
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("bunfig.toml in the working directory applies, as for `bun <file>`", async () => {
+    const result = await runReprl(
+      [`require("fs").writeFileSync("greeting.mytext", "hello"); console.log(require("./greeting.mytext").default);`],
+      { files: { "bunfig.toml": `[loader]\n".mytext" = "text"\n` } },
+    );
+
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0],
+      stdout: ["hello"],
+      stderr: [],
+      exitCode: 0,
+    });
   });
 
   test.concurrent("a program cannot replace the REPRL child with process.execve", async () => {
@@ -278,8 +476,80 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
       `console.log("next program");`,
     ]);
 
-    expect(result.stdout).toEqual(["still here", "next program"]);
-    expect(result.statuses).toEqual([0, 0]);
-    expect(result.exitCode).toBe(0);
+    expect(result).toEqual({
+      handshake: "HELO",
+      statuses: [0, 0],
+      stdout: ["still here", "next program"],
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+
+  // A program runs like the CommonJS file `bun <file>`, except where a row says why not.
+  describe.each([
+    { name: "a throw", program: `console.log("before"); throw new Error("x");` },
+    {
+      name: "a throw with a listener",
+      program: `process.on("uncaughtException", error => console.log("listener got", error.message)); throw new Error("x");`,
+    },
+    { name: "a throw in a timer", program: `setTimeout(() => { throw new Error("x"); }, 1);` },
+    {
+      name: "a throw in a timer with a listener",
+      program: `process.on("uncaughtException", error => console.log("listener got", error.message)); setTimeout(() => { throw new Error("x"); }, 1);`,
+    },
+    { name: "a rejection", program: `Promise.reject(new Error("x"));` },
+    {
+      name: "a rejection with a listener",
+      program: `process.on("unhandledRejection", error => console.log("listener got", error.message)); Promise.reject(new Error("x"));`,
+    },
+    {
+      name: "a require.extensions hook",
+      program: `require("fs").writeFileSync("a.hooked", "not js ("); require.extensions[".hooked"] = module => { module.exports = "from the hook"; }; console.log(require("./a.hooked"));`,
+    },
+    {
+      name: "require of a file with an unknown extension",
+      program: `require("fs").writeFileSync("b.unknown", "const x: number = 1; module.exports = x;"); console.log(require("./b.unknown"));`,
+    },
+    {
+      name: "import() of a file with an unknown extension",
+      program: `require("fs").writeFileSync("c.unknown", "const x: number = 1;"); import("./c.unknown").then(module => console.log(typeof module.default));`,
+    },
+    {
+      name: "import() of a file that the program wrote",
+      program: `require("fs").writeFileSync("late.mjs", "export default 7;"); import("./late.mjs").then(module => console.log(module.default));`,
+    },
+    {
+      name: "process.exitCode",
+      program: `process.exitCode = 3; console.log("set");`,
+      differs: "the status reports errors, not the exit code",
+    },
+    {
+      name: "an exit listener",
+      program: `process.on("exit", () => console.log("exit listener"));`,
+      differs: "the process does not exit when a program ends",
+    },
+    {
+      name: "top-level await",
+      program: `await 1; console.log("after");`,
+      differs: "a program is global code, where await is not a keyword",
+    },
+  ])("$name", ({ program, differs }) => {
+    test.concurrent(differs ? `differs from bun <file>: ${differs}` : "is as with bun <file>", async () => {
+      using dir = tempDir("fuzzilli-reprl-file", { "program.cjs": program });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "program.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [reprl, stdout, exitCode] = await Promise.all([runReprl([program]), proc.stdout.text(), proc.exited]);
+
+      const asProgram = { ok: reprl.statuses[0] === 0, stdout: reprl.stdout };
+      const asFile = { ok: exitCode === 0, stdout: lines(stdout) };
+      expect(reprl.statuses).toHaveLength(1);
+      if (differs) expect(asProgram).not.toEqual(asFile);
+      else expect(asProgram).toEqual(asFile);
+    });
   });
 });

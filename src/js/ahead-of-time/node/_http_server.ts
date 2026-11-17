@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 7c6867773e320c327a45fe7446cb92918b849f00186400f42d640ac6e111a85f.
+// Written against that file with the SHA-256 9eafb3394e7fe230e5ffa70199206447593bb871d91c0cd5e45aada38575a0cb.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -531,6 +531,7 @@ function secureConnectionListener(this: $Node.HttpServer, socket: $Node.HttpServ
 function staysWithNativeParser(socket: $Node.HttpServerSocket) {
   if (socket[kHandle] === undefined || socket[kHandedOff]) return false;
   if (!tookReadsFromParser(socket)) return true;
+  socket[kHandle].detachParser(false);
   detachFromHttp(socket, undefined);
   connectionState(socket);
   startNextResponse(socket);
@@ -2316,7 +2317,7 @@ function handOffSocket(socket: $Node.HttpServerSocket, req: $Node.IncomingMessag
   if (pipeline === undefined) return leaveHttp(socket);
   // The socket reads and writes through uWS until the responses ahead of this request are out.
   pipeline.outgoing.pop();
-  socket[kHandle]!.detachParser();
+  socket[kHandle]!.detachParser(true);
   startNextResponse(socket);
 }
 // The listener gets the rest of the read as `head`.
@@ -3218,7 +3219,7 @@ function unconsume(socket: $Node.HttpServerSocket) {
   if (tookReadsFromParser(socket)) stopParsing(socket);
 }
 function stopParsing(socket: $Node.HttpServerSocket) {
-  socket[kHandle]?.stopParsing();
+  socket[kHandle]?.detachParserAfterRead();
   socket.removeListener("pause", onSocketPause);
   socket.removeListener("resume", nativeSocketOnResume);
   // net.Socket has had a read pending since the accept, so no _read() would lift a pause from before. A full buffer stops the reads now.

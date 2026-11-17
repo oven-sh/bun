@@ -358,6 +358,7 @@ function secureConnectionListener(this: Server, socket) {
 function staysWithNativeParser(socket) {
   if (socket[kHandle] === undefined || socket[kHandedOff]) return false;
   if (!tookReadsFromParser(socket)) return true;
+  socket[kHandle].detachParser(false);
   detachFromHttp(socket, undefined);
   connectionState(socket);
   startNextResponse(socket);
@@ -1603,7 +1604,7 @@ function handOffSocket(socket, req, pipeline) {
   if (pipeline === undefined) return leaveHttp(socket);
   // The socket reads and writes through uWS until the responses ahead of this request are out.
   pipeline.outgoing.pop();
-  socket[kHandle].detachParser();
+  socket[kHandle].detachParser(true);
   startNextResponse(socket);
 }
 // The listener gets the rest of the read as `head`.
@@ -2403,7 +2404,7 @@ function unconsume(socket) {
   if (tookReadsFromParser(socket)) stopParsing(socket);
 }
 function stopParsing(socket) {
-  socket[kHandle]?.stopParsing();
+  socket[kHandle]?.detachParserAfterRead();
   socket.removeListener("pause", onSocketPause);
   socket.removeListener("resume", nativeSocketOnResume);
   // net.Socket has had a read pending since the accept, so no _read() would lift a pause from before. A full buffer stops the reads now.

@@ -10417,6 +10417,31 @@ describe("raw request bytes on a server's connection socket", () => {
       expect(seen).toEqual(["/1"]);
     });
 
+    it.each([{ removed: [] }, { removed: ["data"] }])(
+      "leaves the parser the rest of the read it is in (removed: $removed)",
+      async ({ removed }) => {
+        const seen: string[] = [];
+        const server = create((req, res) => {
+          seen.push(req.url!);
+          if (req.url === "/1") {
+            req.socket.on("data", () => seen.push("removed reader"));
+            req.socket.removeAllListeners(...removed);
+            req.socket.on("data", chunk => req.socket.write(`<raw ${chunk.length}>`));
+          }
+          res.end(`<${req.url}>`);
+        });
+        await withClient(server, async (client, until) => {
+          client.write(get("/1") + get("/1b"));
+          await until("</1b>");
+          client.write(get("/2"));
+          await until(`<raw ${get("/2").length}>`);
+          client.write("last");
+          await until("<raw 4>");
+        });
+        expect(seen).toEqual(["/1", "/1b"]);
+      },
+    );
+
     it("leaves the end of the connection to the server's 'end' listener", async () => {
       const { promise: closed, resolve } = Promise.withResolvers<void>();
       const server = create((req, res) => {

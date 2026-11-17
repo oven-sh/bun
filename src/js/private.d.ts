@@ -2486,7 +2486,8 @@ declare namespace $Node {
     setRawReads(enabled: boolean): void;
     isRequestTimedOut(headersTimeout: number, requestTimeout: number): boolean;
     stopParsing(): void;
-    detachParser(): void;
+    detachParser(restOfReadTaken: boolean): void;
+    detachParserAfterRead(): void;
     /** Whether the connection ended in the middle of a message. */
     finishParsing(): boolean;
     closeIfIdle(): boolean;

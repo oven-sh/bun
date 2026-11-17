@@ -137,11 +137,11 @@ void JSNodeHTTPServerSocket::setRawReads(bool enabled)
 }
 
 template<bool SSL>
-static void endParserReads(us_socket_t* socket)
+static void endParserReads(us_socket_t* socket, bool restOfReadTaken)
 {
     using Data = uWS::HttpResponseData<SSL>;
     // An Upgrade too: the rest of the read that is being parsed went to the listener as `head`.
-    reinterpret_cast<Data*>(us_socket_ext(socket))->isConnectRequest = true;
+    reinterpret_cast<Data*>(us_socket_ext(socket))->isConnectRequest |= restOfReadTaken;
     reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resumeReads(Data::READ_PAUSE_BODY | Data::READ_PAUSE_PARKED | Data::READ_PAUSE_FLOOD);
 }
 
@@ -159,14 +159,14 @@ void JSNodeHTTPServerSocket::leaveHttpAfterBody()
     }
 }
 
-void JSNodeHTTPServerSocket::detachParser()
+void JSNodeHTTPServerSocket::detachParser(bool restOfReadTaken)
 {
     if (isClosed()) {
         return;
     }
     stopHTTPParsing();
     setRawReads(true);
-    is_ssl ? endParserReads<true>(socket) : endParserReads<false>(socket);
+    is_ssl ? endParserReads<true>(socket, restOfReadTaken) : endParserReads<false>(socket, restOfReadTaken);
 }
 
 template<bool SSL>
@@ -418,7 +418,7 @@ void JSNodeHTTPServerSocket::onUpgradeBodyEnded()
         args.append(duplex);
     }
     if (!leaveHttp(false)) {
-        detachParser();
+        detachParser(true);
         return;
     }
     if (!callback || !duplex || globalObject->scriptExecutionStatus(globalObject, this) != ScriptExecutionStatus::Running) {
@@ -486,6 +486,15 @@ extern "C" bool Bun__NodeHTTP__notifyWhenReadParsed(int ssl, us_socket_t* socket
         return false;
     }
     return ssl ? notifyWhenNodeHttpReadParsed<true>(socket) : notifyWhenNodeHttpReadParsed<false>(socket);
+}
+
+void JSNodeHTTPServerSocket::detachParserAfterRead()
+{
+    if (!ended && Bun__NodeHTTP__notifyWhenReadParsed(is_ssl, socket)) {
+        detachesParserAfterRead = true;
+    } else {
+        detachParser(false);
+    }
 }
 
 template<bool SSL>
@@ -821,6 +830,10 @@ extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__shutdown(us_socket_t* so
         return;
     }
     serverSocket->ended = true;
+    // The parse stops at the FIN and reports no end of the read.
+    if (serverSocket->detachesParserAfterRead) {
+        serverSocket->detachParser(false);
+    }
     if (!serverSocket->shutdownAfterResponseDrains()) {
         serverSocket->halfClose();
     }
@@ -896,6 +909,9 @@ void JSNodeHTTPServerSocket::onReadParsed()
 {
     if (isClosed()) {
         return;
+    }
+    if (detachesParserAfterRead) {
+        detachParser(false);
     }
     if (auto* res = currentResponse()) {
         Bun__NodeHTTPResponse_onReadParsed(res->wrapped());

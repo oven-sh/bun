@@ -99,6 +99,8 @@ pub struct Client<P> {
     was_ready: bool,
     /// For the next handshake. What script selected holds only while the client reconnects by itself.
     database: u32,
+    /// The handshake can have fewer rights than the session in which script selected.
+    script_authenticates: bool,
     /// Script sent a command, connected or closed. Until then nobody would hear why the client gave up.
     is_used: bool,
     is_subscriber: bool,
@@ -226,6 +228,7 @@ impl<P> Client<P> {
             state: State::Idle,
             retries: 0,
             was_ready: false,
+            script_authenticates: false,
             is_used: false,
             is_subscriber: false,
             output: OffsetByteList::default(),
@@ -302,10 +305,10 @@ impl<P> Client<P> {
 
     /// An explicit `connect()`, ahead of [`Self::first_dial`] and [`Self::redial`].
     pub fn connect(&mut self) {
+        self.was_ready = self.is_connected();
         match self.state {
             State::Backoff | State::Closed => {
                 self.retries = 0;
-                self.was_ready = false;
                 self.state = State::Backoff;
             }
             // The close of a dial without a TLS context is still due, and no retry can build one.
@@ -379,10 +382,14 @@ impl<P> Client<P> {
         let out = &mut self.output.byte_list;
         command::encode(b"HELLO", &hello[..if anonymous { 1 } else { 4 }], out);
         if self.database > 0 {
-            let mut digits = bun_core::fmt::ItoaBuf::new();
-            let database = bun_core::fmt::itoa(&mut digits, self.database);
-            command::encode(b"SELECT", &[database], out);
+            self.write_select();
         }
+    }
+
+    fn write_select(&mut self) {
+        let mut digits = bun_core::fmt::ItoaBuf::new();
+        let database = bun_core::fmt::itoa(&mut digits, self.database);
+        command::encode(b"SELECT", &[database], &mut self.output.byte_list);
     }
 
     /// Gives up the attempt, if there is one, without a retry: the caller rejects these and closes the socket.
@@ -494,7 +501,11 @@ impl<P> Client<P> {
     ) -> Sent {
         let expect = match ACKS.get_ascii_case_insensitive(name) {
             Some(_) => Expect::Ack,
-            None if matches!(name.len(), 5 | 6) => {
+            None if matches!(
+                (name.len(), name.first().map(u8::to_ascii_lowercase)),
+                (4, Some(b'a')) | (5, Some(b'h' | b'r')) | (6, Some(b's'))
+            ) =>
+            {
                 (self.database_after(name, args)).map_or(Expect::Reply(reply), Expect::Database)
             }
             None => Expect::Reply(reply),
@@ -531,7 +542,10 @@ impl<P> Client<P> {
 
     /// RESET forgets the choice, as it does the rest of the session.
     #[inline(never)]
-    fn database_after<A: AsRef<[u8]>>(&self, name: &[u8], args: &[A]) -> Option<u32> {
+    fn database_after<A: AsRef<[u8]>>(&mut self, name: &[u8], args: &[A]) -> Option<u32> {
+        let is_auth = |it: &[u8]| it.eq_ignore_ascii_case(b"AUTH");
+        self.script_authenticates |= is_auth(name)
+            || (name.eq_ignore_ascii_case(b"HELLO") && args.iter().any(|it| is_auth(it.as_ref())));
         match args {
             [database] if name.eq_ignore_ascii_case(b"SELECT") => Some(
                 bun_core::fmt::parse_int(database.as_ref(), 10).unwrap_or(self.config.database),
@@ -659,8 +673,8 @@ impl<P> Client<P> {
         match value {
             RESPValue::Error(message) => {
                 // Redis 5 has no HELLO. It echoes the arguments, and the password is one.
-                let echo = strings::split_once(&message, b", with args beginning with");
-                let message = echo.map_or(&*message, |(message, _)| message);
+                let echo = strings::split_once(&message, b" with args beginning with");
+                let message = echo.map_or(&*message, |(it, _)| it.strip_suffix(b",").unwrap_or(it));
                 refused(message, AuthenticationFailed)
             }
             RESPValue::SimpleString(ref text) if **text != *b"OK" => broken(
@@ -693,7 +707,21 @@ impl<P> Client<P> {
     fn on_select(&mut self, value: RESPValue, hello: RESPValue) -> Event<P> {
         match value {
             RESPValue::SimpleString(text) if *text == *b"OK" => self.selected(hello),
-            RESPValue::Error(message) => refused(&message, RedisError::InvalidCommand),
+            RESPValue::Error(message) => match refused(&message, RedisError::InvalidCommand) {
+                // `onconnect` has to run for it to select again.
+                Event::Broken { .. }
+                    if self.script_authenticates && self.database != self.config.database =>
+                {
+                    self.database = self.config.database;
+                    if self.database == 0 {
+                        return self.selected(hello);
+                    }
+                    self.write_select();
+                    self.state = State::Select(Box::new(hello));
+                    Event::Ignored
+                }
+                refusal => refusal,
+            },
             RESPValue::SimpleString(_) => broken(
                 b"SELECT command failed with non-OK response",
                 RedisError::InvalidResponse,

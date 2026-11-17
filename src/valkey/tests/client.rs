@@ -587,6 +587,16 @@ mod lifecycle {
         it.dial();
         assert!(!it.client.abandon_handshake(), "close(), connect()");
 
+        let mut it = reach(Ready);
+        it.lost();
+        it.dial();
+        it.start();
+        it.client.connect();
+        assert!(
+            !it.client.abandon_handshake(),
+            "connect() during a reconnect"
+        );
+
         let mut it = Driver::new(Config {
             max_retries: 0,
             ..Config::default()
@@ -749,6 +759,11 @@ mod handshake {
                 "broken UnsupportedProtocol Server does not support RESP3",
             ),
             (0, "-NO\r\n", "broken AuthenticationFailed NO"),
+            (
+                0,
+                "-ERR unknown command HELLO with args beginning with: AUTH\r\n",
+                "broken AuthenticationFailed ERR unknown command HELLO",
+            ),
             (0, "-LOADING x\r\n", "busy ConnectionClosed LOADING x"),
             (0, "-BUSY x\r\n", "busy ConnectionClosed BUSY x"),
             (0, "-BUSYKEY x\r\n", "broken AuthenticationFailed BUSYKEY x"),
@@ -842,6 +857,10 @@ mod handshake {
             (&[("SELECT 5", "-ERR")], "write HELLO 3 SELECT 1"),
             (&[("ECHO 5", "+OK")], "write HELLO 3 SELECT 1"),
             (
+                &[("AUTH u p", "+OK"), ("SELECT 5", "+OK")],
+                "write HELLO 3 SELECT 5",
+            ),
+            (
                 &[("SELECT 5", "+OK"), ("SELECT 5", "+QUEUED")],
                 "write HELLO 3 SELECT 5",
             ),
@@ -889,6 +908,39 @@ mod handshake {
             it.dial();
             it.start();
             assert_eq!(it.log.last().unwrap(), expected, "{exchange:?}");
+        }
+    }
+
+    #[test]
+    fn a_refused_repeat_falls_back_if_script_authenticates() {
+        for (url, command, reply, expected) in [
+            (0, "auth u p", "-NOPERM", "connected OK"),
+            (0, "HELLO 3 AUTH u p", "-NOAUTH", "connected OK"),
+            (1, "AUTH u p", "-NOPERM", "write SELECT 1"),
+            (1, "AUTH u p", "-NOPERM\r\n+OK", "connected OK"),
+            (1, "AUTH u p", "-NOPERM\r\n-NOPERM", "closed [] Final"),
+            (0, "AUTH u p", "-BUSY x", "retry in 100 []"),
+            (0, "HELLO 3", "-NOPERM", "closed [] Final"),
+        ] {
+            let mut it = Driver::new(database(url));
+            it.dial();
+            it.start();
+            it.read(if url == 0 {
+                "+OK\r\n"
+            } else {
+                "+OK\r\n+OK\r\n"
+            });
+            for command in [command, "SELECT 5"] {
+                it.send(command);
+                it.checkpoint();
+                it.read("+OK\r\n");
+            }
+            it.lost();
+            it.dial();
+            it.start();
+            it.read(&format!("+OK\r\n{reply}\r\n"));
+            it.log.retain(|line| line != "ignored");
+            assert_eq!(it.log.last().unwrap(), expected, "{command} {reply}");
         }
     }
 

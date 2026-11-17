@@ -152,7 +152,10 @@ test("MySQL: an OK packet that comes while the callback runs the event loop does
         },
       },
     });
-    const err: any = await sql.unsafe("SELECT 'secret'").simple().catch(err => err);
+    const err: any = await sql
+      .unsafe("SELECT 'secret'")
+      .simple()
+      .catch(err => err);
     await built;
     expect({ code: err.code, connected, commands }).toEqual({
       code: "ERR_MYSQL_UNEXPECTED_PACKET",

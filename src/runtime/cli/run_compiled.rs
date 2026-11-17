@@ -869,15 +869,6 @@ fn start_second_process(
     Global::exit(1)
 }
 
-#[cfg(windows)]
-const HANDLE_FLAG_INHERIT: u32 = 1;
-
-#[cfg(windows)]
-unsafe extern "system" {
-    fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
-    fn GetStartupInfoW(startup_info: *mut bun_sys::windows::STARTUPINFOW);
-}
-
 /// `block` is what a parent process hands to the C runtime of its child: a count, then a byte of flags for each
 /// descriptor, then a handle for each. The answer starts at descriptor 3.
 #[cfg(any(windows, test))]
@@ -898,23 +889,8 @@ fn list_open_extra_descriptors(block: &[u8]) -> Vec<bool> {
 
 #[cfg(windows)]
 fn list_inherited_extra_descriptors() -> Box<[bool]> {
-    // SAFETY: integers and null pointers are a valid STARTUPINFOW.
-    let mut startup_info: bun_sys::windows::STARTUPINFOW =
-        unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: the call fills the structure it is given.
-    unsafe { GetStartupInfoW(&mut startup_info) };
-    if startup_info.lpReserved2.is_null() {
-        return Box::default();
-    }
-    // SAFETY: the block is part of the parameters of this process, which are never freed.
-    let block = unsafe {
-        core::slice::from_raw_parts(
-            startup_info.lpReserved2,
-            usize::from(startup_info.cbReserved2),
-        )
-    };
     let is_still_open = |index: usize| Fd::from_uv(3 + index as i32).native() as isize > 0;
-    list_open_extra_descriptors(block)
+    list_open_extra_descriptors(bun_sys::windows::inherited_descriptors())
         .into_iter()
         .enumerate()
         .map(|(index, was_open)| was_open && is_still_open(index))
@@ -1016,8 +992,7 @@ fn start_second_process(
         }
     };
     let handle = file.fd().native();
-    // SAFETY: `handle` is open until `file` is dropped below.
-    unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) };
+    let _ = bun_sys::windows::make_inheritable(handle);
     let descriptor_text = (handle as usize).to_string();
     let arguments = second_process_arguments(
         typed,

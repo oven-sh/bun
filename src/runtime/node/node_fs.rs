@@ -7912,7 +7912,7 @@ impl NodeFS {
             // Not all files are seekable (and thus, not all files can be truncated).
             #[cfg(windows)]
             {
-                let _ = unsafe { windows::SetEndOfFile(file.fd().native()) };
+                let _ = windows::SetEndOfFile(file.fd().native());
             }
             #[cfg(not(windows))]
             {
@@ -7927,7 +7927,7 @@ impl NodeFS {
         if args.flush {
             #[cfg(windows)]
             {
-                let _ = unsafe { windows::kernel32::FlushFileBuffers(file.fd().native()) };
+                let _ = windows::FlushFileBuffers(file.fd().native());
             }
             #[cfg(not(windows))]
             {

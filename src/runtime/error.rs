@@ -70,8 +70,6 @@ pub enum Error {
     NotFound,
     #[error("EmptyKey")]
     EmptyKey,
-    #[error("FormatFailed")]
-    FormatFailed,
     #[error("SelfExePathFailed")]
     SelfExePathFailed,
     #[error("SpawnFailed")]
@@ -352,7 +350,6 @@ impl Error {
             Self::MissingShell => "MissingShell",
             Self::NotFound => "NotFound",
             Self::EmptyKey => "EmptyKey",
-            Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",
             Self::SpawnFailed => "SpawnFailed",
             Self::PipeStartFailed => "PipeStartFailed",

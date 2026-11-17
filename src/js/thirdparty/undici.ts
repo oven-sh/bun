@@ -222,8 +222,7 @@ function isPlainInput(input) {
   return input !== null && typeof input === "object" && !(input instanceof Request) && !(input instanceof URL);
 }
 
-// A buffered body is copied now, as native fetch does at call time, so a
-// change the caller makes while the lookup is pending does not reach the wire.
+// Copied before the lookup await, as native fetch copies a buffered body at call time.
 function snapshotBody(body) {
   if (body == null || typeof body !== "object") return body;
   if (isArrayBuffer(body)) return body.slice(0);
@@ -368,8 +367,7 @@ async function fetchWithConnect(input, init, connect) {
   const redirectMode = init?.redirect ?? (isRequest ? input.redirect : undefined) ?? "follow";
   const signal = init?.signal ?? (isRequest ? input.signal : undefined);
   if (redirectMode !== "follow") {
-    // Neither mode follows a redirect, so only the first hop is pinned. Headers
-    // and a buffered body are copied before the await.
+    // Neither mode follows a redirect, so only the first hop is pinned.
     const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
     const body = snapshotBody(init?.body);
     let pin;

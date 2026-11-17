@@ -722,41 +722,28 @@ pub(crate) type OpenPtyFn = unsafe extern "C" fn(
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod lib_util {
     use super::*;
-    use bun_core::ZStr;
-    use core::ffi::c_void;
-
-    // Per PORTING.md §Global mutable state: the flag is an AtomicBool and the
-    // handle slot an AtomicPtr (null ⇔ None — dlopen never yields a null Some).
-    // JS-thread-only.
-    static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-    static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-    fn get_handle() -> Option<*mut c_void> {
-        use core::sync::atomic::Ordering::Relaxed;
-        if LOADED.load(Relaxed) {
-            let h = HANDLE.load(Relaxed);
-            return if h.is_null() { None } else { Some(h) };
-        }
-        LOADED.store(true, Relaxed);
-
-        // Try libutil.so first (most common), then libutil.so.1
-        const LIB_NAMES: [&ZStr; 3] = [
-            bun_core::zstr!("libutil.so"),
-            bun_core::zstr!("libutil.so.1"),
-            bun_core::zstr!("libc.so.6"),
-        ];
-        for lib_name in LIB_NAMES {
-            if let Some(h) = sys::dlopen(lib_name, sys::RTLD::LAZY) {
-                HANDLE.store(h, Relaxed);
-                return Some(h);
-            }
-        }
-        None
-    }
+    use bun_core::{ZStr, zstr};
+    use sys::{DynLib, RTLD};
 
     pub(super) fn get_open_pty() -> Option<OpenPtyFn> {
-        sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle())
+        // Try libutil.so first (most common), then libutil.so.1
+        const LIB_NAMES: [&ZStr; 3] = [
+            zstr!("libutil.so"),
+            zstr!("libutil.so.1"),
+            zstr!("libc.so.6"),
+        ];
+        static OPEN_PTY: std::sync::OnceLock<Option<OpenPtyFn>> = std::sync::OnceLock::new();
+        *OPEN_PTY.get_or_init(|| {
+            // SAFETY: parts of the C library, which stay loaded, and the type of its `openpty`.
+            unsafe {
+                let library = (LIB_NAMES.into_iter())
+                    .find_map(|name| DynLib::open_with_flags(name, RTLD::LAZY))
+                    .map(DynLib::leak);
+                // Android has none of them.
+                let library = library.as_deref().unwrap_or(DynLib::GLOBAL);
+                library.lookup_as(zstr!("openpty"))
+            }
+        })
     }
 }
 

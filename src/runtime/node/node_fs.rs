@@ -772,7 +772,7 @@ fn embedded_file_buffer(graph: &bun_standalone_graph::Graph, contents: &[u8]) ->
         && contents.len() >= sys::private_copy::MIN_MAPPED_BYTES
         && let Some(copy) = sys::private_copy::map(contents)
     {
-        return Buffer::from_private_copy(copy, contents.len());
+        return Buffer::from_private_copy(copy);
     }
     Buffer::from_bytes(
         contents.to_vec().into_boxed_slice(),
@@ -1493,17 +1493,16 @@ mod _async_tasks {
                 NodeFSFunctionEnum::Readv => {
                     let args: &args::Readv = args_as!(args::Readv);
                     let fd = args.fd.uv();
-                    let bufs = &args.buffers.buffers;
+                    let bufs = args.buffers.writable();
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
-                    let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
-                    // SAFETY: `bufs` (Vec<PlatformIoVec> == Vec<uv_buf_t>) lives in
-                    // the leaked task; libuv copies the array before return.
+                    let sum: usize = bufs.iter().map(sys::IoVecMut::size).sum();
+                    // SAFETY: the buffers live in the leaked task; libuv copies the array before return.
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
                             &mut task.req,
                             fd,
-                            bufs.as_ptr().cast(),
+                            sys::IoVecMut::as_raw(bufs),
                             c_uint::try_from(bufs.len()).expect("int cast"),
                             pos,
                             Some(Self::uv_callback),
@@ -1522,7 +1521,7 @@ mod _async_tasks {
                 NodeFSFunctionEnum::Writev => {
                     let args: &args::Writev = args_as!(args::Writev);
                     let fd = args.fd.uv();
-                    let bufs = &args.buffers.buffers;
+                    let bufs = args.buffers.readable();
                     if bufs.is_empty() {
                         // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
                         unsafe {
@@ -1539,14 +1538,14 @@ mod _async_tasks {
                         return task.completion.value();
                     }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
-                    let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
+                    let sum: usize = bufs.iter().map(sys::IoVec::size).sum();
                     // SAFETY: see Readv arm.
                     let rc = unsafe {
                         uv::uv_fs_write(
                             loop_,
                             &mut task.req,
                             fd,
-                            bufs.as_ptr().cast(),
+                            sys::IoVec::as_raw(bufs),
                             c_uint::try_from(bufs.len()).expect("int cast"),
                             pos,
                             Some(Self::uv_callback),
@@ -6672,7 +6671,7 @@ impl NodeFS {
     }
 
     pub(crate) fn readv(&mut self, args: &args::Readv, _: Flavor) -> Maybe<ret::Readv> {
-        if args.buffers.buffers.is_empty() {
+        if args.buffers.writable().is_empty() {
             return Ok(ret::Readv { bytes_read: 0 });
         }
         if args.position.is_some() {
@@ -6683,7 +6682,7 @@ impl NodeFS {
     }
 
     pub(crate) fn writev(&mut self, args: &args::Writev, _: Flavor) -> Maybe<ret::Writev> {
-        if args.buffers.buffers.is_empty() {
+        if args.buffers.readable().is_empty() {
             return Ok(ret::Writev { bytes_written: 0 });
         }
         if args.position.is_some() {
@@ -6765,7 +6764,7 @@ impl NodeFS {
 
     fn preadv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
         let position = args.position.unwrap();
-        let bufs = args.buffers.buffers.as_slice();
+        let bufs = args.buffers.writable();
         // libuv `uv__fs_read`: cap `nbufs` at IOV_MAX and issue one syscall.
         let bufs = &bufs[..bufs.len().min(IOV_MAX)];
         match Syscall::preadv(args.fd, bufs, position as i64) {
@@ -6777,7 +6776,7 @@ impl NodeFS {
     }
 
     fn readv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
-        let bufs = args.buffers.buffers.as_slice();
+        let bufs = args.buffers.writable();
         // libuv `uv__fs_read`: cap `nbufs` at IOV_MAX and issue one syscall.
         let bufs = &bufs[..bufs.len().min(IOV_MAX)];
         #[cfg(not(windows))]
@@ -6794,23 +6793,10 @@ impl NodeFS {
 
     fn pwritev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
         let mut position = args.position.unwrap() as i64;
-        // `PlatformIoVec`
-        // and `PlatformIoVecConst` are layout-identical (`{ *void, usize }`); the
-        // kernel never writes through `iov_base` for pwritev(2).
-        // SAFETY: layout-compatible reinterpretation, asserted in `bun_sys`.
-        let vecs: &[sys::PlatformIoVecConst] = unsafe {
-            core::slice::from_raw_parts(
-                args.buffers
-                    .buffers
-                    .as_ptr()
-                    .cast::<sys::PlatformIoVecConst>(),
-                args.buffers.buffers.len(),
-            )
-        };
         // libuv `uv__fs_write_all`: loop IOV_MAX-sized batches until every
         // buffer is written; an error after the first batch returns the
         // accumulated total instead of the error.
-        let mut remaining = vecs;
+        let mut remaining = args.buffers.readable();
         let mut total: u64 = 0;
         while !remaining.is_empty() {
             let chunk_len = remaining.len().min(IOV_MAX);
@@ -6822,7 +6808,7 @@ impl NodeFS {
                 Ok(amt) => {
                     total += amt as u64;
                     position = position.wrapping_add(amt as i64);
-                    let chunk_capacity: usize = chunk.iter().map(|b| b.len as usize).sum();
+                    let chunk_capacity: usize = chunk.iter().map(sys::IoVec::size).sum();
                     if amt < chunk_capacity {
                         break;
                     }
@@ -6836,14 +6822,10 @@ impl NodeFS {
     }
 
     fn writev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
-        // The mutable iovec slice doubles as `iovec_const` for writev(2); the kernel
-        // never writes through `iov_base`. `PlatformIoVec` and
-        // `PlatformIoVecConst` are layout-identical (`{ *void, usize }`), so
-        // pass the slice through `Syscall::writev` as-is.
         // libuv `uv__fs_write_all`: loop IOV_MAX-sized batches until every
         // buffer is written; an error after the first batch returns the
         // accumulated total instead of the error.
-        let mut remaining = args.buffers.buffers.as_slice();
+        let mut remaining = args.buffers.readable();
         let mut total: u64 = 0;
         while !remaining.is_empty() {
             let chunk_len = remaining.len().min(IOV_MAX);
@@ -6854,7 +6836,7 @@ impl NodeFS {
                 Ok(0) => break,
                 Ok(amt) => {
                     total += amt as u64;
-                    let chunk_capacity: usize = chunk.iter().map(sys::platform_iovec_len).sum();
+                    let chunk_capacity: usize = chunk.iter().map(sys::IoVec::size).sum();
                     if amt < chunk_capacity {
                         break;
                     }

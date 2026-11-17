@@ -1167,31 +1167,22 @@ fn is_shared_library_name(name: &[u8]) -> bool {
 const ALIGNMENT_OF_PROGRAMS: usize = 64 * 1024;
 
 #[cfg(unix)]
-fn reserve_range_of_programs(size: usize) -> Option<usize> {
-    let size = size + ALIGNMENT_OF_PROGRAMS;
-    // SAFETY: a new mapping, which nothing else refers to.
-    let range = unsafe {
-        libc::mmap(
-            core::ptr::null_mut(),
-            size,
-            libc::PROT_NONE,
-            libc::MAP_PRIVATE | libc::MAP_ANON,
-            -1,
-            0,
-        )
-    };
-    (range != libc::MAP_FAILED).then(|| (range as usize).next_multiple_of(ALIGNMENT_OF_PROGRAMS))
-}
-
-#[cfg(unix)]
 fn load_graph_file_at_its_address(descriptor: Fd, offset: usize, size: usize) -> Option<*mut u8> {
-    let address = reserve_range_of_programs(size)?;
+    let reserved = bun_sys::Mmap::new(
+        size + ALIGNMENT_OF_PROGRAMS,
+        libc::PROT_NONE,
+        libc::MAP_PRIVATE | libc::MAP_ANON,
+        Fd::from_native(-1),
+        0,
+    );
+    let reserved: *mut u8 = reserved.ok()?.into_raw().as_ptr().cast();
+    let address = reserved.map_addr(|it| it.next_multiple_of(ALIGNMENT_OF_PROGRAMS));
     let (access, flags) = (
         libc::PROT_READ | libc::PROT_WRITE,
         libc::MAP_PRIVATE | libc::MAP_FIXED,
     );
-    let address = address as *mut u8;
-    bun_sys::mmap(address, size, access, flags, descriptor, offset as _).ok()
+    // SAFETY: the pages of the `size` bytes at `address` lie in what was reserved, to which nothing else refers.
+    unsafe { bun_sys::mmap(address, size, access, flags, descriptor, offset as _) }.ok()
 }
 
 #[cfg(windows)]

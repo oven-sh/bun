@@ -1096,7 +1096,8 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
             return;
         }
 
-        let prev = this.read_write_loop.uv_buf.slice();
+        let prev_start = buf_len - this.read_write_loop.uv_buf.len as usize;
+        let prev = &this.read_write_loop.read_buf[prev_start..];
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
         this.read_write_loop_write();
         return;

@@ -560,6 +560,7 @@ describe("data received while a frame's listener spins the event loop", () => {
   const text = (payload: string | Buffer, fin = true) => encodeFrame(OP.text, payload, { fin });
   const ping = (payload: string | Buffer) => encodeFrame(OP.ping, payload);
   const compressed = (payload: string) => encodeFrame(OP.text, deflate(payload), { rsv1: true });
+  const fragment = (payload: string) => encodeFrame(OP.continuation, payload, { fin: false });
   const lastFragment = (payload: string | Buffer) => encodeFrame(OP.continuation, payload);
 
   const tls = { rejectUnauthorized: false };
@@ -587,13 +588,14 @@ describe("data received while a frame's listener spins the event loop", () => {
   });
 
   // One read each. `before` ends with the frame whose listener spins, `during` is read in it, `after` once it returned.
-  const cases: {
+  const allCases: {
     name: string;
     before: Buffer[];
     during: Buffer;
     after?: Buffer;
     events: string[];
     frames?: string[];
+    onEveryClient?: true;
   }[] = [
     {
       name: "a payload in two reads, then a whole frame",
@@ -609,6 +611,7 @@ describe("data received while a frame's listener spins the event loop", () => {
     },
     {
       name: "a compressed payload in two reads, then a compressed frame",
+      onEveryClient: true,
       before: split(compressed("first"), 5),
       during: compressed("second"),
       events: ['text "first"', 'text "second"', "returns"],
@@ -622,6 +625,7 @@ describe("data received while a frame's listener spins the event loop", () => {
     },
     {
       name: "a payload in two reads, then a whole frame and a Close frame",
+      onEveryClient: true,
       before: split(text("first"), 4),
       during: Buffer.concat([text("second"), encodeFrame(OP.close, closePayload(1000))]),
       events: ['text "first"', 'text "second"', "returns"],
@@ -656,6 +660,7 @@ describe("data received while a frame's listener spins the event loop", () => {
     },
     {
       name: "a whole Ping, then part of a Ping",
+      onEveryClient: true,
       before: [ping("first")],
       ...splitAroundReturn(ping("second"), 5),
       events: ['ping "first"', "returns", 'ping "second"'],
@@ -665,13 +670,13 @@ describe("data received while a frame's listener spins the event loop", () => {
 
   // Not concurrent: a listener that spins would run the other tests inside it.
   describe.each([
-    { api: "WebSocket", secure: false },
+    { api: "WebSocket", secure: false, everyCase: true },
     { api: "WebSocket", secure: true },
     { api: "ws", secure: false },
     { api: "ws", secure: true },
-  ])("$api, secure: $secure", ({ api, secure }) => {
-    // Each listener call writes the next of `during` and spins until the client has read it.
-    async function connect(during: Buffer[], with101 = Buffer.alloc(0)) {
+  ])("$api, secure: $secure", ({ api, secure, everyCase }) => {
+    // Each listener call writes the next of `during`, if any, and spins until the client has read it.
+    async function connect(during: (Buffer | undefined)[], with101 = Buffer.alloc(0)) {
       let connection!: RawSocket;
       const peer = await createPeer({
         secure,
@@ -728,6 +733,7 @@ describe("data received while a frame's listener spins the event loop", () => {
       return { url: peer.url, connection, seen, returned: returned.promise, [Symbol.asyncDispose]: dispose };
     }
 
+    const cases = allCases.filter(({ onEveryClient }) => everyCase || onEveryClient);
     test.each(cases)("$name", async ({ before, during, after, events, frames = [] }) => {
       await using client = await connect([during]);
       const { url, connection, seen, returned } = client;
@@ -742,6 +748,8 @@ describe("data received while a frame's listener spins the event loop", () => {
       expect(seen).toEqual(events);
       expect(await connection.roundTrip()).toEqual(frames);
     });
+
+    if (!everyCase) return;
 
     // With the 101, because no other read overwrites those bytes.
     describe.each([
@@ -765,6 +773,49 @@ describe("data received while a frame's listener spins the event loop", () => {
         await client.returned;
         expect(client.seen).toEqual(['text "first"', "returns", 'text "second"', third, "returns"]);
       });
+    });
+
+    const [header, payload] = split(text("third"), 2);
+    test.each([
+      {
+        name: "a header, and its payload two listeners later",
+        with101: [text("first"), text("", false), ping("p"), lastFragment("second")],
+        during: [header, undefined, payload],
+        after: text("fourth"),
+        events: ['text "first"', "returns", 'ping "p"', 'text "second"', 'text "third"', "returns", 'text "fourth"'],
+      },
+      {
+        name: "a header, and its payload after the listeners",
+        with101: [text("first"), text("sec", false), ping("p"), lastFragment("ond")],
+        during: [header],
+        after: payload,
+        events: ['text "first"', "returns", 'ping "p"', 'text "second"', 'text "third"'],
+      },
+      {
+        name: "the last fragment and the first of another message",
+        with101: [text("a", false), ping("p"), fragment("b")],
+        during: [Buffer.concat([lastFragment("c"), text("d", false)])],
+        after: lastFragment("e"),
+        events: ['ping "p"', 'text "abc"', "returns", 'text "de"'],
+      },
+    ])("$name while the first read has a Ping inside a message", async ({ with101, during, after, events }) => {
+      await using client = await connect(during, Buffer.concat(with101));
+      await client.returned;
+      client.connection.write(after);
+      await barrier(client.url);
+      expect(client.seen).toEqual(events);
+    });
+
+    test("every read ends after the header of the next message", async () => {
+      const [[header1, first], [header2, second], [header3, third]] = ["one", "two", "six"].map(t => split(text(t), 2));
+      await using client = await connect([Buffer.concat([second, header3])]);
+      client.connection.write(header1);
+      await barrier(client.url);
+      client.connection.write(Buffer.concat([first, header2]));
+      await client.returned;
+      client.connection.write(third);
+      await barrier(client.url);
+      expect(client.seen).toEqual(['text "one"', 'text "two"', "returns", 'text "six"']);
     });
   });
 

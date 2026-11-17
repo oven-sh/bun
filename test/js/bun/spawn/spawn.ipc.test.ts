@@ -709,6 +709,33 @@ describe.concurrent("the send queue", () => {
     );
     expect(result).toEqual({ stdout: [String(count)], stderr: "", exitCode: 0 });
   });
+
+  // On Windows the handle is still being written at the first disconnect(), which then waits for no ack.
+  it.skipIf(isWindows)("is flushed when disconnect() is called again after the ack it waited for", async () => {
+    const result = await runPair(
+      `
+        const server = await listen();
+        const child = spawnChild();
+        child.send("handle", server, () => {
+          child.disconnect();
+          fs.writeFileSync("disconnected twice", "");
+        });
+        child.send(Buffer.alloc(4 << 20, "x").toString());
+        child.disconnect();
+        await child.exited;
+        server.close();
+      `,
+      `
+        process.on("message", (message, handle) => {
+          console.log(message.length);
+          if (!handle) return;
+          handle.close();
+          until("disconnected twice");
+        });
+      `,
+    );
+    expect(result).toEqual({ stdout: ["6", String(4 << 20)], stderr: "", exitCode: 0 });
+  });
 });
 
 describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {

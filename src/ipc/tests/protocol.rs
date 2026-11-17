@@ -310,7 +310,7 @@ fn every_phase_and_event() {
         ),
         (
             Draining,
-            [Closing, Draining, Closing, read, Closing, write, Closed],
+            [Draining, Draining, Closing, read, Closing, write, Closed],
         ),
         (
             Closing,

@@ -43,8 +43,8 @@ impl Phase {
             (Open | Draining, PeerExited) => Some(ClosingAfterRead),
             (Open | Draining, ReadFailed) => Some(Closing),
             (Open, Disconnect { awaits_ack: true }) => Some(Draining),
-            (Open | Draining, Disconnect { awaits_ack: false }) | (Draining, Idle) => Some(Closing),
-            (Open, Idle) | (Draining, Disconnect { awaits_ack: true }) => None,
+            (Open, Disconnect { awaits_ack: false }) | (Draining, Idle) => Some(Closing),
+            (Open, Idle) | (Draining, Disconnect { .. }) => None,
         }
     }
 

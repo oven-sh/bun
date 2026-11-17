@@ -101,14 +101,15 @@ fn inverse_transform_of_any_coefficients() {
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn flat_blocks() {
-    let ones = JpegBlock([1; 64]);
     for dc in (i16::MIN..=i16::MAX).step_by(7) {
+        // The product has 16 bits.
+        let step = if dc % 8 == 0 { 255 } else { 1 };
         let mut block = ZERO;
         block.0[0] = dc;
-        let mean = (((i32::from(dc) + 4) >> 3) + 128).clamp(0, 255) as u8;
+        let mean = (((i32::from(dc.wrapping_mul(step)) + 4) >> 3) + 128).clamp(0, 255) as u8;
         for size in [5, 8, 14] {
             check(vec![vec![mean; size]; size], || {
-                inverse(&[block], &ones, size)
+                inverse(&[block], &JpegBlock([step; 64]), size)
             });
         }
     }

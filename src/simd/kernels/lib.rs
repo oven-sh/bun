@@ -1,5 +1,5 @@
 //! Bun's kernels on `bun_simd`, checked against those on Highway.
-#![feature(loop_hints, trait_alias)]
+#![feature(hint_prefetch, loop_hints, trait_alias)]
 #![feature(const_array, const_closures, const_trait_impl)]
 #![forbid(unsafe_code)]
 // For `#[inline(always)]` in the copies.

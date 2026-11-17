@@ -30,33 +30,42 @@ pub struct Plane<'a> {
     pub start: usize,
 }
 
-type Rows<'a, const H: usize> = [&'a mut [u8]; H];
+/// `H` rows, of which the last go through the macroblocks, from `ROW_SLACK` samples before those on.
+struct Rows<'a, const H: usize> {
+    samples: &'a mut [u8],
+    stride: usize,
+}
 
 impl<'a> Plane<'a> {
-    /// `H` rows, of which the last `size` go through the macroblocks.
     #[inline(always)]
     fn rows<const H: usize>(self, size: usize, count: usize) -> Option<Rows<'a, H>> {
-        let above = self.stride.checked_mul(H - size)?.checked_add(ROW_SLACK)?;
-        let mut rest = self.samples.get_mut(self.start.checked_sub(above)?..)?;
         let len = 2 * ROW_SLACK + size * usize::from(u16::try_from(count).ok()?);
-        let mut rows = from_fn(|_| &mut [][..]);
-        #[rustc_unroll(full)]
-        for row in &mut rows {
-            *row = rest.split_off_mut(..self.stride)?.get_mut(..len)?;
-        }
-        Some(rows)
+        // LLVM sees that no offset overflows.
+        let stride = Some(self.stride).filter(|it| (len..usize::MAX / 32).contains(it))?;
+        let start = self.start.checked_sub(stride * (H - size) + ROW_SLACK)?;
+        let samples = self.samples.get_mut(start..)?.get_mut(..stride * H)?;
+        Some(Rows { samples, stride })
     }
 }
 
-/// Just macroblock `x`. All rows have the same length, so one check holds for all.
-#[inline(always)]
-fn cut<'a, const H: usize>(all: &'a mut Rows<'_, H>, size: usize, x: usize) -> Option<Rows<'a, H>> {
-    let mut rows = from_fn(|_| &mut [][..]);
-    #[rustc_unroll(full)]
-    for (row, whole) in rows.iter_mut().zip(all) {
-        *row = whole.get_mut(size * x..size * x + size + 2 * ROW_SLACK)?;
+impl<const H: usize> Rows<'_, H> {
+    /// Just macroblock `x`.
+    #[inline(always)]
+    fn cut(&mut self, size: usize, x: usize) -> Option<Rows<'_, H>> {
+        let len = self.stride * (H - 1) + size + 2 * ROW_SLACK;
+        let samples = self.samples.get_mut(size * x..)?.get_mut(..len)?;
+        Some(Rows { samples, ..*self })
     }
-    Some(rows)
+
+    #[inline(always)]
+    fn get<const N: usize, I: Isa>(&self, y: usize, x: usize) -> Bytes<N, I> {
+        Vector::from_slice(&self.samples[y * self.stride + x..y * self.stride + x + N])
+    }
+
+    #[inline(always)]
+    fn set<const N: usize, I: Isa>(&mut self, y: usize, x: usize, v: Bytes<N, I>) {
+        v.copy_to_slice(&mut self.samples[y * self.stride + x..y * self.stride + x + N]);
+    }
 }
 
 /// With the index of the vector above that of the lane in 16 bytes, rotates the bits of both `times`.
@@ -88,48 +97,47 @@ trait Planes<V> {
 impl<I: Isa, const H: usize> Planes<Bytes<16, I>> for Rows<'_, H> {
     #[inline(always)]
     fn across(&self, y: usize) -> Bytes<16, I> {
-        Vector::from_slice(self[H - 16 + y])
+        self.get(H - 16 + y, 0)
     }
 
     #[inline(always)]
     fn set_across(&mut self, y: usize, v: Bytes<16, I>) {
-        v.halves()[0].copy_to_slice(self[H - 16 + y]);
-        v.halves()[1].copy_to_slice(self[H - 15 + y]);
+        self.set(H - 16 + y, 0, v.halves()[0]);
+        self.set(H - 15 + y, 0, v.halves()[1]);
     }
 
     #[inline(always)]
     fn along(&self, y: usize) -> Bytes<16, I> {
-        Vector::from_slice(&self[H + y - 20][4..])
+        self.get(H + y - 20, 4)
     }
 
     #[inline(always)]
     fn set_along(&mut self, y: usize, v: Bytes<16, I>) {
-        v.copy_to_slice(&mut self[H + y - 20][4..]);
+        self.set(H + y - 20, 4, v);
     }
 }
 
 impl<I: Isa> Planes<Bytes<16, I>> for [Rows<'_, 12>; 2] {
     #[inline(always)]
     fn across(&self, y: usize) -> Bytes<16, I> {
-        Vector::from_slice(self[y / 8][4 + y % 8])
+        self[y / 8].get(4 + y % 8, 0)
     }
 
     #[inline(always)]
     fn set_across(&mut self, y: usize, v: Bytes<16, I>) {
-        v.halves()[0].copy_to_slice(self[y / 8][4 + y % 8]);
-        v.halves()[1].copy_to_slice(self[y / 8][5 + y % 8]);
+        self[y / 8].set(4 + y % 8, 0, v.halves()[0]);
+        self[y / 8].set(5 + y % 8, 0, v.halves()[1]);
     }
 
     #[inline(always)]
     fn along(&self, y: usize) -> Bytes<16, I> {
-        let [u, v] = [&self[0][y][4..], &self[1][y][4..]];
-        Bytes::<16, I>::from_halves([Vector::from_slice(u), Vector::from_slice(v)])
+        Bytes::<16, I>::from_halves([self[0].get(y, 4), self[1].get(y, 4)])
     }
 
     #[inline(always)]
     fn set_along(&mut self, y: usize, v: Bytes<16, I>) {
-        v.halves()[0].copy_to_slice(&mut self[0][y][4..]);
-        v.halves()[1].copy_to_slice(&mut self[1][y][4..]);
+        self[0].set(y, 4, v.halves()[0]);
+        self[1].set(y, 4, v.halves()[1]);
     }
 }
 
@@ -313,8 +321,7 @@ pub(crate) mod simd {
         }
 
         #[inline(always)]
-        fn macroblock_edge(v: &mut [U8], strength: FilterStrength) {
-            let limit = strength.edge_limit.wrapping_add(4);
+        fn macroblock_edge(v: &mut [U8], limit: u8, strength: FilterStrength) {
             let [is_filtered, is_smooth] = classify(v, limit.into(), strength);
             let [p1, mut p0, mut q0, q1] = [signed(v[2]), signed(v[3]), signed(v[4]), signed(v[5])];
             let delta = is_filtered.select(base_delta(p1.saturating_sub(q1), p0, q0), 0);
@@ -334,11 +341,13 @@ pub(crate) mod simd {
             v[6] = unsigned(signed(v[6]).saturating_add(by_9));
         }
 
+        /// Changes nothing unless it `is_edge`.
         #[inline(always)]
-        fn outer<const READ: usize>(v: &mut [U8], strength: FilterStrength) {
+        fn outer<const READ: usize>(v: &mut [U8], is_edge: bool, strength: FilterStrength) {
+            let limit = strength.edge_limit.wrapping_add(4) * u8::from(is_edge);
             match READ {
-                2 => simple_edge(v, strength.edge_limit.wrapping_add(4)),
-                _ => macroblock_edge(v, strength),
+                2 => simple_edge(v, limit),
+                _ => macroblock_edge(v, limit, strength),
             }
         }
 
@@ -369,7 +378,7 @@ pub(crate) mod simd {
                 v[y] = at.across(y).interleave_in_blocks(at.across(y + 8)).0;
             }
             rotate(&mut v, 3);
-            outer::<READ>(&mut v, strength);
+            outer::<READ>(&mut v, true, strength);
             let columns = [v[4], v[5], v[6], v[7]];
             rotate(&mut v, 3);
             #[rustc_unroll(full)]
@@ -422,13 +431,14 @@ pub(crate) mod simd {
                 inner::<READ>(&mut v, [true, false, true], strength);
                 rotate(&mut v, ROWS.ilog2() as usize);
             }
-            if has_above {
+            // With all rows in registers, a branch costs more than the first row of a picture saves.
+            if has_above || ROWS > 4 {
                 let mut both = [v[0], v[1], v[2], v[3], v[0], v[1], v[2], v[3]];
                 #[rustc_unroll(full)]
                 for y in 4 - READ..4 {
                     both[y] = at.along(y);
                 }
-                outer::<READ>(&mut both, strength);
+                outer::<READ>(&mut both, has_above, strength);
                 #[rustc_unroll(full)]
                 for y in 5 - READ..4 {
                     at.set_along(y, both[y]);
@@ -639,15 +649,13 @@ pub(crate) mod simd {
         has_above: bool,
     ) -> Option<()> {
         let ([y, u, v], count) = (planes, strengths.len());
-        let (mut y, mut u, mut v) = (y.rows(16, count)?, u.rows(8, count)?, v.rows(8, count)?);
+        let mut y = y.rows::<20>(16, count)?;
+        let (mut u, mut v) = (u.rows(8, count)?, v.rows(8, count)?);
         for (x, &strength) in strengths.iter().enumerate() {
             if strength.edge_limit == 0 {
                 continue;
             }
-            let mut both = (
-                cut(&mut y, 16, x)?,
-                [cut(&mut u, 8, x)?, cut(&mut v, 8, x)?],
-            );
+            let mut both = (y.cut(16, x)?, [u.cut(8, x)?, v.cut(8, x)?]);
             let has = [x != 0, has_above];
             if IS_NARROW {
                 width::x128::filter::<16, 4>(&mut both.0, strength, has);
@@ -670,11 +678,7 @@ pub(crate) mod simd {
         let mut y = y.rows::<18>(16, strengths.len())?;
         for (x, &strength) in strengths.iter().enumerate() {
             if strength.edge_limit != 0 {
-                width::x128::filter::<16, 2>(
-                    &mut cut(&mut y, 16, x)?,
-                    strength,
-                    [x != 0, has_above],
-                );
+                width::x128::filter::<16, 2>(&mut y.cut(16, x)?, strength, [x != 0, has_above]);
             }
         }
         Some(())
@@ -719,9 +723,9 @@ pub(crate) mod simd {
         (steps, *row) = core::mem::take(row).as_chunks_mut();
         ((a, *tl), (b, *t), (c, *tr)) = (tl.as_chunks(), t.as_chunks(), tr.as_chunks());
         #[rustc_unroll(never)]
-        for (it, ((tl, t), tr)) in steps.iter_mut().zip(a.iter().zip(b).zip(c)) {
+        for i in 0..steps.len() {
             let load = |bytes| isa::Vector::load(bytes);
-            let [tl, t, tr] = [load(tl), load(t), load(tr)];
+            let [tl, t, tr] = [load(&a[i]), load(&b[i]), load(&c[i])];
             let predicted = match MODE {
                 2 => t,
                 3 => tr,
@@ -730,7 +734,7 @@ pub(crate) mod simd {
                 9 => !(!t).average_round(!tr),
                 _ => Vector::from_array(const { from_fn(const |i| [0, 0, 0, 255][i % 4]) }),
             };
-            (predicted + isa::Vector::load(it)).store(it);
+            (predicted + load(&steps[i])).store(&mut steps[i]);
         }
     }
 
@@ -791,15 +795,19 @@ pub(crate) mod simd {
     }
 
     #[inline(always)]
-    fn add_average<const MODE: u8>(row: &mut [Rgba], left: Rgba, [tl, t, tr]: [&[Rgba]; 3]) {
+    fn add_average<const MODE: u8>(row: &mut [Rgba], left: Rgba, above: [&[Rgba]; 3]) {
         // LLVM would invert in general registers.
         let inverted = |it| !pixel(it).opaque();
-        let mut left = inverted(left);
+        let [&[tl, ..], &[t, ..], tr] = above else {
+            return;
+        };
+        let [mut left, mut tl, mut t] = [inverted(left), inverted(tl), inverted(t)];
         #[rustc_unroll(2)]
         for i in 0..row.len() {
-            let around = [left, inverted(tl[i]), inverted(t[i]), inverted(tr[i])];
-            left = average::<MODE>(around) - pixel(row[i]);
+            let tr = inverted(tr[i]);
+            left = average::<MODE>([left, tl, t, tr]) - pixel(row[i]);
             row[i] = first((!left).opaque());
+            [tl, t] = [t, tr];
         }
     }
 
@@ -823,7 +831,8 @@ pub(crate) mod simd {
     fn add_gradient<const MODE: u8>(row: &mut [Rgba], left: Rgba, [tl, t, _]: [&[Rgba]; 3]) {
         let (mut left, (steps, rest)) = (pixel(left), row.as_chunks_mut());
         let ((tl, tl_rest), (t, t_rest)) = (tl.as_chunks::<4>(), t.as_chunks::<4>());
-        for (step, (tl, t)) in steps.iter_mut().zip(tl.iter().zip(t)) {
+        for i in 0..steps.len() {
+            let (step, tl, t) = (&mut steps[i], &tl[i], &t[i]);
             let load = |pixels: &[Rgba; 4]| U8::from_slice(pixels.as_flattened());
             if load(t).simd_eq(load(tl)).all() {
                 let pixels = running_sums(step) + repeat(left, 0);
@@ -837,30 +846,36 @@ pub(crate) mod simd {
             }
         }
         #[rustc_unroll(never)]
-        for (it, (&tl, &t)) in rest.iter_mut().zip(tl_rest.iter().zip(t_rest)) {
-            left = gradient::<MODE>(left, [tl, t, *it]);
-            *it = first(left);
+        for i in 0..rest.len() {
+            left = gradient::<MODE>(left, [tl_rest[i], t_rest[i], rest[i]]);
+            rest[i] = first(left);
         }
     }
 
     /// `above` has TL, T and TR for each pixel.
     #[inline(always)]
-    fn undo_mode(mode: u8, row: &mut [Rgba], left: Rgba, above: [&[Rgba]; 3]) {
-        match mode {
-            1 => add_left(row, left),
+    #[allow(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "on Neoverse the load waits for the wider store, and not all modes need it"
+    )]
+    fn undo_mode(mode: u8, row: &mut [Rgba], left: &Rgba, above: [&[Rgba]; 3]) {
+        match mode & 15 {
+            1 => add_left(row, *left),
             2 => add_above::<2>(row.as_flattened_mut(), above),
             3 => add_above::<3>(row.as_flattened_mut(), above),
             4 => add_above::<4>(row.as_flattened_mut(), above),
-            5 => add_average::<5>(row, left, above),
-            6 => add_average::<6>(row, left, above),
-            7 => add_average::<7>(row, left, above),
+            5 => add_average::<5>(row, *left, above),
+            6 => add_average::<6>(row, *left, above),
+            7 => add_average::<7>(row, *left, above),
             8 => add_above::<8>(row.as_flattened_mut(), above),
             9 => add_above::<9>(row.as_flattened_mut(), above),
-            10 => add_average::<10>(row, left, above),
-            11 => add_gradient::<11>(row, left, above),
-            12 => add_gradient::<12>(row, left, above),
-            13 => add_average::<13>(row, left, above),
-            _ => add_above::<0>(row.as_flattened_mut(), above),
+            10 => add_average::<10>(row, *left, above),
+            11 => add_gradient::<11>(row, *left, above),
+            12 => add_gradient::<12>(row, *left, above),
+            13 => add_average::<13>(row, *left, above),
+            // With an arm for each value, the jump needs no check.
+            0 | 14 | 15 => add_above::<0>(row.as_flattened_mut(), above),
+            _ => unreachable!(),
         }
     }
 
@@ -876,24 +891,28 @@ pub(crate) mod simd {
         let size = 1usize
             .checked_shl(tile_bits)
             .filter(|_| row.len() == above.len())?;
-        let last_mode = tiles.get(row.len().checked_sub(1)? >> tile_bits)?[1] & 15;
-        let (start, rest) = row.split_first_mut()?;
-        *start = first(pixel(*start) + pixel(*above.first()?));
-        let Some((end, mut rest)) = rest.split_last_mut() else {
-            return Some(());
-        };
+        let last_mode = tiles.get(row.len().checked_sub(1)? >> tile_bits)?[1];
+        let start = first(pixel(*row.first()?) + pixel(*above.first()?));
+        row[0] = start;
+        let (end, mut rest) = row.split_last_mut()?;
         let (mut len, mut tiles) = (size - (1 & (size - 1)), tiles.get(1 >> tile_bits..)?.iter());
-        let mut left = &*start;
-        while !rest.is_empty() {
-            len = len.min(rest.len());
-            let (part, tr) = (rest.split_off_mut(..len)?, above.get(2..)?.get(..len)?);
-            let around = [&above[..len], &above[1..][..len], tr];
-            undo_mode(tiles.next()?[1] & 15, part, *left, around);
-            (left, above, len) = (part.last()?, &above[len..], size);
+        while rest.len() > 1 {
+            let (left, part) = rest.split_first_mut()?;
+            len = len.min(part.len());
+            let window = above.get(..len + 2)?;
+            let around = [&window[..len], &window[1..][..len], &window[2..]];
+            undo_mode(tiles.next()?[1], &mut part[..len], left, around);
+            (rest, above, len) = (&mut rest[len..], &above[len..], size);
         }
         // At the top right of the last pixel is the first one of its own row.
-        let around = [above.get(..1)?, above.get(1..2)?, from_ref(start)];
-        undo_mode(last_mode, from_mut(end), *left, around);
+        if let ([left], [tl, t]) = (rest, above) {
+            undo_mode(
+                last_mode,
+                from_mut(end),
+                left,
+                [tl, t, &start].map(from_ref),
+            );
+        }
         Some(())
     }
 

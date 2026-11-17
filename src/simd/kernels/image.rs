@@ -1,12 +1,12 @@
 //! Ports of image_resize.cpp. They panic if a width is zero or if `dst` has no room for the result.
 use bun_simd::{Int, Out, Writer};
 use core::array::from_fn;
+use core::hint::{Locality, prefetch_read};
 use std::collections::TryReserveError;
 
 type Pixel = [u8; 4];
 
 /// The pixels that one of the result is made of.
-#[derive(Clone, Copy, Default)]
 struct Span {
     start: usize,
     len: usize,
@@ -57,35 +57,18 @@ pub(crate) mod simd {
 
     /// Resamples each row of `src`.
     #[export(up_to = avx2, up_to = neon)]
-    pub fn horizontal<'a>(
-        src: &[Pixel],
-        src_w: usize,
-        axis: &Axis,
-        dst: Out<'a, Pixel>,
-    ) -> &'a mut [Pixel] {
+    pub fn horizontal(src: &[Pixel], src_w: usize, axis: &Axis, dst: &mut [Pixel]) {
         let (taps, dst_w, src_h) = (axis.taps(), axis.spans.len(), src.len() / src_w);
-        let from = |y: usize| &src[y * src_w..][..src_w];
-        let mut dst = dst.into_writer();
         if src_h < 4 {
-            for y in 0..src_h {
-                dst.append(|to| {
-                    let to = zeroed(to, dst_w);
-                    resample_rows([from(y)], taps.clone(), &mut [&mut *to]);
-                    to
-                });
+            for (from, to) in src.chunks_exact(src_w).zip(dst.chunks_exact_mut(dst_w)) {
+                resample_rows([from], taps.clone(), &mut [to]);
             }
-            return dst.finish();
+            return;
         }
         for y in tiles(src_h) {
-            dst.truncate(y * dst_w);
-            dst.append(|to| {
-                let to = zeroed(to, 4 * dst_w);
-                let from = from_fn(|i| from(y + i));
-                resample_rows(from, taps.clone(), &mut four_rows_mut(to, dst_w));
-                to
-            });
+            let to = &mut four_rows_mut(&mut dst[y * dst_w..], dst_w);
+            resample_rows(four_rows(&src[y * src_w..], src_w), taps.clone(), to);
         }
-        dst.finish()
     }
 
     /// For rows of at least `PIXELS`, which have `K * N` bytes.
@@ -165,7 +148,14 @@ pub(crate) mod simd {
                 to.push_first(reversed(last), overlap);
                 // Unlike with `rev`, the loop has one condition.
                 let from_end = |i: usize| &chunks[chunks.len() - 1 - i];
-                to.extend_with(0..chunks.len(), |i| Some(reversed(from_end(i))));
+                to.extend_with(0..chunks.len(), |i| {
+                    // Neoverse does not foresee the jump to the end of the next row.
+                    if N == 16 && cfg!(all(target_arch = "aarch64", not(target_vendor = "apple"))) {
+                        let ahead = width.min(below.len());
+                        prefetch_read(from_end(i).as_ptr().wrapping_add(ahead), Locality::L2);
+                    }
+                    Some(reversed(from_end(i)))
+                });
                 to.finish()
             });
             src = below;
@@ -220,8 +210,7 @@ pub(crate) mod simd {
             dst.append(|band| {
                 let band = zeroed(band, rows * height);
                 for y in tiles(height) {
-                    let (ab, cd) = src[y * width..][..4 * width].split_at(2 * width);
-                    let ((a, b), (c, d)) = (ab.split_at(width), cd.split_at(width));
+                    let [a, b, c, d] = four_rows(&src[y * width..], width);
                     let from = if IS_CLOCKWISE {
                         [d, c, b, a]
                     } else {
@@ -344,6 +333,13 @@ fn zeroed(out: Out<'_, Pixel>, len: usize) -> &mut [Pixel] {
 }
 
 #[inline(always)]
+fn four_rows(image: &[Pixel], width: usize) -> [&[Pixel]; 4] {
+    let (ab, cd) = image[..4 * width].split_at(2 * width);
+    let ((a, b), (c, d)) = (ab.split_at(width), cd.split_at(width));
+    [a, b, c, d]
+}
+
+#[inline(always)]
 fn four_rows_mut(image: &mut [Pixel], width: usize) -> [&mut [Pixel]; 4] {
     let (ab, cd) = image[..4 * width].split_at_mut(2 * width);
     let ((a, b), (c, d)) = (ab.split_at_mut(width), cd.split_at_mut(width));
@@ -384,7 +380,8 @@ fn rotate<'a, const IS_CLOCKWISE: bool>(
     dst: Out<'a, Pixel>,
 ) -> &'a mut [Pixel] {
     let height = src.len() / width;
-    assert!(dst.len() >= width * height);
+    let src = &src[..width * height];
+    assert!(dst.len() >= src.len());
     if width >= 4 && height >= 4 {
         return match IS_CLOCKWISE {
             true => simd::rotate_tiles_90(src, width, height, dst),
@@ -399,10 +396,12 @@ fn rotate<'a, const IS_CLOCKWISE: bool>(
         3 => rotate_low::<IS_CLOCKWISE, 3>(src, width, &mut dst),
         _ => {
             for x in 0..width {
-                dst.extend_with(0..height, |y| match IS_CLOCKWISE {
-                    true => Some([src[(height - 1 - y) * width + x]]),
-                    false => Some([src[y * width + width - 1 - x]]),
-                });
+                match IS_CLOCKWISE {
+                    true => dst.extend_with(src.rchunks_exact(width), |row| Some([row[x]])),
+                    false => {
+                        dst.extend_with(src.chunks_exact(width), |row| Some([row[width - 1 - x]]))
+                    }
+                }
             }
         }
     }
@@ -511,57 +510,6 @@ impl Filter {
     }
 }
 
-fn build_weights(
-    filter: Filter,
-    src_len: i32,
-    spans: &mut [Span],
-    weights: &mut [i16],
-    stride: usize,
-) {
-    let scale = spans.len() as f64 / f64::from(src_len);
-    // All but one cover what a pixel of a smaller image stands for.
-    let fscale = if filter == Filter::Nearest {
-        1.0
-    } else {
-        scale.min(1.0)
-    };
-    let support = (filter.radius() / fscale).min((MAX_TAPS / 2 - 1) as f64);
-    let mut fw = [0.0; MAX_TAPS];
-    for (i, (span, w)) in spans
-        .iter_mut()
-        .zip(weights.chunks_exact_mut(stride))
-        .enumerate()
-    {
-        let center = (i as f64 + 0.5) / scale - 0.5;
-        let start = ((center - support + 0.5).floor() as i32).max(0);
-        let end = ((center + support + 0.5).floor() as i32).min(src_len - 1);
-        let n = ((end - start + 1) as usize).min(stride);
-        let mut sum = 0.0;
-        for (k, f) in fw[..n].iter_mut().enumerate() {
-            *f = filter.weight_at((f64::from(start + k as i32) - center) * fscale);
-            sum += *f;
-        }
-        let inv = if sum != 0.0 { 1.0 / sum } else { 0.0 };
-        let (mut total, mut big) = (0, 0);
-        for k in 0..n {
-            let q = ((fw[k] * inv * 16384.0).round_ties_even() as i32).clamp(-32768, 32767);
-            w[k] = q as i16;
-            total += q;
-            if q.abs() > i32::from(w[big]).abs() {
-                big = k;
-            }
-        }
-        w[big] = (i32::from(w[big]) + (16384 - total)) as i16;
-        let unused = w[..n].iter().take_while(|&&weight| weight == 0).count();
-        let end = w[..n].iter().rposition(|&weight| weight != 0).unwrap_or(0) + 1;
-        w.copy_within(unused..end, 0);
-        *span = Span {
-            start: start as usize + unused,
-            len: end - unused,
-        };
-    }
-}
-
 pub(crate) struct Axis {
     spans: Vec<Span>,
     weights: Vec<i16>,
@@ -570,14 +518,49 @@ pub(crate) struct Axis {
 
 impl Axis {
     fn new(filter: Filter, src_len: usize, dst_len: usize) -> Result<Self, TryReserveError> {
-        let support = filter.radius() / (dst_len as f64 / src_len as f64).min(1.0);
-        let stride = (support.ceil() as usize * 2 + 2).min(MAX_TAPS);
+        let scale = dst_len as f64 / src_len as f64;
+        // All but one cover what a pixel of a smaller image stands for.
+        let fscale = if filter == Filter::Nearest {
+            1.0
+        } else {
+            scale.min(1.0)
+        };
+        let support = (filter.radius() / fscale).min((MAX_TAPS / 2 - 1) as f64);
+        let stride = support.ceil() as usize * 2 + 2;
         let (mut spans, mut weights) = (Vec::new(), Vec::new());
         spans.try_reserve_exact(dst_len)?;
         weights.try_reserve_exact(dst_len * stride)?;
-        spans.resize(dst_len, Span::default());
         weights.resize(dst_len * stride, 0);
-        build_weights(filter, src_len as i32, &mut spans, &mut weights, stride);
+        let mut fw = [0.0; MAX_TAPS];
+        spans.extend(weights.chunks_exact_mut(stride).zip(0..).map(|(w, i)| {
+            let center = (f64::from(i) + 0.5) / scale - 0.5;
+            let start = ((center - support + 0.5).floor() as i32).max(0);
+            let end = ((center + support + 0.5).floor() as i32).min(src_len as i32 - 1);
+            let n = ((end - start + 1) as usize).min(stride);
+            let (fw, w) = (&mut fw[..n], &mut w[..n]);
+            let mut sum = 0.0;
+            for (k, f) in fw.iter_mut().enumerate() {
+                *f = filter.weight_at((f64::from(start + k as i32) - center) * fscale);
+                sum += *f;
+            }
+            let inv = if sum != 0.0 { 1.0 / sum } else { 0.0 };
+            let (mut rest, mut big, mut most) = (16384, 0, 0);
+            for k in 0..n {
+                w[k] = (fw[k] * inv * 16384.0).round_ties_even() as i16;
+                rest -= i32::from(w[k]);
+                if w[k].unsigned_abs() > most {
+                    (big, most) = (k, w[k].unsigned_abs());
+                }
+            }
+            w[big] = w[big].wrapping_add(rest as i16);
+            let unused = w.iter().take_while(|&&weight| weight == 0).count();
+            let end = w.iter().rposition(|&weight| weight != 0).unwrap_or(0) + 1;
+            w.copy_within(unused..end, 0);
+            Span {
+                start: start as usize + unused,
+                len: end - unused,
+            }
+        }));
         Ok(Self {
             spans,
             weights,
@@ -606,6 +589,11 @@ pub fn resize<'a>(
     let y = Axis::new(filter, src_h, dst.len() / dst_w)?;
     let mut between = Vec::new();
     between.try_reserve_exact(dst_w * src_h)?;
-    let between = simd::horizontal(src, src_w, &x, between.spare_capacity_mut().into());
-    Ok(simd::vertical(between, dst_w, &y, dst))
+    // The zeros are still in the cache when they are overwritten.
+    for band in src.chunks((1024 / dst_w + 1) * 4 * src_w) {
+        let done = between.len();
+        between.resize(done + band.len() / src_w * dst_w, [0; 4]);
+        simd::horizontal(band, src_w, &x, &mut between[done..]);
+    }
+    Ok(simd::vertical(&between, dst_w, &y, dst))
 }

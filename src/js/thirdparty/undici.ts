@@ -120,18 +120,15 @@ function headersFromRequestOptions(inputHeaders) {
   return new Headers(inputHeaders || kEmptyObject);
 }
 
-// The connector's work for one hop, or undefined when it has none. `url` is
-// pinned to the address from connect.lookup unless the host is already an IP
-// literal. `host` (pinned hops only) is the original authority, sent as the
-// Host header, and `serverName` the bare hostname for tls.serverName, so HTTPS
-// still presents SNI and verifies the certificate against the real hostname.
+// One hop's connector work, or undefined when there is none: `url` pinned to
+// the lookup's address, `host` (pinned hops) for the Host header, `serverName`
+// (pinned HTTPS hops) for SNI and certificate verification.
 async function applyConnect(url, connect, signal) {
   const { protocol } = url;
   // data:, blob: and file: never open a socket, so the connector does not apply.
   if (protocol === "data:" || protocol === "blob:" || protocol === "file:") return undefined;
   if (protocol !== "http:" && protocol !== "https:") {
-    // Native fetch reads "host:port/path" as an http URL; a URL object reads
-    // the host as the scheme. The hook cannot see that hostname, so fail closed.
+    // "host:port/path" parses as a scheme, so the hook cannot see the host: fail closed.
     throw new TypeError(`URL scheme must be http or https (received ${protocol})`);
   }
   if (typeof connect === "function") {
@@ -182,11 +179,8 @@ function connectTls(connect) {
   return out;
 }
 
-// Per-hop options for a connection the connector shapes. Over HTTPS the
-// connector's TLS options apply first, then the request's own tls, then the
-// original hostname as serverName unless either set one. A pinned hop is a
-// direct connection, like undici's Agent, so the environment proxy is off
-// unless the caller set proxy.
+// Per-hop init: connector TLS options, then the request's tls, then the pinned
+// serverName. A pinned hop is direct, like undici's Agent, so proxy is off.
 function connectInit(init, hop, connect) {
   const out = { ...init };
   const { host, serverName } = hop;
@@ -292,8 +286,7 @@ async function followRedirectsWithConnect(url, init, connect, opts) {
       throw hopError(`cannot follow the ${status} redirect to ${next.href}: URL scheme must be http or https`);
     }
     if (next.origin !== url.origin) {
-      // The headers native following strips on a cross-origin hop; a
-      // user-supplied Host only applies to the original authority.
+      // The same set native following strips on a cross-origin hop.
       headers.delete("authorization");
       headers.delete("proxy-authorization");
       headers.delete("cookie");
@@ -339,9 +332,8 @@ async function fetchWithConnect(input, init, connect) {
   const signal = init?.signal ?? (isRequest ? input.signal : undefined);
   if (redirectMode !== "follow") {
     // "manual" returns the 3xx and "error" rejects natively; neither follows
-    // a redirect, so only the first hop needs pinning.
-    // Snapshot before the await: a header change during the lookup must not
-    // reach the request.
+    // a redirect, so only the first hop needs pinning. Headers are copied
+    // before the await so a change during the lookup does not reach the request.
     const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
     let pin;
     try {
@@ -369,10 +361,8 @@ async function fetchWithConnect(input, init, connect) {
   let body = init?.body;
   const requestBody = body === undefined && isRequest ? input.body : null;
   if (requestBody != null) {
-    // A Request body held in memory (string, bytes, Blob) or in a file streams
-    // from a native source; take it back as a Blob (a lazy one for a file) so
-    // it is sent with Content-Length and a 307/308 can replay it. Any other
-    // stream (a user stream, a live response body) is sent once.
+    // A body held in memory or in a file is taken back as a (lazy) Blob, so it
+    // has a Content-Length and a 307/308 can replay it. Other streams are sent once.
     const source = requestBody.$bunNativePtr;
     const tag = source == null ? "" : ObjectPrototypeToString.$call(source);
     body =

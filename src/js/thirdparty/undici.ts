@@ -6,6 +6,7 @@ const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapt
 
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectPrototypeToString = Object.prototype.toString;
 const kEmptyObject = ObjectCreate(null);
 
 const nativeFetch = Bun.fetch as unknown as ((input: string | URL | Request, init?: object) => Promise<Response>) & {
@@ -322,9 +323,14 @@ async function fetchWithConnect(input, init, connect) {
   const method = init?.method ?? (isRequest ? input.method : "GET");
   let body = init?.body;
   if (body === undefined && isRequest && input.body != null) {
-    // A buffered Request body (string, bytes, Blob, file) is native-backed and
-    // can be replayed on a 307/308; a user stream is sent once and cannot.
-    body = input.body.$bunNativePtr != null ? await input.blob() : input.body;
+    // A Request body held in memory (string, bytes, Blob) streams from a native
+    // blob source; take it back as a Blob so a 307/308 can replay it. Any other
+    // stream (a user stream, a file, a live response body) is sent once.
+    const source = input.body.$bunNativePtr;
+    body =
+      source != null && ObjectPrototypeToString.$call(source) === "[object BlobInternalReadableStreamSource]"
+        ? await input.blob()
+        : input.body;
   }
   return followRedirectsWithConnect(url, { ...init, signal }, connect, {
     method,
@@ -568,7 +574,9 @@ async function request(
       keepalive: !reset,
     };
     if (hasLookup) {
-      const pin = await applyConnect(new URL(url), connect, signal);
+      // Snapshot before the await: the caller keeps its own URL object.
+      url = new URL(url);
+      const pin = await applyConnect(url, connect, signal);
       if (pin !== undefined) {
         url = pin.url;
         const headers = new Headers(requestHeaders);

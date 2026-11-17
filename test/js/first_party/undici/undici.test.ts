@@ -936,6 +936,49 @@ describe("undici dispatcher connect.lookup", () => {
     expect(targetHits).toBe(0);
   });
 
+  it("a live response body used as a Request body streams through the pin", async () => {
+    const gate = Promise.withResolvers<void>();
+    await using source = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async start(c) {
+              c.enqueue(new TextEncoder().encode("a"));
+              // Only produced once the upload has delivered the first chunk;
+              // buffering the body before the upload would deadlock here.
+              await gate.promise;
+              c.enqueue(new TextEncoder().encode("b"));
+              c.close();
+            },
+          }),
+        ),
+    });
+    await using echo = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const chunks: string[] = [];
+        for await (const chunk of req.body!) {
+          chunks.push(new TextDecoder().decode(chunk));
+          if (chunks.length === 1) gate.resolve();
+        }
+        return new Response(chunks.join(""));
+      },
+    });
+    const { agent } = pinningAgent();
+    const upstream = await fetch(`http://127.0.0.1:${source.port}/`);
+    const res = await undiciFetch(
+      new Request(`http://echo.invalid:${echo.port}/`, {
+        method: "POST",
+        body: upstream.body,
+        // @ts-expect-error duplex is required for stream bodies by the spec
+        duplex: "half",
+      }),
+      { dispatcher: agent },
+    );
+    expect(await res.text()).toBe("ab");
+  });
+
   it("a plain { url } input object goes through the pin", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -968,6 +1011,17 @@ describe("undici dispatcher connect.lookup", () => {
     );
     expect(await res.text()).toBe("tls-ok");
     expect(verified).toEqual([UNRESOLVABLE]);
+  });
+
+  it("request() keeps the destination it was called with if the caller mutates the URL object", async () => {
+    await using server = Bun.serve({ port: 0, fetch: req => new Response(new URL(req.url).pathname) });
+    const { agent } = pinningAgent();
+    // An IP literal skips the hook, but the call still yields once before sending.
+    const url = new URL(`http://127.0.0.1:${server.port}/first`);
+    const pending = request(url, { dispatcher: agent });
+    url.pathname = "/second";
+    const { body } = await pending;
+    expect(await body!.text()).toBe("/first");
   });
 
   it("request() accepts flat-array headers on the unpinned path too", async () => {

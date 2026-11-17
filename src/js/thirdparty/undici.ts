@@ -192,8 +192,7 @@ function connectInit(init, hop, connect) {
   return out;
 }
 
-// A request `tls` replaces a Bun.FetchSession's TLS wholesale, so the
-// connector's options cannot be layered onto a session.
+// A request `tls` replaces a Bun.FetchSession's TLS wholesale, so the two cannot be layered.
 function mergeConnectTls(init, fromConnect) {
   if (init?.session != null && init?.tls == null) {
     throw new NotSupportedError(
@@ -203,8 +202,7 @@ function mergeConnectTls(init, fromConnect) {
   return fromConnect === undefined ? init?.tls : { ...fromConnect, ...init?.tls };
 }
 
-// An Agent with TLS options but no lookup hook stays on the native path, which
-// keeps `tls` across its own redirect following.
+// No lookup hook: stay native, which keeps `tls` across its own redirect following.
 function withConnectTls(init, connect) {
   const fromConnect = connectTls(connect);
   if (fromConnect === undefined) return init;

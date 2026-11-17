@@ -491,6 +491,115 @@ test("a client session reads a socket that was paused with bytes put back", asyn
   }
 });
 
+describe("a transport written in JS whose write() returned false", () => {
+  const u32 = (value: number) => Buffer.from([value >>> 24, value >>> 16, value >>> 8, value]);
+  const nudge = encodeFrame(FrameType.WINDOW_UPDATE, 0, 0, u32(1));
+
+  /** A server session with windows that hold nothing back, on a transport that stops calling back. */
+  async function accept() {
+    const written: Buffer[] = [];
+    let stalled: (() => void) | undefined;
+    let stalls = false;
+    const transport = new Duplex({
+      writableHighWaterMark: 16384,
+      read() {},
+      write(chunk, _, done) {
+        written.push(chunk);
+        if (stalls) stalled = done;
+        else done();
+      },
+    });
+    const session = http2.performServerHandshake(transport);
+    const settings = once(session, "remoteSettings");
+    transport.push(
+      Buffer.concat([
+        PREFACE,
+        encodeFrame(FrameType.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), u32(1 << 30)])),
+        encodeFrame(FrameType.SETTINGS, 0x1, 0),
+        encodeFrame(FrameType.WINDOW_UPDATE, 0, 0, u32(1 << 30)),
+      ]),
+    );
+    await settings;
+    await new Promise(setImmediate);
+    written.length = 0;
+    stalls = true;
+    return {
+      transport,
+      session,
+      request() {
+        const stream = once(session, "stream");
+        transport.push(encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")));
+        return stream.then(([stream]) => stream as http2.ServerHttp2Stream);
+      },
+      drain() {
+        stalls = false;
+        stalled!();
+      },
+      /** The DATA bytes it got, and the frames that end something. */
+      received() {
+        const result = { data: 0, ends: [] as string[] };
+        for (let rest = Buffer.concat(written); rest.length; rest = rest.subarray(9 + rest.readUIntBE(0, 3))) {
+          if (rest[3] === FrameType.DATA) result.data += rest.readUIntBE(0, 3);
+          if (rest[3] === FrameType.DATA && rest[4] & 0x1) result.ends.push("END_STREAM");
+          if (rest[3] === FrameType.GOAWAY) result.ends.push("GOAWAY");
+        }
+        return result;
+      },
+      [Symbol.dispose]() {
+        session.destroy();
+        transport.destroy();
+      },
+    };
+  }
+
+  test("gets no more DATA until 'drain', whatever the peer sends", async () => {
+    using ctx = await accept();
+    const stream = await ctx.request();
+    stream.respond();
+    Readable.from(Array.from({ length: 64 }, () => Buffer.alloc(65536))).pipe(stream);
+    for (let i = 0; i < 200; i++) {
+      ctx.transport.push(nudge);
+      await new Promise(setImmediate);
+    }
+    expect(ctx.transport.writableLength).toBeLessThan(4 * 65536);
+    ctx.drain();
+    await once(stream, "close");
+    expect(ctx.received()).toEqual({ data: 64 * 65536, ends: ["END_STREAM"] });
+  });
+
+  test("ends a session that is flooded with PING frames", async () => {
+    using ctx = await accept();
+    const error = once(ctx.session, "error");
+    let pings = 0;
+    for (; pings < 5000 && !ctx.session.destroyed; pings++) {
+      ctx.transport.push(encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)));
+    }
+    expect(pings).toBeLessThan(5000);
+    expect((await error)[0].message).toBe("Flooding was detected in this HTTP/2 session, and it must be closed");
+  });
+
+  test.each(["close", "destroy"] as const)("gets the frames that wait when session.%s() ends it", async method => {
+    using ctx = await accept();
+    const stream = await ctx.request();
+    stream.respond();
+    stream.write(Buffer.alloc(40_000));
+    expect(ctx.transport.writableNeedDrain).toBe(true);
+    const closed = once(ctx.session, "close");
+    ctx.session.ping(() => {});
+    ctx.session[method]();
+    if (method === "close") {
+      stream.end();
+      ctx.drain();
+      await closed;
+    } else {
+      await closed;
+      ctx.drain();
+    }
+    if (!ctx.transport.writableFinished) await once(ctx.transport, "finish");
+    expect(ctx.received()).toEqual({ data: 40_000, ends: method === "close" ? ["GOAWAY", "END_STREAM"] : ["GOAWAY"] });
+  });
+});
+
 test.each<[string, string[]]>([
   ["request()", ["HEADERS 1", "RST_STREAM 1"]],
   ["a queued request", ["HEADERS 1"]],

@@ -1308,8 +1308,8 @@ declare namespace $Node {
     read(data: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): undefined;
     /** Parses now what arrived inside a write and waits for its turn. */
     readHeldInput(): undefined;
-    /** How many bytes still wait. */
-    flush(): number;
+    /** How many bytes still wait. `socketDrained`: a socket written in JS takes bytes again. */
+    flush(socketDrained?: boolean): number;
     detach(keepOutput?: boolean): undefined;
     rstStream(streamId: number, code: number): undefined;
     /** `false`: no such stream can send, and the parser calls `callback`. Otherwise what became of the write. */

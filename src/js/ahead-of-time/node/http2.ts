@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 100067e997c19865f69a0ceb04144f130fcf37f430acb2baed0ba884bc672258.
+// Written against that file with the SHA-256 3b2d3b0ae12488cf11856ac79de12785e8ae8172374e6708faa56e9655f26e8b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -4554,7 +4554,7 @@ class ServerHttp2Session extends Http2Session {
     const unread = unreadClosedStreams(parser);
     if (parser) {
       // Frames corked before the transport closed count as sent, so a response that already ended closes cleanly.
-      parser.flush();
+      parser.flush(true);
       // detach() completes the queued writes, so destroy the streams first or they emit 'drain'.
       parser.forEachStream(streamCancel);
       parser.forEachStream(streamSocketClosed);
@@ -4601,7 +4601,7 @@ class ServerHttp2Session extends Http2Session {
   #onDrain() {
     const parser = this.#parser;
     if (parser) {
-      parser.flush();
+      parser.flush(true);
     }
   }
   altsvc(alt: string, originOrStream?: string | number | URL | { origin: string }) {
@@ -5690,7 +5690,7 @@ class ClientHttp2Session extends Http2Session {
   #onDrain() {
     const parser = this.#parser;
     if (parser) {
-      parser.flush();
+      parser.flush(true);
     }
   }
   get connecting() {

@@ -4431,7 +4431,7 @@ class ServerHttp2Session extends Http2Session {
     const unread = unreadClosedStreams(parser);
     if (parser) {
       // Frames corked before the transport closed count as sent, so a response that already ended closes cleanly.
-      parser.flush();
+      parser.flush(true);
       // detach() completes the queued writes, so destroy the streams first or they emit 'drain'.
       parser.forEachStream(streamCancel);
       parser.forEachStream(streamSocketClosed);
@@ -4478,7 +4478,7 @@ class ServerHttp2Session extends Http2Session {
   #onDrain() {
     const parser = this.#parser;
     if (parser) {
-      parser.flush();
+      parser.flush(true);
     }
   }
   altsvc(alt: string, originOrStream) {
@@ -5566,7 +5566,7 @@ class ClientHttp2Session extends Http2Session {
   #onDrain() {
     const parser = this.#parser;
     if (parser) {
-      parser.flush();
+      parser.flush(true);
     }
   }
   get connecting() {

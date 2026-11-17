@@ -612,6 +612,8 @@ pub(crate) struct H2FrameParser {
     outbound_queue_size: Cell<usize>,
 
     has_nonnative_backpressure: Cell<bool>,
+    /// The JS-backed socket's `write()` returned false, so it gets nothing more until its 'drain'.
+    js_socket_is_full: Cell<bool>,
     /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
     js_socket_flushing: Cell<bool>,
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
@@ -1543,6 +1545,9 @@ impl H2FrameParser {
             BunSocket::Tls(socket) => self.generic_flush(&*socket.ref_guard()),
             BunSocket::Tcp(socket) => self.generic_flush(&*socket.ref_guard()),
             BunSocket::None => {
+                if self.js_socket_is_full.get() {
+                    return 0;
+                }
                 // consider that backpressure is gone and flush data queue
                 self.has_nonnative_backpressure.set(false);
                 let offset = self.write_buffer_offset.get();
@@ -1591,6 +1596,7 @@ impl H2FrameParser {
 
                     if code == 0 {
                         self.has_nonnative_backpressure.set(true);
+                        self.js_socket_is_full.set(true);
                         return bytes_len;
                     }
                 }
@@ -1644,6 +1650,7 @@ impl H2FrameParser {
                     0 => {
                         // queued
                         self.has_nonnative_backpressure.set(true);
+                        self.js_socket_is_full.set(true);
                         false
                     }
                     _ => {
@@ -3824,7 +3831,10 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn flush_from_js(&self, _: &mut JsScope<'_>) -> usize {
+    pub(crate) fn flush_from_js(&self, _: &mut JsScope<'_>, socket_drained: bool) -> usize {
+        if socket_drained {
+            self.js_socket_is_full.set(false);
+        }
         self.flush()
     }
 
@@ -4201,6 +4211,7 @@ impl H2FrameParser {
             flushing_stream_queue: Cell::new(false),
             outbound_queue_size: Cell::new(0),
             has_nonnative_backpressure: Cell::new(false),
+            js_socket_is_full: Cell::new(false),
             js_socket_flushing: Cell::new(false),
             transport_write_fatal: Cell::new(false),
             draining: Cell::new(Draining::No),
@@ -4420,6 +4431,10 @@ impl H2FrameParser {
             this.drop_queued_data(&stream);
         }
         this.engine.streams.clear();
+        // Its buffer outlives the parser's, and the frames count as sent.
+        if this.js_socket_is_full.take() {
+            let _ = this.flush();
+        }
         this.detach(keep_output);
         if let Some(this_value) = this.strong_this.get().try_get() {
             // `global_this` is `GlobalRef` (JSC_BORROW) — Deref gives `&JSGlobalObject`.

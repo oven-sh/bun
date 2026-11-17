@@ -977,7 +977,7 @@ test("what a test asks about a built-in object that it leaves alone is answered 
   );
 });
 
-test("rows of a table and a helper of another name, two steps from the test file, cost no second build", async () => {
+test("rows of a table and a helper of another name, two steps from the test file, print what plain Bun prints", async () => {
   using dir = tempDir("tests-replace-built-ins", {
     ...app,
     "helpers/stub.ts": `

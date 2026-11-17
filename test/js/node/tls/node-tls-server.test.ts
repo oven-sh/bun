@@ -2306,6 +2306,96 @@ it.each([
   await once(server, "close");
 });
 
+describe.each(["tls", "https", "a stream"])("a context selected by server name, over %s", kind => {
+  const altCert = { key: rawKey, cert };
+  const altFingerprint = new crypto.X509Certificate(cert).fingerprint256;
+  const aes128 = "ECDHE-RSA-AES128-GCM-SHA256";
+  const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+  const chacha = "ECDHE-RSA-CHACHA20-POLY1305";
+  const refused = "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE";
+
+  /** The cipher that each of `clients` gets along with the selected context's certificate, or the code of its error. */
+  async function negotiate(
+    by: string,
+    serverOptions: tls.TlsOptions,
+    contextOptions: tls.SecureContextOptions,
+    clients: tls.ConnectionOptions[],
+  ) {
+    const context = tls.createSecureContext({ ...altCert, ...contextOptions });
+    const options: tls.TlsOptions = { ...COMMON_CERT, ...serverOptions };
+    if (by === "SNICallback") options.SNICallback = (_name, cb) => cb(null, context);
+    const server = kind === "https" ? https.createServer(options) : createServer(options);
+    if (by === "addContext") server.addContext("alt.example.com", context);
+    if (kind !== "a stream") await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      return await Promise.all(
+        clients.map(async clientOptions => {
+          let transport: tls.ConnectionOptions;
+          if (kind === "a stream") {
+            const [serverSide, socket] = duplexPair();
+            server.emit("connection", serverSide);
+            transport = { socket };
+          } else {
+            transport = { port: (server.address() as AddressInfo).port, host: "127.0.0.1" };
+          }
+          const client = connect({
+            ...transport,
+            servername: "alt.example.com",
+            rejectUnauthorized: false,
+            maxVersion: "TLSv1.2",
+            ...clientOptions,
+          });
+          try {
+            await once(client, "secureConnect");
+            expect(client.getPeerCertificate().fingerprint256).toBe(altFingerprint);
+            return client.getCipher().name;
+          } catch (err) {
+            return (err as NodeJS.ErrnoException).code ?? err;
+          } finally {
+            client.destroy();
+          }
+        }),
+      );
+    } finally {
+      server.close();
+    }
+  }
+
+  describe.each(["SNICallback", "addContext"])("%s", by => {
+    it("has the server's ciphers, in the server's order", async () => {
+      const clients = [{ ciphers: aes128 }, { ciphers: aes256 }, { ciphers: `${aes128}:${aes256}:${chacha}` }];
+      expect(await negotiate(by, { ciphers: `${chacha}:${aes256}` }, {}, clients)).toEqual([refused, aes256, chacha]);
+    });
+
+    // Node ignores the context's own.
+    it("has those of the server's ciphers that it names too", async () => {
+      const clients = [{ ciphers: aes128 }, { ciphers: aes256 }, { ciphers: chacha }];
+      expect({
+        "no list on the server": await negotiate(by, {}, { ciphers: aes256 }, clients),
+        "some in both": await negotiate(
+          by,
+          { ciphers: `${aes128}:${aes256}` },
+          { ciphers: `${aes256}:${chacha}` },
+          clients,
+        ),
+        "none in both": await negotiate(by, { ciphers: aes128 }, { ciphers: aes256 }, clients),
+      }).toEqual({
+        "no list on the server": [refused, aes256, refused],
+        "some in both": [refused, aes256, refused],
+        "none in both": [refused, refused, refused],
+      });
+    });
+
+    it("has the server's sigalgs", async () => {
+      const clients = [
+        { ciphers: aes256, sigalgs: "RSA-PSS+SHA256" },
+        { ciphers: aes256, sigalgs: "RSA-PSS+SHA512" },
+      ];
+      expect(await negotiate(by, { sigalgs: "RSA-PSS+SHA512" }, {}, clients)).toEqual([refused, aes256]);
+    });
+  });
+});
+
 describe("addContext with a name of more than 10 labels", () => {
   // The native SNI tree used to cap lookups and removals at 10 labels while
   // accepting any number on insert, so such a name was registered but never

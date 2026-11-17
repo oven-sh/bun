@@ -24,6 +24,7 @@
 #include <limits.h>
 #include <time.h>
 #include <atomic>
+#include <string>
 #include <utility>
 #ifndef _WIN32
 #include <pthread.h>
@@ -155,6 +156,8 @@ static int us_ctx_cache_ex_idx = -1;
  * ca/caFile options or a later addCACert): the per-socket client attach must
  * not replace such a store with the process-shared default roots. */
 static int us_ctx_user_ca_ex_idx = -1;
+/* The `sigalgs` option, owned: BoringSSL has no getter for it. */
+static int us_ctx_sigalgs_ex_idx = -1;
 static int us_ssl_rare_ex_idx = -1;
 /* BIO type of the loop's shared BIO: tells a us_socket_t's SSL from an SSLWrapper's. */
 static int us_ssl_bio_type = 0;
@@ -267,6 +270,11 @@ static void us_ctx_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                            int index, long argl, void *argp) {
   (void)parent; (void)ptr; (void)ad; (void)index; (void)argl; (void)argp;
   ssl_ctx_live--;
+}
+static void us_ctx_sigalgs_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  us_free(ptr);
 }
 static int us_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
                              const unsigned char *in, unsigned int inlen, void *arg);
@@ -394,6 +402,7 @@ static void us_ex_idx_init(void) {
   us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_sigalgs_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_sigalgs_free);
   us_ssl_rare_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_rare_free);
   us_ssl_bio_type = BIO_get_new_index() | BIO_TYPE_SOURCE_SINK;
 }
@@ -1537,6 +1546,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   if (options.sigalgs ? !SSL_CTX_set1_sigalgs_list(ssl_context.get(), options.sigalgs)
                       : !us_ssl_ctx_set_verify_signature_algorithms(ssl_context.get())) {
     return NULL;
+  }
+  if (options.sigalgs) {
+    char *sigalgs = us_strdup(options.sigalgs);
+    if (!sigalgs || !SSL_CTX_set_ex_data(ssl_context.get(), us_ctx_sigalgs_ex_idx, sigalgs)) Bun__outOfMemory();
   }
 
   if (options.ecdh_curve) {
@@ -3187,7 +3200,36 @@ void us_ssl_ctx_set_own_session_id_context(SSL_CTX *ctx) {
 
 static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello);
 
-/* Every SNI context switch goes through here. The connection keeps the verify mode it inherited at accept.
+static int us_ssl_ctx_has_cipher(const SSL_CTX *ctx, const SSL_CIPHER *cipher) {
+  const STACK_OF(SSL_CIPHER) *ciphers = SSL_CTX_get_ciphers(ctx);
+  for (size_t i = 0; i < sk_SSL_CIPHER_num(ciphers); i++) {
+    if (sk_SSL_CIPHER_value(ciphers, i) == cipher) return 1;
+  }
+  return 0;
+}
+
+/* BoringSSL reads the ciphers from the SSL_CTX that `ssl` is on. Leaves it those of `server` that `selected` has too, in the order of `server`. */
+static void ssl_keep_server_ciphers(SSL *ssl, const SSL_CTX *server, const SSL_CTX *selected) {
+  const STACK_OF(SSL_CIPHER) *accepted = SSL_CTX_get_ciphers(server), *offered = SSL_CTX_get_ciphers(selected);
+  size_t count = sk_SSL_CIPHER_num(accepted), same = 0;
+  while (same < count && sk_SSL_CIPHER_value(accepted, same) == sk_SSL_CIPHER_value(offered, same)) same++;
+  if (same == count && count == sk_SSL_CIPHER_num(offered)) return;
+
+  std::string list, group;
+  for (size_t i = 0; i < count; i++) {
+    const SSL_CIPHER *cipher = sk_SSL_CIPHER_value(accepted, i);
+    if (us_ssl_ctx_has_cipher(selected, cipher)) (group += group.empty() ? '[' : '|') += SSL_CIPHER_get_name(cipher);
+    if (SSL_CTX_cipher_in_group(server, i) || group.empty()) continue;
+    (list += group) += "]:";
+    group.clear();
+  }
+  /* An empty list is reported as an error, and set. */
+  SSL_set_cipher_list(ssl, list.c_str());
+  ERR_clear_error();
+}
+
+/* Every SNI context switch goes through here. The connection keeps the verify mode it inherited at accept,
+ * and with `keeps_server_policy` the ciphers and the signature algorithms too, as in Node.
  *
  * SSL_set_SSL_CTX also copies the context's session id context, which for
  * contexts built in Rust is the digest of their options
@@ -3196,7 +3238,9 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
  * authenticated again, against this context's CA. That refusal is deliberate
  * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
  * hosts") and must not be relaxed for parity with another runtime. */
-static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx, int keeps_server_policy) {
+  us_ssl_ctx_ptr server{SSL_get_SSL_CTX(ssl)};
+  SSL_CTX_up_ref(server.get());
   /* The connection is still its server's, so its sessions belong to both. */
   SHA256_CTX sid_ctx;
   ssl_session_id_context_begin(&sid_ctx, ssl);
@@ -3210,6 +3254,11 @@ static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
     SSL_set_SSL_CTX(ssl, blank.get());
   }
   SSL_set_SSL_CTX(ssl, ctx);
+  if (keeps_server_policy) {
+    ssl_keep_server_ciphers(ssl, server.get(), ctx);
+    const char *sigalgs = (const char *)SSL_CTX_get_ex_data(server.get(), us_ctx_sigalgs_ex_idx);
+    if (sigalgs && !SSL_set1_sigalgs_list(ssl, sigalgs)) Bun__outOfMemory();
+  }
   size_t length;
   const uint8_t *selected = SSL_get0_session_id_context(ssl, &length);
   ssl_session_id_context_end(&sid_ctx, ssl, selected, length);
@@ -3274,7 +3323,7 @@ static enum ssl_select_cert_result_t ssl_refuse_server_name(struct us_socket_t *
 /* With no answer, sni_cb serves the listener's entry for the name. */
 static enum ssl_select_cert_result_t ssl_apply_resolved_ctx(SSL *ssl, struct us_ssl_rare_t *rare, us_ssl_ctx_ptr ctx) {
   if (ctx) {
-    us_ssl_apply_selected_ctx(ssl, ctx.get());
+    us_ssl_apply_selected_ctx(ssl, ctx.get(), 1);
   } else if (!rare->has_key_cert) {
     rare->sni_resolver = 0;
   }
@@ -3401,7 +3450,7 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
   if (hostname && hostname[0]) {
     const struct us_server_name_t *node = us_server_names_find(names, hostname);
     if (node) {
-      us_ssl_apply_selected_ctx(ssl, node->ctx.get());
+      us_ssl_apply_selected_ctx(ssl, node->ctx.get(), !node->own_client_auth);
       if (node->own_client_auth) {
         SSL_set_verify(ssl, SSL_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(node->ctx.get()), us_verify_callback);
       }

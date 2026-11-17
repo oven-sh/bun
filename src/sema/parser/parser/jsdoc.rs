@@ -843,8 +843,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             // `Lexer::reset` drops the comments after a mark, which would drop real comments for a mark taken inside
             // this one.
             comments: std::mem::take(&mut self.lx.comments),
-            // It drops the entries of `flagged` after that mark too, and the token behind this comment can have one.
-            // An entry of the comment itself is not of the code.
+            // It would also drop the `flagged` entry of the token behind this comment, and an entry of the comment is no form of the code.
             flagged: std::mem::take(&mut self.lx.flagged),
             comment_directives: self.lx.comment_directives.len(),
             ignore_comments: self.lx.ignore_comments.len(),

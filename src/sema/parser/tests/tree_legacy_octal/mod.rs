@@ -451,8 +451,7 @@ const TYPESCRIPT_POSITIONS: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// The text of each legacy octal form that is an early error of the source, in the order of the text. The source has
-/// no other early error.
+/// The text of each legacy octal form that is an early error of the source, in the order of the text. It has no other early error.
 #[track_caller]
 fn errors_in<'a>(w: &Workspace<'_>, source: &Source<'a>) -> Vec<&'a str> {
     let hir = w.parse(source);

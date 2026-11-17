@@ -84,9 +84,7 @@ impl<S: Storage> FileIn<S> {
         })
     }
 
-    /// True if the parser of `bun run` reads the file as a module: it has an `import` that is not only of types, an
-    /// `export` or a top-level `await`. Without one of them a file can still run as a module. `text` is the text of the
-    /// file.
+    /// True if the parser of `bun run` reads the file as a module: `text`, the text of the file, has an `import` that is not only of types, an `export` or a top-level `await`.
     fn is_parsed_as_module_by_bun_run(&self, text: &[u8]) -> bool {
         // `bun run` hands a text that `bun build` wrote to the engine as it is.
         let is_written_module =
@@ -103,16 +101,13 @@ impl<S: Storage> FileIn<S> {
             || has_written_top_level_await(self)
     }
 
-    /// True if the parser of `bun run` reads all of the file as strict mode code: as a module, or under a
-    /// `"use strict"` directive. It reads any other file as sloppy mode code, also one that runs as a module.
+    /// True if the parser of `bun run` reads all of the file as strict mode code: as a module, or under a `"use strict"` directive. A file that only runs as a module is sloppy mode code to it.
     pub fn is_parsed_as_strict_by_bun_run(&self, text: &[u8]) -> bool {
         self.has_use_strict_directive(FnBody::Block(self.body))
             || self.is_parsed_as_module_by_bun_run(text)
     }
 
-    /// The text that the parser of `bun run` reads as strict mode code in a file that it reads as sloppy mode code, in
-    /// no order: each class from its keyword on, and the body of each function and namespace with the directive. The
-    /// name of a method is outside its body, and the decorators in front of `class` are outside the class.
+    /// Where the parser of `bun run` reads strict mode code in a file that is sloppy to it, in no order: each class from its keyword on, and the statements of each function and namespace with the directive.
     pub fn ranges_parsed_as_strict_by_bun_run(&self) -> Vec<(u32, u32)> {
         let class_start = |class: ClassId| self.classes.get(class.idx()).map(|it| it.text_start);
         let class_statements = self.stmts.iter().filter_map(|it| match it.kind {

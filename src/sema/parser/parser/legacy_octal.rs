@@ -1,7 +1,4 @@
-//! Which legacy octal numbers and escapes of a text parsed for `bun compile` are early errors.
-//!
-//! The parser of `bun run` reports one in code that it reads as strict, and prints the value of every other, so the
-//! engine never sees one.
+//! Which legacy octal numbers and escapes of a text parsed for `bun compile` are early errors: those in code that the parser of `bun run` reads as strict. It prints the value of every other.
 
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
@@ -39,8 +36,7 @@ impl Ranges {
         Ranges(ranges)
     }
 
-    /// True if a token that ends at `end` is in one of them. `-010` is flagged from its sign, which is no part of the
-    /// literal, so the end of a form says where it is.
+    /// True if a token that ends at `end` is in one of them. The end says where a form is: `-010` is flagged from its sign.
     fn contain(&self, end: u32) -> bool {
         let started = self.0.partition_point(|range| range.0 < end);
         let reach = started.checked_sub(1).and_then(|last| self.0.get(last));
@@ -48,8 +44,7 @@ impl Ranges {
     }
 }
 
-/// In text read as TypeScript: the parser of `bun run` passes over a type and an interface without a look at their
-/// literals, and forgets the ones that follow `declare` in a statement.
+/// In text read as TypeScript, what the parser of `bun run` does not check: a type, an interface, and what follows `declare` in a statement.
 fn unchecked_ranges(file: &FileBuilder) -> Vec<(u32, u32)> {
     let passed_over = |statement: &Stmt| {
         let (flags, start) = match statement.kind {

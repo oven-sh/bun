@@ -1,0 +1,11 @@
+// limits, retries, a queue with priorities, timeouts by ticks; no clock
+'use strict';
+function tick(n) { return n > 0 ? Promise.resolve().then(function () { return tick(n - 1); }) : Promise.resolve(); }
+function Pool(limit) { this.limit = limit; this.active = 0; this.waiting = []; this.log = []; this.peak = 0; }
+Pool.prototype.add = function (fn, priority) { var self = this; return new Promise(function (resolve, reject) { var job = { fn: fn, resolve: resolve, reject: reject, priority: priority || 0 }; var i = self.waiting.length; while (i > 0 && self.waiting[i - 1].priority < job.priority) i--; self.waiting.splice(i, 0, job); self._next(); }); };
+Pool.prototype._next = function () { var self = this; while (this.active < this.limit && this.waiting.length) { (function (job) { self.active++; if (self.active > self.peak) self.peak = self.active; var p; try { p = Promise.resolve(job.fn()); } catch (e) { p = Promise.reject(e); } p.then(job.resolve, job.reject).then(function () { self.active--; self.log.push(self.active); self._next(); }); })(this.waiting.shift()); } };
+Pool.prototype.map = function (list, fn) { var self = this; return Promise.all(list.map(function (x, i) { return self.add(function () { return fn(x, i); }, -i % 3); })); };
+Pool.prototype.idle = async function () { while (this.active || this.waiting.length) await tick(1); };
+async function retry(fn, times, onFail) { let last; for (let i = 1; i <= times; i++) { try { return await fn(i); } catch (e) { last = e; if (onFail) await onFail(e, i); } } throw last; }
+class Channel { constructor() { this.values = []; this.takers = []; this.closed = false; } put(v) { if (this.closed) throw new Error('closed'); const t = this.takers.shift(); if (t) t({ value: v, done: false }); else this.values.push(v); } close() { this.closed = true; for (const t of this.takers.splice(0)) t({ value: undefined, done: true }); } next() { if (this.values.length) return Promise.resolve({ value: this.values.shift(), done: false }); if (this.closed) return Promise.resolve({ value: undefined, done: true }); return new Promise(r => this.takers.push(r)); } [Symbol.asyncIterator]() { return this; } }
+module.exports = { Pool: Pool, tick: tick, retry: retry, Channel: Channel };

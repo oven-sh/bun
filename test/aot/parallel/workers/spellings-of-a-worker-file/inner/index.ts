@@ -1,0 +1,1 @@
+postMessage("inner/index.ts");

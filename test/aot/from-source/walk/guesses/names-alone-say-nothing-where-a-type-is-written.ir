@@ -1,0 +1,22 @@
+# In a checked file the written types say what is expected. (TypeScript 6: `computeValue(compilerOptions)`: the options are filled under computed keys; a literal with a spread listed `target`: the guess failed two million times.) f3 = the closure
+# What is written of a capture is expected of it as of a parameter: the front end writes L2 of `def`, so the closure tests for L2 once, and the names that it reads add no other layout to the test.
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function normalize(params: any): any;
+# declare function register(...all: unknown[]): void;
+# declare function build(): { run(value: number): string };
+# interface Def { least: number; abort?: boolean }
+# function least(value: number, params: any) { return { check: "least", ...normalize(params), least: value }; }
+# function Check(this: any, def: Def) { this.run = (value: number) => { if (value >= def.least) return "ok"; return def.abort ? "abort" : "small"; }; }
+# register(Check, least);
+# const c = build();
+# print(c.run(5) + "," + c.run(1));
+# -- end of source
+# RUN(WALK): walk f3 mechanisms=all
+# WALK-LABEL: code f3:Body
+# WALK: ShapeTest v0 layouts=[L2]
+# WALK-NOT: ShapeTest
+# WALK: GetSlot {{*}}key="least" receivers=[L2] level=Proven
+# RUN(ANSWERS): run-in-shell globalThis.normalize = p => p; globalThis.register = (Check, least) => { globalThis.build = () => new Check(least(3)); };
+# ANSWERS: ok,small
+# ANSWERS-NEXT: exited with 0

@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# function mix(Base) { if (Base === undefined) Base = Object; class Mixed extends Base { first() { return this.get(0); } } return Mixed; }
+# class Below extends mix() { constructor(row, width) { super(); this.row = row; this.width = width; } get(i) { return this.row[i & 3]; } set(i, value) { this.row[i & 3] = value; return this; } }
+# function run(n) { const object = new Below(new Array(4).fill(1), 4); let sum = 0; for (let i = 0; i < n; i++) { object.set(i, i & 7); sum = (sum + object.get(i + 1) + object.width) | 0; } return sum; }
+# print(run(64), run(3));
+# -- end of source
+# The turns store, and the kind of a value that stays is asked in front of them: no turn asks for an int32.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[width]]: {{*}} = GetSlot {{*}} key="width"
+# CHECK-NEXT: = TypeTest [[width]] testedType=i32
+# RUN(ANSWER): run-in-shell
+# ANSWER: 465 15
+# ANSWER-NEXT: exited with 0

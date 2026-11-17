@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "src/opaque",
+  "src/pod",
   "src/analytics",
   "src/base64",
   "src/bundler",
@@ -14,11 +15,15 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/libarchive",
+  "src/archive",
   "src/md",
   "src/paths",
   "src/resolver",
   "src/safety",
+  "src/aot",
+  "src/aot/absent",
+  "src/aot/builtins",
+  "src/aot/interface",
   "src/sema",
   "src/sema/baselines",
   "src/sema/driver",
@@ -44,6 +49,7 @@ members = [
   "src/sourcemap",
   "src/sql",
   "src/sys",
+  "src/tar",
   "src/threading",
   "src/valkey",
   "src/watcher",
@@ -56,8 +62,15 @@ members = [
   "src/dns",
   "src/dotenv",
   "src/event_loop",
+  "src/executable",
   "src/exe_format",
+  "src/sort_by_number",
+  "src/trim",
+  "src/trim/removable_features",
   "src/highway",
+  "src/histogram",
+  "src/hpack",
+  "src/http1",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -66,11 +79,13 @@ members = [
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
-  "src/libdeflate_sys",
+  "src/deflate",
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
-  "src/picohttp",
+  "src/png",
+  "src/jpeg",
+  "src/webp",
   "src/s3_signing",
   "src/sql_jsc",
   "src/zlib",
@@ -118,11 +133,11 @@ members = [
   "src/runtime",
   "src/simdutf_sys",
   "src/which",
-  "src/transpiler",
   "src/react_compiler",
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
+  "src/builtin_sources",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
@@ -208,7 +223,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(bun_fuzzilli)', 'cfg(bun_hardened)', 'cfg(bun_locked_environment)', 'cfg(bun_refuses_execute_only_start)', 'cfg(bun_starts_without_mdwe)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(mordant)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -262,7 +277,7 @@ map_clone = "deny"
 trivially_copy_pass_by_ref = "deny"
 large_types_passed_by_value = "deny"
 large_enum_variant = "deny"
-large_stack_frames = "deny"
+large_unopt_stack_frames = "deny"
 vec_init_then_push = "deny"
 format_collect = "deny"
 manual_memcpy = "deny"
@@ -340,22 +355,18 @@ only_used_in_recursion = "allow"
 unnecessary_cast = "allow"
 new_ret_no_self = "allow"
 map_identity = "allow"
+# `v = Vec::new()` is how a buffer over its retention cap is freed; `clear()` keeps it
+new_instead_of_clear = "allow"
 
 [workspace.dependencies]
 rust-argon2 = { path = "vendor/rust-argon2" }
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
-# `allocator-api2` feature gives `hashbrown::HashMap<K, V, S, A>` an externally-
-# implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
-# would bind `A` to `core::alloc::Allocator` directly) because it also enables
-# `min_specialization` on `T: Copy`, which our pinned nightly rejects with
-# "cannot specialize on trait `Copy`". And we can't enable `allocator-api2`'s
-# `nightly` re-export either — that makes hashbrown name `core::alloc::Allocator`
-# without `#![feature(allocator_api)]`. So: use the polyfill trait, and bridge
-# `bun_alloc::{AstAlloc, DefaultAlloc}` to it (see `bun_alloc/hashbrown_bridge.rs`).
+# hashbrown's `A` is bounded on `allocator-api2`'s trait, which that crate's `nightly` feature makes a re-export of
+# `core::alloc::Allocator`. hashbrown's own `nightly` feature does not compile ("cannot specialize on trait `Copy`").
 hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
-allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+allocator-api2 = { version = "0.2", default-features = false, features = ["alloc", "nightly"] }
 bstr = { version = "1", default-features = false, features = ["alloc"] }
 scopeguard = "1"
 const_format = "0.2"
@@ -371,6 +382,7 @@ encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
+bun_pod = { path = "src/pod" }
 bun_analytics = { path = "src/analytics" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
@@ -382,11 +394,16 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_libarchive = { path = "src/libarchive" }
+bun_archive = { path = "src/archive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
+bun_aot = { path = "src/aot" }
+bun_aot_absent = { path = "src/aot/absent" }
+bun_aot_builtins = { path = "src/aot/builtins" }
+bun_aot_interface = { path = "src/aot/interface" }
+bun_builtin_sources = { path = "src/builtin_sources" }
 bun_sema = { path = "src/sema" }
 bun_sema_baselines = { path = "src/sema/baselines" }
 bun_sema_driver = { path = "src/sema/driver" }
@@ -411,6 +428,7 @@ bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
+bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
@@ -424,7 +442,13 @@ bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
+bun_sort_by_number = { path = "src/sort_by_number" }
+bun_trim = { path = "src/trim" }
+bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
+bun_histogram = { path = "src/histogram" }
+bun_hpack = { path = "src/hpack" }
+bun_http1 = { path = "src/http1" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
@@ -433,11 +457,12 @@ bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
-bun_libdeflate_sys = { path = "src/libdeflate_sys" }
+bun_deflate = { path = "src/deflate" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
-bun_picohttp = { path = "src/picohttp" }
+bun_png = { path = "src/png" }
+bun_jpeg = { path = "src/jpeg" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }
 bun_zlib = { path = "src/zlib" }
@@ -486,8 +511,34 @@ bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
+bun_webp = { path = "src/webp" }
 bun_which = { path = "src/which" }
-bun_transpiler = { path = "src/transpiler" }
+
+# Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
+# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp, highway_jpeg.cpp and highway_webp_*.cpp.
+[profile.dev.package.bun_png]
+opt-level = 3
+[profile.dev.package.bun_jpeg]
+opt-level = 3
+
+[profile.dev.package.bun_webp]
+opt-level = 3
+
+# Loops over every byte that is compressed or decompressed.
+[profile.dev.package.bun_deflate]
+opt-level = 3
+
+# Runs for every line of a response head and every chunk of a body.
+[profile.dev.package.bun_http1]
+opt-level = 3
+
+# Runs for every field of an HTTP/2 header block.
+[profile.dev.package.bun_hpack]
+opt-level = 3
+
+# It stands in for vector code that every test program runs over each byte it parses.
+[profile.dev.package.bun_sema_standalone]
+opt-level = 3
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"

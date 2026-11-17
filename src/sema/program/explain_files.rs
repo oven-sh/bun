@@ -24,7 +24,7 @@ impl Files<'_> {
             atoms: &self.atoms,
             modules: &self.modules,
             by_path: &self.by_path,
-            roots: &self.options.files,
+            roots: self.root_file_names,
             starts: self.starts,
             libs_end: self.libs_end,
             roots_end: self.roots_end,
@@ -50,8 +50,8 @@ impl Files<'_> {
         };
         // `referenceFileLocation.text`, for a file whose text wasn't retained.
         let text_read = |it: &Reference| {
-            let from: &Module = &self.modules[it.from.idx()];
-            if it.is_synthetic() || !from.hir.text.is_empty() {
+            let from = &self.modules[it.from.idx()];
+            if it.is_synthetic() || !from.trees().hir.text.is_empty() {
                 return None;
             }
             let text = host.read(from.file_name())?;

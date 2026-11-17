@@ -33,15 +33,10 @@ describe("issue/03830", () => {
   it.concurrent.each([
     // [name, where transformSync+import() runs in macro.ts]
     ["inside the exported macro fn", "fn-body"],
-    // Macro::init runs the module's top-level via wait_for_promise BEFORE the
-    // caller's MacroModeGuard exists — Macro::init holds its own guard so
-    // depth > 0 here too.
-    ["at macro-module top level (during Macro::init)", "top-level"],
-  ])("nested Bun.Transpiler %s then import() does not free the printer", async (_, where) => {
-    // Bun.Transpiler#transformSync drops a nested MacroContext via
-    // TranspilerStateGuard, which calls __bun_macro_context_deinit. On a
-    // bundler-worker thread the macro was the first SOURCE_CODE_PRINTER
-    // allocator; freeing it here would panic the subsequent module fetch.
+    // Loading a macro runs the module's top-level, under a MacroModeGuard of its own.
+    ["at macro-module top level", "top-level"],
+  ])("import() works after a nested Bun.Transpiler %s", async (_, where) => {
+    // The macro VM has to be able to load modules after a nested transformSync().
     const macroTs =
       where === "top-level"
         ? `new Bun.Transpiler().transformSync("const a = 1;");

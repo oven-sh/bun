@@ -1,0 +1,17 @@
+# `make` is copied in line, and in the copy the constructor of P: two frames below the loop. The constructor's stores ask whether a setter lies above (`AreMembersUnchanged [MemberPassedByStores]`); the rare side is a
+# generic store, so the fresh object leaves and is built in every turn. The purchase of a second build of the loop looked for such guards in the text of the loop's own body alone (a read off a `new` with a proven callee).
+# A try of the loop notes the guards of stores that it built, in whatever frame, and the purchase asks them once in front: in the typed build the object is never made.
+# RUN: walk f2:Body mechanisms=all
+# The bound is written and the sum is whole: nothing else is tested in front, so without the guard the loop is built once, with the guard and the birth in its turns.
+# CHECK: isLoopHead=true
+# CHECK: = NewObject
+# CHECK: isLoopHead=true
+# CHECK-NOT: = NewObject
+# CHECK-NOT: = AreMembersUnchanged
+# -- source: the-guard-of-stores-that-a-constructor-copied-through-a-helper-asks-stands-in-front-of-the-loop.cjs
+# class P { constructor(x) { this.x = x; } }
+# function make(C, x) { return new C(x); }
+# function f(t) { let s = t & 1; for (let i = 0; i < 64; i++) s += make(P, i).x; return s; }
+# globalThis.kept = make;
+# const n = +process.argv[2] || 3; let sum = 0; for (let t = 0; t < n; t++) sum = (sum + f(t)) % 1000003; console.log(sum);
+# -- end of source

@@ -300,6 +300,11 @@ impl Options {
         }
     }
 
+    /// False if `tarball_credentials` finds nothing for a tarball URL, whatever the URL is.
+    pub(crate) fn has_tarball_url_credentials(&self) -> bool {
+        self.scope.has_credentials() || !self.url_auth.is_empty()
+    }
+
     /// Follows the order of npm's `getAuth`: the `.npmrc` line for the tarball's own URL, or else
     /// the registry's credentials if the tarball is on the registry's origin.
     pub fn tarball_credentials<'a>(
@@ -309,7 +314,7 @@ impl Options {
         // A URL that one parse could not settle gets no line.
         normalized: bool,
     ) -> Option<&'a Npm::registry::Scope> {
-        // This URL comes from package data, and an `.npmrc` key has no scheme, so credentials are
+        // No configuration names this URL, and an `.npmrc` key has no scheme, so credentials are
         // never sent over plain http.
         let own = (normalized && tarball.is_https())
             .then(|| Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball))

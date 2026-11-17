@@ -5,7 +5,7 @@ use bun_lint::types::{IdMap, NameOf, SyntaxKind, TsNode, Type, TypeFlags};
 /// Disallow enums from having both number and string members.
 pub struct NoMixedEnums;
 
-const MIXED: Message = Message::new("mixed", "Mixing number and string enums can be confusing.");
+const MIXED: &Message = &Message::new("mixed", "Mixing number and string enums can be confusing.");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum AllowedType {

@@ -1,0 +1,2 @@
+import { parentPort } from "node:worker_threads";
+parentPort.postMessage("from a");

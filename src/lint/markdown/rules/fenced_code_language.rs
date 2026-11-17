@@ -5,8 +5,8 @@ pub struct FencedCodeLanguage {
     required: FxHashSet<Vec<u8>>,
 }
 
-const MISSING_LANGUAGE: Message = Message::new("missingLanguage", "Missing code block language.");
-const DISALLOWED_LANGUAGE: Message = Message::new(
+const MISSING_LANGUAGE: &Message = &Message::new("missingLanguage", "Missing code block language.");
+const DISALLOWED_LANGUAGE: &Message = &Message::new(
     "disallowedLanguage",
     "Code block language \"{{lang}}\" is not allowed.",
 );

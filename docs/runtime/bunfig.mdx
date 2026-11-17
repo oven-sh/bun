@@ -194,6 +194,47 @@ Same as the top-level `preload` field, but only applies to `bun test`.
 preload = ["./setup.ts"]
 ```
 
+### `test.environment`
+
+The DOM that test files run with. One of `"happy-dom"`, `"jsdom"`, or `"node"` for no DOM. Default `"node"`. A `// @vitest-environment <name>` comment in a test file overrides it. See [DOM testing](/test/dom#test-environments).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+environment = "happy-dom"
+```
+
+Equivalent CLI flag: `--environment`. It overrides the `bunfig.toml` value.
+
+### `test.globals`
+
+Which module `test`, `expect` and the other globals come from. Default `"bun"`.
+
+- `"bun"`: a file that imports anything from `"vitest"` gets them from `"vitest"`. Any other file gets them from `"bun:test"`.
+- `"vitest"`: every file gets them from `"vitest"`, like `globals: true` in a Vitest project.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+globals = "vitest"
+```
+
+Equivalent CLI flag: `--globals`. It overrides the `bunfig.toml` value.
+
+### `test.reactCompiler`
+
+Compile components and hooks with Bun's built-in React Compiler. Default `false`. Experimental.
+
+- `true`: every JavaScript and TypeScript file, except test files, preload scripts and `node_modules`.
+- An array of folders or glob patterns: only the files in them.
+- A table with `include` and `exclude`: the files that `include` matches and `exclude` doesn't.
+
+```toml title="bunfig.toml" icon="settings"
+[test.reactCompiler]
+include = ["src", "packages/ui"]
+exclude = ["**/*.stories.*"]
+```
+
+Equivalent CLI flag: `--react-compiler`. See [React Compiler](/test/configuration#react-compiler).
+
 ### `test.pathIgnorePatterns`
 
 Exclude files and directories from test discovery using glob patterns. The test runner prunes matched directories during scanning, so it never traverses their contents. Use this when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.
@@ -346,6 +387,17 @@ retry = 3
 
 The `--retry` CLI flag overrides this setting.
 
+### `test.clearMocks`
+
+Clear every mock function's calls and results before each test. Default `false`, or `true` for tests that use `test` from `"vitest"`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+clearMocks = true
+```
+
+`mockReset`, `restoreMocks`, `unstubEnvs` and `unstubGlobals` work the same way. They call `vi.resetAllMocks()`, `vi.restoreAllMocks()`, `vi.unstubAllEnvs()` and `vi.unstubAllGlobals()` before each test. Default `false`.
+
 ### `test.concurrentTestGlob`
 
 Test files matching this glob pattern run all of their tests concurrently, as if you passed the `--concurrent` flag.
@@ -393,6 +445,21 @@ junit = "test-results.xml"
 ```
 
 CI systems and other tools can consume the report.
+
+#### `test.reporter.junitSuites`
+
+How the JUnit report represents `describe` blocks. Default `"nested"`.
+
+- `"nested"`: each block gets its own `<testsuite>` inside its file's `<testsuite>`.
+- `"flat"`: each file gets one `<testsuite>`, and each test's name is prefixed with the names of its blocks.
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+junit = "test-results.xml"
+junitSuites = "flat"
+```
+
+Equivalent to the `--reporter-junit-suites` flag.
 
 ## Linter
 

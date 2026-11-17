@@ -1,0 +1,6 @@
+# the call has no receiver, the callee is the function all the same
+# -- source: a-function-behind-a-comma-that-is-called-uses-its-features.ts
+# console.log((0, Bun.color)("red", "hex"));
+# -- end of source
+# RUN: features
+# CHECK: by BunColor named

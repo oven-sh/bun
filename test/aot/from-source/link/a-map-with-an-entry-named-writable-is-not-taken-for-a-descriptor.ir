@@ -1,0 +1,17 @@
+# -- source: a-map-with-an-entry-named-writable-is-not-taken-for-a-descriptor.js
+# let hits = 0, kept = 0;
+# const accessors = { first: { get() { hits++; return this.n + 1; } }, writable: { get() { return 2; }, set(v) { kept = v; } } };
+# const internals = { kept: undefined, other: 1 };
+# function Writer(n) { this.n = n; }
+# Object.defineProperties(Writer.prototype, accessors);
+# internals.kept = accessors;
+# print(new Writer(3).first, hits, typeof kept);
+# -- end of source
+# Object.defineProperties(target, map): the questions that a descriptor answers (get, set, value, writable, enumerable, configurable) were asked of the map itself, one level too high: an entry NAMED writable answered, and
+# the whole map was let go. The library's map of Writable's accessors has such an entry. A map each of whose entries lays an accessor as written is not inspected: all that the built-in takes out of it is laid by name.
+# RUN(MAP): link why-gone L3
+# MAP: why-gone L3: it has not gone
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "kept" proven=undefined|L3
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4 1 number

@@ -6,9 +6,9 @@ pub struct NoEmptyFunction {
     allow: Allow,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected empty {{name}}.");
-const SUGGEST_COMMENT: Message =
-    Message::new("suggestComment", "Add comment inside empty {{name}}.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected empty {{name}}.");
+const SUGGEST_COMMENT: &Message =
+    &Message::new("suggestComment", "Add comment inside empty {{name}}.");
 
 const FUNCTIONS: u16 = 1 << 0;
 const ARROW_FUNCTIONS: u16 = 1 << 1;

@@ -1,0 +1,20 @@
+# -- source: names-that-hand-a-number-on-from-one-to-the-next-climb-together.ts
+# declare function sink(value: unknown): void;
+# function shift(row: number[]): number {
+#   let p0 = 0, p1 = 0, p2 = 0, p3 = 0, p4 = 0, p5 = 0, p6 = 0, p7 = 0, p8 = 0, p9 = 0, p10 = 0, p11 = 0;
+#   let sum = 0;
+#   for (let i = 0; i < row.length; i++) { sum += p11; p11 = p10; p10 = p9; p9 = p8; p8 = p7; p7 = p6; p6 = p5; p5 = p4; p4 = p3; p3 = p2; p2 = p1; p1 = p0; p0 = row[i] * 0.5; }
+#   return sum;
+# }
+# sink(shift([2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28]));
+# -- end of source
+# What comes round for p1 is the head's own parameter p0, and so on down the chain: a parameter that takes another parameter of its head round holds whatever that one holds, so it climbs with it,
+# in the same step. One name climbed a walk before: twelve names took twelve walks, and behind eleven the row claimed nothing.
+# f1 = shift
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: LostByWalk
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 3
+# SHELL: exited with 0

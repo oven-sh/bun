@@ -1,0 +1,29 @@
+# import "node:vm";        node:vm: take(Function.prototype);
+# Whoever holds an object comes by what hangs below it, and below Function.prototype hangs `constructor`: Function. `[1, 2].map(f)` came there: the code behind `map` reads `constructor` off a value that nobody knows,
+# which hands on a class, its prototype and what stands above. If the evaluator went out with a holder that the library has let go, a program of one line would count as one that evaluates text
+# Whoever holds such a holder comes by the evaluator as anybody does, by a lookup, and only a name that the text of the program spells finds it: the run time refuses the text of whoever comes by it on another road.
+# The control: WebKit's aot/tests/image/holder-that-the-program-lets-go-hands-out-what-hangs-below-it.ir.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: image
+# CHECK: flags
+# CHECK-NOT: AdmitsUnknownJavaScript
+# RUN(CLOSED): image mechanisms=none
+# CLOSED: flags
+# CLOSED-NOT: AdmitsUnknownJavaScript
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}] namespaceLayout=L(m0)
+module m1 path="node:vm" displayPath="node:vm" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeVm body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Builtin builtin=FunctionPrototype
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="take" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="take"
+    Return v3
+}

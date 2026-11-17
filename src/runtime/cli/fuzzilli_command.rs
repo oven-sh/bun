@@ -32,8 +32,6 @@ impl FuzzilliCommand {
 
 #[cfg(unix)]
 mod reprl {
-    use core::ptr::NonNull;
-
     use bun_core::{EncodedSlice, Global, Output};
     use bun_jsc::JSValue;
     use bun_jsc::virtual_machine::{InitOptions, VirtualMachine};
@@ -42,6 +40,10 @@ mod reprl {
 
     use crate::cli::Command::ContextData;
     use crate::cli::run_command::RunCommand;
+
+    unsafe extern "C" {
+        safe fn Bun__REPRL__resetCoverage();
+    }
 
     const CONTROL_READ_FD: Fd = Fd::from_native(100);
     const CONTROL_WRITE_FD: Fd = Fd::from_native(101);
@@ -71,31 +73,28 @@ mod reprl {
         bun_jsc::initialize(bun_jsc::InitializeOptions::default());
         bun_ast::initialize_store();
 
-        let vm_ptr = VirtualMachine::init(InitOptions {
+        let options = InitOptions {
             transform_options: ctx.args.clone(),
-            log: NonNull::new(ctx.log),
+            argv: core::mem::take(&mut ctx.passthrough).leak(),
             smol: ctx.runtime_options.smol,
             mini_mode: ctx.runtime_options.smol,
             is_main_thread: true,
             ..Default::default()
-        })?;
-        // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
-        let vm = unsafe { &mut *vm_ptr };
-        vm.argv = core::mem::take(&mut ctx.passthrough);
+        };
+        let vm = VirtualMachine::init(ctx.log, options)?;
 
-        let defines_ok = {
-            let b = &mut vm.transpiler;
+        let defines_ok = vm.transpiler.with_mut(|b| {
             RunCommand::wire_transpiler_from_ctx(b, ctx);
             b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
             b.configure_defines().is_ok()
-        };
+        });
         if !defines_ok {
             crate::run_main::fail_with_build_error(vm);
         }
-        // SAFETY: `vm.log` is set in `init`.
-        bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
-        vm.load_extra_env_and_source_code_printer();
-        vm.is_main_thread = true;
+        if let Some(log) = vm.log_mut() {
+            bun_http::async_http::load_env(log, vm.env_loader());
+        }
+        vm.load_extra_env();
         VirtualMachine::set_is_main_thread_vm(true);
 
         let time_zone: &[u8] = vm.env_loader().get(b"TZ").unwrap_or(b"");
@@ -105,14 +104,15 @@ mod reprl {
                 .set_time_zone(&EncodedSlice::from_bytes(time_zone));
         }
         // Programs are separated by the `bun test --isolate` reset.
-        vm.enable_test_isolation(time_zone);
+        let _ = vm.test_isolation_state.time_zone.set(Box::from(time_zone));
+        vm.enable_test_isolation();
 
         let _api_lock = vm.global().vm().get_api_lock();
         serve(vm)
     }
 
     /// Handshake, then one program per `exec` until the control pipe closes.
-    fn serve(vm: &mut VirtualMachine) -> ! {
+    fn serve(vm: &VirtualMachine) -> ! {
         prepare_global(vm);
 
         let control_in = File::borrow(&CONTROL_READ_FD);
@@ -164,21 +164,40 @@ mod reprl {
             if control_out.write_all(&status.to_le_bytes()).is_err() {
                 protocol_error(format_args!("could not write the status"));
             }
-            bun_jsc::cpp::Bun__REPRL__resetCoverage();
+            Bun__REPRL__resetCoverage();
         }
 
-        vm.exit_handler.exit_code = 0;
+        vm.exit_handler.exit_code.set(0);
         vm.on_exit();
-        vm.global_exit();
+        vm.global_exit()
     }
 
     /// Runs one program, then resets the VM for the next. Returns success.
-    fn execute(vm: &mut VirtualMachine, source: &[u8]) -> bool {
+    fn execute(vm: &VirtualMachine, source: &[u8]) -> bool {
+        let mut ok = evaluate(vm, source);
+
+        run_event_loop(vm);
+        let _ = vm.global().handle_rejected_promises();
+        crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+        // Uncaught errors and unhandled rejections fail it too, like `bun <file>`.
+        if vm.unhandled_error_counter.get() > 0 {
+            ok = false;
+        }
+        vm.exit_handler.exit_code.set(0);
+
+        vm.swap_global_for_test_isolation();
+        prepare_global(vm);
+
+        ok
+    }
+
+    /// Runs `source` as global code and prints what it throws. Returns whether it threw nothing.
+    fn evaluate(vm: &VirtualMachine, source: &[u8]) -> bool {
         let mut exception = JSValue::ZERO;
-        // SAFETY: `vm.global` is the live global; `source` outlives the call.
-        let mut ok = unsafe {
+        // SAFETY: `vm.global` is the live global; `source` and `exception` outlive the call.
+        let ok = unsafe {
             bun_jsc::cpp::Bun__REPRL__evaluate(
-                vm.global,
+                vm.global.get(),
                 source.as_ptr(),
                 source.len(),
                 &raw mut exception,
@@ -187,24 +206,11 @@ mod reprl {
         if !ok {
             vm.run_error_handler(exception, None);
         }
-
-        run_event_loop(vm);
-        let _ = vm.global().handle_rejected_promises();
-        crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-        // Uncaught errors and unhandled rejections fail it too, like `bun <file>`.
-        if vm.unhandled_error_counter > 0 {
-            ok = false;
-        }
-        vm.exit_handler.exit_code = 0;
-
-        vm.swap_global_for_test_isolation();
-        prepare_global(vm);
-
         ok
     }
 
     /// The program's microtasks, timers and I/O, for at most `EVENT_LOOP_BUDGET_MS`.
-    fn run_event_loop(vm: &mut VirtualMachine) {
+    fn run_event_loop(vm: &VirtualMachine) {
         let deadline = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
             .add_ms(EVENT_LOOP_BUDGET_MS);
 
@@ -215,19 +221,13 @@ mod reprl {
                 return;
             }
             let remaining = deadline.duration(&now);
-            // SAFETY: `vm` is the live main-thread VM.
-            unsafe {
-                crate::jsc_hooks::auto_tick_active_with_max_wait(
-                    core::ptr::from_mut(vm),
-                    Some(&remaining),
-                )
-            };
+            crate::jsc_hooks::auto_tick_active_with_max_wait(vm, Some(&remaining));
             vm.tick();
         }
     }
 
     /// `require`, `module`, `__filename`, `__dirname` and the prelude.
-    fn prepare_global(vm: &mut VirtualMachine) {
+    fn prepare_global(vm: &VirtualMachine) {
         let global = vm.global();
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
         // SAFETY: `cwd` outlives the call.
@@ -238,18 +238,7 @@ mod reprl {
                 vm.run_error_handler(exception, None);
             }
         }
-        let mut exception = JSValue::ZERO;
-        // SAFETY: as in `execute`.
-        if !unsafe {
-            bun_jsc::cpp::Bun__REPRL__evaluate(
-                vm.global,
-                PRELUDE.as_ptr(),
-                PRELUDE.len(),
-                &raw mut exception,
-            )
-        } {
-            vm.run_error_handler(exception, None);
-        }
+        evaluate(vm, PRELUDE);
     }
 
     #[cold]

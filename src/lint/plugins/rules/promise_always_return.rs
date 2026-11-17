@@ -9,7 +9,7 @@ pub struct AlwaysReturn {
     ignore_assignment_variable: Vec<String>,
 }
 
-const ALWAYS_RETURN: Message = Message::new("", "Each then() should return a value or throw");
+const ALWAYS_RETURN: &Message = &Message::new("", "Each then() should return a value or throw");
 
 impl Rule for AlwaysReturn {
     const META: Meta = Meta::oxlint(Plugin::Promise, "always-return", Kind::Problem);

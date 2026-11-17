@@ -1,0 +1,22 @@
+# -- source: unseen-extensions-take-no-word.cjs
+# function Pair(car, cdr) { this.car = car; this.cdr = cdr; }
+# function Triple(one, two, three) { this.one = one; this.two = two; this.three = three; }
+# function Empty() { }
+# function Few(first, second) { this.first = first; this.second = second; }
+# function extend(o, k, v) { o[k] = v; return o; }
+# extend(JSON.parse("{}"), process.argv[2], 1);
+# console.log(extend(new Pair(1, 2), process.argv[3], 3), extend(new Triple(1, 2, 3), process.argv[3], 3), extend(new Empty, process.argv[3], 3));
+# console.log(extend(new Pair(3, 4), process.argv[3], 3), extend(new Pair(5, 6), process.argv[3], 3), extend(new Few(1, 2), process.argv[3], 3));
+# -- end of source
+# Objects of these classes are extended by code that does not know them. The cell of a Pair is smaller without the word for extra properties: 32 bytes for 48.
+# The cell of a Triple has room for the word, and an object without fields is made to be extended: both keep it. A Few is constructed by one call: its word stays too.
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=32
+# CHECK-NEXT: slot 0 "car" {{*}}offset=16
+# CHECK-NEXT: slot 1 "cdr" {{*}}offset=24
+# CHECK-NEXT: layout L1 CompiledObject size=48
+# CHECK: extra-properties {{*}}offset=16
+# CHECK-NEXT: layout L2 CompiledObject size=32
+# CHECK-NEXT: extra-properties {{*}}offset=16
+# CHECK-NEXT: layout L3 CompiledObject size=48
+# CHECK: extra-properties {{*}}offset=16

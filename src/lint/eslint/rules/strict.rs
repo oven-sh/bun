@@ -20,32 +20,32 @@ enum Mode {
     Module,
 }
 
-const FUNCTION: Message = Message::new("function", "Use the function form of 'use strict'.");
-const GLOBAL: Message = Message::new("global", "Use the global form of 'use strict'.");
-const MULTIPLE: Message = Message::new("multiple", "Multiple 'use strict' directives.");
-const NEVER: Message = Message::new("never", "Strict mode is not permitted.");
-const UNNECESSARY: Message = Message::new("unnecessary", "Unnecessary 'use strict' directive.");
-const MODULE: Message = Message::new("module", "'use strict' is unnecessary inside of modules.");
-const IMPLIED: Message = Message::new(
+const FUNCTION: &Message = &Message::new("function", "Use the function form of 'use strict'.");
+const GLOBAL: &Message = &Message::new("global", "Use the global form of 'use strict'.");
+const MULTIPLE: &Message = &Message::new("multiple", "Multiple 'use strict' directives.");
+const NEVER: &Message = &Message::new("never", "Strict mode is not permitted.");
+const UNNECESSARY: &Message = &Message::new("unnecessary", "Unnecessary 'use strict' directive.");
+const MODULE: &Message = &Message::new("module", "'use strict' is unnecessary inside of modules.");
+const IMPLIED: &Message = &Message::new(
     "implied",
     "'use strict' is unnecessary when implied strict mode is enabled.",
 );
-const UNNECESSARY_IN_CLASSES: Message = Message::new(
+const UNNECESSARY_IN_CLASSES: &Message = &Message::new(
     "unnecessaryInClasses",
     "'use strict' is unnecessary inside of classes.",
 );
-const NON_SIMPLE_PARAMETER_LIST: Message = Message::new(
+const NON_SIMPLE_PARAMETER_LIST: &Message = &Message::new(
     "nonSimpleParameterList",
     "'use strict' directive inside a function with non-simple parameter list throws a syntax error since ES2016.",
 );
-const WRAP: Message = Message::new(
+const WRAP: &Message = &Message::new(
     "wrap",
     "Wrap {{name}} in a function with 'use strict' directive.",
 );
 
 impl Mode {
     /// The message for a directive that the mode doesn't allow.
-    fn message(self) -> Message {
+    fn message(self) -> &'static Message {
         match self {
             Mode::Never => NEVER,
             Mode::Global => GLOBAL,
@@ -133,7 +133,7 @@ pub struct State<'a> {
     containers: Containers<'a>,
 }
 
-fn report_directive<'a>(cx: &Cx<'a, Strict>, directive: Stmt<'a>, message: Message, fix: bool) {
+fn report_directive<'a>(cx: &Cx<'a, Strict>, directive: Stmt<'a>, message: &'static Message, fix: bool) {
     let report = cx.report(directive, message);
     if fix {
         report.fix(|fixer| fixer.remove(directive));

@@ -183,24 +183,6 @@ impl ASTMemoryAllocator {
         }
     }
 
-    /// Take this allocator's `AstAlloc` state (if any) and recycle it. For
-    /// owners that are arena-allocated and never run `Drop`. Call only once
-    /// nothing reads `AstVec`s allocated under this allocator's scope.
-    pub fn release_ast_state(&mut self) {
-        debug_assert!(
-            !self.ast_pushed,
-            "release_ast_state while the AstAllocState is still installed"
-        );
-        if self.ast_pushed {
-            // Still installed in the thread-local; releasing here would let the
-            // next scope reuse storage the current scope still writes to.
-            return;
-        }
-        if let Some(state) = self.ast_state.take() {
-            ast_alloc::release_state(state);
-        }
-    }
-
     /// Take this allocator's `AstAlloc` state without recycling it. The caller
     /// keeps the box alive for as long as `AstVec`s allocated under this
     /// allocator's scope are read, then drops it.
@@ -266,9 +248,7 @@ impl ASTMemoryAllocator {
 
     /// Per-iteration reset for hot reuse paths (`initialize_mini_store`'s
     /// per-workspace-child re-entry). Thin delegate to
-    /// [`bun_alloc::Arena::reset_retain_with_limit`]; the cold init paths
-    /// (`bundler::ThreadPool::Worker::init`, `BundleThread::generate_in_new_
-    /// thread`) keep calling [`Self::reset`].
+    /// [`bun_alloc::Arena::reset_retain_with_limit`].
     pub fn reset_retain_with_limit(&mut self, limit: usize) {
         if self.arena_dirty {
             debug_assert!(

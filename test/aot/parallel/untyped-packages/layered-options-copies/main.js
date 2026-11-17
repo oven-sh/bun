@@ -1,0 +1,6 @@
+// An untyped package and a program of it (copies): options laid over defaults: copies made in place, getters, symbols, missing and null, order of keys, sealed ones, plugins that add their own
+const lib = require("./index.js");
+function say() {
+  console.log(Array.prototype.join.call(arguments, " "));
+}
+var users = [undefined, {}, { port: 0 }, { host: null, extra: 1 }, { port: undefined, debug: true }, 'str', [1, 2], { get lazy() { return this.port + 1; }, port: 5 }, Object.create({ inherited: 1 }, { own: { value: 2, enumerable: true }, hidden: { value: 3 } }), { [lib.S]: 'sym', 2: 'two', 1: 'one', b: 0 }, new Map([[1, 2]]), 7, null, { __proto__: { p: 1 }, retry: { n: 9 } }, { toString: function () { return 'ts'; } }]; for (var n = 0; n < 3; n++) users.forEach(function (u, i) { var o = lib.options(u), d; try { d = new lib.Deep(u); } catch (e) { d = e.name; } say(n, i, JSON.stringify(o), lib.order(o), o[lib.S], o.retry === lib.defaults.retry, JSON.stringify(d), lib.order(lib.omit(o, 'port', 'host', 1)), JSON.stringify(lib.pick(o, ['port', 'tags', 'p', 'own'])), o.p); if (n === 1 && i === 7) { lib.defaults.added = n; lib.defaults.port = 8080; } if (n === 1 && i === 10) delete lib.defaults.debug; });

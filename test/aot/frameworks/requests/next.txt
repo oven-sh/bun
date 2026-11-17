@@ -1,0 +1,46 @@
+GET /
+GET /data x-asked-by:smoke
+GET /person/21?greeting=hi
+GET /person/abc
+GET /api/hello?name=ada
+POST /api/hello {"numbers":[1,2,3]}
+GET /old
+GET /rewritten
+GET /hello.txt
+GET /nowhere
+RSC /person/5
+GET /legacy?q=pages
+GET /built-once
+GET /api/legacy?a=1&a=2
+POST /api/legacy {"sent":true}
+GET /_next/data/BUILD/legacy.json?q=data
+GET /who cookie:who=grace;%20other=1
+GET /api/cookie
+GET /post/first
+GET /post/third
+RSC /post/second
+GET /missing
+GET /lazy
+GET /api/stream
+GET /again
+WAIT 1500
+GET /again
+GET /again
+GET /api/edge
+GET /go
+GET /go?forever=1
+FORM /api/form
+GET /api/instrumented
+GET /grouped
+GET /broken
+GET /robots.txt
+GET /sitemap.xml
+ACTION /action
+HEAD /person/3
+OPTIONS /api/hello
+GET /person/21 accept-encoding:identity
+GET /hello.txt range:bytes=2-5
+BYTES /picture.png
+BYTES /_next/image?url=%2Fpicture.png&w=32&q=75
+BYTES /_next/image?url=%2Fpicture.png&w=48&q=75
+GET /_next/image?url=%2Fnowhere.png&w=32&q=75

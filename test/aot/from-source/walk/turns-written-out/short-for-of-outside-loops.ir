@@ -1,0 +1,48 @@
+# A for-of over a short array literal in no loop is unrolled where its body holds no call: no array is allocated and no length is read. With a call in its body it stays a loop.
+# -- source: main.ts
+# class Board {
+#   readonly cells: number[] = new Array<number>(128).fill(0);
+#   attacked(square: number, by: number): boolean {
+#     for (const side of [-1, 1]) {
+#       const from = square + side;
+#       if (!(from & 0x88) && this.cells[from] === by) return true;
+#     }
+#     return false;
+#   }
+#   rights(from: number, to: number): number {
+#     let bits = 15;
+#     for (const square of [from, to]) {
+#       if (square === 0) bits &= ~2;
+#       else if (square === 7) bits &= ~1;
+#     }
+#     return bits;
+#   }
+#   count(first: () => number, second: () => number): number {
+#     let total = 0;
+#     for (const next of [first, second]) total += next();
+#     return total;
+#   }
+# }
+# const board = new Board();
+# for (let i = 0; i < 128; i += 3) board.cells[i] = i % 5;
+# const squares: number[] = JSON.parse("[0, 7, 17, 0.5]");
+# let total = 0;
+# for (const square of squares) total += (board.attacked(square, 2) ? 1 : 0) + board.rights(square, 7) + board.count(() => square, () => 1);
+# print(total);
+# -- end of source
+# f2 = attacked, f3 = rights, f4 = count
+# RUN(CONSTANTS): walk f2 mechanisms=all
+# CONSTANTS-LABEL: code f2:Body
+# CONSTANTS-NOT: isLoopHead=true
+# RUN(ARRAY): walk f2 mechanisms=all
+# ARRAY-LABEL: code f2:Body
+# ARRAY-NOT: CopyOnWriteArray
+# RUN(VALUES): walk f3 mechanisms=all
+# VALUES-LABEL: code f3:Body
+# VALUES-NOT: NewArray
+# RUN(CALL): walk f4 mechanisms=all
+# CALL-LABEL: code f4:Body
+# CALL: LoopHint
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 82.5
+# ANSWERS-NEXT: exited with 0

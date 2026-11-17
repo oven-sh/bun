@@ -9,8 +9,8 @@ pub struct NoReturnWrap {
     allow_reject: bool,
 }
 
-const RESOLVE: Message = Message::new("", "Avoid wrapping return values in Promise.resolve");
-const REJECT: Message = Message::new("", "Expected throw instead of Promise.reject");
+const RESOLVE: &Message = &Message::new("", "Avoid wrapping return values in Promise.resolve");
+const REJECT: &Message = &Message::new("", "Expected throw instead of Promise.reject");
 
 #[derive(Default)]
 pub struct State<'a> {
@@ -87,7 +87,7 @@ impl Rule for NoReturnWrap {
 
 impl NoReturnWrap {
     /// Returns the message if the call is to the global `Promise.resolve` or `Promise.reject`.
-    fn check_for_resolve_reject(&self, call_expr: Call) -> Option<Message> {
+    fn check_for_resolve_reject(&self, call_expr: Call) -> Option<&'static Message> {
         let callee = call_expr.callee();
         let message = match callee.member_name()?.bytes() {
             b"resolve" => RESOLVE,

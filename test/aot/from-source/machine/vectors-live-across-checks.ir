@@ -1,0 +1,131 @@
+# -- source: main.cjs
+# function add(o, a, b) { for (var i = 0; i < 16; i++) o[i] = a[i] + b[i]; }
+# function copy(o, n) { for (var i = 0; i < 16; i++) o[i] = n[i]; for (i = 0; i < 16; i++) n[i] = o[i] * 2; }
+# var x = new Float64Array(16), y = new Float64Array(16), z = new Float64Array(16);
+# for (var k = 0; k < 16; k++) { x[k] = k; y[k] = k * 0.5; }
+# add(z, x, y); copy(y, z); add(x, y, z);
+# print(x.join(), y.join(), z.join());
+# -- end of source
+# A vector may be live across a check: one that passes calls nothing, and one that fails doesn't return. With check=Validate each load that is reused is checked.
+# OPTIONS: check=Validate
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 0,4.5,9,13.5,18,22.5,27,31.5,36,40.5,45,49.5,54,58.5,63,67.5
+# RIGHT: exited with 0
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, IsImportedAsESModule] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0 place=0
+layout L1 module=m0 place=0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=7
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = Undefined @0
+    v4 = NewClosure function=f1 @0
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f2 @0
+    v7 = Convert v6 declared={type=f2 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=Float64Array @195
+    v9 = Integer integer=16 @208
+    v10 = Construct v8, -, v9 calleeName="Float64Array" @195 @191
+    v11 = Builtin builtin=Float64Array @221
+    v12 = Integer integer=16 @234
+    v13 = Construct v11, -, v12 calleeName="Float64Array" @221 @217
+    v14 = Builtin builtin=Float64Array @247
+    v15 = Integer integer=16 @260
+    v16 = Construct v14, -, v15 calleeName="Float64Array" @247 @243
+    v17 = Integer @278
+    v18 = Convert v17 declared={type=undefined|i32 flags=[IsExpected]} @278
+    Jump -> next b1(v18) @274
+  b1(v19):
+    LoopHint @274
+    v21 = Integer integer=16 @285
+    v22 = Less v19, v21 @281
+    Branch v22 -> taken b2(), notTaken b3() @281
+  b2():
+    ElemSet v10, v19, v19 mode=Sloppy @296
+    v24 = Double number=0.5 @317
+    v25 = Mul v19, v24 @313
+    ElemSet v13, v19, v25 mode=Sloppy @306
+    v27 = Increment v19 @289
+    v28 = Convert v27 declared={type=undefined|i32 flags=[IsExpected]} @289
+    Jump -> next b1(v28) @289
+  b3():
+    v29 = Call v5, -, v16, v10, v13 calleeName="add" @324
+    v30 = Call v7, -, v13, v16 calleeName="copy" @338
+    v31 = Call v5, -, v10, v13, v16 calleeName="add" @350
+    v32 = Builtin builtin=GlobalThis @364
+    v33 = PropGet v32 key="print" [isFreeName] @364
+    v34 = PropGet v10 key="join" @370
+    v35 = Call v34, v10 calleeKey="join" calleeName="x.join" @372
+    v36 = PropGet v13 key="join" @380
+    v37 = Call v36, v13 calleeKey="join" calleeName="y.join" @382
+    v38 = PropGet v16 key="join" @390
+    v39 = Call v38, v16 calleeKey="join" calleeName="z.join" @392
+    v40 = Call v33, -, v35, v37, v39 calleeName="print" @364
+    v41 = Undefined @364
+    Return v41 @364
+}
+function f1 name="add" module=m0 flags=[IsSloppy, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}, {type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: undefined|null|string|Array, v2: undefined|null|string|Array):
+    v3 = Undefined @19
+    v4 = Integer @37
+    v5 = Convert v4 declared={type=undefined|i32 flags=[IsExpected]} @37
+    Jump -> next b1(v5) @33
+  b1(v6):
+    LoopHint @33
+    v8 = Integer integer=16 @44
+    v9 = Less v6, v8 @40
+    Branch v9 -> taken b2(), notTaken b3() @40
+  b2():
+    v10 = ElemGet v1, v6 @60
+    v11 = ElemGet v2, v6 @67
+    v12 = Add v10, v11 @60
+    ElemSet v0, v6, v12 mode=Sloppy @53
+    v14 = Increment v6 @48
+    v15 = Convert v14 declared={type=undefined|i32 flags=[IsExpected]} @48
+    Jump -> next b1(v15) @48
+  b3():
+    v16 = Undefined @48
+    Return v16 @48
+}
+function f2 name="copy" module=m0 position=75 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>):
+    v2 = Undefined @92
+    v3 = Integer @110
+    v4 = Convert v3 declared={type=undefined|i32 flags=[IsExpected]} @110
+    Jump -> next b1(v4) @106
+  b1(v5):
+    LoopHint @106
+    v7 = Integer integer=16 @117
+    v8 = Less v5, v7 @113
+    Branch v8 -> taken b2(), notTaken b3() @113
+  b2():
+    v9 = ElemGet v1, v5 @133
+    ElemSet v0, v5, v9 mode=Sloppy @126
+    v11 = Increment v5 @121
+    v12 = Convert v11 declared={type=undefined|i32 flags=[IsExpected]} @121
+    Jump -> next b1(v12) @121
+  b3():
+    v13 = Integer @148
+    v14 = Convert v13 declared={type=undefined|i32 flags=[IsExpected]} @144
+    Jump -> next b4(v14) @144
+  b4(v15):
+    LoopHint @144
+    v17 = Integer integer=16 @155
+    v18 = Less v15, v17 @151
+    Branch v18 -> taken b5(), notTaken b6() @151
+  b5():
+    v19 = ElemGet v0, v15 @171
+    v20 = Integer integer=2 @178
+    v21 = Mul v19, v20 @171
+    ElemSet v1, v15, v21 mode=Sloppy @164
+    v23 = Increment v15 @159
+    v24 = Convert v23 declared={type=undefined|i32 flags=[IsExpected]} @159
+    Jump -> next b4(v24) @159
+  b6():
+    v25 = Undefined @159
+    Return v25 @159
+}

@@ -1,0 +1,1 @@
+{ "features": ["RegExpUnicodeProperties"], "build": ["--disallow-code-generation-from-strings"] }

@@ -7,11 +7,11 @@ pub struct NoDuplicateDefinitions {
     check_footnote_definitions: bool,
 }
 
-const DUPLICATE_DEFINITION: Message = Message::new(
+const DUPLICATE_DEFINITION: &Message = &Message::new(
     "duplicateDefinition",
     "Unexpected duplicate definition `{{ identifier }}` (label: `{{ label }}`) found. First defined at line {{ firstLine }} (label: `{{ firstLabel }}`).",
 );
-const DUPLICATE_FOOTNOTE_DEFINITION: Message = Message::new(
+const DUPLICATE_FOOTNOTE_DEFINITION: &Message = &Message::new(
     "duplicateFootnoteDefinition",
     "Unexpected duplicate footnote definition `{{ identifier }}` (label: `{{ label }}`) found. First defined at line {{ firstLine }} (label: `{{ firstLabel }}`).",
 );

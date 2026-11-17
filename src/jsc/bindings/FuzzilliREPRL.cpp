@@ -12,6 +12,7 @@
 
 #ifdef FUZZILLI_ENABLED
 #include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -24,16 +25,19 @@
 
 extern "C" {
 
-#if ASAN_ENABLED
-// Runs right before ASAN terminates the process, after it printed its report.
-static void fuzzilliFlushOutputBeforeDeath()
+// Signal handler to ensure output is flushed before crash
+static void fuzzilliSignalHandler(int sig)
 {
+    // Flush all output
     fflush(stdout);
     fflush(stderr);
     fsync(STDOUT_FILENO);
     fsync(STDERR_FILENO);
+
+    // Re-raise the signal with default handler
+    signal(sig, SIG_DFL);
+    raise(sig);
 }
-#endif
 
 // Implementation of the global fuzzilli() function for Bun
 // This function is used by Fuzzilli to:
@@ -248,15 +252,24 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
     *guard = 0;
 }
 
-// Register the fuzzilli() function on every global a REPRL program runs on.
+void Bun__REPRL__resetCoverage()
+{
+    __sanitizer_cov_reset_edgeguards();
+}
+
+// Register the fuzzilli() function on a Bun global object
 void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
 
-#if ASAN_ENABLED
-    // ASAN reports the fatal signals; JSC's own SIGSEGV handler (VM traps) must stay in place too.
-    __sanitizer_set_death_callback(fuzzilliFlushOutputBeforeDeath);
-#endif
+    // Install signal handlers to ensure output is flushed before crashes
+    // This is important for ASAN output to be captured
+    // A handler that the engine installed stays: it turns some faults into exceptions.
+    for (int sig : { SIGABRT, SIGSEGV, SIGILL, SIGFPE }) {
+        struct sigaction current;
+        if (!sigaction(sig, nullptr, &current) && !(current.sa_flags & SA_SIGINFO) && current.sa_handler == SIG_DFL)
+            signal(sig, fuzzilliSignalHandler);
+    }
 
     globalObject->putDirectNativeFunction(
         vm,
@@ -271,11 +284,14 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 
 } // extern "C"
 
+#else
+
+// fuzzilli_command.rs names it in every build. Only a build with Fuzzilli has coverage to reset.
+extern "C" void Bun__REPRL__resetCoverage() {}
+
 #endif // FUZZILLI_ENABLED
 
-// For the REPRL loop in src/runtime/cli/fuzzilli_command.rs, in every build.
-
-// Runs one program as global code. On a throw: false, with the JSC::Exception in *exception.
+// Runs one program as global code, for fuzzilli_command.rs. On a throw: false, with the JSC::Exception in *exception.
 extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__REPRL__evaluate(Zig::GlobalObject* globalObject, const unsigned char* source, size_t sourceLen, JSC::EncodedJSValue* exception)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -300,11 +316,4 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__REPRL__evaluate(Zig::GlobalObject* 
     *exception = JSC::JSValue::encode(JSC::JSValue(error));
     scope.clearException();
     return false;
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__REPRL__resetCoverage()
-{
-#ifdef FUZZILLI_ENABLED
-    __sanitizer_cov_reset_edgeguards();
-#endif
 }

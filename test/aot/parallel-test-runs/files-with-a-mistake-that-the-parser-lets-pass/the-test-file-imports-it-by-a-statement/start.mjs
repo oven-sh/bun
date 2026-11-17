@@ -1,0 +1,1 @@
+globalThis.ran = ["start"];

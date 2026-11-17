@@ -213,6 +213,8 @@ const commands: Record<string, readonly [args: readonly string[], length: number
 const args = (names: readonly string[]): Record<string, b.Type> =>
   Object.fromEntries(names.map(name => (name.startsWith("...") ? [name.slice(3), b.any.variadic] : [name, b.any])));
 
+const promise = b.any.returning("Promise");
+
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 
 export const RedisClient = b.class({
@@ -235,13 +237,21 @@ export const RedisClient = b.class({
         ([name, [names, length, rustName]]) =>
           [
             name,
-            { args: args(names), returns: b.any, capability: "js", throws: true, passThis: true, length, rustName },
+            {
+              args: args(names),
+              returns: promise,
+              capability: "js",
+              throws: true,
+              passThis: name === "connect",
+              length,
+              rustName,
+            },
           ] as const,
       ),
       ["bufferedAmount", { getter: b.usize }] as const,
       ["close", { capability: "js", throws: true }] as const,
-      ["connected", { getter: b.bool }] as const,
-      ["duplicate", { returns: b.any, capability: "js", throws: true }] as const,
+      ["connected", { getter: b.bool, pure: true }] as const,
+      ["duplicate", { returns: promise, capability: "js", throws: true }] as const,
       ["onclose", eventHandler] as const,
       ["onconnect", eventHandler] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),

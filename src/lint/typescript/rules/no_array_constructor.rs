@@ -6,7 +6,7 @@ use bun_lint_eslint::rules::no_array_constructor::{
 /// Disallow generic `Array` constructors.
 pub struct NoArrayConstructor;
 
-const USE_LITERAL: Message = Message::new(
+const USE_LITERAL: &Message = &Message::new(
     "useLiteral",
     "The array literal notation [] is preferable.",
 );

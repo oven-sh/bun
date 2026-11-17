@@ -1,0 +1,20 @@
+Two test files mock one module ahead of its load; the file behind them mocks nothing and has the real module, whose body runs then.
+#### a.test.js
+import { test, vi } from "bun:test";
+import * as all from "./dep.js";
+import { flag } from "./dep.js";
+vi.mock("./dep.js", () => ({ flag: "mock of a" }));
+test("a", () => console.log("| CASE a", Object.keys(all).join(), all.flag, flag));
+#### b.test.js
+import { test, vi } from "bun:test";
+import * as all from "./dep.js";
+import { flag } from "./dep.js";
+vi.mock("./dep.js", () => ({ flag: "mock of b" }));
+test("b", () => console.log("| CASE b", Object.keys(all).join(), all.flag, flag));
+#### c.test.js
+import { test } from "bun:test";
+import * as all from "./dep.js";
+import { flag } from "./dep.js";
+test("c", () => console.log("| CASE c", Object.keys(all).join(), all.flag, flag, require("./dep.js").flag));
+#### dep.js
+console.log("| CASE dep.js runs"); export const flag = "real"; export const plain = "real"; export default "real";

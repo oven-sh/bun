@@ -1,4 +1,5 @@
 #include "CryptoHkdf.h"
+#include "NodeCryptoJob.h"
 #include "NodeValidator.h"
 #include "CryptoUtil.h"
 #include "JSCryptoKey.h"
@@ -37,10 +38,6 @@ HkdfJobCtx::~HkdfJobCtx()
 {
 }
 
-extern "C" void Bun__HkdfJobCtx__runTask(HkdfJobCtx* ctx, JSGlobalObject* lexicalGlobalObject)
-{
-    ctx->runTask(lexicalGlobalObject);
-}
 void HkdfJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
     auto key = m_key.symmetricKey().span();
@@ -64,13 +61,9 @@ void HkdfJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
         return;
     }
 
-    m_result = ByteSource::allocated(dp.release());
+    m_result = WTF::move(dp);
 }
 
-extern "C" void Bun__HkdfJobCtx__runFromJS(HkdfJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(lexicalGlobalObject);
-}
 JSCallbackArgs HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -92,27 +85,11 @@ JSCallbackArgs HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
         return { err };
     }
 
-    memcpy(buf->data(), result.data(), result.size());
+    memcpy(buf->data(), result.get(), result.size());
 
     JSValue resultBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), buf.releaseNonNull());
     RETURN_IF_EXCEPTION(scope, {});
     return { jsNull(), resultBuffer };
-}
-
-extern "C" void Bun__HkdfJobCtx__deinit(HkdfJobCtx* ctx)
-{
-    ctx->deinit();
-}
-void HkdfJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__HkdfJob__createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
-void HkdfJob::createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, JSValue callback)
-{
-    HkdfJobCtx* ctxCopy = new HkdfJobCtx(WTF::move(ctx));
-    return Bun__HkdfJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
 // similar to prepareSecretKey
@@ -239,7 +216,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHkdf, (JSGlobalObject * lexicalGlobalObject, JSC::Cal
     V::validateFunction(scope, lexicalGlobalObject, callback, "callback"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    HkdfJob::createAndSchedule(lexicalGlobalObject, WTF::move(ctx.value()), callback);
+    NodeCryptoJob::schedule<HkdfJobCtx>(lexicalGlobalObject, callback, WTF::move(ctx.value()));
 
     return JSValue::encode(jsUndefined());
 }
@@ -267,7 +244,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHkdfSync, (JSGlobalObject * lexicalGlobalObject, JSC:
         return {};
     }
 
-    memcpy(buf->data(), result.data(), result.size());
+    memcpy(buf->data(), result.get(), result.size());
 
     return JSValue::encode(JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), buf.releaseNonNull()));
 }

@@ -51,10 +51,10 @@
 #include "JSPbkdf2Params.h"
 #include "JSMlDsaParams.h"
 #include "JSX25519Params.h"
-#include "AsymmetricKeyValue.h"
 #include "CryptoAlgorithmMLDSA.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
+#include "CryptoKeyOKP.h"
 #include "CryptoKeyRSA.h"
 #include "BunString.h"
 #include "ErrorCode.h"
@@ -331,7 +331,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             JSObject* newValue = constructEmptyObject(&state);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
-            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+            Bun::putDirectNamed(vm, newValue, "publicKey"_s, publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -347,7 +347,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             JSObject* newValue = constructEmptyObject(&state);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
-            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+            Bun::putDirectNamed(vm, newValue, "publicKey"_s, publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmX25519Params>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -551,6 +551,13 @@ CryptoKeyUsageBitmap SubtleCrypto::toCryptoKeyUsageBitmap(const Vector<CryptoKey
 // Maybe we want more specific error messages?
 static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionCode ec, const String& msg)
 {
+    // createDOMException() turns this code into JavaScript's own SyntaxError.
+    if (ec == SyntaxError) {
+        passedPromise->rejectWithCallback([&](JSDOMGlobalObject& globalObject) {
+            return createDOMExceptionObject(&globalObject, ec, msg.isEmpty() ? "A required parameter was missing or out-of-range"_s : msg);
+        });
+        return;
+    }
     if (!msg.isEmpty()) {
         passedPromise->reject(ec, msg);
         return;
@@ -558,9 +565,6 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
     switch (ec) {
     case NotSupportedError:
         passedPromise->reject(ec, "The algorithm is not supported"_s);
-        return;
-    case SyntaxError:
-        passedPromise->reject(ec, "A required parameter was missing or out-of-range"_s);
         return;
     case InvalidStateError:
         passedPromise->reject(ec, "The requested operation is not valid for the current state of the provided key"_s);
@@ -1025,6 +1029,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     // The 26 January 2017 version of the specification suggests we should perform the following task asynchronously
     // regardless what kind of keys it produces: https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-generateKey
     // That's simply not efficient for AES, HMAC and EC keys. Therefore, we perform it as an async task only for RSA keys.
@@ -1287,6 +1292,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
             rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
     // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-importKey
     // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
@@ -1606,6 +1612,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                         rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
                 };
 
+                ncrypto::ClearErrorOnReturn clearErrorOnReturn;
                 // The following operation should be performed synchronously.
                 RELEASE_AND_RETURN(scope, importAlgorithm->importKey(format, WTF::move(keyData), *unwrappedKeyAlgorithm, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
             }
@@ -1629,6 +1636,25 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
 static JSC::JSValue toJSArrayBuffer(JSDOMGlobalObject& globalObject, RefPtr<JSC::ArrayBuffer>&& buffer)
 {
     return JSC::JSArrayBuffer::create(globalObject.vm(), globalObject.arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(buffer));
+}
+
+static std::optional<Vector<uint8_t>> marshalPublicKey(const CryptoKey& key)
+{
+    switch (key.keyClass()) {
+    case CryptoKeyClass::RSA:
+        return marshalEVPKey(uncheckedDowncast<CryptoKeyRSA>(key).platformKey(), true);
+    case CryptoKeyClass::EC:
+        return marshalEVPKey(uncheckedDowncast<CryptoKeyEC>(key).platformKey(), true);
+    case CryptoKeyClass::AKP:
+        return marshalEVPKey(uncheckedDowncast<CryptoKeyAKP>(key).platformKey(), true);
+    case CryptoKeyClass::OKP:
+        return marshalEVPKey(uncheckedDowncast<CryptoKeyOKP>(key).toEVPKey().get(), true);
+    case CryptoKeyClass::AES:
+    case CryptoKeyClass::HMAC:
+    case CryptoKeyClass::Raw:
+        break;
+    }
+    return std::nullopt;
 }
 
 void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
@@ -1673,15 +1699,10 @@ void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vect
     }
     importParams->identifier = identifier;
 
-    Vector<uint8_t> spki;
-    {
-        AsymmetricKeyValue keyValue(key);
-        auto der = marshalEVPKey(keyValue.key, true);
-        if (!der) {
-            promise->reject(OperationError, ""_s);
-            return;
-        }
-        spki = WTF::move(*der);
+    auto spki = marshalPublicKey(key);
+    if (!spki) {
+        promise->reject(OperationError, ""_s);
+        return;
     }
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(identifier);
@@ -1698,7 +1719,7 @@ void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vect
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    algorithm->importKey(KeyFormat::Spki, KeyData { WTF::move(spki) }, *importParams, true, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
+    algorithm->importKey(KeyFormat::Spki, KeyData { WTF::move(*spki) }, *importParams, true, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
 }
 
 void SubtleCrypto::encapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& encapsulationKey, Ref<DeferredPromise>&& promise)

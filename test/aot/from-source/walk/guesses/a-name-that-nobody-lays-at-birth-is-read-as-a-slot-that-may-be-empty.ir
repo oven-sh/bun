@@ -1,0 +1,38 @@
+# -- source: a-name-that-nobody-lays-at-birth-is-read-as-a-slot-that-may-be-empty.js
+# const shelf = {
+#   get label() { return this._label; },
+#   set label(value) { const before = this._label; this._label = value; if (before === undefined) this._first = value; this.turns = this.turns + 1; },
+# };
+# class Store {
+#   constructor() { this.shelf = Object.create(shelf); }
+#   make(tag) { const made = Object.create(this.shelf); made.tag = tag; made.turns = 0; return made; }
+# }
+# const store = new Store();
+# let sum = 0;
+# for (let round = 0; round < 20; round++) { const made = store.make(round); if (made.label !== undefined) sum += 1000; made.label = round; made.label = round + 1; sum += made.label + made._first + made.turns; }
+# print(String(sum));
+# -- end of source
+# The maker lays `tag` and `turns` on the object that it creates. `_label` and `_first` are laid late, through `this`, by the setter of the literal that stands above: nobody lays them at birth, so the first read in the life of
+# every object finds the slot empty. A read behind a test for a filled slot would fail there for ever and take the rest of the body with it: the read takes the slot that may be empty, behind the guard that nothing above answers.
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: AreMembersUnchanged conditions=[{layout=L2 key="_label"}
+# CHECK: = GetSlotOrUndefined {{*}}key="_label" receivers=[L2]
+# CHECK: PutSlotOrAdd {{*}}key="_label" receivers=[L2]
+# RUN(FILLED): walk f4 mechanisms=all
+# FILLED-NOT: IsSlotFilled {{*}}key="_label"
+# What the maker lays is likely there, as ever.
+# RUN(MAKER): walk f4 mechanisms=all
+# MAKER: = GetSlot {{*}}key="turns" receivers=[L2]
+# The literal may be `this` of its own setter. It takes no slot under a name that is laid late on what stands below it: an empty slot on the way up may be filled by compiled code without a word to the run time, and the guard
+# could never begin (ChainWalkUse::KeptForReads). A store on the literal itself lays an extra property, which the run time reports.
+# RUN(FIELDS): link fields held mechanisms=all
+# FIELDS-NOT: field L1.{{*}} "_label"
+# FIELDS-NOT: field L1.{{*}} "_first"
+# FIELDS: field L2.{{*}} "_label" appended {{*}}laid-late
+# FIELDS: field L2.{{*}} "_first" appended {{*}}laid-late
+# RUN(BIRTH): link fields held mechanisms=all
+# BIRTH-NOT: "tag" appended {{*}}laid-late
+# BIRTH-NOT: "turns" appended {{*}}laid-late
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

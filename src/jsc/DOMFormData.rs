@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::{JSGlobalObject, JSValue, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult, WrapperGuard};
 use bun_core::EncodedSlice;
 
 bun_opaque::opaque_ffi! {
@@ -16,7 +16,7 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__append(
-        arg0: &mut DOMFormData,
+        arg0: &DOMFormData,
         arg1: &JSGlobalObject,
         arg2: &EncodedSlice,
         arg3: &EncodedSlice,
@@ -27,13 +27,13 @@ unsafe extern "C" {
     // `*Blob` C++ owns (never dereferenced as Rust data) — same round-trip
     // contract as `Zig__GlobalObject__resetModuleRegistryMap`'s `map` param.
     safe fn WebCore__DOMFormData__appendBlob(
-        arg0: &mut DOMFormData,
+        arg0: &DOMFormData,
         arg1: &JSGlobalObject,
         arg2: &EncodedSlice,
         arg3: *mut c_void,
         arg4: &EncodedSlice,
     ) -> bool;
-    safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
+    safe fn WebCore__DOMFormData__count(arg0: &DOMFormData) -> usize;
 }
 
 impl DOMFormData {
@@ -54,20 +54,14 @@ impl DOMFormData {
         })
     }
 
-    pub fn from_js<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
-        // Returned pointer is valid while `value` is kept alive on the stack
-        // (conservative GC scan). Null → None. `DOMFormData` is an opaque ZST
-        // handle, so `opaque_mut` is the centralised zero-byte deref proof.
-        // The unbounded `'a` cannot be expressed more tightly: the cell is
-        // GC-owned, so the caller must keep `value` stack-rooted for the
-        // lifetime of the returned reference.
-        let p = WebCore__DOMFormData__fromJS(value);
-        (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
+    pub fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+        // SAFETY: a `JSDOMFormData` holds a ref on what it wraps.
+        unsafe { WrapperGuard::new(value, WebCore__DOMFormData__fromJS(*value)) }
     }
 
     #[track_caller]
     pub fn append(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         name_: &EncodedSlice,
         value_: &EncodedSlice,
@@ -79,7 +73,7 @@ impl DOMFormData {
 
     #[track_caller]
     pub fn append_blob(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         name_: &EncodedSlice,
         blob: *mut c_void,
@@ -90,7 +84,7 @@ impl DOMFormData {
         })
     }
 
-    pub fn count(&mut self) -> usize {
+    pub fn count(&self) -> usize {
         WebCore__DOMFormData__count(self)
     }
 }

@@ -1,0 +1,39 @@
+# -- source: mark-of.ts
+# declare function id<T>(value: T): T;
+# declare function report(value: number): void;
+# class Leaf { mark = 0; name = ""; }
+# let next = 1;
+# function markOf(leaf: Leaf): number {
+#   if (!leaf.mark) { leaf.mark = next; next++; }
+#   return leaf.mark;
+# }
+# let sum = 0;
+# for (let turn = 0; turn < 300; turn++) sum += markOf(id(new Leaf()));
+# report(sum);
+# -- end of source
+# markOf() calls nothing on its usual ways: every call stands in the closed arm of a guess. The arm of the store calls with `leaf` alive and saves it in the rare region's own word. The way out of that arm leads to a
+# block that the walk of the allocator has not come to, so its moves are made later, when the head is fixed. They read the save of the region. They used to read a spill of the whole function, which was made for them
+# alone: a store behind the definition and a frame on every way, three instructions of nineteen in each call that finds its mark.
+# f1 = markOf
+# REQUIRES: x86_64 unsanitized-code
+# RUN: allocate f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: save rdi -> s0
+# CHECK: reload s0 -> rdi
+# CHECK: s0: {{*}} isSaveInRareRegion
+# CHECK-NOT: s1:
+# CHECK-NOT: needsFrameOutsideRareRegions
+# REQUIRES(FRAME): x86_64 unsanitized-code
+# RUN(FRAME): frame f1:Body mechanisms=all
+# FRAME-LABEL: unit f1:Body
+# FRAME: coverage = RareRegions
+# REQUIRES(PART): arm64 unsanitized-code
+# RUN(PART): frame f1:Body mechanisms=all
+# PART-LABEL: unit f1:Body
+# PART: coverage = FramedPart
+# RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 45150
+# RUNS: exited with 0
+# RUN(OTHER): run-in-shell mechanisms=all let turn = 0; globalThis.id = value => turn++ % 3 ? value : { mark: 0, other: turn }; globalThis.report = value => print(String(value));
+# OTHER: 45150
+# OTHER: exited with 0

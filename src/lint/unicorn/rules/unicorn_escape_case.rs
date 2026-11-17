@@ -5,7 +5,7 @@ use std::ops::Range;
 /// Enforce uppercase characters for the value of the escape sequence.
 pub struct EscapeCase;
 
-const ESCAPE_CASE: Message = Message::new("", "Use uppercase characters for the value of the escape sequence.");
+const ESCAPE_CASE: &Message = &Message::new("", "Use uppercase characters for the value of the escape sequence.");
 
 impl Rule for EscapeCase {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "escape-case", Kind::Suggestion).fixable(Fixable::Code);

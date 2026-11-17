@@ -19,16 +19,6 @@ pub(crate) mod hmr_runtime;
 pub(crate) use config::{FileSystemRouterType, Framework, SplitBundlerOptions, UserOptions};
 pub(crate) use hmr_runtime::{HmrRuntime, get_hmr_runtime};
 
-/// All bake JSC references go through this re-export of `bun_jsc`.
-pub(crate) mod jsc {
-    /// `jsc.API.JSBundler.Plugin` — the C++ `BunPlugin` FFI handle. The
-    /// canonical opaque struct lives in `bun_bundler::bundle_v2::api::JSBundler`
-    /// (T5) and is re-exported through `crate::api::js_bundler` so the
-    /// JSC-aware `PluginJscExt` methods are in scope; both paths name the same
-    /// nominal type.
-    pub(crate) use crate::api::js_bundler::Plugin;
-}
-
 // ══════════════════════════════════════════════════════════════════════════
 // Top-level types
 // ══════════════════════════════════════════════════════════════════════════

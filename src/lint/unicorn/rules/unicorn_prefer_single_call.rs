@@ -9,7 +9,7 @@ pub struct PreferSingleCall {
     ignore: Vec<String>,
 }
 
-const PREFER_SINGLE_CALL: Message = Message::new("", "Do not call `{{description}}` multiple times.");
+const PREFER_SINGLE_CALL: &Message = &Message::new("", "Do not call `{{description}}` multiple times.");
 
 impl Rule for PreferSingleCall {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-single-call", Kind::Suggestion).fixable(Fixable::Code);

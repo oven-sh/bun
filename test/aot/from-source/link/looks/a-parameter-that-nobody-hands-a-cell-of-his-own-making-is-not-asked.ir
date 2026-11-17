@@ -1,0 +1,13 @@
+# `area` only looks at what arrives, but the one caller hands it an object that it was itself handed. Nobody could lay such an object in a frame: the parameter is not asked, and bears no word.
+# f1 = area, f2 = caller
+# -- source: a-parameter-that-nobody-hands-a-cell-of-his-own-making-is-not-asked.ts
+# declare function sink(...values: unknown[]): void;
+# declare const given: { w: number; h: number };
+# function area(o: { w: number; h: number }): number { let t = 0; for (let i = 0; i < 2; i++) t += o.w * o.h; return t; }
+# function caller() { return area(given); }
+# sink(caller());
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK-NOT: only-looked-at
+# CHECK-LABEL: function f2

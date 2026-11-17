@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# "use strict";
+# function behindACall(o, between) { let text = ""; for (const k in o) { between(o, k); text += k + (o[k] === undefined ? "_" : o[k]); } return text; }
+# const byName = { behindACall }, key = JSON.parse('"behindACall"');
+# const make = () => JSON.parse('{"ash":1,"birch":2,"cedar":3,"date":4,"elm":5,"fir":6,"gum":7,"hazel":8}');
+# print(byName[key](make(), (o, k) => { if (k === "cedar") delete o.cedar; }));
+# -- end of source
+# The read under the key of a for-in uses the enumerator's index, after a check that may reuse the result of the enumerator's step.
+# The read checks the object against the enumerator (first that it is a cell, then its structure and order word) with each of three switches, and with no other.
+# The three are CheckBoundsAtRunTime (--aot-harden=ignore-told-ranges), CheckProofsAtRunTime (--aot-harden=proof-checks) and CheckBoundsInEmittersOnly.
+# Fault injection, testing=AssumeEnumeratorCurrent: the check reuses the step's result although a call has deleted that very property.
+# With the fault and any one of the switches, the process crashes with a named error. With any one of the switches alone, the result is right.
+# RUN(RIGHTP): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHTP: ash1birch2cedar_date4elm5fir6gum7hazel8
+# RIGHTP-NEXT: exited with 0
+# RUN(RIGHTE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly
+# RIGHTE: ash1birch2cedar_date4elm5fir6gum7hazel8
+# RIGHTE-NEXT: exited with 0
+# RUN(HELDT): run-in-shell mechanisms=all testing=AssumeEnumeratorCurrent,CheckBoundsAtRunTime
+# HELDT: bun: internal AOT error:
+# HELDT: crashed with SIGABRT
+# RUN(HELDP): run-in-shell mechanisms=all testing=AssumeEnumeratorCurrent,CheckProofsAtRunTime
+# HELDP: bun: internal AOT error:
+# HELDP: crashed with SIGABRT
+# RUN(HELDE): run-in-shell mechanisms=all testing=AssumeEnumeratorCurrent,CheckBoundsInEmittersOnly
+# HELDE: bun: internal AOT error:
+# HELDE: crashed with SIGABRT

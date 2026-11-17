@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prevent the use of synchronous `<script>` tags in Next.js applications.
 pub struct NoSyncScripts;
 
-const NO_SYNC_SCRIPTS: Message = Message::new("", "Prevent synchronous scripts.");
+const NO_SYNC_SCRIPTS: &Message = &Message::new("", "Prevent synchronous scripts.");
 
 impl Rule for NoSyncScripts {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-sync-scripts", Kind::Problem);

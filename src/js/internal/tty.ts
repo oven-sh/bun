@@ -1,4 +1,4 @@
-let OSRelease;
+let OSRelease: string[] | undefined;
 
 const COLORS_2 = 1;
 const COLORS_16 = 4;
@@ -59,7 +59,7 @@ const TERM_ENVS_REG_EXP = [
 ];
 
 let warned = false;
-function warnOnDeactivatedColors(env) {
+function warnOnDeactivatedColors(env: Record<string, string | undefined>) {
   if (warned) return;
   let name = "";
   if (env.NODE_DISABLE_COLORS !== undefined && env.NODE_DISABLE_COLORS !== "") name = "NODE_DISABLE_COLORS";
@@ -76,7 +76,7 @@ function warnOnDeactivatedColors(env) {
   }
 }
 
-function getColorDepth(env: NodeJS.ProcessEnv) {
+function getColorDepth(env: Record<string, string | undefined>) {
   const FORCE_COLOR = env.FORCE_COLOR;
   // Use level 0-3 to support the same levels as `chalk` does. This is done for
   // consistency throughout the ecosystem.

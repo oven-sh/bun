@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "jsx": "preserve",
+    "noEmit": true,
+    "strict": true,
+    "types": []
+  },
+  "include": ["*.ts", "*.tsx", "imports/*.ts", "imports/*.tsx"]
+}

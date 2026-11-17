@@ -8,7 +8,7 @@ pub struct NoUnmodifiedLoopCondition {
     check_conditional_expressions: bool,
 }
 
-const LOOP_CONDITION_NOT_MODIFIED: Message = Message::new(
+const LOOP_CONDITION_NOT_MODIFIED: &Message = &Message::new(
     "loopConditionNotModified",
     "'{{name}}' is not modified in this loop.",
 );

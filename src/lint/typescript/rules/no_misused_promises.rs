@@ -42,31 +42,31 @@ struct ChecksVoidReturn {
     variables: bool,
 }
 
-const CONDITIONAL: Message =
-    Message::new("conditional", "Expected non-Promise value in a boolean conditional.");
-const PREDICATE: Message = Message::new("predicate", "Expected a non-Promise value to be returned.");
-const SPREAD: Message = Message::new("spread", "Expected a non-Promise value to be spread in an object.");
-const VOID_RETURN_ARGUMENT: Message = Message::new(
+const CONDITIONAL: &Message =
+    &Message::new("conditional", "Expected non-Promise value in a boolean conditional.");
+const PREDICATE: &Message = &Message::new("predicate", "Expected a non-Promise value to be returned.");
+const SPREAD: &Message = &Message::new("spread", "Expected a non-Promise value to be spread in an object.");
+const VOID_RETURN_ARGUMENT: &Message = &Message::new(
     "voidReturnArgument",
     "Promise returned in function argument where a void return was expected.",
 );
-const VOID_RETURN_ATTRIBUTE: Message = Message::new(
+const VOID_RETURN_ATTRIBUTE: &Message = &Message::new(
     "voidReturnAttribute",
     "Promise-returning function provided to attribute where a void return was expected.",
 );
-const VOID_RETURN_INHERITED_METHOD: Message = Message::new(
+const VOID_RETURN_INHERITED_METHOD: &Message = &Message::new(
     "voidReturnInheritedMethod",
     "Promise-returning method provided where a void return was expected by extended/implemented type '{{ heritageTypeName }}'.",
 );
-const VOID_RETURN_PROPERTY: Message = Message::new(
+const VOID_RETURN_PROPERTY: &Message = &Message::new(
     "voidReturnProperty",
     "Promise-returning function provided to property where a void return was expected.",
 );
-const VOID_RETURN_RETURN_VALUE: Message = Message::new(
+const VOID_RETURN_RETURN_VALUE: &Message = &Message::new(
     "voidReturnReturnValue",
     "Promise-returning function provided to return value where a void return was expected.",
 );
-const VOID_RETURN_VARIABLE: Message = Message::new(
+const VOID_RETURN_VARIABLE: &Message = &Message::new(
     "voidReturnVariable",
     "Promise-returning function provided to variable where a void return was expected.",
 );

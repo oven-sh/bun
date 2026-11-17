@@ -1,0 +1,16 @@
+The mock of the first of two `export *` lacks the name, so the second answers.
+#### barrel.js
+console.log("| CASE runs barrel"); export * from "./leaf.js"; export const own = "real";
+#### bindings.js
+import { x } from "./first.js"; export const seen = () => x;
+#### first.js
+export * from "./barrel.js"; export * from "./leaf.js";
+#### leaf.js
+console.log("| CASE runs leaf"); export const x = "real";
+#### x.test.js
+import { test, vi } from "bun:test";
+import { seen } from "./bindings.js";
+import { x } from "./first.js";
+import * as first from "./first.js";
+vi.mock("./barrel.js", () => ({ own: "mocked" }));
+test("t", () => console.log("| CASE", seen(), x, JSON.stringify({ ...first })));

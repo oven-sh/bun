@@ -248,14 +248,17 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm
+        let vm = crate::jsc::VirtualMachine::get();
+        let Some(function) = vm
             .sql_state()
             .postgresql_context
+            .get()
             .on_query_reject_fn
             .get()
-            .unwrap();
-        let event_loop = vm.event_loop_mut();
+        else {
+            return;
+        };
+        let event_loop = vm.event_loop();
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
             function,
@@ -332,14 +335,17 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm
+        let vm = crate::jsc::VirtualMachine::get();
+        let Some(function) = vm
             .sql_state()
             .postgresql_context
+            .get()
             .on_query_resolve_fn
             .get()
-            .unwrap();
-        let event_loop = vm.event_loop_mut();
+        else {
+            return;
+        };
+        let event_loop = vm.event_loop();
 
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
@@ -386,21 +392,18 @@ impl PostgresSQLQuery {
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
         query_ctor_args::validate(global_this, &query, values, simple)?;
 
-        let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
-
-        let this_value = js::to_js(ptr, global_this);
-        this_value.ensure_still_alive();
-
-        // SAFETY: ptr is exclusively owned here until returned to JS.
-        unsafe {
-            (*ptr).query = query;
-            (*ptr).this_value.set(JsRef::init_weak(this_value));
-            (*ptr).flags.set(Flags {
+        let this = RefPtr::new(PostgresSQLQuery {
+            query,
+            flags: Cell::new(Flags {
                 bigint,
                 simple,
                 ..Default::default()
-            });
-        }
+            }),
+            ..Default::default()
+        });
+        let this = js::wrap(this, global_this);
+        let this_value = this.to_js();
+        this.this_value.set(JsRef::init_weak(this_value));
 
         js::binding_set_cached(this_value, global_this, values);
         js::pending_value_set_cached(this_value, global_this, pending_value);
@@ -522,11 +525,7 @@ impl PostgresSQLQuery {
         connection.count(self, RequestCounter::Pending);
         self.connection.set(Some(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.
-        connection.poll_ref.with_mut(|r| {
-            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        connection.poll_ref.ref_(bun_io::js_vm_ctx());
         self.this_value.with_mut(|r| r.upgrade(global_object));
         js::target_set_cached(this_value, global_object, query);
 

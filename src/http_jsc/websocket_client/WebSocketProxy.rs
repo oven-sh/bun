@@ -67,7 +67,7 @@ impl Drop for WebSocketProxy {
     fn drop(&mut self) {
         // target_host / websocket_request_buf: Box<[u8]> drops automatically.
         if let Some(tunnel) = self.tunnel.take() {
-            WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
+            WebSocketProxyTunnel::shutdown(&tunnel);
         }
     }
 }

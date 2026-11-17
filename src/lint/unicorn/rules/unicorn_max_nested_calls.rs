@@ -7,7 +7,7 @@ pub struct MaxNestedCalls {
     max: u32,
 }
 
-const MAX_NESTED_CALLS: Message = Message::new("", "Call is nested too deeply. Maximum allowed is {{max}}.");
+const MAX_NESTED_CALLS: &Message = &Message::new("", "Call is nested too deeply. Maximum allowed is {{max}}.");
 
 #[derive(Default)]
 pub struct State<'a> {

@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![allow(
     non_snake_case,
     non_camel_case_types,
@@ -14,12 +13,9 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
-// `bun.ptr.CowSlice(T)` / `CowSliceZ` — the lifetime-free struct port (owns or
-// borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Callers
-// that need the struct-shaped API (e.g. `pack_command::Pattern`) reach for
-// `cow_slice::CowSlice<u8>`.
-#[path = "CowSlice.rs"]
-pub mod cow_slice;
+mod cell_ext;
+pub use cell_ext::{CellExt, OptionCellExt, VecCellExt};
+
 mod js_cell;
 pub use js_cell::JsCell;
 
@@ -30,6 +26,9 @@ pub use bun_core::external_shared;
 pub use bun_core::{ExternalShared, ExternalSharedDescriptor, WTFString};
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
 pub use bun_core::{RawSlice, cast_fn_ptr};
+
+mod aliasable_box;
+pub use aliasable_box::AliasableBox;
 
 pub mod raw_ref_count;
 pub mod weak_ptr;
@@ -318,92 +317,9 @@ pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
     unsafe { &mut *core::ptr::from_mut::<T>(r) }
 }
 
-/// Marker trait for types whose `&mut self` methods launder `self` through
-/// `core::hint::black_box` (PORT_NOTES_PLAN **R-2**) before dispatching a
-/// re-entrant parent/user callback, then reborrow via [`LaunderedSelf::r`].
-///
-/// This trait makes the reborrow sound without scattering
-/// `unsafe { &mut *this }` at every field access.
-///
-/// # Safety (impl contract)
-/// For every method on `Self` that calls [`r`](Self::r):
-/// - `Self` is an inline/intrusive field of a heap object that is **never
-///   freed** during the re-entrant callback (the laundered raw pointer aliases
-///   a `&mut self` whose stack frame is still live);
-/// - re-entry runs on the **single JS thread** (no concurrent `&mut Self`);
-/// - each `&mut Self` produced by [`r`](Self::r) is short-lived and is the
-///   sole live borrow at the point of use — never held across the next
-///   parent/user dispatch.
-pub unsafe trait LaunderedSelf: Sized {
-    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer.
-    ///
-    /// `this` is the `black_box`-laundered address of an outer `&mut self`;
-    /// the laundered raw pointer carries no `noalias`, so the compiler may not
-    /// cache fields across re-entry. See the trait-level safety contract for
-    /// the encapsulated invariant.
-    // The safety contract is on `unsafe impl LaunderedSelf` (the implementor
-    // promises every `this` it passes is a live laundered `&mut self`); the
-    // method is safe-to-call by design — that's the point of `unsafe trait`.
-    // Clippy's `not_unsafe_ptr_arg_deref` doesn't see the trait-level
-    // invariant; making this `unsafe fn` would force 89 call sites to restate
-    // a contract they cannot violate.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline(always)]
-    fn r<'a>(this: *mut Self) -> &'a mut Self {
-        debug_assert!(!this.is_null());
-        // SAFETY: `LaunderedSelf` impl contract — `this` aliases a live
-        // `&mut self` on the single JS thread; sole borrow at point of use.
-        unsafe { &mut *this }
-    }
-}
-
 /// Shorter alias for [`detach_lifetime_ref`] — two workstreams converged on
 /// slightly different names; both are kept so callers from either land cleanly.
 pub use detach_lifetime_ref as detach_ref;
-
-/// Reinterpret `&[Box<[T]>]` as `&[&[T]]` for read-only fan-out.
-///
-/// `Box<[T]>` and `&[T]` are both `(NonNull<T>, len: usize)` fat pointers with
-/// identical layout (guaranteed by the unsized-pointer ABI), so a column of
-/// owned boxed slices can be viewed as a column of borrows without copying.
-/// Used by the bundler's SoA columns (`items_unique_key_for_additional_file`)
-/// where the printer API wants `&[&[u8]]`.
-///
-/// The returned borrows are valid for the input borrow `'a` only — the boxes
-/// are not moved or dropped while the view is live.
-///
-/// # Safety
-/// Relies on `Box<[T]>` and `&[T]` having identical fat-pointer **field
-/// order** (data-ptr then len). This is de-facto stable on every supported
-/// rustc but is not a language guarantee — the const block below proves only
-/// size/align. `unsafe` + `#[doc(hidden)]` so the layout assumption stays
-/// visible at each call site rather than inviting new callers; do not use
-/// outside the bundler SoA-column read-only fan-out it was written for.
-#[doc(hidden)]
-#[inline(always)]
-pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T], A>]) -> &[&[T]] {
-    const {
-        assert!(core::mem::size_of::<Box<[T], A>>() == core::mem::size_of::<&[T]>());
-        assert!(core::mem::align_of::<Box<[T], A>>() == core::mem::align_of::<&[T]>());
-    }
-    // SAFETY: layout-identical per the const asserts above; every `Box<[T]>`
-    // element is a valid non-null `(ptr, len)` pair, which is exactly the
-    // validity invariant of `&[T]`. Read-only, lifetime tied to `s`.
-    let view: &[&[T]] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) };
-    // Fat-pointer field order (ptr-then-len) is de-facto stable but not
-    // language-guaranteed; spot-check first+last in debug so an ABI flip
-    // would trip here rather than silently misbehaving downstream. (Checking
-    // every element is O(n) per call and the bundler passes thousands of
-    // entries inside per-chunk loops; first/last is sufficient to detect a
-    // field-order swap since it would affect every element uniformly.)
-    #[cfg(debug_assertions)]
-    if let (Some(bf), Some(bl)) = (s.first(), s.last()) {
-        let (vf, vl) = (view[0], view[view.len() - 1]);
-        debug_assert!(bf.as_ptr() == vf.as_ptr() && bf.len() == vf.len());
-        debug_assert!(bl.as_ptr() == vl.as_ptr() && bl.len() == vl.len());
-    }
-    view
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interned — process-lifetime byte-slice proof type.
@@ -432,7 +348,7 @@ pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T
 // inherited via auto-traits (no `unsafe impl` needed).
 //
 // This does NOT cover `&'static mut [u8]` / `&'static mut T` forges (e.g.
-// `Decompressor::seat` output, `CmdHandle::cmd_mut`)
+// `Decompressor::seat` output)
 // — those are tracked under the sibling `static-widen-mut` pattern and want a
 // raw-pointer field or a future `RawSliceMut<T>`.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -656,7 +572,7 @@ unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
 // it across a call that could reach the same slot. Under that protocol the
 // single `unsafe` in [`get_mut`] is sound; keeping it here (rather than at
 // each host-fn call site) is the same centralisation trade-off `BackRef::get`
-// / `LaunderedSelf::r` already make in this crate.
+// already makes in this crate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A nullable slot for a lifetime-erased `&mut T` borrowed from an outer scope.

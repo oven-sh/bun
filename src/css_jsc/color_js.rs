@@ -1,7 +1,6 @@
 use std::io::Write as _;
 
 use bun_alloc::Arena;
-use bun_ast::Log;
 use bun_core::String as BunString;
 use bun_core::output::{ColorDepth, Source as OutputSource};
 use bun_css::values::color::RGBA;
@@ -182,11 +181,9 @@ pub(crate) fn color<'a>(
     use bun_ast::symbol::Map as SymbolMap;
     use bun_css as css;
     use bun_css::CssColor;
-    use bun_css::values::color::{HSL, LAB, SRGB};
+    use bun_css::values::color::{Colorspace as _, HSL, LAB, SRGB};
 
-    let log = Log::init();
-
-    let parsed_color: css::CssColorParseResult = match input {
+    let parsed_color: Option<CssColor> = match input {
         ColorInput::Missing => {
             return Err(cx
                 .global()
@@ -208,23 +205,23 @@ pub(crate) fn color<'a>(
                 255
             };
 
-            Ok(CssColor::Rgba(RGBA {
+            Some(CssColor::Rgba(RGBA {
                 alpha,
                 red,
                 green,
                 blue,
             }))
         }
-        ColorInput::List(list) => Ok(CssColor::Rgba(rgba_from_list(cx.global(), list.to_js())?)),
+        ColorInput::List(list) => Some(CssColor::Rgba(rgba_from_list(cx.global(), list.to_js())?)),
         ColorInput::Buffer(buffer) => {
             let (global, buffer) = (cx.global(), buffer.to_js());
-            Ok(CssColor::Rgba(if buffer.js_type() == JSType::DataView {
+            Some(CssColor::Rgba(if buffer.js_type() == JSType::DataView {
                 rgba_from_channels(&ColorChannels::from_js(global, buffer)?)
             } else {
                 rgba_from_list(global, buffer)?
             }))
         }
-        ColorInput::Channels(channels) => Ok(CssColor::Rgba(rgba_from_channels(&channels))),
+        ColorInput::Channels(channels) => Some(CssColor::Rgba(rgba_from_channels(&channels))),
         ColorInput::Text(text) => {
             // MimallocArena::new() calls mi_heap_new(), so defer creation to the
             // paths that actually allocate.
@@ -233,30 +230,17 @@ pub(crate) fn color<'a>(
             let mut parser = css::Parser::new(
                 &mut parser_input,
                 None,
-                css::css_parser::ParserOpts::default(),
+                css::css_parser::ParserOpts::CLIP_COLORS,
                 None,
             );
-            CssColor::parse(&mut parser)
+            CssColor::parse(&mut parser).ok()
         }
     };
     let heap = &cx.heap;
 
     match parsed_color {
-        Err(err) => {
-            if log.msgs.is_empty() {
-                return Ok(None);
-            }
-
-            let kind_name = match err.basic().kind {
-                css::BasicParseErrorKind::unexpected_token(_) => "unexpected_token",
-                css::BasicParseErrorKind::end_of_input => "end_of_input",
-                css::BasicParseErrorKind::at_rule_invalid(_) => "at_rule_invalid",
-                css::BasicParseErrorKind::at_rule_body_invalid => "at_rule_body_invalid",
-                css::BasicParseErrorKind::qualified_rule_invalid => "qualified_rule_invalid",
-            };
-            return Err(heap.error(format_args!("color() failed to parse {}", kind_name)));
-        }
-        Ok(result) => {
+        None => Ok(None),
+        Some(result) => {
             let format: OutputColorFormat = if output_format == OutputColorFormat::Ansi {
                 match OutputSource::color_depth() {
                     // No color terminal, therefore return an empty string
@@ -290,14 +274,9 @@ pub(crate) fn color<'a>(
                         | OutputColorFormat::RgbObject
                         | OutputColorFormat::RgbaArray
                         | OutputColorFormat::RgbArray) => {
-                            let srgba: SRGB = match &result {
-                                CssColor::Float(float) => match &**float {
-                                    css::FloatColor::Rgb(rgb) => *rgb,
-                                    other => other.into_srgb(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_srgb(),
-                                CssColor::Lab(lab) => lab.into_srgb(),
-                                _ => break 'formatted,
+                            // `currentColor`, a system color and `light-dark()` have no channels.
+                            let Some(srgba) = SRGB::try_from_css_color(&result) else {
+                                return Ok(None);
                             };
                             let rgba = srgba.into_rgba();
                             match tag {
@@ -419,14 +398,8 @@ pub(crate) fn color<'a>(
                         }
 
                         OutputColorFormat::Hsl => {
-                            let hsl: HSL = match &result {
-                                CssColor::Float(float) => match &**float {
-                                    css::FloatColor::Hsl(hsl) => *hsl,
-                                    other => other.into_hsl(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_hsl(),
-                                CssColor::Lab(lab) => lab.into_hsl(),
-                                _ => break 'formatted,
+                            let Some(hsl) = HSL::try_from_css_color(&result) else {
+                                return Ok(None);
                             };
 
                             // Saturation and lightness are stored as 0..1 but hsl()
@@ -440,14 +413,8 @@ pub(crate) fn color<'a>(
                             ));
                         }
                         OutputColorFormat::Lab => {
-                            let lab: LAB = match &result {
-                                CssColor::Float(float) => float.into_lab(),
-                                CssColor::Lab(lab) => match &**lab {
-                                    css::LabColor::Lab(lab_) => *lab_,
-                                    other => other.into_lab(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_lab(),
-                                _ => break 'formatted,
+                            let Some(lab) = LAB::try_from_css_color(&result) else {
+                                return Ok(None);
                             };
 
                             // lab() is space-separated and takes lightness as a

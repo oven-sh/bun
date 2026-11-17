@@ -49,19 +49,15 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
     expect(probe!.values("feature").includes(feature)).toBe(stdout.toString().trim() === "1");
   });
 
+  // It takes 1200 to put each short length at both ends of a page.
   const rounds = isDebug || isASAN ? "1200" : "10000";
 
-  // 3 to 4 seconds each: it takes 1200 rounds to put each short length at both ends of a page.
-  test.concurrent.each(targets)(
-    "%s returns what has been recorded",
-    async target => {
-      const { lines, exitCode } = await run(target, ["check", rounds]);
-      const byDefault = target === "avx512_skx" ? "avx2" : target;
-      expect(lines).toEqual([`chosen: ${byDefault} ${target}`, `rounds: ${rounds}`]);
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+  test.concurrent.each(targets)("%s returns what has been recorded", async target => {
+    const { lines, exitCode } = await run(target, ["check", rounds]);
+    const byDefault = target === "avx512_skx" ? "avx2" : target;
+    expect(lines).toEqual([`chosen: ${byDefault} ${target}`, `rounds: ${rounds}`]);
+    expect(exitCode).toBe(0);
+  });
 
   // Without the feature, it would run the copy that `targets` covers.
   for (const limit of further) {

@@ -267,6 +267,14 @@ await client.unsubscribe(channel); // Unsubscribe a particular channel.
 await client.unsubscribe(channel, listener); // Unsubscribe a particular listener.
 ```
 
+If `.subscribe()` rejects or throws, the client does not keep the listener.
+
+On every new connection (a reconnect, or `.connect()` after `.close()`), the client subscribes again to the channels that have listeners before it reports that it is connected. Calling `.subscribe()` from `onconnect` adds the listener a second time. Messages published while the client was disconnected are lost. Subscriptions made with `.psubscribe()` or `.send()` are not restored.
+
+If the server refuses one of the channels during a reconnect, the client counts that as a failed attempt and retries. The error names the channel. To go on without it, call `.unsubscribe(channel)`, then `.connect()`.
+
+Subscriptions need RESP3. Subscribing after `HELLO 2` or `RESET` fails the connection.
+
 ## Advanced Usage
 
 ### Command Execution and Pipelining
@@ -370,7 +378,6 @@ The following commands disable automatic pipelining:
 - `SUBSCRIBE`
 - `PSUBSCRIBE`
 - `UNSUBSCRIBE`
-- `UNPSUBSCRIBE`
 
 ---
 
@@ -482,7 +489,7 @@ Common error codes:
 - `ERR_REDIS_CONNECTION_CLOSED` - Connection to the server was closed
 - `ERR_REDIS_AUTHENTICATION_FAILED` - Failed to authenticate with the server
 - `ERR_REDIS_INVALID_RESPONSE` - Received an invalid response from the server
-- `ERR_REDIS_SERVER_ERROR` - The server sent an error reply, either rejecting one command or, in subscriber mode, closing the connection
+- `ERR_REDIS_SERVER_ERROR` - The server sent an error reply, which rejects one command. The connection closes if the reply refuses a channel that is being restored, or answers no command of a subscriber
 - `ERR_REDIS_CONNECTION_TIMEOUT`, `ERR_REDIS_IDLE_TIMEOUT` - `connectionTimeout` or `idleTimeout` expired
 
 When the client gives up on a connection, `connect()`, the queued commands and `onclose` get the same error. A socket that cannot be opened keeps the code `ERR_REDIS_CONNECTION_CLOSED`, and the message says why, for example `connect ECONNREFUSED 127.0.0.1:6379`. An error reply to the handshake has the code `ERR_REDIS_AUTHENTICATION_FAILED` and the server's text as its message. TLS errors have their own code, such as `DEPTH_ZERO_SELF_SIGNED_CERT`. After the last retry, the message is `Max reconnection attempts reached` and `error.cause` is the error of the last attempt.

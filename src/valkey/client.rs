@@ -6,6 +6,7 @@ use bun_collections::OffsetByteList;
 use bun_core::strings;
 
 use crate::command::{self, ACKS, Ack, Reply};
+use crate::listeners::{Listeners, Name, Ticket, Undo};
 use crate::valkey_protocol::{Push, RESPValue, RedisError, ReplyScanner, ScanResult, ValkeyReader};
 
 const FIRST_DELAY_MS: u32 = 50;
@@ -70,16 +71,76 @@ enum End {
     Failed,
 }
 
-#[derive(Copy, Clone)]
-enum Expect {
-    Reply(Reply),
-    /// Whichever acknowledgement comes next: a count would shift every later reply once a peer sent fewer.
-    Ack,
+enum InFlight<P> {
+    Reply(Reply, P),
+    /// Its first acknowledgement answers it: a count would shift every later reply once a peer sent fewer.
+    Ack(Box<Request<P>>),
 }
 
-struct InFlight<P> {
-    expect: Expect,
+const _: () = assert!(size_of::<InFlight<usize>>() == 2 * size_of::<usize>());
+
+struct Request<P> {
     promise: P,
+    kind: Ack,
+    names: Vec<Name>,
+    /// From [`Client::subscribe`].
+    ticket: Option<Ticket>,
+}
+
+impl<P> InFlight<P> {
+    fn into_promise(self) -> P {
+        match self {
+            InFlight::Reply(_, promise) => promise,
+            InFlight::Ack(request) => request.promise,
+        }
+    }
+}
+
+/// The acknowledgements that the request answered last may still draw.
+enum Tail {
+    None,
+    Named(Ack, VecDeque<Name>),
+    /// It had no arguments: each carries a count one below the last.
+    CountingDown(Ack, i64),
+}
+
+impl Tail {
+    fn after(kind: Ack, names: Vec<Name>, ack: &[RESPValue]) -> Tail {
+        let mut names = VecDeque::from(names);
+        match (names.pop_front(), ack) {
+            (Some(_), _) => Tail::Named(kind, names),
+            (None, [RESPValue::BulkString(Some(_)), RESPValue::Integer(count)]) => {
+                Tail::CountingDown(kind, *count)
+            }
+            (None, _) => Tail::None,
+        }
+    }
+
+    fn take(&mut self, kind: Ack, ack: &[RESPValue]) -> bool {
+        match (self, ack) {
+            (Tail::Named(owed, names), [RESPValue::BulkString(Some(name)), ..])
+                if *owed == kind =>
+            {
+                let at = names.iter().position(|it| it == name);
+                at.map(|at| names.drain(..=at)).is_some()
+            }
+            (Tail::CountingDown(owed, last), [_, RESPValue::Integer(count)])
+                if *owed == kind && count.checked_add(1) == Some(*last) =>
+            {
+                *last = *count;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Mode {
+    /// Never had a listener or a subscription.
+    Fresh,
+    Plain,
+    Subscriber,
 }
 
 struct Queued<P> {
@@ -95,7 +156,9 @@ pub struct Client<P> {
     retries: u32,
     /// Script sent a command, connected or closed. Until then nobody would hear why the client gave up.
     is_used: bool,
-    is_subscriber: bool,
+    mode: Mode,
+    listeners: Listeners,
+    tail: Tail,
     output: OffsetByteList,
     input: OffsetByteList,
     /// Resumes over `input`.
@@ -122,6 +185,7 @@ pub enum Event<P> {
     Rejected {
         promise: P,
         message: Box<[u8]>,
+        undo: Vec<Undo>,
     },
     Message(Vec<RESPValue>),
     /// Has no listeners, but is a microtask checkpoint like a message.
@@ -168,8 +232,16 @@ pub enum Close {
 
 #[must_use]
 pub enum Lost<P> {
-    ForGood { reason: Reason, pending: Vec<P> },
-    Retry { delay_ms: u32, in_flight: Vec<P> },
+    ForGood {
+        reason: Reason,
+        pending: Vec<P>,
+        undo: Vec<Undo>,
+    },
+    Retry {
+        delay_ms: u32,
+        in_flight: Vec<P>,
+        undo: Vec<Undo>,
+    },
 }
 
 /// Why no retry follows.
@@ -195,7 +267,9 @@ impl<P> Client<P> {
             state: State::Idle,
             retries: 0,
             is_used: false,
-            is_subscriber: false,
+            mode: Mode::Fresh,
+            listeners: Listeners::default(),
+            tail: Tail::None,
             output: OffsetByteList::default(),
             input: OffsetByteList::default(),
             scanner: ReplyScanner::default(),
@@ -230,11 +304,35 @@ impl<P> Client<P> {
     }
 
     pub fn is_subscriber(&self) -> bool {
-        self.is_subscriber
+        self.mode == Mode::Subscriber
     }
 
-    pub fn leave_subscriber_mode(&mut self) {
-        self.is_subscriber = false;
+    pub fn may_unsubscribe(&self) -> bool {
+        self.mode != Mode::Fresh
+    }
+
+    fn leave_subscriber_mode_without_listeners(&mut self) {
+        if self.is_subscriber() && self.listeners.is_empty() {
+            self.mode = Mode::Plain;
+        }
+    }
+
+    /// Script dropped the listeners of `channel` but for those at the indices that `keep` names.
+    pub fn retain_listeners(&mut self, channel: &[u8], keep: impl FnMut(usize) -> bool) {
+        self.listeners.retain(channel, keep);
+        self.dropped_listeners();
+    }
+
+    pub fn clear_listeners(&mut self) {
+        self.listeners.clear();
+        self.dropped_listeners();
+    }
+
+    /// No acknowledgement follows an UNSUBSCRIBE that cannot be sent.
+    fn dropped_listeners(&mut self) {
+        if self.rejection().is_some() {
+            self.leave_subscriber_mode_without_listeners();
+        }
     }
 
     pub fn has_pending_commands(&self) -> bool {
@@ -376,6 +474,7 @@ impl<P> Client<P> {
         self.output.clear_and_free();
         self.input.clear_and_free();
         self.scanner.reset();
+        self.tail = Tail::None;
 
         let is_final = matches!(self.state, State::Ending(End::Final | End::Failed));
         let reason = if let State::Ending(End::Requested) = self.state {
@@ -389,6 +488,7 @@ impl<P> Client<P> {
                 return Lost::Retry {
                     delay_ms: (FIRST_DELAY_MS << (self.retries.min(10) - 1)).min(MAX_DELAY_MS),
                     in_flight: self.take_in_flight(),
+                    undo: self.undo_unanswered(),
                 };
             }
             Reason::RetriesUsedUp
@@ -402,18 +502,30 @@ impl<P> Client<P> {
         Lost::ForGood {
             reason,
             pending: self.take_pending(),
+            undo: self.undo_unanswered(),
         }
+    }
+
+    /// With nothing in flight. Covers what [`Self::fail`] and [`Self::session_broke`] took as well.
+    fn undo_unanswered(&mut self) -> Vec<Undo> {
+        let queued = self.queue.iter().find_map(|it| match &it.request {
+            InFlight::Ack(request) => request.ticket,
+            InFlight::Reply(..) => None,
+        });
+        let undo = self.listeners.abandon(queued);
+        self.leave_subscriber_mode_without_listeners();
+        undo
     }
 
     fn take_in_flight(&mut self) -> Vec<P> {
         let in_flight = core::mem::take(&mut self.in_flight);
-        in_flight.into_iter().map(|it| it.promise).collect()
+        in_flight.into_iter().map(InFlight::into_promise).collect()
     }
 
     fn take_pending(&mut self) -> Vec<P> {
         let mut pending = self.take_in_flight();
         let queue = core::mem::take(&mut self.queue);
-        pending.extend(queue.into_iter().map(|it| it.request.promise));
+        pending.extend(queue.into_iter().map(|it| it.request.into_promise()));
         pending
     }
 
@@ -436,11 +548,34 @@ impl<P> Client<P> {
         reply: Reply,
         promise: P,
     ) -> Sent {
-        let expect = match ACKS.get_ascii_case_insensitive(name) {
-            Some(_) => Expect::Ack,
-            None => Expect::Reply(reply),
+        let request = match ACKS.get_ascii_case_insensitive(name) {
+            Some(&kind) => InFlight::Ack(Box::new(Request {
+                promise,
+                kind,
+                names: args.iter().map(|it| it.as_ref().into()).collect(),
+                ticket: None,
+            })),
+            None => InFlight::Reply(reply, promise),
         };
-        let request = InFlight { expect, promise };
+        self.enqueue(name, args, request)
+    }
+
+    /// As [`Self::send`], once script has stored a listener for each of `names`.
+    pub fn subscribe(&mut self, names: &[Name], promise: P) -> Sent {
+        if self.mode == Mode::Fresh {
+            self.mode = Mode::Plain;
+        }
+        let request = InFlight::Ack(Box::new(Request {
+            promise,
+            kind: Ack::Subscribe,
+            names: names.to_vec(),
+            ticket: Some(self.listeners.add(names)),
+        }));
+        self.enqueue(b"SUBSCRIBE", names, request)
+    }
+
+    #[inline]
+    fn enqueue<A: AsRef<[u8]>>(&mut self, name: &[u8], args: &[A], request: InFlight<P>) -> Sent {
         let can_pipeline = command::can_pipeline(name);
         let batches = can_pipeline && self.config.enable_auto_pipelining;
         let connected = self.is_connected();
@@ -647,60 +782,123 @@ impl<P> Client<P> {
     fn on_reply(&mut self, value: RESPValue) -> Event<P> {
         match value {
             RESPValue::Push(push) => self.on_push(push),
-            // The request it answers stays in flight: `fail` rejects it first.
-            RESPValue::Error(message) if self.is_subscriber => Event::Broken {
-                message,
-                error: RedisError::ServerError,
-            },
             value => self.answer(value),
         }
     }
 
     fn answer(&mut self, value: RESPValue) -> Event<P> {
-        let Some(InFlight { expect, promise }) = self.in_flight.pop_front() else {
-            return Event::Ignored;
+        if !matches!(self.tail, Tail::None) {
+            self.tail = Tail::None;
+        }
+        let (reply, promise) = match self.in_flight.pop_front() {
+            Some(InFlight::Reply(reply, promise)) => (reply, promise),
+            Some(InFlight::Ack(request)) => return self.answer_without_ack(request, value),
+            None => {
+                return match value {
+                    RESPValue::Error(message) if self.is_subscriber() => Event::Broken {
+                        message,
+                        error: RedisError::ServerError,
+                    },
+                    _ => Event::Ignored,
+                };
+            }
         };
-        match (value, expect) {
-            (RESPValue::Error(message), _) => Event::Rejected { promise, message },
-            (RESPValue::Integer(int), Expect::Reply(Reply::Bool)) => Event::Resolved {
+        match (value, reply) {
+            (RESPValue::Error(message), _) => Event::Rejected {
+                promise,
+                message,
+                undo: Vec::new(),
+            },
+            (RESPValue::Integer(int), Reply::Bool) => Event::Resolved {
                 promise,
                 value: RESPValue::Boolean(int > 0),
                 as_buffer: false,
             },
-            (value, expect) => Event::Resolved {
+            (value, reply) => Event::Resolved {
                 promise,
                 value,
-                as_buffer: matches!(expect, Expect::Reply(Reply::Buffer)),
+                as_buffer: reply == Reply::Buffer,
             },
+        }
+    }
+
+    #[cold]
+    fn answer_without_ack(&mut self, request: Box<Request<P>>, value: RESPValue) -> Event<P> {
+        if let RESPValue::Array(items) = &value
+            && let [RESPValue::BulkString(Some(kind)), ..] = &**items
+            && ACKS.get(kind).is_some_and(|it| it.subscribes())
+            && request.kind.subscribes()
+        {
+            // `fail` rejects it first.
+            self.in_flight.push_front(InFlight::Ack(request));
+            return broken(
+                b"Subscriptions need RESP3, but this connection uses RESP2",
+                RedisError::UnsupportedProtocol,
+            );
+        }
+        let Request {
+            promise,
+            names,
+            ticket,
+            ..
+        } = *request;
+        if let RESPValue::Error(message) = value {
+            let undo = ticket.map_or_else(Vec::new, |it| self.listeners.refuse(it, names));
+            self.leave_subscriber_mode_without_listeners();
+            return Event::Rejected {
+                promise,
+                message,
+                undo,
+            };
+        }
+        if let Some(ticket) = ticket {
+            self.listeners.confirm(ticket);
+        }
+        Event::Resolved {
+            promise,
+            value,
+            as_buffer: false,
         }
     }
 
     fn on_push(&mut self, push: Push) -> Event<P> {
         let kind = match &*push.kind {
-            b"message" if self.is_subscriber => return Event::Message(push.data),
-            b"pmessage" | b"smessage" if self.is_subscriber => return Event::PatternMessage,
+            b"message" if self.is_subscriber() => return Event::Message(push.data),
+            b"pmessage" | b"smessage" if self.is_subscriber() => return Event::PatternMessage,
             kind => ACKS.get(kind),
         };
         let Some(&kind) = kind else {
             return self.on_unknown_push(push);
         };
-        let request = self
-            .in_flight
-            .pop_front_if(|it| matches!(it.expect, Expect::Ack));
-        let acked = match request.map(|it| it.promise) {
-            None if !self.is_subscriber => return Event::Ignored,
+        if self.tail.take(kind, &push.data) {
+            return Event::Ignored;
+        }
+        self.tail = Tail::None;
+        let request = (self.in_flight).pop_front_if(|it| matches!(it, InFlight::Ack(_)));
+        let promise = match request {
+            Some(InFlight::Ack(request)) => {
+                if let Some(ticket) = request.ticket {
+                    self.listeners.confirm(ticket);
+                }
+                self.tail = Tail::after(request.kind, request.names, &push.data);
+                Some(request.promise)
+            }
+            other => other.map(InFlight::into_promise),
+        };
+        let acked = match promise {
+            None if !self.is_subscriber() => return Event::Ignored,
             None => Acked::Nobody,
             Some(promise) if matches!(kind, Ack::Subscribe | Ack::Unsubscribe) => {
                 Acked::Channel(promise)
             }
             Some(promise) => Acked::Raw(promise, RESPValue::Push(push)),
         };
-        match kind {
-            Ack::Subscribe | Ack::PSubscribe | Ack::SSubscribe => {
-                self.is_subscriber = true;
-                Event::Subscribed(acked)
-            }
-            Ack::Unsubscribe | Ack::PUnsubscribe | Ack::SUnsubscribe => Event::Unsubscribed(acked),
+        if kind.subscribes() {
+            self.mode = Mode::Subscriber;
+            Event::Subscribed(acked)
+        } else {
+            self.leave_subscriber_mode_without_listeners();
+            Event::Unsubscribed(acked)
         }
     }
 
@@ -709,8 +907,8 @@ impl<P> Client<P> {
         if !matches!(&*push.kind, [b'p' | b's', rest @ ..] if ACKS.get(rest).is_some()) {
             return Event::Ignored;
         }
-        match self.in_flight.front().map(|it| it.expect) {
-            None | Some(Expect::Reply(_)) if !self.is_subscriber => {
+        match self.in_flight.front() {
+            None | Some(InFlight::Reply(..)) if !self.is_subscriber() => {
                 self.answer(RESPValue::Push(push))
             }
             _ => broken(

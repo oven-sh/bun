@@ -21,6 +21,12 @@ pub(crate) enum Ack {
     SUnsubscribe,
 }
 
+impl Ack {
+    pub(crate) fn subscribes(self) -> bool {
+        matches!(self, Ack::Subscribe | Ack::PSubscribe | Ack::SSubscribe)
+    }
+}
+
 bun_core::comptime_string_map! {
     pub(crate) static ACKS: Ack = {
         b"subscribe" => Ack::Subscribe,
@@ -49,7 +55,6 @@ bun_core::comptime_string_set! {
         b"SUBSCRIBE",
         b"PSUBSCRIBE",
         b"UNSUBSCRIBE",
-        b"UNPSUBSCRIBE",
     };
 }
 

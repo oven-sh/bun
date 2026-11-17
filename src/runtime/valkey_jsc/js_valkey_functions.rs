@@ -7,6 +7,7 @@ use bun_jsc::{
 };
 
 use bun_valkey::command::Reply;
+use bun_valkey::listeners::Name;
 
 use super::hold::Object;
 use super::js_valkey::{JSValkeyClient, js};
@@ -33,7 +34,7 @@ fn require_not_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResul
 }
 
 fn require_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()> {
-    if !this.is_subscriber() {
+    if !this.may_unsubscribe() {
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
         let global: &JSGlobalObject = &this.global_object;
         return Err(global
@@ -71,6 +72,39 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     }
 
     JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
+}
+
+/// Valid UTF-8, so that each name has a string of its own to keep its listeners under.
+fn channel_name(global: &JSGlobalObject, method: &'static str, value: JSValue) -> JsResult<Name> {
+    let Some(channel) = from_js(global, value)? else {
+        return Err(global.throw_invalid_argument_type(method, "channel", "string"));
+    };
+    if bun_core::strings::is_valid_utf8(channel.as_ref()) {
+        return Ok(channel.as_ref().into());
+    }
+    let text = jsc::bun_string_jsc::create_utf8_for_js(global, channel.as_ref())?;
+    Ok(text.to_utf8(global)?.slice().into())
+}
+
+fn channel_names(
+    global: &JSGlobalObject,
+    method: &'static str,
+    channel_or_many: JSValue,
+) -> JsResult<Vec<Name>> {
+    if !channel_or_many.is_array() {
+        return Ok(vec![channel_name(global, method, channel_or_many)?]);
+    }
+    let mut names = Vec::new();
+    let mut array_iter = channel_or_many.array_iterator(global)?;
+    while let Some(channel) = array_iter.next()? {
+        names.push(channel_name(global, method, channel)?);
+    }
+    if names.is_empty() {
+        return Err(
+            global.throw_invalid_arguments(format_args!("{method} requires at least one channel"))
+        );
+    }
+    Ok(names)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -975,7 +1009,6 @@ impl JSValkeyClient {
         let _guard = self.ref_guard();
 
         let (channel_or_many, handler_callback) = (channel.to_js(), listener.to_js());
-        let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
             return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
@@ -988,10 +1021,9 @@ impl JSValkeyClient {
             ));
         }
 
-        // The walk below stores each listener as it goes. A client that would
-        // reject the SUBSCRIBE outright must not keep the listeners either: a
-        // listener with no subscription behind it pins the event loop and the
-        // client, and cannot be removed with unsubscribe(). The dial comes
+        // A client that would reject the SUBSCRIBE outright must not keep the
+        // listeners either: a listener with no subscription behind it pins the
+        // event loop and the client. The dial comes
         // after the argument checks, as for every other command, and before
         // the state check, as in `send()`, so a fresh client with the offline
         // queue off is rejected the way get() is: connecting, not never
@@ -1001,45 +1033,16 @@ impl JSValkeyClient {
             return Ok(JSPromise::rejected_promise(global, error).to_js());
         }
 
-        // The first argument given is the channel or may be an array of channels.
-        if channel_or_many.is_array() {
-            if channel_or_many.get_length(global)? == 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "subscribe requires at least one channel"
-                )));
-            }
-            redis_channels.ensure_total_capacity(channel_or_many.get_length(global)? as usize);
-
-            let mut array_iter = channel_or_many.array_iterator(global)?;
-            while let Some(channel_arg) = array_iter.next()? {
-                let Some(channel) = from_js(global, channel_arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        "subscribe",
-                        "channel",
-                        "string",
-                    ));
-                };
-                redis_channels.push(channel);
-
-                // What we do here is add our receive handler. Notice that this doesn't really do anything until the
-                // "SUBSCRIBE" command is sent to redis and we get a response.
-                //
-                // This is less-than-ideal, still, because this assumes a happy path. What happens if
-                // the SUBSCRIBE command fails? We have no way to roll back the addition of the
-                // handler.
-                self.upsert_receive_handler(this.into(), global, channel_arg, handler_callback)?;
-            }
-        } else {
-            // It is a single string channel
-            let Some(channel) = from_js(global, channel_or_many)? else {
-                return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
-            };
-            redis_channels.push(channel);
-
-            self.upsert_receive_handler(this.into(), global, channel_or_many, handler_callback)?;
+        let channels = channel_names(global, "subscribe", channel_or_many)?;
+        // The conversions can run script.
+        if let Some(error) = self.rejection(global) {
+            return Ok(JSPromise::rejected_promise(global, error).to_js());
+        }
+        for channel in &channels {
+            self.upsert_receive_handler(this.into(), global, channel, handler_callback)?;
         }
 
-        Ok(self.send(this, global, b"SUBSCRIBE", &redis_channels, Reply::Value))
+        Ok(self.send_subscribe(this, global, &channels))
     }
 
     pub(crate) fn unsubscribe(
@@ -1059,24 +1062,26 @@ impl JSValkeyClient {
 
         let args_view = JsLocal::to_js_slice(args);
 
-        let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
-
         // The first argument can be a channel or an array of channels
         let Some(&channel_or_many) = args_view.first() else {
             // If no arguments, unsubscribe from all channels
-            object.clear_all_receive_handlers(global)?;
-            return Ok(self.send(this, global, b"UNSUBSCRIBE", &redis_channels, Reply::Value));
+            self.clear_all_receive_handlers(object, global)?;
+            return Ok(self.send::<Name>(this, global, b"UNSUBSCRIBE", &[], Reply::Value));
         };
 
-        // Two arguments means .unsubscribe(channel, listener) is invoked.
-        if let &[_, listener_cb] = args_view {
+        let listener = match *args_view {
+            [_, listener] if !listener.is_undefined() => Some(listener),
+            [channel, listener, ..] if channel.is_string() && listener.is_callable() => {
+                Some(listener)
+            }
+            _ => None,
+        };
+        if let Some(listener_cb) = listener {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
             if !channel_or_many.is_string() {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             }
-
-            let channel = channel_or_many;
 
             if !listener_cb.is_callable() {
                 return Err(global.throw_invalid_argument_type(
@@ -1086,17 +1091,10 @@ impl JSValkeyClient {
                 ));
             }
 
-            // Populate the redis_channels list with the single channel to
-            // unsubscribe from. This s important since this list is used to send
-            // the UNSUBSCRIBE command to redis. Without this, we would end up
-            // unsubscribing from all channels.
-            let Some(ch) = from_js(global, channel)? else {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
-            };
-            redis_channels.push(ch);
+            let channel = channel_name(global, "unsubscribe", channel_or_many)?;
 
             let remaining_listeners =
-                match object.remove_receive_handler(global, channel, listener_cb) {
+                match self.remove_receive_handler(object, global, &channel, listener_cb) {
                     Ok(Some(n)) => n,
                     Ok(None) => {
                         // Listeners weren't present in the first place, so we can return a
@@ -1112,7 +1110,7 @@ impl JSValkeyClient {
             // In this case, we only want to send the unsubscribe command to redis if there are no more listeners for this
             // channel.
             if remaining_listeners == 0 {
-                return Ok(self.send(this, global, b"UNSUBSCRIBE", &redis_channels, Reply::Value));
+                return Ok(self.send(this, global, b"UNSUBSCRIBE", &[channel], Reply::Value));
             }
 
             // Otherwise, in order to keep the API consistent, we need to return a resolved promise.
@@ -1122,44 +1120,16 @@ impl JSValkeyClient {
             ));
         }
 
-        if channel_or_many.is_array() {
-            if channel_or_many.get_length(global)? == 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "unsubscribe requires at least one channel"
-                )));
-            }
-
-            redis_channels.reserve(
-                (channel_or_many.get_length(global)? as usize).saturating_sub(redis_channels.len()),
-            );
-            // It is an array, so let's iterate over it
-            let mut array_iter = channel_or_many.array_iterator(global)?;
-            while let Some(channel_arg) = array_iter.next()? {
-                let Some(channel) = from_js(global, channel_arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        "unsubscribe",
-                        "channel",
-                        "string",
-                    ));
-                };
-                redis_channels.push(channel);
-                // Clear the handlers for this channel
-                object.clear_receive_handlers(global, channel_arg)?;
-            }
-        } else if channel_or_many.is_string() {
-            // It is a single string channel
-            let Some(channel) = from_js(global, channel_or_many)? else {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
-            };
-            redis_channels.push(channel);
-            // Clear the handlers for this channel
-            object.clear_receive_handlers(global, channel_or_many)?;
-        } else {
+        if !channel_or_many.is_string() && !channel_or_many.is_array() {
             return Err(global.throw_invalid_argument_type(
                 "unsubscribe",
                 "channel",
                 "string or array",
             ));
+        }
+        let redis_channels = channel_names(global, "unsubscribe", channel_or_many)?;
+        for channel in &redis_channels {
+            self.clear_receive_handlers(object, global, channel)?;
         }
 
         // Now send the unsubscribe command and clean up if necessary

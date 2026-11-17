@@ -225,7 +225,7 @@ describe.concurrent("Valkey reply decoding", () => {
     });
   });
 
-  test("error reply in subscriber mode fails the connection with ERR_REDIS_SERVER_ERROR", async () => {
+  test("error reply in subscriber mode rejects one command with ERR_REDIS_SERVER_ERROR", async () => {
     const server = createCommandServer((fields, s) => {
       switch (fields[0]?.toUpperCase()) {
         case "HELLO":
@@ -242,15 +242,15 @@ describe.concurrent("Valkey reply decoding", () => {
       await client.subscribe("ch", () => {});
       let closedWith: unknown;
       client.onclose = e => (closedWith = e);
-      // The first PING drew the reply, the second is in flight when the connection fails.
       let first: unknown = "pending";
       client.send("PING", []).catch(e => (first = e));
       const err = await client.send("PING", []).then(
         () => null,
         e => e,
       );
-      expect(first).toBe(err);
-      expect(closedWith).toBe(err);
+      expect(first).not.toBe(err);
+      expect(first).toEqual(err);
+      expect({ closedWith, connected: client.connected }).toEqual({ closedWith: undefined, connected: true });
       expect(err).toBeInstanceOf(Error);
       expect({ code: err.code, message: err.message }).toEqual({
         code: "ERR_REDIS_SERVER_ERROR",

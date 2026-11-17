@@ -2718,6 +2718,9 @@ declare module "bun" {
      * {@link ping `.ping()`}, {@link subscribe `.subscribe()`}, and
      * {@link unsubscribe `.unsubscribe()`} can be called while subscribed.
      *
+     * The client subscribes again on every new connection. If the promise
+     * rejects, the listener is not kept.
+     *
      * @param channel The channel to subscribe to.
      * @param listener The listener to call when a message is received on the
      * channel. The listener receives the message as the first argument and
@@ -2740,6 +2743,9 @@ declare module "bun" {
      *
      * Subscribing moves the channels to a dedicated subscription state in which
      * only a limited set of commands can be executed.
+     *
+     * The client subscribes again on every new connection. If the promise
+     * rejects, the listener is not kept.
      *
      * @param channels An array of channels to subscribe to.
      * @param listener The listener to call when a message is received on any of

@@ -1,5 +1,7 @@
+import { RedisClient, type Socket } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ConnectionType, createClient, ctx, isEnabled, testKey } from "../test-utils";
+import { bunEnv, bunExe } from "harness";
+import { ConnectionType, createClient, ctx, isEnabled, readCommands, testKey } from "../test-utils";
 
 /**
  * Test suite for RESP protocol handling, focusing on edge cases
@@ -396,6 +398,361 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
         // Clean up clients
         await Promise.all(clients.map(client => client.close()));
       }
+    });
+  });
+});
+
+describe("Valkey: Pub/Sub", () => {
+  type Peer = { buffer: Buffer; id: number; resp2: boolean; channels: Set<string>; patterns: Set<string> };
+  const bulk = (text: string) => `$${text.length}\r\n${text}\r\n`;
+
+  /**
+   * Keeps subscriptions as Redis does. `override` answers in its place: a string is written, null drops the
+   * connection. Strings are latin1, as `readCommands` gives them.
+   */
+  function pubSubServer(override: (command: string, connection: number) => string | null | void = () => {}) {
+    const peers = new Set<Socket<Peer>>();
+    const commands: string[][] = [];
+    const frame = (peer: Peer, kind: string, name: string | undefined, last: string) =>
+      `${peer.resp2 ? "*" : ">"}3\r\n${bulk(kind)}${name === undefined ? "_\r\n" : bulk(name)}${last}`;
+    function reply(peer: Peer, [command, ...args]: string[]) {
+      const held = command.startsWith("P") ? peer.patterns : peer.channels;
+      const ack = (name?: string) =>
+        frame(peer, command.toLowerCase(), name, `:${peer.channels.size + peer.patterns.size}\r\n`);
+      switch (command) {
+        case "SUBSCRIBE":
+        case "PSUBSCRIBE":
+          return args.map(name => (held.add(name), ack(name))).join("");
+        case "UNSUBSCRIBE":
+        case "PUNSUBSCRIBE":
+          return (args.length ? args : [...held]).map(name => (held.delete(name), ack(name))).join("") || ack();
+        case "HELLO":
+          peer.resp2 = args[0] === "2";
+          return "+OK\r\n";
+        case "RESET":
+          peer.resp2 = true;
+          return "+RESET\r\n";
+        case "PING":
+          return "+PONG\r\n";
+        default:
+          return "+OK\r\n";
+      }
+    }
+    const server = Bun.listen<Peer>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          const id = commands.push([]);
+          socket.data = { buffer: Buffer.alloc(0), id, resp2: false, channels: new Set(), patterns: new Set() };
+          peers.add(socket);
+        },
+        close: socket => void peers.delete(socket),
+        error() {},
+        data(socket, chunk) {
+          socket.data.buffer = Buffer.concat([socket.data.buffer, chunk]);
+          for (const command of readCommands(socket.data)) {
+            commands[socket.data.id - 1].push(command.join(" "));
+            const answer = override(command.join(" "), socket.data.id);
+            if (answer === null) return void socket.end();
+            socket.write(Buffer.from(answer ?? reply(socket.data, command), "latin1"));
+          }
+        },
+      },
+    });
+    return {
+      url: `redis://127.0.0.1:${server.port}`,
+      /** By connection. */
+      commands,
+      publish(channel: string, message: string) {
+        for (const peer of peers) {
+          if (peer.data.channels.has(channel)) {
+            peer.write(Buffer.from(frame(peer.data, "message", channel, bulk(message)), "latin1"));
+          }
+        }
+      },
+      drop: () => peers.forEach(peer => peer.end()),
+      [Symbol.dispose]: () => server.stop(true),
+    };
+  }
+
+  function subscriber(url: string, options?: Bun.RedisOptions) {
+    const client = new RedisClient(url, options);
+    const got: string[] = [];
+    return {
+      // The types declare only some of the calls below.
+      client: client as any,
+      listener: (name: string) => (message: string, channel: string) => void got.push(`${name} ${channel} ${message}`),
+      /** Everything that the server wrote so far has been delivered. */
+      delivered: () => client.ping().then(() => got),
+      [Symbol.dispose]: () => client.close(),
+    };
+  }
+
+  const outcome = (call: () => unknown) =>
+    Promise.try(call).then(
+      value => value,
+      error => `${error.code}: ${error.message}`,
+    );
+  const NOPERM = "-NOPERM No permissions to access a channel\r\n";
+  const REFUSED = "ERR_REDIS_SERVER_ERROR: NOPERM No permissions to access a channel";
+
+  test("subscribe() after unsubscribe() from two channels resolves on its own acknowledgement and delivers", async () => {
+    using server = pubSubServer();
+    using sub = subscriber(server.url);
+    await sub.client.subscribe(["a", "b"], sub.listener("old"));
+    await sub.client.ping();
+    await sub.client.unsubscribe();
+    const count = await sub.client.subscribe("c", sub.listener("new"));
+    await sub.client.ping();
+    server.publish("c", "m");
+    expect({ count, got: await sub.delivered() }).toEqual({ count: 1, got: ["new c m"] });
+  });
+
+  test("psubscribe() behind subscribe([a, b]) resolves on its own acknowledgement", async () => {
+    using server = pubSubServer();
+    using sub = subscriber(server.url);
+    expect(await Promise.all([sub.client.subscribe(["a", "b"], () => {}), sub.client.psubscribe("p*")])).toEqual([
+      2,
+      { type: "psubscribe", data: ["p*", 3] },
+    ]);
+  });
+
+  test("a refused subscribe() takes only its own listeners along", async () => {
+    let refuse = false;
+    using server = pubSubServer(command => (refuse && command === "SUBSCRIBE a b" ? NOPERM : undefined));
+    using sub = subscriber(server.url);
+    const same = sub.listener("same");
+    await sub.client.subscribe("a", same);
+    refuse = true;
+    const results = await Promise.all([
+      outcome(() => sub.client.subscribe(["a", "b"], same)),
+      outcome(() => sub.client.subscribe("a", sub.listener("later"))),
+    ]);
+    expect(results).toEqual([REFUSED, 1]);
+    server.publish("a", "m");
+    expect(await sub.delivered()).toEqual(["same a m", "later a m"]);
+  });
+
+  test.each<[string, string | null, string]>([
+    ["refused", NOPERM, REFUSED],
+    ["dropped", null, "ERR_REDIS_CONNECTION_CLOSED: Connection closed"],
+  ])("a listener whose subscribe() was %s is called once after the next subscribe()", async (_, answer, rejection) => {
+    let requests = 0;
+    using server = pubSubServer(command => (command === "SUBSCRIBE a" && ++requests === 1 ? answer : undefined));
+    using sub = subscriber(server.url);
+    const listener = sub.listener("l");
+    expect(await outcome(() => sub.client.subscribe("a", listener))).toBe(rejection);
+    await sub.client.subscribe("a", listener);
+    server.publish("a", "m");
+    expect(await sub.delivered()).toEqual(["l a m"]);
+  });
+
+  test.concurrent.each([
+    { call: `subscribe("forbidden", () => {})`, stdout: "NOPERM No permissions to access a channel\n" },
+    { call: `subscribe(["a", null], () => {})`, stdout: "Expected channel to be a string for 'subscribe'.\n" },
+  ])("the process exits after $call fails", async ({ call, stdout }) => {
+    using server = pubSubServer(command => (command === "SUBSCRIBE forbidden" ? NOPERM : undefined));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const client = new Bun.RedisClient("${server.url}");
+         try { await client.${call}; } catch (error) { console.log(error.message); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(output).toEqual([stdout, "", 0]);
+  });
+
+  test("unsubscribe([channel, null]) throws before a listener is removed", async () => {
+    using server = pubSubServer();
+    using sub = subscriber(server.url);
+    await sub.client.subscribe("a", sub.listener("l"));
+    expect(() => sub.client.unsubscribe(["a", null])).toThrow("Expected channel to be a string");
+    server.publish("a", "m");
+    expect(await sub.delivered()).toEqual(["l a m"]);
+  });
+
+  test("a getter in the channels that closes the client leaves no listener", async () => {
+    using server = pubSubServer();
+    using sub = subscriber(server.url);
+    await sub.client.connect();
+    const channels = Object.defineProperty(["a", "b"], 1, { get: () => (sub.client.close(), "b") });
+    expect(await outcome(() => sub.client.subscribe(channels, () => {}))).toStartWith("ERR_REDIS_CONNECTION_CLOSED");
+    await sub.client.connect();
+    expect(await sub.client.subscribe("c", () => {})).toBe(1);
+  });
+
+  test("unsubscribe() cancels a subscribe() that is not acknowledged yet", async () => {
+    using server = pubSubServer();
+    using sub = subscriber(server.url);
+    const subscribed = sub.client.subscribe("a", () => {});
+    expect(await outcome(() => sub.client.unsubscribe("a"))).toBeUndefined();
+    expect([await subscribed, await sub.client.get("k")]).toEqual([0, "OK"]);
+  });
+
+  test("get() works once a pattern subscription is lost with the connection", async () => {
+    using server = pubSubServer();
+    using sub = subscriber(server.url);
+    await sub.client.psubscribe("p*");
+    const reconnected = new Promise(resolve => (sub.client.onconnect = resolve));
+    server.drop();
+    await reconnected;
+    expect(await outcome(() => sub.client.get("k"))).toBe("OK");
+    expect(await outcome(() => sub.client.unsubscribe())).toBeUndefined();
+  });
+
+  test.each<[string, unknown, string, string]>([
+    ["5", 5, "5", "5"],
+    ['Buffer.from("b")', Buffer.from("b"), "b", "b"],
+    ["Buffer.from([0xff])", Buffer.from([0xff]), "\xef\xbf\xbd", "�"],
+    ['"\\ud800"', "\ud800", "\xef\xbf\xbd", "�"],
+  ])("subscribe([%s]) delivers", async (_, channel, bytes, text) => {
+    using server = pubSubServer();
+    using sub = subscriber(server.url);
+    await sub.client.subscribe([channel], sub.listener("l"));
+    server.publish(bytes, "m");
+    expect(await sub.delivered()).toEqual([`l ${text} m`]);
+  });
+
+  test.each<[string, string[], string, (client: any) => Promise<unknown>]>([
+    ["HELLO", ["2"], "subscribe()", client => client.subscribe("a", () => {})],
+    ["RESET", [], "subscribe()", client => client.subscribe("a", () => {})],
+    ["HELLO", ["2"], "psubscribe()", client => client.psubscribe("p*")],
+  ])("after %s %j, %s fails the connection", async (command, args, _, call) => {
+    using server = pubSubServer();
+    using sub = subscriber(server.url);
+    await sub.client.send(command, args);
+    expect({ result: await outcome(() => call(sub.client)), connected: sub.client.connected }).toEqual({
+      result: "ERR_REDIS_INVALID_RESPONSE: Subscriptions need RESP3, but this connection uses RESP2",
+      connected: false,
+    });
+  });
+
+  test.each<[string, (client: any, first: Function) => unknown, string[]]>([
+    ["unsubscribe(a, first, undefined)", (client, first) => client.unsubscribe("a", first, undefined), ["second a m"]],
+    ["unsubscribe(a, first, true)", (client, first) => client.unsubscribe("a", first, true), ["second a m"]],
+    ["unsubscribe(a, first, () => {})", (client, first) => client.unsubscribe("a", first, () => {}), ["second a m"]],
+    ["unsubscribe(a, undefined)", client => client.unsubscribe("a", undefined), []],
+    ["[a].map(unsubscribe)", client => Promise.all(["a"].map(client.unsubscribe, client)), []],
+  ])("%s", async (_, call, expected) => {
+    using server = pubSubServer();
+    using sub = subscriber(server.url);
+    const first = sub.listener("first");
+    await sub.client.subscribe("a", first);
+    await sub.client.subscribe("a", sub.listener("second"));
+    await call(sub.client, first);
+    server.publish("a", "m");
+    expect(await sub.delivered()).toEqual(expected);
+  });
+
+  describe("on a new connection", () => {
+    type Server = ReturnType<typeof pubSubServer>;
+    const event = (client: any, name: "onconnect" | "onclose") => new Promise<any>(resolve => (client[name] = resolve));
+    const drop = (client: any, server: Server) => {
+      const reconnected = event(client, "onconnect");
+      server.drop();
+      return reconnected;
+    };
+
+    test.each<[string, string, Bun.RedisOptions, (client: any, server: Server) => Promise<unknown>]>([
+      ["a drop", "", {}, drop],
+      ["a drop on database 1", "/1", {}, drop],
+      ["a raw UNSUBSCRIBE and a drop", "", {}, (c, s) => c.send("UNSUBSCRIBE", ["a"]).then(() => drop(c, s))],
+      ["RESET and a drop", "", {}, (c, s) => c.send("RESET", []).then(() => drop(c, s))],
+      ["close() and connect()", "", {}, client => (client.close(), client.connect())],
+      [
+        "a drop without autoReconnect, and connect()",
+        "",
+        { autoReconnect: false },
+        async (client, server) => {
+          const closed = event(client, "onclose");
+          server.drop();
+          await closed;
+          await client.connect();
+        },
+      ],
+    ])("listeners are called again after %s", async (_, path, options, reconnect) => {
+      using server = pubSubServer();
+      using sub = subscriber(server.url + path, options);
+      await sub.client.subscribe(["a", "b", "gone"], sub.listener("l"));
+      await sub.client.unsubscribe("gone");
+      await reconnect(sub.client, server);
+      for (const channel of ["a", "b", "gone"]) server.publish(channel, "m");
+      expect(await sub.delivered()).toEqual(["l a m", "l b m"]);
+    });
+
+    test("a refusal that passes costs one attempt", async () => {
+      using server = pubSubServer((command, connection) =>
+        command === "SUBSCRIBE a" && connection === 2 ? "-OOM command not allowed\r\n" : undefined,
+      );
+      using sub = subscriber(server.url);
+      await sub.client.subscribe("a", sub.listener("l"));
+      await drop(sub.client, server);
+      server.publish("a", "m");
+      expect({ got: await sub.delivered(), connections: server.commands.length }).toEqual({
+        got: ["l a m"],
+        connections: 3,
+      });
+    });
+
+    test("a refusal that lasts names the channel, and the others come back without it", async () => {
+      using server = pubSubServer((command, connection) =>
+        command === "SUBSCRIBE b" && connection > 1 ? NOPERM : undefined,
+      );
+      using sub = subscriber(server.url, { maxRetries: 2 });
+      await sub.client.subscribe(["a", "b"], sub.listener("l"));
+      const ended = Promise.race([event(sub.client, "onclose"), event(sub.client, "onconnect")]);
+      server.drop();
+      const error = await ended;
+      const refusal = "NOPERM No permissions to access a channel (channel b)";
+      expect([error.message, error.cause?.message]).toEqual(["Max reconnection attempts reached", refusal]);
+      expect(await outcome(() => sub.client.connect())).toBe(`ERR_REDIS_SERVER_ERROR: ${refusal}`);
+
+      await outcome(() => sub.client.unsubscribe("b"));
+      await sub.client.connect();
+      server.publish("a", "m");
+      expect(await sub.delivered()).toEqual(["l a m"]);
+    });
+
+    test.each<[string, (client: any) => unknown, string]>([
+      ["close()", client => client.close(), "ERR_REDIS_CONNECTION_CLOSED: Connection closed"],
+      ["unsubscribe()", client => client.unsubscribe(), "OK"],
+    ])("a listener calls %s ahead of the last acknowledgement", async (_, call, connected) => {
+      const ack = `>3\r\n${bulk("subscribe")}${bulk("a")}:1\r\n`;
+      using server = pubSubServer((command, connection) =>
+        command === "SUBSCRIBE a" && connection === 2
+          ? `>3\r\n${bulk("message")}${bulk("a")}${bulk("m")}${ack}`
+          : undefined,
+      );
+      using sub = subscriber(server.url);
+      await sub.client.subscribe("a", () => call(sub.client));
+      sub.client.close();
+      expect(
+        await outcome(() =>
+          sub.client
+            .connect()
+            .then(() => sub.client.ping())
+            .then(() => sub.client.get("k")),
+        ),
+      ).toBe(connected);
+    });
+
+    test("onconnect may still unsubscribe and subscribe again", async () => {
+      using server = pubSubServer();
+      using sub = subscriber(server.url);
+      const listener = sub.listener("l");
+      await sub.client.subscribe("a", listener);
+      const { promise, resolve } = Promise.withResolvers();
+      sub.client.onconnect = () => resolve(sub.client.unsubscribe().then(() => sub.client.subscribe("a", listener)));
+      server.drop();
+      await promise;
+      server.publish("a", "m");
+      expect(await sub.delivered()).toEqual(["l a m"]);
     });
   });
 });

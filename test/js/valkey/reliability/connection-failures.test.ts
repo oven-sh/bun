@@ -1109,11 +1109,13 @@ describe("Valkey: Recovering After fail()", () => {
     const port = await fake.listen();
     const client = new RedisClient(`redis://127.0.0.1:${port}`);
     try {
+      fake.server.on("connection", socket =>
+        socket.on("data", chunk => {
+          if (chunk.toString("latin1").includes("SUBSCRIBE")) socket.write(push("subscribe", "ch", 1));
+        }),
+      );
       await client.connect();
       const connection1 = fake.sockets[0];
-      connection1.on("data", chunk => {
-        if (chunk.toString("latin1").includes("SUBSCRIBE")) connection1.write(push("subscribe", "ch", 1));
-      });
       const delivered: string[] = [];
       const firstDelivered = Promise.withResolvers<void>();
       const reconnect = Promise.withResolvers<string>();
@@ -2063,13 +2065,7 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
-  // subscribe() before connect() with the default offline queue stores the
-  // listener and queues the SUBSCRIBE; when the dial then fails for good the
-  // queued SUBSCRIBE is rejected but the listener stays, so the process is
-  // held alive. #33290 registers the listener on the server's subscribe
-  // confirmation instead, which closes this route; a -ERR reply to SUBSCRIBE
-  // (an ACL NOPERM, say) leaves the same orphan and is closed the same way.
-  test.todo("the process exits after a queued subscribe() is rejected by a dial that fails for good", async () => {
+  test("the process exits after a queued subscribe() is rejected by a dial that fails for good", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

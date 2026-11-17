@@ -1,12 +1,11 @@
 //! Prints DOM nodes and collections like pretty-format's `DOMElement` and `DOMCollection` plugins.
 
 use core::cmp::Ordering;
-use core::ffi::c_void;
 
 use bun_core::{StackCheck, String, strings};
 use bun_jsc::{
     JSGlobalObject, JSPropertyIterator, JSType, JSValue, JsError, JsResult,
-    PropertyIteratorOptions, StringJsc as _, VM, console_object,
+    PropertyIteratorOptions, StringJsc as _, console_object,
 };
 
 use super::pretty_format;
@@ -286,28 +285,15 @@ fn for_each_item(
     list: JSValue,
     each: &mut dyn FnMut(JSValue) -> JsResult<()>,
 ) -> JsResult<()> {
-    struct Iteration<'a> {
-        each: &'a mut dyn FnMut(JSValue) -> JsResult<()>,
-        result: JsResult<()>,
-    }
-    extern "C" fn next(_: *mut VM, _: &JSGlobalObject, iteration: *mut c_void, item: JSValue) {
-        // SAFETY: `iteration` is the `Iteration` below, which outlives the `for_each` call.
-        let iteration = unsafe { &mut *iteration.cast::<Iteration<'_>>() };
-        if iteration.result.is_ok() {
-            iteration.result = (iteration.each)(item);
-        }
-    }
-
     if !list.is_object() {
         return Ok(());
     }
     if list.is_iterable(global)? {
-        let mut iteration = Iteration {
-            each,
-            result: Ok(()),
-        };
-        list.for_each(global, (&raw mut iteration).cast::<c_void>(), next)?;
-        return iteration.result;
+        let mut result = Ok(());
+        return list.try_for_each(global, |item| {
+            result = result.and_then(|()| each(item));
+            result
+        });
     }
     for i in 0..length_of(global, list)? {
         let item = list.get_index(global, i)?;

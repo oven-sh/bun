@@ -309,12 +309,7 @@ impl FlagParser for Opts {
         }
     }
 
-    fn parse_short<'a>(
-        &mut self,
-        ch: u8,
-        _smallflags: &'a [u8],
-        _i: usize,
-    ) -> Option<ParseFlagResult<'a>> {
+    fn parse_short(&mut self, ch: u8, _i: usize) -> Option<ParseFlagResult<'static>> {
         match ch {
             b'a' => Some(ParseFlagResult::Unsupported(b"-a")),
             b'c' => Some(ParseFlagResult::Unsupported(b"-c")),

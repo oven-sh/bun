@@ -2241,13 +2241,8 @@ impl<'a> ParseFlagResult<'a> {
 pub(crate) trait FlagParser {
     /// Handle a `--long` flag. Return `None` when the builtin has no such flag.
     fn parse_long<'a>(&mut self, flag: &'a [u8]) -> Option<ParseFlagResult<'a>>;
-    /// Handle byte `i` of `smallflags`, a `-abc` cluster without its `-`. Return `None` to keep iterating.
-    fn parse_short<'a>(
-        &mut self,
-        ch: u8,
-        smallflags: &'a [u8],
-        i: usize,
-    ) -> Option<ParseFlagResult<'a>>;
+    /// Handle `ch`, the option at index `i` of a `-abc` cluster. Return `None` to keep iterating.
+    fn parse_short(&mut self, ch: u8, i: usize) -> Option<ParseFlagResult<'static>>;
 }
 
 /// Returns the trailing non-flag args (`args[idx..]`) on success.
@@ -2286,7 +2281,7 @@ fn parse_one_flag<'a, O: FlagParser>(opts: &mut O, flag: &'a [u8]) -> Result<(),
     }
     let small_flags = &flag[1..];
     for (i, &ch) in small_flags.iter().enumerate() {
-        if let Some(result) = opts.parse_short(ch, small_flags, i) {
+        if let Some(result) = opts.parse_short(ch, i) {
             return result.into_result(&small_flags[i..=i]);
         }
     }

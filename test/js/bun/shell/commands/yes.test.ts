@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 $.throws(false);
 
@@ -55,6 +55,57 @@ describe("yes", async () => {
       head: "hi\nhi\nhi\nhi\n",
       filled: true,
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("lets the event loop turn while it fills a file", async () => {
+    using dir = tempDir("yes-file", {});
+    const script = `
+      const order = [];
+      const done = Bun.$\`yes ab > out\`.nothrow().then(r => order.push("exit " + r.exitCode));
+      setImmediate(() => order.push("immediate"));
+      await done;
+      const text = await Bun.file("out").text();
+      console.log(JSON.stringify({ order, full: text.length >= 1 << 20, intact: "ab\\n".repeat(1 << 20).startsWith(text) }));
+    `;
+    await using proc = Bun.spawn({
+      // The file size limit ends the command with EFBIG.
+      cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 2048; exec "$0" -e "$1"`, bunExe(), script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ order: ["immediate", "exit 1"], full: true, intact: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a Worker that runs `yes > /dev/null` can be terminated", async () => {
+    using dir = tempDir("yes-worker", {
+      "main.js": `
+        import { Worker, isMainThread, parentPort } from "node:worker_threads";
+        if (isMainThread) {
+          const worker = new Worker(import.meta.filename);
+          worker.once("message", async () => console.log(await worker.terminate()));
+        } else {
+          const running = Bun.$\`yes > /dev/null\`.then(() => {});
+          parentPort.postMessage("started");
+          await running;
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1\n");
     expect(exitCode).toBe(0);
   });
 });

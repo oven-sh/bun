@@ -77,7 +77,6 @@ use bun_sys::{self as sys, Fd};
 use bun_zlib as zlib;
 
 use crate::node;
-use crate::valkey_jsc::js_valkey::{SubscriptionCtx, js as js_RedisClient};
 use bun_collections::index_sort;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
@@ -1376,20 +1375,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    let valkey = js_RedisClient::wrap(valkey, global_this);
-    let as_js = valkey.to_js();
-    valkey.this_value.set(jsc::JsRef::init_weak(as_js));
-    match SubscriptionCtx::init(&valkey) {
-        Ok(ctx) => valkey._subscription_ctx.set(ctx),
-        Err(jsc::JsError::Thrown) => return JSValue::ZERO,
-        Err(err) => {
-            let _ =
-                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
-            return JSValue::ZERO;
-        }
-    }
-
-    as_js
+    JSValkeyClient::wrap(valkey, global_this).to_js()
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

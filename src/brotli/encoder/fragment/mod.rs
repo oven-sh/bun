@@ -5,6 +5,7 @@ mod two_pass;
 
 use core::ops::{ControlFlow, Range};
 
+use bun_highway::with_bmi2;
 use one_pass::OnePass;
 use two_pass::TwoPass;
 
@@ -115,16 +116,18 @@ impl ItemCodes {
     fn symbols(&mut self) -> &mut [Code] {
         &mut self.0[LITERAL_SYMBOLS..][..SYMBOLS]
     }
+}
 
-    #[inline(never)]
-    fn write_literals(&self, literals: &[u8], writer: &mut BitWriter) {
-        writer.write_codes::<5, _>(literals, |literal| self.0[usize::from(literal)]);
+with_bmi2! {
+    fn write_literals(literals: &[u8], codes: &ItemCodes, writer: &mut BitWriter) {
+        writer.write_codes::<5, _>(literals, |literal| codes.0[usize::from(literal)]);
     }
+}
 
-    #[inline(never)]
-    fn write_items(&self, items: &[Item], writer: &mut BitWriter) {
+with_bmi2! {
+    fn write_items(items: &[Item], codes: &ItemCodes, writer: &mut BitWriter) {
         writer.write_codes::<4, _>(items, |item| {
-            self.0[item.index()].plus(u64::from(item.0) << (u64::BITS - Item::EXTRA_BITS))
+            codes.0[item.index()].plus(u64::from(item.0) << (u64::BITS - Item::EXTRA_BITS))
         });
     }
 }

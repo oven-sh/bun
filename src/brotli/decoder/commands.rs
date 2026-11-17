@@ -1,5 +1,7 @@
 //! The data of a compressed meta-block (RFC 7932 section 9.3).
 
+use bun_highway::with_bmi2;
+
 use super::bit_reader::{BitReader, FastReader, REFILLED};
 use super::huffman::{
     Forest, Ranges, RangesRoot, Root, Symbol, SymbolLists, SymbolTree, peek_symbol,
@@ -80,9 +82,12 @@ pub(super) fn push_distance_tree(
     })
 }
 
-/// Bits `start..end`.
+/// In what is compiled only once.
+const NO_BMI2: bool = false;
+
+/// Bits `start..end`. Making the mask takes long on x64, unless there is BMI2.
 #[inline(always)]
-fn bits_in(bits: u64, start: u32, end: u32) -> u32 {
+fn bits_in(bits: u64, start: u32, end: u32, has_bmi2: bool) -> u32 {
     #[allow(clippy::indexing_slicing)] // Runs at compile time.
     static BELOW: [u64; 256] = {
         let mut masks = [u64::MAX; 256];
@@ -93,9 +98,14 @@ fn bits_in(bits: u64, start: u32, end: u32) -> u32 {
         }
         masks
     };
+    debug_assert!(end < u64::BITS);
     #[allow(clippy::indexing_slicing)] // A `u8` into 256 entries.
-    let below_end = bits & BELOW[usize::from(end as u8)];
-    (below_end >> (start % u64::BITS)) as u32
+    let below_end = if cfg!(target_arch = "x86_64") && !has_bmi2 {
+        BELOW[usize::from(end as u8)]
+    } else {
+        (1 << (end % u64::BITS)) - 1
+    };
+    ((bits & below_end) >> (start % u64::BITS)) as u32
 }
 
 #[derive(Clone, Copy)]
@@ -367,7 +377,7 @@ fn run_fast_in_block<'a>(
 ) -> Result<Stopped, Stop> {
     let contexts = tables.literal_contexts(cursor.blocks[0].current())?;
     Ok(match contexts.lut {
-        None => run_fast(tables, contexts.first, cursor, reader, ring),
+        None => run_fast_in_one_tree(tables, contexts.first, cursor, reader, ring),
         Some(lut) if !core::ptr::eq(lut, tables.lut_in_trees) || cursor.position < 2 => None,
         Some(_) => {
             let is_selected =
@@ -376,19 +386,44 @@ fn run_fast_in_block<'a>(
                 return Ok(None);
             }
             let trees = TreesByContext::select(trees, tables, &contexts)?;
-            run_fast(tables, trees, cursor, reader, ring)
+            run_fast_in_contexts(tables, trees, cursor, reader, ring)
         }
     })
 }
 
+with_bmi2! {
+    fn run_fast_in_one_tree(
+        tables: &Tables<'_>,
+        tree: &SymbolTree,
+        cursor: &mut Cursor,
+        reader: &mut BitReader<'_>,
+        ring: &mut [u8],
+    ) -> Stopped |has_bmi2| {
+        run_fast(tables, tree, cursor, reader, ring, has_bmi2)
+    }
+}
+
+with_bmi2! {
+    fn run_fast_in_contexts(
+        tables: &Tables<'_>,
+        trees: &TreesByContext<'_>,
+        cursor: &mut Cursor,
+        reader: &mut BitReader<'_>,
+        ring: &mut [u8],
+    ) -> Stopped |has_bmi2| {
+        run_fast(tables, trees, cursor, reader, ring, has_bmi2)
+    }
+}
+
 /// Decodes the commands that are clear of the ends of the input, the blocks, the meta-block and the ring.
-#[inline(never)]
+#[inline(always)]
 fn run_fast(
     tables: &Tables<'_>,
     trees: &impl LiteralTrees,
     cursor: &mut Cursor,
     whole_input: &mut BitReader<'_>,
     whole_ring: &mut [u8],
+    has_bmi2: bool,
 ) -> Stopped {
     /// Looking a symbol up in a root does not wait for the next word, so each step leaves enough bits for that.
     const MAX_STEP: u32 = REFILLED - Root::Wide.bits();
@@ -443,7 +478,7 @@ fn run_fast(
         let ([insert_end, context], [insert, copy]) = (command.small(), command.halves_of_large());
         let insert_end = start + insert_end;
         reader.skip_in(word, command.total_length());
-        let copy = copy + bits_in(word, insert_end, reader.used());
+        let copy = copy + bits_in(word, insert_end, reader.used(), has_bmi2);
         left -= 1;
 
         let mut interrupt = |phase, unwritten_literals| {
@@ -456,7 +491,8 @@ fn run_fast(
             without_distance += 1;
         };
         if insert != 0 {
-            let insert = insert + bits_in(word, start + command.code_length(), insert_end);
+            let insert =
+                insert + bits_in(word, start + command.code_length(), insert_end, has_bmi2);
             let copy_start = position + insert;
             if copy_start as usize >= limit || insert > literals_left || insert > MAX_INSERT {
                 interrupt(Phase::Literals, insert);
@@ -498,7 +534,7 @@ fn run_fast(
                     }
                 }
                 reader.skip(ranges.total_length());
-                distance_of(ranges, bits, tables, &recent)
+                distance_of(ranges, bits, tables, &recent, has_bmi2)
             }
         };
 
@@ -547,8 +583,8 @@ fn run_fast(
 fn lengths_of(command: &Ranges, bits: u64) -> [u32; 2] {
     let ([insert_end, _], [insert, copy]) = (command.small(), command.halves_of_large());
     [
-        insert + bits_in(bits, command.code_length(), insert_end),
-        copy + bits_in(bits, insert_end, command.total_length()),
+        insert + bits_in(bits, command.code_length(), insert_end, NO_BMI2),
+        copy + bits_in(bits, insert_end, command.total_length(), NO_BMI2),
     ]
 }
 
@@ -559,9 +595,10 @@ fn distance_of(
     bits: u64,
     tables: &Tables<'_>,
     recent: &RecentDistances,
+    has_bmi2: bool,
 ) -> (u32, bool) {
     if let [_, 0] = ranges.small() {
-        let extra = bits_in(bits, ranges.code_length(), ranges.total_length());
+        let extra = bits_in(bits, ranges.code_length(), ranges.total_length(), has_bmi2);
         (ranges.large() + extra * tables.distance_step, false)
     } else {
         (recent.resolve(ranges.large()), ranges.large() == 0)
@@ -708,7 +745,7 @@ fn run_carefully<'a>(
                 let ranges = look_up(tables.distance_root(index)?, tables.ranges.entries(), bits)?;
                 reader.bits.skip(ranges.total_length())?;
                 distances.remaining -= 1;
-                distance_of(ranges, bits, tables, &cursor.recent)
+                distance_of(ranges, bits, tables, &cursor.recent, NO_BMI2)
             };
             command.phase = Phase::Lengths;
 
@@ -752,31 +789,32 @@ fn look_up<'a>(root: &'a RangesRoot, entries: &'a [Ranges], bits: u64) -> Result
     (in_root(root, bits).resolve(entries, bits)).ok_or(Stop::UNREACHABLE)
 }
 
-/// See [`read_literals`].
-#[inline(never)]
-fn read_many_literals<'a>(
-    tables: &Tables<'a>,
-    contexts: LiteralContexts<'a>,
-    trees: &mut Option<TreesByContext<'a>>,
-    reader: &mut BitReader<'_>,
-    ring: &mut [u8],
-    start: usize,
-    end: usize,
-) -> Result<usize, Stop> {
-    let Some(mut fast) = reader.begin_refilling() else {
-        return Ok(start);
-    };
-    let (start, end) = (start as u32, end as u32);
-    let position = match contexts.lut {
-        None => read_literals(tables, contexts.first, &mut fast, ring, start, end),
-        Some(lut) if !core::ptr::eq(lut, tables.lut_in_trees) => start,
-        Some(_) => {
-            let trees = TreesByContext::select(trees, tables, &contexts)?;
-            read_literals(tables, trees, &mut fast, ring, start, end)
-        }
-    };
-    reader.end_refilling(&fast);
-    Ok(position as usize)
+with_bmi2! {
+    /// See [`read_literals`].
+    fn read_many_literals<'a>(
+        tables: &Tables<'a>,
+        contexts: LiteralContexts<'a>,
+        trees: &mut Option<TreesByContext<'a>>,
+        reader: &mut BitReader<'_>,
+        ring: &mut [u8],
+        start: usize,
+        end: usize,
+    ) -> Result<usize, Stop> {
+        let Some(mut fast) = reader.begin_refilling() else {
+            return Ok(start);
+        };
+        let (start, end) = (start as u32, end as u32);
+        let position = match contexts.lut {
+            None => read_literals(tables, contexts.first, &mut fast, ring, start, end),
+            Some(lut) if !core::ptr::eq(lut, tables.lut_in_trees) => start,
+            Some(_) => {
+                let trees = TreesByContext::select(trees, tables, &contexts)?;
+                read_literals(tables, trees, &mut fast, ring, start, end)
+            }
+        };
+        reader.end_refilling(&fast);
+        Ok(position as usize)
+    }
 }
 
 #[inline(always)]

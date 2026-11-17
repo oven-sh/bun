@@ -2,6 +2,8 @@
 
 use core::hint::select_unpredictable;
 
+use bun_highway::with_bmi2;
+
 use super::Stop;
 use super::bit_reader::{BitReader, Bits, REFILLED};
 use super::huffman::{SymbolLists, fill_root};
@@ -62,7 +64,7 @@ impl PrefixCodeReader {
                     self.phase = Phase::SymbolLengths(table, SymbolLengths::new());
                 }
                 Phase::SymbolLengths(table, lengths) => {
-                    lengths.read(alphabet.size, table, reader, symbols)?;
+                    read_symbol_lengths(lengths, alphabet.size, table, reader, symbols)?;
                     self.phase = Phase::Start;
                     return Ok(symbols);
                 }
@@ -209,6 +211,21 @@ struct SymbolLengths {
     run: u32,
 }
 
+with_bmi2! {
+    fn read_symbol_lengths(
+        lengths: &mut SymbolLengths,
+        alphabet_size: u32,
+        table: &CodeLengthTable,
+        reader: &mut BitReader<'_>,
+        symbols: &mut SymbolLists,
+    ) -> Result<(), Stop> {
+        let (mut state, mut local) = (*lengths, *reader);
+        let result = state.read_all(alphabet_size, table, &mut local, symbols);
+        (*lengths, *reader) = (state, local);
+        result
+    }
+}
+
 impl SymbolLengths {
     fn new() -> Self {
         Self {
@@ -218,19 +235,6 @@ impl SymbolLengths {
             previous_mask: 0,
             run: 0,
         }
-    }
-
-    fn read(
-        &mut self,
-        alphabet_size: u32,
-        table: &CodeLengthTable,
-        reader: &mut BitReader<'_>,
-        symbols: &mut SymbolLists,
-    ) -> Result<(), Stop> {
-        let (mut state, mut local) = (*self, *reader);
-        let result = state.read_all(alphabet_size, table, &mut local, symbols);
-        (*self, *reader) = (state, local);
-        result
     }
 
     #[inline(always)]

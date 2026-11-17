@@ -4,7 +4,7 @@ use core::ops::{ControlFlow, Range};
 
 use super::{
     Item, ItemCodes, MAX_LITERAL_ITEMS, Sink, Table, build_and_write_codes, find_matches,
-    insert_last, table_bits,
+    insert_last, table_bits, write_items, write_literals,
 };
 use crate::encoder::bit_stream::{MetaBlockKind, write_plain_header, write_uncompressed};
 use crate::encoder::bit_writer::{BitWriter, Code};
@@ -202,11 +202,11 @@ impl Block {
 
         let mut written = 0;
         for run in &self.runs {
-            codes.write_items(&self.items[written..run.items_before], writer);
-            codes.write_literals(&input[run.start..run.end], writer);
+            write_items(&self.items[written..run.items_before], &codes, writer);
+            write_literals(&input[run.start..run.end], &codes, writer);
             written = run.items_before;
         }
-        codes.write_items(&self.items[written..], writer);
+        write_items(&self.items[written..], &codes, writer);
     }
 }
 

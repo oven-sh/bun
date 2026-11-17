@@ -6,7 +6,15 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
-import { brotliCompressSync, constants, crc32, deflateSync, gzipSync, inflateSync } from "node:zlib";
+import {
+  brotliCompressSync,
+  brotliDecompressSync,
+  constants,
+  crc32,
+  deflateSync,
+  gzipSync,
+  inflateSync,
+} from "node:zlib";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "../../image/webp-golden/observe";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
@@ -246,9 +254,10 @@ function linesOf(file: Uint8Array): Buffer {
   return inflateSync(Buffer.concat(idat));
 }
 
-describe("Brotli encoder: Highway runtime dispatch", () => {
+describe("Brotli: Highway runtime dispatch", () => {
   // src/jsc/bindings/highway_brotli.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
-  // three have to lead to the same bytes. These checksums are from google/brotli.
+  // three have to lead to the same bytes. These checksums are from google/brotli. The loops in src/brotli that read and
+  // write bits are compiled with BMI2 and without.
   // Text takes turns with bytes of few, of many, and of scattered values, and some of it comes again with changes.
   const words = ["the ", "The ", "time ", "information ", "of ", "<div>", "</div>\n", "é", "working ", "1024, "];
   const input = Buffer.alloc(24000);
@@ -275,8 +284,17 @@ describe("Brotli encoder: Highway runtime dispatch", () => {
     { quality: 11, expected: [0x089c7811, 0x89fdfe52] },
   ])("quality $quality", ({ quality, expected }) => {
     const params = { [constants.BROTLI_PARAM_QUALITY]: quality };
-    const checksum = (bytes: Buffer) => Bun.hash.crc32(brotliCompressSync(bytes, { params }));
-    expect([checksum(input.subarray(0, 1500)), checksum(input)]).toEqual(expected);
+    const streams = [input.subarray(0, 1500), input].map(bytes => brotliCompressSync(bytes, { params }));
+    expect(streams.map(stream => Bun.hash.crc32(stream))).toEqual(expected);
+    expect(brotliDecompressSync(streams[1]).equals(input)).toBe(true);
+  });
+
+  test.each([0, 1, 2, 5])("many literals and long copies at quality %d", quality => {
+    state = 1;
+    const literals = Buffer.alloc(9000).map(() => random() & random());
+    const bytes = Buffer.concat([input, Buffer.alloc(200_000, "far"), literals, input]);
+    const params = { [constants.BROTLI_PARAM_QUALITY]: quality };
+    expect(brotliDecompressSync(brotliCompressSync(bytes, { params })).equals(bytes)).toBe(true);
   });
 
   // These depend on how bytes that are equally frequent get sorted.

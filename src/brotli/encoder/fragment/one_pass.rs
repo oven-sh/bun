@@ -4,7 +4,8 @@ use core::ops::{ControlFlow, Range};
 
 use super::{
     FIRST_COPY_AT_LAST_DISTANCE, FIRST_DISTANCE, Item, ItemCodes, ROOM, SYMBOLS, Sink, Table,
-    build_and_write_codes, find_matches, insert_last, symbol_with_rank, table_bits,
+    build_and_write_codes, find_matches, insert_last, symbol_with_rank, table_bits, write_items,
+    write_literals,
 };
 use crate::encoder::bit_stream::{MetaBlockKind, write_plain_header, write_uncompressed};
 use crate::encoder::bit_writer::{BitWriter, Code};
@@ -176,12 +177,12 @@ impl Sink for Emitter<'_> {
 
     #[inline(always)]
     fn items(&mut self, items: &[Item]) {
-        self.block.codes.write_items(items, self.writer);
+        write_items(items, &self.block.codes, self.writer);
     }
 
     #[inline(always)]
     fn literals(&mut self, input: &[u8], range: Range<usize>) {
-        self.block.codes.write_literals(&input[range], self.writer);
+        write_literals(&input[range], &self.block.codes, self.writer);
     }
 }
 

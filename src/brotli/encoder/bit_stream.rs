@@ -1,5 +1,7 @@
 //! Writes meta-blocks (RFC 7932 section 9.2).
 
+use bun_highway::with_bmi2;
+
 use super::bit_writer::{BitWriter, Bits, Code};
 use super::block_splitter::{Block, BlockSplit};
 use super::command::{Command, ROOM_FOR_LENGTHS, room_for_distance};
@@ -476,14 +478,16 @@ impl CurrentCodes<'_> {
     }
 }
 
-#[inline(never)]
-fn write_indexed(indices: &[u32], table: &[Code], writer: &mut BitWriter) {
-    writer.write_codes::<4, _>(indices, |index| table[index as usize]);
+with_bmi2! {
+    fn write_indexed(indices: &[u32], table: &[Code], writer: &mut BitWriter) {
+        writer.write_codes::<4, _>(indices, |index| table[index as usize]);
+    }
 }
 
-#[inline(never)]
-fn write_literals(literals: &[u16], table: &[Code], writer: &mut BitWriter) {
-    writer.write_codes::<5, _>(literals, |literal| table[usize::from(literal)]);
+with_bmi2! {
+    fn write_literals(literals: &[u16], table: &[Code], writer: &mut BitWriter) {
+        writer.write_codes::<5, _>(literals, |literal| table[usize::from(literal)]);
+    }
 }
 
 /// `table` has the codes of the literals, and [`SLOTS`] more.

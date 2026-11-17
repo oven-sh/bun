@@ -395,6 +395,7 @@ declare module "node:net" {
   interface Server {
     _handle: Bun.SocketListener<Socket> | null;
     _connections: number;
+    _emitCloseIfDrained(): void;
   }
 }
 

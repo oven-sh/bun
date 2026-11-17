@@ -421,6 +421,35 @@ process.send('ready');
     });
   });
 
+  test.concurrent("a closing net.Server emits 'close' once its last socket is sent", async () => {
+    using dir = tempDir("ipc-handle-closing-server", {
+      "parent.js": `
+const net = require('node:net');
+const child = require('node:child_process').fork('child.js');
+const server = net.createServer(socket => {
+  server.close(() => console.log('close'));
+  child.send('take', socket, () => socket.destroy());
+});
+child.once('message', () => server.listen(0, '127.0.0.1', () => {
+  net.connect(server.address().port, '127.0.0.1').resume().on('close', () => child.disconnect());
+}));
+`,
+      "child.js": `
+process.on('message', (message, socket) => socket.end());
+process.send('ready');
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "close\n", stderr: "", exitCode: 0 });
+  });
+
   test.concurrent("net.Socket handle sent with {keepOpen: true} stays open in the sender", async () => {
     using dir = tempDir("ipc-handle-keepopen", {
       "parent.js": `

@@ -440,6 +440,19 @@ describe("property matchers", () => {
     }
   });
 
+  test("on a long chain of objects that the comparison meets a second time", () => {
+    // Each item holds the item before it and `items` holds them all. The matcher is in the first item, so every item leads to it.
+    const chain = (length: number, firstId: unknown) => {
+      const items: { id: unknown; before?: object }[] = [{ id: firstId }];
+      for (let id = 1; id < length; id++) items.push({ id, before: items[id - 1] });
+      return items;
+    };
+    // A Date prints as one line, so the call is little more than the rows of its 20,000 items.
+    const received = Object.assign(new Date(0), { items: chain(20_000, 0) });
+    expect(received).toMatchInlineSnapshot({ items: chain(20_000, expect.any(Number)) }, `1970-01-01T00:00:00.000Z`);
+    expect(received.items[0].id).toBe(0);
+  });
+
   test("on a Headers or a FormData with a property of its own", () => {
     const headers = Object.assign(new Headers(), { id: "v1" });
     expect(headers).toMatchSnapshot({ id: expect.any(String) });

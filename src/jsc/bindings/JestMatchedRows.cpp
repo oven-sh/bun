@@ -189,9 +189,12 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
     for (size_t i = 0; i < records; i++)
         holderOf.append(numbers.add(PlaceKey { state.recorded.at(i * 4).asCell(), state.recorded.at(i * 4 + 1).asCell() }, numbers.size()).iterator->value);
 
-    // Kept (not 0) are the places with a matched matcher and, to a fixed point because of cycles, the places that lead to one.
+    // Kept (not 0) are the places with a matched matcher and the places that lead to one, also through a cycle.
     WTF::Vector<unsigned, 32> handleOf(WTF::FillWith {}, numbers.size(), 0u);
     WTF::Vector<unsigned, 32> childOf(WTF::FillWith {}, records, none);
+    // Counts at `number + 2` the records that lead to a pair. Below, it becomes where the holders of that pair are in `holders`.
+    WTF::Vector<unsigned, 32> holdersAt(WTF::FillWith {}, numbers.size() + 2, 0u);
+    unsigned leadingRecords = 0;
     for (size_t i = 0; i < records; i++) {
         // The printer lists no private names.
         if (state.recordedNames[i].isPrivateName())
@@ -201,15 +204,35 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
             continue;
         }
         auto child = numbers.find(PlaceKey { state.recorded.at(i * 4 + 2).asCell(), state.recorded.at(i * 4 + 3).asCell() });
-        if (child != numbers.end())
+        if (child != numbers.end()) {
             childOf[i] = child->value;
+            holdersAt[child->value + 2]++;
+            leadingRecords++;
+        }
     }
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (size_t i = records; i-- > 0;) {
-            if (childOf[i] != none && handleOf[childOf[i]] && !handleOf[holderOf[i]]) {
-                handleOf[holderOf[i]] = 1;
-                changed = true;
+    if (leadingRecords) {
+        for (size_t number = 2; number < holdersAt.size(); number++)
+            holdersAt[number] += holdersAt[number - 1];
+        // The holders of a pair are from holdersAt[number] up to holdersAt[number + 1], once this loop has put them there.
+        WTF::Vector<unsigned, 32> holders(WTF::FillWith {}, leadingRecords, 0u);
+        for (size_t i = 0; i < records; i++) {
+            if (childOf[i] != none)
+                holders[holdersAt[childOf[i] + 1]++] = holderOf[i];
+        }
+        // Each kept place is taken once and each record is read once, so a pair that the walk met again costs no pass of its own.
+        WTF::Vector<unsigned, 32> toKeepHoldersOf;
+        for (unsigned number = 0; number < handleOf.size(); number++) {
+            if (handleOf[number])
+                toKeepHoldersOf.append(number);
+        }
+        while (!toKeepHoldersOf.isEmpty()) {
+            unsigned number = toKeepHoldersOf.takeLast();
+            for (unsigned at = holdersAt[number]; at < holdersAt[number + 1]; at++) {
+                unsigned holder = holders[at];
+                if (!handleOf[holder]) {
+                    handleOf[holder] = 1;
+                    toKeepHoldersOf.append(holder);
+                }
             }
         }
     }

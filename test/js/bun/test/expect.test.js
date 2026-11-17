@@ -4356,6 +4356,35 @@ describe("expect()", () => {
         }
       });
 
+      test("shows a matcher below a chain of objects that the comparison met before", () => {
+        // Each item holds the item before it and `items` holds them all, so the comparison meets every item but the last again.
+        const chain = (/** @type {number} */ length, /** @type {unknown} */ firstId) => {
+          /** @type {{ id: unknown, before?: object }[]} */
+          const items = [{ id: firstId }];
+          for (let id = 1; id < length; id++) items.push({ id, before: items[id - 1] });
+          return items;
+        };
+        const number = expect.any(Number);
+        const onlyWrong = ['-   "wrong": 2,', '+   "wrong": 1,', "- Expected  - 1", "+ Received  + 1"];
+        // The first item is printed below every item. Its `id` is the matcher each time, so the diff marks no item.
+        for (const length of [2, 3, 24]) {
+          const received = { items: chain(length, 0), wrong: 1 };
+          const message = failureOf(() => expect(received).toMatchObject({ items: chain(length, number), wrong: 2 }));
+          expect({ length, marked: marked(message) }).toEqual({ length, marked: onlyWrong });
+          expect(received.items[0].id).toBe(0);
+        }
+        // The same with a link from the first item to the last one, which makes the chain a cycle.
+        const cycle = (/** @type {unknown} */ firstId) => {
+          const items = chain(6, firstId);
+          items[0].before = items[5];
+          return items;
+        };
+        const message = failureOf(() =>
+          expect({ items: cycle(0), wrong: 1 }).toMatchObject({ items: cycle(number), wrong: 2 }),
+        );
+        expect(marked(message)).toEqual(onlyWrong);
+      });
+
       test("shows the matcher that a property of a Headers, a URL, an Event or a CryptoHasher matched", () => {
         const number = expect.any(Number);
         const string = expect.any(String);

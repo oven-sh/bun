@@ -17,6 +17,28 @@ enum State {
     Done,
 }
 
+/// POSIX `dirname(1)`: <https://pubs.opengroup.org/onlinepubs/9699919799/utilities/dirname.html>
+fn posix_dirname(path: &[u8]) -> &[u8] {
+    let mut end = path.len();
+    while end > 0 && path[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        return if path.is_empty() { b"." } else { b"/" };
+    }
+    let Some(slash) = bun_core::strings::last_index_of_char(&path[..end], b'/') else {
+        return b".";
+    };
+    end = slash + 1;
+    while end > 0 && path[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        return b"/";
+    }
+    &path[..end]
+}
+
 impl Dirname {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let bltn = Builtin::of(interp, cmd);
@@ -28,10 +50,7 @@ impl Dirname {
         let stdout_needs_io = bltn.stdout.needs_io();
         let mut buf = Vec::new();
         for i in 0..argc {
-            let path = bltn.arg_bytes(i);
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
-            let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
-            buf.extend_from_slice(dir);
+            buf.extend_from_slice(posix_dirname(bltn.arg_bytes(i)));
             buf.push(b'\n');
         }
 

@@ -127,6 +127,16 @@ const dir = String(
           .transform(new Response(input)).text();
         controller.write("<p>");
       };
+      // Past 16 KiB of output that nobody reads, HTMLRewriter holds the <b> for a later turn of the event loop.
+      export const rewritesPastUnreadOutput = listening => {
+        let controller;
+        const input = new ReadableStream({ type: "direct", pull(c) { controller = c; return new Promise(() => {}); } });
+        new HTMLRewriter()
+          .on("b", { element: () => listening(Bun.serve({ port: 0, fetch: () => new Response("the graph's") }).url) })
+          .transform(new Response(input));
+        controller.write(Buffer.alloc(20_000, "a"));
+        controller.write("<b>");
+      };
       // A module loaded through a graph of its own making.
       export const loadsThroughAGraphOfItsOwn = specifier => new Bun.ModuleGraph().import(specifier);
       export const makesAGraph = options => new Bun.ModuleGraph(options);
@@ -235,12 +245,12 @@ const dir = String(
       // Nothing is left for the host to do: the process winds down, collecting on the way.
       process.on("exit", () => writeSync(1, JSON.stringify({ said })));
     `,
-    "rewrite-of-what-a-handler-wrote.mjs": `
+    "rewrite-in-a-later-turn.mjs": `
       const listening = Promise.withResolvers();
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      graph.run(() => app.rewritesWhatItsHandlerWrote(listening.resolve));
-      if (process.argv[2] === "after") await listening.promise;
+      graph.run(() => app[process.argv[2]](listening.resolve));
+      if (process.argv[3] === "after") await listening.promise;
       graph.dispose();
       await new Promise(resolve => setImmediate(resolve));
       listening.resolve();
@@ -3624,12 +3634,14 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     expect(await runsFixture("rewrite-given-up-at-exit.mjs")).toEqual({ stdout: `{"said":[]}`, exitCode: 0 });
   });
   test.each([
-    { disposed: "before", stdout: "never listened" },
-    { disposed: "after", stdout: "closed" },
+    { tenant: "rewritesWhatItsHandlerWrote", disposed: "before", stdout: "never listened" },
+    { tenant: "rewritesWhatItsHandlerWrote", disposed: "after", stdout: "closed" },
+    { tenant: "rewritesPastUnreadOutput", disposed: "before", stdout: "never listened" },
+    { tenant: "rewritesPastUnreadOutput", disposed: "after", stdout: "closed" },
   ])(
-    "an HTMLRewriter handler of input that another handler wrote is the graph's: disposed $disposed it runs",
-    async ({ disposed, stdout }) => {
-      expect(await runsFixture("rewrite-of-what-a-handler-wrote.mjs", disposed)).toEqual({ stdout, exitCode: 0 });
+    "an HTMLRewriter handler that runs in a later turn is the graph's: $tenant, disposed $disposed it runs",
+    async ({ tenant, disposed, stdout }) => {
+      expect(await runsFixture("rewrite-in-a-later-turn.mjs", tenant, disposed)).toEqual({ stdout, exitCode: 0 });
     },
   );
   test("the host's import() of a module parked in a top-level await is left pending: dispose() settles nothing", async () => {

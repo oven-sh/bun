@@ -757,14 +757,11 @@ impl RewriterPipe {
     pub(crate) fn run_background_pull(&self) {
         let _root = self.background_pull_root.take();
         let armed = self.background_pull_armed.replace(false);
-        if self.is_blocked() {
-            return;
-        }
-        if armed {
-            return self.advance(PullPacing::AlreadyYielded);
-        }
         let vm = self.global.bun_vm();
-        if self.is_stalled() && vm.is_context_live(self.script_context) {
+        if !self.is_blocked()
+            && (armed || self.is_stalled())
+            && vm.is_context_live(self.script_context)
+        {
             let _context = vm.enter_context(self.script_context);
             self.advance(PullPacing::AlreadyYielded);
         }
@@ -899,7 +896,7 @@ impl RewriterPipe {
             || self.input_end.get() == InputEnd::Ended
             || self.flush_waits())
             && match self.output.get() {
-                // A later consumer signals.
+                // A later consumer signals once it has drained the output.
                 Output::Unread | Output::Over => false,
                 Output::Buffering => true,
                 Output::Stream(out) => {

@@ -450,6 +450,39 @@ process.send('ready');
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "close\n", stderr: "", exitCode: 0 });
   });
 
+  test.concurrent("a sent socket leaves the count of the server that accepted it", async () => {
+    using dir = tempDir("ipc-handle-emitted-connection", {
+      "parent.js": `
+const net = require('node:net');
+const child = require('node:child_process').fork('child.js');
+const parser = require('node:http').createServer(req => {
+  child.send('take', req.socket, () => req.socket.destroy());
+  parser.getConnections((_, count) => console.log('http', count));
+  server.getConnections((_, count) => console.log('net', count));
+  server.close(() => console.log('close'));
+});
+const server = net.createServer(socket => parser.emit('connection', socket));
+child.once('message', () => server.listen(0, '127.0.0.1', () => {
+  const client = net.connect(server.address().port, '127.0.0.1').resume().on('close', () => child.disconnect());
+  client.write('GET / HTTP/1.1\\r\\nHost: a\\r\\n\\r\\n');
+}));
+`,
+      "child.js": `
+process.on('message', (message, socket) => socket.resume().end());
+process.send('ready');
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "http 0\nnet 0\nclose\n", stderr: "", exitCode: 0 });
+  });
+
   test.concurrent("net.Socket handle sent with {keepOpen: true} stays open in the sender", async () => {
     using dir = tempDir("ipc-handle-keepopen", {
       "parent.js": `

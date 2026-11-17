@@ -2244,7 +2244,7 @@ ${
             "JSValue",
             `${checkedWordsOf(method.returns)?.includes("this") ? "let receiver = JSValue::from_cell(this);\n" : ""}${takeThis(method.receiver, method.passThis || throughCaller)}${rustTakeArguments(args, scope)}let result = ${
               throughCaller
-                ? // It captures nothing, so it's passed as a function pointer.
+                ? // It captures nothing, so it's passed as a function pointer, whose type decides what `this` is.
                   `<${rustPath}>::${type.protoCaller}(${[...leading("ref", true, "js"), ...args.map(rustArgumentName)].join(", ")}, |this, cx, ${method.args.length ? "all_arguments" : "_"}| ${call})`
                 : infallible(call, method.throws, method.returns)
             };

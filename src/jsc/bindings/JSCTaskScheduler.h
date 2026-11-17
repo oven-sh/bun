@@ -37,6 +37,25 @@ public:
         m_isShuttingDown = true;
     }
 
+    // While one is alive, the scheduler records the ticket of the WorkType::AtSomePoint work that JSC registers: JSC returns that ticket only to the owner of the work.
+    class TicketCapture {
+        WTF_MAKE_NONCOPYABLE(TicketCapture);
+
+    public:
+        explicit TicketCapture(WebCore::JSVMClientData*);
+        ~TicketCapture();
+        JSC::DeferredWorkTimer::WeakTicket take();
+
+    private:
+        friend class JSCTaskScheduler;
+        JSCTaskScheduler& m_scheduler;
+        JSC::DeferredWorkTimer::WeakTicket m_ticket;
+        bool m_isCapturing { true };
+    };
+
+    // Makes a WorkType::AtSomePoint ticket, which holds no event loop ref, keep the loop alive until it is scheduled or cancelled: for work that has become certain to be scheduled.
+    static void refEventLoopForPendingWork(WebCore::JSVMClientData* clientData, const JSC::DeferredWorkTimer::WeakTicket&);
+
 public:
     // What was current when JSC registered the work.
     struct PendingWork {
@@ -49,6 +68,7 @@ public:
 
     Lock m_lock;
     bool m_isShuttingDown WTF_GUARDED_BY_LOCK(m_lock) { false };
+    TicketCapture* m_ticketCapture WTF_GUARDED_BY_LOCK(m_lock) { nullptr };
     UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsKeepingEventLoopAlive;
     UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsOther;
 };

@@ -2,6 +2,7 @@
 
 #include "JSDOMWrapper.h"
 #include "JavaScriptCore/WasmStreamingCompiler.h"
+#include <JavaScriptCore/DeferredWorkTimer.h>
 
 #if ENABLE(WEBASSEMBLY)
 
@@ -29,6 +30,10 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
+    // The ticket that the DeferredWorkTimer holds for the compiler's work.
+    const JSC::DeferredWorkTimer::WeakTicket& ticket() const { return m_ticket; }
+    void setTicket(JSC::DeferredWorkTimer::WeakTicket&& ticket) { m_ticket = WTF::move(ticket); }
+
     // static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -43,6 +48,9 @@ protected:
     JSWasmStreamingCompiler(JSC::Structure*, JSDOMGlobalObject&, Ref<JSC::Wasm::StreamingCompiler>&&);
 
     void finishCreation(JSC::VM&);
+
+private:
+    JSC::DeferredWorkTimer::WeakTicket m_ticket;
 };
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, JSC::Wasm::StreamingCompiler&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, JSC::Wasm::StreamingCompiler* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

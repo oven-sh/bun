@@ -57,6 +57,7 @@ members = [
   "src/clap",
   "src/clap_macros",
   "src/crash_handler",
+  "src/cron",
   "src/csrf",
   "src/css_jsc",
   "src/dns",
@@ -79,7 +80,7 @@ members = [
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
-  "src/libdeflate_sys",
+  "src/deflate",
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
@@ -115,6 +116,7 @@ members = [
   "src/wyhash",
   "src/yarr",
   "src/node_path",
+  "src/test_schedule",
   "src/text_diff",
   "src/hash",
   "src/boringssl_sys",
@@ -436,6 +438,7 @@ bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
+bun_cron = { path = "src/cron" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
@@ -457,7 +460,7 @@ bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
-bun_libdeflate_sys = { path = "src/libdeflate_sys" }
+bun_deflate = { path = "src/deflate" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
@@ -492,6 +495,7 @@ bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
 bun_yarr = { path = "src/yarr" }
 bun_node_path = { path = "src/node_path" }
+bun_test_schedule = { path = "src/test_schedule" }
 bun_text_diff = { path = "src/text_diff" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
@@ -522,6 +526,10 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.bun_webp]
+opt-level = 3
+
+# Loops over every byte that is compressed or decompressed.
+[profile.dev.package.bun_deflate]
 opt-level = 3
 
 # Runs for every line of a response head and every chunk of a body.

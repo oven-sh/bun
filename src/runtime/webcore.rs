@@ -261,10 +261,6 @@ pub(crate) mod form_data;
 #[path = "webcore/ScriptExecutionContext.rs"]
 pub(crate) mod script_execution_context;
 
-#[doc(hidden)]
-pub(crate) mod multipart_options_impl {
-    pub(crate) use bun_s3_signing::MultiPartUploadOptions;
-}
 // Note: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
 // `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
 // exist). Declare the file mods at this level (where `#[path]` is relative to
@@ -291,8 +287,7 @@ pub(crate) mod __s3_simple_request;
 #[path = "webcore/s3/xml_response.rs"]
 pub(crate) mod __s3_xml_response;
 pub(crate) mod s3 {
-    pub(crate) use super::multipart_options_impl as multipart_options;
-    pub(crate) use super::multipart_options_impl::MultiPartUploadOptions;
+    pub(crate) use bun_s3_signing::MultiPartUploadOptions;
 
     // Note: `client` is the umbrella re-export hub. It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.
@@ -303,7 +298,6 @@ pub(crate) mod s3 {
     pub(crate) use super::__s3_multipart as multipart;
     pub(crate) use super::__s3_simple_request as simple_request;
     pub(crate) use super::__s3_xml_response as xml_response;
-    pub(crate) use multipart::MultiPartUpload;
 }
 
 #[path = "webcore/streams.rs"]
@@ -323,7 +317,7 @@ pub enum SinkHandle {
     None,
     ServerResponse(crate::server::AnyRequestContext),
     FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink, bun_ptr::Mut>),
-    S3Upload(bun_ptr::BackRef<streams::NetworkSink, bun_ptr::Mut>),
+    S3Upload(bun_ptr::BackRef<s3::multipart::NetworkSink>),
     FileSink(bun_ptr::BackRef<file_sink::FileSink>),
     HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
     HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
@@ -354,10 +348,7 @@ impl SinkHandle {
                 // SAFETY: live backref; ByteStream clears sink before free.
                 unsafe { p.get_mut() }.write(data)
             }),
-            SinkHandle::S3Upload(mut p) => removable_body!(S3Client, Abort, {
-                // SAFETY: live backref; ByteStream clears sink before free.
-                unsafe { p.get_mut() }.write(data)
-            }),
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, { p.write(data) }),
             SinkHandle::FileSink(p) => p.ref_guard().write(data),
             SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),
             SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
@@ -384,9 +375,10 @@ impl SinkHandle {
                 // SAFETY: live backref; ByteStream clears sink before free.
                 unsafe { p.get_mut() }.end_from_stream(err)
             }),
-            // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
             SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
-                streams::NetworkSink::end_from_stream(p.as_ptr(), err)
+                if let Some(sink) = p.ref_guard() {
+                    s3::multipart::NetworkSink::end_from_stream(&sink, err)
+                }
             }),
             SinkHandle::FileSink(p) => p.ref_guard().end_from_stream(err),
             SinkHandle::HTMLRewriter(p) => {

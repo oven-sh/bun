@@ -103,16 +103,18 @@ pub(crate) enum BlobOrStringOrBuffer {
     StringOrBuffer(StringOrBuffer<'static>),
 }
 
+impl AsRef<[u8]> for BlobOrStringOrBuffer {
+    fn as_ref(&self) -> &[u8] {
+        self.slice()
+    }
+}
+
 impl BlobOrStringOrBuffer {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::Blob(blob) => blob.shared_view(),
             Self::StringOrBuffer(str) => str.slice(),
         }
-    }
-
-    pub(crate) fn byte_length(&self) -> usize {
-        self.slice().len()
     }
 
     pub(crate) fn from_js_maybe_file(

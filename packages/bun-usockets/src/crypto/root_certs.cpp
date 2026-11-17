@@ -373,8 +373,6 @@ extern "C" const char *us_get_default_ciphers() {
 // - root_certs_windows.cpp loads raw certificate data (uses Windows headers)
 // - This file converts raw data to X509* (uses OpenSSL headers)
 
-#include <vector>
-
 struct RawCertificate {
   std::vector<unsigned char> data;
 };

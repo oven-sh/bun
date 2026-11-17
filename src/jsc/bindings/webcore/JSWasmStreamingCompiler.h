@@ -47,7 +47,6 @@ protected:
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, JSC::Wasm::StreamingCompiler&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, JSC::Wasm::StreamingCompiler* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<JSC::Wasm::StreamingCompiler>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<JSC::Wasm::StreamingCompiler>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<JSC::Wasm::StreamingCompiler> {
     using WrapperClass = JSWasmStreamingCompiler;

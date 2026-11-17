@@ -105,7 +105,6 @@
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
 #include "../napi.h"
-#include <limits>
 #include <algorithm>
 
 #if CPU(BIG_ENDIAN) || CPU(MIDDLE_ENDIAN) || CPU(NEEDS_ALIGNED_ACCESS)

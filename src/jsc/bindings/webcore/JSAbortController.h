@@ -84,7 +84,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, AbortController*)
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, AbortController&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, AbortController* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<AbortController>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<AbortController>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<AbortController> {
     using WrapperClass = JSAbortController;

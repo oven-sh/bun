@@ -75,7 +75,6 @@ protected:
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, ErrorEvent&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, ErrorEvent* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<ErrorEvent>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<ErrorEvent>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<ErrorEvent> {
     using WrapperClass = JSErrorEvent;

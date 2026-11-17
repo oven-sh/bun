@@ -623,7 +623,6 @@ struct Http2Context {
     };
     HttpRouter<RouterData> router;
 
-    Loop *loop = nullptr;
     /* The HttpContextData<SSL> we take connections from: its filter handlers
      * count our connections too, and its flags/limits apply to us. */
     void *parent = nullptr;
@@ -657,7 +656,7 @@ struct Http2Context {
         return v > 0xffffff ? 0xffffff : (uint32_t) v;
     }
 
-    Http2Context(Loop *loop, unsigned idleTimeoutS) : loop(loop), idleTimeoutS(idleTimeoutS) {
+    Http2Context(Loop *loop, unsigned idleTimeoutS) : idleTimeoutS(idleTimeoutS) {
         us_socket_group_init(&group, (us_loop_t *) loop, &vtable, this);
     }
 

@@ -271,11 +271,11 @@ describe("bundler", () => {
 
     describe.each(["cli", "api"] as const)("enum tag bindings (%s)", backend => {
       describe.each([false, true])("minify=%s", minify => {
-        test.concurrent.each([false, true])("preserves the binding, reentrant=%s", async reentrant => {
+        test.concurrent.each([false, true, "class field"])("preserves the binding, reentrant=%s", async reentrant => {
           using dir = tempDir("jsx-enum-binding", {
             "in.tsx": reentrant
               ? `
-              function render(component) { enum E { A = <Comp /> } return E.A; }
+              function render(component) { enum E { A = ${reentrant === "class field" ? "new (class { value = <Comp /> })().value" : "<Comp />"} } return E.A; }
               let depth = 0;
               globalThis.factory = { get h() {
                 if (depth++ === 0) render(() => "inner");

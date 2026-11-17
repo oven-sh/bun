@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
 import vm from "node:vm";
 
 // Strict-mode early errors. The cases follow esbuild's TestStrictMode corpus:

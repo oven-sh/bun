@@ -2142,7 +2142,7 @@ export function computeHardeningFlags(cfg: Config): string[] {
   if (!cfg.hardened) return [];
   return [
     ...hardeningFlags.filter(flag => (cfg.release && !cfg.asan) || !flag.startsWith("-D_FORTIFY_SOURCE")),
-    ...(cfg.signReturnAddresses ? signedReturnAddressFlags : []),
+    ...(cfg.signReturnAddresses ? signedReturnAddressFlags : cfg.arm64 ? ["-DENABLE_RETURN_ADDRESS_SIGNING=0"] : []),
   ];
 }
 

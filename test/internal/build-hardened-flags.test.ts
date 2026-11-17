@@ -300,6 +300,7 @@ test("a hardened build for arm64 signs its return addresses", () => {
   for (const partial of [{ hardened: true }, { arch: "aarch64" }, unsigned] as PartialConfig[]) {
     const all = Object.values(everyFlagOf(linuxConfig(partial, String(dir)))).flat();
     for (const flag of [...signing, rustSigning]) expect(all).not.toContain(flag);
+    expect(all.includes("-DENABLE_RETURN_ADDRESS_SIGNING=0")).toBe(partial === unsigned);
   }
   const prebuilt = linuxConfig({ hardened: true, arch: "aarch64", webkit: "prebuilt", lto: true }, String(dir));
   expect(webkit.provides(prebuilt).requireDefined?.symbols).toContain("JSC__AOT__savesSignedReturnAddresses");

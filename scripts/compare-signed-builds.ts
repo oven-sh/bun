@@ -170,8 +170,8 @@ for (const name of ["whole/typescript-transpiles", "whole/start"]) {
   report(`build/${name}`, "ns of the clock", wall);
   report(`build/${name}`, "ns of processors", cpu);
   report(`size/${name}`, "bytes", {
-    signed: statSync(executableOf("signed", name)).size - statSync(buns.signed).size,
-    unsigned: statSync(executableOf("unsigned", name)).size - statSync(buns.unsigned).size,
+    signed: statSync(executableOf("signed", name)).size,
+    unsigned: statSync(executableOf("unsigned", name)).size,
   });
 }
 report("size/bun", "bytes", { signed: statSync(buns.signed).size, unsigned: statSync(buns.unsigned).size });

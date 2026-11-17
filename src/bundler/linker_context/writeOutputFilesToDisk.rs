@@ -508,11 +508,7 @@ pub(crate) fn write_output_files_to_disk(
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
             output_path: chunk.final_rel_path.clone(),
             input_path,
-            input_loader: if chunk.entry_point.is_entry_point() {
-                parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize]
-            } else {
-                Loader::Js
-            },
+            input_loader: c.chunk_input_loader(chunk),
             hash: chunk.template.placeholder.hash,
             output_kind,
             loader: chunk.content.loader(),

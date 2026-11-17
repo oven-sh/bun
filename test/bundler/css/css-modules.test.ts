@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -63,6 +64,8 @@ describe("css", () => {
     },
   });
 
+  // The class-name object is in a chunk that both entry points import. #18435 printed a copy into
+  // each entry point, and said that the object should get a chunk of its own.
   itBundled("css-module/BundleTwoFilesWithCodeSplitting", {
     files: {
       "/foo-entry.js": `
@@ -80,27 +83,653 @@ describe("css", () => {
     outdir: "/out",
 
     onAfterBundle(api) {
-      api.expectFile("/out/foo-entry.js").toMatchInlineSnapshot(`
+      const [barEntry, chunk, fooEntry] = readdirSync(api.outdir)
+        .filter(file => file.endsWith(".js"))
+        .sort();
+      expect([barEntry, chunk, fooEntry]).toEqual([
+        "bar-entry.js",
+        expect.stringMatching(/^foo-entry-[a-z0-9]{8}\.js$/),
+        "foo-entry.js",
+      ]);
+      api.expectFile("/out/" + chunk).toMatchInlineSnapshot(`
         "// common.module.css
         var common_module_default = {
           baz: "baz_I7o34g"
         };
 
+        export { common_module_default };
+        "
+      `);
+      expect(api.readFile("/out/foo-entry.js").replace(chunk, "chunk.js")).toMatchInlineSnapshot(`
+        "import {
+          common_module_default
+        } from "./chunk.js";
+
         // foo-entry.js
         console.log(common_module_default);
         "
       `);
-      api.expectFile("/out/bar-entry.js").toMatchInlineSnapshot(`
-        "// common.module.css
-        var common_module_default = {
-          baz: "baz_I7o34g"
-        };
+      expect(api.readFile("/out/bar-entry.js").replace(chunk, "chunk.js")).toMatchInlineSnapshot(`
+        "import {
+          common_module_default
+        } from "./chunk.js";
 
         // bar-entry.js
         console.log(common_module_default);
         "
       `);
     },
+    run: [
+      { file: "/out/foo-entry.js", stdout: '{\n  baz: "baz_I7o34g",\n}' },
+      { file: "/out/bar-entry.js", stdout: '{\n  baz: "baz_I7o34g",\n}' },
+    ],
+  });
+
+  // JavaScript that reads the value of a stylesheet gets the class names, in every output format.
+  // The value is in a module of its own, so one stylesheet has one object and one `require()` result.
+  const stylesheets = {
+    "/x.module.css": `.foo { color: red }`,
+    "/plain.css": `.plain { color: green }`,
+    "/kebab.module.css": `.foo-bar { color: red } .baz { color: blue }`,
+    "/glob/a.module.css": `.a { color: red }`,
+    "/glob/b.module.css": `.b { color: blue }`,
+  };
+  const valueShapes: Record<
+    string,
+    { files: Record<string, string>; entryPoints?: string[]; run: Record<string, string>; skipModes?: string[] }
+  > = {
+    // Only the namespace object needs a runtime helper here.
+    NamespaceImport: {
+      files: {
+        "/entry.js": `
+          import * as styles from "./x.module.css";
+          import * as plain from "./plain.css";
+          console.log(JSON.stringify([styles, plain]));
+        `,
+      },
+      run: { "entry.js": '[{"default":{"foo":"foo_e7Ht-A"},"foo":"foo_e7Ht-A"},{"default":{}}]' },
+    },
+    // An entry point that only has a default import prints the object that another entry point names.
+    NamespaceImportNextToDefaultImport: {
+      files: {
+        "/a.js": `import * as styles from "./x.module.css"; console.log("a", JSON.stringify(styles));`,
+        "/b.js": `import styles from "./x.module.css"; console.log("b", JSON.stringify(styles));`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      run: {
+        "a.js": 'a {"default":{"foo":"foo_e7Ht-A"},"foo":"foo_e7Ht-A"}',
+        "b.js": 'b {"foo":"foo_e7Ht-A"}',
+      },
+    },
+    // A file with a run-time `export *` keeps the exports object of what it imports.
+    DefaultImportNextToRuntimeExportStar: {
+      files: {
+        "/a.js": `
+          import styles from "./x.module.css";
+          export * from "./commonjs.cjs";
+          console.log("a", JSON.stringify(styles));
+        `,
+        "/b.js": `import styles from "./x.module.css"; console.log("b", JSON.stringify(styles));`,
+        "/commonjs.cjs": `module.exports = { value: 1 };`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      run: { "a.js": 'a {"foo":"foo_e7Ht-A"}', "b.js": 'b {"foo":"foo_e7Ht-A"}' },
+    },
+    ExportStar: {
+      files: {
+        "/a.js": `import * as styles from "./x.module.css"; console.log("a", Object.keys(styles).join());`,
+        "/b.js": `export * from "./x.module.css"; console.log("b");`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      run: { "a.js": "a default,foo", "b.js": "b" },
+    },
+    Require: {
+      files: {
+        "/entry.js": `
+          const styles = require("./x.module.css");
+          const plain = require("./plain.css");
+          console.log(JSON.stringify([styles, plain]));
+          export {};
+        `,
+      },
+      run: { "entry.js": '[{"foo":"foo_e7Ht-A"},{}]' },
+    },
+    RequireNextToDefaultImport: {
+      files: {
+        "/a.js": `console.log("a", JSON.stringify(require("./x.module.css"))); export {};`,
+        "/b.js": `import styles from "./x.module.css"; console.log("b", JSON.stringify(styles));`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      run: { "a.js": 'a {"foo":"foo_e7Ht-A"}', "b.js": 'b {"foo":"foo_e7Ht-A"}' },
+    },
+    RequireAndDefaultImportAreOneObject: {
+      files: {
+        "/entry.js": `
+          import styles from "./x.module.css";
+          console.log(styles === require("./x.module.css"), JSON.stringify(styles));
+        `,
+      },
+      run: { "entry.js": 'true {"foo":"foo_e7Ht-A"}' },
+    },
+    // The wrapper of a require()d file covers the stylesheet that the file imports.
+    RequireOfFileThatImportsStylesheet: {
+      files: {
+        "/a.js": `console.log("a", JSON.stringify(require("./component.js").styles)); export {};`,
+        "/b.js": `import styles from "./x.module.css"; console.log("b", JSON.stringify(styles));`,
+        "/component.js": `import styles from "./x.module.css"; export { styles };`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      run: { "a.js": 'a {"foo":"foo_e7Ht-A"}', "b.js": 'b {"foo":"foo_e7Ht-A"}' },
+    },
+    RequireOfStylesheetThatComposes: {
+      files: {
+        "/entry.js": `
+          import base from "./base.module.css";
+          console.log(JSON.stringify([require("./button.module.css"), base]));
+        `,
+        "/button.module.css": `.button { composes: base from "./base.module.css"; color: red }`,
+        "/base.module.css": `.base { padding: 0 }`,
+      },
+      run: { "entry.js": '[{"button":"base_1Cz41w button_6E65eQ"},{"base":"base_1Cz41w"}]' },
+    },
+    DynamicImport: {
+      files: {
+        "/entry.js": `
+          import("./x.module.css").then(styles =>
+            console.log(JSON.stringify(styles.default), Object.keys(styles).sort().join()),
+          );
+        `,
+      },
+      run: { "entry.js": '{"foo":"foo_e7Ht-A"} default,foo' },
+    },
+    StylesheetEntryPointNextToDefaultImport: {
+      files: {
+        "/entry.js": `import styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+      },
+      entryPoints: ["/entry.js", "/x.module.css"],
+      run: { "entry.js": '{"foo":"foo_e7Ht-A"}' },
+    },
+    // One require() or import() of a stylesheet left every default import of it with no class names.
+    DefaultImportNextToRequireInAnotherFile: {
+      files: {
+        "/entry.js": `import "./modern.js"; import "./legacy.cjs";`,
+        "/modern.js": `import styles from "./x.module.css"; console.log("modern", styles.foo);`,
+        "/legacy.cjs": `console.log("legacy", require("./x.module.css").foo);`,
+      },
+      run: { "entry.js": "modern foo_e7Ht-A\nlegacy foo_e7Ht-A" },
+    },
+    DefaultImportNextToDynamicImportInAnotherFile: {
+      files: {
+        "/entry.js": `import "./modern.js"; import "./lazy.js";`,
+        "/modern.js": `import styles from "./x.module.css"; console.log("modern", styles.foo);`,
+        "/lazy.js": `import("./x.module.css").then(styles => console.log("lazy", styles.default.foo));`,
+      },
+      run: { "entry.js": "modern foo_e7Ht-A\nlazy foo_e7Ht-A" },
+    },
+    // A require() whose value nothing reads still prints a wrapper, which needs the runtime.
+    RequireWithNoValueReadInCommonJS: {
+      files: {
+        "/entry.js": `require("./plain.css"); require("./x.module.css"); console.log("ran");`,
+      },
+      run: { "entry.js": "ran" },
+      // An iife does not run a CommonJS entry point, with or without a stylesheet.
+      skipModes: ["iife"],
+    },
+    // A CommonJS file whose exports are lifted has no wrapper of its own.
+    RequireWithNoValueReadInCommonJSDependency: {
+      files: {
+        "/entry.js": `import { value } from "./dependency.js"; console.log("ran", value);`,
+        "/dependency.js": `require("./plain.css"); exports.value = 1;`,
+      },
+      run: { "entry.js": "ran 1" },
+    },
+    RequireWithNoValueReadInModule: {
+      files: {
+        "/entry.js": `
+          import { value } from "./value.js";
+          require("./plain.css");
+          require("./x.module.css");
+          console.log("ran", value);
+        `,
+        "/value.js": `export const value = 1;`,
+      },
+      run: { "entry.js": "ran 1" },
+    },
+    // A name that is not an identifier is a key of the object. The namespace of an ES module does not
+    // have it yet, as for such a key of a JSON file.
+    ClassNameThatIsNotAnIdentifier: {
+      files: {
+        "/entry.js": `
+          import styles from "./kebab.module.css";
+          import * as namespace from "./kebab.module.css";
+          const required = require("./kebab.module.css");
+          import("./kebab.module.css").then(lazy =>
+            console.log(JSON.stringify([styles, namespace.default, required, lazy.default])),
+          );
+        `,
+      },
+      run: {
+        "entry.js": "[" + Array(4).fill('{"foo-bar":"foo-bar_Fe8ZQg","baz":"baz_Fe8ZQg"}').join() + "]",
+      },
+    },
+    // import.meta.glob() makes an import() for each file, or a namespace import with \`eager\`.
+    LazyGlob: {
+      files: {
+        "/entry.js": `
+          const modules = import.meta.glob("./glob/*.module.css");
+          const paths = Object.keys(modules).sort();
+          Promise.all(paths.map(path => modules[path]())).then(loaded =>
+            console.log(JSON.stringify(loaded.map((styles, i) => [paths[i], styles.default, Object.keys(styles).sort()]))),
+          );
+        `,
+      },
+      run: {
+        "entry.js":
+          '[["./glob/a.module.css",{"a":"a_KE7_UA"},["a","default"]],["./glob/b.module.css",{"b":"b_okzPrQ"},["b","default"]]]',
+      },
+    },
+    LazyGlobOfDefaultExport: {
+      files: {
+        "/entry.js": `
+          const modules = import.meta.glob("./glob/*.module.css", { import: "default" });
+          const paths = Object.keys(modules).sort();
+          Promise.all(paths.map(path => modules[path]())).then(loaded =>
+            console.log(JSON.stringify(loaded.map((styles, i) => [paths[i], styles]))),
+          );
+        `,
+      },
+      run: { "entry.js": '[["./glob/a.module.css",{"a":"a_KE7_UA"}],["./glob/b.module.css",{"b":"b_okzPrQ"}]]' },
+    },
+    EagerGlob: {
+      files: {
+        "/entry.js": `
+          const modules = import.meta.glob("./glob/*.module.css", { eager: true });
+          const paths = Object.keys(modules).sort();
+          console.log(JSON.stringify(paths.map(path => [path, modules[path].default, Object.keys(modules[path]).sort()])));
+        `,
+      },
+      run: {
+        "entry.js":
+          '[["./glob/a.module.css",{"a":"a_KE7_UA"},["a","default"]],["./glob/b.module.css",{"b":"b_okzPrQ"},["b","default"]]]',
+      },
+    },
+    // The class names run where the first import of the stylesheet is, also when that import reads no
+    // value. m.js reads them before b.js has run its own import of the stylesheet.
+    BareImportAheadOfValueImportInACycle: {
+      files: {
+        "/entry.js": `
+          import "./x.module.css";
+          import { value } from "./b.js";
+          console.log(JSON.stringify(value));
+        `,
+        "/b.js": `
+          import { early } from "./m.js";
+          import styles from "./x.module.css";
+          export function getStyles() { return styles; }
+          export const value = [early, styles.foo];
+        `,
+        "/m.js": `
+          import { getStyles } from "./b.js";
+          export const early = typeof getStyles();
+        `,
+      },
+      run: { "entry.js": '["object","foo_e7Ht-A"]' },
+    },
+  };
+  const valueModes = {
+    esm: {},
+    cjs: { format: "cjs" },
+    iife: { format: "iife" },
+    minify: { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true },
+    bun: { target: "bun" },
+    cli: { backend: "cli" },
+  } as const;
+  for (const [shape, { files, entryPoints = ["/entry.js"], run, skipModes = [] }] of Object.entries(valueShapes)) {
+    for (const [mode, options] of Object.entries(valueModes)) {
+      if (skipModes.includes(mode)) continue;
+      itBundled(`css-module/${shape}/${mode}`, {
+        files: { ...stylesheets, ...files },
+        entryPoints,
+        outdir: "/out",
+        ...options,
+        run: Object.entries(run).map(([file, stdout]) => ({ file: "/out/" + file, stdout })),
+      });
+    }
+  }
+
+  itBundled("css-module/NamespaceImportInExecutable", {
+    files: {
+      ...stylesheets,
+      "/entry.js": `import * as styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+    },
+    entryPoints: ["/entry.js"],
+    compile: true,
+    backend: "cli",
+    run: { stdout: '{"default":{"foo":"foo_e7Ht-A"},"foo":"foo_e7Ht-A"}' },
+  });
+
+  // The wrapper of a require()d stylesheet holds the class names. The files that the stylesheet
+  // names with @import, url() and composes are not JavaScript imports of the wrapper: they get none.
+  itBundled("css-module/RequireWrapsOnlyTheStylesheet", {
+    files: {
+      "/entry.js": `
+        import image from "./image.png";
+        import base from "./base.module.css";
+        const styles = require("./styles.module.css");
+        console.log(JSON.stringify(styles), JSON.stringify(base), typeof image);
+      `,
+      "/styles.module.css": `
+        @import "./reset.css";
+        .card { composes: base from "./base.module.css"; background: url("./image.png") }
+      `,
+      "/base.module.css": `.base { padding: 0 }`,
+      "/reset.css": `body { margin: 0 }`,
+      "/image.png": "not a real png",
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+
+        // styles.module.css
+        var require_styles_module = __commonJS(function(exports, module) {
+          module.exports = {
+            card: "base_1Cz41w card_-MSaAA"
+          };
+        });
+
+        // image.png
+        var image_default = "./image-mphfvab5.png";
+
+        // base.module.css
+        var base_module_default = {
+          base: "base_1Cz41w"
+        };
+
+        // entry.js
+        var styles = require_styles_module();
+        console.log(JSON.stringify(styles), JSON.stringify(base_module_default), typeof image_default);
+        "
+      `);
+    },
+    run: { stdout: '{"card":"base_1Cz41w card_-MSaAA"} {"base":"base_1Cz41w"} string' },
+  });
+
+  // An entry point that reads no value of a stylesheet gets no runtime helper from an entry point that does.
+  itBundled("css-module/RequireInOneEntryPointAddsNothingToAnother", {
+    files: {
+      "/a.js": `console.log(JSON.stringify(require("./a.css"))); export {};`,
+      "/b.js": `
+        import "./a.css";
+        import styles from "./b.module.css";
+        console.log(JSON.stringify(styles));
+      `,
+      "/a.css": `.a { color: red }`,
+      "/b.module.css": `.b { color: blue }`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/a.js").toMatchInlineSnapshot(`
+        "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+
+        // a.css
+        var require_a = __commonJS(function(exports, module) {
+          module.exports = {};
+        });
+
+        // a.js
+        console.log(JSON.stringify(require_a()));
+        "
+      `);
+      api.expectFile("/out/b.js").toMatchInlineSnapshot(`
+        "// b.module.css
+        var b_module_default = {
+          b: "b_Kd7Gww"
+        };
+
+        // b.js
+        console.log(JSON.stringify(b_module_default));
+        "
+      `);
+    },
+    run: [
+      { file: "/out/a.js", stdout: "{}" },
+      { file: "/out/b.js", stdout: '{"b":"b_Kd7Gww"}' },
+    ],
+  });
+
+  // The class names print where the first import of the stylesheet is, also when that import is a bare one.
+  itBundled("css-module/BareImportPlacesTheClassNames", {
+    files: {
+      "/entry.js": `
+        import "./x.module.css";
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        console.log(a, b);
+      `,
+      "/a.js": `export const a = "a";`,
+      "/b.js": `import styles from "./x.module.css"; export const b = styles.foo;`,
+      "/x.module.css": `.foo { color: red }`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// x.module.css
+        var x_module_default = {
+          foo: "foo_e7Ht-A"
+        };
+
+        // a.js
+        var a = "a";
+
+        // b.js
+        var b = x_module_default.foo;
+
+        // entry.js
+        console.log(a, b);
+        "
+      `);
+    },
+    run: { stdout: "a foo_e7Ht-A" },
+  });
+
+  // A file that is wrapped (here: loaded by require() or by an import() that is not split) can have a bare
+  // import of a stylesheet. The stylesheet has no JavaScript, so it gets no wrapper and no call.
+  const wrappedFiles = {
+    "/page.js": `import "./page.css"; export const page = 1; console.log("page");`,
+    "/page.css": `@import "./reset.css"; .page { color: red; background: url("./image.png") }`,
+    "/reset.css": `body { margin: 0 }`,
+    "/image.png": "not a real png",
+  };
+  itBundled("css-module/BareImportInFileLoadedByRequire", {
+    files: {
+      ...wrappedFiles,
+      "/entry.js": `console.log(JSON.stringify(require("./page.js"))); export {};`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js.slice(js.indexOf("// page.js"))).toMatchInlineSnapshot(`
+        "// page.js
+        var exports_page = {};
+        __export(exports_page, {
+          page: () => page
+        });
+        var page = 1;
+        var init_page = __esm(() => {
+          console.log("page");
+        });
+
+        // entry.js
+        console.log(JSON.stringify((init_page(), __toCommonJS(exports_page))));
+        "
+      `);
+      expect(api.readFile("/out/entry.css")).toContain("margin: 0");
+    },
+    run: { stdout: 'page\n{"page":1}' },
+  });
+  itBundled("css-module/BareImportInFileLoadedByUnsplitImport", {
+    files: {
+      ...wrappedFiles,
+      "/entry.js": `import("./page.js").then(page => console.log(JSON.stringify(page)));`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js.slice(js.indexOf("// page.js"))).toMatchInlineSnapshot(`
+        "// page.js
+        var exports_page = {};
+        __export(exports_page, {
+          page: () => page
+        });
+        var page = 1;
+        var init_page = __esm(() => {
+          console.log("page");
+        });
+
+        // entry.js
+        Promise.resolve().then(() => (init_page(), exports_page)).then((page) => console.log(JSON.stringify(page)));
+        "
+      `);
+    },
+    run: { stdout: 'page\n{"page":1}' },
+  });
+  // A require() of a stylesheet has a value, also when nothing reads it: the wrapper holds an empty object.
+  itBundled("css-module/RequireWithNoValueReadHasAnEmptyWrapper", {
+    files: {
+      ...wrappedFiles,
+      "/entry.js": `import legacy from "./legacy.cjs"; console.log(JSON.stringify(legacy));`,
+      "/legacy.cjs": `require("./page.css"); module.exports = { legacy: 1 };`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js.slice(js.indexOf("// page.css"))).toMatchInlineSnapshot(`
+        "// page.css
+        var require_page = __commonJS(function(exports, module) {
+          module.exports = {};
+        });
+
+        // legacy.cjs
+        var require_legacy = __commonJS(function(exports, module) {
+          require_page();
+          module.exports = { legacy: 1 };
+        });
+
+        // entry.js
+        var import_legacy = __toESM(require_legacy());
+        console.log(JSON.stringify(import_legacy.default));
+        "
+      `);
+    },
+    run: { stdout: '{"legacy":1}' },
+  });
+  // Two entry points load the wrapped file, so it is in a chunk of its own.
+  itBundled("css-module/BareImportInFileLoadedByRequireWithSplitting", {
+    files: {
+      ...wrappedFiles,
+      "/a.js": `console.log("a", JSON.stringify(require("./page.js"))); export {};`,
+      "/b.js": `console.log("b", JSON.stringify(require("./page.js"))); export {};`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: 'page\na {"page":1}' },
+      { file: "/out/b.js", stdout: 'page\nb {"page":1}' },
+    ],
+  });
+
+  // The minifier picks short names by how often each character is in the files of a chunk. The text of the
+  // stylesheet counts for the module that holds its class names, so the names are the ones that a build
+  // picked before that module had a row of its own.
+  itBundled("css-module/MinifiedNamesCountTheTextOfTheStylesheet", {
+    files: {
+      "/entry.js": `
+        import styles from "./x.module.css";
+        export function read(value) { return styles[value]; }
+      `,
+      "/x.module.css": `/* ${Buffer.alloc(4096, "q").toString()} */ .foo { color: red }`,
+    },
+    outdir: "/out",
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// x.module.css
+        var q = {
+          foo: "foo_e7Ht-A"
+        };
+
+        // entry.js
+        function f(o) {
+          return q[o];
+        }
+        export {
+          f as read
+        };
+        "
+      `);
+    },
+  });
+
+  // The module that holds the class names is not a source file: the source map of a JS chunk has no entry for it.
+  for (const [name, sourceMap] of Object.entries({
+    External: "external",
+    Linked: "linked",
+    Inline: "inline",
+  } as const)) {
+    itBundled(`css-module/SourceMapHasNoStylesheet${name}`, {
+      files: {
+        "/entry.js": `
+          import * as styles from "./x.module.css";
+          console.log(JSON.stringify(styles), JSON.stringify(require("./y.module.css")));
+        `,
+        "/x.module.css": `.foo { color: red }`,
+        "/y.module.css": `.bar { color: blue }`,
+      },
+      outdir: "/out",
+      sourceMap,
+      onAfterBundle(api) {
+        const js = api.readFile("/out/entry.js");
+        const map = JSON.parse(
+          sourceMap === "inline"
+            ? Buffer.from(js.slice(js.lastIndexOf("base64,") + "base64,".length), "base64").toString()
+            : api.readFile("/out/entry.js.map"),
+        );
+        expect({ sources: map.sources, sourcesContent: map.sourcesContent?.length }).toEqual({
+          sources: ["../entry.js"],
+          sourcesContent: 1,
+        });
+      },
+      run: { stdout: '{"default":{"foo":"foo_e7Ht-A"},"foo":"foo_e7Ht-A"} {"bar":"bar_zA6N2g"}' },
+    });
+  }
+  // The chunk that two entry points share holds only class names: its source map has no source.
+  itBundled("css-module/SourceMapOfSharedClassNames", {
+    files: {
+      "/a.js": `import styles from "./x.module.css"; console.log("a", styles.foo);`,
+      "/b.js": `import styles from "./x.module.css"; console.log("b", styles.foo);`,
+      "/x.module.css": `.foo { color: red }`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    sourceMap: "external",
+    onAfterBundle(api) {
+      const maps = readdirSync(api.outdir)
+        .filter(file => file.endsWith(".js.map"))
+        .sort()
+        .map(file => JSON.parse(api.readFile("/out/" + file)).sources);
+      expect(maps).toEqual([[], ["../a.js"], ["../b.js"]]);
+    },
+    run: [
+      { file: "/out/a.js", stdout: "a foo_e7Ht-A" },
+      { file: "/out/b.js", stdout: "b foo_e7Ht-A" },
+    ],
   });
 
   // https://github.com/oven-sh/bun/issues/18921

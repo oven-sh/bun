@@ -203,7 +203,11 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     /// what the import records of its live parts load
     /// (`file_loaded_by_import`) and the files declaring the bindings those
     /// parts use. A CSS or HTML file has no parts; every record counts.
+    /// The JS stub of a stylesheet loads the stylesheet.
     pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, mut each: impl FnMut(u32)) {
+        if let Some(stylesheet) = self.parse_graph().css_js_stubs.stylesheet_of(source_index) {
+            each(stylesheet);
+        }
         let records = &self.graph.ast.items_import_records()[source_index as usize];
         if self.parse_graph().css_asts[source_index as usize].is_some()
             || self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
@@ -307,6 +311,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
         let parse_graph = &bundle.graph;
         let entry_points: &[Index] = &parse_graph.entry_points;
+        // Every row of the graph has a copy in the linker graph: the copy is made after the last row.
+        debug_assert_eq!(graph.ast.len(), parse_graph.input_files.len());
 
         graph.code_splitting = bundle.transpiler.options.code_splitting;
         graph.reachable_files = reachable.to_vec();
@@ -501,16 +507,26 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         }
     }
 
+    /// The loader of the file that `chunk` is made from: `BuildArtifact.loader`. The CSS chunk of a JavaScript entry
+    /// point has that entry point's loader. The JS stub of a stylesheet has the loader of the stylesheet, as the
+    /// value of a JSON file has the JSON loader.
+    pub(crate) fn chunk_input_loader(&self, chunk: &Chunk) -> Loader {
+        if !chunk.entry_point.is_entry_point() {
+            return Loader::Js;
+        }
+        let parse_graph = self.parse_graph();
+        let entry_point = chunk.entry_point.source_index();
+        let source_index = parse_graph
+            .css_js_stubs
+            .stylesheet_of(entry_point)
+            .unwrap_or(entry_point);
+        parse_graph.input_files.items_loader()[source_index as usize]
+    }
+
     /// Whether `chunk` is one that bytecode (and, in an executable, module info) is made for. The output file list
     /// counts those files with this before they are made (`OutputFileList::calculate_output_file_list_capacity`).
     pub(crate) fn chunk_gets_bytecode(&self, chunk: &Chunk) -> bool {
-        // The CSS chunk of a JavaScript entry point has that entry point's loader.
-        let loader = if chunk.entry_point.is_entry_point() {
-            self.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize]
-        } else {
-            crate::options::Loader::Js
-        };
-        chunk.content.is_javascript() && loader.is_javascript_like()
+        chunk.content.is_javascript() && self.chunk_input_loader(chunk).is_javascript_like()
     }
 
     #[inline(never)]
@@ -660,6 +676,20 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
             if self.module_preload() {
                 self.mark_preload_entries(&mut worklist)?;
+            }
+        }
+
+        // A stylesheet has no JS parts and no wrapper. What JavaScript reads of it is in its JS stub.
+        if cfg!(debug_assertions) {
+            let flags = self.graph.meta.items_flags();
+            for (source_index, stylesheet) in self.parse_graph().css_asts.iter().enumerate() {
+                debug_assert!(
+                    stylesheet.is_none()
+                        || (self.graph.parts_live[source_index]
+                            .find_first_set()
+                            .is_none()
+                            && flags[source_index].wrap == WrapKind::None)
+                );
             }
         }
 
@@ -2309,6 +2339,13 @@ impl LinkerContext<'_, '_> {
         if source_index as usize >= self.graph.ast.len() {
             debug_assert!(false);
             return;
+        }
+
+        // If the JS stub of a stylesheet is included, also include the stylesheet.
+        if let Some(stylesheet) = self.parse_graph().css_js_stubs.stylesheet_of(source_index)
+            && !self.graph.files_live.is_set(stylesheet as usize)
+        {
+            worklist.push(TreeShakeWork::File(stylesheet));
         }
 
         if self.parse_graph().css_asts[source_index as usize].is_some() {
@@ -4237,12 +4274,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     #[inline]
     pub(crate) fn generate_code_for_lazy_export(
         &mut self,
-        log: &mut Log,
         source_index: crate::IndexInt,
     ) -> Result<(), AllocError> {
         crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export(
             self,
-            log,
             source_index,
         )
     }

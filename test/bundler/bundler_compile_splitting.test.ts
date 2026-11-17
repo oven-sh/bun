@@ -656,6 +656,38 @@ describe("bundler", () => {
       });
     }
 
+    // An import() of a stylesheet loads a chunk of the executable that holds the class names. With --bytecode
+    // the entry point loads from bytecode and that chunk from source, like a chunk that holds a JSON file.
+    for (const bytecode of [false, true]) {
+      itBundled(`compile/splitting/DynamicImportOfCSSModule-${bytecode ? "bytecode" : "source"}`, {
+        compile: true,
+        splitting: true,
+        bytecode,
+        format: "esm",
+        backend: "cli",
+        files: {
+          "/entry.ts": /* js */ `
+            import styles from "./x.module.css";
+            const lazy = await import("./x.module.css");
+            console.log(Object.keys(styles).join(), Object.keys(lazy).sort().join(), lazy.default === styles);
+          `,
+          "/x.module.css": `.foo { color: red }`,
+        },
+        run: {
+          stdout: "foo default,foo true",
+          env: bytecode ? { BUN_JSC_verboseDiskCache: "1" } : undefined,
+          validate: bytecode
+            ? ({ stderr }) => {
+                const lines = stderr.trim().split("\n");
+                expect(lines.filter(l => l === "[Disk Cache] Cache hit for sourceCode").length).toBeGreaterThanOrEqual(
+                  1,
+                );
+              }
+            : undefined,
+        },
+      });
+    }
+
     // A chunk that is only linked statically has no module namespace object.
     itBundled("compile/splitting/NamespaceObjectsOnlyForImportedChunks", {
       compile: true,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 
 // Type definitions for metafile structure
@@ -708,6 +708,87 @@ describe("bundler metafile", () => {
     expect(aImportsB).toBe(true);
     expect(bImportsA).toBe(true);
   });
+
+  // JavaScript reads the class names of a stylesheet from a module that the bundler makes. The stylesheet is
+  // still one input, with the imports of the stylesheet.
+  test("metafile has one input for a stylesheet that JavaScript reads a value from", async () => {
+    using dir = tempDir("metafile-css-module-value", {
+      "entry.js": `
+        import styles from "./styles.module.css";
+        const lazy = await import("./lazy.module.css");
+        console.log(styles.card, lazy.default.lazy);
+      `,
+      "styles.module.css": `@import "./reset.css";\n.card { composes: base from "./base.module.css"; color: red }\n`,
+      "base.module.css": `.base { padding: 0 }\n`,
+      "reset.css": `body { margin: 0 }\n`,
+      "lazy.module.css": `.lazy { color: blue }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "entry.js",
+        "--splitting",
+        "--metafile=meta.json",
+        "--metafile-md=meta.md",
+        "--outdir=dist",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+
+    // `JSON.parse` keeps the last of two equal keys, so count the keys in the text.
+    const json = await Bun.file(`${dir}/meta.json`).text();
+    const inputsText = json.slice(json.indexOf('"inputs"'), json.indexOf('"outputs"'));
+    expect(inputsText.match(/"[^"]+\.css": \{/g)?.sort()).toEqual([
+      '"base.module.css": {',
+      '"lazy.module.css": {',
+      '"reset.css": {',
+      '"styles.module.css": {',
+    ]);
+
+    const metafile: Metafile = JSON.parse(json);
+    expect(metafile.inputs["styles.module.css"]).toEqual({
+      bytes: 85,
+      imports: [
+        { path: "reset.css", kind: "import-rule", original: "./reset.css" },
+        { path: "base.module.css", kind: "composes", original: "./base.module.css" },
+      ],
+      format: "css",
+    } as any);
+    expect(metafile.inputs["lazy.module.css"]).toEqual({ bytes: 22, imports: [], format: "css" } as any);
+    // The class names are bytes of the stylesheet in the JS output that holds them.
+    expect(metafile.outputs["./entry.js"].inputs["styles.module.css"].bytesInOutput).toBeGreaterThan(0);
+
+    expect(await Bun.file(`${dir}/meta.md`).text()).toContain("| Input modules | 5 |");
+    expect(exitCode).toBe(0);
+  });
+
+  test("metafile lists no exports for a stylesheet entry point", async () => {
+    using dir = tempDir("metafile-css-entry-point-exports", {
+      "a.module.css": `.foo { color: red } .bar { composes: foo }`,
+      "plain.css": `.plain { color: blue }`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/a.module.css`, `${dir}/plain.css`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+    const outputs = Object.entries((result.metafile as Metafile).outputs).map(([path, output]) => [
+      path,
+      output.exports,
+    ]);
+    expect(outputs.sort()).toEqual([
+      ["./a.module.css", []],
+      ["./plain.css", []],
+    ]);
+  });
 });
 
 describe("Bun.build metafile option variants", () => {
@@ -896,7 +977,6 @@ describe("Bun.build metafile option variants", () => {
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {

@@ -95,6 +95,11 @@ pub(crate) fn scan_imports_and_exports(
                     input_files,
                 );
 
+                // `DependencyWrapper::wrap` stops at a stylesheet, as at the runtime: a stylesheet has no JS
+                // parts to wrap, and its records are not JS imports. A wrapped file can have a bare `import`
+                // of one.
+                meta.flags[id].did_wrap_dependencies = true;
+
                 continue;
             }
 
@@ -433,6 +438,11 @@ pub(crate) fn scan_imports_and_exports(
         // are ignored for those modules.
         {
             let mut export_star_ctx: Option<ExportStarContext> = None;
+            let has_any_css_locals = this
+                .bundle
+                .has_any_css_locals
+                .load(core::sync::atomic::Ordering::Relaxed)
+                != 0;
             let _trace = perf::trace("Bundler.ResolveExportStarStatements");
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
@@ -445,7 +455,11 @@ pub(crate) fn scan_imports_and_exports(
                 // generation is done here because at this point we know that the
                 // "ExportsKind" field has its final value and will not be changed.
                 if this.graph.ast.items_flags()[id].contains(AstFlags::HAS_LAZY_EXPORT) {
-                    this.generate_code_for_lazy_export(log, id as u32)?;
+                    this.generate_code_for_lazy_export(id as u32)?;
+                } else if has_any_css_locals {
+                    super::generate_code_for_lazy_export::report_composes_errors(
+                        this, log, id as u32,
+                    );
                 }
 
                 // Propagate exports for export star statements

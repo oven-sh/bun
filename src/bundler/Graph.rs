@@ -2,7 +2,7 @@ use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
-use bun_collections::MultiArrayList;
+use bun_collections::{ArrayHashMap, MultiArrayList};
 use enum_map::EnumMap;
 
 use crate::IndexStringMap::IndexStringMap;
@@ -75,6 +75,8 @@ pub struct Graph<'a> {
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
     pub(crate) html_imports: Vec<IndexInt>,
 
+    pub(crate) css_js_stubs: CssJsStubs,
+
     pub(crate) estimated_file_loader_count: u32,
 
     /// For Bake, a count of the CSS asts is used to make precise
@@ -114,6 +116,55 @@ impl<'a> core::ops::Index<usize> for CssAsts<'a> {
     type Output = Option<Box<BundlerStyleSheet<'a>>>;
     fn index(&self, source_index: usize) -> &Self::Output {
         self.0.get(source_index).unwrap_or(&None)
+    }
+}
+
+/// The JS modules that export the class names of stylesheets (esbuild's "JavaScript stub" of a CSS
+/// file). JavaScript that reads a value from a stylesheet imports its stub, so the row of a
+/// stylesheet has no JS parts. `find_reachable_files` adds them as the last rows of the graph.
+#[derive(Default)]
+pub(crate) struct CssJsStubs {
+    /// The source index of the first stub. Stub `first + i` has the key `stubs.keys()[i]`.
+    first: IndexInt,
+    /// The stylesheet and the target of each stub. esbuild has one stub for a stylesheet.
+    /// `bun build --app` gives its graphs one stylesheet row when an `onResolve` plugin declines
+    /// the import (`share_stylesheet_source_index_across_graphs`), and the JavaScript of each
+    /// graph needs a stub of its own target.
+    stubs: ArrayHashMap<(IndexInt, options::Target), ()>,
+}
+
+impl CssJsStubs {
+    pub(crate) fn new(
+        first: IndexInt,
+        stubs: ArrayHashMap<(IndexInt, options::Target), ()>,
+    ) -> Self {
+        Self { first, stubs }
+    }
+
+    /// The stylesheet whose class names the stub at `source_index` exports.
+    #[inline]
+    pub(crate) fn stylesheet_of(&self, source_index: IndexInt) -> Option<IndexInt> {
+        self.stubs
+            .keys()
+            .get(source_index.checked_sub(self.first)? as usize)
+            .map(|&(stylesheet, _)| stylesheet)
+    }
+
+    /// The stub that JavaScript of `target` imports for the value of `stylesheet`.
+    #[inline]
+    pub(crate) fn stub_of(
+        &self,
+        stylesheet: IndexInt,
+        target: options::Target,
+    ) -> Option<IndexInt> {
+        if self.stubs.is_empty() {
+            return None;
+        }
+        Some(self.first + self.stubs.get_index(&(stylesheet, target))? as IndexInt)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.stubs.count()
     }
 }
 
@@ -192,6 +243,7 @@ impl<'a> Graph<'a> {
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: Vec::new(),
+            css_js_stubs: CssJsStubs::default(),
             estimated_file_loader_count: 0,
             css_file_count: 0,
             kit_referenced_server_data: false,

@@ -260,6 +260,15 @@ pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box
             continue;
         }
 
+        // The JS stub of a stylesheet is part of the stylesheet's input.
+        if parse_graph
+            .css_js_stubs
+            .stylesheet_of(source_index)
+            .is_some()
+        {
+            continue;
+        }
+
         let source = &sources[source_index as usize];
         if source.path.text.is_empty() {
             continue;

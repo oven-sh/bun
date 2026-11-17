@@ -179,6 +179,55 @@ b.onLoad({ filter: ${/\.tmpl$/} }, () => ({ contents: 'export default "from the 
     600_000,
   );
 
+  // The page's script is bundled by the linker in both modes. The program prints the script, and the class
+  // names are what the script computes.
+  test(
+    "page whose script reads the class names of a CSS module",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-pages", {
+          ...sharedFiles,
+          "e.html": page("E", "e.ts"),
+          "e.ts": `// @ts-ignore
+import * as styles from "./x.module.css";
+// @ts-ignore
+const required = require("./x.module.css");
+// @ts-ignore
+import("./x.module.css").then(lazy => console.log(JSON.stringify([styles, required, lazy.default])));
+`,
+          "x.module.css": ".foo {\n  color: red;\n}\n",
+          "main.ts":
+            importPage("e") +
+            `declare const Bun: any;
+// @ts-ignore
+import styles from "./x.module.css";
+console.error(JSON.stringify(styles));
+for (const file of e.files) if (file.loader === "js") console.log(await Bun.file(file.path).text());
+`,
+        });
+        const folder = String(dir);
+        for (const mode of MODES) {
+          const program = join(folder, exe(mode));
+          const built = await spawned(commandLine()(program, mode), folder, bunEnv);
+          expect({ mode, exitCode: built.exitCode, signal: built.signal }).toEqual({ mode, exitCode: 0, signal: null });
+          const ran = await spawned([program], folder, mode === "aot" ? COMPILED : bunEnv);
+          expect({ mode, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ mode, exitCode: 0, signal: null });
+          const classNames = ran.stderr.trim().split("\n").at(-1)!;
+          expect({ mode, classNames }).toEqual({ mode, classNames: expect.stringMatching(/^\{"foo":"foo_[\w-]+"\}$/) });
+
+          const script = join(folder, mode + "-page.mjs");
+          await Bun.write(script, ran.stdout);
+          const page = await spawned([bunExe(), script], folder, bunEnv);
+          expect({ mode, stdout: page.stdout, exitCode: page.exitCode }).toEqual({
+            mode,
+            stdout: `[{"default":${classNames},"foo":${JSON.stringify(JSON.parse(classNames).foo)}},${classNames},${classNames}]\n`,
+            exitCode: 0,
+          });
+        }
+      }),
+    600_000,
+  );
+
   test.each(failures)(
     "%s",
     (_, script, files, message) =>

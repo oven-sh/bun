@@ -489,6 +489,97 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
+  // A route (server graph) and the client entry point (client graph) each read the class names of a CSS module
+  // from a module of their own graph. With an `onResolve` plugin that declines the import, the two graphs share
+  // one row for the stylesheet. Without one, each graph has its own row: there the route also imports y.css,
+  // because two graphs cannot write the same CSS file.
+  const classNames = `{"foo":"foo_e7Ht-A"}`;
+  const namespace = `{"default":${classNames},"foo":"foo_e7Ht-A"}`;
+  test.concurrent.each([
+    {
+      name: "import * as, one stylesheet row for both graphs",
+      declines: true,
+      route: `import * as styles from "../x.module.css"; export default () => JSON.stringify(styles);`,
+      client: `import * as styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+      value: namespace,
+    },
+    {
+      name: "require() and import, one stylesheet row for both graphs",
+      declines: true,
+      route: `const styles = require("../x.module.css"); export default () => JSON.stringify(styles);`,
+      client: `import styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+      value: classNames,
+    },
+    {
+      name: "import(), one stylesheet row for both graphs",
+      declines: true,
+      route: `export default async () => JSON.stringify(await import("../x.module.css"));`,
+      client: `console.log(JSON.stringify(await import("./x.module.css")));`,
+      value: namespace,
+    },
+    {
+      name: "import * as, one stylesheet row for each graph",
+      declines: false,
+      route: `import "../y.css"; import * as styles from "../x.module.css"; export default () => JSON.stringify(styles);`,
+      client: `import * as styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+      value: namespace,
+    },
+  ])(
+    "a framework route and its client entry point read a CSS module: $name",
+    async ({ declines, route, client, value }) => {
+      using dir = tempDir("bake-production-css-module-value", {
+        "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          const scripts = meta.modules.map(m => '<script type="module" src="' + m + '"></script>').join("");
+          return { files: { "index.html": "<body>page=" + (await meta.pageModule.default()) + scripts + "</body>" } };
+        }
+      `,
+        "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        const plugins = ${declines ? `[{ name: "declines", setup(build) { build.onResolve({ filter: /\\.css$/ }, () => undefined); } }]` : "undefined"};
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] }, plugins } };
+      `,
+        "x.module.css": `.foo{color:red}`,
+        "y.css": `.y{color:blue}`,
+        "routes/index.ts": route,
+        "client.ts": client,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExitCode] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      const dist = path.join(String(dir), "dist");
+      const html = await Bun.file(path.join(dist, "index.html"))
+        .text()
+        .catch(() => buildStderr);
+      expect(html).toContain("page=" + value + "<script");
+
+      const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/)![1];
+      await using run = Bun.spawn({
+        cmd: [bunExe(), path.join(dist, script)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(stdout.trim()).toBe(value);
+      expect(exitCode).toBe(0);
+      expect(buildExitCode).toBe(0);
+    },
+  );
+
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

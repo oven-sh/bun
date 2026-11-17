@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import path from "node:path";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -302,6 +303,77 @@ h1 {
       expect(cssBundle).toContain("--background-color");
       expect(cssBundle).toContain("--heading-font");
       expect(cssBundle).toContain("font-family");
+    },
+  });
+
+  // The script of a page reads the class names of a stylesheet that the page also links.
+  itBundled("html/script-reads-stylesheet-value", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.module.css">
+    <script type="module" src="./script.js"></script>
+  </head>
+</html>`,
+      "/script.js": `
+import * as styles from "./styles.module.css";
+import("./lazy.module.css").then(lazy => console.log(JSON.stringify(styles), JSON.stringify(lazy.default)));`,
+      "/styles.module.css": `.title { color: red }`,
+      "/lazy.module.css": `.lazy { color: blue }`,
+    },
+    entryPoints: ["/index.html"],
+    async onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html.match(/rel="stylesheet"/g)).toHaveLength(1);
+      const script = html.match(/src="(.*\.js)"/)![1];
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(api.outdir, script)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '{"default":{"title":"title_-MSaAA"},"title":"title_-MSaAA"} {"lazy":"lazy_zrZbVw"}\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  });
+
+  // With --splitting, the scripts of two pages import the class names of one stylesheet from a chunk that both
+  // pages preload.
+  itBundled("html/two-pages-read-one-stylesheet-value", {
+    outdir: "out/",
+    splitting: true,
+    files: {
+      "/a.html": `<!DOCTYPE html><html><head><script type="module" src="./a.js"></script></head></html>`,
+      "/b.html": `<!DOCTYPE html><html><head><script type="module" src="./b.js"></script></head></html>`,
+      "/a.js": `import styles from "./styles.module.css"; console.log("a", styles.title);`,
+      "/b.js": `import styles from "./styles.module.css"; console.log("b", styles.title);`,
+      "/styles.module.css": `.title { color: red }`,
+    },
+    entryPoints: ["/a.html", "/b.html"],
+    async onAfterBundle(api) {
+      const pages = ["a", "b"].map(name => api.readFile(`out/${name}.html`));
+      const preloaded = pages.map(html => html.match(/rel="modulepreload"[^>]*href="([^"]+\.js)"/)?.[1]);
+      expect(preloaded).toEqual([expect.any(String), preloaded[0]]);
+      expect(api.readFile(path.join("out", preloaded[0]!))).toContain(`title: "title_-MSaAA"`);
+
+      for (const [i, html] of pages.entries()) {
+        const script = html.match(/<script[^>]*src="(.*?\.js)"/)![1];
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), path.join(api.outdir, script)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${"ab"[i]} title_-MSaAA\n`, stderr: "", exitCode: 0 });
+      }
     },
   });
 

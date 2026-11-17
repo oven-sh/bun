@@ -14,9 +14,129 @@ use crate::{Index, IndexInt, LinkerContext};
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
+/// What the `composes` walk of a CSS module reads of the graph.
+struct CssModuleGraph<'a, 'bump> {
+    all_import_records: &'a [bun_ast::import_record::List<'a>],
+    all_css_asts: &'a CssAsts<'bump>,
+    all_sources: &'a [Source<'a>],
+}
+
+impl<'bump> ComposesGraph<'bump> for CssModuleGraph<'_, 'bump> {
+    fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet<'bump>> {
+        self.all_css_asts[idx as usize].as_deref()
+    }
+
+    fn source(&self, idx: IndexInt) -> &Source<'_> {
+        &self.all_sources[idx as usize]
+    }
+
+    fn import_record(&self, idx: IndexInt, import_record_idx: u32) -> &ImportRecord<'_> {
+        &self.all_import_records[idx as usize][import_record_idx as usize]
+    }
+}
+
+/// Reports what is wrong with the `composes` of the stylesheet `source_index`. A JS stub of the
+/// stylesheet walks the same names to export them, and reports nothing.
+pub(crate) fn report_composes_errors(
+    this: &LinkerContext,
+    log: &mut bun_ast::Log,
+    source_index: IndexInt,
+) {
+    let all_css_asts = &this.parse_graph().css_asts;
+    let Some(css_ast) = all_css_asts[source_index as usize].as_deref() else {
+        return;
+    };
+    if css_ast.composes.count() == 0 {
+        return;
+    }
+    let graph = CssModuleGraph {
+        all_import_records: this.graph.ast.items_import_records(),
+        all_css_asts,
+        all_sources: this.parse_graph().input_files.items_source(),
+    };
+    let mut visitor = ComposesVisitor::new(&graph);
+    for entry in css_ast.local_scope.values() {
+        visitor.exported_names(css_ast, entry.ref_, source_index, log);
+    }
+}
+
+/// The object that JavaScript gets for the CSS module `stylesheet`: each local name with the class
+/// names it stands for. `None`: the stylesheet has no local name.
+pub(crate) fn css_module_exports(
+    this: &LinkerContext,
+    stylesheet: IndexInt,
+    loc: bun_ast::Loc,
+) -> Result<Option<E::Object>, AllocError> {
+    let all_css_asts = &this.parse_graph().css_asts;
+    let Some(css_ast) = all_css_asts[stylesheet as usize].as_deref() else {
+        return Ok(None);
+    };
+    if css_ast.local_scope.count() == 0 {
+        return Ok(None);
+    }
+    let mut exports = E::Object::default();
+
+    let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[stylesheet as usize];
+
+    let graph = CssModuleGraph {
+        all_import_records: this.graph.ast.items_import_records(),
+        all_css_asts,
+        all_sources: this.parse_graph().input_files.items_source(),
+    };
+    let mut visitor = ComposesVisitor::new(&graph);
+    let arena = this.arena();
+    // `report_composes_errors` reported them for the stylesheet.
+    let mut unreported = bun_ast::Log::init();
+
+    for entry in css_ast.local_scope.values() {
+        let ref_ = entry.ref_;
+        debug_assert!(ref_.inner_index() < symbols.len() as u32);
+
+        let name_expr = |name: &ExportedName<'_>| match *name {
+            ExportedName::Local(ref_) => Expr::init(
+                E::NameOfSymbol {
+                    ref_,
+                    ..Default::default()
+                },
+                loc,
+            ),
+            ExportedName::Global(name) => Expr::init(E::String::init(name), loc),
+        };
+        let names = visitor.exported_names(css_ast, ref_, stylesheet, &mut unreported);
+        let value = if let [name] = names {
+            name_expr(name)
+        } else {
+            // Move the parts into the linker arena
+            // (freed when the linker arena drops).
+            let parts_slice = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(
+                names.iter().enumerate().map(|(i, name)| {
+                    let tail: &[u8] = if i + 1 == names.len() { b"" } else { b" " };
+                    E::TemplatePart {
+                        value: name_expr(name),
+                        tail_loc: loc,
+                        tail: E::TemplateContents::Cooked(E::String::init(tail)),
+                    }
+                }),
+            ));
+            Expr::init(
+                E::Template {
+                    tag: None,
+                    parts: parts_slice,
+                    head: E::TemplateContents::Cooked(E::String::init(b"")),
+                },
+                loc,
+            )
+        };
+
+        // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
+        let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();
+        exports.put(arena, key, value)?;
+    }
+    Ok(Some(exports))
+}
+
 pub(crate) fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
-    log: &mut bun_ast::Log,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
@@ -31,6 +151,8 @@ pub(crate) fn generate_code_for_lazy_export(
         exports_kind = bun_ast::ExportsKind::Cjs;
         this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
     }
+    // If this JavaScript file is a stub from a CSS file, its exports are the local names of that CSS file.
+    let stylesheet = this.parse_graph().css_js_stubs.stylesheet_of(source_index);
     let part = &mut this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice()[1];
     let stmts = part.stmts;
     if stmts.is_empty() {
@@ -38,11 +160,14 @@ pub(crate) fn generate_code_for_lazy_export(
     }
     if exports_kind != bun_ast::ExportsKind::Cjs {
         part.stmts = bun_ast::StoreSlice::EMPTY;
+        // The emptied part of a stub is in no chunk, as when the stylesheet had these parts: a chunk keeps the
+        // part ranges that its hash is made of. The other lazy exports keep the part in their chunk.
+        if stylesheet.is_some() {
+            part.can_be_removed_if_unused = true;
+        }
     }
 
     let all_sources = this.parse_graph().input_files.items_source();
-    let all_css_asts = &this.parse_graph().css_asts;
-    let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
     let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
 
@@ -52,100 +177,14 @@ pub(crate) fn generate_code_for_lazy_export(
     // If this JavaScript file is a stub from a CSS file, populate the exports of
     // this JavaScript stub with the local names from that CSS file. This is done
     // now instead of earlier because we need the whole bundle to be present.
-    if let Some(css_ast) = maybe_css_ast {
+    if let Some(stylesheet) = stylesheet {
         let stmt: Stmt = stmts[0];
-        if !matches!(stmt.data, StmtData::SLazyExport(_)) {
+        let StmtData::SLazyExport(mut slot) = stmt.data else {
             panic!("Internal error: expected top-level lazy export statement");
-        }
-        'out: {
-            if css_ast.local_scope.count() == 0 {
-                break 'out;
-            }
-            let mut exports = E::Object::default();
-
-            let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
-
-            struct Graph<'a, 'bump> {
-                all_import_records: &'a [bun_ast::import_record::List<'a>],
-                all_css_asts: &'a CssAsts<'bump>,
-                all_sources: &'a [Source<'a>],
-            }
-
-            impl<'bump> ComposesGraph<'bump> for Graph<'_, 'bump> {
-                fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet<'bump>> {
-                    self.all_css_asts[idx as usize].as_deref()
-                }
-
-                fn source(&self, idx: IndexInt) -> &Source<'_> {
-                    &self.all_sources[idx as usize]
-                }
-
-                fn import_record(
-                    &self,
-                    idx: IndexInt,
-                    import_record_idx: u32,
-                ) -> &ImportRecord<'_> {
-                    &self.all_import_records[idx as usize][import_record_idx as usize]
-                }
-            }
-
-            let graph = Graph {
-                all_import_records: this.graph.ast.items_import_records(),
-                all_css_asts,
-                all_sources,
-            };
-            let mut visitor = ComposesVisitor::new(&graph);
-            let arena = this.arena();
-
-            for entry in css_ast.local_scope.values() {
-                let ref_ = entry.ref_;
-                debug_assert!(ref_.inner_index() < symbols.len() as u32);
-
-                let name_expr = |name: &ExportedName<'_>| match *name {
-                    ExportedName::Local(ref_) => Expr::init(
-                        E::NameOfSymbol {
-                            ref_,
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    ),
-                    ExportedName::Global(name) => Expr::init(E::String::init(name), stmt.loc),
-                };
-                let names = visitor.exported_names(css_ast, ref_, source_index, log);
-                let value = if let [name] = names {
-                    name_expr(name)
-                } else {
-                    // Move the parts into the linker arena
-                    // (freed when the linker arena drops).
-                    let parts_slice = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(
-                        names.iter().enumerate().map(|(i, name)| {
-                            let tail: &[u8] = if i + 1 == names.len() { b"" } else { b" " };
-                            E::TemplatePart {
-                                value: name_expr(name),
-                                tail_loc: stmt.loc,
-                                tail: E::TemplateContents::Cooked(E::String::init(tail)),
-                            }
-                        }),
-                    ));
-                    Expr::init(
-                        E::Template {
-                            tag: None,
-                            parts: parts_slice,
-                            head: E::TemplateContents::Cooked(E::String::init(b"")),
-                        },
-                        stmt.loc,
-                    )
-                };
-
-                // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
-                let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();
-                exports.put(arena, key, value)?;
-            }
-
-            if let StmtData::SLazyExport(mut slot) = stmts[0].data {
-                // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
-                *slot = Expr::init(exports, stmt.loc).data;
-            }
+        };
+        if let Some(exports) = css_module_exports(this, stylesheet, stmt.loc)? {
+            // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
+            *slot = Expr::init(exports, stmt.loc).data;
         }
     }
 

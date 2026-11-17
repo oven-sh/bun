@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
-use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
+use bun_collections::{AutoBitSet, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
 use crate::options::Loader;
@@ -414,7 +414,6 @@ impl LoadTimeReads {
     fn new(c: &LinkerContext) -> LoadTimeReads {
         let all_parts = c.graph.ast.items_parts();
         let flags = c.graph.meta.items_flags();
-        let css = &c.parse_graph().css_asts;
         let mut first_part_id: Vec<u32> = Vec::with_capacity(all_parts.len());
         let mut file_of_part: Vec<IndexInt> = Vec::new();
         for (file, parts) in all_parts.iter().enumerate() {
@@ -426,7 +425,7 @@ impl LoadTimeReads {
         let for_each_live_part = |each: &mut dyn FnMut(usize, u32, &bun_ast::Part)| {
             for source_index in c.graph.reachable_files.iter() {
                 let file = source_index.get() as usize;
-                if !c.graph.files_live.is_set(file) || css[file].is_some() {
+                if !c.graph.files_live.is_set(file) {
                     continue;
                 }
                 for (part_index, part) in all_parts[file].as_slice().iter().enumerate() {
@@ -610,8 +609,7 @@ fn for_each_edge(
     mut each: impl FnMut(u32, Edge),
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
-    let css = &c.parse_graph().css_asts;
-    if css[source_index as usize].is_some()
+    if c.parse_graph().css_asts[source_index as usize].is_some()
         || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
     {
         // A CSS or HTML file has no parts; every record counts.
@@ -648,15 +646,6 @@ fn for_each_edge(
                     Edge::LoadLater(other)
                 },
             );
-        }
-        // A chunk prints its own copy of the CSS class names that it uses, also when the `import` is in another chunk.
-        if runs_here {
-            for dependency in part.dependencies.iter() {
-                let other = dependency.source_index.get();
-                if css[other as usize].is_some() {
-                    each(part_index, Edge::Import(other));
-                }
-            }
         }
     }
 }
@@ -770,8 +759,6 @@ enum WalkFrame {
     Enter { source_index: IndexInt, loader: u32 },
     /// The walk is past what `run` waits for: `run` goes at the end of `owned[slot].runs`.
     Place { run: PartRun, slot: u32 },
-    /// The class-name object of a CSS file goes at the end of `owned[slot].runs`, unless the list has it.
-    PlaceCss { source_index: IndexInt, slot: u32 },
 }
 
 struct OwnedChunk {
@@ -795,17 +782,8 @@ impl EntryWalk {
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut left = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut stack: Vec<WalkFrame> = Vec::new();
-        let mut css_placed: HashMap<u64, ()> = HashMap::default();
         let root = c.graph.entry_points.items_source_index()[self.entry_id as usize];
-        self.walk(
-            c,
-            plan,
-            &mut seen,
-            &mut left,
-            &mut stack,
-            &mut css_placed,
-            root,
-        );
+        self.walk(c, plan, &mut seen, &mut left, &mut stack, root);
 
         // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
         let runtime = Index::RUNTIME.value();
@@ -813,15 +791,7 @@ impl EntryWalk {
             let chunk = &chunks[self.owned[slot].chunk_index as usize];
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if source_index != runtime && !seen.is_set(source_index as usize) {
-                    self.walk(
-                        c,
-                        plan,
-                        &mut seen,
-                        &mut left,
-                        &mut stack,
-                        &mut css_placed,
-                        source_index,
-                    );
+                    self.walk(c, plan, &mut seen, &mut left, &mut stack, source_index);
                 }
             }
         }
@@ -835,7 +805,6 @@ impl EntryWalk {
         seen: &mut AutoBitSet,
         left: &mut AutoBitSet,
         stack: &mut Vec<WalkFrame>,
-        css_placed: &mut HashMap<u64, ()>,
         root: IndexInt,
     ) {
         let entry_id = self.entry_id;
@@ -843,6 +812,8 @@ impl EntryWalk {
         let entry_bits = c.graph.files.items_entry_bits();
         let flags = c.graph.meta.items_flags();
         let css = &c.parse_graph().css_asts;
+        let css_js_stubs = &c.parse_graph().css_js_stubs;
+        let targets = c.graph.ast.items_target();
         let loads = |source_index: IndexInt, loader: u32| {
             files_live.is_set(source_index as usize)
                 && entry_bits[source_index as usize].is_set(loader as usize)
@@ -874,17 +845,6 @@ impl EntryWalk {
                     }
                     continue;
                 }
-                WalkFrame::PlaceCss { source_index, slot } => {
-                    let key = u64::from(slot) << 32 | u64::from(source_index);
-                    if !bun_core::handle_oom(css_placed.get_or_put(key)).found_existing {
-                        self.owned[slot as usize].runs.push(PartRun {
-                            source_index,
-                            begin: 0,
-                            end: u32::MAX,
-                        });
-                    }
-                    continue;
-                }
                 WalkFrame::Enter {
                     source_index,
                     loader,
@@ -913,6 +873,16 @@ impl EntryWalk {
                 if other == Index::RUNTIME.value() {
                     return;
                 }
+                // A stylesheet is in no JS chunk. Its class names are in its JS stub, which runs where the first
+                // `import` of the stylesheet is, also when that one reads no value.
+                let other = if css[other as usize].is_some() {
+                    match css_js_stubs.stub_of(other, targets[source_index as usize]) {
+                        Some(stub) => stub,
+                        None => return,
+                    }
+                } else {
+                    other
+                };
                 if seen.is_set(other as usize) {
                     if !left.is_set(other as usize)
                         && let Some(slot) = slot_of(other)
@@ -920,25 +890,6 @@ impl EntryWalk {
                         owned[slot as usize].has_cycle = true;
                     }
                     return;
-                }
-                let is_css = css[other as usize].is_some();
-                if is_css {
-                    let Some(slot) = slot else { return };
-                    // The chunk of the importer loads the CSS file, whatever load reached the importer.
-                    let chunk_loads_css = if c.graph.code_splitting {
-                        files_live.is_set(other as usize)
-                            && entry_bits[other as usize]
-                                .has_intersection(&entry_bits[source_index as usize])
-                    } else {
-                        loads(other, entry_id)
-                    };
-                    if !chunk_loads_css {
-                        return;
-                    }
-                    let key = u64::from(slot) << 32 | u64::from(other);
-                    if css_placed.contains(&key) {
-                        return;
-                    }
                 }
                 if let Some(slot) = slot
                     && splits
@@ -954,15 +905,9 @@ impl EntryWalk {
                     });
                     begin = part_index;
                 }
-                stack.push(match slot {
-                    Some(slot) if is_css => WalkFrame::PlaceCss {
-                        source_index: other,
-                        slot,
-                    },
-                    _ => WalkFrame::Enter {
-                        source_index: other,
-                        loader,
-                    },
+                stack.push(WalkFrame::Enter {
+                    source_index: other,
+                    loader,
                 });
             };
 
@@ -1039,6 +984,7 @@ impl ChunkLayout<'_, '_> {
 
     fn place(&mut self, run: PartRun) {
         let source_index = run.source_index;
+        debug_assert!(self.c.parse_graph().css_asts[source_index as usize].is_none());
         let parts = self.c.graph.ast.items_parts()[source_index as usize].as_slice();
         let leaves = run.end == u32::MAX;
         // Wrapped files can't be split because they are all inside the wrapper
@@ -1135,7 +1081,6 @@ fn reached_chunks_in_order(
 
     let entry_bits = chunk.entry_bits();
     let file_entry_bits = c.graph.files.items_entry_bits();
-    let css = &c.parse_graph().css_asts;
     let parts = c.graph.ast.items_parts();
     let import_records = c.graph.ast.items_import_records();
 
@@ -1174,11 +1119,7 @@ fn reached_chunks_in_order(
             }
             visited.set(source_index as usize);
 
-            let is_file_in_chunk = if css[source_index as usize].is_none() {
-                entry_bits.eql(&file_entry_bits[source_index as usize])
-            } else {
-                entry_bits.has_intersection(&file_entry_bits[source_index as usize])
-            };
+            let is_file_in_chunk = entry_bits.eql(&file_entry_bits[source_index as usize]);
             let parts_live = &c.graph.parts_live[source_index as usize];
             let records = import_records[source_index as usize].as_slice();
 

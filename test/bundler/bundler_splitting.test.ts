@@ -1,7 +1,8 @@
+import type { BuildArtifact } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SourceMapConsumer, type RawSourceMap } from "source-map";
 import { itBundled, type BundlerTestBundleAPI, type BundlerTestInput } from "./expectBundled";
 import { checkGraph, run } from "./splitting-fuzz";
@@ -327,6 +328,675 @@ describe("bundler", () => {
       file: "/out/entry.js",
       env,
       stdout: "a.js executed\na loaded from entry\nb.js executed\nb.js imports a {}\nb loaded from entry, value: B",
+    },
+  });
+
+  // JavaScript that reads the value of a stylesheet imports a module that holds the class names.
+  // That module is in one chunk, like any other module, and an import() of it has a JS chunk.
+  const jsOutputsOf = (api: BundlerTestBundleAPI) =>
+    readdirSync(api.outdir)
+      .filter(file => file.endsWith(".js"))
+      .sort();
+  const outputKinds = (outputs: BuildArtifact[]) =>
+    outputs
+      .map(output => ({ file: basename(output.path), kind: output.kind, loader: output.loader }))
+      .sort((a, b) => (a.file < b.file ? -1 : 1));
+  const hashedChunk = (name: string) => expect.stringMatching(new RegExp(`^${name}-[a-z0-9]{8}\\.js$`));
+
+  for (const target of ["bun", "browser"] as const) {
+    // The namespace object needs `__export`, and nothing else here uses the runtime.
+    itBundled(`splitting/NamespaceImportOfCSS-${target}`, {
+      files: {
+        "/entry.js": `
+          import * as ns from './styles.css'
+          console.log(JSON.stringify(Object.keys(ns)), JSON.stringify(ns.default))
+        `,
+        "/styles.css": `.styles { color: blue; }`,
+      },
+      entryPoints: ["/entry.js"],
+      splitting: true,
+      outdir: "/out",
+      target,
+      format: "esm",
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).sort()).toEqual(["entry.css", "entry.js"]);
+      },
+      run: { file: "/out/entry.js", stdout: '["default"] {}' },
+    });
+
+    itBundled(`splitting/MultipleEntryPointsWithNamespaceImportOfSharedCSS-${target}`, {
+      files: {
+        "/entry1.js": `
+          import * as ns from './shared.module.css'
+          console.log('entry1', JSON.stringify(Object.keys(ns).sort()), ns.shared === ns.default.shared)
+        `,
+        "/entry2.js": `
+          import * as ns from './shared.module.css'
+          console.log('entry2', JSON.stringify(Object.keys(ns).sort()), ns.shared === ns.default.shared)
+        `,
+        "/shared.module.css": `.shared { font-size: 16px; }`,
+      },
+      entryPoints: ["/entry1.js", "/entry2.js"],
+      splitting: true,
+      outdir: "/out",
+      target,
+      format: "esm",
+      onAfterBundle(api) {
+        expect(jsOutputsOf(api)).toEqual([hashedChunk("entry1"), "entry1.js", "entry2.js"]);
+      },
+      run: [
+        { file: "/out/entry1.js", stdout: 'entry1 ["default","shared"] true' },
+        { file: "/out/entry2.js", stdout: 'entry2 ["default","shared"] true' },
+      ],
+    });
+  }
+
+  // The namespace object is in the chunk that the entry points share, next to shared.js.
+  itBundled("splitting/NamespaceImportOfCSSNextToSharedModule", {
+    files: {
+      "/entry1.js": `
+        import * as ns from './styles.css'
+        import { shared } from './shared.js'
+        console.log('entry1', JSON.stringify(Object.keys(ns)), shared)
+      `,
+      "/entry2.js": `
+        import * as ns from './styles.css'
+        import { shared } from './shared.js'
+        console.log('entry2', JSON.stringify(Object.keys(ns)), shared)
+      `,
+      "/shared.js": `export const shared = 'shared'`,
+      "/styles.css": `.styles { color: blue; }`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const [chunk, ...entries] = jsOutputsOf(api);
+      expect([chunk, ...entries]).toEqual([hashedChunk("entry1"), "entry1.js", "entry2.js"]);
+      const shared = api.readFile("/out/" + chunk);
+      expect(shared).toContain("var __export =");
+      expect(shared).toContain("__export(exports_styles, {");
+      expect(shared).toContain("export { exports_styles, shared };");
+      for (const entry of entries) {
+        expect(api.readFile("/out/" + entry)).toStartWith(
+          `import {\n  exports_styles,\n  shared\n} from "./${chunk}";\n`,
+        );
+      }
+    },
+    run: [
+      { file: "/out/entry1.js", stdout: 'entry1 ["default"] shared' },
+      { file: "/out/entry2.js", stdout: 'entry2 ["default"] shared' },
+    ],
+  });
+
+  // A stylesheet that is imported for its CSS alone gives its entry point no chunk to share with
+  // the entry point that uses the runtime.
+  itBundled("splitting/PlainImportOfCSSDoesNotShareTheRuntime", {
+    files: {
+      "/entry1.js": `
+        import * as util from './util.js'
+        console.log('entry1', JSON.stringify(Object.keys(util)))
+      `,
+      "/util.js": `export const util = 1`,
+      "/entry2.js": `
+        import './styles.css'
+        console.log('entry2')
+      `,
+      "/styles.css": `.styles { color: blue; }`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual(["entry1.js", "entry2.css", "entry2.js"]);
+      api.expectFile("/out/entry2.js").toMatchInlineSnapshot(`
+        "// entry2.js
+        console.log("entry2");
+        "
+      `);
+    },
+    run: [
+      { file: "/out/entry1.js", stdout: 'entry1 ["util"]' },
+      { file: "/out/entry2.js", stdout: "entry2" },
+    ],
+  });
+
+  // Both entry points call the one wrapper in the chunk that they share.
+  itBundled("splitting/RequireOfCSSModuleInTwoEntryPoints", {
+    files: {
+      "/entry1.js": `console.log('entry1', JSON.stringify(require('./styles.module.css'))); export {};`,
+      "/entry2.js": `console.log('entry2', JSON.stringify(require('./styles.module.css'))); export {};`,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const [chunk, ...entries] = jsOutputsOf(api);
+      expect([chunk, ...entries]).toEqual([hashedChunk("entry1"), "entry1.js", "entry2.js"]);
+      api.expectFile("/out/" + chunk).toMatchInlineSnapshot(`
+        "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+
+        // styles.module.css
+        var require_styles_module = __commonJS(function(exports, module) {
+          module.exports = {
+            foo: "foo_-MSaAA"
+          };
+        });
+
+        export { require_styles_module };
+        "
+      `);
+    },
+    run: [
+      { file: "/out/entry1.js", stdout: 'entry1 {"foo":"foo_-MSaAA"}' },
+      { file: "/out/entry2.js", stdout: 'entry2 {"foo":"foo_-MSaAA"}' },
+    ],
+  });
+
+  // The entry point re-exports bindings of the class-name module, and another entry point imports them.
+  itBundled("splitting/EntryPointReExportsCSSModule", {
+    files: {
+      "/entry1.js": `
+        export { default as styles, foo } from './styles.module.css'
+        console.log('entry1')
+      `,
+      "/entry2.js": `
+        import { styles, foo } from './entry1.js'
+        console.log('entry2', styles.foo === foo, foo)
+      `,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/entry1.js", stdout: "entry1" },
+      { file: "/out/entry2.js", stdout: "entry1\nentry2 true foo_-MSaAA" },
+    ],
+  });
+
+  // An import() of a stylesheet loads a JS chunk that exports the class names.
+  itBundled("splitting/DynamicImportOfCSSModuleExports", {
+    files: {
+      "/entry.js": `
+        const mod = await import('./styles.module.css');
+        console.log(Object.keys(mod).join(','), mod.foo === mod.default.foo, mod.foo);
+      `,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    metafile: true,
+    onAfterApiBundle(build) {
+      expect(outputKinds(build.outputs)).toEqual([
+        { file: "entry.css", kind: "asset", loader: "jsx" },
+        { file: "entry.js", kind: "entry-point", loader: "jsx" },
+        { file: hashedChunk("styles.module"), kind: "chunk", loader: "css" },
+      ]);
+    },
+    onAfterBundle(api) {
+      const [, chunk] = jsOutputsOf(api);
+      expect(jsOutputsOf(api)).toEqual(["entry.js", hashedChunk("styles.module")]);
+      expect(api.readFile("/out/entry.js")).toContain(`import("./${chunk}")`);
+      expect(api.readFile("/out/entry.css")).toContain("color: red");
+      api.expectFile("/out/" + chunk).toMatchInlineSnapshot(`
+        "// styles.module.css
+        var foo = "foo_-MSaAA";
+        var styles_module_default = {
+          foo
+        };
+        export {
+          styles_module_default as default,
+          foo
+        };
+        "
+      `);
+
+      // The stylesheet is one input. The class names count as its bytes in the chunk.
+      const { inputs, outputs } = JSON.parse(api.readFile("/metafile.json"));
+      expect(Object.keys(inputs).sort()).toEqual(["entry.js", "styles.module.css"]);
+      const chunkPath = Object.keys(outputs).find(file => file.endsWith(chunk))!;
+      expect(outputs[chunkPath]).toMatchObject({
+        entryPoint: "styles.module.css",
+        exports: ["default", "foo"],
+        cssBundle: expect.stringMatching(/entry\.css$/),
+        inputs: { "styles.module.css": { bytesInOutput: expect.any(Number) } },
+      });
+      expect(outputs[chunkPath].inputs["styles.module.css"].bytesInOutput).toBeGreaterThan(0);
+      const entryPath = Object.keys(outputs).find(file => file.endsWith("entry.js"))!;
+      expect(outputs[entryPath].imports).toContainEqual({ path: chunkPath, kind: "dynamic-import" });
+    },
+    run: { file: "/out/entry.js", env, stdout: "default,foo true foo_-MSaAA" },
+  });
+
+  // One entry point imports the stylesheet, another one import()s it. The class names are in a
+  // chunk of their own: the first imports it, and the chunk of the import() exports from it.
+  itBundled("splitting/StaticAndDynamicImportOfSameCSSModule", {
+    files: {
+      "/static.js": `
+        import { foo } from './styles.module.css';
+        console.log('static', foo);
+      `,
+      "/dynamic.js": `
+        const mod = await import('./styles.module.css');
+        console.log('dynamic', Object.keys(mod).join(','), mod.default.bar);
+      `,
+      "/styles.module.css": `
+        .foo { color: red; }
+        .bar { color: blue; }
+      `,
+    },
+    entryPoints: ["/static.js", "/dynamic.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const [dynamic, shared, entry, chunk] = jsOutputsOf(api);
+      expect([dynamic, shared, entry, chunk]).toEqual([
+        "dynamic.js",
+        hashedChunk("static"),
+        "static.js",
+        hashedChunk("styles.module"),
+      ]);
+      expect(api.readFile("/out/dynamic.js")).toContain(`import("./${chunk}")`);
+      expect(api.readFile("/out/static.js")).toContain(`from "./${shared}";`);
+      expect(api.readFile("/out/" + chunk).replace(shared, "shared.js")).toMatchInlineSnapshot(`
+        "import {
+          foo2,
+          bar2,
+          styles_module_default
+        } from "./shared.js";
+        export {
+          bar2 as bar,
+          styles_module_default as default,
+          foo2 as foo
+        };
+        "
+      `);
+    },
+    run: [
+      { file: "/out/static.js", env, stdout: "static foo_-MSaAA" },
+      { file: "/out/dynamic.js", env, stdout: "dynamic bar,default,foo bar_-MSaAA" },
+    ],
+  });
+
+  itBundled("splitting/StaticAndDynamicImportOfCSSModuleAreOneObject", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        const mod = await import('./styles.module.css');
+        console.log(mod.default === styles, JSON.stringify(styles));
+      `,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", env, stdout: 'true {"foo":"foo_-MSaAA"}' },
+  });
+
+  // A stylesheet that is an entry point, and that no JavaScript reads a value from, is CSS only.
+  itBundled("splitting/UserSpecifiedCSSEntryPointHasNoJSChunk", {
+    files: {
+      "/entry.js": `
+        import './styles.module.css';
+        console.log('entry');
+      `,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js", "/styles.module.css"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual(["entry.css", "entry.js", "styles.module.css"]);
+    },
+    run: { file: "/out/entry.js", stdout: "entry" },
+  });
+
+  // The stylesheet keeps the CSS output that has its name. The import() loads a JS chunk, in
+  // each order of the entry points.
+  for (const [order, entryPoints] of Object.entries({
+    Last: ["/entry.js", "/styles.module.css"],
+    First: ["/styles.module.css", "/entry.js"],
+  })) {
+    itBundled(`splitting/DynamicImportOfUserSpecifiedCSSEntryPoint${order}`, {
+      files: {
+        "/entry.js": `
+          const mod = await import('./styles.module.css');
+          console.log(Object.keys(mod).join(','), mod.foo);
+        `,
+        "/styles.module.css": `.foo { color: red; }`,
+      },
+      entryPoints,
+      splitting: true,
+      outdir: "/out",
+      onAfterApiBundle(build) {
+        expect(outputKinds(build.outputs)).toEqual([
+          { file: "entry.css", kind: "asset", loader: "jsx" },
+          { file: "entry.js", kind: "entry-point", loader: "jsx" },
+          { file: hashedChunk("styles.module"), kind: "chunk", loader: "css" },
+          { file: "styles.module.css", kind: "asset", loader: "css" },
+        ]);
+      },
+      onAfterBundle(api) {
+        const [, chunk] = jsOutputsOf(api);
+        expect(jsOutputsOf(api)).toEqual(["entry.js", hashedChunk("styles.module")]);
+        expect(api.readFile("/out/entry.js")).toContain(`import("./${chunk}")`);
+        expect(api.readFile("/out/styles.module.css")).toContain("color: red");
+      },
+      run: { file: "/out/entry.js", env, stdout: "default,foo foo_-MSaAA" },
+    });
+  }
+
+  // With --css-chunking the stylesheet shares a CSS output with the entry point that imports it.
+  // The import() used to name that output, or the importing chunk itself.
+  test.concurrent.each([
+    { entryPoints: ["./entry.js"], css: ["entry.css"] },
+    { entryPoints: ["./entry.js", "./styles.module.css"], css: ["entry.css"] },
+    { entryPoints: ["./styles.module.css", "./entry.js"], css: ["styles.module.css"] },
+  ])("splitting/DynamicImportOfCSSModuleWithCSSChunking $entryPoints", async ({ entryPoints, css }) => {
+    using dir = tempDir("splitting-css-chunking-dynamic-import", {
+      "entry.js": `
+        import './styles.module.css';
+        import('./styles.module.css').then(mod => console.log(Object.keys(mod).join(','), mod.foo));
+      `,
+      "styles.module.css": `.foo { color: red; }`,
+    });
+    const root = String(dir);
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--splitting", "--css-chunking", "--outdir", "out", ...entryPoints],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
+
+    const outputs = readdirSync(join(root, "out")).sort();
+    expect(outputs.filter(file => file.endsWith(".css"))).toEqual(css);
+    const js = outputs.filter(file => file.endsWith(".js"));
+    expect(js).toEqual(["entry.js", hashedChunk("styles.module")]);
+    expect(readFileSync(join(root, "out", "entry.js"), "utf8")).toContain(`import("./${js[1]}")`);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(root, "out", "entry.js")],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "default,foo foo_-MSaAA\n", stderr: "", exitCode: 0 });
+  });
+
+  // The import() has a JS chunk and a CSS file of its own. Both have the loader of the stylesheet.
+  itBundled("splitting/DynamicImportOfCSSModuleNextToBareImport", {
+    files: {
+      "/entry.js": `
+        import './a.css';
+        const mod = await import('./styles.module.css');
+        console.log(Object.keys(mod).join(','), mod.foo);
+      `,
+      "/a.css": `.a { color: blue; }`,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterApiBundle(build) {
+      expect(outputKinds(build.outputs)).toEqual([
+        { file: "entry.css", kind: "asset", loader: "jsx" },
+        { file: "entry.js", kind: "entry-point", loader: "jsx" },
+        { file: expect.stringMatching(/^styles\.module-[a-z0-9]{8}\.css$/), kind: "asset", loader: "css" },
+        { file: hashedChunk("styles.module"), kind: "chunk", loader: "css" },
+      ]);
+    },
+    run: { file: "/out/entry.js", env, stdout: "default,foo foo_-MSaAA" },
+  });
+
+  // The same build with no output directory: the output files are the same.
+  for (const [order, entryPoints] of Object.entries({
+    Last: ["/entry.js", "/styles.module.css"],
+    First: ["/styles.module.css", "/entry.js"],
+  })) {
+    itBundled(`splitting/DynamicImportOfUserSpecifiedCSSEntryPoint${order}InMemory`, {
+      files: {
+        "/entry.js": `
+          const mod = await import('./styles.module.css');
+          console.log(Object.keys(mod).join(','), mod.foo);
+        `,
+        "/styles.module.css": `.foo { color: red; }`,
+      },
+      entryPoints,
+      splitting: true,
+      generateOutput: false,
+      chunkNaming: "[name]-[hash].[ext]",
+      backend: "api",
+      async onAfterApiBundle(build) {
+        expect(build.logs).toEqual([]);
+        expect(outputKinds(build.outputs)).toEqual([
+          { file: "entry.css", kind: "asset", loader: "jsx" },
+          { file: "entry.js", kind: "entry-point", loader: "jsx" },
+          { file: hashedChunk("styles.module"), kind: "chunk", loader: "css" },
+          { file: "styles.module.css", kind: "asset", loader: "css" },
+        ]);
+        const chunk = build.outputs.find(output => output.kind === "chunk")!;
+        const entry = build.outputs.find(output => output.kind === "entry-point")!;
+        expect(await entry.text()).toContain(`import("${chunk.path}")`);
+      },
+    });
+  }
+
+  // Two chunks that read one stylesheet import its class names from a third chunk. The two chunks can be an
+  // entry point and a file that it loads with import(), or two such files.
+  itBundled("splitting/EntryPointAndLazyFileReadOneCSSModule", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        const page = await import('./page.js');
+        console.log('entry', styles.foo, page.styles === styles);
+      `,
+      "/page.js": `
+        import styles from './styles.module.css';
+        console.log('page', styles.foo);
+        export { styles };
+      `,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(jsOutputsOf(api)).toEqual([hashedChunk("entry"), "entry.js", hashedChunk("page")]);
+    },
+    run: { file: "/out/entry.js", env, stdout: "page foo_-MSaAA\nentry foo_-MSaAA true" },
+  });
+  itBundled("splitting/TwoLazyFilesReadOneCSSModule", {
+    files: {
+      "/entry.js": `
+        const [home, about] = await Promise.all([import('./home.js'), import('./about.js')]);
+        console.log(home.name, about.name, home.styles === about.styles);
+      `,
+      "/home.js": `import styles from './styles.module.css'; export const name = 'home ' + styles.foo; export { styles };`,
+      "/about.js": `import styles from './styles.module.css'; export const name = 'about ' + styles.foo; export { styles };`,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(jsOutputsOf(api)).toEqual([hashedChunk("about"), hashedChunk("entry"), "entry.js", hashedChunk("home")]);
+    },
+    run: { file: "/out/entry.js", env, stdout: "home foo_-MSaAA about foo_-MSaAA true" },
+  });
+
+  // Nothing reads the class names: they are in no chunk, and the entry points share none.
+  itBundled("splitting/UnusedDefaultImportOfSharedCSSModule", {
+    files: {
+      "/a.js": `import styles from './shared.module.css'; console.log('a');`,
+      "/b.js": `import styles from './shared.module.css'; console.log('b');`,
+      "/shared.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(jsOutputsOf(api)).toEqual(["a.js", "b.js"]);
+    },
+    run: [
+      { file: "/out/a.js", stdout: "a" },
+      { file: "/out/b.js", stdout: "b" },
+    ],
+  });
+
+  // A chunk that two entry points share takes its name from the first entry point. With a chunk name that has no
+  // [hash], the chunk of the class names has the path of that entry point, as the chunk of a shared JSON file has.
+  for (const [kind, shared] of Object.entries({ CSSModule: "./shared.module.css", JSON: "./shared.json" })) {
+    itBundled(`splitting/ChunkNameWithoutHashOfShared${kind}`, {
+      files: {
+        "/a.js": `import shared from '${shared}'; console.log('a', shared.foo);`,
+        "/b.js": `import shared from '${shared}'; console.log('b', shared.foo);`,
+        "/shared.module.css": `.foo { color: red; }`,
+        "/shared.json": `{ "foo": "json" }`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      splitting: true,
+      outdir: "/out",
+      chunkNaming: "[name].[ext]",
+      bundleErrors: {
+        "<bun>": [`Multiple files share the same output path`],
+      },
+    });
+  }
+
+  // The size of a chunk for --min-chunk-size does not count the text of a stylesheet: the class names of a
+  // long stylesheet go into the chunk of shared.js, as the class names of a short one do.
+  itBundled("splitting/MinChunkSizeDoesNotCountTheTextOfAStylesheet", {
+    files: {
+      "/a.js": `import styles from './styles.module.css'; import { shared } from './shared.js'; console.log('a', styles.foo, shared);`,
+      "/b.js": `import styles from './styles.module.css'; import { shared } from './shared.js'; console.log('b', styles.foo, shared);`,
+      "/c.js": `import { shared } from './shared.js'; console.log('c', shared);`,
+      "/shared.js": `export const shared = 'shared';`,
+      "/styles.module.css": `/* ${Buffer.alloc(64 * 1024, "x").toString()} */ .foo { color: red; }`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
+    splitting: true,
+    minChunkSize: 16384,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(jsOutputsOf(api)).toEqual([hashedChunk("a"), "a.js", "b.js", "c.js"]);
+    },
+    run: [
+      { file: "/out/a.js", stdout: "a foo_-MSaAA shared" },
+      { file: "/out/b.js", stdout: "b foo_-MSaAA shared" },
+      { file: "/out/c.js", stdout: "c shared" },
+    ],
+  });
+
+  // A require() of a stylesheet whose value nothing reads prints a wrapper. The chunk that has it imports
+  // __commonJS from the chunk that the entry points share.
+  itBundled("splitting/RequireOfStylesheetWithNoValueRead", {
+    files: {
+      "/a.js": `
+        import legacy from './legacy.cjs';
+        require('./styles.css');
+        console.log('a', legacy.value);
+      `,
+      "/b.js": `
+        import legacy from './legacy.cjs';
+        import './styles.css';
+        console.log('b', legacy.value);
+      `,
+      "/legacy.cjs": `module.exports = { value: 1 };`,
+      "/styles.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a 1" },
+      { file: "/out/b.js", stdout: "b 1" },
+    ],
+  });
+
+  // The file that import() loads makes a namespace object of the stylesheet. __export is in the chunk of the
+  // entry point, which has the runtime for legacy.cjs.
+  itBundled("splitting/NamespaceObjectOfCSSModuleInLazyFile", {
+    files: {
+      "/entry.js": `
+        import legacy from './legacy.cjs';
+        const page = await import('./page.js');
+        console.log(legacy.value, page.className('foo'));
+      `,
+      "/page.js": `
+        import * as styles from './styles.module.css';
+        export const className = name => styles[name];
+      `,
+      "/legacy.cjs": `module.exports = { value: 1 };`,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", env, stdout: "1 foo_-MSaAA" },
+  });
+
+  // import.meta.glob() over stylesheets: each import() has a JS chunk, and an eager glob in a file that
+  // import() loads has the class names in the chunk of that file.
+  itBundled("splitting/LazyGlobOfCSSModules", {
+    files: {
+      "/entry.js": `
+        const modules = import.meta.glob('./styles/*.module.css');
+        for (const path of Object.keys(modules).sort()) {
+          const styles = await modules[path]();
+          console.log(path, JSON.stringify(styles.default), Object.keys(styles).sort().join());
+        }
+      `,
+      "/styles/a.module.css": `.a { color: red; }`,
+      "/styles/b.module.css": `.b { color: blue; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const [a, b] = jsOutputsOf(api);
+      expect(jsOutputsOf(api)).toEqual([hashedChunk("a.module"), hashedChunk("b.module"), "entry.js"]);
+      const entry = api.readFile("/out/entry.js");
+      expect(entry).toContain(`import("./${a}")`);
+      expect(entry).toContain(`import("./${b}")`);
+    },
+    run: {
+      file: "/out/entry.js",
+      env,
+      stdout: './styles/a.module.css {"a":"a_BjJ-Lw"} a,default\n./styles/b.module.css {"b":"b_UNp2ng"} b,default',
+    },
+  });
+  itBundled("splitting/EagerGlobOfCSSModulesInLazyFile", {
+    files: {
+      "/entry.js": `
+        const page = await import('./page.js');
+        console.log(JSON.stringify(page.styles));
+      `,
+      "/page.js": `
+        const modules = import.meta.glob('./styles/*.module.css', { eager: true });
+        export const styles = Object.keys(modules).sort().map(path => [path, modules[path].default]);
+      `,
+      "/styles/a.module.css": `.a { color: red; }`,
+      "/styles/b.module.css": `.b { color: blue; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/entry.js",
+      env,
+      stdout: '[["./styles/a.module.css",{"a":"a_BjJ-Lw"}],["./styles/b.module.css",{"b":"b_UNp2ng"}]]',
     },
   });
 
@@ -2171,6 +2841,29 @@ describe("bundler", () => {
         expect(code.indexOf(`"first"`)).toBeLessThan(code.indexOf(`"from json"`));
       },
       run: { file: "/out/entry.js", stdout: "first\nfrom json" },
+    });
+
+    // The class names of a stylesheet are a file that holds a value, like data.json above: they go where the
+    // barrel imports the stylesheet, after first.js.
+    itBundled("splitting/BarrelCycleKeepsImportOrderOfCSSModule" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": `import { read } from "./index.js"; console.log(read());`,
+        "/index.js": `export * from "./first.js"; export { default as data } from "./data.module.css";`,
+        "/first.js": /* js */ `
+          import { data } from "./index.js";
+          export function read() { return data.a; }
+          console.log("first");
+        `,
+        "/data.module.css": `.a { color: red; }`,
+      },
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        const code = api.readFile("/out/entry.js");
+        expect(code.indexOf(`"first"`)).toBeLessThan(code.indexOf(`"a_tXs_KA"`));
+      },
+      run: { file: "/out/entry.js", stdout: "first\na_tXs_KA" },
     });
 
     // first.js runs ahead of second.js and holds the namespace object of second.js, which exists before any file runs.

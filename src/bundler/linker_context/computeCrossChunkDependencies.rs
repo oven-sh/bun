@@ -410,6 +410,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             // Ignore uses that aren't top-level symbols
             if let Some(other_chunk_index) = symbol.chunk_index() {
                 if other_chunk_index as usize != chunk_index {
+                    debug_assert!(
+                        c.parse_graph().css_asts[import_ref.source_index() as usize].is_none()
+                    );
                     if cfg!(debug_assertions) {
                         // SAFETY: arena slices valid for the link pass.
                         let name = symbol.original_name.slice();

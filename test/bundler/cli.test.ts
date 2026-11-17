@@ -399,6 +399,30 @@ test("log case 1", async () => {
   `);
 });
 
+// The module that holds the class names of a stylesheet is not a module of its own in the count.
+test("log case with the value of a CSS module", async () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+
+  writeFileSync(inputFile, 'import styles from "./styles.module.css"; console.log(styles.foo);');
+  writeFileSync(path.join(tmpdir, "styles.module.css"), ".foo { color: red }");
+
+  const { exited, stdout } = Bun.spawn({
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(await exited).toBe(0);
+  expect((await stdout.text()).replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 2 modules in {time}ms
+
+      input.js   127 bytes  (entry point)
+      input.css  54 bytes   (asset)
+
+    "
+  `);
+});
+
 test("log case 2", async () => {
   const tmpdir = tmpdirSync();
   const inputFile = path.join(tmpdir, "input.js");

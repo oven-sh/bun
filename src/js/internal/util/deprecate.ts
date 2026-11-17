@@ -5,7 +5,7 @@ const codesWarned = new Set<string>();
 function getDeprecationWarningEmitter<Arg = void>(
   code: string | undefined,
   msg: string,
-  deprecated: ((...args: unknown[]) => unknown) | undefined,
+  deprecated: Function | undefined,
   shouldEmitWarning: (arg: Arg) => boolean = () => true,
 ) {
   let warned = false;

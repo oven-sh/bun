@@ -1140,9 +1140,7 @@ impl<'a> Parser<'a, '_> {
                 let _ = bun_core::copy_lowercase(&value[..len], &mut lower_buf[..len]);
                 let value = &lower_buf[..len];
 
-                if value == b"fallback" {
-                    jsx_runtime = api::JsxRuntime::Classic;
-                } else if let Some(runtime) = bun_options_types::jsx::RUNTIME_MAP.get(value) {
+                if let Some(runtime) = bun_options_types::jsx::RUNTIME_MAP.get(value) {
                     jsx_runtime = runtime.runtime.into();
                     if let Some(dev) = runtime.development {
                         jsx_dev = dev;

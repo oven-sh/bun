@@ -1224,3 +1224,43 @@ mod simd {}
 mod simd {}
 # fn main() {}
 ```
+
+```rust,compile_fail
+#[bun_simd::foreach_target(sse4 + "pclmulqdq", sse4 + "aes", sse4 + "vpclmulqdq")]
+mod simd {}
+# fn main() {}
+```
+
+The list has names from the tables only:
+
+```rust,compile_fail
+#[bun_simd::foreach_target(sse4 + "none", neon + "none")]
+mod simd {}
+# fn main() {}
+```
+
+```rust,compile_fail
+#[bun_simd::foreach_target(portable + "aes")]
+mod simd {}
+# fn main() {}
+```
+
+```rust,compile_fail
+macro_rules! item { ($($it:tt)*) => { const _: u8 = { $($it)* }; } }
+macro_rules! nothing { ($($it:tt)*) => {} }
+#[bun_simd::foreach_target(portable + a {} item! { un safe { 0 } } nothing!)]
+mod simd {}
+# fn main() {}
+```
+
+`or` takes a path:
+
+```rust,compile_fail
+#[bun_simd::foreach_target(sse4 + "aes", neon + "aes")]
+mod simd {
+    #[export(or = g / * [ * / ] #[inline / * ] * /)]
+    pub fn f() {}
+}
+fn g() {}
+# fn main() {}
+```

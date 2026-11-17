@@ -688,9 +688,6 @@ pub fn CopyFileW(source: &WStr, dest: &WStr, fail_if_exists: bool) -> Result<(),
     check(unsafe { externs::CopyFileW(source.as_ptr(), dest, fail_if_exists.into()) })
 }
 
-/// `bun.windows.Error` — alias for `Win32Error`.
-pub type Error = Win32Error;
-
 /// `bun.windows.translateNTStatusToErrno` — thin wrapper over the canonical
 /// table in `bun_errno::windows::translate_ntstatus_to_errno`. This crate only
 /// adds the debug-build `Output::debug_warn` diagnostics (which `bun_errno`

@@ -3,7 +3,7 @@
 use bun_zlib::{Deflater, Inflater, deflate, inflate};
 
 /// The end of an empty stored block, which every message ends with and which is not sent.
-pub const TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
+const TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -57,9 +57,48 @@ pub fn inflate_message(
     Ok(())
 }
 
+/// Only without context takeover. `None` if it fails, or takes more than `limit` bytes.
+pub fn inflate_message_at_once(
+    payload: &[u8],
+    out: &mut Vec<u8>,
+    limit: usize,
+    max_len: usize,
+) -> Option<Result<(), InflateError>> {
+    let output = bun_deflate::Output::Vec { vec: out, limit };
+    let written = bun_deflate::inflate_message(payload, output).ok()?.written;
+    Some(if written > max_len {
+        Err(InflateError::TooLarge)
+    } else {
+        Ok(())
+    })
+}
+
 /// What the result of a call points into, until the next call.
 #[derive(Default)]
 struct DeflateBuffer(Vec<u8>);
+
+impl DeflateBuffer {
+    fn inflate(
+        &mut self,
+        inflater: &mut Inflater,
+        payload: &[u8],
+        max_len: usize,
+        reset: bool,
+    ) -> Result<(), InflateError> {
+        const AT_ONCE: usize = 16 * 1024;
+        if !reset {
+            return inflate_message(inflater, payload, &mut self.0, max_len);
+        }
+        self.0
+            .try_reserve(AT_ONCE)
+            .map_err(|_| InflateError::OutOfMemory)?;
+        inflate_message_at_once(payload, &mut self.0, AT_ONCE, max_len).unwrap_or_else(|| {
+            let result = inflate_message(inflater, payload, &mut self.0, max_len);
+            inflater.reset();
+            result
+        })
+    }
+}
 
 #[repr(C)]
 struct Output {
@@ -137,10 +176,7 @@ unsafe extern "C" fn Bun__Inflater__inflateMessage(
     // SAFETY: the contract of this function.
     let payload = unsafe { bun_core::ffi::slice(payload, len) };
     buffer.0.clear();
-    let error = inflate_message(inflater, payload, &mut buffer.0, max_len).err();
-    if reset {
-        inflater.reset();
-    }
+    let error = buffer.inflate(inflater, payload, max_len, reset).err();
     if error == Some(InflateError::OutOfMemory) {
         // Every connection on the loop shares it.
         buffer.0 = Vec::new();

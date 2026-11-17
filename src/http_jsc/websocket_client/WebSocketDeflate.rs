@@ -1,8 +1,9 @@
 //! Manages the DEFLATE compression and decompression streams for a WebSocket connection.
 
 use bun_core::{feature_flag, handle_oom};
-use bun_libdeflate_sys::libdeflate as libdeflate_sys;
-use bun_uws_sys::permessage_deflate::{InflateError, TAIL, deflate_message, inflate_message};
+use bun_uws_sys::permessage_deflate::{
+    InflateError, deflate_message, inflate_message, inflate_message_at_once,
+};
 use bun_zlib::{Deflater, Inflater, deflate, inflate};
 
 #[repr(C)]
@@ -38,8 +39,6 @@ pub(crate) type Error = InflateError;
 
 /// The streams are per connection: with context takeover (the default)
 /// each message's back-references reach into the previous message's window.
-/// The libdeflate fast path is stateless and lives in the VM's
-/// `bun_jsc::RareData`, shared by every client on the thread.
 pub struct PerMessageDeflate {
     deflater: Box<Deflater>,
     inflater: Inflater,
@@ -51,13 +50,10 @@ pub struct PerMessageDeflate {
 /// 9-bit output, because match distances stay <= 512 - MIN_LOOKAHEAD = 250.
 const MIN_RAW_DEFLATE_WINDOW_BITS: u8 = 9;
 
-/// Output space reserved up front for one message. The one-shot libdeflate
+/// Output space reserved up front for one message. The one-shot
 /// path gets exactly that space, so it is skipped for compressed inputs at
 /// least this large: their output would not fit either.
 const INFLATE_BUFFER_SIZE: usize = 128 * 1024;
-
-/// An empty stored block with BFINAL set.
-const FINAL_EMPTY_BLOCK: [u8; 5] = [0x01, 0x00, 0x00, 0xff, 0xff];
 
 impl PerMessageDeflate {
     /// RFC 7692 names each parameter after the side whose compressor it limits: `server_*`
@@ -107,43 +103,22 @@ impl PerMessageDeflate {
         len < INFLATE_BUFFER_SIZE
     }
 
-    /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes. `decompressor`
-    /// is the thread's shared libdeflate handle (`None` when it could not be allocated).
+    /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes.
     pub(crate) fn decompress(
         &mut self,
-        decompressor: Option<&libdeflate_sys::OwnedDecompressor>,
         in_buf: &[u8],
         out: &mut Vec<u8>,
         max_len: usize,
     ) -> Result<(), InflateError> {
-        let initial_len = out.len();
         out.try_reserve_exact(INFLATE_BUFFER_SIZE)
             .map_err(|_| InflateError::OutOfMemory)?;
 
-        // libdeflate needs a final block, and can't see earlier messages.
         if self.decompress_no_context_takeover
             && Self::can_use_libdeflate(in_buf.len())
-            && let Some(decompressor) = decompressor
+            && let Some(result) =
+                inflate_message_at_once(in_buf, out, out.capacity() - out.len(), max_len)
         {
-            let mut finished: Vec<u8> = Vec::new();
-            finished
-                .try_reserve_exact(in_buf.len() + TAIL.len() + FINAL_EMPTY_BLOCK.len())
-                .map_err(|_| InflateError::OutOfMemory)?;
-            finished.extend_from_slice(in_buf);
-            finished.extend_from_slice(&TAIL);
-            finished.extend_from_slice(&FINAL_EMPTY_BLOCK);
-            let result =
-                decompressor.decompress_to_vec(&finished, out, libdeflate_sys::Encoding::Deflate);
-            if result.status == libdeflate_sys::Status::Success {
-                // Stopping before the appended block means the peer sent a final block of its own.
-                if result.read == finished.len() {
-                    if out.len() - initial_len > max_len {
-                        return Err(InflateError::TooLarge);
-                    }
-                    return Ok(());
-                }
-                out.truncate(initial_len);
-            }
+            return result;
         }
 
         inflate_message(&mut self.inflater, in_buf, out, max_len)?;

@@ -163,7 +163,7 @@ const noUnify: readonly string[] = [
   // The highway TUs of the WebP codec — same reason.
   "src/jsc/bindings/highway_webp_decoder.cpp",
   "src/jsc/bindings/highway_webp_encoder.cpp",
-  // The highway TU of zlib's checksums — same reason.
+  // The highway TU of DEFLATE and its containers — same reason.
   "src/jsc/bindings/highway_zlib.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that

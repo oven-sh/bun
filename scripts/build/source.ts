@@ -436,7 +436,6 @@ export type DepName =
   | "brotli"
   | "cares"
   | "highway"
-  | "libdeflate"
   | "libuv"
   | "lolhtml"
   | "lsqpack"

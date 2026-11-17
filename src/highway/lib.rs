@@ -1723,6 +1723,44 @@ pub unsafe fn parse_mappings(
     }
 }
 
+pub use zlib::crc32;
+
+/// zlib's Adler-32 of `bytes`.
+#[inline(always)]
+pub fn adler32(bytes: &[u8]) -> u32 {
+    zlib::adler32(1, bytes)
+}
+
+/// Compiles a function, and what is inlined into it, a second time for CPUs that have BMI2.
+#[macro_export]
+macro_rules! with_bmi2 {
+    ($(#[$meta:meta])* fn $name:ident($($arg:ident: $type:ty),* $(,)?) -> $result:ty $body:block) => {
+        $(#[$meta])*
+        #[inline(always)]
+        fn $name($($arg: $type),*) -> $result {
+            #[inline(always)]
+            fn body($($arg: $type),*) -> $result $body
+
+            #[inline(never)]
+            fn baseline($($arg: $type),*) -> $result {
+                body($($arg),*)
+            }
+
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            if ::std::is_x86_feature_detected!("bmi2") {
+                #[target_feature(enable = "bmi2")]
+                #[inline(never)]
+                fn bmi2($($arg: $type),*) -> $result {
+                    body($($arg),*)
+                }
+                // SAFETY: the CPU has BMI2.
+                return unsafe { bmi2($($arg),*) };
+            }
+            baseline($($arg),*)
+        }
+    };
+}
+
 #[cfg(test)]
 mod jpeg_tests {
     use super::*;

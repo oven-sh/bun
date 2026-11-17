@@ -791,6 +791,15 @@ bun::N_AVX2::UnfilterUp                                              [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
+# Bun DEFLATE (src/deflate).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (3 symbols)
+# ----------------------------------------------------------------------------
+bun_deflate::block::write_body::bmi2             [BMI2]
+bun_deflate::decompressor::decode_blocks::bmi2   [BMI2]
+bun_deflate::decompressor::decode_dynamic::bmi2  [BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun byte sets (src/jsc/bindings/highway_byte_set.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
 # ----------------------------------------------------------------------------
@@ -928,22 +937,6 @@ rsaz_1024_sqr_avx2             [AVX, AVX2]
 # ----------------------------------------------------------------------------
 CRYPTO_rdrand                [RDRAND]
 CRYPTO_rdrand_multiple8_buf  [RDRAND]
-
-
-# ----------------------------------------------------------------------------
-# libdeflate.
-# (10 symbols)
-# ----------------------------------------------------------------------------
-adler32_x86_avx2                   [AVX, AVX2]
-adler32_x86_avx2_vnni              [AVX, AVX2, AVX_VNNI]
-adler32_x86_avx512_vl256_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI]
-adler32_x86_avx512_vl512_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI]
-crc32_x86_pclmulqdq                [PCLMULQDQ]
-crc32_x86_pclmulqdq_avx            [AVX, PCLMULQDQ]
-crc32_x86_vpclmulqdq_avx2          [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl256  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl512  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-deflate_decompress_bmi2            [BMI2]
 
 
 # ----------------------------------------------------------------------------

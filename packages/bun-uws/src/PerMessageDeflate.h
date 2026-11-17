@@ -95,7 +95,6 @@ namespace uWS {
 #include <memory>
 #include <optional>
 #include <string_view>
-#include "libdeflate.h"
 
 namespace uWS {
 
@@ -131,20 +130,12 @@ struct Destroy {
 
 }
 
-#define LARGE_BUFFER_SIZE 1024 * 16 // todo: fix this
-
 struct ZlibContext {
     /* Any returned data is valid until next same-class call.
      * We need to have two classes to allow inflation followed
      * by many deflations without modifying the inflation */
     const std::unique_ptr<zlib::Buffer, zlib::Destroy> deflationBuffer{zlib::Bun__DeflateBuffer__create()};
     const std::unique_ptr<zlib::Buffer, zlib::Destroy> inflationBuffer{zlib::Bun__DeflateBuffer__create()};
-    const std::unique_ptr<char[]> libdeflateBuffer = std::make_unique_for_overwrite<char[]>(LARGE_BUFFER_SIZE);
-
-    struct DecompressorDeleter {
-        void operator()(libdeflate_decompressor *decompressor) const { libdeflate_free_decompressor(decompressor); }
-    };
-    const std::unique_ptr<libdeflate_decompressor, DecompressorDeleter> decompressor{libdeflate_alloc_decompressor()};
 };
 
 struct DeflationStream {
@@ -183,29 +174,6 @@ struct InflationStream {
 
     /* Zero length inflates are possible and valid */
     InflateResult inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
-        /* The libdeflate fast path is stateless: it cannot resolve back-references into a
-         * previous message's sliding window, and whatever it inflates never reaches the
-         * inflater's window. Both are only correct without context takeover, i.e. when reset is set. */
-        if (reset) {
-            /* Try fast path first */
-            size_t written = 0;
-
-            /* We have to pad 9 bytes and restore those bytes when done since 9 is more than 6 of next WebSocket message */
-            char tmp[9];
-            memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
-            memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
-            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor.get(), compressed.data(), compressed.length() + 9, zlibContext->libdeflateBuffer.get(), LARGE_BUFFER_SIZE, &written);
-            memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
-
-            if (res == 0) {
-                /* Fast path wins */
-                if (written > maxPayloadLength) {
-                    return {{}, 1009};
-                }
-                return {{zlibContext->libdeflateBuffer.get(), written}, 0};
-            }
-        }
-
         if (!inflater) {
             return {{}, 1007};
         }

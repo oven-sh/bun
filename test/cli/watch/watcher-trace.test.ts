@@ -276,9 +276,10 @@ type Batch = { files: Record<string, { events: string[]; changed?: string[] }> }
 
 /**
  * Starts `bun --hot` on `main.js`, which imports the files of `deps`. Each file prints its name and the version of
- * its text. A text is at least 4 lines, and its first lines alone are a program too.
+ * its text, and the first line to wait for is `main.js v0`. A text is at least 4 lines, and its first lines alone are
+ * a program too.
  */
-async function hotWithTrace(deps = ["dep.js"]) {
+function hotWithTrace(deps = ["dep.js"]) {
   const text = (name: string, version: string) =>
     (name === "main.js" ? "//\n" + deps.map(dep => `import "./${dep}";\n`).join("") : "//\n//\n//\n") +
     `console.log("${name} ${version}");\n` +
@@ -310,7 +311,6 @@ async function hotWithTrace(deps = ["dep.js"]) {
       seen.add(value);
     }
   };
-  await printed("main.js v0");
   let fences = 0;
   return {
     pid: proc.pid,
@@ -360,7 +360,8 @@ const longestSave = 40;
 
 // Only inotify reports that a writer closed a file, so only there can a batch wait for the end of a save.
 test.skipIf(!isLinux).each(["main.js", "dep.js"])("--hot gets a save in place of %s as one batch", async name => {
-  await using hot = await hotWithTrace();
+  await using hot = hotWithTrace();
+  await hot.printed("main.js v0");
   const saves = {
     "truncate, write": (fd: number, text: string) => {
       hot.pause();
@@ -408,21 +409,24 @@ test.skipIf(!isLinux).each(["main.js", "dep.js"])("--hot gets a save in place of
 test.skipIf(!isLinux)("--hot holds a batch until the last of many files is closed", async () => {
   const deps = Array.from({ length: 32 }, (_, i) => `dep${i}.js`);
   const last = deps.length - 1;
-  await using hot = await hotWithTrace(deps);
+  await using hot = hotWithTrace(deps);
+  await hot.printed("main.js v0");
   const counts: number[] = [];
   let version = 0;
   for (let attempt = 0; counts.length < 2 && attempt < 20; attempt++) {
     const from = hot.batches().length;
-    version++;
+    const texts = deps.map(dep => hot.text(dep, "v" + ++version));
+    const lastLine = texts[last].lastIndexOf("console.log");
+    // An open with no truncation is no event, so the save starts at the first write.
+    const fds = deps.map(dep => openSync(hot.file(dep), "r+"));
     const started = performance.now();
-    const fds = deps.map(dep => openSync(hot.file(dep), "w"));
-    hot.pause();
     for (let i = 0; i < last; i++) {
-      writeSync(fds[i], hot.text(deps[i], "v" + version));
+      writeSync(fds[i], texts[i]);
       closeSync(fds[i]);
     }
+    writeSync(fds[last], texts[last].slice(0, lastLine));
     hot.pause();
-    writeSync(fds[last], hot.text(deps[last], "v" + version));
+    writeSync(fds[last], texts[last].slice(lastLine));
     closeSync(fds[last]);
     const took = performance.now() - started;
     await hot.fence();
@@ -435,7 +439,8 @@ test.skipIf(!isLinux)("--hot holds a batch until the last of many files is close
 // 32 saves are 128 changes and 32 closes. A batch is 128 events at most, and a close must not count as one.
 test.skipIf(!isLinux)("--hot gets 32 queued saves in place as one batch", async () => {
   const deps = Array.from({ length: 32 }, (_, i) => `dep${i}.js`);
-  await using hot = await hotWithTrace(deps);
+  await using hot = hotWithTrace(deps);
+  await hot.printed("main.js v0");
   const from = hot.batches().length;
   process.kill(hot.pid, "SIGSTOP");
   try {
@@ -455,7 +460,8 @@ test.skipIf(!isLinux)("--hot gets 32 queued saves in place as one batch", async 
 });
 
 test.skipIf(!isLinux)("--hot waits again for the close of a file whose writer closed it late", async () => {
-  await using hot = await hotWithTrace();
+  await using hot = hotWithTrace();
+  await hot.printed("main.js v0");
   const from = hot.batches().length;
   const fd = openSync(hot.file("dep.js"), "a");
   try {
@@ -492,7 +498,8 @@ test.skipIf(!isLinux)("--hot waits again for the close of a file whose writer cl
 test.skipIf(!isLinux)(
   "--hot gets no batch for a file that is opened for writing and closed with no write",
   async () => {
-    await using hot = await hotWithTrace();
+    await using hot = hotWithTrace();
+    await hot.printed("main.js v0");
     const from = hot.batches().length;
     closeSync(openSync(hot.file("dep.js"), "r+"));
     await hot.fence();
@@ -506,7 +513,8 @@ test.skipIf(!isLinux)(
 
 // A new file has no watch of its own, so the watcher gets no close for it. Its folder reports the create and the write.
 test.todo("--hot gets the first save of a new file as one batch", async () => {
-  await using hot = await hotWithTrace();
+  await using hot = hotWithTrace();
+  await hot.printed("main.js v0");
   const from = hot.batches().length;
   const fd = openSync(hot.file("new.js"), "w");
   hot.pause();

@@ -66,8 +66,17 @@ impl Writers {
             } else if (event.mask & (IN::CLOSE_WRITE | IN::IGNORED)) > 0 {
                 self.open.retain(|&open| open != wd);
                 self.no_close.retain(|&open| open != wd);
+            } else if (event.mask & IN::Q_OVERFLOW) > 0 {
+                // The kernel dropped events, and a close can be one of them.
+                self.open.clear();
+                self.no_close.clear();
             }
         }
+    }
+
+    /// The kernel keeps the watch of a file that the consumer took off its list.
+    fn forget_unwatched(&mut self, watched: &[EventListIndex]) {
+        self.open.retain(|wd| watched.contains(wd));
     }
 
     fn give_up(&mut self) {
@@ -196,7 +205,7 @@ impl INotifyWatcher {
     }
 
     /// Returns how many bytes it read.
-    fn read(&self, bytes: &mut [u8], writers: &mut Writers) -> bun_sys::Result<usize> {
+    fn read(&self, bytes: &mut [u8]) -> bun_sys::Result<usize> {
         // This is what replit does as of Jaunary 2023.
         // 1) CREATE .http.ts.3491171321~
         // 2) OPEN .http.ts.3491171321~
@@ -226,12 +235,7 @@ impl INotifyWatcher {
                             tv_sec: 0,
                             tv_nsec: self.coalesce_interval as _,
                         };
-                        if !self.read_more(bytes, &mut read_len, &timespec)? {
-                            return Ok(read_len);
-                        }
-                    }
-                    if self.wait_for_close {
-                        self.wait_for_writers_to_close(bytes, &mut read_len, writers)?;
+                        self.read_more(bytes, &mut read_len, &timespec)?;
                     }
 
                     return Ok(read_len);
@@ -300,42 +304,6 @@ impl INotifyWatcher {
             }
         }
     }
-
-    /// A save is a truncation, writes and a close. Reads on until each written file has its close.
-    fn wait_for_writers_to_close(
-        &self,
-        bytes: &mut [u8],
-        read_len: &mut usize,
-        writers: &mut Writers,
-    ) -> bun_sys::Result<()> {
-        let mut scanned: usize = 0;
-        let mut deadline: Option<std::time::Instant> = None;
-        writers.open.clear();
-        loop {
-            writers.note(EventIterator(&bytes[scanned..*read_len]));
-            scanned = *read_len;
-            if writers.open.is_empty() || !has_room(bytes, *read_len) {
-                return Ok(());
-            }
-            let now = std::time::Instant::now();
-            let left = deadline
-                .get_or_insert(now + CLOSE_WAIT_CAP)
-                .saturating_duration_since(now);
-            let timespec = libc::timespec {
-                tv_sec: 0,
-                tv_nsec: left.subsec_nanos() as _,
-            };
-            let had = *read_len;
-            if !self.read_more(bytes, read_len, &timespec)? {
-                return Ok(());
-            }
-            // At the cap the poll does not wait, so a close that is already queued still counts.
-            if left.is_zero() && *read_len == had {
-                writers.give_up();
-                return Ok(());
-            }
-        }
-    }
 }
 
 /// `read` fails with EINVAL when the next event does not fit in the rest of the buffer.
@@ -347,6 +315,53 @@ impl Watcher {
     pub(crate) fn wake(&self) {
         let _ = self.platform.eventfd.write_all(&1u64.to_ne_bytes());
     }
+
+    /// A save is a truncation, writes and a close. Reads on until each written file has its close.
+    fn wait_for_writers_to_close(
+        &self,
+        bytes: &mut [u8],
+        read_len: &mut usize,
+        writers: &mut Writers,
+        watched: &mut Vec<EventListIndex>,
+    ) -> bun_sys::Result<()> {
+        let mut scanned: usize = 0;
+        let mut deadline: Option<std::time::Instant> = None;
+        let mut polled_at_cap = false;
+        writers.open.clear();
+        loop {
+            writers.note(EventIterator(&bytes[scanned..*read_len]));
+            scanned = *read_len;
+            if writers.open.is_empty() {
+                return Ok(());
+            }
+            if deadline.is_none() {
+                watched.clear();
+                watched.extend_from_slice(self.state.lock().watchlist.items_eventlist_index());
+            }
+            writers.forget_unwatched(watched);
+            if writers.open.is_empty() {
+                return Ok(());
+            }
+            let now = std::time::Instant::now();
+            let left = deadline
+                .get_or_insert(now + CLOSE_WAIT_CAP)
+                .saturating_duration_since(now);
+            // A writer that fills the 50 ms or the buffer is not a save.
+            if polled_at_cap || !has_room(bytes, *read_len) {
+                writers.give_up();
+                return Ok(());
+            }
+            // At the cap one poll with no wait takes a close that is already queued.
+            polled_at_cap = left.is_zero();
+            let timespec = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: left.subsec_nanos() as _,
+            };
+            if !self.platform.read_more(bytes, read_len, &timespec)? {
+                return Ok(());
+            }
+        }
+    }
 }
 
 pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
@@ -355,7 +370,11 @@ pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys:
     let mut eventlist_index_scratch = Vec::new();
     let mut writers = Writers::default();
     while this.running.load() {
-        let len = this.platform.read(&mut bytes, &mut writers)?;
+        let mut len = this.platform.read(&mut bytes)?;
+        if this.platform.wait_for_close {
+            let watched = &mut eventlist_index_scratch;
+            this.wait_for_writers_to_close(&mut bytes, &mut len, &mut writers, watched)?;
+        }
         let mut events = EventIterator(&bytes[..len]);
         // More than one batch only under load, see `watch-many-dirs.test.ts`.
         while !events.0.is_empty() && this.running.load() {
@@ -578,6 +597,32 @@ mod tests {
 
         note(&mut writers, &[record(2, IN::IGNORED, b"")]);
         assert!(writers.no_close.is_empty());
+    }
+
+    #[test]
+    fn a_queue_overflow_forgets_every_file() {
+        let mut writers = Writers::default();
+        note(&mut writers, &[record(1, IN::MODIFY, b"")]);
+        writers.give_up();
+        note(
+            &mut writers,
+            &[record(2, IN::MODIFY, b""), record(-1, IN::Q_OVERFLOW, b"")],
+        );
+        assert!(writers.open.is_empty());
+        assert!(writers.no_close.is_empty());
+        note(&mut writers, &[record(1, IN::MODIFY, b"")]);
+        assert_eq!(writers.open, [1]);
+    }
+
+    #[test]
+    fn a_file_off_the_watch_list_is_not_open() {
+        let mut writers = Writers::default();
+        note(
+            &mut writers,
+            &[record(1, IN::MODIFY, b""), record(2, IN::MODIFY, b"")],
+        );
+        writers.forget_unwatched(&[2, 3]);
+        assert_eq!(writers.open, [2]);
     }
 
     #[test]

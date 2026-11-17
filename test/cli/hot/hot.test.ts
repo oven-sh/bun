@@ -1177,8 +1177,8 @@ it.skipIf(!isLinux)(
 const runCounter = (version: string) =>
   `globalThis.runs = (globalThis.runs ?? 0) + 1;\nconsole.log("run " + globalThis.runs + " of " + ${version});\nsetInterval(() => {}, 1e6);\n`;
 
-/** Starts `bun --hot main.js` on `files`, which are a `runCounter` program. */
-async function startRunCounter(files: Record<string, string>) {
+/** Starts `bun --hot main.js` on `files`, which are a `runCounter` program. Wait for its first line before a save. */
+function startRunCounter(files: Record<string, string>) {
   const dir = tempDir("hot-save", {
     ...Object.fromEntries(Object.entries(files).map(([name, text]) => [`app/${name}`, text])),
     "staging/next.js": "",
@@ -1202,7 +1202,6 @@ async function startRunCounter(files: Record<string, string>) {
       if (value.endsWith(suffix)) return value;
     }
   };
-  expect(await line("")).toStartWith("run 1 of ");
   return {
     file: (name: string) => join(cwd, name),
     line,
@@ -1225,7 +1224,8 @@ const longestSave = 40;
 
 // Only inotify reports that a writer closed a file, and the watcher waits for that after a write.
 it.skipIf(!isLinux)("reloads for each write of a writer that keeps the file open", async () => {
-  await using hot = await startRunCounter({ "main.js": runCounter(`"v0"`) });
+  await using hot = startRunCounter({ "main.js": runCounter(`"v0"`) });
+  expect(await hot.line(" of v0")).toBe("run 1 of v0");
   const fd = openSync(hot.file("main.js"), "a");
   try {
     writeSync(fd, `console.log("run of the first append");\n`);
@@ -1242,7 +1242,8 @@ it.skipIf(!isLinux)("runs once for a save in place of an import that a slow writ
   const dep = (version: string) => `globalThis.version = "${version}";\n`;
   // The entry point prints the version that the import set, and a tag of its own.
   const entry = (tag: string) => `import "./dep.js";\n` + runCounter(`globalThis.version + " ${tag}"`);
-  await using hot = await startRunCounter({ "main.js": entry("tag0"), "dep.js": dep("v0") });
+  await using hot = startRunCounter({ "main.js": entry("tag0"), "dep.js": dep("v0") });
+  expect(await hot.line(" tag0")).toBe("run 1 of v0 tag0");
   const runsPerSave: number[] = [];
   let runs = 1;
   for (let i = 1; runsPerSave.length < 4 && i <= 40; i++) {

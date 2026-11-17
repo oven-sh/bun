@@ -620,7 +620,7 @@ impl Outcome {
         }
     }
 
-    /// Reads `then` of the value, which can run script.
+    /// Reads `then` of the value, which can run script. The caller's loop scope, task or script drains the microtasks.
     fn settle(
         self,
         promise: &mut JSPromiseStrong,
@@ -629,7 +629,6 @@ impl Outcome {
     ) {
         // The lookup continues the script that asked for it.
         let _context = global.bun_vm().enter_context(context);
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
         crate::dispatch::fold(match self {
             Outcome::Value(v) => promise.resolve(global, v),
             Outcome::Error(e) => promise.reject(global, Ok(e)),
@@ -1843,6 +1842,7 @@ impl Resolver {
         crate::jsc_hooks::timer_all().increment_timer_ref(-1, vm.uws_loop());
 
         if self.channel.has_active_queries() {
+            let _exit = vm.enter_event_loop_scope();
             let answers = self.channel.process_timeouts();
             if self.channel.has_active_queries() {
                 self.add_timer(Some(now), CARES_TIMEOUT_CHECK_INTERVAL_MS);

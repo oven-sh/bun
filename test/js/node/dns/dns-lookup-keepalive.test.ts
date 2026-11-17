@@ -210,6 +210,12 @@ describe("script does not run inside c-ares", () => {
       });
       expect(result).toSpawn("exit");
     });
+
+    test.concurrent("settles the lookups that joined it before a continuation runs", async () => {
+      expect(await bunRun(["-e", lookup(`console.log(Bun.peek.status(joined)); server.close();`)])).toSpawn(
+        "fulfilled",
+      );
+    });
   });
 
   describe("a resolver's graph is disposed", () => {
@@ -260,3 +266,19 @@ describe("script does not run inside c-ares", () => {
     });
   });
 });
+
+test.concurrent.each(["beforeExit", "exit"])(
+  "a query that c-ares answers inside the call runs no microtask of the %s listener that made it",
+  async event => {
+    const script = `
+      process.once("${event}", () => {
+        const ran = [];
+        process.nextTick(() => ran.push("tick"));
+        queueMicrotask(() => ran.push("microtask"));
+        Bun.dns.lookup("127.0.0.1", { backend: "c-ares" });
+        console.log(JSON.stringify(ran));
+      });
+    `;
+    expect(await bunRun(["-e", script])).toSpawn("[]");
+  },
+);

@@ -1,4 +1,4 @@
-// The CRC-32 of gzip and the Adler-32 of zlib, derived from libdeflate (src/deflate/LICENSE).
+// The CRC-32 of gzip and the Adler-32 of zlib, derived from libdeflate (LICENSE.md).
 
 // One target for each width of carry-less multiplication, which on Arm only beats the CRC instructions in wide cores. The best targets also have dot products.
 #undef HWY_DISABLED_TARGETS

@@ -1,4 +1,4 @@
-//! One-shot DEFLATE, gzip and zlib, derived from libdeflate 1.26 (LICENSE).
+//! One-shot DEFLATE, gzip and zlib, derived from libdeflate 1.26 (LICENSE.md).
 #![forbid(unsafe_code)]
 // Streams come from anywhere and a panic aborts the process.
 #![deny(

@@ -2,7 +2,7 @@
 // for timers and I/O: what its code opens belongs to it, and dispose() closes all of it.
 import { afterAll, describe, expect, test } from "bun:test";
 import fs, { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import nodeTls from "node:tls";
@@ -1234,4 +1234,21 @@ describe.concurrent("ModuleGraph: a request through an Agent of the host's is st
       });
     },
   );
+});
+
+test.skipIf(!isLinux)("dispose() stops a read of a device that always has more", async () => {
+  const size = 256 * 1024 * 1024;
+  const script = `
+    const bytesRead = () => Number(/rchar: (\\d+)/.exec(require("node:fs").readFileSync("/proc/self/io", "utf8"))[1]);
+    const before = bytesRead();
+    const graph = new Bun.ModuleGraph();
+    graph.run(() => void Bun.file("/dev/zero").slice(0, ${size}).bytes());
+    graph.dispose();
+    process.on("beforeExit", () => console.log(bytesRead() - before));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toMatch(/^\d+\n$/);
+  expect(Number(stdout)).toBeLessThan(size / 2);
+  expect(exitCode).toBe(0);
 });

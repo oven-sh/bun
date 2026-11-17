@@ -8,16 +8,19 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import { finished } from "node:stream/promises";
 import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
+import { drain, drainUntil, fill, openFifo, untilWaits } from "./fifo-helpers";
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -1796,5 +1799,103 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stdout).toBe("caught EISDIR\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+it.skipIf(isWindows).each([
+  ["a Blob", new Blob([Buffer.alloc(2000, "a")]), 2000],
+  ["a large Buffer", Buffer.alloc(300 * 1024, "a"), 300 * 1024],
+])("Bun.write(Bun.file(fd), %s) appends right after the end of a file opened with O_APPEND", async (_, data, size) => {
+  using dir = tempDir("bun-write-append", { log: "first\n" });
+  const log = join(String(dir), "log");
+  const fd = fs.openSync(log, "a");
+  try {
+    expect(await Bun.write(Bun.file(fd), data)).toBe(size);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const written = fs.readFileSync(log);
+  expect({ size: written.length, firstNul: written.indexOf(0) }).toEqual({ size: 6 + size, firstNul: -1 });
+});
+
+// /proc/self/fdinfo shows that a write waits.
+describe.skipIf(!isLinux).concurrent("Bun.write() to a pipe that is full", () => {
+  const size = 1 << 20;
+  const data = new Blob([Buffer.alloc(size, "a")]);
+  const outcome = promise => promise.catch(({ code, syscall }) => ({ code, syscall }));
+  function fifoIn(dir) {
+    const path = join(String(dir), "fifo");
+    mkfifo(path);
+    return Object.assign(openFifo(path), { path });
+  }
+  /** `.size` makes the file find out that it is not a regular one. */
+  function knownPipe(fd) {
+    const file = Bun.file(fd);
+    file.size;
+    return file;
+  }
+
+  it.each(["path", "writer"])("waits for room without holding a thread (%s)", async destination => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = fifoIn(dir);
+    const write = outcome(Bun.write(Bun.file(fifo[destination]), data));
+    expect(await untilWaits(fifo.inode, 1)).toBe(1);
+    expect(await drainUntil(fifo.reader, write)).toBe(size);
+    expect(await write).toBe(size);
+  });
+
+  it("rejects with EPIPE when the reader leaves", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = fifoIn(dir);
+    const write = outcome(Bun.write(knownPipe(fifo.writer), data));
+    expect(await untilWaits(fifo.inode, 1)).toBe(1);
+    fifo.close(fifo.reader);
+    expect(await write).toEqual({ code: "EPIPE", syscall: "write" });
+  });
+
+  it("lets two writes wait on one descriptor", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = fifoIn(dir);
+    const file = knownPipe(fifo.writer);
+    const writes = Promise.all([outcome(Bun.write(file, data)), outcome(Bun.write(file, data))]);
+    const waits = await untilWaits(fifo.inode, 2);
+    const received = await drainUntil(fifo.reader, writes);
+    expect({ waits, received, writes: await writes }).toEqual({ waits: 2, received: 2 * size, writes: [size, size] });
+  });
+
+  it("lets a read and a write wait on one socket", async () => {
+    const big = new Blob([Buffer.alloc(4 * size, "a")]);
+    await using peer = Bun.spawn({
+      cmd: ["sh", "-c", `read go; head -c ${big.size} <&3 >/dev/null; echo reply >&3`],
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "inherit", "pipe"],
+    });
+    const socket = knownPipe(peer.stdio[3]);
+    const both = Promise.all([outcome(socket.slice(0, 6).text()), outcome(Bun.write(socket, big))]);
+    const waits = await untilWaits(fs.fstatSync(peer.stdio[3]).ino, 2);
+    peer.stdin.write("go\n");
+    await peer.stdin.end();
+    expect(waits).toBe(2);
+    expect(await both).toEqual(["reply\n", big.size]);
+  });
+
+  it("finishes after the caller has closed the descriptor", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = fifoIn(dir);
+    const write = outcome(Bun.write(knownPipe(fifo.writer), data));
+    expect(await untilWaits(fifo.inode, 1)).toBe(1);
+    fifo.close(fifo.writer);
+    expect(await drainUntil(fifo.reader, write)).toBe(size);
+    expect(await write).toBe(size);
+  });
+
+  it("does not wait with nothing left to write", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = fifoIn(dir);
+    const room = fill(fifo.writer);
+    drain(fifo.reader);
+    const file = knownPipe(fifo.writer);
+    expect(await Bun.write(file, data.slice(0, room))).toBe(room);
+    expect(await Bun.write(file, data.slice(1, 1))).toBe(0);
   });
 });

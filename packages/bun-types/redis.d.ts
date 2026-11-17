@@ -97,7 +97,7 @@ declare module "bun" {
     /**
      * Connect to the Redis server
      *
-     * @returns A promise that resolves when connected
+     * @returns A promise that resolves when connected and, if the URL names a database, once the server has accepted it
      */
     connect(): Promise<void>;
 

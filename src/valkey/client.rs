@@ -46,8 +46,8 @@ enum State {
     Dialing,
     /// HELLO is written, and SELECT behind it if there is a database.
     Hello,
-    /// HELLO was accepted; the reply to SELECT is due.
-    Select,
+    /// HELLO was accepted with this reply; the reply to SELECT is due.
+    Select(Box<RESPValue>),
     Ready,
     /// The socket is closing, or the dial gave none: [`Client::lost`] is due.
     Ending(End),
@@ -106,7 +106,7 @@ pub enum Input<'a> {
 
 pub enum Event<P> {
     Ignored,
-    /// With the reply to HELLO.
+    /// The handshake is over, with the reply to HELLO.
     Connected(RESPValue),
     Resolved {
         promise: P,
@@ -203,10 +203,6 @@ impl<P> Client<P> {
     }
 
     pub fn is_connected(&self) -> bool {
-        matches!(self.state, State::Select | State::Ready)
-    }
-
-    fn is_ready(&self) -> bool {
         matches!(self.state, State::Ready)
     }
 
@@ -269,7 +265,7 @@ impl<P> Client<P> {
             State::Idle
             | State::Dialing
             | State::Hello
-            | State::Select
+            | State::Select(_)
             | State::Ready
             | State::Ending(End::Policy) => {}
         }
@@ -279,7 +275,7 @@ impl<P> Client<P> {
         let close = match self.state {
             State::Idle | State::Closed | State::Ending(End::Failed) => return Close::Nothing,
             State::Ending(End::Policy | End::Final) => Close::Nothing,
-            State::Dialing | State::Hello | State::Select | State::Ready => Close::Socket,
+            State::Dialing | State::Hello | State::Select(_) | State::Ready => Close::Socket,
             State::Backoff => Close::Retry,
         };
         self.state = State::Ending(End::Final);
@@ -330,7 +326,7 @@ impl<P> Client<P> {
             State::Idle | State::Backoff | State::Ending(End::Failed) | State::Closed => None,
             State::Dialing
             | State::Hello
-            | State::Select
+            | State::Select(_)
             | State::Ready
             | State::Ending(End::Policy | End::Final) => {
                 self.state = State::Ending(End::Failed);
@@ -341,7 +337,7 @@ impl<P> Client<P> {
 
     /// The TLS session broke. `Some` if that counts as a lost connection and not as a failed handshake.
     pub fn session_broke(&mut self) -> Option<Vec<P>> {
-        let greeted = matches!(self.state, State::Select | State::Ready);
+        let greeted = matches!(self.state, State::Select(_) | State::Ready);
         (greeted && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
     }
 
@@ -413,8 +409,7 @@ impl<P> Client<P> {
         let batches = can_pipeline && self.config.enable_auto_pipelining;
         let connected = self.is_connected();
 
-        let goes_now =
-            !batches && self.is_ready() && self.queue.is_empty() && self.in_flight.is_empty();
+        let goes_now = !batches && connected && self.queue.is_empty() && self.in_flight.is_empty();
 
         let mut bytes = Vec::new();
         let out = if goes_now {
@@ -442,7 +437,7 @@ impl<P> Client<P> {
     /// Moves the head of the queue to [`Self::output`] if it travels alone. Whether [`Self::batch`] is due.
     #[must_use]
     pub fn advance(&mut self) -> bool {
-        if !self.output.is_empty() || !self.is_ready() {
+        if !self.output.is_empty() || !self.is_connected() {
             return false;
         }
         if self.in_flight.is_empty()
@@ -539,10 +534,13 @@ impl<P> Client<P> {
     }
 
     fn route(&mut self, value: RESPValue) -> Event<P> {
-        match self.state {
+        match &mut self.state {
             State::Ready => self.on_reply(value),
             State::Hello => self.on_hello(value),
-            State::Select => self.on_select(value),
+            State::Select(hello) => {
+                let hello = core::mem::replace(&mut **hello, RESPValue::Null);
+                self.on_select(value, hello)
+            }
             State::Idle | State::Dialing | State::Ending(_) | State::Backoff | State::Closed => {
                 Event::Ignored
             }
@@ -571,6 +569,10 @@ impl<P> Client<P> {
             {
                 broken(b"Server does not support RESP3", UnsupportedProtocol)
             }
+            RESPValue::SimpleString(_) | RESPValue::Map(_) if self.config.database > 0 => {
+                self.state = State::Select(Box::new(value));
+                Event::Ignored
+            }
             RESPValue::SimpleString(_) | RESPValue::Map(_) => self.connected(value),
             _ => broken(
                 b"Authentication failed with unexpected response",
@@ -579,12 +581,9 @@ impl<P> Client<P> {
         }
     }
 
-    fn on_select(&mut self, value: RESPValue) -> Event<P> {
+    fn on_select(&mut self, value: RESPValue, hello: RESPValue) -> Event<P> {
         match value {
-            RESPValue::SimpleString(text) if *text == *b"OK" => {
-                self.state = State::Ready;
-                Event::Ignored
-            }
+            RESPValue::SimpleString(text) if *text == *b"OK" => self.connected(hello),
             RESPValue::Error(message) => Event::Broken {
                 message,
                 error: RedisError::InvalidCommand,
@@ -601,11 +600,7 @@ impl<P> Client<P> {
     }
 
     fn connected(&mut self, hello: RESPValue) -> Event<P> {
-        self.state = if self.config.database > 0 {
-            State::Select
-        } else {
-            State::Ready
-        };
+        self.state = State::Ready;
         self.retries = 0;
         Event::Connected(hello)
     }

@@ -1,4 +1,4 @@
-import { expect, test as base } from "bun:test";
+import { test as base, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/26360

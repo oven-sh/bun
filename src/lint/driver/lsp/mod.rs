@@ -3,8 +3,8 @@
 //! The thread that reads the messages keeps the documents. Each workspace folder has a thread that lints and formats what is
 //! in it, with the folder as the working directory and its `bunfig.toml`: as `bun lint` does there. It keeps the
 //! configurations that it has read until one of their files changes. While it lints, a second thread runs the rules that
-//! need types, which wait for a program to be built: a request never waits for that. One more thread is for the
-//! documents that are in no folder: nothing of theirs is run.
+//! need types, which wait for a program to be built: only a request for `source.fixAll` waits for that, and for the
+//! program of its own document. One more thread is for the documents that are in no folder: nothing of theirs is run.
 //!
 //! Standard output carries the messages and nothing else: what the linter and the formatter have to say goes to the
 //! client as a message, or is an answer.
@@ -36,6 +36,7 @@ use bun_threading::{Condition, Guarded};
 use rpc::{ErrorCode, Frame, Incoming, Reader, Writer, dig, number, object};
 use session::{How, Session, Weight};
 use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use text::{Encoding, Lines, Range};
@@ -159,7 +160,8 @@ enum Job {
         /// The thread of the root lints with types itself only while its session has no second thread.
         with_types: bool,
     },
-    /// What the second thread of a session found with types, for the thread of the root to publish.
+    /// What the second thread of a session found with types, for the thread of the root to publish. It comes for
+    /// every document that the thread took, linted or not.
     Typed {
         document: Arc<Document>,
         /// [`Queue::generation`] of the session that found it.
@@ -168,13 +170,7 @@ enum Job {
         outcome: Option<Result<Linted, Fatal>>,
         notes: Vec<(Weight, Vec<u8>)>,
     },
-    /// `textDocument/codeAction`
-    Actions {
-        id: Json,
-        document: Arc<Document>,
-        range: Range,
-        only: Option<Vec<Vec<u8>>>,
-    },
+    Actions(Actions),
     /// `textDocument/formatting`, and with a range `textDocument/rangeFormatting`.
     Format {
         id: Json,
@@ -183,13 +179,21 @@ enum Job {
     },
 }
 
+/// `textDocument/codeAction`
+struct Actions {
+    id: Json,
+    document: Arc<Document>,
+    range: Range,
+    only: Option<Vec<Vec<u8>>>,
+}
+
 #[derive(Default)]
 struct Queue {
     /// What the client waits for goes first.
     requests: VecDeque<Job>,
     lints: VecDeque<Job>,
     /// The documents to lint with types, which takes as long as building their program: the session's second thread
-    /// takes them while it has one, so that no request waits for them.
+    /// takes them while it has one, so that no request waits for the program of another document.
     typed: VecDeque<Arc<Document>>,
     /// The session whose second thread runs, by [`Queue::sessions`]. `None`: the thread of the root takes `typed`.
     typed_thread: Option<u64>,
@@ -225,7 +229,7 @@ impl Root {
             }
             // The lint of a document goes before the code actions of it, which use what the lint found.
             let its_lint = match queue.requests.front() {
-                Some(Job::Actions { document, .. }) => queue.lints.iter().position(
+                Some(Job::Actions(Actions { document, .. })) => queue.lints.iter().position(
                     |it| matches!(it, Job::Lint { document: other, .. } if other.serial == document.serial),
                 ),
                 _ => None,
@@ -325,6 +329,9 @@ enum Types {
 struct Known {
     serial: u64,
     types: Types,
+    /// The client has them as diagnostics. If not, they were found for a code action, and what a lint with types
+    /// adds is not published either: a document that is linted on save has no diagnostics of a version in between.
+    is_shown: bool,
     /// How a comment turns a rule off in the document's language, if one can.
     directives: Option<Directives>,
     /// What the lines of `messages` are counted with: Markdown and JSON count only newlines.
@@ -349,6 +356,8 @@ struct Server<'s> {
     pending: Guarded<Vec<(Json, bool)>>,
     /// The engines of the folders, while their threads use them: to end before the process does.
     realms: Guarded<Vec<Arc<dyn Realms + 's>>>,
+    /// The client has said `exit`, or is gone: the threads of the roots end after the job they are at.
+    is_ending: AtomicBool,
 }
 
 /// The files that say how a file is linted or formatted, or whether it is at all.
@@ -475,7 +484,7 @@ impl<'s> Server<'s> {
         }
     }
 
-    /// Ends the process with `code`, once the engines have ended their threads.
+    /// Ends the process with `code`, once the engines have ended their threads. The threads of the roots are over.
     fn exit(&self, code: u8) -> ! {
         let realms: Vec<Arc<dyn Realms + 's>> = std::mem::take(&mut *self.realms.lock());
         for realms in &realms {
@@ -625,6 +634,10 @@ impl<'s> Server<'s> {
             };
             self.realms.lock().push(Arc::clone(&realms));
             next = self.work_with(root, &*realms, None, first, &hand_over);
+            // The process ends: [`Server::exit`] ends the engine, which takes less than to free it.
+            if self.is_ending.load(Ordering::Relaxed) {
+                return;
+            }
             realms.free_all();
             self.realms.lock().retain(|it| !Arc::ptr_eq(it, &realms));
         }
@@ -796,8 +809,8 @@ struct Worker<'w, 's> {
     formatter: Option<Prepared<'w>>,
     /// By URI.
     known: FxHashMap<Vec<u8>, Known>,
-    /// The [`Job::Actions`] for `source.fixAll` that wait for the lint with types of their document.
-    waiting: Vec<Job>,
+    /// The requests for `source.fixAll` that wait for the lint with types of their document.
+    waiting: Vec<Actions>,
     /// What the user has been told, which is not said again. An error is kept with the name of its command: both
     /// halves read the same `bunfig.toml`, and each reports its own failure.
     told: Vec<Vec<u8>>,
@@ -812,7 +825,7 @@ impl Worker<'_, '_> {
             match self.root.take() {
                 Some((taken, now)) if now == self.generation => job = taken,
                 other => {
-                    self.leave_waiting(other.is_none());
+                    self.leave_waiting();
                     return other;
                 }
             }
@@ -820,22 +833,20 @@ impl Worker<'_, '_> {
     }
 
     /// The requests that still wait go to the next generation, which lints their documents with its configurations.
-    /// `is_closed`: there is none.
-    fn leave_waiting(&mut self, is_closed: bool) {
+    /// A root that is closed has none: they are cancelled.
+    fn leave_waiting(&mut self) {
         let waiting = std::mem::take(&mut self.waiting);
-        if is_closed {
-            for job in &waiting {
-                if let Job::Actions { id, .. } = job {
-                    self.server.cancel(id);
-                }
-            }
-        } else if !waiting.is_empty() {
-            self.root.change(|queue| {
-                waiting
-                    .into_iter()
-                    .rev()
-                    .for_each(|it| queue.requests.push_front(it));
-            });
+        if waiting.is_empty() {
+            return;
+        }
+        let mut cancelled = Vec::new();
+        self.root.change(|queue| match queue.is_closed {
+            true => cancelled = waiting,
+            false => (waiting.into_iter().rev())
+                .for_each(|it| queue.requests.push_front(Job::Actions(it))),
+        });
+        for actions in &cancelled {
+            self.server.cancel(&actions.id);
         }
     }
 
@@ -954,28 +965,48 @@ impl Worker<'_, '_> {
             let result = self.lint(session, document, How::default())?.results.pop();
             let lacks_types =
                 (result.as_ref()).is_some_and(|it| session.wants_types(&document.path, it));
-            self.note(document, result, lacks_types.then_some(Types::NotAsked));
+            let known = self.note(document, result, false);
+            if lacks_types {
+                known.types = Types::NotAsked;
+            }
         }
         self.known.get(&document.uri)
     }
 
-    /// `lacks`: what the rules that need types are still to say, if the result is without them and its configuration
-    /// asks for them.
-    fn note(&mut self, document: &Document, result: Option<FileResult>, lacks: Option<Types>) {
+    /// Keeps what a lint of `document` found, as all there is to know of it.
+    fn note(
+        &mut self,
+        document: &Document,
+        result: Option<FileResult>,
+        is_shown: bool,
+    ) -> &mut Known {
         let linted = result.as_ref().and_then(|it| it.linted.as_ref());
-        let had_types = result.as_ref().is_some_and(|it| it.had_types);
         let known = Known {
             serial: document.serial,
-            types: lacks.unwrap_or(match had_types {
+            types: match result.as_ref().is_some_and(|it| it.had_types) {
                 true => Types::Found,
                 false => Types::Absent,
-            }),
+            },
+            is_shown,
             directives: linted.and_then(|it| Directives::of(&it.config, &document.path)),
             line_breaks: linted.map_or_else(Default::default, |it| it.config.line_breaks),
             messages: result.map(|it| it.messages).unwrap_or_default(),
             fixed: None,
         };
-        self.known.insert(document.uri.clone(), known);
+        match self.known.entry(document.uri.clone()) {
+            Entry::Occupied(mut entry) => {
+                entry.insert(known);
+                entry.into_mut()
+            }
+            Entry::Vacant(entry) => entry.insert(known),
+        }
+    }
+
+    /// Whether what a lint with types finds in `document` is the client's to see: not what adds to problems that were
+    /// found for a code action.
+    fn shows_types(&self, document: &Document) -> bool {
+        let known = (self.known.get(&document.uri)).filter(|it| it.serial == document.serial);
+        known.is_none_or(|it| it.is_shown)
     }
 
     /// The text of `document` with every fix applied, found once per [`Document::serial`]. `None`: nothing is fixed.
@@ -1034,8 +1065,9 @@ impl Worker<'_, '_> {
                         with_types,
                         fixes: false,
                     };
+                    let shows = !with_types || self.shows_types(&document);
                     let linted = session.and_then(|it| self.lint(it, &document, how));
-                    self.publish(session, Arc::clone(&document), with_types, linted);
+                    self.publish(session, &document, with_types, shows, linted);
                 }
                 let typed = with_types.then_some(document.serial);
                 self.answer_waiting(session, &document.uri, typed);
@@ -1053,12 +1085,13 @@ impl Worker<'_, '_> {
                     return;
                 }
                 if let Some(outcome) = outcome.filter(|_| server.is_latest(&document)) {
+                    let shows = self.shows_types(&document);
                     let linted = session.and_then(|_| self.outcome(outcome));
-                    self.publish(session, Arc::clone(&document), true, linted);
+                    self.publish(session, &document, true, shows, linted);
                 }
                 self.answer_waiting(session, &document.uri, Some(document.serial));
             }
-            job @ Job::Actions { .. } => self.answer(session, job, true),
+            Job::Actions(actions) => self.answer(session, actions, true),
             Job::Format {
                 id,
                 document,
@@ -1072,29 +1105,35 @@ impl Worker<'_, '_> {
         }
     }
 
-    /// Publishes what a lint of `document` found: `linted`, or `None` if it could not be linted. Without types, a
-    /// document whose configuration asks for them is queued for a lint with them.
+    /// Keeps what a lint of `document` found, and with `shows` publishes it: `linted`, or `None` if it could not be
+    /// linted. Without types, a document whose configuration asks for them is queued for a lint with them.
     fn publish(
         &mut self,
         session: Option<&Session>,
-        document: Arc<Document>,
+        document: &Arc<Document>,
         with_types: bool,
+        shows: bool,
         linted: Option<Linted>,
     ) {
         let server = self.server;
+        let show = |diagnostics: Vec<Json>| {
+            if shows {
+                server.publish(document, diagnostics);
+            }
+        };
         // Turned off while the lint ran: what it found is not shown.
         let Some(mut linted) = linted.filter(|_| server.settings.lock().lints) else {
             self.known.remove(&document.uri);
-            return server.publish(&document, Vec::new());
+            return show(Vec::new());
         };
         if linted.files == 0 {
             // Not one to lint: the problems it had as one are taken back, once. A generation earlier it may have been
             // one, and its Worker's `known` is gone with it.
             let is_cleared =
                 (self.known.get(&document.uri)).is_some_and(|it| it.messages.is_empty());
-            self.note(&document, None, None);
+            self.note(document, None, shows);
             if !is_cleared {
-                server.publish(&document, Vec::new());
+                show(Vec::new());
             }
             return;
         }
@@ -1103,72 +1142,68 @@ impl Worker<'_, '_> {
         let lacks_types = !with_types
             && (session.zip(result.as_ref()))
                 .is_some_and(|(session, result)| session.wants_types(&document.path, result));
-        self.note(&document, result, lacks_types.then_some(Types::Awaited));
-        let known = self.known.get(&document.uri);
-        let breaks = known.map_or_else(Default::default, |it| it.line_breaks);
-        let places = server.places(&document, breaks);
-        let messages = known.map(|it| &it.messages[..]).unwrap_or_default();
-        let diagnostics = messages.iter().map(|it| places.diagnostic(it));
-        server.publish(&document, diagnostics.collect());
+        let known = self.note(document, result, shows);
         if lacks_types {
-            self.root.change(|queue| queue.typed.push_back(document));
+            known.types = Types::Awaited;
         }
-    }
-
-    /// Answers `job`, a [`Job::Actions`]. `source.fixAll` is what `bun lint --fix` would write, which the rules that
-    /// need types have a part in: with `may_wait`, the request waits in [`Worker::waiting`] for the lint with types
-    /// of its document, and no other request waits for it.
-    fn answer(&mut self, session: Option<&Session>, job: Job, may_wait: bool) {
-        let server = self.server;
-        let Job::Actions {
-            id,
-            document,
-            range,
-            only,
-        } = &job
-        else {
-            return;
-        };
-        if !server.is_wanted(id, document) {
-            return;
-        }
-        let Some(session) = session else {
-            return server.finish(id, Ok(Json::Array(Vec::new())));
-        };
-        if may_wait && wants(only.as_deref(), FIX_ALL) && self.awaits_types(session, document) {
-            return self.waiting.push(job);
-        }
-        let actions = self.actions(session, document, *range, only.as_deref());
-        server.finish(id, Ok(Json::Array(actions)));
-    }
-
-    /// Whether a lint with types of `document` is to come, which is queued here if its problems were found for a
-    /// code action.
-    fn awaits_types(&mut self, session: &Session, document: &Arc<Document>) -> bool {
-        let types = self.problems(session, document).map(|it| it.types);
-        if types == Some(Types::NotAsked) {
-            if let Some(known) = self.known.get_mut(&document.uri) {
-                known.types = Types::Awaited;
-            }
+        let places = server.places(document, known.line_breaks);
+        let diagnostics = known.messages.iter().map(|it| places.diagnostic(it));
+        show(diagnostics.collect());
+        if lacks_types {
             let document = Arc::clone(document);
             self.root.change(|queue| queue.typed.push_back(document));
         }
-        matches!(types, Some(Types::Awaited | Types::NotAsked))
+    }
+
+    /// Answers a request for code actions. `source.fixAll` is what `bun lint --fix` would write, which the rules that
+    /// need types have a part in: with `may_wait`, the request waits in [`Worker::waiting`] for the lint with types
+    /// of its document, and no other request waits for it.
+    fn answer(&mut self, session: Option<&Session>, actions: Actions, may_wait: bool) {
+        let server = self.server;
+        let (id, document) = (&actions.id, &actions.document);
+        if !server.is_wanted(id, document) {
+            return;
+        }
+        let only = actions.only.as_deref();
+        let waits = match session {
+            Some(session) if may_wait && wants(only, FIX_ALL) => {
+                self.awaits_types(session, document)
+            }
+            _ => Some(false),
+        };
+        let found = match (session, waits) {
+            (Some(_), Some(true)) => return self.waiting.push(actions),
+            (Some(session), Some(false)) => self.actions(session, document, actions.range, only),
+            // Linting is off, or the document cannot be linted, which the user was told.
+            (None, _) | (_, None) => Vec::new(),
+        };
+        server.finish(id, Ok(Json::Array(found)));
+    }
+
+    /// Whether a lint with types of `document` is to come, which is queued here if its problems were found for a
+    /// code action. `None`: the document cannot be linted.
+    fn awaits_types(&mut self, session: &Session, document: &Arc<Document>) -> Option<bool> {
+        self.problems(session, document)?;
+        let known = self.known.get_mut(&document.uri)?;
+        if known.types == Types::NotAsked {
+            known.types = Types::Awaited;
+            let document = Arc::clone(document);
+            self.root.change(|queue| queue.typed.push_back(document));
+            return Some(true);
+        }
+        Some(known.types == Types::Awaited)
     }
 
     /// Looks again at the requests that wait for a lint with types of the document at `uri`, after a lint of it.
     /// `typed`: the [`Document::serial`] that the lint with types is over for, whatever came of it.
     fn answer_waiting(&mut self, session: Option<&Session>, uri: &[u8], typed: Option<u64>) {
-        let is_of_document =
-            |it: &Job| matches!(it, Job::Actions { document, .. } if document.uri == uri);
         let (of_document, others) = std::mem::take(&mut self.waiting)
             .into_iter()
-            .partition(is_of_document);
+            .partition(|it| it.document.uri == uri);
         self.waiting = others;
-        for job in of_document {
-            let may_wait =
-                !matches!(&job, Job::Actions { document, .. } if Some(document.serial) == typed);
-            self.answer(session, job, may_wait);
+        for actions in of_document {
+            let may_wait = Some(actions.document.serial) != typed;
+            self.answer(session, actions, may_wait);
         }
     }
 
@@ -1377,7 +1412,7 @@ impl<'d> Desk<'d, '_, '_> {
                 unanswered = std::mem::take(&mut queue.requests);
             });
             for job in unanswered {
-                if let Job::Actions { id, .. } | Job::Format { id, .. } = job {
+                if let Job::Actions(Actions { id, .. }) | Job::Format { id, .. } = job {
                     self.server.cancel(&id);
                 }
             }
@@ -1537,12 +1572,12 @@ impl<'d> Desk<'d, '_, '_> {
                         .filter_map(|it| Some(it.as_str()?.to_vec()))
                         .collect()
                 };
-                Some(Job::Actions {
+                Some(Job::Actions(Actions {
                     id,
                     document,
                     range: text::range_from_json(params.get(b"range")?)?,
                     only: only.map(kinds),
-                })
+                }))
             }),
             (_, b"textDocument/formatting" | b"textDocument/rangeFormatting")
                 if !server.settings.lock().formats =>
@@ -1573,9 +1608,6 @@ impl<'d> Desk<'d, '_, '_> {
 
     fn notification(&mut self, method: &[u8], params: &Json) {
         let server = self.server;
-        if method == b"exit" {
-            server.exit(u8::from(self.phase != Phase::Down));
-        }
         if self.phase != Phase::Running {
             return;
         }
@@ -1697,7 +1729,9 @@ impl<'d> Desk<'d, '_, '_> {
         }
     }
 
-    fn run(&mut self) -> ! {
+    /// Reads the messages until the client says `exit` or is gone. Returns the exit code of the process, once no
+    /// thread of a root takes another job.
+    fn run(&mut self) -> u8 {
         let server = self.server;
         let mut reader = Reader::new(server.process.read);
         loop {
@@ -1712,10 +1746,11 @@ impl<'d> Desk<'d, '_, '_> {
                     continue;
                 }
                 // The client is gone.
-                Frame::End => server.exit(u8::from(self.phase != Phase::Down)),
+                Frame::End => break,
             };
             match Incoming::parse(&message) {
                 Incoming::Request { id, method, params } => self.request(id, &method, &params),
+                Incoming::Notification { method, .. } if &method[..] == b"exit" => break,
                 Incoming::Notification { method, params } => self.notification(&method, &params),
                 Incoming::Response => {}
                 Incoming::Unreadable => {
@@ -1732,6 +1767,11 @@ impl<'d> Desk<'d, '_, '_> {
                 }
             }
         }
+        server.is_ending.store(true, Ordering::Relaxed);
+        for root in &self.roots {
+            root.change(|queue| queue.is_closed = true);
+        }
+        u8::from(self.phase != Phase::Down)
     }
 }
 
@@ -1748,8 +1788,10 @@ pub fn serve<'a>(args: Args<'a>, environment: &'a Environment<'a>, process: &'a 
         latest: Guarded::default(),
         pending: Guarded::default(),
         realms: Guarded::default(),
+        is_ending: AtomicBool::new(false),
     };
-    std::thread::scope(|scope| {
+    // The scope waits for the threads of the roots: nothing is linted any more when the engines end.
+    let code = std::thread::scope(|scope| {
         let mut desk = Desk {
             server,
             scope,
@@ -1759,5 +1801,6 @@ pub fn serve<'a>(args: Args<'a>, environment: &'a Environment<'a>, process: &'a 
             serial: 0,
         };
         desk.run()
-    })
+    });
+    server.exit(code)
 }

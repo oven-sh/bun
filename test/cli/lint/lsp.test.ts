@@ -993,6 +993,9 @@ describe.concurrent("bun lint --lsp", () => {
       const editsOf = (action: any): TextEdit[] =>
         action.edit.changes?.[uri] ?? action.edit.documentChanges.find((it: any) => it.textDocument.uri === uri).edits;
       expect(applyEdits(text, editsOf(all.result[0]))).toBe("const n: number = 1;\nconst m = n;\nconsole.log(m);\n");
+      // The version is not saved: what was found in it for the request is no diagnostic.
+      const published = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
+      expect(published.filter(it => it.params.version !== 1)).toEqual([]);
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();

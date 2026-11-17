@@ -142,6 +142,7 @@ static void endParserReads(us_socket_t* socket, bool restOfReadTaken)
     using Data = uWS::HttpResponseData<SSL>;
     // An Upgrade too: the rest of the read that is being parsed went to the listener as `head`.
     reinterpret_cast<Data*>(us_socket_ext(socket))->isConnectRequest |= restOfReadTaken;
+    reinterpret_cast<Data*>(us_socket_ext(socket))->state |= Data::HTTP_NODE_PARSER_DETACHED;
     reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resumeReads(Data::READ_PAUSE_BODY | Data::READ_PAUSE_PARKED | Data::READ_PAUSE_FLOOD);
 }
 

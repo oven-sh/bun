@@ -10565,6 +10565,21 @@ describe("raw request bytes on a server's connection socket", () => {
     });
   });
 
+  it.each(["http", "https"])(
+    "%s: the client's FIN closes a connection with a reader that a 'clientError' listener left open",
+    async scheme => {
+      const server = scheme === "https" ? createHttpsServer(tlsCert) : createServer();
+      server.on(scheme === "https" ? "secureConnection" : "connection", socket => socket.on("data", () => {}));
+      await withClient(server, async client => {
+        client.write("\x01\r\n\r\n");
+        const [err, socket] = await once(server, "clientError");
+        expect(err.code).toBe("HPE_INVALID_METHOD");
+        client.end();
+        await once(socket, "close");
+      });
+    },
+  );
+
   it("removeAllListeners() with no reader behind it leaves the reads to the parser", async () => {
     const server = createServer((req, res) => {
       req.socket.removeAllListeners();

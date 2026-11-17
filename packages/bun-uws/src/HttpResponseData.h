@@ -160,6 +160,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * parser when 'close' is emitted on the socket); any further request data
          * in the buffer is not parsed. */
         HTTP_NODE_PARSING_STOPPED = 1 << 12,
+        /* See isParserDetached(). */
+        HTTP_NODE_PARSER_DETACHED = 1 << 11,
         /* HttpResponse::terminateHeaders() decides the framing, unless the status (1xx, 204) or node:http did before it. */
         HTTP_FRAMING_DECIDED = 1 << 13,
         /* An accepted Upgrade request with a body. The body is parsed and delivered through the request as usual. Behind its last chunk the connection leaves HTTP (NodeHttpSocketHooks::onUpgradeBodyEnded). */
@@ -214,7 +216,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: call NodeHttpSocketHooks::onReadParsed once the read being parsed is consumed. */
         HTTP_NODE_NOTIFY_READ_PARSED = 1 << 19,
 
-        HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED
+        HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_PARSER_DETACHED
             | HTTP_NODE_LEAVE_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
             | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
             | HTTP_NODE_HALF_CLOSED | HTTP_NODE_RAW_READS | HTTP_NODE_SHUTDOWN_AFTER_DRAIN
@@ -253,7 +255,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
     /* node:http: 'connect' or 'upgrade' has the socket, and responses ahead of that request are still owed. Nothing is parsed, and the socket's handle gets every read. */
     bool isParserDetached() const {
-        return (state & (HTTP_NODE_PARSING_STOPPED | HTTP_NODE_RAW_READS)) == (HTTP_NODE_PARSING_STOPPED | HTTP_NODE_RAW_READS);
+        return state & HTTP_NODE_PARSER_DETACHED;
     }
 
     /* Shared context pointer for onAborted/onTimeout/onData */

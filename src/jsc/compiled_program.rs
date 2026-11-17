@@ -620,12 +620,11 @@ pub fn entry_point_is_commonjs(global: &JSGlobalObject) -> bool {
 
 #[cfg(target_os = "linux")]
 mod write_execute {
-    const PR_SET_MDWE: libc::c_int = 65;
-    const PR_GET_MDWE: libc::c_int = 66;
+    use bun_sys::linux::{PrctlOp, prctl};
+
     const PR_MDWE_REFUSE_EXEC_GAIN: libc::c_ulong = 1;
     #[cfg(not(bun_hardened))]
     const PR_MDWE_NO_INHERIT: libc::c_ulong = 2;
-    const UNUSED: libc::c_ulong = 0;
 
     static IS_FILTERED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
@@ -680,8 +679,7 @@ mod write_execute {
     }
 
     fn is_denied_by_the_kernel() -> bool {
-        // SAFETY: the request takes and returns integers only.
-        let bits = unsafe { libc::prctl(PR_GET_MDWE, UNUSED, UNUSED, UNUSED, UNUSED) };
+        let bits = prctl(PrctlOp::GET_MDWE, 0);
         bits > 0 && bits as libc::c_ulong & PR_MDWE_REFUSE_EXEC_GAIN != 0
     }
 
@@ -723,18 +721,12 @@ mod write_execute {
     #[cfg(bun_hardened)]
     fn gain_no_new_privileges() -> Result<(), Failure> {
         let call = "prctl(PR_SET_NO_NEW_PRIVS)";
-        let yes: libc::c_ulong = 1;
-        // SAFETY: the requests take and return integers only.
-        let (set, in_force) = unsafe {
-            let set = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, yes, UNUSED, UNUSED, UNUSED);
-            let errno = last_errno();
-            let read = libc::prctl(libc::PR_GET_NO_NEW_PRIVS, UNUSED, UNUSED, UNUSED, UNUSED);
-            ((set, errno), read == 1)
-        };
-        match (in_force, set) {
+        let set = prctl(PrctlOp::SET_NO_NEW_PRIVS, 1);
+        let errno = last_errno();
+        match (prctl(PrctlOp::GET_NO_NEW_PRIVS, 0) == 1, set) {
             (true, _) => Ok(()),
-            (false, (0, _)) => Err(Failure::NotInForce { call }),
-            (false, (_, errno)) => Err(Failure::Failed { call, errno }),
+            (false, 0) => Err(Failure::NotInForce { call }),
+            (false, _) => Err(Failure::Failed { call, errno }),
         }
     }
 
@@ -792,10 +784,6 @@ mod write_execute {
         let version = (version.next().flatten(), version.next().flatten());
         // glibc 2.34 moved libutil, librt and the services `files` and `dns` into libc.so.6.
         let is_merged = version >= (Some(2), Some(34));
-        // pthread_exit() unwinds with it, and only a reload calls that.
-        if !is_removed(Feature::HotReload) {
-            load(c"libgcc_s.so.1");
-        }
         if !is_merged && !is_removed(Feature::Terminal) {
             load(c"libutil.so.1");
         }
@@ -853,8 +841,7 @@ mod write_execute {
             return;
         }
         let bits = PR_MDWE_REFUSE_EXEC_GAIN | PR_MDWE_NO_INHERIT;
-        // SAFETY: the request takes and returns integers only.
-        unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) };
+        prctl(PrctlOp::SET_MDWE, bits);
     }
 
     /// Child processes inherit it. Whoever started this process may have set it already.
@@ -873,9 +860,7 @@ mod write_execute {
             return Ok(());
         }
         let call = "prctl(PR_SET_MDWE), which Linux has since 6.3,";
-        let bits = PR_MDWE_REFUSE_EXEC_GAIN;
-        // SAFETY: the request takes and returns integers only.
-        let set = unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) };
+        let set = prctl(PrctlOp::SET_MDWE, PR_MDWE_REFUSE_EXEC_GAIN);
         let errno = last_errno();
         if is_denied_by_the_kernel() {
             return Ok(());

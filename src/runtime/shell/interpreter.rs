@@ -479,37 +479,29 @@ impl Interpreter {
         // on Windows `MAX_PATH_BYTES` is ~96 KiB and `init` runs from
         // JS-triggered paths that may already be deep on the stack.
         let mut pathbuf = bun_paths::path_buffer_pool::get();
-        let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
-            Ok(n) => n,
+        let cwd_z = match bun_sys::getcwd_z(&mut pathbuf) {
+            Ok(cwd) => cwd,
             Err(e) => return Err(ShellErr::new_sys(&e)),
         };
-        // NUL-terminate for `open()`; downstream `cwd()` strips the trailing 0.
-        pathbuf[cwd_len] = 0;
-        let cwd_z = bun_core::ZStr::from_buf(pathbuf.as_slice(), cwd_len);
 
         let cwd_fd = match bun_sys::open(cwd_z, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
             Ok(fd) => OwnedFd(fd),
             Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
-        let mut cwd_arr = Vec::with_capacity(cwd_len + 1);
-        cwd_arr.extend_from_slice(&pathbuf[..cwd_len + 1]);
-        debug_assert_eq!(*cwd_arr.last().unwrap(), 0);
+        // Downstream `cwd()` strips the trailing 0.
+        let cwd_arr = cwd_z.as_bytes_with_nul().to_vec();
 
         // ── stdin ──────────────────────────────────────────────────────────
         log!("Duping stdin");
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
             #[cfg(unix)]
             {
-                bun_sys::open(
-                    bun_core::ZStr::from_static(b"/dev/null\0"),
-                    bun_sys::O::RDONLY,
-                    0,
-                )
+                bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDONLY, 0)
             }
             #[cfg(windows)]
             {
-                bun_sys::open(bun_core::ZStr::from_static(b"NUL\0"), bun_sys::O::RDONLY, 0)
+                bun_sys::open(bun_core::zstr!("NUL"), bun_sys::O::RDONLY, 0)
             }
         } else {
             shell_dup(Fd::stdin())
@@ -1537,11 +1529,7 @@ fn io_to_js_value(
     buf: *mut Vec<u8>,
 ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
     // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
-    let bytelist = core::mem::take(unsafe { &mut *buf });
-    // The moved-out `Vec<u8>` storage is handed to JSC directly; the
-    // `Vec<u8>` value itself is `mem::forget`-ed since JSC now owns the bytes.
-    let mut bytelist = core::mem::ManuallyDrop::new(bytelist);
-    crate::jsc::JSValue::create_buffer(global_this, bytelist.slice_mut())
+    crate::jsc::JSValue::create_buffer(global_this, core::mem::take(unsafe { &mut *buf }))
 }
 
 /// On the mini event
@@ -1806,7 +1794,6 @@ impl ShellExecEnv {
         // Build NUL-terminated `new_cwd` in `buf`.
         let new_cwd_len: usize = if is_abs {
             buf[..new_cwd_.len()].copy_from_slice(new_cwd_);
-            buf[new_cwd_.len()] = 0;
             new_cwd_.len()
         } else {
             // `join_z_buf` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD`
@@ -1834,10 +1821,9 @@ impl ShellExecEnv {
             if n > 1 && buf[n - 1] == b'/' {
                 n -= 1;
             }
-            buf[n] = 0;
             n
         };
-        let new_cwd_z = bun_core::ZStr::from_buf(&buf[..], new_cwd_len);
+        let new_cwd_z = bun_core::ZStr::nul_terminate(&mut buf, new_cwd_len);
 
         self.cwd_fd = OwnedFd(shell_openat(
             self.cwd_fd.fd(),
@@ -1851,7 +1837,7 @@ impl ShellExecEnv {
 
         self.__cwd.clear();
         // include trailing NUL.
-        self.__cwd.extend_from_slice(&buf[..new_cwd_len + 1]);
+        self.__cwd.extend_from_slice(new_cwd_z.as_bytes_with_nul());
 
         debug_assert_eq!(*self.__cwd.last().unwrap(), 0);
         debug_assert_eq!(*self.__prev_cwd.last().unwrap(), 0);
@@ -1943,16 +1929,12 @@ pub(crate) use crate::shell::states::assigns::AssignCtx;
 fn open_null_device() -> bun_sys::Result<Fd> {
     #[cfg(unix)]
     {
-        bun_sys::open(
-            bun_core::ZStr::from_static(b"/dev/null\0"),
-            bun_sys::O::RDWR,
-            0,
-        )
+        bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDWR, 0)
     }
     #[cfg(windows)]
     {
         // Windows NUL is bidirectional regardless of the open flags.
-        bun_sys::open(bun_core::ZStr::from_static(b"nul\0"), bun_sys::O::RDWR, 0)
+        bun_sys::open(bun_core::zstr!("nul"), bun_sys::O::RDWR, 0)
     }
 }
 
@@ -2101,8 +2083,7 @@ fn shell_get_path<'a>(
             return Err(name_too_long());
         }
         buf[source_root_len..end].copy_from_slice(to_tail);
-        buf[end] = 0;
-        return Ok(bun_core::ZStr::from_buf(buf.as_slice(), end));
+        return Ok(bun_core::ZStr::nul_terminate(buf, end));
     }
     if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
         return Ok(to);
@@ -2122,8 +2103,7 @@ fn shell_get_path<'a>(
         return Err(name_too_long());
     }
     buf[..len].copy_from_slice(joined);
-    buf[len] = 0;
-    Ok(bun_core::ZStr::from_buf(buf.as_slice(), len))
+    Ok(bun_core::ZStr::nul_terminate(buf, len))
 }
 
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging

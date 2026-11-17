@@ -395,7 +395,7 @@ pub mod bv2_impl {
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
     use bun_ast::{ExportsKind, ImportKind, ImportRecord};
-    use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
+    use bun_collections::{ArrayHashMap, DynamicBitSet, VecExt};
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
     use bun_resolver::DataURL;
@@ -1231,7 +1231,7 @@ pub mod bv2_impl {
                     }
                     // SAFETY: the pass cannot finish before this is answered, so `'a` outlasts it.
                     let request = unsafe { transmute::<Box<Self>, Box<Resolve<'static>>>(self) };
-                    bv2.enqueue_plugin_request(request);
+                    bv2.js_loop_for_plugins().post_boxed(request);
                 }
                 /// The plugins can no longer answer this request (their VM is shutting down, or the pass
                 /// was cancelled before it was handed over): answer it as cancelled, from whichever thread
@@ -1328,7 +1328,7 @@ pub mod bv2_impl {
                     }
                     // SAFETY: as `Resolve::dispatch`.
                     let request = unsafe { transmute::<Box<Self>, Box<Load<'static>>>(self) };
-                    bv2.enqueue_plugin_request(request);
+                    bv2.js_loop_for_plugins().post_boxed(request);
                 }
                 /// As `Resolve::answer_cancelled`.
                 pub fn answer_cancelled(mut self: Box<Self>) {
@@ -1786,25 +1786,13 @@ pub mod bv2_impl {
     pub use super::{BakeOptions, BundleV2};
 
     impl<'a> BundleV2<'a> {
-        pub(crate) fn enqueue_on_js_loop_for_plugins(
-            &mut self,
-            task: Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
-        ) -> bun_event_loop::Posted {
+        pub(crate) fn js_loop_for_plugins(&self) -> &dyn bun_event_loop::PostToJs {
             debug_assert!(self.plugins.is_some());
-            let poster = match self.completion {
+            match self.completion {
                 Some(completion) => completion.poster,
                 // From bake, where the loop running the bundle also runs the plugins.
                 None => (self.js_poster.as_deref())
                     .expect("No JavaScript event loop for transpiler plugins to run on"),
-            };
-            poster.post(task)
-        }
-
-        fn enqueue_plugin_request<T: bun_event_loop::BoxedTask>(&mut self, request: Box<T>) {
-            let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_boxed(request);
-            if let bun_event_loop::Posted::Refused(ct) = self.enqueue_on_js_loop_for_plugins(ct) {
-                // SAFETY: the task made above.
-                drop(unsafe { ct.task.into_boxed::<T>() });
             }
         }
 
@@ -1924,13 +1912,13 @@ pub mod bv2_impl {
         pub(crate) all_exports_kinds: &'a [ExportsKind],
         pub(crate) all_targets: &'a [Target],
         /// Files which are Server Component Boundaries
-        pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
+        pub(crate) scb_bitset: Option<DynamicBitSet>,
         pub(crate) scb_list: &'a server_component_boundary::List,
 
         /// Files inlined in CSS whose output path a JS or HTML importer or their own entry point chunk prints
-        pub(crate) additional_files_needed_outside_css: &'a mut DynamicBitSetUnmanaged,
+        pub(crate) additional_files_needed_outside_css: &'a mut DynamicBitSet,
         /// Files which are imported by CSS and inlined in CSS
-        pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
+        pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSet,
 
         pub(crate) stack: Vec<ReachFrame>,
     }
@@ -2165,12 +2153,12 @@ pub mod bv2_impl {
             };
 
             let mut additional_files_needed_outside_css =
-                DynamicBitSetUnmanaged::init_empty(self.graph.input_files.len())?;
+                DynamicBitSet::init_empty(self.graph.input_files.len())?;
             for entry_point in self.graph.entry_points.iter() {
                 additional_files_needed_outside_css.set(entry_point.get() as usize);
             }
             let mut additional_files_imported_by_css_and_inlined =
-                DynamicBitSetUnmanaged::init_empty(self.graph.input_files.len())?;
+                DynamicBitSet::init_empty(self.graph.input_files.len())?;
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
 
@@ -4193,15 +4181,11 @@ pub mod bv2_impl {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     // SAFETY: `repr(transparent)`, and the pass cannot finish before it has run.
                     let answered = unsafe { bun_core::heap::take(load.cast::<LoadAnswered>()) };
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_boxed(answered);
                     let poster = self
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                        // SAFETY: the task made above.
-                        drop(unsafe { ct.task.into_boxed::<LoadAnswered>() });
-                    }
+                    poster.post_boxed(answered);
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `task` is the field at that offset; `on_load_mini` takes the box back.
@@ -4229,15 +4213,11 @@ pub mod bv2_impl {
                     // SAFETY: as in `on_load_async`.
                     let answered =
                         unsafe { bun_core::heap::take(resolve.cast::<ResolveAnswered>()) };
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_boxed(answered);
                     let poster = self
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                        // SAFETY: the task made above.
-                        drop(unsafe { ct.task.into_boxed::<ResolveAnswered>() });
-                    }
+                    poster.post_boxed(answered);
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `task` is the field at that offset; `on_resolve_mini` takes the box back.

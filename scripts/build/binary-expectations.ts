@@ -333,6 +333,10 @@ function forbiddenImports(cfg: Config): string[] {
     // from the shared libstdc++/libc++ legitimately).
     forbidden.push("__cxa_guard_*");
   }
+  if (cfg.linux && cfg.abi === "gnu") {
+    // glibc loads libgcc_s for it at its first use, which a hardened program refuses.
+    forbidden.push("pthread_exit");
+  }
   return forbidden;
 }
 

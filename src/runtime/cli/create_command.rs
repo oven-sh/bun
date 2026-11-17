@@ -1312,6 +1312,8 @@ fn file_copier_copy(
     while let Some(entry) = walker.next()? {
         #[cfg(windows)]
         {
+            use bun_sys::windows::Win32ErrorExt as _;
+
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -1326,37 +1328,22 @@ fn file_copier_copy(
 
             match entry.kind {
                 bun_sys::FileKind::Directory => {
-                    // SAFETY: `src`/`dst` are NUL-terminated wide strings.
-                    if unsafe {
-                        bun_sys::windows::CreateDirectoryExW(
-                            src.as_ptr(),
-                            dst.as_ptr(),
-                            core::ptr::null_mut(),
-                        )
-                    } == 0
-                    {
+                    if bun_sys::windows::CreateDirectoryExW(src, dst).is_err() {
                         let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry.path);
                     }
                 }
                 bun_sys::FileKind::File => {
                     scopeguard::defer! { progress.complete_one(NodeId::Root) }
-                    // SAFETY: `src`/`dst` are NUL-terminated wide strings.
-                    if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
-                        == bun_sys::windows::FALSE
+                    let mut result = bun_sys::windows::CopyFileW(src, dst, false);
+                    if result.is_err()
+                        && let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path)
                     {
-                        if let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path) {
-                            let _ =
-                                bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
-                            // SAFETY: same NUL-terminated wide strings as above; retry after mkdir.
-                            if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
-                                != bun_sys::windows::FALSE
-                            {
-                                continue;
-                            }
-                        }
-
+                        let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
+                        result = bun_sys::windows::CopyFileW(src, dst, false);
+                    }
+                    if let Err(err) = result {
                         Output::err(
-                            bun_sys::windows::last_system_errno(),
+                            err.to_system_errno(),
                             "failed to copy file {}",
                             format_args!(
                                 "{}",
@@ -1552,8 +1539,7 @@ impl Example {
                 home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
                 home_dir_buf[entry_name.len()] = bun_paths::SEP;
                 home_dir_buf[entry_name.len() + 1..len].copy_from_slice(b"package.json");
-                home_dir_buf[len] = 0;
-                let path = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
+                let path = bun_core::ZStr::nul_terminate(&mut home_dir_buf, len);
 
                 if bun_sys::faccessat(folder, path).unwrap_or(false) {
                     examples.push(Example {

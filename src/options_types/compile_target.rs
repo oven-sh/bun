@@ -208,10 +208,8 @@ impl CompileTarget {
                     return Err(crate::Error::BufferTooSmall);
                 }
                 buf[..self_exe_path.len()].copy_from_slice(self_exe_path.as_bytes());
-                buf[self_exe_path.len()] = 0;
                 *needs_download = false;
-                // SAFETY: buf[self_exe_path.len()] == 0 written above
-                return Ok(ZStr::from_buf(&buf[..], self_exe_path.len()));
+                return Ok(ZStr::nul_terminate(buf, self_exe_path.len()));
             }
         }
 

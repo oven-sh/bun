@@ -13,9 +13,8 @@ use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::http_context::ActiveSocketExt;
-use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h3};
+use crate::{AsyncHttp, HTTPContext, InFlightRequest, InitError, NewHttpContext, h2, h3};
 
 // The scope registry keys on name, so the two visibilities (.hidden +
 // .visible) are split into two scope names.
@@ -121,9 +120,6 @@ pub struct HttpThread {
     /// path stays O(1). Owned by the HTTP thread.
     pub(crate) has_pending_queued_abort: bool,
 
-    /// Refs released on the next loop tick rather than inside the socket
-    /// callback that gave them up.
-    pub(crate) queued_threadlocal_proxy_derefs: Vec<RefPtr<ProxyTunnel>>,
     /// Custom TLS contexts with no ref left, see
     /// `HTTPContext::destroy_between_ticks`.
     pub(crate) dead_ssl_contexts: Vec<NonNull<NewHttpContext<true>>>,
@@ -131,7 +127,7 @@ pub struct HttpThread {
     pub(crate) timer: Instant,
     pub(crate) lazy_libdeflater: Option<Box<LibdeflateState>>,
 
-    /// Owns the requests that have started. Sockets and streams point into them.
+    /// What each `InFlightRequest` owns, for `dealloc_in_flight_for_exit`.
     pub(crate) in_flight: Vec<NonNull<AsyncHttp<'static>>>,
 }
 
@@ -163,7 +159,6 @@ impl HttpThread {
             lazy_https_init: None,
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
-            queued_threadlocal_proxy_derefs: Vec::new(),
             dead_ssl_contexts: Vec::new(),
             timer: Instant::now(),
             lazy_libdeflater: None,
@@ -360,10 +355,7 @@ impl HttpThread {
             .expect("init_with_thread_opts sets `secure` or diverges")
     }
 
-    pub(crate) fn connect<const IS_SSL: bool>(
-        &mut self,
-        client: &mut HttpClient,
-    ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
+    pub(crate) fn connect<const IS_SSL: bool>(&mut self, mut client: InFlightRequest) {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
@@ -388,9 +380,7 @@ impl HttpThread {
                     // Cache hit - reuse existing SSL context
                     entry.last_used_ns = self.timer_read();
                     client.set_custom_ssl_ctx(entry.ctx.clone());
-                    // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
-                    return Self::dial(entry.ctx_mut(), client)
-                        .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
+                    return Self::dial(entry.ctx_mut(), client);
                 }
 
                 // Cache miss - create new SSL context
@@ -407,12 +397,12 @@ impl HttpThread {
                 });
                 // SAFETY: fresh allocation; HTTP-thread-only.
                 let custom_context = unsafe { &mut *ctx.as_ptr() };
-                if let Err(err) = custom_context.init_with_client_config(client) {
+                if let Err(err) = custom_context.init_with_client_config(&mut client) {
                     // `init_with_client_config` fails before `group.init()` runs.
                     // `impl Drop for HTTPContext` tolerates an uninitialized
                     // group (skips close_all when `group.loop_` is
                     // null), so dropping `ctx` here is safe.
-                    return Err(match err {
+                    return client.fail(match err {
                         InitError::InvalidCRL => crate::Error::InvalidCRL,
                         InitError::FailedToOpenSocket
                         | InitError::InvalidCA
@@ -438,36 +428,38 @@ impl HttpThread {
                     evict_oldest_ssl_context();
                 }
 
-                // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
-                return Self::dial(custom_context, client)
-                    .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
+                return Self::dial(custom_context, client);
             }
         }
         Self::dial(self.context::<IS_SSL>(), client)
     }
 
     /// Open the connection for `client` on `ctx`: unix path, HTTP proxy, or direct.
-    fn dial<const IS_SSL: bool>(
-        ctx: &mut NewHttpContext<IS_SSL>,
-        client: &mut HttpClient,
-    ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
-        let unix_path = client.unix_socket_path;
-        if !unix_path.is_empty() {
-            return ctx.connect_socket(client, unix_path);
+    fn dial<const IS_SSL: bool>(ctx: &mut NewHttpContext<IS_SSL>, mut client: InFlightRequest) {
+        client.connected_url = client
+            .http_proxy
+            .clone()
+            .unwrap_or_else(|| client.url.clone());
+        if !client.unix_socket_path.is_empty() {
+            return ctx.connect_socket(client);
         }
-        if let Some(url) = client.http_proxy.clone() {
+        if let Some(url) = &client.http_proxy {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
                 if url.protocol.is_empty() || url.has_http_like_protocol() {
-                    return ctx.connect(client, url.hostname, url.get_port_auto());
+                    let port = url.get_port_auto();
+                    return ctx.connect(client, port);
                 }
-                return Err(crate::Error::UnsupportedProxyProtocol);
+                return client.fail(crate::Error::UnsupportedProxyProtocol);
             }
         }
-        let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
         // The hostname is passed to the socket layer as a C string, so it must not contain a NUL.
-        crate::validate_request_target(hn)?;
-        ctx.connect(client, hn, pt)
+        if let Err(err) = crate::validate_request_target(client.url.hostname) {
+            return client.fail(err);
+        }
+        client.connected_url.hostname = client.url.hostname;
+        let port = client.url.get_port_auto();
+        ctx.connect(client, port);
     }
 
     /// Evict SSL context cache entries that haven't been used for ssl_context_cache_ttl_ns.
@@ -510,14 +502,12 @@ impl HttpThread {
                     let (_k, socket_ptr) = tracker.swap_remove_at(idx);
                     match socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
-                            let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.client_mut() {
-                                // If we only call socket.close(), then it won't
-                                // call `onClose` if this happens before `onOpen` is
-                                // called.
-                                client.close_and_abort::<true>(socket);
-                                continue;
-                            }
+                            // If we only call socket.close(), then it won't
+                            // call `onClose` if this happens before `onOpen` is
+                            // called.
+                            let tagged =
+                                HTTPContext::enter_client(socket, |c| c.close_and_abort(socket));
+                            let Some(tagged) = tagged else { continue };
                             if let Some(session) = tagged.session() {
                                 h2::ClientSession::abort_by_http_id(session, http.async_http_id);
                                 continue;
@@ -525,11 +515,9 @@ impl HttpThread {
                             socket.close(uws::CloseKind::Failure);
                         }
                         uws::AnySocket::SocketTcp(socket) => {
-                            let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.client_mut() {
-                                client.close_and_abort::<false>(socket);
-                                continue;
-                            }
+                            let tagged =
+                                HTTPContext::enter_client(socket, |c| c.close_and_abort(socket));
+                            let Some(tagged) = tagged else { continue };
                             if let Some(session) = tagged.session() {
                                 h2::ClientSession::abort_by_http_id(session, http.async_http_id);
                                 continue;
@@ -579,11 +567,10 @@ impl HttpThread {
                             if socket.is_closed() || socket.is_shutdown() {
                                 continue;
                             }
-                            let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.client_mut() {
-                                client.on_request_stream_message::<true>(message, socket);
-                            }
-                            if let Some(session) = tagged.session() {
+                            let tagged = HTTPContext::enter_client(socket, |client| {
+                                client.on_request_stream_message::<true>(message, socket)
+                            });
+                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
                                 h2::ClientSession::stream_body_by_http_id(
                                     session,
                                     write.async_http_id,
@@ -595,11 +582,10 @@ impl HttpThread {
                             if socket.is_closed() || socket.is_shutdown() {
                                 continue;
                             }
-                            let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.client_mut() {
-                                client.on_request_stream_message::<false>(message, socket);
-                            }
-                            if let Some(session) = tagged.session() {
+                            let tagged = HTTPContext::enter_client(socket, |client| {
+                                client.on_request_stream_message::<false>(message, socket)
+                            });
+                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
                                 h2::ClientSession::stream_body_by_http_id(
                                     session,
                                     write.async_http_id,
@@ -633,23 +619,17 @@ impl HttpThread {
                             if socket.is_closed() || socket.is_shutdown() {
                                 continue;
                             }
-                            let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.client_mut() {
-                                // May synchronously reach close_and_fail →
-                                // dispatch_result_and_reset; do not touch
-                                // `client` after this call.
-                                client.resume_after_cert_check::<true>(socket);
-                            }
+                            HTTPContext::enter_client(socket, |client| {
+                                client.resume_after_cert_check::<true>(socket)
+                            });
                         }
                         uws::AnySocket::SocketTcp(socket) => {
                             if socket.is_closed() || socket.is_shutdown() {
                                 continue;
                             }
-                            let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.client_mut() {
-                                // See Tls arm.
-                                client.resume_after_cert_check::<false>(socket);
-                            }
+                            HTTPContext::enter_client(socket, |client| {
+                                client.resume_after_cert_check::<false>(socket)
+                            });
                         }
                     }
                 }
@@ -692,12 +672,11 @@ impl HttpThread {
                 if let Some(socket_ptr) = abort_tracker().get(&id) {
                     match *socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
-                            let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.client_mut() {
+                            let tagged = HTTPContext::enter_client(socket, |client| {
                                 client.resume_receive::<true>(socket);
-                                client.drain_response_body::<true>(socket);
-                            }
-                            if let Some(session) = tagged.session() {
+                                client.drain_response_body::<true>(socket)
+                            });
+                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
                                 // The resume may tear the session down and
                                 // release its last ref; hold one across
                                 // the second call.
@@ -707,12 +686,11 @@ impl HttpThread {
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
-                            let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.client_mut() {
+                            let tagged = HTTPContext::enter_client(socket, |client| {
                                 client.resume_receive::<false>(socket);
-                                client.drain_response_body::<false>(socket);
-                            }
-                            if let Some(session) = tagged.session() {
+                                client.drain_response_body::<false>(socket)
+                            });
+                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
                                 // See the Tls arm.
                                 let _guard = RefPtr::from_this(session);
                                 h2::ClientSession::resume_receive_by_http_id(session, id);
@@ -754,8 +732,6 @@ impl HttpThread {
         self.drain_queued_pool_closes();
         h3::PendingConnect::drain_resolved();
 
-        self.queued_threadlocal_proxy_derefs.clear();
-
         let mut count: usize = 0;
         let mut active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
         let max = MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed);
@@ -776,14 +752,14 @@ impl HttpThread {
         //
         // Already-aborted tasks are started regardless of `max`: `start_()` will
         // observe the `aborted` signal and fail immediately with
-        // `error.AbortedBeforeConnecting`, and `AsyncHTTP::on_result` decrements
+        // `error.AbortedBeforeConnecting`, and `InFlightRequest::finish` decrements
         // `active_requests_count` in the same turn — so they never hold a slot.
         // Without this, an aborted fetch that was queued behind `max` would sit
         // there until some unrelated request completed; if every active request
         // is itself hung, the aborted one never settles and its promise hangs
         // forever even though the user called `controller.abort()`.
         //
-        // `start_queued_task` can re-enter `AsyncHTTP::on_result` synchronously (for
+        // `InFlightRequest::start` can reach `finish` synchronously (for
         // aborted tasks, or when connect() fails immediately), which reads both
         // `active_requests_count` and `deferred_tasks.items.len` to decide whether
         // to wake the loop. To keep those reads accurate we swap the deferred list
@@ -796,7 +772,7 @@ impl HttpThread {
             for http in pending {
                 let aborted = http.client.signals.get(crate::signals::Field::Aborted);
                 if aborted || active < max {
-                    start_queued_task(http, &mut self.in_flight);
+                    InFlightRequest::start(http);
                     if cfg!(debug_assertions) {
                         count += 1;
                     }
@@ -816,7 +792,7 @@ impl HttpThread {
                 self.defer(http);
                 continue;
             }
-            start_queued_task(http, &mut self.in_flight);
+            InFlightRequest::start(http);
             if cfg!(debug_assertions) {
                 count += 1;
             }
@@ -876,12 +852,6 @@ impl HttpThread {
         Self::wakeup();
     }
 
-    pub(crate) fn schedule_proxy_deref(&mut self, proxy: RefPtr<ProxyTunnel>) {
-        // this is always called on the http thread,
-        self.queued_threadlocal_proxy_derefs.push(proxy);
-        Self::wakeup();
-    }
-
     /// Everything this thread runs is inside `drain_events` or `tick`, and
     /// this runs between the two, so no socket callback is on the stack.
     fn free_dead_ssl_contexts(&mut self) {
@@ -915,8 +885,8 @@ impl HttpThread {
             http.release_at_shutdown();
         }
         for http in core::mem::take(&mut self.in_flight) {
-            // SAFETY: the box that `start_queued_task` leaked. Sockets and streams still point
-            // into it, but the loop never ticks again.
+            // SAFETY: from a `Box`. Its `InFlightRequest` is in a socket, a stream or a list of
+            // waiters, and is not used again: this thread parks for good.
             unsafe { bun_core::heap::take(http.as_ptr()) }.release_at_shutdown();
         }
     }
@@ -965,16 +935,6 @@ fn evict_oldest_ssl_context() {
         }
     }
     map.swap_remove_at(oldest_idx);
-}
-
-fn start_queued_task(
-    http: Box<AsyncHttp<'static>>,
-    in_flight: &mut Vec<NonNull<AsyncHttp<'static>>>,
-) {
-    let mut http = bun_core::heap::into_raw_nn(http);
-    in_flight.push(http);
-    // SAFETY: just leaked. It lives until its last result takes it out of `in_flight`.
-    unsafe { http.as_mut() }.on_start();
 }
 
 /// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:
@@ -1099,12 +1059,7 @@ mod _event_loop_draft {
 
         #[cfg(windows)]
         {
-            // `getenv_w` forwards `name.as_ptr()` directly to Win32
-            // `GetEnvironmentVariableW`, which expects a NUL-terminated LPCWSTR.
-            // `bun_core::w!` does NOT append a sentinel on its own (see
-            // src/sys/windows/mod.rs WATCHER_CHILD_ENV_Z note), so embed `\0`
-            // in the literal.
-            if bun_sys::windows::getenv_w(bun_core::w!("SystemRoot\0")).is_none() {
+            if bun_sys::windows::getenv_w(bun_core::wstr!("SystemRoot")).is_none() {
                 Output::err_generic(
                     "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
                     (),

@@ -4,11 +4,12 @@
 //! the run loop entry live in `runner.rs`; this file is the per-run state
 //! and its methods.
 
-use core::ffi::c_void;
 #[cfg(unix)]
-use core::mem::MaybeUninit;
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write as _;
+#[cfg(windows)]
+use std::os::windows::io::OwnedHandle;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
@@ -78,7 +79,7 @@ pub(crate) struct Coordinator<'a> {
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
     /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
     #[cfg(windows)]
-    pub(crate) windows_job: Option<*mut c_void>,
+    pub(crate) windows_job: Option<&'a OwnedHandle>,
 }
 
 /// What the processes that test files start hold. A worker leads a process group, and what it starts stays in the group. Five times a
@@ -235,12 +236,13 @@ impl<'a> Coordinator<'a> {
         victim
     }
 
-    pub(crate) fn drive(&mut self) {
+    pub(crate) fn drive(&mut self, abort_guard: &abort_handler::Guard) {
         let _ = self.spawn_worker();
         self.handle_worker_events();
         while !self.is_done() {
             let signal = abort_handler::ABORT_SIGNAL.load(Ordering::Acquire);
             if signal != 0 {
+                abort_guard.uninstall();
                 self.abort_all(signal);
                 return;
             }
@@ -286,7 +288,6 @@ impl<'a> Coordinator<'a> {
     /// group kill here plus stdin EOF in the worker loop is the best effort.
     /// Exits with 128 + `signal`, the status a shell reports for a signal death.
     fn abort_all(&mut self, signal: i32) {
-        abort_handler::uninstall();
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
         let running: Vec<(u32, i64)> = workers
@@ -1258,16 +1259,6 @@ pub(crate) mod abort_handler {
     /// The signal that asked for the abort, or 0. Windows console events count as SIGINT.
     pub(crate) static ABORT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
-    // PORTING.md §Global mutable state: written once in `install()` (single
-    // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
-    // no concurrent access.
-    #[cfg(unix)]
-    static PREV_INT: bun_core::RacyCell<MaybeUninit<libc::sigaction>> =
-        bun_core::RacyCell::new(MaybeUninit::uninit());
-    #[cfg(unix)]
-    static PREV_TERM: bun_core::RacyCell<MaybeUninit<libc::sigaction>> =
-        bun_core::RacyCell::new(MaybeUninit::uninit());
-
     #[cfg(unix)]
     extern "C" fn posix_handler(sig: i32, _: *const libc::siginfo_t, _: *const c_void) {
         ABORT_SIGNAL.store(sig, Ordering::Release);
@@ -1290,69 +1281,46 @@ pub(crate) mod abort_handler {
     /// Restores the previous SIGINT/SIGTERM (or Windows console-ctrl) handlers
     /// when dropped. Returned by [`install`].
     #[must_use = "dropping the guard uninstalls the abort handler"]
-    pub(crate) struct Guard(());
+    pub(crate) struct Guard {
+        #[cfg(unix)]
+        previous: [(i32, libc::sigaction); 2],
+    }
 
     impl Drop for Guard {
         fn drop(&mut self) {
-            uninstall();
+            self.uninstall();
         }
     }
 
     pub(crate) fn install() -> Guard {
-        #[cfg(unix)]
-        {
-            // SAFETY: signal handler installation; PREV_* are written before
-            // any read in uninstall(), single-threaded coordinator setup.
-            // `&raw mut` + cast (MaybeUninit<T> is repr(transparent))
-            // avoids creating &mut to a `static mut` (Rust 2024 hard error).
-            unsafe {
-                // SAFETY: POD, zero-valid — sigaction with handler=0/flags=0 is SIG_DFL.
+        #[cfg(windows)]
+        let _ =
+            bun_sys::c::SetConsoleCtrlHandler(Some(windows_ctrl_handler), bun_sys::windows::TRUE);
+        Guard {
+            #[cfg(unix)]
+            previous: [libc::SIGINT, libc::SIGTERM].map(|signal| {
                 let mut act: libc::sigaction = bun_core::ffi::zeroed();
                 act.sa_sigaction = posix_handler as *const () as usize;
-                libc::sigemptyset(&raw mut act.sa_mask);
                 act.sa_flags = libc::SA_SIGINFO;
-                libc::sigaction(
-                    libc::SIGINT,
-                    &raw const act,
-                    PREV_INT.get().cast::<libc::sigaction>(),
-                );
-                libc::sigaction(
-                    libc::SIGTERM,
-                    &raw const act,
-                    PREV_TERM.get().cast::<libc::sigaction>(),
-                );
-            }
+                let mut previous = bun_core::ffi::zeroed();
+                // SAFETY: the handler has the signature that `SA_SIGINFO` asks for, and only stores to an atomic.
+                unsafe {
+                    libc::sigemptyset(&raw mut act.sa_mask);
+                    libc::sigaction(signal, &raw const act, &raw mut previous);
+                }
+                (signal, previous)
+            }),
         }
-        #[cfg(windows)]
-        {
-            let _ = bun_sys::c::SetConsoleCtrlHandler(
-                Some(windows_ctrl_handler),
-                bun_sys::windows::TRUE,
-            );
-        }
-        Guard(())
     }
 
-    pub(crate) fn uninstall() {
-        #[cfg(unix)]
-        {
-            // SAFETY: PREV_* were initialized by install().
-            // `&raw const` + cast avoids creating & to a `static mut`.
-            unsafe {
-                libc::sigaction(
-                    libc::SIGINT,
-                    PREV_INT.get().cast::<libc::sigaction>(),
-                    core::ptr::null_mut(),
-                );
-                libc::sigaction(
-                    libc::SIGTERM,
-                    PREV_TERM.get().cast::<libc::sigaction>(),
-                    core::ptr::null_mut(),
-                );
+    impl Guard {
+        pub(crate) fn uninstall(&self) {
+            #[cfg(unix)]
+            for (signal, previous) in &self.previous {
+                // SAFETY: `install` got `previous` from `sigaction` for this signal.
+                unsafe { libc::sigaction(*signal, previous, core::ptr::null_mut()) };
             }
-        }
-        #[cfg(windows)]
-        {
+            #[cfg(windows)]
             let _ = bun_sys::c::SetConsoleCtrlHandler(
                 Some(windows_ctrl_handler),
                 bun_sys::windows::FALSE,

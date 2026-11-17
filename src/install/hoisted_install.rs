@@ -286,8 +286,10 @@ pub(crate) fn install_hoisted_packages(
             let (completed_trees, tree_ids_to_trees_the_id_depends_on) = 'trees: {
                 let trees = this.lockfile.buffers.trees.as_slice();
                 let completed_trees = Bitset::init_empty(trees.len())?;
-                let tree_ids_to_trees_the_id_depends_on =
-                    DynamicBitSetList::init_empty(trees.len(), trees.len())?;
+                let mut tree_ids_to_trees_the_id_depends_on = DynamicBitSetList::init_empty(
+                    trees.len(),
+                    u32::try_from(trees.len()).expect("int cast"),
+                )?;
 
                 {
                     // For each tree id, traverse through it's parents and mark all visited tree
@@ -295,16 +297,19 @@ pub(crate) fn install_hoisted_packages(
                     let mut deps = Bitset::init_empty(trees.len())?;
                     for _curr in trees {
                         let mut curr = *_curr;
-                        tree_ids_to_trees_the_id_depends_on.set(curr.id as usize, curr.id as usize);
+                        tree_ids_to_trees_the_id_depends_on
+                            .at_mut(curr.id)
+                            .set(curr.id as usize);
 
                         while curr.parent != tree::Tree::INVALID_ID {
                             deps.set(curr.id as usize);
                             tree_ids_to_trees_the_id_depends_on
-                                .set_union(curr.parent as usize, &deps.unmanaged);
+                                .at_mut(curr.parent)
+                                .set_union(&deps);
                             curr = trees[curr.parent as usize];
                         }
 
-                        deps.unmanaged.set_all(false);
+                        deps.set_all(false);
                     }
                 }
 

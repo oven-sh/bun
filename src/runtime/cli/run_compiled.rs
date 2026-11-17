@@ -12,7 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
-use bun_watcher::{Evictions, WatchEvent, WatchList, Watcher, WatcherContext};
+use bun_watcher::{Evictions, OwnedWatcher, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
     CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
@@ -417,7 +417,7 @@ fn hand_over(
 }
 
 struct WatchedFiles {
-    watcher: Arc<Watcher>,
+    watcher: OwnedWatcher,
     working_directory: Vec<u8>,
     paths: Guarded<Vec<Vec<u8>>>,
 }
@@ -649,19 +649,17 @@ fn create_shared_memory() -> Option<File> {
 
 #[cfg(target_os = "freebsd")]
 fn create_shared_memory() -> Option<File> {
-    // SAFETY: `SHM_ANON` stands in for a name and is not read.
-    let descriptor =
-        unsafe { libc::shm_open(libc::SHM_ANON, libc::O_RDWR | libc::O_CLOEXEC, 0o600) };
-    (descriptor >= 0).then(|| File::from_fd(Fd::from_native(descriptor)))
+    bun_sys::freebsd::create_shared_memory().map(File::from_fd)
 }
 
 #[cfg(unix)]
 fn create_unnamed_file(first: ProgramFile) -> Maybe<(File, ProgramFile)> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if first == ProgramFile::Memfd && bun_sys::can_use_memfd() {
-        if let Ok(descriptor) =
-            bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable)
-        {
+        if let Ok(descriptor) = bun_sys::memfd_create(
+            c"bun-compiled-program".into(),
+            bun_sys::MemfdFlags::Executable,
+        ) {
             return Ok((File::from_fd(descriptor), ProgramFile::Memfd));
         }
     }
@@ -751,8 +749,7 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: &[&[u8]]) -> bool {
         return false;
     }
     // A store to a page that there is no room for ends the process. With the room taken first, it is an error of this call.
-    // SAFETY: the system checks the descriptor and the range.
-    if unsafe { libc::fallocate(descriptor.native(), 0, 0, length as libc::off_t) } != 0 {
+    if !bun_sys::linux::fallocate(descriptor.native(), 0, length as i64) {
         return false;
     }
     let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
@@ -1187,8 +1184,8 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
         Err(_) => path.to_vec(),
     };
     argv[0] = Box::leak(Box::new(ZBox::from_bytes(typed.unwrap_or(&file)))).as_zstr();
-    // SAFETY: no other thread has started.
-    unsafe { bun_core::set_argv(Vec::leak(argv)) };
+    static ARGV: bun_core::Once<&[&bun_core::ZStr]> = bun_core::Once::new();
+    bun_core::set_argv(ARGV.get_or_init(|| argv.leak()));
     // The program finds the environment that the launcher found.
     #[cfg(unix)]
     if has_launcher {

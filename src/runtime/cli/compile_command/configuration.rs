@@ -685,8 +685,7 @@ pub(super) fn output_location(
         let mut zbuf = bun_paths::path_buffer_pool::get();
         let n = outfile.len().min(zbuf.0.len() - 1);
         zbuf.0[..n].copy_from_slice(&outfile[..n]);
-        zbuf.0[n] = 0;
-        let z = bun_core::ZStr::from_buf(&zbuf.0[..], n);
+        let z = bun_core::ZStr::nul_terminate(&mut zbuf, n);
         if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
             outfile = b"index";
         }

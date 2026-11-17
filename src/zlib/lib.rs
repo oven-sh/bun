@@ -9,7 +9,7 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-#![feature(allocator_ext, core_io_borrowed_buf, vec_push_within_capacity)]
+#![feature(allocator_ext, core_io_borrowed_buf)]
 
 mod array;
 mod checksum;

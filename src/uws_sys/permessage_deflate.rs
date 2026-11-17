@@ -20,17 +20,13 @@ pub fn deflate_message(
     out: &mut Vec<u8>,
 ) -> Result<(), bun_zlib::Error> {
     let start = out.len();
-    let result = deflater
+    deflater
         .deflate_to_vec(message, out, deflate::Flush::Sync)
-        .and_then(|()| match out[start..].strip_suffix(&TAIL) {
-            Some(payload) => Ok(start + payload.len()),
-            // An empty message behind another leaves nothing to flush.
-            None => Err(bun_zlib::Error::InvalidState),
-        });
-    if result.is_err() {
-        deflater.reset();
-    }
-    out.truncate(result?);
+        .inspect_err(|_| deflater.reset())?;
+    // An empty message behind another leaves nothing to flush.
+    let payload = out[start..].strip_suffix(&TAIL);
+    let len = payload.ok_or(bun_zlib::Error::InvalidState)?.len();
+    out.truncate(start + len);
     Ok(())
 }
 

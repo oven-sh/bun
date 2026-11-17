@@ -1,10 +1,11 @@
 //! Level 2: takes the first match it finds.
 
-use super::chains::{HASHED_LEN, Match, Search};
-use super::window::{MIN_LOOKAHEAD, byte};
-use super::{Deflater, Flush, Io, Progress, Stretch, Tuning};
+use super::chains::HASHED_LEN;
+use super::window::MIN_LOOKAHEAD;
+use super::{Deflater, Flush, Io, Progress, Tuning};
 
 impl Deflater {
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate_fast.c#L19
     #[inline(never)]
     pub(super) fn compress_greedily(
         &mut self,
@@ -12,49 +13,35 @@ impl Deflater {
         flush: Flush,
         tuning: Tuning,
     ) -> Progress {
-        loop {
-            let stop = match self.next_stretch(io, flush, MIN_LOOKAHEAD) {
-                Stretch::Until(stop) => stop,
-                Stretch::NeedsInput => return Progress::NeedsMore,
-                Stretch::End => break,
-            };
-            let search = self.search(tuning);
-            let (window, end) = (self.window.bytes.as_slice(), self.window.end);
-            let mut position = self.window.position;
-            while position < stop && !self.block.is_full() {
-                let lookahead = end - position;
-                let mut found = Match::NONE;
-                if lookahead >= HASHED_LEN {
-                    let candidate = self.chains.insert::<false>(window, position);
-                    let search = Search {
-                        position,
-                        lookahead,
-                        ..search
-                    };
-                    if search.reaches(candidate) {
-                        found = self.chains.longest_match(window, search, candidate, found);
+        let is_done = self.fill_blocks(io, flush, MIN_LOOKAHEAD, |this, stop| {
+            let mut matcher = tuning.matcher(&mut this.chains, &this.window);
+            let (mut position, end) = (this.window.position, this.window.end);
+            this.block.tally(|mut block| {
+                while position < stop
+                    && !block.is_full()
+                    && let Some(target) = matcher.target(position, end - position)
+                {
+                    let found = matcher.insert_and_match(target);
+                    if found.len < HASHED_LEN {
+                        block.push_literal(target.scan[0]);
+                        position += 1;
+                        continue;
                     }
+                    block.push_match(found.distance(matcher.index.window, position), found.len);
+                    if found.len <= tuning.max_lazy && target.lookahead - found.len >= HASHED_LEN {
+                        matcher
+                            .index
+                            .insert_all::<false>(position + 1, found.len - 1);
+                    } else {
+                        matcher.index.insert_at(position + found.len - 1);
+                    }
+                    position += found.len;
                 }
-                if found.len < HASHED_LEN || found.start >= position {
-                    self.block.push_literal(byte(window, position));
-                    position += 1;
-                    continue;
-                }
-                self.block
-                    .push_match(found.distance(window, position), found.len);
-                if found.len <= tuning.max_lazy && lookahead - found.len >= HASHED_LEN {
-                    self.chains
-                        .insert_all::<false>(window, position + 1, found.len - 1);
-                } else {
-                    self.chains
-                        .insert::<false>(window, position + found.len - 1);
-                }
-                position += found.len;
-            }
-            self.window.position = position;
-            if self.block.is_full() && !self.flush_block(io, false) {
-                return Progress::NeedsMore;
-            }
+            });
+            this.window.position = position;
+        });
+        if !is_done {
+            return Progress::NeedsMore;
         }
         self.window.leave_end_unhashed();
         self.flush_rest(io, flush)

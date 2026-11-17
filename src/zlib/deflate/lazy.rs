@@ -1,6 +1,7 @@
 //! Levels 7 to 9: a match is only taken if there is no longer one at the next position.
 
-use super::chains::{HASHED_LEN, Match, Search};
+use super::chains::HASHED_LEN;
+use super::matcher::Match;
 use super::window::{MIN_LOOKAHEAD, byte};
 use super::{Deflater, Flush, Io, Progress, Strategy, Stretch, Tuning};
 use crate::format::MIN_MATCH;
@@ -33,6 +34,7 @@ impl Lazy {
 }
 
 impl Deflater {
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate_slow.c#L17
     #[inline(never)]
     pub(super) fn compress_lazily<const ROLLING: bool>(
         &mut self,
@@ -47,56 +49,56 @@ impl Deflater {
                 Stretch::NeedsInput => return Progress::NeedsMore,
                 Stretch::End => break,
             };
-            let search = self.search(tuning);
-            let (window, end) = (self.window.bytes.as_slice(), self.window.end);
-            let mut position = self.window.position;
+            let mut matcher = tuning.matcher(&mut self.chains, &self.window);
+            let window = matcher.index.window;
+            let (mut position, end) = (self.window.position, self.window.end);
             let (mut previous, mut is_undecided) = (self.lazy.previous, self.lazy.is_undecided);
+            // With a full output it goes no further than the next literal.
             let (is_out_full, mut must_stop) = (io.is_full(), false);
-            while position < stop && !self.block.is_full() && !must_stop {
-                let lookahead = end - position;
-                let mut found = Match::NONE;
-                if lookahead >= HASHED_LEN {
-                    let candidate = self.chains.insert::<ROLLING>(window, position);
-                    let search = Search {
-                        position,
-                        lookahead,
-                        ..search
-                    };
-                    if search.reaches(candidate) && previous.len < tuning.max_lazy {
-                        found = if ROLLING {
-                            self.chains
-                                .longest_match_on_any_chain(window, search, candidate, previous)
-                        } else {
-                            self.chains
-                                .longest_match(window, search, candidate, previous)
-                        };
-                        if (is_filtered && found.len <= MAX_FILTERED_LEN) || found.start >= position
-                        {
-                            found = Match::NONE;
+            self.block.tally(|mut block| {
+                while position < stop
+                    && !block.is_full()
+                    && let Some(target) = matcher.target(position, end - position)
+                {
+                    let (lookahead, mut found) = (target.lookahead, Match::NONE);
+                    if lookahead >= HASHED_LEN {
+                        let candidate = matcher.index.insert::<ROLLING>(position, target.hashed());
+                        if matcher.reaches(position, candidate) && previous.len < tuning.max_lazy {
+                            found = if ROLLING {
+                                matcher.longest_match_on_any_chain(
+                                    position, lookahead, candidate, previous,
+                                )
+                            } else {
+                                matcher.longest_match(target, candidate, previous)
+                            };
+                            if is_filtered && found.len <= MAX_FILTERED_LEN {
+                                found = Match::NONE;
+                            }
+                        }
+                    }
+
+                    if previous.len >= MIN_MATCH as u32 && found.len <= previous.len {
+                        block.push_match(previous.distance(window, position - 1), previous.len);
+                        let hashable = lookahead.saturating_sub(MIN_MATCH as u32);
+                        matcher
+                            .index
+                            .insert_all::<ROLLING>(position + 1, hashable.min(previous.len - 2));
+                        position += previous.len - 1;
+                        (previous, is_undecided) = (Match::NONE, false);
+                        continue;
+                    }
+                    let was_undecided = core::mem::replace(&mut is_undecided, true);
+                    previous = found;
+                    position += 1;
+                    if was_undecided {
+                        block.push_literal(byte(window, position - 2));
+                        if is_out_full {
+                            must_stop = true;
+                            break;
                         }
                     }
                 }
-
-                if previous.len >= MIN_MATCH as u32 && found.len <= previous.len {
-                    self.block
-                        .push_match(previous.distance(window, position - 1), previous.len);
-                    let hashable = lookahead.saturating_sub(MIN_MATCH as u32);
-                    self.chains.insert_all::<ROLLING>(
-                        window,
-                        position + 1,
-                        hashable.min(previous.len - 2),
-                    );
-                    position += previous.len - 1;
-                    (previous, is_undecided) = (Match::NONE, false);
-                    continue;
-                }
-                if is_undecided {
-                    self.block.push_literal(byte(window, position - 1));
-                    must_stop = is_out_full;
-                }
-                (previous, is_undecided) = (found, true);
-                position += 1;
-            }
+            });
             self.lazy = Lazy {
                 previous,
                 is_undecided,
@@ -112,7 +114,7 @@ impl Deflater {
         }
         if core::mem::take(&mut self.lazy.is_undecided) {
             let last = byte(&self.window.bytes, self.window.position - 1);
-            self.block.push_literal(last);
+            self.block.tally(|mut block| block.push_literal(last));
         }
         self.window.leave_end_unhashed();
         self.flush_rest(io, flush)

@@ -3,8 +3,6 @@
 use crate::array::At;
 use crate::format::{MAX_CODE_BITS, reversed};
 
-/// Room for the leaves and inner nodes of any alphabet.
-const MAX_NODES: usize = 1024;
 const INDEX_BITS: u32 = 10;
 const DEPTH_BITS: u32 = 6;
 
@@ -73,7 +71,14 @@ impl<const N: usize> Heap<N> {
     }
 }
 
-/// `N` is a power of two, and more than there are symbols.
+/// How many bits the symbols take.
+pub(super) fn cost<const N: usize>(frequencies: &[u16; N], bits: &[u8; N]) -> u32 {
+    let each = frequencies.iter().zip(bits);
+    each.map(|(&frequency, &bits)| u32::from(frequency) * u32::from(bits))
+        .sum()
+}
+
+/// There is room for `N` symbols.
 pub(super) struct Code<const N: usize> {
     pub(super) lengths: [u8; N],
     /// The symbols from here on have no code.
@@ -82,16 +87,23 @@ pub(super) struct Code<const N: usize> {
 }
 
 impl<const N: usize> Code<N> {
-    pub(super) fn new(frequencies: &[u16; N], max_bits: u8) -> Self {
+    /// `HEAP` is a power of two, at least `N`, and more than there are symbols with a frequency.
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/trees.c#L184
+    pub(super) fn new<const HEAP: usize>(frequencies: &[u16; N], max_bits: u8) -> Self {
         let mut heap = Heap {
-            nodes: [Node(0); N],
+            nodes: [Node(0); HEAP],
             len: 0,
         };
         let mut used = 0;
-        for (symbol, &frequency) in frequencies.iter().enumerate() {
-            if frequency != 0 {
-                heap.push_unordered(Node::leaf(symbol, frequency));
-                used = symbol + 1;
+        for (first, group) in (0..).step_by(4).zip(frequencies.as_chunks::<4>().0) {
+            if *group == [0; 4] {
+                continue;
+            }
+            for (symbol, &frequency) in (first..).zip(group) {
+                if frequency != 0 {
+                    heap.push_unordered(Node::leaf(symbol, frequency));
+                    used = symbol + 1;
+                }
             }
         }
         // PKZIP wants a code of at least a bit, even for one symbol or none.
@@ -104,49 +116,52 @@ impl<const N: usize> Code<N> {
             heap.sift_down(at, *heap.nodes.at(at));
         }
 
-        // From the least frequent on, with siblings side by side. Inner nodes are numbered from `N` on.
-        let mut order = [0u16; MAX_NODES];
+        // For each inner node. They are numbered from `HEAP` on, and the last is the root.
+        let mut children = [[0u16; 2]; HEAP];
         let mut parents = 0;
         while heap.len >= 2 {
             let (least, last) = (heap.nodes[1], *heap.nodes.at(heap.len));
             heap.len -= 1;
             heap.sift_down(1, last);
             let next = heap.nodes[1];
-            *order.at_mut(2 * parents) = least.index() as u16;
-            *order.at_mut(2 * parents + 1) = next.index() as u16;
-            heap.sift_down(1, Node::parent(N + parents, least, next));
+            *children.at_mut(parents) = [least.index() as u16, next.index() as u16];
+            heap.sift_down(1, Node::parent(HEAP + parents, least, next));
             parents += 1;
         }
-        let order = order.get(..2 * parents).unwrap_or_default();
+        let children = children.get(..parents).unwrap_or_default();
 
         let mut code = Self {
             lengths: [0; N],
             used,
             counts: [0; _],
         };
-        let mut inner_lengths = [0u8; N];
+        let mut inner_lengths = [0u8; HEAP];
         let mut too_long = 0usize;
-        for (at, &node) in order.iter().enumerate().rev() {
-            let bits = inner_lengths.at(at / 2) + 1;
-            too_long += usize::from(bits > max_bits);
+        for (parent, pair) in children.iter().enumerate().rev() {
+            let bits = inner_lengths.at(parent) + 1;
+            too_long += 2 * usize::from(bits > max_bits);
             let bits = bits.min(max_bits);
-            if let Some(inner) = usize::from(node).checked_sub(N) {
-                *inner_lengths.at_mut(inner) = bits;
-            } else {
-                *code.lengths.at_mut(usize::from(node)) = bits;
-                *code.counts.at_mut(usize::from(bits)) += 1;
+            for node in pair.map(usize::from) {
+                if let Some(inner) = node.checked_sub(HEAP) {
+                    *inner_lengths.at_mut(inner) = bits;
+                } else {
+                    *code.lengths.at_mut(node) = bits;
+                    *code.counts.at_mut(usize::from(bits)) += 1;
+                }
             }
         }
         if too_long != 0 {
-            code.shorten(order, too_long, usize::from(max_bits));
+            code.shorten(children.as_flattened(), too_long, usize::from(max_bits));
         }
         code
     }
 
-    /// The counts have all that are too long at `max_bits`, where there is no room for so many.
+    /// The counts have all that are too long at `max_bits`, where there is no room for so many. `order` has the nodes
+    /// from the least frequent on.
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/trees.c#L332
     #[cold]
     fn shorten(&mut self, order: &[u16], too_long: usize, max_bits: usize) {
-        for _ in 0..too_long.div_ceil(2) {
+        for _ in 0..too_long / 2 {
             let shorter = (1..max_bits).rev().find(|&bits| *self.counts.at(bits) != 0);
             let bits = shorter.unwrap_or_default();
             *self.counts.at_mut(bits) -= 1;

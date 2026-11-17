@@ -2,14 +2,18 @@
 
 mod block;
 mod chains;
+mod encoding;
 mod greedy;
+mod header;
 mod huffman;
 mod lazy;
+mod matcher;
 mod medium;
 mod pending;
 mod quick;
 mod runs;
 mod stored;
+mod symbol;
 mod window;
 
 use bun_core::vec::{BorrowedCursor, append_with};
@@ -21,11 +25,12 @@ use crate::format::{
     ZLIB_HEADER_DIVISOR, ZLIB_PRESET_DICTIONARY,
 };
 use block::Block;
-use chains::{Chains, Effort, Search};
+use chains::{Chains, HASHED_LEN};
 use lazy::Lazy;
-use pending::Pending;
+use matcher::{Effort, Matcher};
+use pending::{Bits, Pending};
 use quick::QuickBlock;
-use window::{MIN_LOOKAHEAD, Window};
+use window::Window;
 
 /// What is put around the compressed data.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -149,7 +154,19 @@ struct Tuning {
     effort: Effort,
 }
 
+impl Tuning {
+    #[inline(always)]
+    fn matcher<'a>(&self, chains: &'a mut Chains, window: &'a Window) -> Matcher<'a> {
+        Matcher {
+            index: chains.over(&window.bytes),
+            max_distance: window.max_distance(),
+            effort: self.effort,
+        }
+    }
+}
+
 impl Level {
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L102
     fn tuning(self) -> Tuning {
         let (method, good_len, max_lazy, nice_len, max_chain) = match self.0 {
             0 => (Method::Stored, 0, 0, 0, 0),
@@ -189,6 +206,15 @@ enum Phase {
     /// The last block has been written.
     Trailer,
     Done,
+}
+
+/// What may be in the chains.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hashed {
+    Nothing,
+    /// The window is still as it was when the hashes were computed.
+    FirstInput,
+    More,
 }
 
 /// How far a method has got.
@@ -231,6 +257,7 @@ pub struct Deflater {
     checksum: Checksum,
     window: Window,
     chains: Chains,
+    hashed: Hashed,
     /// How often the window has slid at level 0, which leaves the chains alone. 2 stands for more, too.
     missed_slides: u8,
     block: Block,
@@ -262,6 +289,7 @@ impl Deflater {
             checksum: Checksum::None,
             window: Window::new(window_bits)?,
             chains: Chains::new(1 << window_bits)?,
+            hashed: Hashed::Nothing,
             missed_slides: 0,
             block: Block::new(block_size - 1)?,
             pending: Pending::new(4 * block_size)?,
@@ -279,8 +307,8 @@ impl Deflater {
         self.has_started = false;
         self.last_flush = None;
         self.checksum = Checksum::None;
-        self.window.rewind();
-        self.chains.reset();
+        self.forget_history();
+        self.chains.reset_rolling_hash();
         self.missed_slides = 0;
         self.block.clear();
         self.pending.clear();
@@ -309,13 +337,15 @@ impl Deflater {
         self.window.leave_end_unhashed();
         let hashed = end - self.window.unhashed;
         if hashed != 0 && self.level.uses_rolling_hash() {
-            self.chains.restart_rolling_hash(&self.window.bytes, 0);
+            self.chains.over(&self.window.bytes).restart_rolling_hash(0);
         }
         self.hash_all(0, hashed);
+        self.hashed = Hashed::More;
         Ok(())
     }
 
     /// `false`, and nothing changes, if a block would have to be flushed first.
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L589
     pub fn set_params(&mut self, level: Level, strategy: Strategy) -> Result<bool> {
         let changes_method =
             strategy != self.strategy || level.tuning().method != self.level.tuning().method;
@@ -328,6 +358,9 @@ impl Deflater {
             }
         }
         if level != self.level {
+            if self.hashed == Hashed::FirstInput {
+                self.hashed = Hashed::More;
+            }
             match core::mem::take(&mut self.missed_slides) {
                 0 => {}
                 1 => self.chains.slide(self.window.size),
@@ -357,14 +390,16 @@ impl Deflater {
         if self.pending.has_overflowed() {
             return Err(Error::Internal);
         }
-        Ok(match result? {
-            true => Status::StreamEnd,
-            false if io.is_full() => {
-                self.last_flush = None;
-                Status::NeedsOutput
-            }
-            false => Status::NeedsInput,
-        })
+        if result? {
+            Ok(Status::StreamEnd)
+        } else if io.is_full() {
+            self.last_flush = None;
+            Ok(Status::NeedsOutput)
+        } else if flush == Flush::Finish {
+            Err(Error::Internal)
+        } else {
+            Ok(Status::NeedsInput)
+        }
     }
 
     /// Like `deflate()` with exactly `room` bytes behind the end of `out`. At level 0 that decides where blocks end.
@@ -402,6 +437,7 @@ impl Deflater {
     }
 
     /// Whether the stream has ended.
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L753
     fn run(&mut self, io: &mut Io<'_, '_>, flush: Flush) -> Result<bool> {
         let is_finishing = self.is_finishing();
         self.has_started = true;
@@ -491,6 +527,7 @@ impl Deflater {
                 self.checksum = Checksum::ZLIB;
             }
             Container::Gzip => {
+                // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/zutil.h#L115
                 const SYSTEM: u8 = if cfg!(windows) {
                     10
                 } else if cfg!(target_vendor = "apple") {
@@ -519,7 +556,10 @@ impl Deflater {
             (_, Strategy::Rle) => self.compress_runs(io, flush),
             (Method::Quick, _) => self.compress_quickly(io, flush),
             (Method::Greedy, _) => self.compress_greedily(io, flush, tuning),
-            (Method::Medium, _) => self.compress_medium(io, flush, tuning),
+            (Method::Medium, _) if tuning.effort.gives_up_early => {
+                self.compress_medium::<false>(io, flush, tuning)
+            }
+            (Method::Medium, _) => self.compress_medium::<true>(io, flush, tuning),
             (Method::Lazy, _) if self.level.uses_rolling_hash() => {
                 self.compress_lazily::<true>(io, flush, tuning)
             }
@@ -529,26 +569,40 @@ impl Deflater {
 
     fn write_flush_marker(&mut self, flush: Flush) {
         match flush {
-            Flush::Partial => self.pending.write_bits(2, |writer| {
-                writer.put_block_type(FIXED_BLOCK, false);
-                block::FIXED.put_end_of_block(writer);
-            }),
+            Flush::Partial => {
+                self.pending.put(Bits::block_header(FIXED_BLOCK, false));
+                self.pending.put(encoding::FIXED.end_of_block());
+            }
             Flush::Sync => self.pending.write_stored_header(0, false),
             Flush::Full => {
                 self.pending.write_stored_header(0, false);
-                self.chains.clear();
-                self.window.rewind();
+                self.forget_history();
             }
             Flush::None | Flush::Block | Flush::Finish => {}
         }
     }
 
+    fn forget_history(&mut self) {
+        /// Up to here it is faster than zeroing all 128 KB.
+        const MAX_REHASHED: u32 = 2048;
+        match core::mem::replace(&mut self.hashed, Hashed::Nothing) {
+            Hashed::Nothing => {}
+            Hashed::FirstInput if self.window.end <= MAX_REHASHED => {
+                let len = (self.window.end + HASHED_LEN - 1) as usize;
+                let hashed = self.window.bytes.get(..len).unwrap_or_default();
+                self.chains.clear_hashes_of(hashed);
+            }
+            _ => self.chains.clear(),
+        }
+        self.window.rewind();
+    }
+
     fn hash_all(&mut self, start: u32, len: u32) {
-        let window = self.window.bytes.as_slice();
+        let mut index = self.chains.over(&self.window.bytes);
         if self.level.uses_rolling_hash() {
-            self.chains.insert_all::<true>(window, start, len);
+            index.insert_all::<true>(start, len);
         } else {
-            self.chains.insert_all::<false>(window, start, len);
+            index.insert_all::<false>(start, len);
         }
     }
 
@@ -557,35 +611,39 @@ impl Deflater {
         self.checksum.update(self.window.append(input));
     }
 
-    /// Until there is `MIN_LOOKAHEAD`, or no more input.
+    /// There is `MIN_LOOKAHEAD` afterwards, or no more input.
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L1175
     fn fill_window(&mut self, io: &mut Io<'_, '_>) {
-        loop {
-            if self.window.position >= self.window.slide_position() {
-                self.window.slide(self.window.size);
-                self.lazy.slide(self.window.size);
-                self.chains.slide(self.window.size);
-            }
-            if io.input.is_empty() {
-                return;
-            }
-            self.read_into_window(io);
-            self.chains.grow(self.window.end);
+        if self.window.position >= self.window.slide_position() {
+            self.window.slide(self.window.size);
+            self.lazy.slide(self.window.size);
+            self.chains.slide(self.window.size);
+            self.hashed = Hashed::More;
+        }
+        if io.input.is_empty() {
+            return;
+        }
+        let is_first = self.window.end == 0 && self.hashed == Hashed::Nothing;
+        self.hashed = if is_first && !self.level.uses_rolling_hash() {
+            Hashed::FirstInput
+        } else {
+            Hashed::More
+        };
+        self.read_into_window(io);
+        self.chains.grow(self.window.end);
 
-            let (lookahead, unhashed) = (self.window.lookahead(), self.window.unhashed);
-            if lookahead + unhashed >= MIN_MATCH as u32 {
-                let start = self.window.position - unhashed;
-                if self.level.uses_rolling_hash() {
-                    self.chains.restart_rolling_hash(&self.window.bytes, start);
-                } else if start != 0 {
-                    self.chains.insert::<false>(&self.window.bytes, start - 1);
-                }
-                let len = unhashed - u32::from(lookahead == 1);
-                self.hash_all(start, len);
-                self.window.unhashed -= len;
+        let (lookahead, unhashed) = (self.window.lookahead(), self.window.unhashed);
+        if lookahead + unhashed >= MIN_MATCH as u32 {
+            let start = self.window.position - unhashed;
+            let mut index = self.chains.over(&self.window.bytes);
+            if self.level.uses_rolling_hash() {
+                index.restart_rolling_hash(start);
+            } else if start != 0 {
+                index.insert_at(start - 1);
             }
-            if lookahead >= MIN_LOOKAHEAD || io.input.is_empty() {
-                return;
-            }
+            let len = unhashed - u32::from(lookahead == 1);
+            self.hash_all(start, len);
+            self.window.unhashed -= len;
         }
     }
 
@@ -608,12 +666,25 @@ impl Deflater {
         Stretch::Until(with_lookahead.max(without))
     }
 
-    fn search(&self, tuning: Tuning) -> Search {
-        Search {
-            position: self.window.position,
-            lookahead: self.window.lookahead(),
-            max_distance: self.window.max_distance(),
-            effort: tuning.effort,
+    /// `fill` adds to the block until that is full or the position is at the one it is given. `false` if there is more
+    /// to do, for want of input or room.
+    #[inline(always)]
+    fn fill_blocks(
+        &mut self,
+        io: &mut Io<'_, '_>,
+        flush: Flush,
+        lookahead: u32,
+        mut fill: impl FnMut(&mut Self, u32),
+    ) -> bool {
+        loop {
+            match self.next_stretch(io, flush, lookahead) {
+                Stretch::Until(stop) => fill(self, stop),
+                Stretch::NeedsInput => return false,
+                Stretch::End => return true,
+            }
+            if self.block.is_full() && !self.flush_block(io, false) {
+                return false;
+            }
         }
     }
 
@@ -622,6 +693,9 @@ impl Deflater {
         let only_fixed = self.strategy == Strategy::Fixed;
         self.block
             .write(&mut self.pending, self.window.block(), only_fixed, is_last);
+        if is_last {
+            self.pending.pad_to_byte_boundary();
+        }
         self.window.start_block();
         self.pending.hand_out(&mut io.out);
         !io.is_full()

@@ -1,3 +1,4 @@
+use bun_core::vec::BorrowedCursor;
 pub use bun_highway::zlib::crc32;
 
 const ADLER32_START: u32 = 1;
@@ -21,6 +22,14 @@ pub(crate) enum Checksum {
 impl Checksum {
     pub(crate) const ZLIB: Self = Self::Adler32(ADLER32_START);
     pub(crate) const GZIP: Self = Self::Crc32 { crc: 0, len: 0 };
+
+    /// Goes by the copy, as a script may be writing to `bytes`.
+    pub(crate) fn copy(&mut self, bytes: &[u8], out: &mut BorrowedCursor<'_, u8>) {
+        out.with_unfilled_buf(|out| {
+            out.unfilled().append(bytes);
+            self.update(out.filled());
+        });
+    }
 
     #[inline]
     pub(crate) fn update(&mut self, bytes: &[u8]) {

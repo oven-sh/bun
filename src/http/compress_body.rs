@@ -133,8 +133,8 @@ fn compress_libdeflate_fast(
 }
 
 /// Slow path for gzip/deflate when the libdeflate one-shot bound exceeds the
-/// shared buffer: streaming deflate into a Vec that grows as needed, so the allocation tracks the actual compressed size, not the
-/// worst-case bound.
+/// shared buffer: streaming deflate into a Vec that grows as needed, so the
+/// allocation tracks the actual compressed size, not the worst-case bound.
 fn compress_zlib_streaming(
     input: &[u8],
     gzip: bool,

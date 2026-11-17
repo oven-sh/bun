@@ -11,31 +11,31 @@ use crate::format::{
 pub(super) const LITERAL_LENGTH_BITS: u32 = 11;
 pub(super) const DISTANCE_BITS: u32 = 8;
 
-/// From the lowest bit: how many bits of the stream it stands for (6 bits), `SPECIAL`, `MATCH`, a literal (8), another
-/// or the length of the match less 3 (8), `small()` (4), a `Special` (2), how many literals (2).
+/// From the lowest bit: how many bits of the stream it stands for (6 bits), `ONLY_LITERALS`, `MATCH`, a literal (8),
+/// another or the length of the match less 3 (8), `small()` (4), a `Special` (2), how many literals (2).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Entry(pub(super) u32);
 
-/// From the lowest bit: an `Entry` if that is special, or else how many bits of the stream it stands for (8 bits), how
-/// many of them are the code (8), the shortest distance (16), the mask for the other bits (32).
+/// A special `Entry`, or the lowest 8 bits of one, how many of the bits in the stream are the code (8), the shortest
+/// distance (16), and the mask for the other bits (32).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct DistanceEntry(pub(super) u64);
 
 #[derive(Clone, Copy)]
 pub(super) enum Special {
+    Invalid,
     Subtable,
     LengthWithExtraBits,
     EndOfBlock,
-    Invalid,
 }
 
 impl Entry {
-    const SPECIAL: u32 = 1 << 6;
+    const ONLY_LITERALS: u32 = 1 << 6;
     const MATCH: u32 = 1 << 7;
     const ONE_LITERAL: u32 = 1 << 30;
 
     const fn special(kind: Special, bits: u32) -> Self {
-        Self((kind as u32) << 28 | Self::SPECIAL | bits)
+        Self((kind as u32) << 28 | bits)
     }
 
     const fn subtable(start: u32, index_bits: u32, root_bits: u32) -> Self {
@@ -47,7 +47,7 @@ impl Entry {
     }
 
     const fn literal(literal: u8, bits: u32) -> Self {
-        Self(Self::ONE_LITERAL | bits << 24 | (literal as u32) << 8 | bits)
+        Self(Self::ONE_LITERAL | bits << 24 | (literal as u32) << 8 | Self::ONLY_LITERALS | bits)
     }
 
     const fn new(symbol: usize, bits: u32) -> Self {
@@ -69,7 +69,7 @@ impl Entry {
     /// What is added to the entry of a literal for it to stand for this one too, which is not special.
     const fn as_second(self) -> u32 {
         if self.0 & Self::MATCH != 0 {
-            return self.0;
+            return self.0 - Self::ONLY_LITERALS;
         }
         Self::ONE_LITERAL | (self.first_literal() as u32) << 16 | self.bits()
     }
@@ -93,22 +93,22 @@ impl Entry {
 
     #[inline(always)]
     pub(super) const fn is_only_literals(self) -> bool {
-        self.0 & (Self::SPECIAL | Self::MATCH) == 0
+        self.0 & Self::ONLY_LITERALS != 0
     }
 
     #[inline(always)]
     pub(super) const fn is_special(self) -> bool {
-        self.0 & Self::SPECIAL != 0
+        self.0 & (Self::ONLY_LITERALS | Self::MATCH) == 0
     }
 
     /// Of a special one.
     #[inline(always)]
     pub(super) const fn kind(self) -> Special {
         match (self.0 >> 28) % 4 {
-            0 => Special::Subtable,
-            1 => Special::LengthWithExtraBits,
-            2 => Special::EndOfBlock,
-            _ => Special::Invalid,
+            0 => Special::Invalid,
+            1 => Special::Subtable,
+            2 => Special::LengthWithExtraBits,
+            _ => Special::EndOfBlock,
         }
     }
 
@@ -152,7 +152,7 @@ impl DistanceEntry {
             return Self(Entry::special(Special::Invalid, bits).0 as u64);
         }
         let range = distance_range(symbol as u32);
-        let lower = range.base << 16 | bits << 8 | (bits + range.extra_bits);
+        let lower = range.base << 16 | bits << 8 | Entry::MATCH | (bits + range.extra_bits);
         Self(((1 << range.extra_bits) - 1) << 32 | lower as u64)
     }
 
@@ -187,6 +187,8 @@ pub(super) struct Tables {
     /// Or for the code lengths, until all have been read.
     pub(super) literal_length: Table<Entry, { 1 << LITERAL_LENGTH_BITS }, 512>,
     pub(super) distance: Table<DistanceEntry, { 1 << DISTANCE_BITS }, 256>,
+    /// The bits that index the root of `literal_length`.
+    pub(super) literal_length_mask: u64,
 }
 
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
@@ -250,27 +252,28 @@ impl Ends {
     }
 }
 
-/// The symbols in the order of their codes. There is room for `N`.
-struct Sorted<const N: usize> {
-    symbols: [u16; N],
+/// The symbols in the order of their codes.
+struct Sorted<'a> {
+    symbols: &'a [u16],
     ends: Ends,
     min_bits: u32,
     max_bits: u32,
     is_complete: bool,
 }
 
-impl<const N: usize> Sorted<N> {
+impl<'a> Sorted<'a> {
     /// `None` if there are more symbols than codes. `first` becomes symbol 0.
     #[inline(always)]
-    fn new(coded: &[Coded], first: u16) -> Option<Self> {
+    fn new<const N: usize>(coded: &[Coded], first: u16, room: &'a mut [u16; N]) -> Option<Self> {
         let mut counts = [0u16; MAX_CODE_BITS + 1];
         for it in coded {
             *counts.at_mut(it.bits()) += 1;
         }
         let mut next = [0u16; MAX_CODE_BITS + 1];
         let (mut start, mut unused, mut lengths) = (0, 1i32, 0u32);
-        for (bits, (&count, next)) in counts.iter().zip(&mut next).enumerate().skip(1) {
-            *next = start;
+        for bits in 1..=MAX_CODE_BITS {
+            let count = *counts.at(bits);
+            *next.at_mut(bits) = start;
             start += count;
             // Once below zero it stays there.
             unused = 2 * unused - i32::from(count);
@@ -279,14 +282,13 @@ impl<const N: usize> Sorted<N> {
         if unused < 0 {
             return None;
         }
-        let mut symbols = [0; _];
         for it in coded {
             let next = next.at_mut(it.bits());
-            *symbols.at_mut(usize::from(*next)) = it.symbol() - first;
+            *room.at_mut(usize::from(*next)) = it.symbol() - first;
             *next += 1;
         }
         Some(Self {
-            symbols,
+            symbols: room,
             ends: Ends(next),
             min_bits: lengths.trailing_zeros(),
             max_bits: lengths.checked_ilog2().unwrap_or(0),
@@ -296,7 +298,7 @@ impl<const N: usize> Sorted<N> {
 
     #[inline(always)]
     fn of_length(&self, bits: u32) -> &[u16] {
-        self.ends.of_length(bits, &self.symbols)
+        self.ends.of_length(bits, self.symbols)
     }
 }
 
@@ -341,9 +343,9 @@ impl<T: Copy + From<Entry>, const ROOT: usize, const SUBTABLES: usize> Table<T, 
 
     /// With an index of `root_bits`. The code is complete. Returns the first longer code.
     #[inline(always)]
-    fn fill_root<const N: usize>(
+    fn fill_root(
         &mut self,
-        sorted: &Sorted<N>,
+        sorted: &Sorted<'_>,
         root_bits: u32,
         entry_for: impl Fn(usize, u32) -> T,
     ) -> u16 {
@@ -359,9 +361,9 @@ impl<T: Copy + From<Entry>, const ROOT: usize, const SUBTABLES: usize> Table<T, 
     }
 
     #[inline(always)]
-    fn fill_subtables<const N: usize>(
+    fn fill_subtables(
         &mut self,
-        sorted: &Sorted<N>,
+        sorted: &Sorted<'_>,
         mut code: u16,
         entry_for: impl Fn(usize, u32) -> T,
     ) {
@@ -394,14 +396,14 @@ impl<T: Copy + From<Entry>, const ROOT: usize, const SUBTABLES: usize> Table<T, 
 
     /// Only no code at all, or just one of a single bit, is let through.
     #[cold]
-    fn fill_incomplete<const N: usize>(
+    fn fill_incomplete(
         &mut self,
-        sorted: &Sorted<N>,
+        sorted: &Sorted<'_>,
         entry_for: impl Fn(usize, u32) -> T,
     ) -> bool {
         self.root.fill(Entry::special(Special::Invalid, 1).into());
-        if sorted.max_bits == 1 {
-            let entry = entry_for((*sorted.symbols.at(0)).into(), 1);
+        if let &[symbol] = sorted.of_length(1) {
+            let entry = entry_for(symbol.into(), 1);
             self.root.iter_mut().step_by(2).for_each(|it| *it = entry);
         }
         sorted.max_bits <= 1
@@ -418,6 +420,7 @@ impl Tables {
             root: [DistanceEntry(0); _],
             subtables: [DistanceEntry(0); _],
         },
+        literal_length_mask: u64::MAX,
     };
 
     /// The symbol is the first literal.
@@ -428,6 +431,7 @@ impl Tables {
     }
 
     /// `false` if the lengths do not make a code.
+    #[inline(never)]
     pub(super) fn build_code_length(&mut self, coded: &[Coded]) -> bool {
         let table = &mut self.literal_length;
         if coded.is_empty() {
@@ -435,7 +439,8 @@ impl Tables {
             table.root.fill(Entry::literal(0, 1));
             return true;
         }
-        let Some(sorted) = Sorted::<32>::new(coded, 0).filter(|it| it.is_complete) else {
+        let mut room = [0; 32];
+        let Some(sorted) = Sorted::new(coded, 0, &mut room).filter(|it| it.is_complete) else {
             return false;
         };
         let entry_for = |symbol, bits| Entry::literal(symbol as u8, bits);
@@ -444,9 +449,11 @@ impl Tables {
     }
 
     /// `first` is what `coded` calls the first distance symbol.
+    #[inline(never)]
     pub(super) fn build_distance(&mut self, coded: &[Coded], first: u16) -> bool {
         let table = &mut self.distance;
-        let Some(sorted) = Sorted::<32>::new(coded, first) else {
+        let mut room = [0; 32];
+        let Some(sorted) = Sorted::new(coded, first, &mut room) else {
             return false;
         };
         if !sorted.is_complete {
@@ -458,18 +465,23 @@ impl Tables {
     }
 
     /// With `combines`, entries stand for as much as their index has room for, which takes time.
+    #[inline(never)]
     pub(super) fn build_literal_length(&mut self, coded: &[Coded], combines: bool) -> bool {
-        let Some(sorted) = Sorted::<512>::new(coded, 0) else {
+        let mut room = [0; 512];
+        let Some(sorted) = Sorted::new(coded, 0, &mut room) else {
             return false;
         };
         if !sorted.is_complete {
             return self.literal_length.fill_incomplete(&sorted, Entry::new);
         }
         let code = if combines {
+            self.literal_length_mask = u64::MAX;
             self.fill_combined_root(&sorted)
         } else {
+            let root_bits = LITERAL_LENGTH_BITS.min(sorted.max_bits);
+            self.literal_length_mask = (1 << root_bits) - 1;
             self.literal_length
-                .fill_root(&sorted, LITERAL_LENGTH_BITS, Entry::new)
+                .fill_root(&sorted, root_bits, Entry::new)
         };
         self.literal_length
             .fill_subtables(&sorted, code, Entry::new);
@@ -477,7 +489,7 @@ impl Tables {
     }
 
     #[inline(never)]
-    fn fill_combined_root(&mut self, sorted: &Sorted<512>) -> u16 {
+    fn fill_combined_root(&mut self, sorted: &Sorted<'_>) -> u16 {
         let table = &mut self.literal_length;
         let mut literals = List::<{ END_OF_BLOCK + 1 }>::new();
         let mut followers = List::<{ LITERAL_LENGTH_SYMBOLS + 1 }>::new();

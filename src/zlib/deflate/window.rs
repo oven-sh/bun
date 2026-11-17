@@ -1,5 +1,7 @@
 //! The input that is being compressed, behind what matches are looked for in.
 
+use bun_highway::common_prefix_length;
+
 use crate::error::Result;
 use crate::format::{MAX_MATCH, MIN_MATCH};
 use crate::vec;
@@ -7,7 +9,8 @@ use crate::vec;
 /// So much input is wanted behind the position, unless there is a flush.
 pub(super) const MIN_LOOKAHEAD: u32 = (MAX_MATCH + MIN_MATCH + 1) as u32;
 /// How much may be compared for a match.
-pub(super) const SCAN_LEN: usize = 16 + (MAX_MATCH - 16).next_multiple_of(32);
+const SCAN_LEN: usize = 16 + (MAX_MATCH - 16).next_multiple_of(32);
+pub(super) type Scan = [u8; SCAN_LEN];
 /// Behind the input. Zeros, or what used to be there.
 const PADDING: usize = SCAN_LEN + 8;
 
@@ -57,6 +60,13 @@ impl Window {
     #[inline(always)]
     pub(super) fn slide_position(&self) -> u32 {
         2 * self.size - MIN_LOOKAHEAD
+    }
+
+    /// So much that there is a `Scan` at each position below `stop`, and at no other.
+    pub(super) fn scannable_below(&self, stop: u32) -> &[u8] {
+        let bytes = self.bytes.get(..stop as usize + SCAN_LEN - 1);
+        debug_assert!(bytes.is_some());
+        bytes.unwrap_or_default()
     }
 
     pub(super) fn room(&self) -> usize {
@@ -123,25 +133,21 @@ pub(super) fn word(bytes: &[u8], at: u32) -> Option<u64> {
     chunk(bytes, at).copied().map(u64::from_le_bytes)
 }
 
-/// How many bytes are equal at the start, at most `MAX_MATCH`. The first 8 are known to be.
+/// How many bytes are equal at the start, at most `MAX_MATCH`.
 #[inline(always)]
-pub(super) fn long_match_len(a: &[u8; SCAN_LEN], b: &[u8; SCAN_LEN]) -> u32 {
-    let difference = word(a, 8).unwrap_or_default() ^ word(b, 8).unwrap_or_default();
-    if difference != 0 {
-        return 8 + difference.trailing_zeros() / 8;
+pub(super) fn match_len(a: &Scan, b: &Scan) -> u32 {
+    match common_prefix_length(&a[..16], &b[..16]) {
+        16 => long_match_len(a, b),
+        len => len as u32,
     }
+}
+
+#[inline(never)]
+fn long_match_len(a: &Scan, b: &Scan) -> u32 {
     let mut len = 16;
     while let (Some(a), Some(b)) = (chunk::<32>(a, len), chunk::<32>(b, len)) {
         if a != b {
-            let difference = |at| {
-                let half = |bytes| chunk(bytes, at).copied().map_or(0, u128::from_le_bytes);
-                half(a) ^ half(b)
-            };
-            let equal_bits = match difference(0) {
-                0 => u128::BITS + difference(16).trailing_zeros(),
-                lower => lower.trailing_zeros(),
-            };
-            return (len + equal_bits / 8).min(MAX_MATCH as u32);
+            return (len + common_prefix_length(a, b) as u32).min(MAX_MATCH as u32);
         }
         len += 32;
     }

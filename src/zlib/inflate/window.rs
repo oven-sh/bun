@@ -12,7 +12,7 @@ pub(super) const LAP: usize = MAX_DISTANCE + SLACK;
 const CARRIED: usize = 320;
 const LAP_END: usize = CARRIED + LAP;
 const FULL_LEN: usize = LAP_END + SLACK;
-const MIN_GROWTH: usize = 1024;
+const MIN_GROWTH: usize = 256;
 
 #[derive(Default)]
 pub(super) struct Window {
@@ -55,6 +55,15 @@ impl Window {
     #[inline]
     pub(super) fn is_lap_over(&self) -> bool {
         self.end >= LAP_END
+    }
+
+    /// If all that is within reach repeats every `period` bytes, some periods of it. At the end of a lap.
+    pub(super) fn periods(&self, period: usize) -> Option<&[u8]> {
+        const CACHED_LEN: usize = 16 * 1024;
+        let all = self.bytes.get(self.end - MAX_DISTANCE..self.end)?;
+        let len = period.max(CACHED_LEN - CACHED_LEN % period);
+        all.starts_with(all.get(period..)?)
+            .then(|| all.get(MAX_DISTANCE - len..))?
     }
 
     /// The last one is over, and nothing is pending.

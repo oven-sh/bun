@@ -1,8 +1,10 @@
 //! Level 1: one candidate for a match, written at once with the fixed codes.
 
-use super::block::{FIXED, Symbol};
 use super::chains::HASHED_LEN;
-use super::window::{MIN_LOOKAHEAD, byte, chunk, long_match_len, word};
+use super::encoding::FIXED;
+use super::pending::Bits;
+use super::symbol::Symbol;
+use super::window::{MIN_LOOKAHEAD, Scan, chunk, match_len};
 use super::{Deflater, Flush, Io, Progress, Stretch};
 use crate::format::FIXED_BLOCK;
 
@@ -13,22 +15,9 @@ pub(super) enum QuickBlock {
     OpenAndLast,
 }
 
-#[inline(always)]
-fn match_len(window: &[u8], position: u32, candidate: u32) -> Option<u32> {
-    let difference = word(window, position)? ^ word(window, candidate)?;
-    if difference != 0 {
-        return Some(difference.trailing_zeros() / 8);
-    }
-    Some(long_match_len(
-        chunk(window, position)?,
-        chunk(window, candidate)?,
-    ))
-}
-
 impl Deflater {
     fn open_quick_block(&mut self, is_last: bool) {
-        self.pending
-            .write_bits(1, |writer| writer.put_block_type(FIXED_BLOCK, is_last));
+        self.pending.put(Bits::block_header(FIXED_BLOCK, is_last));
         self.quick_block = if is_last {
             QuickBlock::OpenAndLast
         } else {
@@ -42,18 +31,17 @@ impl Deflater {
         if self.quick_block == QuickBlock::None {
             return true;
         }
-        self.pending.write_bits(2, |writer| {
-            FIXED.put_end_of_block(writer);
-            if is_last {
-                writer.pad_to_byte_boundary();
-            }
-        });
+        self.pending.put(FIXED.end_of_block());
+        if is_last {
+            self.pending.pad_to_byte_boundary();
+        }
         self.quick_block = QuickBlock::None;
         self.window.start_block();
         self.pending.hand_out(&mut io.out);
         !io.is_full()
     }
 
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate_quick.c#L47
     #[inline(never)]
     pub(super) fn compress_quickly(&mut self, io: &mut Io<'_, '_>, flush: Flush) -> Progress {
         let is_last = flush == Flush::Finish;
@@ -66,46 +54,47 @@ impl Deflater {
             self.open_quick_block(false);
         }
 
-        let almost_full = self.pending.size() - 8;
         loop {
             let stop = match self.next_stretch(io, flush, MIN_LOOKAHEAD) {
                 Stretch::Until(stop) => stop,
-                Stretch::NeedsInput => {
-                    self.pending.hold_back_partial_word();
-                    return Progress::NeedsMore;
-                }
+                Stretch::NeedsInput => return Progress::NeedsMore,
                 Stretch::End => break,
             };
             if self.quick_block == QuickBlock::None {
                 self.open_quick_block(is_last);
             }
-            let (window, end) = (self.window.bytes.as_slice(), self.window.end);
+            let (mut position, end) = (self.window.position, self.window.end);
             let max_distance = self.window.max_distance();
-            let mut position = self.window.position;
-            let chains = &mut self.chains;
+            let window = self.window.scannable_below(stop);
+            let mut index = self.chains.over(window);
             let max_len = (end - position) as usize * 9 / 8 + 1;
-            let len = self.pending.write_bits(max_len, |writer| {
-                while position < stop && writer.len() < almost_full {
+            self.pending.write_some(max_len, |writer| {
+                while let Some::<&Scan>(scan) = chunk(window, position) {
                     let lookahead = end - position;
                     if lookahead >= HASHED_LEN {
-                        let candidate = chains.insert::<false>(window, position);
+                        let hashed = chunk(scan, 0).copied().unwrap_or_default();
+                        let candidate = index.insert::<false>(position, hashed);
                         let distance = position.wrapping_sub(candidate);
                         if distance.wrapping_sub(1) < max_distance
-                            && let Some(len @ HASHED_LEN..) = match_len(window, position, candidate)
+                            && let Some::<&Scan>(other) = chunk(window, candidate)
+                            && chunk(other, 0) == Some(&hashed)
                         {
-                            let len = len.min(lookahead);
-                            FIXED.put(writer, Symbol::for_match(distance, len));
+                            let len = match_len(scan, other).min(lookahead);
                             position += len;
+                            if !writer.put_and_check(FIXED.of(Symbol::for_match(distance, len))) {
+                                break;
+                            }
                             continue;
                         }
                     }
-                    FIXED.put_literal(writer, byte(window, position));
                     position += 1;
+                    if !writer.put_and_check(FIXED.of_literal(scan[0])) {
+                        break;
+                    }
                 }
-                writer.len()
             });
             self.window.position = position;
-            if len >= almost_full {
+            if self.pending.is_almost_full() {
                 self.pending.hand_out(&mut io.out);
                 if io.is_full() {
                     return Progress::NeedsMore;

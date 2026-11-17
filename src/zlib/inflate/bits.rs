@@ -8,6 +8,7 @@ pub(super) struct HeldBits {
 /// So many bits are there after a refill, unless the input has run out.
 pub(super) const REFILLED_BITS: u32 = u64::BITS - 8;
 
+#[derive(Clone, Copy)]
 pub(super) struct BitReader<'a> {
     input: &'a [u8],
     /// The end of `input` that `count` does not cover.

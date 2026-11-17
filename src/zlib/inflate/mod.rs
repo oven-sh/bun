@@ -2,8 +2,11 @@
 
 mod bits;
 mod codes;
+mod dynamic;
 mod tables;
 mod window;
+
+use core::cell::Cell;
 
 use bun_core::strings;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
@@ -11,14 +14,13 @@ use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 use crate::checksum::{Checksum, adler32, crc32};
 use crate::error::{Damage, Error, Result};
 use crate::format::{
-    CODE_LENGTH_ORDER, CODE_LENGTH_SYMBOLS, DEFLATE_METHOD, DISTANCE_SYMBOLS, DYNAMIC_BLOCK,
-    END_OF_BLOCK, FIRST_LENGTH_SYMBOL, FIXED_BLOCK, GZIP_ID, LITERAL_LENGTH_SYMBOLS,
-    MAX_CODE_LENGTH_BITS, MAX_WINDOW_BITS, MIN_WINDOW_BITS, REPEAT_FEW_ZEROS, REPEAT_MANY_ZEROS,
-    REPEAT_PREVIOUS, STORED_BLOCK, ZLIB_HEADER_DIVISOR, ZLIB_PRESET_DICTIONARY, gzip_flag,
+    DEFLATE_METHOD, DYNAMIC_BLOCK, FIXED_BLOCK, GZIP_ID, MAX_WINDOW_BITS, MIN_WINDOW_BITS,
+    STORED_BLOCK, ZLIB_HEADER_DIVISOR, ZLIB_PRESET_DICTIONARY, gzip_flag,
 };
 use bits::{BitReader, HeldBits};
 use codes::{FAST_ROOM, Reach, Step, Stop};
-use tables::{Coded, Tables};
+use dynamic::{Counts, DynamicCodes};
+use tables::Tables;
 use window::{MAX_DISTANCE, Window};
 
 /// What may be around the compressed data.
@@ -59,12 +61,9 @@ enum State {
     BlockBoundary,
     BlockHeader,
     Stored(u16),
-    CodeLengthCode(Counts),
-    CodeLengths {
-        counts: Counts,
-        read: u16,
-        last: u8,
-    },
+    /// With the first of its lengths, as all 19 are too many bits for one go.
+    CodeLengthCode(Counts, u8),
+    CodeLengths(Counts),
     Codes {
         fixed: bool,
     },
@@ -75,19 +74,6 @@ enum State {
     Done,
     Failed(Error),
 }
-
-/// From the header of a dynamic block.
-#[derive(Clone, Copy)]
-struct Counts {
-    literal_lengths: u16,
-    distances: u8,
-    code_lengths: u8,
-    /// Read with the counts, as all 19 are too many bits for one go.
-    first_code_length: u8,
-}
-
-/// An end-of-block code this long is a sign of a block that has enough symbols for better tables to pay off.
-const LONG_BLOCK_END_BITS: usize = 10;
 
 pub struct Inflater {
     container: Container,
@@ -105,9 +91,7 @@ pub struct Inflater {
     /// Of the match that `window.pending()` is the rest of, or 0.
     pending_distance: usize,
     window: Window,
-    /// Of the last dynamic block.
-    tables: Option<Box<Tables>>,
-    coded: Vec<Coded>,
+    dynamic: DynamicCodes,
 }
 
 /// The output of one call.
@@ -121,6 +105,14 @@ impl Output<'_, '_> {
     #[inline]
     fn room(&self) -> usize {
         self.buf.capacity() - self.buf.len()
+    }
+}
+
+fn current_tables(dynamic: &DynamicCodes, fixed: bool) -> Option<&Tables> {
+    if fixed {
+        Some(&tables::FIXED)
+    } else {
+        dynamic.tables()
     }
 }
 
@@ -156,8 +148,7 @@ impl Inflater {
             history: 0,
             pending_distance: 0,
             window: Window::default(),
-            tables: None,
-            coded: Vec::new(),
+            dynamic: DynamicCodes::default(),
         }
     }
 
@@ -205,6 +196,7 @@ impl Inflater {
         self.max_distance = MAX_DISTANCE;
         self.history = 0;
         self.pending_distance = 0;
+        self.dynamic.reset();
         self.window.clear();
     }
 
@@ -450,31 +442,32 @@ impl Inflater {
                             Status::NeedsInput
                         });
                     }
-                    self.checksum.update(bytes);
-                    out.buf.unfilled().append(bytes);
+                    self.checksum.copy(bytes, &mut out.buf.unfilled());
                     out.unrecorded += bytes.len();
                     State::Stored(left - bytes.len() as u16)
                 }
-                State::CodeLengthCode(counts) => {
-                    let lengths = take!(3 * (u32::from(counts.code_lengths) - 1)) << 3;
-                    self.start_dynamic_block(lengths | u64::from(counts.first_code_length))?;
-                    State::CodeLengths {
-                        counts,
-                        read: 0,
-                        last: 0,
-                    }
+                State::CodeLengthCode(counts, first) => {
+                    let others = take!(counts.code_length_bits() - 3);
+                    self.dynamic.start(others << 3 | u64::from(first))?;
+                    State::CodeLengths(counts)
                 }
-                State::CodeLengths { counts, read, last } => {
-                    if !self.read_code_lengths(bits, counts, read, last)? {
+                State::CodeLengths(counts) => {
+                    if !self.dynamic.read_lengths(bits, counts)? {
                         return Ok(Status::NeedsInput);
                     }
-                    self.build_tables(counts)?;
+                    self.dynamic.build_tables(counts, bits.rest.len())?;
                     State::Codes { fixed: false }
                 }
-                State::Codes { fixed } => match self.decode_codes(bits, out, fixed)? {
-                    Status::BlockEnd => State::BlockBoundary,
-                    status => return Ok(status),
-                },
+                State::Codes { fixed } => {
+                    let before = out.buf.len() + self.window.pending();
+                    let status = self.decode_codes(bits, out, fixed)?;
+                    let after = out.buf.len() + self.window.pending();
+                    self.dynamic.add_decoded(after - before);
+                    if status != Status::BlockEnd {
+                        return Ok(status);
+                    }
+                    State::BlockBoundary
+                }
 
                 State::TooFarBack if out.room() == 0 => return Ok(Status::NeedsOutput),
                 State::TooFarBack => return Err(Damage::DistanceTooFarBack.into()),
@@ -527,7 +520,7 @@ impl Inflater {
     /// Takes nothing if it returns `None`, for want of input.
     fn read_block_header(&mut self, bits: &mut BitReader<'_>) -> Result<Option<State>> {
         const TYPE_END: u32 = 3;
-        const COUNTS_END: u32 = TYPE_END + 14;
+        const COUNTS_END: u32 = TYPE_END + Counts::BITS;
         if !bits.has(TYPE_END) {
             return Ok(None);
         }
@@ -554,24 +547,11 @@ impl Inflater {
                 if !bits.has(COUNTS_END) {
                     return Ok(None);
                 }
-                let field = |start: u32, len: u32| (bits.buffer >> start) as u8 % (1 << len);
-                let literal_lengths = FIRST_LENGTH_SYMBOL + usize::from(field(TYPE_END, 5));
-                let distances = 1 + field(TYPE_END + 5, 5);
-                let code_lengths = 4 + field(TYPE_END + 10, 4);
-                if literal_lengths > LITERAL_LENGTH_SYMBOLS
-                    || usize::from(distances) > DISTANCE_SYMBOLS
-                {
-                    return Err(Damage::TooManySymbols.into());
-                }
+                let counts = Counts::new(bits.buffer >> TYPE_END)?;
                 let Some(header) = bits.take(COUNTS_END + 3) else {
                     return Ok(None);
                 };
-                State::CodeLengthCode(Counts {
-                    literal_lengths: literal_lengths as u16,
-                    distances,
-                    code_lengths,
-                    first_code_length: (header >> COUNTS_END) as u8,
-                })
+                State::CodeLengthCode(counts, (header >> COUNTS_END) as u8)
             }
             _ => return Err(Damage::BlockType.into()),
         };
@@ -579,112 +559,21 @@ impl Inflater {
         Ok(Some(state))
     }
 
-    /// `lengths` has three bits for each code length symbol, in the order of the stream.
-    fn start_dynamic_block(&mut self, lengths: u64) -> Result<()> {
-        let tables = match &mut self.tables {
-            Some(tables) => tables,
-            None => {
-                self.coded
-                    .try_reserve_exact(LITERAL_LENGTH_SYMBOLS + DISTANCE_SYMBOLS)?;
-                let tables = Box::try_new(Tables::EMPTY).map_err(|_| bun_alloc::AllocError)?;
-                self.tables.insert(tables)
-            }
-        };
-        #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
-        const SHIFTS: [u8; CODE_LENGTH_SYMBOLS] = {
-            let mut shifts = [0; _];
-            let mut rank = 0;
-            while rank < CODE_LENGTH_SYMBOLS {
-                shifts[CODE_LENGTH_ORDER[rank] as usize] = 3 * rank as u8;
-                rank += 1;
-            }
-            shifts
-        };
-        self.coded.clear();
-        for (symbol, shift) in (0..).zip(SHIFTS) {
-            let bits = (lengths >> shift) as u8 % 8;
-            if bits != 0 {
-                self.coded.push(Coded::new(symbol, bits));
+    /// More periods leave a window that has nothing else as it is, so they need not be written there.
+    fn continue_period(&mut self, bits: &mut BitReader<'_>, out: &mut Output<'_, '_>, fixed: bool) {
+        if let Some(tables) = current_tables(&self.dynamic, fixed)
+            && let Some(next @ (distance, _)) = codes::peek_longest_match(tables, bits)
+            && distance <= self.max_distance.min(self.history + out.buf.len())
+            && let Some(periods) = self.window.periods(distance)
+        {
+            let mut left = codes::skip_same_matches(bits, next, out.room());
+            while left != 0 {
+                let piece = periods.get(..left).unwrap_or(periods);
+                self.checksum.update(piece);
+                out.buf.unfilled().append(piece);
+                left -= piece.len();
             }
         }
-        let is_valid = tables.build_code_length(&self.coded);
-        self.coded.clear();
-        Ok(is_valid.then_some(()).ok_or(Damage::CodeLengthsSet)?)
-    }
-
-    /// Whether all have been read.
-    fn read_code_lengths(
-        &mut self,
-        bits: &mut BitReader<'_>,
-        counts: Counts,
-        mut read: u16,
-        mut last: u8,
-    ) -> Result<bool> {
-        const MAX_BITS: u32 = MAX_CODE_LENGTH_BITS as u32 + REPEAT_MANY_ZEROS.extra_bits;
-        let tables = self.tables.as_deref().ok_or(Error::Internal)?;
-        let total = counts.literal_lengths + u16::from(counts.distances);
-        while read < total {
-            if bits.count < MAX_BITS {
-                bits.refill();
-            }
-            let entry = tables.code_length(bits.buffer);
-            let symbol = entry.first_literal();
-            if symbol < REPEAT_PREVIOUS.symbol {
-                if entry.bits() > bits.count {
-                    break;
-                }
-                bits.skip(entry.bits());
-                if symbol != 0 {
-                    self.coded.push(Coded::new(read, symbol));
-                }
-                (read, last) = (read + 1, symbol);
-                continue;
-            }
-            let repeat = match symbol - REPEAT_PREVIOUS.symbol {
-                0 => REPEAT_PREVIOUS,
-                1 => REPEAT_FEW_ZEROS,
-                _ => REPEAT_MANY_ZEROS,
-            };
-            if entry.bits() + repeat.extra_bits > bits.count {
-                break;
-            }
-            bits.skip(entry.bits());
-            let end = read + (repeat.min + bits.peek(repeat.extra_bits) as u32) as u16;
-            bits.skip(repeat.extra_bits);
-            if symbol != REPEAT_PREVIOUS.symbol {
-                last = 0;
-            } else if read == 0 {
-                return Err(Damage::BitLengthRepeat.into());
-            }
-            if end > total {
-                return Err(Damage::BitLengthRepeat.into());
-            }
-            if last != 0 {
-                self.coded
-                    .extend((read..end).map(|symbol| Coded::new(symbol, last)));
-            }
-            read = end;
-        }
-        self.state = State::CodeLengths { counts, read, last };
-        Ok(read == total)
-    }
-
-    fn build_tables(&mut self, counts: Counts) -> Result<()> {
-        let tables = self.tables.as_deref_mut().ok_or(Error::Internal)?;
-        let below = |symbol: u16| self.coded.partition_point(|it| it.symbol() < symbol);
-        let end_of_block = self.coded.get(below(END_OF_BLOCK as u16));
-        let end_of_block = end_of_block
-            .filter(|it| usize::from(it.symbol()) == END_OF_BLOCK)
-            .ok_or(Damage::MissingEndOfBlock)?;
-        let (literal_lengths, distances) = self.coded.split_at(below(counts.literal_lengths));
-        let is_long = end_of_block.bits() >= LONG_BLOCK_END_BITS;
-        if !tables.build_literal_length(literal_lengths, is_long) {
-            return Err(Damage::LiteralLengthsSet.into());
-        }
-        if !tables.build_distance(distances, counts.literal_lengths) {
-            return Err(Damage::DistancesSet.into());
-        }
-        Ok(())
     }
 
     /// As in zlib, a full output does not keep it from reading up to the first symbol that there is no room for.
@@ -698,6 +587,7 @@ impl Inflater {
         loop {
             if self.window.is_lap_over() {
                 self.hand_out(out);
+                self.continue_period(bits, out, fixed);
                 self.window.start_lap()?;
             }
             let room = out.room() - self.window.pending();
@@ -705,11 +595,7 @@ impl Inflater {
                 self.window
                     .grow(room.min(bits.rest.len().saturating_mul(4)))?;
             }
-            let tables = match &self.tables {
-                _ if fixed => &tables::FIXED,
-                Some(tables) => tables,
-                None => return Err(Error::Internal),
-            };
+            let tables = current_tables(&self.dynamic, fixed).ok_or(Error::Internal)?;
             let window = &mut self.window;
             let reach = Reach {
                 max: self.max_distance,
@@ -720,9 +606,17 @@ impl Inflater {
             let fast_limit = limit.min(full.saturating_sub(FAST_ROOM - 1));
             let (bytes, end) = (window.bytes.as_mut_slice(), &mut window.end);
             if *end < fast_limit {
-                match codes::decode_fast(tables, bits, bytes, end, fast_limit, reach)? {
-                    Stop::EndOfBlock => return Ok(Status::BlockEnd),
-                    Stop::Limit(distance) => self.pending_distance = distance,
+                let stop = codes::decode_fast(
+                    tables,
+                    bits,
+                    bytes,
+                    end,
+                    fast_limit,
+                    reach,
+                    Cell::from_mut(&mut self.pending_distance),
+                )?;
+                if let Stop::EndOfBlock = stop {
+                    return Ok(Status::BlockEnd);
                 }
             }
             while *end <= full && *end < limit {

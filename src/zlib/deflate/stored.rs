@@ -5,6 +5,7 @@ use crate::format::MAX_STORED_LEN;
 
 impl Deflater {
     /// Blocks go straight to the output if they can be large enough there, and through `pending` if not.
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate_stored.c#L27
     pub(super) fn store(&mut self, io: &mut Io<'_, '_>, flush: Flush) -> Progress {
         let size = self.window.size as usize;
         let min_block = (self.pending.size() - 5).min(size);
@@ -32,8 +33,7 @@ impl Deflater {
             io.out.append(from_window);
             let from_input = io.take_input(len - from_window.len());
             self.window.block_start += from_window.len() as i64;
-            self.checksum.update(from_input);
-            io.out.append(from_input);
+            self.checksum.copy(from_input, &mut io.out);
         }
 
         let copied = input.split_at(input.len() - io.input.len()).0;
@@ -71,12 +71,9 @@ impl Deflater {
 
         let room = (self.pending.size() - self.pending.stored_header_len()).min(MAX_STORED_LEN);
         let left = self.window.block().unwrap_or_default();
-        let is_all = io.input.is_empty() && left.len() <= room;
-        if left.len() >= room.min(size)
-            || (is_flush && is_all && (!left.is_empty() || flush == Flush::Finish))
-        {
+        if is_flush || left.len() >= room.min(size) {
             let block = left.get(..room).unwrap_or(left);
-            is_last = flush == Flush::Finish && is_all;
+            is_last = flush == Flush::Finish && io.input.is_empty() && block.len() == left.len();
             self.pending.write_stored_block(block, is_last);
             self.window.block_start += block.len() as i64;
             self.pending.hand_out(&mut io.out);

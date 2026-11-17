@@ -1,11 +1,13 @@
 //! The literals and matches of a compressed block.
 
 use core::cell::Cell;
+use core::hint::cold_path;
+
+use bun_highway::zlib::{MATCH_SPAN, repeat};
 
 use super::bits::{BitReader, REFILLED_BITS};
 use super::tables::{DISTANCE_BITS, Entry, LITERAL_LENGTH_BITS, Special, Tables};
 use super::window::{LAP, SLACK};
-use crate::array::At;
 use crate::error::{Damage, Error, Result};
 use crate::format::MAX_MATCH;
 
@@ -28,19 +30,17 @@ impl Reach {
 
 pub(super) enum Stop {
     EndOfBlock,
-    /// Too little is left of the input or in front of the limit. If the last symbol was a match, this is its distance.
-    Limit(usize),
+    /// Too little is left of the input or in front of the limit.
+    Limit,
 }
 
 /// What one round of `decode_fast()` may write before the match it ends with, plus one byte of that.
 pub(super) const FAST_ROOM: usize = 4;
 
 const CHUNK: usize = 32;
-const HALF_CHUNK: usize = CHUNK / 2;
 
 /// A match is read from one and written to another, and they may overlap.
 type Span = [Cell<u8>; MATCH_SPAN];
-const MATCH_SPAN: usize = 320;
 
 #[inline(always)]
 fn part<const N: usize>(cells: &[Cell<u8>], at: usize) -> Option<&[Cell<u8>; N]> {
@@ -48,37 +48,14 @@ fn part<const N: usize>(cells: &[Cell<u8>], at: usize) -> Option<&[Cell<u8>; N]>
 }
 
 #[inline(always)]
-fn load<const N: usize>(cells: &[Cell<u8>; N]) -> [u8; N] {
-    cells.each_ref().map(Cell::get)
-}
-
-#[inline(always)]
-fn store<const N: usize>(cells: &[Cell<u8>; N], bytes: [u8; N]) {
-    for (cell, byte) in cells.iter().zip(bytes) {
-        cell.set(byte);
-    }
-}
-
-/// In chunks of `N` bytes from `done` on, until they cover `len` bytes.
-#[inline(always)]
-fn copy_chunks<const N: usize>(from: &Span, to: &Span, mut done: usize, len: usize) {
-    while done < len.min(MAX_MATCH)
-        && let (Some(from), Some(to)) = (part::<N>(from, done), part(to, done))
-    {
-        store(to, load(from));
-        done += N;
-    }
-}
-
-#[inline(always)]
 fn match_source(window: &[Cell<u8>], at: usize, distance: usize) -> Option<&Span> {
-    let from = at.wrapping_sub(distance);
-    let from = if distance > at {
-        from.wrapping_add(LAP)
+    let (from, is_in_last_lap) = (at as u32).overflowing_sub(distance as u32);
+    let from = if is_in_last_lap {
+        from.wrapping_add(LAP as u32)
     } else {
         from
     };
-    part(window, from as u32 as usize)
+    part(window, from as usize)
 }
 
 /// May write up to `CHUNK - 1` bytes too many.
@@ -87,68 +64,23 @@ fn copy_match(from: &Span, to: &Span, distance: usize, len: usize) {
     if distance < len.min(CHUNK) {
         return repeat(from, to, distance, len);
     }
-    if let (Some(from), Some(to)) = (from.first_chunk::<CHUNK>(), to.first_chunk()) {
-        store(to, load(from));
-    }
-    copy_chunks::<CHUNK>(from, to, CHUNK, len);
-}
-
-/// By distance: what is left of half a chunk behind the whole periods, and how much those take of a chunk.
-#[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
-static PERIODS: [[u8; 2]; HALF_CHUNK] = {
-    let mut periods = [[0; _]; _];
-    let mut distance = 1;
-    while distance < HALF_CHUNK {
-        periods[distance] = [
-            (HALF_CHUNK % distance) as u8,
-            (CHUNK - CHUNK % distance) as u8,
-        ];
-        distance += 1;
-    }
-    periods
-};
-
-/// For a match that is longer than its distance, which is less than `CHUNK`.
-#[cold]
-#[inline(never)]
-fn repeat(from: &Span, to: &Span, distance: usize, len: usize) {
-    if distance >= HALF_CHUNK {
-        return copy_chunks::<HALF_CHUNK>(from, to, 0, len);
-    }
-    if distance == 1 {
-        let chunk = [from[0].get(); CHUNK];
-        let mut done = 0;
-        while done < len.min(MAX_MATCH)
-            && let Some(to) = part(to, done)
-        {
-            store(to, chunk);
-            done += CHUNK;
+    let copy_chunk = |at| {
+        if let (Some(from), Some(to)) = (from.get(at..at + CHUNK), to.get(at..at + CHUNK)) {
+            let bytes: [u8; CHUNK] = core::array::from_fn(|i| from.get(i).map_or(0, Cell::get));
+            to.iter().zip(bytes).for_each(|(to, byte)| to.set(byte));
         }
-        return;
-    }
-    let period = from.first_chunk().map_or([0; _], load);
-    let mut bits = 8 * distance as u32;
-    let mut lower = u128::from_le_bytes(period) & ((1 << bits) - 1);
-    while bits < u128::BITS {
-        lower |= lower << bits;
-        bits *= 2;
-    }
-    let [rest, step] = *PERIODS.at(distance);
-    let (rest, step) = (8 * u32::from(rest), usize::from(step));
-    let upper = lower >> rest;
-    let upper = upper | (upper << 1) << (u128::BITS - 1 - rest);
-    let mut done = 0;
-    while done < len.min(MAX_MATCH)
-        && let (Some(first), Some(second)) = (part(to, done), part(to, done + HALF_CHUNK))
-    {
-        store(first, lower.to_le_bytes());
-        store(second, upper.to_le_bytes());
-        done += step;
+    };
+    copy_chunk(0);
+    for at in (CHUNK..MAX_MATCH).step_by(CHUNK) {
+        if at >= len {
+            break;
+        }
+        copy_chunk(at);
     }
 }
 
 /// Goes on for as long as `position` is below `limit` and enough input is left for any symbol.
-#[inline(never)]
+#[inline(always)]
 pub(super) fn decode_fast(
     tables: &Tables,
     bits: &mut BitReader<'_>,
@@ -156,21 +88,45 @@ pub(super) fn decode_fast(
     position: &mut usize,
     limit: usize,
     reach: Reach,
+    last_distance: &Cell<usize>,
+) -> Result<Stop> {
+    if tables.literal_length_mask == u64::MAX {
+        decode_fast_with::<false>(tables, bits, window, position, limit, reach, last_distance)
+    } else {
+        decode_fast_with::<true>(tables, bits, window, position, limit, reach, last_distance)
+    }
+}
+
+enum Exit {
+    Limit,
+    EndOfBlock,
+    Damaged(Damage),
+    Internal,
+}
+
+/// The mask takes a register, of which there are too few.
+#[inline(never)]
+fn decode_fast_with<const MASK: bool>(
+    tables: &Tables,
+    bits: &mut BitReader<'_>,
+    window: &mut [u8],
+    position: &mut usize,
+    limit: usize,
+    reach: Reach,
+    last_distance: &Cell<usize>,
 ) -> Result<Stop> {
     let window = Cell::from_mut(window).as_slice_of_cells();
-    let writable = window.get(..limit + SLACK - 1).ok_or(Error::Internal)?;
-    let input = bits.rest;
-    let (mut taken, mut buffer, mut at) = (0u32, bits.buffer, *position as u32);
+    let writable_end = limit + SLACK - 1;
+    let mut writable = window.get(*position..writable_end).ok_or(Error::Internal)?;
+    let (mut input, mut buffer) = (bits.rest, bits.buffer);
     // Only the lowest 6 bits are right.
     let mut count = bits.count;
-    let surely_in_reach = reach.max.min(reach.available_at(*position));
-    let input = input.get(..u32::MAX as usize / 2).unwrap_or(input);
-    let next_word = |taken: u32| -> Option<&[u8; 8]> {
-        input
-            .get(taken as usize..taken as usize + 8)?
-            .try_into()
-            .ok()
+    let mask = if MASK {
+        tables.literal_length_mask % (1 << LITERAL_LENGTH_BITS)
+    } else {
+        u64::MAX
     };
+    let surely_in_reach = reach.max.min(reach.available_at(*position));
 
     macro_rules! skip {
         ($bits:expr) => {
@@ -182,127 +138,195 @@ pub(super) fn decode_fast(
     macro_rules! refill {
         ($word:expr) => {
             buffer |= u64::from_le_bytes(*$word).wrapping_shl(count);
-            taken += (!count / 8) % 8;
+            input = input.get((!count as usize / 8) % 8..).unwrap_or_default();
             count |= REFILLED_BITS;
         };
     }
 
-    let Some(word) = next_word(taken) else {
-        return Ok(Stop::Limit(0));
+    macro_rules! write_literals {
+        ($entry:expr) => {
+            if let [first, second, ..] = writable {
+                let literals = $entry.literals();
+                first.set(literals[0]);
+                second.set(literals[1]);
+            }
+            writable = writable.get($entry.literal_count()..).unwrap_or_default();
+        };
+    }
+
+    let Some(word) = input.first_chunk() else {
+        return Ok(Stop::Limit);
     };
     refill!(word);
-    let mut entry = tables.literal_length.look_up(buffer);
-    let mut distance = 0;
-    let stop = loop {
-        let Some(mut word) = next_word(taken) else {
-            break Ok(Stop::Limit(distance));
-        };
-        let Some(ahead) = part::<SLACK>(writable, at as usize) else {
-            break Ok(Stop::Limit(distance));
-        };
-        // Evaluates to the room behind them.
-        macro_rules! write_literals {
-            ($room:expr) => {{
-                skip!(entry.0);
-                if let Some(room) = $room.first_chunk() {
-                    store(room, entry.literals());
-                }
-                at += entry.literal_count() as u32;
-                part($room, entry.literal_count())
+    let mut entry = tables.literal_length.look_up(buffer & mask);
+    let exit = loop {
+        macro_rules! stop {
+            ($exit:expr) => {{
+                cold_path();
+                break $exit;
             }};
         }
-        macro_rules! next_round {
+        let Some(mut word) = input.first_chunk() else {
+            stop!(Exit::Limit);
+        };
+        if writable.len() < SLACK {
+            stop!(Exit::Limit);
+        }
+        // The lookup comes first as all else waits for it.
+        macro_rules! take_literals {
             () => {
-                entry = tables.literal_length.look_up(buffer);
-                refill!(word);
-                continue;
+                let literals = entry;
+                skip!(literals.0);
+                entry = tables.literal_length.look_up(buffer & mask);
+                write_literals!(literals);
             };
         }
 
-        let is_literal = entry.is_only_literals();
-        let ahead: Option<&[_; SLACK - 4]> = if is_literal {
-            let behind = write_literals!(ahead);
-            entry = tables.literal_length.look_up(buffer);
-            behind
-        } else {
-            ahead.first_chunk()
-        };
-        let Some(ahead) = ahead else {
-            break Err(Error::Internal);
-        };
-        if is_literal && entry.is_only_literals() {
-            let _: Option<&Span> = write_literals!(ahead);
-            next_round!();
+        if entry.is_only_literals() {
+            take_literals!();
+            if entry.is_only_literals() {
+                take_literals!();
+                refill!(word);
+                continue;
+            }
         }
 
-        let (len, to);
+        let (len, mut code);
         if entry.is_special() {
-            if next_word(taken + 8).is_none() {
-                break Ok(Stop::Limit(0));
+            if input.len() < 16 {
+                stop!(Exit::Limit);
             }
             if let Special::Subtable = entry.kind() {
                 skip!(LITERAL_LENGTH_BITS);
                 entry = tables.literal_length.follow(entry, buffer);
                 if entry.is_only_literals() {
-                    let _: Option<&Span> = write_literals!(ahead);
-                    next_round!();
+                    take_literals!();
+                    refill!(word);
+                    continue;
                 }
             }
             skip!(entry.0);
             len = if entry.is_special() {
-                match entry.kind() {
-                    Special::LengthWithExtraBits => {}
-                    Special::EndOfBlock => break Ok(Stop::EndOfBlock),
-                    _ => break Err(Damage::LiteralLengthCode.into()),
+                if !matches!(entry.kind(), Special::LengthWithExtraBits) {
+                    stop!(match entry.kind() {
+                        Special::EndOfBlock => Exit::EndOfBlock,
+                        _ => Exit::Damaged(Damage::LiteralLengthCode),
+                    });
                 }
-                let extra = entry.small_number(buffer);
+                let extra = entry.small_number(buffer) % 32;
                 skip!(entry.small());
                 entry.match_length() + extra
             } else {
                 entry.match_length()
             };
+            code = tables.distance.look_up(buffer);
             refill!(word);
-            match next_word(taken) {
+            match input.first_chunk() {
                 Some(next) => word = next,
-                None => break Err(Error::Internal),
+                None => stop!(Exit::Internal),
             }
-            to = ahead.first_chunk();
         } else {
+            skip!(entry.0);
+            code = tables.distance.look_up(buffer);
+            write_literals!(entry);
             len = entry.match_length();
-            to = write_literals!(ahead);
         }
 
-        let mut code = tables.distance.look_up(buffer);
         if code.entry().is_special() {
             if !matches!(code.entry().kind(), Special::Subtable) {
-                break Err(Damage::DistanceCode.into());
+                stop!(Exit::Damaged(Damage::DistanceCode));
             }
             skip!(DISTANCE_BITS);
             code = tables.distance.follow(code.entry(), buffer);
         }
-        distance = code.distance(buffer);
+        let stream = buffer;
         skip!(code.entry().0);
-        if distance > surely_in_reach
-            && (distance > reach.max || distance > reach.available_at(at as usize))
+        entry = tables.literal_length.look_up(buffer & mask);
+        let distance = code.distance(stream);
+        // A store, which the compiler does not move the lookup behind.
+        last_distance.set(distance);
+        let at = writable_end - writable.len();
+        if distance > surely_in_reach && (distance > reach.max || distance > reach.available_at(at))
         {
-            break Err(Damage::DistanceTooFarBack.into());
+            stop!(Exit::Damaged(Damage::DistanceTooFarBack));
         }
-        entry = tables.literal_length.look_up(buffer);
         refill!(word);
-        let Some(from) = match_source(window, at as usize, distance) else {
-            break Err(Error::Internal);
+        let Some(from) = match_source(window, at, distance) else {
+            stop!(Exit::Internal);
         };
-        let Some(to) = to else {
-            break Err(Error::Internal);
+        let Some(to) = writable.first_chunk() else {
+            stop!(Exit::Internal);
         };
         copy_match(from, to, distance, len);
-        at += len as u32;
+        writable = writable.get(len..).unwrap_or_default();
     };
 
-    bits.rest = bits.rest.get(taken as usize..).unwrap_or_default();
-    (bits.buffer, bits.count) = (buffer, count % u64::BITS);
-    *position = at as usize;
-    stop
+    (bits.rest, bits.buffer, bits.count) = (input, buffer, count % u64::BITS);
+    *position = writable_end - writable.len();
+    match exit {
+        Exit::Limit => Ok(Stop::Limit),
+        Exit::EndOfBlock => Ok(Stop::EndOfBlock),
+        Exit::Damaged(damage) => Err(damage.into()),
+        Exit::Internal => Err(Error::Internal),
+    }
+}
+
+enum Symbol {
+    Literal(u8),
+    EndOfBlock,
+    Match { len: usize, distance: usize },
+}
+
+/// The next symbol and how many bits it takes, if they are all there.
+#[inline(always)]
+fn peek(tables: &Tables, bits: &mut BitReader<'_>) -> Result<Option<(Symbol, u32)>, Damage> {
+    bits.refill();
+    let (mut stream, mut used) = (bits.buffer, 0);
+    let mut advance = |stream: &mut u64, count: u32| {
+        *stream >>= count;
+        used += count;
+        (used <= bits.count).then_some(used)
+    };
+    let is_link = |entry: Entry| entry.is_special() && matches!(entry.kind(), Special::Subtable);
+
+    let mut entry = tables
+        .literal_length
+        .look_up(stream & tables.literal_length_mask);
+    if is_link(entry) {
+        advance(&mut stream, LITERAL_LENGTH_BITS);
+        entry = tables.literal_length.follow(entry, stream);
+    }
+    if entry.literal_count() != 0 {
+        let used = advance(&mut stream, entry.small());
+        return Ok(used.map(|used| (Symbol::Literal(entry.first_literal()), used)));
+    }
+    let Some(used) = advance(&mut stream, entry.bits()) else {
+        return Ok(None);
+    };
+    let mut len = entry.match_length();
+    if entry.is_special() {
+        match entry.kind() {
+            Special::LengthWithExtraBits => {}
+            Special::EndOfBlock => return Ok(Some((Symbol::EndOfBlock, used))),
+            _ => return Err(Damage::LiteralLengthCode),
+        }
+        len += entry.small_number(stream);
+        advance(&mut stream, entry.small());
+    }
+
+    let mut code = tables.distance.look_up(stream);
+    if is_link(code.entry()) {
+        advance(&mut stream, DISTANCE_BITS);
+        code = tables.distance.follow(code.entry(), stream);
+    }
+    let distance = code.distance(stream);
+    let Some(used) = advance(&mut stream, code.entry().bits()) else {
+        return Ok(None);
+    };
+    if code.entry().is_special() {
+        return Err(Damage::DistanceCode);
+    }
+    Ok(Some((Symbol::Match { len, distance }, used)))
 }
 
 pub(super) enum Step {
@@ -323,69 +347,67 @@ pub(super) fn decode_one(
     position: &mut usize,
     reach: Reach,
 ) -> Result<Step> {
-    bits.refill();
-    let (mut stream, mut used) = (bits.buffer, 0);
-    let mut advance = |stream: &mut u64, count: u32| {
-        *stream >>= count;
-        used += count;
-        used <= bits.count
+    let Some((symbol, used)) = peek(tables, bits)? else {
+        return Ok(Step::NeedsInput);
     };
-    let is_link = |entry: Entry| entry.is_special() && matches!(entry.kind(), Special::Subtable);
-
-    let mut entry = tables.literal_length.look_up(stream);
-    if is_link(entry) {
-        advance(&mut stream, LITERAL_LENGTH_BITS);
-        entry = tables.literal_length.follow(entry, stream);
-    }
-    if entry.literal_count() != 0 {
-        if !advance(&mut stream, entry.small()) {
-            return Ok(Step::NeedsInput);
-        }
-        *window.get_mut(*position).ok_or(Error::Internal)? = entry.first_literal();
-        *position += 1;
-        bits.skip(used);
-        return Ok(Step::Literal);
-    }
-    if !advance(&mut stream, entry.bits()) {
-        return Ok(Step::NeedsInput);
-    }
-    let mut len = entry.match_length();
-    if entry.is_special() {
-        match entry.kind() {
-            Special::LengthWithExtraBits => {}
-            Special::EndOfBlock => {
-                bits.skip(used);
-                return Ok(Step::EndOfBlock);
-            }
-            _ => return Err(Damage::LiteralLengthCode.into()),
-        }
-        len += entry.small_number(stream);
-        advance(&mut stream, entry.small());
-    }
-
-    let mut code = tables.distance.look_up(stream);
-    if is_link(code.entry()) {
-        advance(&mut stream, DISTANCE_BITS);
-        code = tables.distance.follow(code.entry(), stream);
-    }
-    let distance = code.distance(stream);
-    if !advance(&mut stream, code.entry().bits()) {
-        return Ok(Step::NeedsInput);
-    }
-    if code.entry().is_special() {
-        return Err(Damage::DistanceCode.into());
-    }
-    if distance > reach.max {
-        return Err(Damage::DistanceTooFarBack.into());
-    }
     bits.skip(used);
-    if distance > reach.available_at(*position) {
-        return Ok(Step::OutOfReach);
+    match symbol {
+        Symbol::Literal(literal) => {
+            *window.get_mut(*position).ok_or(Error::Internal)? = literal;
+            *position += 1;
+            Ok(Step::Literal)
+        }
+        Symbol::EndOfBlock => Ok(Step::EndOfBlock),
+        Symbol::Match { distance, .. } if distance > reach.max => {
+            Err(Damage::DistanceTooFarBack.into())
+        }
+        Symbol::Match { distance, .. } if distance > reach.available_at(*position) => {
+            Ok(Step::OutOfReach)
+        }
+        Symbol::Match { len, distance } => {
+            let window = Cell::from_mut(window).as_slice_of_cells();
+            let from = match_source(window, *position, distance).ok_or(Error::Internal)?;
+            let to = part(window, *position).ok_or(Error::Internal)?;
+            copy_match(from, to, distance, len);
+            *position += len;
+            Ok(Step::Match(distance))
+        }
     }
-    let window = Cell::from_mut(window).as_slice_of_cells();
-    let from = match_source(window, *position, distance).ok_or(Error::Internal)?;
-    let to = part(window, *position).ok_or(Error::Internal)?;
-    copy_match(from, to, distance, len);
-    *position += len;
-    Ok(Step::Match(distance))
+}
+
+/// If a match of the greatest length is next, its distance and how many bits it takes.
+pub(super) fn peek_longest_match(
+    tables: &Tables,
+    bits: &mut BitReader<'_>,
+) -> Option<(usize, u32)> {
+    match peek(tables, bits) {
+        Ok(Some((Symbol::Match { len, distance }, used))) if len == MAX_MATCH => {
+            Some((distance, used))
+        }
+        _ => None,
+    }
+}
+
+/// Takes that match and the same ones behind it. Returns how many bytes they stand for: a multiple of the distance, and
+/// no more than `max`.
+pub(super) fn skip_same_matches(
+    bits: &mut BitReader<'_>,
+    (distance, count): (usize, u32),
+    max: usize,
+) -> usize {
+    let (first, step) = (bits.peek(count), MAX_MATCH % distance);
+    let (mut ahead, mut len, mut phase, mut skipped) = (*bits, MAX_MATCH, 0, 0);
+    // It does not read far ahead for nothing.
+    while len <= max.min(skipped + 2 * LAP) && ahead.has(count) && ahead.peek(count) == first {
+        ahead.skip(count);
+        phase += step;
+        if phase >= distance {
+            phase -= distance;
+        }
+        if phase == 0 {
+            (*bits, skipped) = (ahead, len);
+        }
+        len += MAX_MATCH;
+    }
+    skipped
 }

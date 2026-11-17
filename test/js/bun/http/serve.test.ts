@@ -5345,6 +5345,51 @@ describe.concurrent("request body backpressure", () => {
   );
 });
 
+// Bun.build() waits for an async plugin setup() by running the event loop.
+it("a direct stream survives a pull() that ends it and runs the event loop until the connection is closed", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      const pulled = Promise.withResolvers();
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch() {
+          // From a timer, so that no tick of the socket loop is on the stack.
+          await Bun.sleep(1);
+          return new Response(new ReadableStream({
+            type: "direct",
+            pull(controller) {
+              controller.write("body");
+              controller.end();
+              let waited = false;
+              Bun.build({
+                entrypoints: ["./none.js"],
+                plugins: [{ name: "nested tick", setup: () => closed.then(() => void (waited = true)) }],
+              }).catch(() => {});
+              pulled.resolve(waited);
+            },
+          }));
+        },
+      });
+      const client = net.connect(server.port, "127.0.0.1").on("error", () => {}).resume();
+      const closed = new Promise(resolve => client.on("close", resolve));
+      client.write("GET / HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\n\\r\\n");
+      console.log(await pulled.promise, server.pendingRequests);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("true 0\n");
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/32469
 it("type: direct stream awaiting flush(true) under backpressure does not re-enter pull", async () => {
   const CHUNK = Buffer.alloc(256 * 1024, 67);

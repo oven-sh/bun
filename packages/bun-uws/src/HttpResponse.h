@@ -1067,6 +1067,8 @@ public:
 
      /* Corks the response if possible. Leaves already corked socket be. */
     HttpResponse *cork(MoveOnlyFunction<void()> &&handler) {
+        auto hold = Super::holdClosedSockets();
+
         if (!Super::isCorked()) {
             LoopData *loopData = Super::getLoopData();
             Super::cork();

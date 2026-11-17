@@ -4054,6 +4054,98 @@ it("stop(true) survives a close handler that terminates the other sockets and ru
   expect(exitCode).toBe(0);
 });
 
+it("an upgrade after an await survives an open handler that terminates the socket and runs the event loop", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { once } from "node:events";
+      import net from "node:net";
+      const upgraded = Promise.withResolvers();
+      let ranLoop = false;
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch(request, server) {
+          // From a timer, so that no tick of the socket loop is on the stack.
+          await Bun.sleep(1);
+          upgraded.resolve(server.upgrade(request));
+        },
+        websocket: {
+          open(ws) {
+            ws.terminate();
+            let waited = false;
+            Bun.build({
+              entrypoints: ["./none.js"],
+              plugins: [{ name: "nested tick", setup: () => closed.then(() => void (waited = true)) }],
+            }).catch(() => {});
+            ranLoop = waited;
+          },
+          message() {},
+        },
+      });
+      const client = net.connect(server.port, "127.0.0.1").on("error", () => {}).resume();
+      const closed = new Promise(resolve => client.on("close", resolve));
+      await once(client, "connect");
+      // A frame that doesn't wait for the 101.
+      client.write("GET / HTTP/1.1\\r\\nHost: a\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n\\x81\\x80\\0\\0\\0\\0", "latin1");
+      console.log(await upgraded.promise, ranLoop);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("true true\n");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent.each(["close", "terminate"])(
+  "cork() survives a callback that calls %s() and runs the event loop",
+  async method => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      const opened = Promise.withResolvers();
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: (request, server) => void server.upgrade(request),
+        websocket: { open: opened.resolve, message() {} },
+      });
+      const client = new WebSocket("ws://127.0.0.1:" + server.port);
+      const closed = new Promise(resolve => (client.onclose = resolve));
+      const ws = await opened.promise;
+      // From a timer, so that no tick of the socket loop is on the stack.
+      await Bun.sleep(1);
+      let ranLoop = false;
+      ws.cork(() => {
+        ws.${method}();
+        let waited = false;
+        Bun.build({
+          entrypoints: ["./none.js"],
+          // One more turn, for the server's end to see the client's FIN.
+          plugins: [{ name: "nested tick", setup: () => closed.then(() => Bun.sleep(1)).then(() => void (waited = true)) }],
+        }).catch(() => {});
+        ranLoop = waited;
+      });
+      console.log(ranLoop);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 // A sweep is 4 seconds, and the upgrade comes a moment after one.
 it.concurrent.each([
   [8, "ping 2, close 3"],

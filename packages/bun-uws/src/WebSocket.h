@@ -378,6 +378,7 @@ public:
     /* Corks the response if possible. Leaves already corked socket be. */
     void cork(MoveOnlyFunction<void()> &&handler) {
         if (!Super::isCorked()) {
+            auto hold = Super::holdClosedSockets();
             Super::cork();
             handler();
 

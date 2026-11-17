@@ -27,6 +27,7 @@
  * to signal error with -1 (which is how the entire UNIX syscalling is built). */
 
 #include <cstring>
+#include <wtf/SetForScope.h>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"
@@ -66,6 +67,12 @@ public:
     /* Get loop data for socket */
     LoopData *getLoopData() {
         return (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) this)));
+    }
+
+    /* A handler can tick the loop (waitForPromise). After an await no tick is under its caller to keep a socket that closes there allocated. */
+    [[nodiscard]] SetForScope<int> holdClosedSockets() {
+        int &tickDepth = us_socket_group_loop(us_socket_group((us_socket_t *) this))->data.tick_depth;
+        return SetForScope<int>(tickDepth, tickDepth + 1);
     }
 
     /* Get socket extension */

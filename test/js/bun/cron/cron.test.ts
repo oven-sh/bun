@@ -746,9 +746,9 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
   });
 
   // Across file systems this copies the executable, which is over 1 GB in a debug build.
-  test.serial("a line break in the path of the executable throws", { timeout: 60_000 }, async () => {
+  test.serial("a line break in the path of the executable throws", async () => {
     const { stdout, ...rest } = await run(`
-      const fs = require("node:fs");
+      import * as fs from "node:fs";
       try {
         fs.linkSync(process.execPath, "a\\nb");
       } catch {
@@ -909,7 +909,7 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
 
   test.skipIf(!isMacOS)("the logs go to a directory that only the user can open", async () => {
     const result = await run(`
-      const fs = require("node:fs");
+      import * as fs from "node:fs";
       await Bun.cron("./job.ts", "@yearly", "bun-test-logs").catch(() => {});
       const plist = fs.readFileSync("home/Library/LaunchAgents/bun.cron.bun-test-logs.plist", "utf8");
       await Bun.cron.remove("bun-test-logs");
@@ -926,7 +926,7 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
     { what: "a read-only directory", make: `fs.mkdirSync(logs, 0o500)`, code: "EACCES" },
   ])("$what in place of the log directory rejects with $code", async ({ make, code }) => {
     const result = await run(`
-      const fs = require("node:fs");
+      import * as fs from "node:fs";
       const logs = "home/Library/Logs/bun/cron";
       fs.mkdirSync("home/Library/Logs/bun", { recursive: true });
       ${make};
@@ -941,10 +941,22 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
     });
   });
 
+  test.skipIf(!isMacOS || process.getuid!() !== 0)("root leaves the log directory to the owner of HOME", async () => {
+    const result = await run(`
+      import * as fs from "node:fs";
+      fs.chownSync("home", 1, 1);
+      await Bun.cron("./job.ts", "@yearly", "bun-test-sudo").catch(() => {});
+      console.log(fs.existsSync("home/Library/Logs"), fs.readdirSync("home/Library/LaunchAgents").join());
+      await Bun.cron.remove("bun-test-sudo");
+    `);
+    expect(result).toEqual({ stdout: "false bun.cron.bun-test-sudo.plist\n", stderr: "", exitCode: 0 });
+  });
+
   test.skipIf(!isMacOS)("too many calendar intervals reject before anything is written", async () => {
     const result = await run(`
+      import * as fs from "node:fs";
       console.log(await Bun.cron("./job.ts", "0-28 0-22 1-15 * *", "bun-test-cap").catch(e => e.message));
-      console.log(require("node:fs").existsSync("home/Library/LaunchAgents"));
+      console.log(fs.existsSync("home/Library/LaunchAgents"));
       await Bun.cron.remove("bun-test-cap");
     `);
     expect(result.stdout).toMatch(/too many calendar intervals for launchd \(max 10000\).*\nfalse\n$/);
@@ -1472,7 +1484,7 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
     { title: "test-mac-log", schedule: "@yearly", logDirectory: "kept" },
     { title: "test-mac-log-deleted", schedule: "@yearly", logDirectory: "deleted" },
     { title: "test-mac-10000-dicts", schedule: "0-49 0-19 1-10 1 *", logDirectory: "kept" },
-  ])("$schedule runs and logs, log directory $logDirectory", { timeout: 30_000 }, async job => {
+  ])("$schedule runs and logs, log directory $logDirectory", async job => {
     using home = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() { console.log("ran"); } };`,
       "register.ts": `await Bun.cron("./job.ts", "${job.schedule}", "${job.title}");`,

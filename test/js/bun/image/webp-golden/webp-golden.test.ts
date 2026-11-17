@@ -13,6 +13,7 @@
 // https://github.com/webmproject/libwebp/commit/80bda3fdb882bc4131b223124c0411ac8b366386. A case is here because it
 // tells src/webp and its kernels from a version with one small mistake, or takes a branch that no other takes.
 import { describe, expect, test } from "bun:test";
+import { differentInTarget } from "../png-golden/check";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "./observe";
 
 const cases = await loadCases();
@@ -21,6 +22,14 @@ describe("Bun.Image reads and writes WebP the way it was recorded to", () => {
   test("decode", async () => {
     expect(cases.decode.length).toBe(354);
     expect(await decodeDifferences(cases.decode)).toBe("");
+  });
+
+  test("decode into a target", async () => {
+    const images = cases.decode.map(({ name, data }) => ({
+      name,
+      open: () => new Bun.Image(Buffer.from(data, "base64"), { maxPixels: 1 << 25 }),
+    }));
+    expect(await differentInTarget(images)).toEqual({ decoded: 283, refused: 44, different: [] });
   });
 
   test("there is something to encode", () => {

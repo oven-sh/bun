@@ -102,6 +102,8 @@ pub(crate) struct RuntimeState {
     /// Installed while `process.on("memoryPressure", ...)` has a listener.
     pub(crate) memory_pressure_watcher: crate::node::memory_pressure::WatcherSlot,
     pub(crate) browsers: crate::webview::Browsers,
+    /// The addresses that pending `Bun.Image#imageData(target)` calls write to.
+    pub(crate) image_targets: JsCell<Vec<core::ops::Range<usize>>>,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
     /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
@@ -323,6 +325,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         node_fs: JsCell::new(None),
         memory_pressure_watcher: Default::default(),
         browsers: Default::default(),
+        image_targets: JsCell::default(),
         lint: core::cell::OnceCell::new(),
         #[cfg(unix)]
         uv_loop: crate::napi::uv_posix::UvLoop::new(vm.handle()),

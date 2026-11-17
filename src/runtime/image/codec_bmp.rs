@@ -129,7 +129,11 @@ fn to8(v: u32, width: u32) -> u8 {
     }
 }
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode<'a>(
+    bytes: &[u8],
+    max_pixels: u64,
+    canvas: codecs::Canvas<'a>,
+) -> Result<codecs::Decoded<'a>, codecs::Error> {
     let h = parse_header(bytes)?;
     codecs::guard(h.width, h.height, max_pixels)?;
 
@@ -147,7 +151,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     let (bs, bw) = shift_width(h.b_mask);
     let (as_, aw) = shift_width(h.a_mask);
 
-    let mut out: Vec<u8> = Vec::with_capacity(h.width as usize * h.height as usize * 4);
+    let len = h.width as usize * h.height as usize * 4;
+    let mut out = Vec::with_capacity_in(len, canvas.lender_for(h.width, h.height));
 
     let mut y: u32 = 0;
     while y < h.height {

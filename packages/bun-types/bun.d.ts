@@ -9780,10 +9780,13 @@ declare module "bun" {
      *   not reject: Bun verifies neither. A PNG that ends before its last row,
      *   or inside the data of the `IDAT` chunk that holds it, rejects.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_IMAGE_SIZE_MISMATCH` — the output of `imageData(target)` does not
+     *   have the width and height of `target`. The error is a `RangeError`.
      * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
      *   that its decode or encode needs.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
-     *   construction and the terminal call.
+     *   construction and the terminal call, or the target of `imageData(target)`
+     *   was transferred or is in use by another `imageData()` call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
      *   `EACCES`, …) directly.
      */
@@ -9793,6 +9796,7 @@ declare module "bun" {
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_IMAGE_SIZE_MISMATCH"
       | "ERR_OUT_OF_MEMORY"
       | "ERR_INVALID_STATE";
 
@@ -9800,9 +9804,10 @@ declare module "bun" {
      * `bmp`/`tiff`/`gif` are decode-only — `metadata().format` may report them
      * but there are no `.bmp()`/`.tiff()`/`.gif()` encoder methods. `tiff`
      * decode rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` on Linux; `gif` decodes the first
-     * frame everywhere.
+     * frame everywhere. `raw` is what `metadata()` reports for an `ImageData` input.
      */
-    type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif";
+    type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif" | "raw";
+    type ColorSpace = "srgb" | "srgb-linear" | "display-p3" | "display-p3-linear";
     type Filter =
       | "nearest"
       | "box"
@@ -9859,6 +9864,23 @@ declare module "bun" {
       height: number;
       format: Format;
     }
+
+    /**
+     * An 8-bit `ImageData`, or any object with the same shape, such as the
+     * `ImageData` of a canvas package.
+     */
+    interface Pixels {
+      /**
+       * `width * height * 4` bytes: red, green, blue and alpha for each pixel,
+       * rows from the top, not premultiplied. Bun refuses a view of a
+       * `SharedArrayBuffer` or of a resizable buffer.
+       */
+      readonly data: Uint8ClampedArray | Uint8Array;
+      readonly width: number;
+      readonly height: number;
+      /** @default "srgb" */
+      readonly colorSpace?: ColorSpace | undefined;
+    }
   }
 
   /**
@@ -9868,7 +9890,8 @@ declare module "bun" {
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
-   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
+   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `imageData`, `metadata`)
+   * is awaited.
    *
    * Chainables overwrite (calling `.resize()` twice keeps the second). Order
    * of execution is fixed regardless of call order:
@@ -9924,7 +9947,15 @@ declare module "bun" {
      */
     static clipboardChangeCount(): number;
 
-    constructor(input: string | ArrayBuffer | NodeJS.TypedArray | Blob, options?: Image.ConstructorOptions);
+    /**
+     * @param input A path, a `data:` URL, the bytes of an encoded image, or
+     * pixels. Each terminal copies the pixels when you call it, so you can
+     * change them as soon as the call returns.
+     */
+    constructor(
+      input: string | ArrayBuffer | NodeJS.TypedArray | Blob | ImageData | Image.Pixels,
+      options?: Image.ConstructorOptions,
+    );
 
     /** Set target dimensions. Omit `height` to keep the source aspect ratio. */
     resize(width: number, height?: number, options?: Image.ResizeOptions): this;
@@ -9972,7 +10003,8 @@ declare module "bun" {
 
     /**
      * Run the pipeline and return the encoded bytes. If no format setter was
-     * called, re-encodes in the source format.
+     * called, re-encodes in the source format, or as PNG if the input is
+     * pixels or in a decode-only format.
      */
     bytes(): Promise<Uint8Array>;
     /** Like {@link bytes} but as a Node `Buffer`. */
@@ -10012,6 +10044,42 @@ declare module "bun" {
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */
     toBase64(): Promise<string>;
+    /**
+     * Run the pipeline and write the pixels to `target`, in the color space of
+     * `target`. Resolves to `target`.
+     *
+     * A worker thread writes to `target.data`. Don't read or write it until
+     * the promise settles.
+     *
+     * Rejects with `ERR_IMAGE_SIZE_MISMATCH` if the output does not have the
+     * width and height of `target`, and leaves the pixels of `target` as they
+     * were. After any other rejection, `target` can hold part of the image.
+     *
+     * @example
+     * ```ts
+     * const frame = new ImageData(800, 500);
+     * for await (const webp of frames) {
+     *   await new Bun.Image(webp).imageData(frame);
+     *   draw(frame.data);
+     * }
+     * ```
+     */
+    imageData<T extends ImageData | Image.Pixels>(target: T): Promise<T>;
+    /**
+     * Run the pipeline and return the pixels as 8-bit RGBA, not premultiplied.
+     * Nothing is encoded, so the output format has no effect.
+     *
+     * If the source has an ICC profile, Bun converts the pixels from it.
+     *
+     * @example
+     * ```ts
+     * const { data, width, height } = await Bun.file("photo.jpg").image().resize(224, 224).imageData();
+     * ```
+     */
+    imageData(settings?: {
+      /** The color space of the result. @default "srgb" */
+      colorSpace?: Image.ColorSpace | undefined;
+    }): Promise<ImageData>;
     /** Decode just enough to read width/height/format. */
     metadata(): Promise<Image.Metadata>;
 

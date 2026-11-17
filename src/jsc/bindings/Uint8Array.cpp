@@ -12,11 +12,13 @@ static void freeDefaultAllocatorBytes(void* bytes, void*)
     Bun::defaultAllocatorFree(bytes);
 }
 
-extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
+template<typename JSByteArray>
+static JSC::EncodedJSValue byteArrayFromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSUint8Array* uint8Array;
+    auto* structure = lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSByteArray::Adaptor::typeValue>();
+    JSByteArray* array;
 
     if (length > 0) [[likely]] {
         if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(lexicalGlobalObject, scope, ptr, length, freeDefaultAllocatorBytes, nullptr)) [[unlikely]]
@@ -26,13 +28,23 @@ extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalO
             freeDefaultAllocatorBytes(p, nullptr);
         }));
 
-        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), WTF::move(buffer), 0, length);
+        array = JSByteArray::create(lexicalGlobalObject, structure, WTF::move(buffer), 0, length);
     } else {
-        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), 0);
+        array = JSByteArray::create(lexicalGlobalObject, structure, 0);
     }
     RETURN_IF_EXCEPTION(scope, {});
 
-    return JSC::JSValue::encode(uint8Array);
+    return JSC::JSValue::encode(array);
+}
+
+extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
+{
+    return byteArrayFromDefaultAllocator<JSC::JSUint8Array>(lexicalGlobalObject, ptr, length);
+}
+
+extern "C" JSC::EncodedJSValue JSUint8ClampedArray__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
+{
+    return byteArrayFromDefaultAllocator<JSC::JSUint8ClampedArray>(lexicalGlobalObject, ptr, length);
 }
 
 extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)

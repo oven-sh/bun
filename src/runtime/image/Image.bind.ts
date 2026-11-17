@@ -21,7 +21,7 @@ export const Image = b.class({
     throws: true,
     length: 0,
   },
-  /** Keeps the input ArrayBuffer/TypedArray alive: its bytes are borrowed, not copied. */
+  /** The input ArrayBuffer/TypedArray, or the `data` of an input `ImageData`. Each terminal reads it again. */
   internalFields: ["sourceJS"],
   proto: {
     avif: chainableWithOptions,
@@ -35,6 +35,8 @@ export const Image = b.class({
     heic: chainableWithOptions,
     /** Read-only after a pipeline has run; -1 before. */
     height: { getter: b.i32, pure: true },
+    /** Fills the `data` of `target` later. Without one, the argument is the settings of a new `ImageData`. */
+    imageData: { ...terminal, args: { target: b.any }, uses: { target: [table.everything] }, length: 0 },
     jpeg: chainableWithOptions,
     metadata: terminal,
     modulate: chainableWithOptions,

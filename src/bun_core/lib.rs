@@ -428,7 +428,7 @@ pub mod vec {
     /// `n <= v.capacity() - v.len()` and `v[len .. len+n]` must have been
     /// fully initialized (typically by the FFI/syscall that just returned `n`).
     #[inline]
-    pub unsafe fn commit_spare(v: &mut Vec<u8>, n: usize) {
+    pub unsafe fn commit_spare(v: &mut Vec<u8, impl core::alloc::Allocator>, n: usize) {
         debug_assert!(n <= v.capacity() - v.len());
         // SAFETY: caller contract — `n <= capacity - len` and `v[len .. len+n]`
         // was fully initialized by the producer before this call.
@@ -472,7 +472,7 @@ pub mod vec {
     /// Appends what `fill` writes to its cursor: the spare capacity of `v`, up to `max` items.
     #[inline]
     pub fn append_with<T: Copy, R>(
-        v: &mut Vec<T>,
+        v: &mut Vec<T, impl core::alloc::Allocator>,
         max: usize,
         fill: impl FnOnce(BorrowedCursor<'_, T>) -> R,
     ) -> R {

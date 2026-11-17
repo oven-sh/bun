@@ -38,7 +38,7 @@ const NAMES: &[&str] = &[
     "screenTop", "screenX", "screenY", "scroll", "scrollBy", "scrollLeft", "scrollTo", "scrollTop", "scrollX",
     "scrollY", "self", "sessionStorage", "stop", "top", "Window", "window", "reportError", "jsdom", "Request", "URL",
     "onerror", "onmessage", "Response", "MessagePort", "fetch", "Headers", "AbortController", "AbortSignal",
-    "URLSearchParams",
+    "URLSearchParams", "ImageData",
 ];
 
 pub(crate) fn globals_that_a_window_replaces() -> Vec<u32> {

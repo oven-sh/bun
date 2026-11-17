@@ -97,6 +97,7 @@
 #include "GeneratedBlob.h"
 #include "GeneratedBlockList.h"
 #include "GeneratedHistogram.h"
+#include "GeneratedImageData.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
 #include "JSKeyObject.h"
@@ -164,6 +165,7 @@ enum SerializationTag {
     TrueTag = 9,
     DoubleTag = 10,
     DateTag = 11,
+    ImageDataTag = 14,
     StringTag = 16,
     EmptyStringTag = 17,
     RegExpTag = 18,
@@ -214,6 +216,7 @@ extern "C" JSC::EncodedJSValue Blob__onStructuredCloneDeserialize(JSC::JSGlobalO
 extern "C" void BlockList__onStructuredCloneSerialize(void* blockList, CloneSerializer*);
 extern "C" JSC::EncodedJSValue BlockList__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
 extern "C" JSC::EncodedJSValue Histogram__fromStructuredClone(JSC::JSGlobalObject*, uint64_t id);
+extern "C" JSC::EncodedJSValue ImageData__fromStructuredClone(JSC::JSGlobalObject*, JSC::EncodedJSValue data, uint32_t width, uint8_t colorSpaceTag);
 
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
@@ -537,7 +540,7 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *    FileListTag <length:uint32_t>(<file:FileData>){length}
  *
  * ImageData :-
- *    ImageDataTag <width:int32_t> <height:int32_t> <length:uint32_t> <data:uint8_t{length}> <colorSpace:PredefinedColorSpaceTag>
+ *    ImageDataTag <width:uint32_t> <colorSpace:uint8_t> (ArrayBufferView | ObjectReference) // The view gives the height and the pixel format.
  *
  * Blob :-
  *    BlobTag <url:StringData><type:StringData><size:long long><memoryCost:long long>
@@ -1404,6 +1407,18 @@ private:
             if (obj->inherits<JSDOMException>()) {
                 dumpDOMException(obj, code);
                 return true;
+            }
+
+            if (auto* imageData = dynamicDowncast<Bun::Bindgen::Generated::JSImageData>(obj)) {
+                if (checkForDuplicate(imageData))
+                    return true;
+                write(ImageDataTag);
+                write(imageData->width());
+                write(imageData->colorSpaceTag());
+                bool success = dumpIfTerminal(imageData->m_data.get(), code);
+                RETURN_IF_EXCEPTION(scope, false);
+                recordObject(imageData);
+                return success;
             }
 
             // write bun types
@@ -3599,6 +3614,28 @@ private:
         return wrapper;
     }
 
+    JSValue readImageData()
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_globalObject->vm());
+        uint32_t width;
+        uint8_t colorSpaceTag;
+        // As in readArrayBufferViewImpl: nested ImageDataTags must not recurse.
+        if (!read(width) || !read(colorSpaceTag) || m_ptr >= m_end || (*m_ptr != ArrayBufferViewTag && *m_ptr != ObjectReferenceTag)) {
+            fail();
+            return JSValue();
+        }
+        JSValue data = readTerminal();
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        JSValue imageData = data ? JSValue::decode(ImageData__fromStructuredClone(defaultGlobalObject(m_globalObject), JSValue::encode(data), width, colorSpaceTag)) : JSValue();
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        if (!imageData) {
+            fail();
+            return JSValue();
+        }
+        addToObjectPool(imageData);
+        return imageData;
+    }
+
     JSValue readBigInt()
     {
         uint8_t sign = 0;
@@ -3985,6 +4022,9 @@ private:
 #endif
         case DOMExceptionTag:
             return readDOMException();
+
+        case ImageDataTag:
+            return readImageData();
 
         case Bun__BlobTag:
             return readBunType(Blob__onStructuredCloneDeserialize);

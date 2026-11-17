@@ -66,6 +66,7 @@ const MIRI_CRATES = [
 // Crates of which Miri runs only the unit tests under these paths. The rest of
 // their tests start other programs, call vendored C, or would take hours to interpret.
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
+  bun_alloc: ["loan"],
   bun_aot: ["ir::parallel"],
   bun_core: ["c_str_list", "util::tests"],
   bun_io: ["max_buf"],

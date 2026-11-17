@@ -2,6 +2,8 @@
 //!
 //! A line is a row behind the byte that says which filter it has, its filter type.
 
+use bun_alloc::Lender;
+
 use crate::error::{Error, Result};
 
 const NONE: u8 = 0;
@@ -36,7 +38,7 @@ pub(crate) fn unfilter(
 }
 
 /// The alpha does not count: see `make_opaque()`.
-pub(crate) fn push_rgb_as_rgba(rgb: &[u8], rgba: &mut Vec<u8>) -> Result<()> {
+pub(crate) fn push_rgb_as_rgba(rgb: &[u8], rgba: &mut Vec<u8, Lender>) -> Result<()> {
     rgba.try_reserve(rgb.len() / 3 * 4)?;
     // Four pixels at a time.
     let (fours, rest) = rgb.as_chunks::<12>();

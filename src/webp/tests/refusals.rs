@@ -4,8 +4,10 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::fmt::Debug;
+use std::mem::MaybeUninit;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use bun_alloc::{Lender, Loan};
 use bun_highway::webp::{self as kernels, FilterStrength, LumaCandidates, Macroblock, Plane};
 use bun_webp::{Compression, Decoder, Error, Result, encode};
 
@@ -146,9 +148,17 @@ fn there(width: u32, height: u32, compression: Compression, paint: Paint) -> Vec
 }
 
 fn back(file: &[u8]) {
-    refuse_each_allocation(|| {
-        let image = Decoder::new(file)?.decode()?;
+    let (rgba, _) = refuse_each_allocation(|| {
+        let image = Decoder::new(file)?.decode(Lender::NONE)?;
         Ok((image.rgba, image.icc_profile))
+    });
+    let mut memory = vec![MaybeUninit::new(7); rgba.len()];
+    let loan = Loan::new(&mut memory);
+    refuse_each_allocation(|| {
+        let image = Decoder::new(file)?.decode(loan.lender())?;
+        assert_eq!(image.rgba, rgba);
+        assert_eq!(Lender::release(image.rgba), None);
+        Ok(())
     });
 }
 
@@ -228,7 +238,8 @@ fn alpha_is_not_decoded_for_a_frame_that_is_cut_short() {
         (file[24], file[27]) = (width - 1, height - 1);
         [file[48], file[49]] = ((first_partition_len << 5) | 16).to_le_bytes();
         (file[54], file[56]) = (width, height);
-        Decoder::new(&file).and_then(Decoder::decode).err()
+        let image = Decoder::new(&file).and_then(|it| it.decode(Lender::NONE));
+        image.err()
     };
     assert_eq!(error(8 * 16, 4 * 16, 12), Some(Error::InvalidAlpha));
     // Within the header, and within the modes of 33 macroblocks.
@@ -264,7 +275,7 @@ fn an_empty_profile_is_none() {
     let mut file = with(Some(b"JUNK\0\0\0\0"));
     // The length of the ICCP chunk, which leaves what it had as a chunk of its own.
     file[34] = 0;
-    let image = Decoder::new(&file).unwrap().decode().unwrap();
+    let image = Decoder::new(&file).unwrap().decode(Lender::NONE).unwrap();
     assert_eq!(image.icc_profile, None);
 }
 

@@ -44,3 +44,27 @@ export function parse(out: Uint8Array) {
 /** The pixels as RGBA, each row behind a zero, and the profile. */
 export const decoded = async (file: Uint8Array, maxPixels?: number) =>
   parse(await new Bun.Image(file, { maxPixels }).png({ compressionLevel: 0 }).bytes());
+
+/** The names of the images for which `imageData(target)` does not do what `imageData()` does, or writes next to `target`. */
+export async function differentInTarget(images: { name: string; open: () => Bun.Image | Promise<Bun.Image> }[]) {
+  const margin = Buffer.alloc(64, 0xa5);
+  const codeOf = (error: any): string => error.code ?? String(error);
+  let [decodedCount, refusedCount] = [0, 0];
+  const different = await Promise.all(
+    images.map(async ({ name, open }) => {
+      const image = await open();
+      const expected = await image.imageData().catch(codeOf);
+      const size = typeof expected === "string" ? await image.metadata().catch(() => null) : expected;
+      if (!size || size.width * size.height > 1 << 20) return [];
+      const length = size.width * size.height * 4;
+      const memory = new Uint8ClampedArray(64 + length + 64).fill(0xa5);
+      const target = new ImageData(memory.subarray(64, 64 + length), size.width);
+      const actual = await image.imageData(target).catch(codeOf);
+      const isRefused = typeof expected === "string";
+      isRefused ? refusedCount++ : decodedCount++;
+      const isSame = isRefused ? actual === expected : actual === target && !Buffer.compare(target.data, expected.data);
+      return isSame && margin.equals(memory.subarray(0, 64)) && margin.equals(memory.subarray(-64)) ? [] : [name];
+    }),
+  );
+  return { decoded: decodedCount, refused: refusedCount, different: different.flat() };
+}

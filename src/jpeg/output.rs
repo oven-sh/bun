@@ -3,6 +3,7 @@
 use crate::block::{Block, Zigzag};
 use crate::header::{ColorSpace, Component, Frame};
 use crate::{Error, MAX_COMPONENTS, Result, fill_up, filled};
+use bun_alloc::Lender;
 use bun_highway::{JPEG_PIXEL_GROUP, JPEG_ROW_SLACK, JpegChroma};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -185,7 +186,7 @@ impl Plane {
     }
 }
 
-pub(crate) struct Output {
+pub(crate) struct Output<'a> {
     pub(crate) width: usize,
     pub(crate) height: usize,
     color_space: ColorSpace,
@@ -194,12 +195,17 @@ pub(crate) struct Output {
     /// Whether the last row of pixels of a strip needs samples of the next strip.
     looks_ahead: bool,
     strips_done: usize,
-    pixels: Vec<[u8; 4]>,
+    pixels: Vec<[u8; 4], Lender<'a>>,
 }
 
-impl Output {
+impl<'a> Output<'a> {
     /// The planes have room for one strip. A lossless frame ignores `eighths`.
-    pub(crate) fn new(frame: &Frame, color_space: ColorSpace, eighths: u8) -> Result<Self> {
+    pub(crate) fn new(
+        frame: &Frame,
+        color_space: ColorSpace,
+        eighths: u8,
+        lender: Lender<'a>,
+    ) -> Result<Self> {
         let scale = frame.block_size().min(eighths.into());
         let (mcu_width, mcu_height) = (frame.max_h() * scale, frame.max_v() * scale);
         let mcus_wide = frame.size_in_mcus().wide;
@@ -248,8 +254,8 @@ impl Output {
             });
         }
 
-        let mut pixels = Vec::new();
-        pixels.try_reserve_exact(width * height + JPEG_PIXEL_GROUP)?;
+        let mut pixels = Vec::new_in(lender);
+        pixels.try_reserve_exact(width * height)?;
         Ok(Self {
             width,
             height,
@@ -330,7 +336,15 @@ impl Output {
                         cr: cr.full_row(y),
                     },
                 };
-                bun_highway::jpeg_ycc_to_rgba(luma.full_row(y), chroma, width, pixels)?;
+                let (luma, padded) = (luma.full_row(y), width.next_multiple_of(JPEG_PIXEL_GROUP));
+                if padded <= pixels.capacity() - pixels.len() {
+                    bun_highway::jpeg_ycc_to_rgba(luma, chroma, width, pixels)?;
+                } else {
+                    let mut row = Vec::new_in(Lender::NONE);
+                    row.try_reserve_exact(padded)?;
+                    bun_highway::jpeg_ycc_to_rgba(luma, chroma, width, &mut row)?;
+                    pixels.extend_from_slice(&row);
+                }
                 if let [k] = k {
                     let row = pixels.get_mut(y * width..).unwrap_or_default();
                     for (pixel, &k) in row.iter_mut().zip(k.full_row(y)) {
@@ -349,10 +363,11 @@ impl Output {
         Ok(())
     }
 
-    pub(crate) fn into_rgba(self) -> Result<Vec<u8>> {
+    pub(crate) fn into_rgba(self) -> Result<Vec<u8, Lender<'a>>> {
         if self.pixels.len() != self.width * self.height {
             return Err(Error::Internal);
         }
+        debug_assert_eq!(self.pixels.capacity(), self.pixels.len());
         Ok(self.pixels.into_flattened())
     }
 }

@@ -452,7 +452,7 @@ export default b.declarations(
     "Bun.concatArrayBuffers",
   ),
 
-  extendAll(["Image", ...s3RequestFeatures], "Bun.Image", "Blob.prototype.image"),
+  extendAll(["Image", "ImageData", "Uint8ClampedArray", ...s3RequestFeatures], "Bun.Image", "Blob.prototype.image"),
   extendAll(["Cookie"], "Bun.Cookie", "Bun.CookieMap", "%BunRequest%.prototype.cookies"),
   extendAll(["Glob"], "Bun.Glob"),
   extendAll(

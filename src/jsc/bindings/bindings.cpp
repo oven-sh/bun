@@ -182,6 +182,7 @@
 #include "JSDOMFormData.h"
 #include "GeneratedBlob.h"
 #include "GeneratedExpect.h"
+#include "GeneratedImageData.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
 #include <JavaScriptCore/JSWeakMap.h>
@@ -2142,6 +2143,13 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 }
 
                 goto compareAsNormalValue;
+            }
+
+            // `data` is an own property, so it is compared below. With it, these two decide the rest.
+            auto* imageData1 = dynamicDowncast<Bun::Bindgen::Generated::JSImageData>(c1);
+            auto* imageData2 = dynamicDowncast<Bun::Bindgen::Generated::JSImageData>(c2);
+            if (imageData1 && imageData2 && (imageData1->width() != imageData2->width() || imageData1->colorSpaceTag() != imageData2->colorSpaceTag())) {
+                return false;
             }
 
             // TODO: FormData.

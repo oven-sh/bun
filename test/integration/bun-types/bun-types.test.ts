@@ -336,6 +336,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "HTMLBundle.bind.ts": null,
   "HashObject.bind.ts": "typeof Bun.hash & { wyhash: typeof Bun.hash }",
   "Image.bind.ts": "typeof Bun",
+  "ImageData.bind.ts": "{ ImageData: typeof ImageData }",
   "InternalSourceMap.bind.ts": null,
   "JSBundler.bind.ts": null,
   "JSMySQLConnection.bind.ts": null,

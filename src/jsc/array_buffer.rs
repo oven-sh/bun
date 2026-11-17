@@ -92,6 +92,11 @@ unsafe extern "C" {
         ptr: *mut u8,
         len: usize,
     ) -> JSValue;
+    fn JSUint8ClampedArray__fromDefaultAllocator(
+        global: *const JSGlobalObject,
+        ptr: *mut u8,
+        len: usize,
+    ) -> JSValue;
     // NOT `safe`: C++ adopts `ptr..ptr+len` as the backing store of a
     // JS-visible ArrayBuffer (every JS read/write dereferences it) and calls
     // `dealloc(ptr, ctx)` on GC, so these are unsafe to call with arbitrary
@@ -336,6 +341,7 @@ impl ArrayBuffer {
         let adopt = match typed_array_type {
             JSType::ArrayBuffer => JSArrayBuffer__fromDefaultAllocator,
             JSType::Uint8Array => crate::js_uint8_array::JSUint8Array__fromDefaultAllocator,
+            JSType::Uint8ClampedArray => JSUint8ClampedArray__fromDefaultAllocator,
             _ => unreachable!("Not implemented yet"),
         };
         // C++ does not take a buffer with nothing in it.

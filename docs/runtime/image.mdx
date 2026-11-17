@@ -13,7 +13,7 @@ The API is shaped after [Sharp](https://sharp.pixelplumbing.com/): construct fro
 
 ## Input
 
-The constructor accepts a path, bytes, or a `Blob` — including `Bun.file()` and `Bun.s3.file()`. `Blob#image()` is shorthand for `new Bun.Image(blob)`:
+The constructor accepts a path, bytes, [pixels](#pixels), or a `Blob` — including `Bun.file()` and `Bun.s3.file()`. `Blob#image()` is shorthand for `new Bun.Image(blob)`:
 
 ```ts
 new Bun.Image("./photo.jpg"); // file path
@@ -21,6 +21,7 @@ new Bun.Image(buffer); // Buffer / ArrayBuffer / TypedArray
 new Bun.Image(Bun.file("photo.jpg")); // BunFile (read lazily, off-thread)
 Bun.file("photo.jpg").image(); // same as above
 Bun.s3.file("bucket/photo.jpg").image(); // S3File
+new Bun.Image(imageData); // RGBA pixels
 ```
 
 Bun sniffs the format from the bytes and ignores extensions and `Content-Type`.
@@ -55,6 +56,8 @@ Read `width`, `height`, and `format` without decoding pixel data:
 const { width, height, format } = await new Bun.Image(input).metadata();
 // => { width: 1920, height: 1080, format: "jpeg" }
 ```
+
+The `format` of [pixels](#pixels) is `"raw"`.
 
 ## Resize
 
@@ -105,7 +108,7 @@ img.modulate({
 
 ## Output formats
 
-Calling a format method sets the encode target; without one, Bun reuses the source format.
+Calling a format method sets the encode target; without one, Bun reuses the source format. For pixels, BMP, GIF, and TIFF, the default is PNG.
 
 ```ts
 img.jpeg({ quality: 85 }); // 1–100, default 80
@@ -131,9 +134,101 @@ await img.toBase64(); // string
 await img.dataurl(); // "data:image/png;base64,…"
 await img.write("out.webp"); // number (bytes written)
 await img.write(Bun.s3.file("bucket/out.webp"));
+await img.imageData(); // ImageData, without an encode
 ```
 
 `.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3.file()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
+
+## Pixels
+
+An [`ImageData`](https://developer.mozilla.org/en-US/docs/Web/API/ImageData) holds pixels in a `Uint8ClampedArray`. Each pixel has 4 bytes: red, green, blue, and alpha. The rows go from top to bottom without padding. The color is not premultiplied by alpha.
+
+### Read pixels
+
+`.imageData()` runs the pipeline and skips the encode. It ignores format methods such as `.webp()`.
+
+```ts
+const { data, width, height } = await Bun.file("photo.jpg").image().resize(64, 64).imageData();
+const [r, g, b, a] = data.subarray(0, 4); // the top left pixel
+```
+
+### Encode pixels
+
+Pass an `ImageData` to the constructor and chain as usual:
+
+```ts
+const pixels = new ImageData(256, 256);
+for (let i = 0; i < pixels.data.length; i += 4) pixels.data.set([255, 0, 0, 128], i);
+
+await new Bun.Image(pixels).resize(64).webp().write("red.webp");
+```
+
+An object with the same shape works too. Its `data` is a `Uint8ClampedArray`, a `Uint8Array`, or a `Buffer` of `width * height * 4` bytes:
+
+```ts
+new Bun.Image({ data: Buffer.alloc(640 * 480 * 4), width: 640, height: 480 });
+```
+
+Each terminal copies the pixels when you call it. You can draw the next frame while Bun encodes the previous one. `maxPixels` applies to pixels too.
+
+### Decode into your own memory
+
+Pass an `ImageData` to `.imageData()` to fill it. The promise resolves to the same object. A loop that reuses one target allocates no buffer for its results:
+
+```ts
+const frame = new ImageData(800, 500);
+
+for await (const webp of frames) {
+  await new Bun.Image(webp).imageData(frame);
+  draw(frame.data);
+}
+```
+
+Bun decodes straight into the target. With `resize()`, `rotate()`, `flip()`, or `flop()`, the last of these steps writes into the target, and the steps before it use temporary buffers. Bun fills a temporary buffer and copies it when the target is in a `WebAssembly.Memory`, or when its address is not a multiple of 4.
+
+- **The size has to match.** The target needs the width and the height of the output. Otherwise the promise rejects with `ERR_IMAGE_SIZE_MISMATCH` and the target keeps its pixels. `img.width` and `img.height` then hold the size of the output.
+- **Leave the target alone until the promise settles.** Bun writes to it from another thread. To show one frame while the next one decodes, alternate between two targets.
+- **One call at a time.** A second call rejects with `ERR_INVALID_STATE` when its target shares memory with a target that Bun is still filling.
+- **A failed decode can leave a partial image** in the target.
+- **The target stays attached.** While Bun fills it, `transfer()` and `postMessage()` copy its buffer. `grow()` of a `WebAssembly.Memory` still detaches it, and Bun writes the pixels to the same offset in the grown memory.
+- **The input can be in the target.** Bun copies such an input first, so `new Bun.Image(frame).flip().imageData(frame)` works.
+
+As an input and as a target, `Bun.Image` throws a `TypeError` for shared buffers, resizable buffers, and the `"rgba-float16"` pixel format. It rejects with `ERR_INVALID_STATE` when the buffer is detached.
+
+### Color spaces
+
+`colorSpace` says what the values mean: `"srgb"` (the default), `"srgb-linear"`, `"display-p3"`, or `"display-p3-linear"`. `.imageData()` converts the pixels from the ICC profile of the file, as a canvas does in a browser. It clips the colors that the color space does not have.
+
+```ts
+await img.imageData(); // sRGB
+await img.imageData({ colorSpace: "display-p3" });
+await img.imageData(new ImageData(800, 500, { colorSpace: "display-p3" }));
+```
+
+Bun reads RGB and gray ICC profiles of versions 2 and 4 from JPEG, PNG, and WebP files. It treats the decoded pixels as sRGB in these cases:
+
+- The file has no profile, or a damaged one.
+- The file is a CMYK JPEG.
+- The file is a PNG that describes its colors only with `gAMA`, `cHRM`, or `cICP`.
+- The file is in another format.
+
+When Bun encodes pixels that are not sRGB as JPEG, PNG, or WebP, it keeps their values and adds the matching ICC profile. For HEIC, AVIF, and placeholders it converts them to sRGB.
+
+### The `ImageData` global
+
+`ImageData` follows the [HTML specification](https://html.spec.whatwg.org/multipage/imagebitmap-and-animations.html#imagedata). `structuredClone()` and `postMessage()` copy it with the whole buffer of its `data`, as they do for any typed array. To move the pixels to a worker without a copy, transfer the buffer:
+
+```ts
+worker.postMessage(frame, [frame.data.buffer]);
+```
+
+Bun has no canvas. The `canvas` and `@napi-rs/canvas` packages accept only their own `ImageData` class in `putImageData()`. Some libraries, such as `pica` 7, use the global class if there is one. To use them with one of these packages, replace the global:
+
+```js
+import { ImageData } from "@napi-rs/canvas";
+
+globalThis.ImageData = ImageData;
+```
 
 ## Placeholders
 

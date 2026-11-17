@@ -142,6 +142,30 @@ declare module "bun" {
     }
 
     type LibEmptyOrBunEventTarget = LibDomIsLoaded extends true ? {} : BunEventTarget;
+
+    interface BunImageData<Data, PixelFormat> {
+      /** Red, green, blue and alpha for each pixel, rows from the top, not premultiplied. */
+      readonly data: Data;
+      readonly width: number;
+      readonly height: number;
+      readonly pixelFormat: PixelFormat;
+      readonly colorSpace: Bun.Image.ColorSpace;
+    }
+
+    type LibEmptyOrBunImageData = LibDomIsLoaded extends true
+      ? {}
+      : BunImageData<Uint8ClampedArray<ArrayBuffer>, "rgba-unorm8">;
+
+    type Float16ArrayIfAvailable = typeof globalThis extends { Float16Array: { prototype: infer T } } ? T : never;
+    type Float16ImageData = BunImageData<Float16ArrayIfAvailable, "rgba-float16">;
+
+    interface ImageDataSettings<PixelFormat> {
+      /** @default "srgb" */
+      colorSpace?: Bun.Image.ColorSpace | undefined;
+      /** @default "rgba-unorm8" */
+      pixelFormat?: PixelFormat | undefined;
+    }
+    type Float16ImageDataSettings = ImageDataSettings<"rgba-float16"> & { pixelFormat: "rgba-float16" };
   }
 }
 
@@ -1840,6 +1864,40 @@ interface FormData {
   entries(): IterableIterator<[string, string]>;
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
+
+/**
+ * A rectangle of RGBA pixels. {@link Bun.Image} takes one as input and
+ * returns one from `imageData()`.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/ImageData)
+ */
+interface ImageData extends Bun.__internal.LibEmptyOrBunImageData {}
+declare var ImageData: Bun.__internal.UseLibDomIfAvailable<
+  "ImageData",
+  {
+    prototype: ImageData;
+    /** Transparent black pixels. */
+    new (width: number, height: number, settings?: Bun.__internal.ImageDataSettings<"rgba-unorm8">): ImageData;
+    /** Uses `data` without a copy. */
+    new (
+      data: Uint8ClampedArray<ArrayBuffer>,
+      width: number,
+      height?: number,
+      settings?: Bun.__internal.ImageDataSettings<"rgba-unorm8">,
+    ): ImageData;
+    new (
+      width: number,
+      height: number,
+      settings: Bun.__internal.Float16ImageDataSettings,
+    ): Bun.__internal.Float16ImageData;
+    new (
+      data: Bun.__internal.Float16ArrayIfAvailable,
+      width: number,
+      height: number | undefined,
+      settings: Bun.__internal.Float16ImageDataSettings,
+    ): Bun.__internal.Float16ImageData;
+  }
+>;
 
 interface EventSource extends Bun.__internal.LibEmptyOrEventSource {}
 declare var EventSource: Bun.__internal.UseLibDomIfAvailable<

@@ -7,6 +7,7 @@ mod planes;
 mod reconstruct;
 mod residuals;
 
+use bun_alloc::Lender;
 use bun_highway::webp::FilterStrength;
 
 pub(crate) use self::header::Header;
@@ -30,12 +31,17 @@ struct Bottom {
 
 impl Header<'_> {
     /// `alpha` is the content of the ALPH chunk.
-    pub(crate) fn decode(self, alpha: Option<&[u8]>) -> Result<Vec<[u8; 4]>> {
+    pub(crate) fn decode<'a>(
+        self,
+        alpha: Option<&[u8]>,
+        lender: Lender<'a>,
+    ) -> Result<Vec<[u8; 4], Lender<'a>>> {
         let (width, height) = (usize::from(self.width), usize::from(self.height));
         let [columns, rows] = self.macroblocks();
         let mut parameters = Parameters::parse(&self)?;
         let mut memory = Vec::new();
-        let mut planes = Planes::new(width, height, parameters.filter_type, alpha, &mut memory)?;
+        let filter_type = parameters.filter_type;
+        let mut planes = Planes::new(width, height, filter_type, alpha, &mut memory, lender)?;
         let above_picture = Bottom {
             modes: [SubblockMode::Dc; 4],
             context: Context::default(),

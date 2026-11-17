@@ -1,5 +1,6 @@
 //! PNG to 8-bit RGBA. No checksum is looked at: not a chunk's CRC, not a zlib stream's Adler-32.
 
+use bun_alloc::Lender;
 use bun_core::strings::index_of_char_usize;
 use bun_zlib::{InflateDecoder, ReturnCode};
 
@@ -16,9 +17,9 @@ const AHEAD_LEN: usize = 128 * 1024;
 
 type Rgba = [u8; 4];
 
-pub struct Image {
+pub struct Image<'a> {
     /// `width * height * 4` bytes, rows from the top, not premultiplied.
-    pub rgba: Vec<u8>,
+    pub rgba: Vec<u8, Lender<'a>>,
     /// What the iCCP chunk inflates to.
     pub icc_profile: Option<Vec<u8>>,
 }
@@ -49,14 +50,14 @@ impl<'a> Decoder<'a> {
         self.header
     }
 
-    pub fn decode(self) -> Result<Image> {
+    pub fn decode(self, lender: Lender) -> Result<Image> {
         let Self { header, mut reader } = self;
         let mut chunks = Chunks::new(header);
         let first_idat_len = chunks.read_until_idat(&mut reader)?;
         let expander = Expander::new(&chunks);
         let mut idat = Idat::new(reader, first_idat_len)?;
         Ok(Image {
-            rgba: read_pixels(header, &expander, &mut idat)?,
+            rgba: read_pixels(header, &expander, &mut idat, lender)?,
             icc_profile: chunks.icc_profile,
         })
     }
@@ -204,7 +205,7 @@ struct Idat<'a> {
     /// How many bytes are still to be inflated of the lines that are read ahead.
     ahead_left: usize,
     /// Inflated for the reads to come, and how much of it they have had.
-    ahead: Vec<u8>,
+    ahead: Vec<u8, Lender<'static>>,
     ahead_read: usize,
 }
 
@@ -216,7 +217,7 @@ impl<'a> Idat<'a> {
             reader,
             inflater: new_inflater()?,
             ahead_left: 0,
-            ahead: Vec::new(),
+            ahead: Vec::new_in(Lender::NONE),
             ahead_read: 0,
         })
     }
@@ -244,7 +245,7 @@ impl<'a> Idat<'a> {
     }
 
     /// Appends the next `len` bytes of the lines to `out`.
-    fn read(&mut self, out: &mut Vec<u8>, len: usize) -> Result<()> {
+    fn read(&mut self, out: &mut Vec<u8, Lender>, len: usize) -> Result<()> {
         out.try_reserve(len)?;
         let end = out.len() + len;
         loop {
@@ -259,7 +260,7 @@ impl<'a> Idat<'a> {
             if self.ahead_left == 0 {
                 return self.inflate(out, missing);
             }
-            let mut ahead = core::mem::take(&mut self.ahead);
+            let mut ahead = core::mem::replace(&mut self.ahead, Vec::new_in(Lender::NONE));
             ahead.clear();
             let more = AHEAD_LEN.min(self.ahead_left);
             self.ahead_left -= more;
@@ -270,7 +271,7 @@ impl<'a> Idat<'a> {
 
     /// Appends the next `len` bytes of the stream to `out`.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1389
-    fn inflate(&mut self, out: &mut Vec<u8>, len: usize) -> Result<()> {
+    fn inflate(&mut self, out: &mut Vec<u8, Lender>, len: usize) -> Result<()> {
         let end = out.len().saturating_add(len);
         while out.len() < end {
             let (used, code) = self.inflater.step_limited(self.input, out, end - out.len());
@@ -441,20 +442,16 @@ fn unfilter_last_row(filter_type: u8, rows: &mut [u8], stride: usize) -> Result<
 }
 
 /// Inflates lines to the end of the image and moves each row up over the filter types: no copy to memory that is cold.
-fn read_rgba8(header: Header, size: usize, idat: &mut Idat) -> Result<Vec<u8>> {
+fn read_rgba8(header: Header, idat: &mut Idat, image: &mut Vec<u8, Lender>) -> Result<()> {
     let stride = header.width as usize * 4;
     let line_len = stride + 1;
-    let mut lines_left = header.height as usize;
-    let lines_at_a_time = (AHEAD_LEN / line_len).max(1).min(lines_left);
-    let mut image: Vec<u8> = Vec::new();
-    // With room for the filter types of the last lines.
-    image.try_reserve_exact(size + lines_at_a_time)?;
-    let capacity = image.capacity();
-    while lines_left != 0 {
-        let lines = lines_at_a_time.min(lines_left);
-        lines_left -= lines;
+    let lines_at_a_time = (AHEAD_LEN / line_len).max(1);
+    let mut rows_left = header.height as usize;
+    while rows_left > 1 {
+        let lines = lines_at_a_time.min(rows_left * stride / line_len);
+        rows_left -= lines;
         let start = image.len();
-        idat.read(&mut image, lines * line_len)?;
+        idat.read(image, lines * line_len)?;
         for i in 0..lines {
             let (from, to) = (start + i * line_len, start + i * stride);
             let Some(&[filter_type, ..]) = image.get(from..from + line_len) else {
@@ -466,8 +463,12 @@ fn read_rgba8(header: Header, size: usize, idat: &mut Idat) -> Result<Vec<u8>> {
         }
         image.truncate(start + lines * stride);
     }
-    debug_assert_eq!(image.capacity(), capacity);
-    Ok(image)
+    // There is no room for the last row and its filter type at once.
+    idat.read(image, 1)?;
+    let filter_type = image.pop().ok_or(Error::Internal)?;
+    idat.read(image, stride)?;
+    unfilter_last_row(filter_type, image, stride)?;
+    Ok(())
 }
 
 /// A row becomes RGBA before it is unfiltered, because that is faster on 4-byte pixels.
@@ -475,10 +476,10 @@ fn read_rgb8(
     header: Header,
     expander: &Expander,
     idat: &mut Idat,
-    image: &mut Vec<u8>,
+    image: &mut Vec<u8, Lender>,
 ) -> Result<()> {
     let (line_len, stride) = (header.width as usize * 3 + 1, header.width as usize * 4);
-    let mut line: Vec<u8> = Vec::new();
+    let mut line = Vec::new_in(Lender::NONE);
     line.try_reserve_exact(line_len)?;
     for _ in 0..header.height {
         line.clear();
@@ -495,23 +496,29 @@ fn read_rgb8(
 }
 
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L3618
-fn read_pixels(header: Header, expander: &Expander, idat: &mut Idat) -> Result<Vec<u8>> {
+fn read_pixels<'a>(
+    header: Header,
+    expander: &Expander,
+    idat: &mut Idat,
+    lender: Lender<'a>,
+) -> Result<Vec<u8, Lender<'a>>> {
     let stride = header.width as usize * 4;
     let size = stride
         .checked_mul(header.height as usize)
         .ok_or(Error::ImageTooLarge)?;
-    let image = if matches!(expander.layout, Layout::Rgba8) && !header.interlaced {
-        read_rgba8(header, size, idat)?
+    let mut image = Vec::new_in(lender);
+    image.try_reserve_exact(size)?;
+    let capacity = image.capacity();
+    if matches!(expander.layout, Layout::Rgba8) && !header.interlaced {
+        read_rgba8(header, idat, &mut image)?;
     } else {
         idat.read_ahead(header);
-        let mut image: Vec<u8> = Vec::new();
-        image.try_reserve_exact(size)?;
         match expander.layout {
             Layout::Rgb8(_) if !header.interlaced => read_rgb8(header, expander, idat, &mut image)?,
             _ => read_any_layout(header, expander, idat, &mut image)?,
         }
-        image
-    };
+    }
+    debug_assert_eq!(image.capacity(), capacity);
     // It goes to C by its address, with the width and the height.
     if image.len() != size {
         return Err(Error::Internal);
@@ -523,7 +530,7 @@ fn read_any_layout(
     header: Header,
     expander: &Expander,
     idat: &mut Idat,
-    image: &mut Vec<u8>,
+    image: &mut Vec<u8, Lender>,
 ) -> Result<()> {
     let stride = header.width as usize * 4;
     let longest = header.passes().map(|pass| pass.row_bytes).max();
@@ -531,14 +538,14 @@ fn read_any_layout(
     let mut bytes_per_pixel = header.bytes_per_pixel();
     // A line that came as RGB, which becomes RGBA as in `read_rgb8()`.
     let is_rgb8 = matches!(expander.layout, Layout::Rgb8(_));
-    let mut rgb_line: Vec<u8> = Vec::new();
+    let mut rgb_line = Vec::new_in(Lender::NONE);
     if is_rgb8 {
         rgb_line.try_reserve_exact(line_len)?;
         (line_len, bytes_per_pixel) = (stride + 1, 4);
     }
-    let mut line: Vec<u8> = Vec::new();
+    let mut line = Vec::new_in(Lender::NONE);
     line.try_reserve_exact(line_len)?;
-    let mut line_above: Vec<u8> = Vec::new();
+    let mut line_above = Vec::new_in(Lender::NONE);
     line_above.try_reserve_exact(line_len)?;
 
     // For the passes that do not have every pixel of a row.

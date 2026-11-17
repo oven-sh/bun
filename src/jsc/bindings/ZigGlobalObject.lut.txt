@@ -37,6 +37,7 @@
   BuildMessage                    Bun::Bindgen::Generated::ResolveMessage::getBuildMessageConstructor PropertyCallback
   Crypto                          Bun::Bindgen::Generated::Crypto::getCryptoConstructor PropertyCallback
   HTMLRewriter                    Bun::Bindgen::Generated::HtmlRewriter::getHTMLRewriterConstructor PropertyCallback
+  ImageData                       Bun::Bindgen::Generated::ImageData::getImageDataConstructor DontEnum|PropertyCallback
   Request                         Bun::Bindgen::Generated::Response::getRequestConstructor PropertyCallback
   ResolveError                    Bun::Bindgen::Generated::ResolveMessage::getResolveMessageConstructor PropertyCallback
   ResolveMessage                  Bun::Bindgen::Generated::ResolveMessage::getResolveMessageConstructor PropertyCallback

@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { differences } from "../../archive-golden/observe";
+import { differentInTarget } from "./check";
 import { chunksOf, linesOf, loadCases, observeDecode, observeEncode, type PngOptions } from "./observe";
 
 const cases = await loadCases(join(import.meta.dir, "cases.json.gz"));
@@ -26,6 +27,14 @@ describe("Bun.Image reads and writes PNG the way it was recorded to", () => {
       })),
     );
     expect(differences(results)).toBe("");
+  });
+
+  test("decode into a target", async () => {
+    const images = cases.decode.map(({ name, maxPixels }) => ({
+      name,
+      open: () => new Bun.Image(files.get(name)!, { maxPixels }),
+    }));
+    expect(await differentInTarget(images)).toEqual({ decoded: 679, refused: 355, different: [] });
   });
 
   test("encode", async () => {

@@ -10461,6 +10461,31 @@ describe("raw request bytes on a server's connection socket", () => {
     });
   });
 
+  it.each(["http", "https"])(
+    "%s: a listener added while the socket is paused gets the reads after resume()",
+    async scheme => {
+      let raw = "";
+      const onRequest: http.RequestListener = (req, res) => {
+        if (req.url !== "/1") return void res.end(`<${req.url}>`);
+        setImmediate(() => {
+          req.socket.pause();
+          req.socket.on("data", chunk => (raw += chunk.toString("latin1")));
+          req.socket.resume();
+          res.write("<resumed>");
+          res.end();
+        });
+      };
+      const server = scheme === "https" ? createHttpsServer(tlsCert, onRequest) : createServer(onRequest);
+      await withClient(server, async (client, until) => {
+        client.write("GET /1 HTTP/1.1\r\nHost: x\r\n\r\n");
+        await until("<resumed>");
+        client.write("GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+        await until("</2>");
+      });
+      expect(raw).toBe("GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+    },
+  );
+
   it("removeAllListeners() with no reader behind it leaves the reads to the parser", async () => {
     const server = createServer((req, res) => {
       req.socket.removeAllListeners();

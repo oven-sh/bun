@@ -2405,6 +2405,8 @@ function unconsume(socket) {
   // Gone once uWS has closed the connection, which is before the socket's 'close'.
   socket[kHandle]?.setRawReads(true);
   if (tookReadsFromParser(socket)) stopParsing(socket);
+  // net.Socket has had a read pending since the accept, so no _read() would lift a pause from before. A full buffer stops the reads now.
+  socket._handle?.resume();
 }
 function stopParsing(socket) {
   socket[kHandle]?.stopParsing();

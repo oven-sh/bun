@@ -25,6 +25,31 @@ const noDebugger = {
   message: "Unexpected 'debugger' statement.",
 };
 
+// A plugin whose rule `demo/hold` holds the second lint that it is part of until a file called `release` is next to
+// it, and writes `held` when it does. After a document is opened, that is its lint with types. The other lints of
+// the engine wait for the plugin too.
+const holdsSecondLint = `
+  import { appendFileSync, existsSync, statSync, writeFileSync } from "node:fs";
+  import { join } from "node:path";
+  const at = name => join(import.meta.dirname, name);
+  export default {
+    meta: { name: "demo" },
+    rules: {
+      hold: {
+        create() {
+          return {
+            Program() {
+              appendFileSync(at("calls"), "x");
+              if (statSync(at("calls")).size !== 2) return;
+              writeFileSync(at("held"), "");
+              while (!existsSync(at("release"))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+            },
+          };
+        },
+      },
+    },
+  };`;
+
 describe.concurrent("bun lint --lsp", () => {
   test(
     "answers initialize with the capabilities of a linter and a formatter",
@@ -932,6 +957,151 @@ describe.concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // An editor asks for `source.fixAll` before it saves, so a document that is linted on save has no lint of that
+  // version yet: the request waits for the one with types.
+  test(
+    "fixes what the rules that need types find with source.fixAll on a version that is not linted yet",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "bunfig.toml":
+          '[lint.rules]\n"no-var" = "error"\n"@typescript-eslint/no-unnecessary-type-assertion" = "error"\n',
+        "a.ts": "",
+      });
+      await using client = new Client([...command, "--type-aware"], String(dir));
+      const started = await initialize(client, [String(dir)], {
+        initializationOptions: { lint: { run: "onSave" } },
+      });
+      expect(started.error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.ts");
+      open(client, path, "");
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      const uri = uriOf(path);
+      const text = "var n: number = 1;\nvar m = n as number;\nconsole.log(m);\n";
+      client.notify("textDocument/didChange", {
+        textDocument: { uri, version: 2 },
+        contentChanges: [{ text }],
+      });
+      const all = await client.request("textDocument/codeAction", {
+        textDocument: { uri },
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+        context: { diagnostics: [], only: ["source.fixAll.bun"] },
+      });
+      expect(all.error).toBeUndefined();
+      expect(all.result.map((it: any) => it.kind)).toEqual(["source.fixAll.bun"]);
+      const editsOf = (action: any): TextEdit[] =>
+        action.edit.changes?.[uri] ?? action.edit.documentChanges.find((it: any) => it.textDocument.uri === uri).edits;
+      expect(applyEdits(text, editsOf(all.result[0]))).toBe("const n: number = 1;\nconst m = n;\nconsole.log(m);\n");
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // `source.fixAll` waits for the lint with types, which a plugin holds here. A configuration that changes meanwhile
+  // moves the request to the lint with types of the new configuration.
+  test.skipIf(isWindows)(
+    "answers source.fixAll that waits for a lint with types after a configuration change",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "demo/hold": "error", "typescript/no-unnecessary-type-assertion": "error" },
+        }),
+        "plugin.mjs": holdsSecondLint,
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "a.ts": "",
+      });
+      await using client = new Client([...command, "--type-aware"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.ts");
+      const uri = uriOf(path);
+      const text = "const n: number = 1;\nexport const m = n as number;\n";
+      open(client, path, text);
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      const held = join(String(dir), "held");
+      while (!existsSync(held)) await Bun.sleep(5);
+      try {
+        const waiting = client.request("textDocument/codeAction", {
+          textDocument: { uri },
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+          context: { diagnostics: [], only: ["source.fixAll"] },
+        });
+        client.notify("workspace/didChangeWatchedFiles", {
+          changes: [{ uri: uriOf(String(dir), ".oxlintrc.json"), type: 2 }],
+        });
+        const all = await waiting;
+        expect(all.error).toBeUndefined();
+        const editsOf = (action: any): TextEdit[] =>
+          action.edit.changes?.[uri] ??
+          action.edit.documentChanges.find((it: any) => it.textDocument.uri === uri).edits;
+        expect(applyEdits(text, editsOf(all.result[0]))).toBe("const n: number = 1;\nexport const m = n;\n");
+      } finally {
+        writeFileSync(join(String(dir), "release"), "");
+      }
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // The document is linted on save, so its change queues no lint: the request that waits is answered when the lint
+  // with types that it waits for is over.
+  test.skipIf(isWindows)(
+    "answers source.fixAll that waits for a lint with types of a document that changes meanwhile",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "demo/hold": "error", "typescript/no-unnecessary-type-assertion": "error" },
+        }),
+        "plugin.mjs": holdsSecondLint,
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "a.ts": "",
+      });
+      await using client = new Client([...command, "--type-aware"], String(dir));
+      const started = await initialize(client, [String(dir)], {
+        initializationOptions: { lint: { run: "onSave" } },
+      });
+      expect(started.error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.ts");
+      const uri = uriOf(path);
+      open(client, path, "const n: number = 1;\nexport const m = n as number;\n");
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      const held = join(String(dir), "held");
+      while (!existsSync(held)) await Bun.sleep(5);
+      const waiting = client.request("textDocument/codeAction", {
+        textDocument: { uri },
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+        context: { diagnostics: [], only: ["source.fixAll"] },
+      });
+      client.notify("textDocument/didChange", {
+        textDocument: { uri, version: 2 },
+        contentChanges: [{ text: "const n: number = 2;\nexport const m = n as number;\n" }],
+      });
+      writeFileSync(join(String(dir), "release"), "");
+      expect((await waiting).error?.code).toBe(-32801);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // `bun lint` reports what is wrong with a tsconfig.json as a problem of that file, and exits with 1.
   test(
     "shows the error of a tsconfig.json that cannot be used, once",
@@ -1085,27 +1255,7 @@ describe.concurrent("bun lint --lsp", () => {
           jsPlugins: ["./plugin.mjs"],
           rules: { "demo/hold": "error", "typescript/no-floating-promises": "error" },
         }),
-        "plugin.mjs": `
-        import { appendFileSync, existsSync, statSync, writeFileSync } from "node:fs";
-        import { join } from "node:path";
-        const at = name => join(import.meta.dirname, name);
-        export default {
-          meta: { name: "demo" },
-          rules: {
-            hold: {
-              create() {
-                return {
-                  Program() {
-                    appendFileSync(at("calls"), "x");
-                    if (statSync(at("calls")).size !== 2) return;
-                    writeFileSync(at("held"), "");
-                    while (!existsSync(at("release"))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
-                  },
-                };
-              },
-            },
-          },
-        };`,
+        "plugin.mjs": holdsSecondLint,
         "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
         "a.ts": "",
       });

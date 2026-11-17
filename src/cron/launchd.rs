@@ -40,10 +40,10 @@ fn calendar_interval(schedule: &CronExpression) -> String {
     let mut dicts = String::new();
     if day.is_some() && weekday.is_some() {
         // cron fires when either of the two matches.
-        append_dicts(&mut dicts, "", &[minute, hour, day, month, None]);
-        append_dicts(&mut dicts, "", &[minute, hour, None, month, weekday]);
+        append_dicts(&mut dicts, "", &KEYS, &[minute, hour, day, month, None]);
+        append_dicts(&mut dicts, "", &KEYS, &[minute, hour, None, month, weekday]);
     } else {
-        append_dicts(&mut dicts, "", &fields);
+        append_dicts(&mut dicts, "", &KEYS, &fields);
         if fields.iter().flatten().all(|set| set.count_ones() == 1) {
             dicts.pop();
             return dicts;
@@ -52,19 +52,20 @@ fn calendar_interval(schedule: &CronExpression) -> String {
     format!("    <array>\n{dicts}    </array>")
 }
 
-/// A dict for each combination of the values of `rest`, the last fields of a schedule, after `keys`.
-fn append_dicts(dicts: &mut String, keys: &str, rest: &[Option<u64>]) {
-    const KEYS: [&str; 5] = ["Minute", "Hour", "Day", "Month", "Weekday"];
-    match *rest {
-        [] => _ = write!(dicts, "    <dict>\n{keys}    </dict>\n"),
-        [None, ref rest @ ..] => append_dicts(dicts, keys, rest),
-        [Some(set), ref rest @ ..] => {
-            let key = KEYS[KEYS.len() - 1 - rest.len()];
-            for value in values(set) {
-                let keys =
-                    format!("{keys}        <key>{key}</key>\n        <integer>{value}</integer>\n");
-                append_dicts(dicts, &keys, rest);
+const KEYS: [&str; 5] = ["Minute", "Hour", "Day", "Month", "Weekday"];
+
+/// A dict for each combination of the values of `fields`, which `keys` names, after `written`.
+fn append_dicts(dicts: &mut String, written: &str, keys: &[&str], fields: &[Option<u64>]) {
+    match (keys, fields) {
+        ([_, keys @ ..], [None, fields @ ..]) => append_dicts(dicts, written, keys, fields),
+        ([key, keys @ ..], [Some(set), fields @ ..]) => {
+            for value in values(*set) {
+                let written = format!(
+                    "{written}        <key>{key}</key>\n        <integer>{value}</integer>\n"
+                );
+                append_dicts(dicts, &written, keys, fields);
             }
         }
+        _ => _ = write!(dicts, "    <dict>\n{written}    </dict>\n"),
     }
 }

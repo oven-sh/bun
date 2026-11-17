@@ -88,8 +88,8 @@ pub(crate) struct RuntimeState {
     #[cfg(windows)]
     pub(crate) path_watchers: core::cell::OnceCell<Box<crate::node::win_watcher::PathWatchers>>,
     pub(crate) request_pools: crate::server::RequestPools,
-    /// The running `Bun.cron()` jobs of the main thread under `--hot`, which a reload stops.
-    pub(crate) cron_jobs: JsCell<Vec<bun_jsc::bindgen::StrongWrapper<crate::api::cron::CronJob>>>,
+    /// The wrappers of the running `Bun.cron()` jobs of the main thread under `--hot`, which a reload stops.
+    pub(crate) cron_jobs: JsCell<Vec<bun_jsc::Strong>>,
     pub(crate) cron_os_jobs: crate::api::cron_os::OsJobs,
     pub(crate) stat_watcher_scheduler: JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
     /// Set in the VM that runs the files of `bun test`.
@@ -1198,7 +1198,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_flags,
     stop_watches_for_vm_teardown,
-    cron_clear_all_reload,
+    cron_clear_all_reload: crate::api::cron::CronJob::stop_all_for_reload,
     retroactively_report_discovered_tests,
     cancel_timers,
     end_hot_run_timers,
@@ -1286,18 +1286,12 @@ unsafe fn parse_worker_exec_argv_flags(
     Some(flags)
 }
 
-/// Their polls are slots of `RareData`, which is freed before the runtime state.
-fn stop_watches_for_vm_teardown(_: &VirtualMachine) {
+/// Drops the owners of polls, which are slots of `RareData`: it is freed before the runtime state.
+fn stop_watches_for_vm_teardown() {
     if let Some(state) = try_runtime_state() {
         state.cron_os_jobs.release_for_vm_teardown();
         state.memory_pressure_watcher.set(None);
         state.browsers.release_for_vm_teardown();
-    }
-}
-
-fn cron_clear_all_reload(vm: &VirtualMachine) {
-    for job in runtime_state_of(vm).cron_jobs.take() {
-        job.payload().stop_now();
     }
 }
 

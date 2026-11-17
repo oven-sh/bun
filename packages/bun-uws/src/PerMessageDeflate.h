@@ -96,8 +96,9 @@ namespace uWS {
 #include <memory>
 #include <string>
 #include <string_view>
-#include "libdeflate.h"
 #include "ReceiveBuffer.h"
+
+extern "C" ptrdiff_t Bun__inflateWebSocketMessage(const char *input, size_t inputLength, char *output, size_t outputLength);
 
 namespace uWS {
 
@@ -110,12 +111,8 @@ struct ZlibContext {
     std::string dynamicDeflationBuffer;
     ReceiveBuffer dynamicInflationBuffer;
     const std::unique_ptr<char[]> deflationBuffer = std::make_unique_for_overwrite<char[]>(LARGE_BUFFER_SIZE);
-    const std::unique_ptr<char[]> inflationBuffer = std::make_unique_for_overwrite<char[]>(LARGE_BUFFER_SIZE);
-
-    struct DecompressorDeleter {
-        void operator()(libdeflate_decompressor *decompressor) const { libdeflate_free_decompressor(decompressor); }
-    };
-    const std::unique_ptr<libdeflate_decompressor, DecompressorDeleter> decompressor{libdeflate_alloc_decompressor()};
+    /* Rust takes it as a slice, which has to be initialized */
+    const std::unique_ptr<char[]> inflationBuffer = std::make_unique<char[]>(LARGE_BUFFER_SIZE);
 };
 
 struct DeflationStream {
@@ -203,26 +200,19 @@ struct InflationStream {
 
     /* Zero length inflates are possible and valid */
     InflateResult inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
-        /* The libdeflate fast path is stateless: it cannot resolve back-references into a
+        /* The fast path is stateless: it cannot resolve back-references into a
          * previous message's sliding window, and whatever it inflates never reaches the zlib
          * stream's window. Both are only correct without context takeover, i.e. when reset is set. */
         if (reset) {
             /* Try fast path first */
-            size_t written = 0;
+            ptrdiff_t written = Bun__inflateWebSocketMessage(compressed.data(), compressed.length(), zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE);
 
-            /* We have to pad 9 bytes and restore those bytes when done since 9 is more than 6 of next WebSocket message */
-            char tmp[9];
-            memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
-            memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
-            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor.get(), compressed.data(), compressed.length() + 9, zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE, &written);
-            memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
-
-            if (res == 0) {
+            if (written >= 0) {
                 /* Fast path wins */
-                if (written > maxPayloadLength) {
+                if ((size_t) written > maxPayloadLength) {
                     return {{}, 1009};
                 }
-                return {{zlibContext->inflationBuffer.get(), written}, 0};
+                return {{zlibContext->inflationBuffer.get(), (size_t) written}, 0};
             }
         }
 

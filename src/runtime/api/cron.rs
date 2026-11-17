@@ -6,19 +6,20 @@ use bstr::BStr;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_cron::{CronExpression, TimeZone, WallClock};
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::{Callable, JsLocal, JsPayload as _, JsScope, JsWrapper, StrongWrapper};
+use bun_jsc::bindgen::{Callable, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, AbortHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject, JSValue, JsError,
     JsResult, ScriptExecutionStatus, Strong, StrongCell,
 };
+use bun_removable_features::removable_body_behind_value;
 
 use crate::generated_bindgen::cron::{
     Bun__Cron__cron, Bun__Cron__parse, Bun__Cron__remove, Bun__CronJob__onPromiseReject,
-    Bun__CronJob__onPromiseResolve, CronOptions, js_CronJob as js,
+    Bun__CronJob__onPromiseResolve, CronOptions, js_CronJob as js, js_CronTick as js_tick,
 };
-use crate::jsc_hooks::{runtime_state, timer_all};
+use crate::jsc_hooks::{timer_all, try_runtime_state};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 #[derive(Clone, Copy)]
@@ -104,6 +105,9 @@ pub(crate) struct CronJob {
     abort_handle: AbortHandle,
 }
 
+/// `CronTick`, declared in `cron.bind.ts`. The promise holds it, so it must not hold a stopped job.
+pub(crate) struct CronTick;
+
 bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
 bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, _cause| {
     // SAFETY: trait contract: `this` is live.
@@ -138,17 +142,21 @@ impl CronJob {
             )));
         };
 
-        let wrapper = job.into_js_wrapper(global);
-        let js_value = wrapper.to_js();
-        let job = js::from_js(&js_value).expect("just made");
+        let js_value = job.into_js_wrapper(global).to_js();
+        let Some(job) = js::from_js(&js_value) else {
+            return Err(global.throw(format_args!("Failed to create cron job")));
+        };
         job.root.set(Strong::create(js_value, global));
         js::cron_set_cached(js_value, global, schedule_value.to_js());
         let handler = handler.to_js().with_async_context_if_needed(global);
         js::callback_set_cached(js_value, global, handler);
         let vm = global.bun_vm();
-        if vm.hot_reload.get() == HotReload::Hot && vm.worker.get().is_none() {
-            let entry = StrongWrapper::new(wrapper, global);
-            runtime_state().cron_jobs.with_mut(|jobs| jobs.push(entry));
+        if vm.hot_reload.get() == HotReload::Hot
+            && vm.worker.get().is_none()
+            && let Some(state) = try_runtime_state()
+        {
+            let entry = Strong::create(js_value, global);
+            state.cron_jobs.with_mut(|jobs| jobs.push(entry));
         }
         job.poll_ref.ref_(bun_io::js_vm_ctx());
         // SAFETY: `stop_now` leaves the context before `root` lets go of the wrapper.
@@ -157,7 +165,7 @@ impl CronJob {
         Ok(js_value)
     }
 
-    /// Idempotent, and runs no script. A tick's pending promise keeps the wrapper for its reactions, and nothing else does.
+    /// Idempotent, and runs no script.
     pub(crate) fn stop_now(&self) {
         let Some(js_this) = self.root.get() else {
             return;
@@ -166,11 +174,29 @@ impl CronJob {
         self.poll_ref.disable();
         self.abort_handle.leave();
         js::callback_set_cached(js_this, &self.global, JSValue::ZERO);
-        drop(runtime_state().cron_jobs.with_mut(|jobs| {
-            let i = jobs.iter().position(|job| job.to_js() == js_this)?;
-            Some(jobs.swap_remove(i))
-        }));
+        if let Some(tick) = js::pending_tick_take_cached(js_this, &self.global) {
+            js_tick::job_set_cached(tick, &self.global, JSValue::ZERO);
+        }
+        if let Some(state) = try_runtime_state() {
+            drop(state.cron_jobs.with_mut(|jobs| {
+                let i = jobs.iter().position(|job| job.get() == js_this)?;
+                Some(jobs.swap_remove(i))
+            }));
+        }
         self.root.clear();
+    }
+
+    pub(crate) fn stop_all_for_reload() {
+        let Some(state) = try_runtime_state() else {
+            return;
+        };
+        for job in state.cron_jobs.take() {
+            removable_body_behind_value!(Cron, {
+                if let Some(job) = js::from_js(&job.get()) {
+                    job.stop_now();
+                }
+            });
+        }
     }
 
     pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
@@ -213,42 +239,47 @@ impl CronJob {
         self.stop_now();
     }
 
-    pub(crate) fn on_timer_fire(&self, vm: &VirtualMachine) {
+    /// A root of its own for [`tick`](Self::tick), whose script can stop the job.
+    pub(crate) fn timer_fired(&self) -> Option<Strong> {
         self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-        let Some(js_this) = self.root.get() else {
+        Some(Strong::create(self.root.get()?, &self.global))
+    }
+
+    pub(crate) fn tick(root: &Strong, vm: &VirtualMachine) {
+        let js_this = root.get();
+        let Some(job) = js::from_js(&js_this) else {
             return;
         };
-        let _alive = jsc::EnsureStillAlive(js_this);
         let (ScriptExecutionStatus::Running, Some(callback)) = (
             vm.script_execution_status(),
             js::callback_get_cached(js_this),
         ) else {
-            return self.stop_now();
+            return job.stop_now();
         };
 
         let _entered = vm.enter_event_loop_scope();
         // The reactions on the tick's promise, and what they report, belong to the job's script too.
-        let _context = vm.enter_context(self.context);
-        let global = &*self.global;
+        let _context = vm.enter_context(job.context);
+        let global = &*job.global;
         // Reports what the tick throws, before the job is armed again.
-        let result = (vm.event_loop()).run_callback_with_result(
-            self.context,
-            callback,
-            global,
-            js_this,
-            &[],
-        );
+        let result =
+            (vm.event_loop()).run_callback_with_result(job.context, callback, global, js_this, &[]);
         if vm.script_execution_status() != ScriptExecutionStatus::Running {
-            return self.stop_now();
+            return job.stop_now();
         }
 
         if let Some(promise) = result.as_any_promise() {
             match promise.unwrap(global.vm(), UnwrapMode::MarkHandled) {
                 Unwrapped::Pending => {
-                    js::pending_promise_set_cached(js_this, global, result);
+                    let tick = CronTick.into_js_wrapper(global).to_js();
+                    js_tick::promise_set_cached(tick, global, result);
+                    if job.root.is_some() {
+                        js_tick::job_set_cached(tick, global, js_this);
+                        js::pending_tick_set_cached(js_this, global, tick);
+                    }
                     return result.then_with_value(
                         global,
-                        js_this,
+                        tick,
                         Bun__CronJob__onPromiseResolve,
                         Bun__CronJob__onPromiseReject,
                     );
@@ -257,29 +288,36 @@ impl CronJob {
                 Unwrapped::Rejected(reason) => vm.unhandled_rejection(vm.global(), reason, result),
             }
         }
-        self.schedule_next(vm);
+        job.schedule_next(vm);
     }
 }
 
 pub(crate) fn on_promise_resolve(
-    _: &mut JsScope<'_>,
+    cx: &mut JsScope<'_>,
     _: JsLocal<'_>,
-    (job, js_this): (&CronJob, JsLocal<'_>),
+    (_, tick): (&CronTick, JsLocal<'_>),
 ) {
-    js::pending_promise_set_cached(js_this.to_js(), &job.global, JSValue::ZERO);
-    job.schedule_next(job.global.bun_vm());
+    tick_settled(cx.global(), tick);
 }
 
 pub(crate) fn on_promise_reject(
-    _: &mut JsScope<'_>,
+    cx: &mut JsScope<'_>,
     reason: JsLocal<'_>,
-    (job, js_this): (&CronJob, JsLocal<'_>),
+    (_, tick): (&CronTick, JsLocal<'_>),
 ) {
-    let vm = job.global.bun_vm();
-    let promise = js::pending_promise_take_cached(js_this.to_js(), &job.global);
-    let promise = promise.unwrap_or(JSValue::UNDEFINED);
+    let vm = cx.global().bun_vm();
+    let promise = js_tick::promise_get_cached(tick.to_js()).unwrap_or(JSValue::UNDEFINED);
     vm.unhandled_rejection(vm.global(), reason.to_js(), promise);
-    job.schedule_next(vm);
+    tick_settled(cx.global(), tick);
+}
+
+fn tick_settled(global: &JSGlobalObject, tick: JsLocal<'_>) {
+    if let Some(js_this) = js_tick::job_get_cached(tick.to_js())
+        && let Some(job) = js::from_js(&js_this)
+    {
+        js::pending_tick_set_cached(js_this, global, JSValue::ZERO);
+        job.schedule_next(global.bun_vm());
+    }
 }
 
 pub(crate) fn get_cron_object(global: &JSGlobalObject, _obj: &JSObject) -> JSValue {

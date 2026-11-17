@@ -411,11 +411,6 @@ pub(crate) fn run_task(
             [Test],
             |run: crate::test_runner::bun_test::RunTestsTask| -> JsResult<()> { run.call() }
         )?,
-        task_tag::ValkeyDeferredFailure => boxed_arm!(
-            task,
-            [Valkey],
-            |failure: crate::valkey_jsc::valkey::DeferredFailure| -> JsResult<()> { failure.run() }
-        )?,
         task_tag::DnsErrorDeferred => boxed_arm!(
             task,
             [Dns],
@@ -840,7 +835,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 82,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1447,7 +1442,8 @@ pub(crate) unsafe fn fire_timer(
             [Valkey],
             (container: *mut Valkey = owner!(Valkey, reconnect_timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_reconnect_timer() }
+                unsafe { (*container).on_reconnect_timer() };
+                Ok(())
             }
         ),
         EventLoopTimerTag::SubprocessTimeout => {
@@ -1490,8 +1486,10 @@ pub(crate) unsafe fn fire_timer(
         EventLoopTimerTag::CronJob => in_features!(
             [Cron],
             (c: *mut CronJob = owner!(CronJob, event_loop_timer)) -> JsResult<()> {
-                // SAFETY: an armed job roots its JS wrapper, which owns `c`.
-                unsafe { (*c).on_timer_fire(VirtualMachine::get()) };
+                // SAFETY: an armed job roots its JS wrapper, which owns `c`, and this call runs no script.
+                if let Some(root) = unsafe { (*c).timer_fired() } {
+                    CronJob::tick(&root, VirtualMachine::get());
+                }
                 Ok(())
             }
         ),
@@ -1709,9 +1707,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::RunTestsTask => {
             release_boxed_in!([Test], crate::test_runner::bun_test::RunTestsTask)
-        }
-        task_tag::ValkeyDeferredFailure => {
-            release_boxed_in!([Valkey], crate::valkey_jsc::valkey::DeferredFailure)
         }
         task_tag::DnsErrorDeferred => {
             release_boxed_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)

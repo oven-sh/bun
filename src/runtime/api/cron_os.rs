@@ -39,8 +39,8 @@ pub(crate) fn register(
     let script = resolve_script(global, path).ok_or_else(|| invalid("Failed to resolve path"))?;
 
     // The path goes into a crontab line, in single quotes.
-    if let Some(i) = strings::index_of_any(&script, b"'%\n\r") {
-        return Err(invalid(match script[i] {
+    if let Some(byte) = strings::index_of_any(&script, b"'%\n\r").and_then(|i| script.get(i)) {
+        return Err(invalid(match byte {
             b'\'' => "Path must not contain single quotes",
             b'%' => "Path must not contain percent signs (cron interprets % as newline)",
             _ => "Path must not contain line breaks",
@@ -105,13 +105,42 @@ impl Command {
     }
 }
 
-/// The command to run, `None` to resolve the promise, or the message to reject it with.
-type Next = Result<Option<Command>, String>;
+/// What the promise rejects with.
+#[derive(thiserror::Error, Debug)]
+enum Failure {
+    #[error("{0}")]
+    Text(&'static str),
+    #[error("Failed to spawn process: {}", BStr::new(.0))]
+    Spawn(&'static [u8]),
+    #[error("Failed to read process output: {}", BStr::new(.0.name()))]
+    Read(sys::Error),
+    #[error("Process exited with code {0}")]
+    Exited(u8),
+    #[error("Process killed by signal {0}")]
+    Signaled(u8),
+    #[error("Process error: {}", BStr::new(.0.name()))]
+    Wait(sys::Error),
+    #[cfg(windows)]
+    #[error("{}", BStr::new(.0))]
+    Stderr(Box<[u8]>),
+    #[cfg(windows)]
+    #[error(transparent)]
+    TooManyTriggers(#[from] bun_cron::schtasks::TooManyTriggers),
+}
+
+impl From<&'static str> for Failure {
+    fn from(text: &'static str) -> Failure {
+        Failure::Text(text)
+    }
+}
+
+/// The command to run, or `None` to resolve the promise.
+type Next = Result<Option<Command>, Failure>;
 
 /// A step is over when its child has exited and the child's output has ended, in either order.
 enum Child {
     Running,
-    Exited(Status),
+    Exited(Result<(), Failure>),
     OutputEnded(sys::Result<Vec<u8>>),
 }
 
@@ -124,8 +153,8 @@ impl OsJobs {
         if self.0.get().capacity() != 0 {
             removable_body_behind_value!(Cron, {
                 for job in self.0.take() {
-                    // The child outlives the VM, and may not have opened its file yet.
-                    if let Some(file) = job.step.take().and_then(Step::into_file) {
+                    // The child outlives the VM, and the file is its input or the installed plist.
+                    if let Some(file) = job.step.take().and_then(|(step, _)| step.into_file()) {
                         ScopeGuard::into_inner(file);
                     }
                 }
@@ -141,8 +170,8 @@ pub(crate) struct OsJob {
     promise: JsCell<JSPromiseStrong>,
     global: GlobalRef,
     _keep_alive: JsKeepAlive,
-    step: Cell<Option<Step>>,
-    child: Cell<Child>,
+    /// `None` between two steps.
+    step: Cell<Option<(Step, Child)>>,
     process: Cell<Option<ProcessHandle>>,
     /// Of the child's stdout, or on Windows its stderr.
     output: BufferedReader,
@@ -156,14 +185,13 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl OsJob {
-    fn start(global: &JSGlobalObject, first: Result<Command, String>) -> JSValue {
+    fn start(global: &JSGlobalObject, first: Result<Command, Failure>) -> JSValue {
         let job = RefPtr::new(OsJob {
             ref_count: Cell::new(1),
             promise: JsCell::new(JSPromiseStrong::init(global)),
             global: GlobalRef::from(global),
             _keep_alive: JsKeepAlive::active(),
             step: Cell::new(None),
-            child: Cell::new(Child::Running),
             process: Cell::new(None),
             output: BufferedReader::init(),
         });
@@ -180,10 +208,10 @@ impl OsJob {
         let process = match next.and_then(|next| next.map(|c| this.spawn(c)).transpose()) {
             Ok(Some(process)) => process,
             Ok(None) => return Self::finish(this, Ok(())),
-            Err(message) => return Self::finish(this, Err(message)),
+            Err(failure) => return Self::finish(this, Err(failure)),
         };
         process.set_exit_handler(this);
-        // Only `Ok(false)` has not run the exit handler.
+        // `this` may be freed on every path but `Ok(false)`.
         match process.watch_or_reap() {
             Ok(false) => this.process.set(Some(process)),
             Ok(true) => {}
@@ -195,7 +223,7 @@ impl OsJob {
         }
     }
 
-    fn spawn(&self, Command { argv, stdout, step }: Command) -> Result<ProcessHandle, String> {
+    fn spawn(&self, Command { argv, stdout, step }: Command) -> Result<ProcessHandle, Failure> {
         let vm = VirtualMachine::get();
         let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
         #[cfg(windows)]
@@ -229,27 +257,25 @@ impl OsJob {
         #[cfg(windows)]
         let env = Some(envp.as_list());
 
-        let failed = |name: &[u8]| format!("Failed to spawn process: {}", BStr::new(name));
         let mut spawned = spawn::spawn_process(&options, argv.as_list(), env)
-            .map_err(|err| failed(err.name().as_bytes()))?
-            .map_err(|err| failed(err.name()))?;
+            .map_err(|err| Failure::Spawn(err.name().as_bytes()))?
+            .map_err(|err| Failure::Spawn(err.name()))?;
 
         let mut child = Child::OutputEnded(Ok(Vec::new()));
         #[cfg(unix)]
         if let Some(stdout) = spawned.stdout.take().map(File::into_raw) {
             use bun_io::PosixFlags;
             (self.output).update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let started = self.output.start(bun_io::js_vm_ctx(), stdout, true);
-            let output = self.take_output(started.unwrap_or_else(ReadResult::Err));
-            child = output.map_or(Child::Running, Child::OutputEnded);
+            let read = (self.output.start(bun_io::js_vm_ctx(), stdout, true))
+                .map_err(|_| "Failed to start reading stdout")?;
+            child = (self.take_output(read)).map_or(Child::Running, Child::OutputEnded);
         }
         #[cfg(windows)]
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
             (self.output.start_with_pipe(pipe)).map_err(|_| "Failed to start reading stderr")?;
             child = Child::Running;
         }
-        self.child.set(child);
-        self.step.set(Some(step));
+        self.step.set(Some((step, child)));
         Ok(spawned.to_process_handle(event_loop))
     }
 
@@ -271,36 +297,58 @@ impl OsJob {
         let Some(output) = this.take_output(read) else {
             return;
         };
-        match this.child.replace(Child::Running) {
-            Child::Exited(status) => Self::end_step(this, &status, output),
-            Child::Running | Child::OutputEnded(_) => this.child.set(Child::OutputEnded(output)),
+        match this.step.take() {
+            Some((step, Child::Running)) => this.step.set(Some((step, Child::OutputEnded(output)))),
+            Some((step, Child::Exited(exit))) => Self::end_step(this, step, exit, output),
+            other @ (Some((_, Child::OutputEnded(_))) | None) => {
+                debug_assert!(false, "the output ended twice");
+                this.step.set(other);
+            }
         }
     }
 
     fn on_process_exit(this: ThisPtr<Self>, status: Status) {
-        match this.child.replace(Child::Running) {
-            Child::OutputEnded(output) => Self::end_step(this, &status, output),
-            Child::Running | Child::Exited(_) => this.child.set(Child::Exited(status)),
+        let exit = match status {
+            Status::Running => return,
+            Status::Exited(exited) if exited.code == 0 => Ok(()),
+            Status::Exited(exited) => Err(Failure::Exited(exited.code)),
+            Status::Signaled(signal) => Err(Failure::Signaled(signal)),
+            Status::Err(err) => Err(Failure::Wait(err)),
+        };
+        match this.step.take() {
+            Some((step, Child::Running)) => this.step.set(Some((step, Child::Exited(exit)))),
+            Some((step, Child::OutputEnded(output))) => Self::end_step(this, step, exit, output),
+            other @ (Some((_, Child::Exited(_))) | None) => {
+                debug_assert!(false, "the child exited twice");
+                this.step.set(other);
+            }
         }
     }
 
-    fn end_step(this: ThisPtr<Self>, status: &Status, output: sys::Result<Vec<u8>>) {
+    fn end_step(
+        this: ThisPtr<Self>,
+        step: Step,
+        exit: Result<(), Failure>,
+        output: sys::Result<Vec<u8>>,
+    ) {
         this.process.set(None);
-        let step = this.step.take().expect("set by spawn");
-        Self::run(this, after(step, status, output));
+        Self::run(this, after(step, exit, output));
     }
 
-    fn finish(this: ThisPtr<Self>, result: Result<(), String>) {
+    fn finish(this: ThisPtr<Self>, result: Result<(), Failure>) {
         let _entered = VirtualMachine::get().enter_event_loop_scope();
         // Dropped before the scope ends, which is where the reactions run.
-        let job = runtime_state().cron_os_jobs.0.with_mut(|jobs| {
-            let i = jobs.iter().position(|job| job.as_ptr() == this.as_ptr());
-            jobs.swap_remove(i.expect("cron job finished twice"))
-        });
+        let Some(job) = runtime_state().cron_os_jobs.0.with_mut(|jobs| {
+            let i = jobs.iter().position(|job| job.as_ptr() == this.as_ptr())?;
+            Some(jobs.swap_remove(i))
+        }) else {
+            return;
+        };
         let global = job.global;
         let _ = job.promise.with_mut(|promise| match result {
             Ok(()) => promise.resolve(&global, JSValue::UNDEFINED),
-            Err(message) => {
+            Err(failure) => {
+                let message = failure.to_string();
                 let error = EncodedSlice::utf8(message.as_bytes()).to_error_instance(&global);
                 promise.reject_with_async_stack(&global, Ok(error))
             }
@@ -309,24 +357,19 @@ impl OsJob {
 }
 
 /// Takes `step`, so that its file is gone before the promise settles.
-fn after(step: Step, status: &Status, output: sys::Result<Vec<u8>>) -> Next {
-    let output = output
-        .map_err(|err| format!("Failed to read process output: {}", BStr::new(err.name())))?;
-    if status.is_ok() || step.tolerates(status) {
-        return step.next(&output);
-    }
-    let stderr = if cfg!(windows) {
-        bun_cron::schtasks::explain_failure(&output)
-    } else {
-        b""
+fn after(step: Step, exit: Result<(), Failure>, output: sys::Result<Vec<u8>>) -> Next {
+    let output = output.map_err(Failure::Read)?;
+    let failure = match exit {
+        Err(failure) if !step.tolerates(&failure) => failure,
+        _ => return step.next(&output),
     };
-    Err(match status {
-        Status::Exited(_) if !stderr.is_empty() => BStr::new(stderr).to_string(),
-        Status::Exited(exited) => format!("Process exited with code {}", exited.code),
-        Status::Signaled(signal) => format!("Process killed by signal {signal}"),
-        Status::Err(err) => format!("Process error: {}", BStr::new(err.name())),
-        Status::Running => unreachable!(),
-    })
+    #[cfg(windows)]
+    if let Failure::Exited(_) = failure
+        && let explained @ [_, ..] = bun_cron::schtasks::explain_failure(&output)
+    {
+        return Err(Failure::Stderr(explained.into()));
+    }
+    Err(failure)
 }
 
 /// A path that is unlinked when it drops.
@@ -336,8 +379,8 @@ fn write_file(
     path: &[u8],
     (flag, mode): (i32, sys::Mode),
     contents: &[u8],
-    [create_failed, write_failed]: [&str; 2],
-) -> Result<OwnedFile, String> {
+    [create_failed, write_failed]: [&'static str; 2],
+) -> Result<OwnedFile, Failure> {
     let owned: OwnedFile = scopeguard::guard(ZBox::from_bytes(path), |p| _ = sys::unlink(&p));
     let flags = sys::O::WRONLY | sys::O::CREAT | flag;
     let file = File::openat(Fd::cwd(), owned.as_bytes(), flags, mode).map_err(|_| create_failed)?;
@@ -345,12 +388,16 @@ fn write_file(
     Ok(owned)
 }
 
-/// Under a name that cannot be guessed, and only if nothing is there.
+/// Under a name that cannot be guessed.
 #[cfg(not(target_os = "macos"))]
-fn write_temp_file(suffix: &str, contents: &[u8], errors: [&str; 2]) -> Result<OwnedFile, String> {
+fn write_temp_file(
+    suffix: &str,
+    contents: &[u8],
+    errors: [&'static str; 2],
+) -> Result<OwnedFile, Failure> {
     let mut buf = bun_paths::path_buffer_pool::get();
     let name = FileSystem::tmpname(suffix.as_bytes(), &mut buf.0, bun_core::fast_random())
-        .expect("a path buffer holds a temporary name");
+        .map_err(|_| "Out of memory")?;
     let dir = bun_resolver::fs::RealFS::platform_temp_dir();
     let path = resolve_path::join_abs_string::<platform::Auto>(dir, &[name.as_bytes()]);
     write_file(path, (sys::O::EXCL, 0o600), contents, errors)
@@ -368,21 +415,21 @@ mod backend {
         Install(OwnedFile),
     }
 
-    pub(super) fn register(job: &Registration<'_>) -> Result<Command, String> {
+    pub(super) fn register(job: &Registration<'_>) -> Result<Command, Failure> {
         list(&job.title, Some(crontab::entry(job)))
     }
 
-    pub(super) fn remove(title: &Title) -> Result<Command, String> {
+    pub(super) fn remove(title: &Title) -> Result<Command, Failure> {
         list(title, None)
     }
 
-    fn list(title: &Title, entry: Option<String>) -> Result<Command, String> {
+    fn list(title: &Title, entry: Option<String>) -> Result<Command, Failure> {
         let title = title.clone();
         let step = Step::List { title, entry };
         Ok(Command::new(&[&find()?, b"-l"], Stdio::Buffer, step))
     }
 
-    fn find() -> Result<Vec<u8>, String> {
+    fn find() -> Result<Vec<u8>, Failure> {
         let path = bun_core::env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
         let mut buf = bun_paths::path_buffer_pool::get();
         let found = bun_which::which(&mut buf, path, b"", b"crontab");
@@ -390,9 +437,9 @@ mod backend {
     }
 
     impl Step {
-        pub(super) fn tolerates(&self, status: &Status) -> bool {
+        pub(super) fn tolerates(&self, failure: &Failure) -> bool {
             // How `crontab -l` says that there is no table.
-            matches!((self, status), (Step::List { .. }, Status::Exited(exited)) if exited.code == 1)
+            matches!((self, failure), (Step::List { .. }, Failure::Exited(1)))
         }
 
         pub(super) fn next(self, output: &[u8]) -> Next {
@@ -438,7 +485,7 @@ mod backend {
         Bootout(Title),
     }
 
-    pub(super) fn register(job: &Registration<'_>) -> Result<Command, String> {
+    pub(super) fn register(job: &Registration<'_>) -> Result<Command, Failure> {
         let home = HOME.get().ok_or("HOME environment variable not set")?;
         let dir = format!("{}/Library/LaunchAgents", BStr::new(home));
         (Fd::cwd().make_path(dir.as_bytes()))
@@ -452,7 +499,7 @@ mod backend {
         Ok(bootout(&job.title, Step::BootoutOld(plist)))
     }
 
-    pub(super) fn remove(title: &Title) -> Result<Command, String> {
+    pub(super) fn remove(title: &Title) -> Result<Command, Failure> {
         Ok(bootout(title, Step::Bootout(title.clone())))
     }
 
@@ -468,9 +515,10 @@ mod backend {
     }
 
     impl Step {
-        pub(super) fn tolerates(&self, status: &Status) -> bool {
+        pub(super) fn tolerates(&self, failure: &Failure) -> bool {
             // There may be nothing to boot out.
-            !matches!(self, Step::Bootstrap) && !matches!(status, Status::Err(_))
+            !matches!(self, Step::Bootstrap)
+                && matches!(failure, Failure::Exited(_) | Failure::Signaled(_))
         }
 
         pub(super) fn next(self, _: &[u8]) -> Next {
@@ -515,8 +563,8 @@ mod backend {
         Delete,
     }
 
-    pub(super) fn register(job: &Registration<'_>) -> Result<Command, String> {
-        let xml = bun_cron::schtasks::task_xml(job).map_err(|err| err.to_string())?;
+    pub(super) fn register(job: &Registration<'_>) -> Result<Command, Failure> {
+        let xml = bun_cron::schtasks::task_xml(job)?;
         let errors = [
             "Failed to create temp XML file",
             "Failed to write temp XML file",
@@ -536,16 +584,16 @@ mod backend {
         Ok(Command::new(&argv, Stdio::Ignore, Step::Create(file)))
     }
 
-    pub(super) fn remove(title: &Title) -> Result<Command, String> {
+    pub(super) fn remove(title: &Title) -> Result<Command, Failure> {
         let name = format!("bun-cron-{title}");
         let argv = [&b"schtasks"[..], b"/delete", b"/tn", name.as_bytes(), b"/f"];
         Ok(Command::new(&argv, Stdio::Ignore, Step::Delete))
     }
 
     impl Step {
-        pub(super) fn tolerates(&self, status: &Status) -> bool {
+        pub(super) fn tolerates(&self, failure: &Failure) -> bool {
             // There may be no such task.
-            matches!((self, status), (Step::Delete, Status::Exited(_)))
+            matches!((self, failure), (Step::Delete, Failure::Exited(_)))
         }
 
         pub(super) fn next(self, _: &[u8]) -> Next {

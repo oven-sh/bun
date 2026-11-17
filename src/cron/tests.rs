@@ -143,39 +143,63 @@ impl TimeZone for Zone {
     }
 }
 
+/// The instant of `"2026-06-15 09:00"` in UTC.
+fn utc(text: &str) -> f64 {
+    let number = |part| bun_core::parse_decimal::<u16>(part).unwrap().into();
+    let parts: Vec<i32> = (strings::tokenize_any(text.as_bytes(), b"- :").map(number)).collect();
+    let [year, month, day, hour, minute] = parts.try_into().unwrap();
+    (minutes(year, month, day, hour, minute) * MINUTE) as f64
+}
+
+#[track_caller]
+fn assert_next(zone: &Zone, text: &str, after: &str, expected: Option<&str>) {
+    let Ok(next) = parse(text).next(zone, utc(after));
+    assert_eq!(next, expected.map(utc), "{text} after {after}");
+}
+
 #[test]
 fn next() {
-    let utc = |(y, mo, d, h, mi)| (minutes(y, mo, d, h, mi) * MINUTE) as f64;
-    #[rustfmt::skip]
-    let cases = [
-        ("0 9 * * *", 0, (2026, 6, 15, 9, 0), Some((2026, 6, 16, 9, 0))),
-        ("* * * * *", 0, (2026, 12, 31, 23, 59), Some((2027, 1, 1, 0, 0))),
-        ("0 0 13 * 5", 0, (2026, 1, 1, 0, 0), Some((2026, 1, 2, 0, 0))),
-        ("0 0 1-31 * 1", 0, (2026, 11, 16, 12, 0), Some((2026, 11, 17, 0, 0))),
-        ("0 0 * * 1", 0, (2026, 11, 16, 12, 0), Some((2026, 11, 23, 0, 0))),
-        ("0 0 29 2 *", 0, (2026, 1, 1, 0, 0), Some((2028, 2, 29, 0, 0))),
-        ("0 0 30 2 *", 0, (2026, 1, 1, 0, 0), None),
-        // 02:30 is skipped, and fires at 03:30.
-        ("30 2 * * *", 60, (2026, 3, 8, 0, 0), Some((2026, 3, 8, 2, 30))),
-        // 01:30 comes at 00:30 and at 01:30 UTC.
-        ("30 1 * * *", 60, (2026, 10, 31, 23, 0), Some((2026, 11, 1, 0, 30))),
-        ("30 1 * * *", 60, (2026, 11, 1, 0, 30), Some((2026, 11, 2, 1, 30))),
-        ("30 * * * *", 60, (2026, 11, 1, 0, 30), Some((2026, 11, 1, 1, 30))),
-        ("* 1 * * *", 60, (2026, 11, 1, 0, 59), Some((2026, 11, 1, 1, 0))),
-        ("45 * * * *", 30, (2026, 11, 1, 1, 15), Some((2026, 11, 1, 1, 45))),
-        ("30 * * * *", 120, (2026, 10, 31, 23, 30), Some((2026, 11, 1, 0, 30))),
-        // The range ends with 2099.
-        ("* * * * *", 0, (2099, 12, 31, 23, 59), Some((2100, 1, 1, 0, 0))),
-        ("* * * * *", 0, (2100, 1, 1, 0, 0), None),
-        ("* * * * *", 0, (2100, 1, 1, 0, 1), None),
-        ("0 0 2 1 *", 0, (2099, 6, 1, 0, 0), None),
-    ];
-    for (text, shift, from, expected) in cases {
-        let Ok(next) = parse(text).next(&Zone { shift }, utc(from));
-        assert_eq!(next, expected.map(utc), "{text} from {from:?}");
+    let zone = Zone { shift: 0 };
+    for (text, after, expected) in [
+        ("0 9 * * *", "2026-06-15 09:00", Some("2026-06-16 09:00")),
+        ("* * * * *", "2026-12-31 23:59", Some("2027-01-01 00:00")),
+        ("0 0 13 * fri", "2026-01-01 00:00", Some("2026-01-02 00:00")),
+        ("0 0 * * mon", "2026-11-16 12:00", Some("2026-11-23 00:00")),
+        ("0 0 1-31 * 1", "2026-11-16 12:00", Some("2026-11-17 00:00")),
+        ("0 0 29 feb *", "2026-01-01 00:00", Some("2028-02-29 00:00")),
+        ("0 0 30 feb *", "2026-01-01 00:00", None),
+        // `Zone::MAX_MS` is 2100-01-01 00:00.
+        ("* * * * *", "2099-12-31 23:59", Some("2100-01-01 00:00")),
+        ("* * * * *", "2100-01-01 00:00", None),
+        ("* * * * *", "2100-01-01 00:01", None),
+        ("0 0 2 jan *", "2099-06-01 00:00", None),
+    ] {
+        assert_next(&zone, text, after, expected);
     }
-    let Ok(next) = parse("* * * * *").next(&Zone { shift: 0 }, f64::NAN);
+    let Ok(next) = parse("* * * * *").next(&zone, f64::NAN);
     assert_eq!(next, None);
+}
+
+#[test]
+fn next_when_clocks_change() {
+    let zone = Zone { shift: 60 };
+    for (text, after, expected) in [
+        // 02:30 is skipped, and fires at 03:30, which is 02:30 UTC.
+        ("30 2 * * *", "2026-03-08 00:00", "2026-03-08 02:30"),
+        // 01:30 comes at 00:30 and at 01:30 UTC: a fixed time fires once, a `*` twice.
+        ("30 1 * * *", "2026-10-31 23:00", "2026-11-01 00:30"),
+        ("30 1 * * *", "2026-11-01 00:30", "2026-11-02 01:30"),
+        ("30 * * * *", "2026-11-01 00:30", "2026-11-01 01:30"),
+        ("* 1 * * *", "2026-11-01 00:59", "2026-11-01 01:00"),
+    ] {
+        assert_next(&zone, text, after, Some(expected));
+    }
+    for (shift, text, after, expected) in [
+        (30, "45 * * * *", "2026-11-01 01:15", "2026-11-01 01:45"),
+        (120, "30 * * * *", "2026-10-31 23:30", "2026-11-01 00:30"),
+    ] {
+        assert_next(&Zone { shift }, text, after, Some(expected));
+    }
 }
 
 #[test]
@@ -233,22 +257,27 @@ fn plist() {
             dicts.collect::<Vec<_>>().concat()
         )
     };
-    let (m, h, d, mo, w) = ("Minute", "Hour", "Day", "Month", "Weekday");
     for (text, interval) in [
         ("* * * * *", dict(&[])),
-        ("0 0 1-31 * 1", dict(&[(m, 0), (h, 0), (w, 1)])),
+        (
+            "0 0 1-31 * 1",
+            dict(&[("Minute", 0), ("Hour", 0), ("Weekday", 1)]),
+        ),
         (
             "0,30 1,2 * * *",
             array(&[
-                &[(m, 0), (h, 1)],
-                &[(m, 0), (h, 2)],
-                &[(m, 30), (h, 1)],
-                &[(m, 30), (h, 2)],
+                &[("Minute", 0), ("Hour", 1)],
+                &[("Minute", 0), ("Hour", 2)],
+                &[("Minute", 30), ("Hour", 1)],
+                &[("Minute", 30), ("Hour", 2)],
             ]),
         ),
         (
             "* * 13 2 5",
-            array(&[&[(d, 13), (mo, 2)], &[(mo, 2), (w, 5)]]),
+            array(&[
+                &[("Day", 13), ("Month", 2)],
+                &[("Month", 2), ("Weekday", 5)],
+            ]),
         ),
     ] {
         let plist = launchd::plist(&job(text, b"", b""));

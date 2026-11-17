@@ -5,6 +5,7 @@
 use bun_collections::VecExt;
 
 use crate::api::bun_spawn::stdio::Stdio;
+use crate::shell::interpreter::OutputNeedsIOSafeGuard;
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::IOWriter;
 use crate::shell::shell_body::subproc::ShellIO;
@@ -119,6 +120,16 @@ impl OutKind {
         match self {
             OutKind::Fd(fd) => fd.memory_cost(),
             _ => 0,
+        }
+    }
+
+    /// If this output requires async IO (i.e. it's an `Fd`), return the
+    /// safeguard token; otherwise `None` and the caller can write
+    /// synchronously to the captured buffer / drop.
+    pub(crate) fn needs_io(&self) -> Option<OutputNeedsIOSafeGuard> {
+        match self {
+            OutKind::Fd(_) => Some(OutputNeedsIOSafeGuard::OutputNeedsIo),
+            _ => None,
         }
     }
 

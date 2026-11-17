@@ -1425,10 +1425,12 @@ impl Run<'_> {
                     let Some(redis) = bun_object.get(global, "redis")? else {
                         return Ok(());
                     };
-                    let Some(client) = crate::valkey_jsc::js_valkey::js::from_js(&redis) else {
+                    let Some(client) =
+                        redis.as_class_ref::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
+                    else {
                         return Ok(());
                     };
-                    client.do_connect(global, (&client).into());
+                    client.do_connect(global, redis)?;
                     Ok(())
                 })
             };
@@ -3350,10 +3352,34 @@ impl RunCommand {
                 }
             }
         }
-        match bun_core::output::File::from(Fd::stdout()).winsize() {
-            Some(size) if size.col > 0 => size.col,
-            _ => 80,
+        #[cfg(unix)]
+        {
+            let mut size: libc::winsize = bun_core::ffi::zeroed();
+            // SAFETY: ioctl with valid winsize ptr
+            if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0 {
+                if size.ws_col > 0 {
+                    return size.ws_col;
+                }
+            }
         }
+        #[cfg(windows)]
+        {
+            if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
+                let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+                // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
+                // is a valid console output HANDLE from GetStdHandle and
+                // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
+                if unsafe { sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
+                    != sys::windows::FALSE
+                {
+                    let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                    if w > 0 {
+                        return u16::try_from(w).expect("int cast");
+                    }
+                }
+            }
+        }
+        80
     }
 
     /// Renders `path` to stdout. Returns the process exit code.

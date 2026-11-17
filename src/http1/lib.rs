@@ -1,6 +1,6 @@
-//! HTTP/1.1 framing without I/O. Parts derive from picohttpparser and llhttp (LICENSE.md).
+//! HTTP/1.1 response framing without I/O. Parts derive from picohttpparser (LICENSE.md).
 #![forbid(unsafe_code)]
-// Messages come from anywhere and a panic aborts the process.
+// Responses come from anywhere and a panic aborts the process.
 #![deny(
     clippy::indexing_slicing,
     clippy::unwrap_used,
@@ -13,7 +13,6 @@
 mod byte_sets;
 mod chunked;
 mod error;
-pub mod message;
 mod response;
 
 pub use chunked::ChunkedDecoder;

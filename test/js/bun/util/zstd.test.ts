@@ -740,7 +740,8 @@ describe("sync compression argument handling", () => {
     }
   });
 
-  // The output buffer doubles as it fills; its cap must not be tighter than the zlib backend's (ArrayBuffer max).
+  // libdeflate is one-shot, so Bun retries with a doubling output buffer; the
+  // retry cap must not be tighter than the zlib backend's (ArrayBuffer max).
   // Spawned so the multi-GB buffer is released with the child.
   it("gunzipSync({library:'libdeflate'}) decompresses output larger than 1 GiB", async () => {
     const MiB = 1024 * 1024;

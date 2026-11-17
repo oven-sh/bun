@@ -181,7 +181,7 @@ impl WindowsWatcher {
             Error::CreateFileFailed
         })?;
 
-        let port = w::CreateIoCompletionPort(dir_handle.as_raw_handle(), 0, 1)
+        let port = w::CreateIoCompletionPort(dir_handle.as_raw_handle(), ptr::null_mut(), 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
 
         let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);

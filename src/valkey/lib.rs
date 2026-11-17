@@ -1,4 +1,2 @@
-#![forbid(unsafe_code)]
-pub mod client;
-pub mod command;
+#![warn(unused_must_use)]
 pub mod valkey_protocol;

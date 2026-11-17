@@ -774,7 +774,9 @@ it("process.versions", async () => {
     tinycc: "tinycc",
     lolhtml: "lolhtml",
     ares: "cares",
+    libdeflate: "libdeflate",
     zstd: "zstd",
+    lshpack: "lshpack",
   };
 
   const expectedVersions = {};

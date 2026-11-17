@@ -10,7 +10,6 @@ use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
 use crate::{HTTPClient, Request};
 use bun_core::strings;
-use bun_hpack::{Block, Indexing};
 
 pub(crate) fn write_preface(session: &mut ClientSession) {
     session.queue(wire::CLIENT_PREFACE);
@@ -96,6 +95,13 @@ pub(crate) fn write_request(
     let mut encoded = core::mem::take(&mut session.encode_scratch);
     encoded.clear();
 
+    if let Some(cap) = session.pending_hpack_enc_capacity {
+        session.pending_hpack_enc_capacity = None;
+        session.hpack.set_encoder_max_capacity(cap);
+        encoded.reserve(8);
+        encode_hpack_table_size_update(&mut encoded, cap);
+    }
+
     let mut authority: &[u8] = client.url.host;
     let mut has_expect_continue = false;
     let mut lower_buf = [0u8; 256];
@@ -119,25 +125,27 @@ pub(crate) fn write_request(
         }
     }
 
-    let mut block = session.encoder.block(&mut encoded);
-    encode_header(&mut block, b":method", request.method, Indexing::Allowed)?;
-    encode_header(&mut block, b":scheme", b"https", Indexing::Allowed)?;
-    encode_header(&mut block, b":authority", authority, Indexing::Allowed)?;
+    encode_header(session, &mut encoded, b":method", request.method, false)?;
+    encode_header(session, &mut encoded, b":scheme", b"https", false)?;
+    encode_header(session, &mut encoded, b":authority", authority, false)?;
     encode_header(
-        &mut block,
+        session,
+        &mut encoded,
         b":path",
         if !request.path.is_empty() {
             request.path
         } else {
             b"/"
         },
-        Indexing::Allowed,
+        false,
     )?;
 
     for h in request.headers {
         // §8.2.1: field names MUST be lowercase on the wire. copy_lowercase_if_needed
         // returns the input slice unchanged when it's already lowercase, so
-        // the common (Fetch-normalised) case is zero-copy.
+        // the common (Fetch-normalised) case is zero-copy. lshpack rejects
+        // names+values >64KiB anyway, so the heap fallback only ever holds a
+        // few hundred bytes.
         let mut heap: Vec<u8>;
         let name: &[u8] = if h.name().len() <= lower_buf.len() {
             strings::copy_lowercase_if_needed(h.name(), &mut lower_buf)
@@ -145,7 +153,7 @@ pub(crate) fn write_request(
             heap = vec![0u8; h.name().len()];
             strings::copy_lowercase_if_needed(h.name(), &mut heap)
         };
-        let mut indexing = Indexing::Allowed;
+        let mut never_index = false;
         if let Some(kind) = classify_request_header(name) {
             match kind {
                 RequestHeader::Drop | RequestHeader::Host => continue,
@@ -162,11 +170,11 @@ pub(crate) fn write_request(
                         continue;
                     }
                 }
-                RequestHeader::Sensitive => indexing = Indexing::Never,
+                RequestHeader::Sensitive => never_index = true,
                 RequestHeader::Expect => {}
             }
         }
-        encode_header(&mut block, name, h.value(), indexing)?;
+        encode_header(session, &mut encoded, name, h.value(), never_index)?;
     }
 
     // request_body points into original_request_body.bytes (lives in client.state).
@@ -398,14 +406,41 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
 }
 
 fn encode_header(
-    block: &mut Block<'_>,
+    session: &mut ClientSession,
+    encoded: &mut Vec<u8>,
     name: &[u8],
     value: &[u8],
-    indexing: Indexing,
+    never_index: bool,
 ) -> crate::Result<()> {
-    if name.len() + value.len() > bun_hpack::MAX_FIELD_LEN {
-        return Err(crate::Error::UnableToEncode);
-    }
-    block.field(name, value, indexing);
+    let required = encoded.len() + name.len() + value.len() + 32;
+    encoded.reserve(required.saturating_sub(encoded.len()));
+    let len = encoded.len();
+    // Write through the raw buffer and set_len after.
+    // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
+    // within the just-reserved capacity; bytes in `[0..len]` are initialized.
+    let buf = unsafe { bun_core::vec::allocated_bytes_mut(encoded) };
+    let written = session
+        .hpack
+        .encode(name, value, never_index, buf, len)
+        .map_err(crate::Error::from)?;
+    // SAFETY: hpack wrote `written` bytes at offset `len`; new_len <= capacity.
+    unsafe { bun_core::vec::commit_spare(encoded, written) };
     Ok(())
+}
+
+/// RFC 7541 §6.3 Dynamic Table Size Update: `001` prefix, 5-bit-prefix
+/// integer. Must be the first opcode in a header block. Caller guarantees
+/// at least 6 bytes of capacity (max for a u32).
+fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
+    if value < 31 {
+        encoded.push(0x20 | u8::try_from(value).expect("int cast"));
+        return;
+    }
+    encoded.push(0x20 | 31);
+    let mut rest = value - 31;
+    while rest >= 128 {
+        encoded.push((rest as u8) | 0x80);
+        rest >>= 7;
+    }
+    encoded.push(rest as u8);
 }

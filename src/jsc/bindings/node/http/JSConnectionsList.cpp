@@ -4,12 +4,11 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSSetIterator.h>
-#include "GeneratedNodeHttpParser.h"
+#include "JSHTTPParser.h"
 
 namespace Bun {
 
 using namespace JSC;
-using Bindgen::Generated::JSHTTPParser;
 
 const ClassInfo JSConnectionsList::s_info = { "ConnectionsList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSConnectionsList) };
 
@@ -94,7 +93,12 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     while (iter->next(globalObject, item)) {
         RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
-        if (parser && parser->isIdle()) {
+        // close() frees the impl but doesn't remove the parser from the set.
+        if (!parser || !parser->impl()) {
+            continue;
+        }
+
+        if (parser->impl()->lastMessageStart() == 0) {
             result->putDirectIndex(globalObject, i++, parser);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
@@ -150,7 +154,11 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     while (iter->next(globalObject, item)) {
         RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
-        if (parser && parser->isExpired(headersDeadline, requestDeadline)) {
+        if (!parser || !parser->impl()) {
+            continue;
+        }
+
+        if ((!parser->impl()->headersCompleted() && headersDeadline > 0 && parser->impl()->lastMessageStart() < headersDeadline) || (requestDeadline > 0 && parser->impl()->lastMessageStart() < requestDeadline)) {
             result->putDirectIndex(globalObject, i++, item);
             RETURN_IF_EXCEPTION(scope, nullptr);
             active->remove(globalObject, item);
@@ -162,33 +170,24 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     return result;
 }
 
-void JSConnectionsList::update(JSGlobalObject* globalObject, JSCell* parser, bool isListed, bool isActive)
+void JSConnectionsList::push(JSGlobalObject* globalObject, JSCell* parser)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    for (auto [set, isMember] : { std::pair { allConnections(), isListed }, std::pair { activeConnections(), isActive } }) {
-        // A member moves to the end.
-        set->remove(globalObject, parser);
-        RETURN_IF_EXCEPTION(scope, );
-        if (isMember) {
-            set->add(globalObject, parser);
-            RETURN_IF_EXCEPTION(scope, );
-        }
-    }
+    allConnections()->add(globalObject, parser);
 }
 
-JSValue JSHTTPParser::setConnections(JSGlobalObject* globalObject, JSValue list)
+void JSConnectionsList::pop(JSGlobalObject* globalObject, JSCell* parser)
 {
-    auto* connections = dynamicDowncast<JSConnectionsList>(list);
-    if (!connections && !list.isUndefinedOrNull())
-        return jsBoolean(false);
-    m_connections.setMayBeNull(globalObject->vm(), this, connections);
-    return jsBoolean(true);
+    allConnections()->remove(globalObject, parser);
 }
 
-void JSHTTPParser::updateConnections(JSGlobalObject* globalObject, bool isListed, bool isActive)
+void JSConnectionsList::pushActive(JSGlobalObject* globalObject, JSCell* parser)
 {
-    if (auto* connections = m_connections.get())
-        connections->update(globalObject, this, isListed, isActive);
+    activeConnections()->add(globalObject, parser);
+}
+
+void JSConnectionsList::popActive(JSGlobalObject* globalObject, JSCell* parser)
+{
+    activeConnections()->remove(globalObject, parser);
 }
 
 } // namespace Bun

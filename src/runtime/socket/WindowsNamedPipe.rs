@@ -35,7 +35,7 @@ use bun_uws::us_bun_verify_error_t;
 
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
 use crate::socket::{SSLConfig, WindowsNamedPipeContext};
-use crate::timer::{EventLoopTimer, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
@@ -367,7 +367,12 @@ impl WindowsNamedPipe {
     pub(crate) fn on_timeout(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
 
-        if self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
+        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
+            || self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
+
+        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
+
+        if has_been_cleared {
             return;
         }
 

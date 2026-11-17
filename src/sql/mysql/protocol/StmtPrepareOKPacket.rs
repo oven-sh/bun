@@ -2,22 +2,24 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::packet_reader::PacketReader;
 
 #[derive(Default)]
-pub(crate) struct StmtPrepareOKPacket {
-    pub(crate) status: u8,
-    pub(crate) statement_id: u32,
-    pub(crate) num_columns: u16,
-    pub(crate) num_params: u16,
+pub struct StmtPrepareOKPacket {
+    pub status: u8,
+    pub statement_id: u32,
+    pub num_columns: u16,
+    pub num_params: u16,
 }
 
 impl StmtPrepareOKPacket {
-    pub(crate) fn decode(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+    pub fn decode(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         self.status = reader.int::<u8>()?;
         if self.status != 0 {
             return Err(AnyMySQLError::InvalidPrepareOKPacket);
         }
 
         self.statement_id = reader.int::<u32>()?;
-        // No server issues it.
+        // The server never issues statement_id 0, and the client keys its own
+        // "prepared" state on statement_id > 0 (see handle_prepared_statement),
+        // so a 0 here is a protocol violation.
         if self.statement_id == 0 {
             return Err(AnyMySQLError::InvalidPrepareOKPacket);
         }

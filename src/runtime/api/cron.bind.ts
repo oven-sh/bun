@@ -6,7 +6,9 @@ const chainable = { returns: b.self, passThis: true } as const;
 
 export const CronJob = b.class({
   rustPath: "crate::api::cron::CronJob",
-  internalFields: ["callback", "pendingTick", "cron"],
+  refCounted: true,
+  finalize: true,
+  internalFields: ["callback", "pendingPromise", "cron"],
   proto: {
     cron: { internalField: "cron" },
     ref: chainable,
@@ -16,10 +18,10 @@ export const CronJob = b.class({
   },
 });
 
-/** A tick whose promise is pending. `job` is emptied when the job stops. */
-export const CronTick = b.class({ rustPath: "crate::api::cron::CronTick", internalFields: ["job", "promise"] });
-
-const reaction = { args: { value: b.any, context: CronTick.withValue }, capability: "js" } as const;
+const reaction = {
+  args: { value: b.any, context: b.nativePromiseContext("crate::api::cron::CronJob") },
+  capability: "js",
+} as const;
 
 /** The reactions to the promise a job's callback returned. */
 export const onPromiseResolve = b.fn({ ...reaction, export: "Bun__CronJob__onPromiseResolve" });
@@ -43,7 +45,7 @@ export const cron = b.overloads(
       title: "Bun.cron() expects a string title as the third argument",
     },
     returns: b.any,
-    rustPath: "crate::api::cron_os::register",
+    rustPath: "crate::api::cron::register_os_job",
   },
   /** An in-process job, whose `cron` is the `schedule` it was given. */
   {
@@ -64,7 +66,6 @@ export const remove = b.fn({
   args: { title: b.string.utf8 },
   expected: { title: "Bun.cron.remove() expects a string title" },
   returns: b.any,
-  rustPath: "crate::api::cron_os::remove",
   capability: "js",
   throws: true,
 });

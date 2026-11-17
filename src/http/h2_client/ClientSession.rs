@@ -18,6 +18,7 @@ use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
 use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
+use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
 use crate::{
@@ -47,8 +48,7 @@ pub struct ClientSession {
     /// One ref moves between `active_h2_sessions`, while the socket ext points here, and the keep-alive pool.
     pub(crate) ref_count: Cell<u32>,
 
-    pub(crate) encoder: bun_hpack::Encoder,
-    pub(crate) decoder: bun_hpack::Decoder,
+    pub(crate) hpack: lshpack::HpackHandle, // RAII owner; Deref/DerefMut to lshpack::HPACK
     pub(crate) socket: Socket,
     pub(crate) ctx: *mut NewHTTPContext<true>, // BACKREF: context outlives and registers this session
 
@@ -132,6 +132,11 @@ pub struct ClientSession {
     pub(crate) remote_max_frame_size: u24,
     pub(crate) remote_max_concurrent_streams: u32,
     pub(crate) remote_initial_window_size: u32,
+    /// SETTINGS_HEADER_TABLE_SIZE received from the peer that hasn't yet been
+    /// acknowledged with a Dynamic Table Size Update (RFC 7541 §6.3) at the
+    /// start of a header block. lshpack's encoder doesn't emit that opcode
+    /// itself, so writeRequest must prepend it before the first encode call.
+    pub(crate) pending_hpack_enc_capacity: Option<u32>,
     /// Connection-level send window. Starts at the spec default regardless of
     /// SETTINGS; only WINDOW_UPDATE on stream 0 grows it.
     pub(crate) conn_send_window: i32,
@@ -304,8 +309,7 @@ impl ClientSession {
     ) -> SessionPtr {
         let this = RefPtr::new(ClientSession {
             ref_count: Cell::new(1),
-            encoder: bun_hpack::Encoder::new(),
-            decoder: bun_hpack::Decoder::new(),
+            hpack: lshpack::HpackHandle::new(4096),
             socket,
             ctx,
             hostname: Box::<[u8]>::from(client.connected_url.hostname),
@@ -339,6 +343,7 @@ impl ClientSession {
             remote_max_frame_size: wire::DEFAULT_MAX_FRAME_SIZE,
             remote_max_concurrent_streams: 100,
             remote_initial_window_size: wire::DEFAULT_WINDOW_SIZE,
+            pending_hpack_enc_capacity: None,
             conn_send_window: wire::DEFAULT_WINDOW_SIZE as i32,
             conn_unacked_bytes: 0,
             registry_index: Cell::new(u32::MAX),

@@ -384,8 +384,8 @@ pub(crate) fn cluster_raw_bind<'a>(
     }
     #[cfg(not(windows))]
     {
-        use bun_sys::net::{Address, bind, getsockname, setsockopt_int, socket};
-        use bun_sys::{CloseOnDrop, Fd};
+        use bun_sys::Fd;
+        use bun_sys::net::{Address, getsockname, setsockopt_int};
         use core::ffi::c_int;
         use core::net::{Ipv4Addr, Ipv6Addr};
 
@@ -402,9 +402,12 @@ pub(crate) fn cluster_raw_bind<'a>(
             flags: i32,
             address: &[u8],
         ) -> Result<Fd, i32> {
-            let negated_errno = |err: bun_sys::Error| -i32::from(err.errno);
-            let socket = CloseOnDrop::new(socket(family, socktype).map_err(negated_errno)?);
-            let fd = socket.fd();
+            // SAFETY: socket(2) takes no pointers.
+            let fd = unsafe { libc::socket(family, socktype, 0) };
+            if fd < 0 {
+                return Err(-bun_core::ffi::errno());
+            }
+            let fd = Fd::from_native(fd);
             let _ = bun_sys::set_close_on_exec(fd);
             let _ = bun_sys::set_nonblocking(fd);
 
@@ -420,8 +423,14 @@ pub(crate) fn cluster_raw_bind<'a>(
                 let _ = setsockopt_int(fd, libc::IPPROTO_IPV6, libc::IPV6_V6ONLY, flags & 0x1);
             }
 
-            bind(fd, address).map_err(negated_errno)?;
-            Ok(socket.into_raw())
+            let len = address.len() as libc::socklen_t;
+            // SAFETY: bind(2) reads at most `len` bytes of `address`.
+            if unsafe { libc::bind(fd.native(), address.as_ptr().cast(), len) } != 0 {
+                let e = -bun_core::ffi::errno();
+                let _ = bun_sys::FdExt::close_allowing_standard_io(fd, None);
+                return Err(e);
+            }
+            Ok(fd)
         }
 
         if atype == -1 {
@@ -539,12 +548,34 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
         } else {
             libc::SOCK_STREAM
         };
-        let fd = bun_sys::Fd::from_native(fd);
+        let mut ty: libc::c_int = 0;
+        let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are live locals, and `len`
+        // is the size of `ty`.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                (&raw mut ty).cast(),
+                &raw mut len,
+            )
+        };
         // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
-        if bun_sys::net::socket_type(fd) != Some(wanted)
-            || (!want_dgram && bun_sys::net::is_connected(fd))
-        {
+        if rc != 0 || ty != wanted {
             return -bun_sys::UV_E::INVAL;
+        }
+        if ty == libc::SOCK_STREAM {
+            // SAFETY: getpeername only writes within `peer_len`, the size of `peer`.
+            let connected = unsafe {
+                let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed();
+                let mut peer_len =
+                    core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+                libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
+            };
+            if connected {
+                return -bun_sys::UV_E::INVAL;
+            }
         }
         0
     }

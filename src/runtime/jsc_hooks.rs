@@ -88,9 +88,10 @@ pub(crate) struct RuntimeState {
     #[cfg(windows)]
     pub(crate) path_watchers: core::cell::OnceCell<Box<crate::node::win_watcher::PathWatchers>>,
     pub(crate) request_pools: crate::server::RequestPools,
-    /// The wrappers of the running `Bun.cron()` jobs of the main thread under `--hot`, which a reload stops.
-    pub(crate) cron_jobs: JsCell<Vec<bun_jsc::Strong>>,
-    pub(crate) cron_os_jobs: crate::api::cron_os::OsJobs,
+    /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
+    /// stop; one ref per entry, released by `CronJob::remove_from_list` /
+    /// `clear_all_for_vm`.
+    pub(crate) cron_jobs: JsCell<Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>,
     pub(crate) stat_watcher_scheduler: JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
     /// Set in the VM that runs the files of `bun test`.
     pub(crate) test_runner: Cell<Option<&'static crate::test_runner::jest::TestRunner>>,
@@ -157,7 +158,7 @@ fn try_timer_all() -> Option<&'static timer::All> {
     try_runtime_state().map(|state| &state.timer)
 }
 
-/// Per-VM lazy DNS resolver storage. Shared borrow only — script can
+/// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
@@ -316,7 +317,6 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         path_watchers: Default::default(),
         request_pools: Default::default(),
         cron_jobs: JsCell::default(),
-        cron_os_jobs: Default::default(),
         stat_watcher_scheduler: JsCell::new(None),
         test_runner: Cell::new(None),
         matcher_pass: Cell::new(ptr::null()),
@@ -995,10 +995,14 @@ fn timer_min_delay_ms() -> u32 {
 }
 
 /// For `AbortSignal::Timeout`, like `timer_min_delay_ms`.
-fn abort_signal_timeout_clock() -> timer::Clock {
-    try_timer_all().map_or(timer::Clock::Real, |all| {
-        all.fake_timers.abort_signal_timeout_clock()
-    })
+fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+    let Some(all) = try_timer_all() else {
+        return bun_core::TimespecMockMode::ForceRealTime;
+    };
+    match all.fake_timers.abort_signal_timeout_clock() {
+        crate::timer::Clock::Fake => bun_core::TimespecMockMode::AllowMockedTime,
+        crate::timer::Clock::Real => bun_core::TimespecMockMode::ForceRealTime,
+    }
 }
 
 fn timers_left() -> TimersLeft {
@@ -1194,7 +1198,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_flags,
     stop_watches_for_vm_teardown,
-    cron_clear_all_reload: crate::api::cron::CronJob::stop_all_for_reload,
+    cron_clear_all_reload,
     retroactively_report_discovered_tests,
     cancel_timers,
     end_hot_run_timers,
@@ -1282,13 +1286,27 @@ unsafe fn parse_worker_exec_argv_flags(
     Some(flags)
 }
 
-/// Drops the owners of polls, which are slots of `RareData`: it is freed before the runtime state.
-fn stop_watches_for_vm_teardown() {
+/// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —
+/// stops every in-process `Bun.cron()` job registered on
+/// this VM and releases the pending-promise ref so the struct frees (the event
+/// loop is dying; settle callbacks will never run). Drops the memory pressure watcher too.
+fn stop_watches_for_vm_teardown(vm: &VirtualMachine) {
+    use crate::api::cron::{ClearMode, CronJob};
+    CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(vm);
     if let Some(state) = try_runtime_state() {
-        state.cron_os_jobs.release_for_vm_teardown();
+        // Its poll is a slot of `RareData`, which is freed before the runtime state.
         state.memory_pressure_watcher.set(None);
         state.browsers.release_for_vm_teardown();
     }
+}
+
+/// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` —
+/// the cron half of [`stop_watches_for_vm_teardown`], but skips
+/// the pending-promise force-release (the event loop survives a hot reload, so
+/// settle callbacks will still run).
+fn cron_clear_all_reload(vm: &VirtualMachine) {
+    use crate::api::cron::{ClearMode, CronJob};
+    CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
 }
 
 pub(crate) fn hot_reload_generation() -> f64 {
@@ -1302,7 +1320,7 @@ pub(crate) fn hot_reload_generation() -> f64 {
 
 /// `RuntimeHooks::cancel_timers` — cancel every `TimeoutObject` /
 /// `ImmediateObject` still linked in the current thread's timer heap so the
-/// JS pins drop before the GC sweep / `~VM`; or, for
+/// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`; or, for
 /// `only`, just those script of that (stopped) context set.
 /// `timer::All` lives in `bun_runtime`; callers (`global_exit`,
 /// `WebWorker::shutdown`) are in `bun_jsc`, hence the hook.
@@ -1327,23 +1345,40 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
         let Some(timers) = vm.timer_context(context).map(|c| c.take_timers()) else {
             return;
         };
-        for &timer in timers.keys() {
+        for (&timer, &kind) in timers.iter() {
             // SAFETY: tracked ⇒ live (each untracks itself when it drops); a
-            // discard may free the one it discards, never another tracked one.
-            unsafe { timer::discard_js_timer(timer) };
+            // cancel may free the one it cancels, never another tracked one.
+            unsafe {
+                match kind {
+                    bun_jsc::ContextTimer::Object => {
+                        (*timer.cast::<crate::timer::TimerObjectInternals>()).cancel(vm)
+                    }
+                    bun_jsc::ContextTimer::AbortSignal => {
+                        bun_jsc::abort_signal::Timeout::discard(timer.cast())
+                    }
+                }
+            }
         }
         return;
     }
     // Fake-timer state lives in the per-thread `timer::All`, so it would outlive this global.
     all.fake_timers.forget_realm(vm.global());
-    all.cancel_all_timeout_objects();
+    all.cancel_all_timeout_objects(vm);
 }
 
 /// `RuntimeHooks::end_hot_run_timers`.
 fn end_hot_run_timers(vm: &VirtualMachine, cancel: CancelHotRunTimers) {
-    if let Some(timers) = try_timer_all() {
-        timers.end_hot_run(vm, cancel);
+    let Some(timers) = try_timer_all() else {
+        return;
+    };
+    if cancel != CancelHotRunTimers::None {
+        let hot_run = crate::timer::HotRun {
+            counter: vm.hot_reload_counter.get(),
+            only_intervals: cancel == CancelHotRunTimers::Intervals,
+        };
+        timers.cancel_timeout_objects(vm, Some(&hot_run));
     }
+    timers.first_id_of_hot_run.set(timers.last_id.get());
 }
 
 /// `RuntimeHooks::close_timer_loop_handles_after_vm_destroyed`: teardown-only companion of
@@ -1376,7 +1411,7 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
-/// are all still live.
+/// are all still live. See `Resolver::close_channel_for_terminate`.
 fn stop_dns_for_vm_teardown() -> SweepResult {
     let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;
@@ -1541,9 +1576,9 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         Ok(true)
     }
-    fn timeout_id_and_repeats(value: JSValue) -> Option<(u64, bool)> {
+    fn timeout_id_and_kind(value: JSValue) -> Option<(u64, crate::timer::Kind)> {
         let timer = value.as_class_ref::<crate::timer::TimeoutObject>()?;
-        Some((timer.id, timer.repeats()))
+        Some((timer.internals.id, timer.internals.flags.get().kind()))
     }
     let global = formatter.global_this;
 
@@ -1601,10 +1636,10 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         // Spec falls through (no `return`) when `toJSON` is absent.
     }
-    if let Some((id, repeats)) = timeout_id_and_repeats(value) {
+    if let Some((id, kind)) = timeout_id_and_kind(value) {
         formatter.add_for_new_line("Timeout(# ) ".len() + bun_core::fmt::digit_count(id));
         let mut w = AsFmt::new(writer_);
-        if repeats {
+        if kind == crate::timer::Kind::SetInterval {
             formatter.add_for_new_line("repeats ".len() + bun_core::fmt::digit_count(id));
             let _ = write!(
                 w,
@@ -1635,7 +1670,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         return Ok(true);
     }
     if let Some(immediate) = value.as_class_ref::<crate::timer::ImmediateObject>() {
-        let id = immediate.id;
+        let id = immediate.internals.id;
         formatter.add_for_new_line("Immediate(# ) ".len() + bun_core::fmt::digit_count(id));
         let mut w = AsFmt::new(writer_);
         let _ = write!(

@@ -1,4 +1,6 @@
 use core::cell::Cell;
+#[cfg(not(windows))]
+use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
 use bun_core::{String as BunString, Utf8Bytes};
@@ -21,6 +23,8 @@ use bun_sys::{self, SystemErrno};
 use bun_uws as uws;
 #[cfg(not(windows))]
 use libc::sockaddr_storage;
+#[cfg(not(windows))]
+use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
 
 use crate::api::SocketAddress;
 use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
@@ -213,8 +217,14 @@ extern "C" fn on_data(
             'blk: {
                 #[cfg(not(windows))]
                 {
-                    let mut buffer = [0u8; libc::IF_NAMESIZE];
-                    if let Some(name) = bun_sys::net::if_indextoname(id, &mut buffer) {
+                    let mut buffer = [0u8; IF_NAMESIZE + 1];
+                    // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
+                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }
+                        .is_null()
+                    {
+                        // SAFETY: if_indextoname wrote a NUL-terminated string.
+                        let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }
+                            .to_bytes();
                         break 'blk BunString::create_format(format_args!(
                             "{}%{}",
                             bstr::BStr::new(span),
@@ -1442,8 +1452,9 @@ impl UDPSocket {
                         }
                         #[cfg(not(windows))]
                         {
+                            // SAFETY: a `ZStr` ends with a NUL.
                             let index =
-                                bun_sys::net::if_nametoindex(address.substring(percent + 1));
+                                unsafe { if_nametoindex(address.substring(percent + 1).as_ptr()) };
                             if index > 0 {
                                 break 'blk index;
                             }
@@ -2039,16 +2050,30 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
         if fd < 0 {
             break 'kind "UNKNOWN";
         }
-        let fd = bun_sys::Fd::from_native(fd);
-        let Ok(st) = bun_sys::fstat(fd) else {
+        let mut st: libc::stat = bun_core::ffi::zeroed();
+        // SAFETY: fstat(2) with a zeroed out-param.
+        let rc = unsafe { libc::fstat(fd, std::ptr::from_mut(&mut st)) };
+        if rc != 0 {
             break 'kind "UNKNOWN";
-        };
+        }
         let mode = st.st_mode & libc::S_IFMT;
         if mode == libc::S_IFSOCK {
-            let Some(sock_type) = bun_sys::net::socket_type(fd) else {
-                break 'kind "UNKNOWN";
+            let mut sock_type: c_int = 0;
+            let mut len = size_of::<c_int>() as libc::socklen_t;
+            // SAFETY: getsockopt(2) writes an int into sock_type.
+            let rc = unsafe {
+                libc::getsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_TYPE,
+                    std::ptr::from_mut(&mut sock_type).cast::<c_void>(),
+                    std::ptr::from_mut(&mut len),
+                )
             };
-            let Ok(addr) = bun_sys::net::getsockname(fd) else {
+            if rc != 0 {
+                break 'kind "UNKNOWN";
+            }
+            let Ok(addr) = bun_sys::net::getsockname(bun_sys::Fd::from_native(fd)) else {
                 break 'kind "UNKNOWN";
             };
             let family = addr.family();
@@ -2063,7 +2088,9 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
             break 'kind "PIPE";
         }
         if mode == libc::S_IFCHR {
-            break 'kind if bun_sys::isatty(fd) { "TTY" } else { "FILE" };
+            // SAFETY: isatty(3) on a non-negative fd.
+            let is_tty = unsafe { libc::isatty(fd) } == 1;
+            break 'kind if is_tty { "TTY" } else { "FILE" };
         }
         if mode == libc::S_IFREG {
             break 'kind "FILE";
@@ -2078,7 +2105,16 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
 pub(crate) fn dgram_listen_fd(fd: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
-        bun_sys::net::listen(bun_sys::Fd::from_native(dgram_owned_fd(fd)?), 511)
+        let fd = dgram_owned_fd(fd)?;
+        // SAFETY: listen(2) on a descriptor this module created.
+        let rc = unsafe { libc::listen(fd, 511) };
+        if rc != 0 {
+            return Err(bun_sys::Error::from_code_int(
+                bun_sys::last_errno(),
+                bun_sys::Tag::listen,
+            ));
+        }
+        Ok(())
     }
     #[cfg(windows)]
     {

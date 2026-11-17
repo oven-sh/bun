@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bitflags.workspace = true
 bun_core.workspace = true
 bun_http_types.workspace = true
 thiserror.workspace = true

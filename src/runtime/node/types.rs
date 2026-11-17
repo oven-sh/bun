@@ -13,7 +13,7 @@ pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
-use bun_sys::{self, Fd, IoVec, IoVecMut, Mode, O};
+use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
 use crate::webcore::{Blob, Request, Response};
@@ -60,6 +60,8 @@ impl FdArgExt for Fd {}
 // `system_error.to_error_instance(ctx)` resolves via the canonical impl.
 pub(crate) use bun_sys_jsc::SystemErrorJsc;
 
+pub(crate) use bun_sys::PlatformIoVec;
+
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Whether a call is serviced on the JS thread before it returns (`Sync`) or
@@ -103,18 +105,16 @@ pub(crate) enum BlobOrStringOrBuffer {
     StringOrBuffer(StringOrBuffer<'static>),
 }
 
-impl AsRef<[u8]> for BlobOrStringOrBuffer {
-    fn as_ref(&self) -> &[u8] {
-        self.slice()
-    }
-}
-
 impl BlobOrStringOrBuffer {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::Blob(blob) => blob.shared_view(),
             Self::StringOrBuffer(str) => str.slice(),
         }
+    }
+
+    pub(crate) fn byte_length(&self) -> usize {
+        self.slice().len()
     }
 
     pub(crate) fn from_js_maybe_file(
@@ -1302,8 +1302,7 @@ impl Valid {
 
 pub(crate) struct VectorArrayBuffer {
     pub value: JSValue,
-    /// Initialized bytes, which live as long as `self`.
-    buffers: Vec<IoVecMut<'static>>,
+    pub(crate) buffers: Vec<PlatformIoVec>,
     /// The collected elements, in order. Rooted (and their backing stores
     /// pinned), along with `value`, from `from_js(.., pin: true)` until drop.
     pub(crate) views: Vec<JSValue>,
@@ -1362,10 +1361,12 @@ unsafe extern "C" fn append_buffer_span(
     // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
     // duration of the call.
     let out = unsafe { &mut *ctx.cast::<VectorArrayBuffer>() };
-    let (data, byte_len) = if data.is_null() || byte_len == 0 {
-        (core::ptr::dangling_mut(), 0)
+    let slice: &mut [u8] = if data.is_null() || byte_len == 0 {
+        &mut []
     } else {
-        (data, byte_len)
+        // SAFETY: `data..data + byte_len` is the byte range of `element`'s
+        // backing store, valid and unaliased for the duration of the callback.
+        unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
     };
     if is_wasm_memory {
         out.wasm.push(WasmElement {
@@ -1374,9 +1375,7 @@ unsafe extern "C" fn append_buffer_span(
             native: None,
         });
     }
-    // SAFETY: the backing store of `element`. It is pinned, or no JS runs before the I/O. See `from_js`.
-    out.buffers
-        .push(unsafe { IoVecMut::from_raw(data, byte_len) });
+    out.buffers.push(bun_sys::platform_iovec_create(slice));
     out.views.push(element);
 }
 
@@ -1443,10 +1442,8 @@ impl VectorArrayBuffer {
                         return Err(global_object.throw_out_of_memory());
                     };
                     let mut bytes: jsc::ArrayBuffer = *pinned;
-                    let bytes = bytes.byte_slice_mut();
-                    // SAFETY: `pinned` keeps the bytes until `write_back`, which clears `buffers`.
                     out.buffers[element.index] =
-                        unsafe { IoVecMut::from_raw(bytes.as_mut_ptr(), bytes.len()) };
+                        bun_sys::platform_iovec_create(bytes.byte_slice_mut());
                     element.native = Some(pinned);
                 }
                 Ok(out)
@@ -1460,30 +1457,20 @@ impl VectorArrayBuffer {
         }
     }
 
-    pub(crate) fn writable(&self) -> &[IoVecMut<'_>] {
-        &self.buffers
-    }
-
-    pub(crate) fn readable(&self) -> &[IoVec<'_>] {
-        // SAFETY: see `buffers`.
-        unsafe { IoVecMut::assume_init(&self.buffers) }
-    }
-
     /// Runs on the JS thread after a read of `bytes_read` bytes, which filled the spans in order.
     /// See [`PinnedArrayBuffer::write_back`].
     pub(crate) fn write_back(&mut self, bytes_read: usize) {
         let (mut start, mut counted) = (0, 0);
-        for mut element in self.wasm.drain(..) {
+        for element in &mut self.wasm {
             start += self.buffers[counted..element.index]
                 .iter()
-                .map(IoVecMut::size)
+                .map(bun_sys::platform_iovec_len)
                 .sum::<usize>();
             counted = element.index;
             if let Some(pinned) = &mut element.native {
                 pinned.write_back(bytes_read.saturating_sub(start));
             }
         }
-        self.buffers.clear();
     }
 }
 

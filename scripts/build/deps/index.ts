@@ -15,8 +15,10 @@ import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
+import { libdeflate } from "./libdeflate.ts";
 import { libuv } from "./libuv.ts";
 import { lolhtml } from "./lolhtml.ts";
+import { lshpack } from "./lshpack.ts";
 import { lsqpack } from "./lsqpack.ts";
 import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
@@ -42,11 +44,13 @@ export const allDeps: readonly Dependency[] = [
   zlib,
   zstd,
   brotli,
+  libdeflate,
   cares,
   highway,
   libuv,
   lolhtml,
   rustArgon2,
+  lshpack,
   lsqpack,
   mimalloc,
   sqlite,
@@ -67,8 +71,10 @@ export {
   brotli,
   cares,
   highway,
+  libdeflate,
   libuv,
   lolhtml,
+  lshpack,
   lsqpack,
   lsquic,
   mimalloc,

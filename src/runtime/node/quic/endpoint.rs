@@ -15,7 +15,7 @@ use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
 use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimerTag, OwnedTimer};
+use crate::timer::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
 
 use super::callbacks;
 use super::ffi::lsquic_callback;
@@ -1598,6 +1598,10 @@ impl QuicEndpoint {
     pub(crate) fn on_timer_fire(this: *mut Self) {
         // SAFETY: the timer heap only holds timers of live endpoints.
         let this_ref = unsafe { &*this };
+        this_ref
+            .event_loop_timer
+            .state
+            .set(EventLoopTimerState::FIRED);
         let global_ptr = this_ref.global.get();
         if global_ptr.is_null() {
             return;

@@ -11,9 +11,5 @@ workspace = true
 
 [dependencies]
 strum.workspace = true
-bun_collections.workspace = true
+bstr.workspace = true
 bun_core.workspace = true
-
-[[test]]
-name = "client"
-path = "tests/client.rs"

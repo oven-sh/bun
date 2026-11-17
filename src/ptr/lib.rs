@@ -159,6 +159,13 @@ impl<T: ?Sized> BackRef<T, Mut> {
     }
 }
 
+impl<T, P> BackRef<T, P> {
+    #[inline]
+    pub const fn dangling() -> Self {
+        BackRef(core::ptr::NonNull::dangling(), core::marker::PhantomData)
+    }
+}
+
 impl<T: ?Sized> BackRef<T, Mut> {
     #[inline]
     pub const fn as_ptr(self) -> *mut T {

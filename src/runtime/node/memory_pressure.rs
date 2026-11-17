@@ -305,6 +305,7 @@ mod posix {
 #[cfg(windows)]
 mod windows {
     use core::ffi::c_void;
+    use core::ptr;
 
     use bun_jsc::JSGlobalObject;
     use std::os::windows::io::{AsRawHandle as _, HandleOrNull, OwnedHandle};
@@ -323,6 +324,12 @@ mod windows {
 
     unsafe extern "system" {
         safe fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
+        fn CreateEventW(
+            attrs: *mut c_void,
+            manual_reset: BOOL,
+            initial: BOOL,
+            name: *const u16,
+        ) -> HANDLE;
         /// A bad handle yields `FALSE`.
         safe fn SetEvent(h: HANDLE) -> BOOL;
         /// A bad handle yields `WAIT_FAILED`.
@@ -378,7 +385,10 @@ mod windows {
         else {
             return;
         };
-        let Ok(shutdown) = bun_sys::windows::CreateEventW() else {
+        // SAFETY: FFI; manual-reset, initially non-signalled, unnamed. A new handle, or null.
+        let Ok(shutdown) = OwnedHandle::try_from(unsafe {
+            HandleOrNull::from_raw_handle(CreateEventW(ptr::null_mut(), 1, 0, ptr::null()))
+        }) else {
             return;
         };
 

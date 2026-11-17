@@ -22,6 +22,10 @@ impl<'a> StackReader<'a> {
         self.message_start.set(self.offset.get());
     }
 
+    pub(crate) fn set_offset_from_start(&self, offset: usize) {
+        self.offset.set(self.message_start.get() + offset);
+    }
+
     pub(crate) fn ensure_capacity(&self, length: usize) -> bool {
         self.offset
             .get()

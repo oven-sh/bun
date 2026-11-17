@@ -3,7 +3,6 @@ use crate::mysql::my_sql_value::{DateTime, Time};
 use crate::shared::sql_data_cell::SQLDataCell;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::ColumnDefinition41;
-use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::packet_reader::PacketReader;
 
@@ -20,7 +19,7 @@ pub(crate) fn decode_binary_value(
     raw: bool,
     bigint: bool,
     reader: PacketReader<'_>,
-) -> Result<SQLDataCell, AnyMySQLError> {
+) -> crate::Result<SQLDataCell> {
     bun_core::scoped_log!(
         MySQLDecodeBinaryValue,
         "decodeBinaryValue: {}",
@@ -127,7 +126,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_TIME => {
             let length = reader.byte()?;
             if !matches!(length, 0 | 8 | 12) {
-                return Err(AnyMySQLError::InvalidBinaryValue);
+                return Err(crate::Error::InvalidBinaryValue);
             }
             let data = reader.read(length as usize)?;
             if raw {
@@ -135,7 +134,7 @@ pub(crate) fn decode_binary_value(
             }
             let time = Time::from_binary(data);
             if time.microseconds >= 1_000_000 {
-                return Err(AnyMySQLError::InvalidBinaryValue);
+                return Err(crate::Error::InvalidBinaryValue);
             }
 
             // As the text protocol sends it: the fraction padded to the column's precision.
@@ -151,7 +150,7 @@ pub(crate) fn decode_binary_value(
                 time.minutes,
                 time.seconds
             )
-            .map_err(|_| AnyMySQLError::InvalidBinaryValue)?;
+            .map_err(|_| crate::Error::InvalidBinaryValue)?;
             if decimals > 0 {
                 write!(
                     w,
@@ -159,7 +158,7 @@ pub(crate) fn decode_binary_value(
                     time.microseconds / 10u32.pow(6 - decimals),
                     width = decimals as usize
                 )
-                .map_err(|_| AnyMySQLError::InvalidBinaryValue)?;
+                .map_err(|_| crate::Error::InvalidBinaryValue)?;
             }
             let remaining = w.len();
             Ok(SQLDataCell::string(&buffer[..buffer.len() - remaining]))
@@ -169,7 +168,7 @@ pub(crate) fn decode_binary_value(
         | FieldType::MYSQL_TYPE_DATETIME => {
             let length = reader.byte()?;
             if !matches!(length, 0 | 4 | 7 | 11) {
-                return Err(AnyMySQLError::InvalidBinaryValue);
+                return Err(crate::Error::InvalidBinaryValue);
             }
             let data = reader.read(length as usize)?;
             if raw {
@@ -181,13 +180,13 @@ pub(crate) fn decode_binary_value(
             if length == 0 {
                 return Ok(SQLDataCell::date(f64::NAN));
             }
+            // Map JsError variants to their
+            // interned crate::Error names so `?` can widen here.
             let ts = DateTime::from_binary(data)
                 .to_js_timestamp(global_object)
                 .map_err(|e| match e {
-                    bun_jsc::JsError::OutOfMemory => AnyMySQLError::OutOfMemory,
-                    bun_jsc::JsError::Thrown | bun_jsc::JsError::Terminated => {
-                        AnyMySQLError::InvalidBinaryValue
-                    }
+                    bun_jsc::JsError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+                    bun_jsc::JsError::Thrown | bun_jsc::JsError::Terminated => crate::Error::Thrown,
                 })?;
             Ok(SQLDataCell::date(ts))
         }

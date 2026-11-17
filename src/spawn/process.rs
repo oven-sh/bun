@@ -1136,7 +1136,9 @@ pub mod waiter_thread_posix {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
-                if bun_sys::write(INSTANCE.eventfd(), &one).is_err() {
+                // SAFETY: write(2) is async-signal-safe; eventfd valid after start().
+                let n = unsafe { libc::write(INSTANCE.eventfd().native(), one.as_ptr().cast(), 8) };
+                if n < 0 {
                     panic!("Failed to write to eventfd");
                 }
             }
@@ -2853,7 +2855,8 @@ mod spawn_process_body {
             let mut child_exited = false;
             let mut child_status: Option<Status> = None;
             loop {
-                let got = match bun_sys::kevent_wait(kq_fd, &mut events[..], None) {
+                // SAFETY: an empty changelist registers nothing.
+                let got = match unsafe { bun_sys::kevent(kq_fd, &[], &mut events[..], None) } {
                     Err(err) => return Some(Err(err)),
                     Ok(c) => c,
                 };

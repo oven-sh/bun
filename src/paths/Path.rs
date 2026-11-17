@@ -695,7 +695,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
             #[cfg(not(windows))]
             {
-                let n = bun_core::fd_path_raw(fd, buf);
+                // SAFETY: buf is valid for buf.len() writable bytes.
+                let n = unsafe { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
                 // `fd_path_raw` returns 0 on misc failure — do not swallow as
                 // an empty path; propagate an error.
                 if n <= 0 {

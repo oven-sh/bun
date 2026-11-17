@@ -110,7 +110,6 @@ export default b.declarations(
 
   extendAll(
     ["HttpParser"],
-    "%HTTPParser%",
     "node:_http_common",
     "node:_http_client",
     "node:_http_server",

@@ -2,10 +2,8 @@
 //!   [u32 LE payload_len][u8 kind][payload]
 //! Strings within a payload are [u32 LE len][bytes].
 
-use crate::test_runner::jest::Summary;
-
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, strum::FromRepr)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Kind {
     // worker → coordinator
     /// (empty)
@@ -26,7 +24,7 @@ pub(crate) enum Kind {
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     // coordinator → worker
-    /// u32 file_idx, str path, str: what the last FileDone of the worker's slot said of first loads, u32: 1 where growth is written
+    /// u32 file_idx, str path, str: what the last FileDone of the worker's slot said of first loads
     Run,
     /// (empty)
     Shutdown,
@@ -41,32 +39,20 @@ pub(crate) enum Kind {
 impl TryFrom<u8> for Kind {
     type Error = ();
     fn try_from(v: u8) -> Result<Self, ()> {
-        Kind::from_repr(v).ok_or(())
+        // Int → enum: valid only for declared discriminants.
+        Ok(match v {
+            0 => Kind::Ready,
+            1 => Kind::FileStart,
+            2 => Kind::TestDone,
+            3 => Kind::FileDone,
+            4 => Kind::RepeatBufs,
+            5 => Kind::Run,
+            6 => Kind::Shutdown,
+            7 => Kind::CoverageFile,
+            8 => Kind::RefusedChange,
+            _ => return Err(()),
+        })
     }
-}
-
-/// In the order in which `FileDone` has them.
-pub(crate) fn counters(summary: &mut Summary) -> [&mut u32; 8] {
-    let Summary {
-        pass,
-        fail,
-        skip,
-        todo,
-        expectations,
-        skipped_because_label: skipped,
-        files,
-        shuffled,
-    } = summary;
-    [
-        pass,
-        fail,
-        skip,
-        todo,
-        expectations,
-        skipped,
-        files,
-        shuffled,
-    ]
 }
 
 /// `payload_len` and `kind`.
@@ -134,30 +120,39 @@ impl Frame {
     }
 }
 
+// `deinit` dropped: `Vec<u8>` frees on Drop.
+
 /// Payload reader; bounds-checked, returns zero/empty on truncation.
 pub(crate) struct Reader<'a> {
     pub p: &'a [u8],
 }
 
 impl<'a> Reader<'a> {
-    fn bytes<const N: usize>(&mut self) -> [u8; N] {
-        let Some((bytes, rest)) = self.p.split_first_chunk() else {
-            return [0; N];
-        };
-        self.p = rest;
-        *bytes
-    }
-
     pub(crate) fn u32(&mut self) -> u32 {
-        u32::from_le_bytes(self.bytes())
+        if self.p.len() < 4 {
+            return 0;
+        }
+        let v = u32::from_le_bytes(self.p[0..4].try_into().unwrap());
+        self.p = &self.p[4..];
+        v
     }
 
     pub(crate) fn u64(&mut self) -> u64 {
-        u64::from_le_bytes(self.bytes())
+        if self.p.len() < 8 {
+            return 0;
+        }
+        let v = u64::from_le_bytes(self.p[0..8].try_into().unwrap());
+        self.p = &self.p[8..];
+        v
     }
 
     pub(crate) fn str(&mut self) -> &'a [u8] {
         let n = self.u32() as usize;
-        self.p.split_off(..n).unwrap_or_default()
+        if self.p.len() < n {
+            return b"";
+        }
+        let s = &self.p[0..n];
+        self.p = &self.p[n..];
+        s
     }
 }

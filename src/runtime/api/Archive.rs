@@ -25,7 +25,7 @@ pub(crate) enum Compression {
 #[derive(Clone, Copy)]
 pub(crate) struct GzipOptions {
     /// Compression level: 1 (fastest) to 12 (maximum compression). Default is 6.
-    pub level: bun_deflate::Level,
+    pub level: u8,
 }
 
 pub(crate) struct Archive {
@@ -193,23 +193,20 @@ fn parse_compression_options(
         }
 
         // Parse level option (1-12, default 6)
-        let mut level = bun_deflate::Level::DEFAULT;
+        let mut level: u8 = 6;
         if let Some(level_val) = options_arg.get_truthy(global, "level")? {
             if !level_val.is_number() {
                 return Err(
                     global.throw_invalid_arguments(format_args!("Archive: level must be a number"))
                 );
             }
-            let level_num = i32::try_from(level_val.to_int64()).ok();
-            let Some(valid) = level_num
-                .filter(|&level| level >= 1)
-                .and_then(bun_deflate::Level::new)
-            else {
+            let level_num = level_val.to_int64();
+            if level_num < 1 || level_num > 12 {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Archive: level must be between 1 and 12"
                 )));
-            };
-            level = valid;
+            }
+            level = u8::try_from(level_num).expect("int cast");
         }
 
         return Ok(Compression::Gzip(GzipOptions { level }));
@@ -1029,8 +1026,11 @@ fn start_files_task(
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 enum CompressError {
+    #[error("GzipInitFailed")]
+    GzipInitFailed,
     #[error("GzipCompressFailed")]
     GzipCompressFailed,
+    /// The output buffer (sized by the data being compressed) could not be allocated.
     #[error("OutOfMemory")]
     OutOfMemory,
 }
@@ -1044,13 +1044,20 @@ impl CompressError {
     }
 }
 
-fn compress_gzip(data: &[u8], level: bun_deflate::Level) -> Result<Vec<u8>, CompressError> {
-    use bun_deflate::{Error, Format};
+fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
+    use bun_libdeflate_sys::libdeflate;
 
-    bun_deflate::compress_to_vec(data, Format::Gzip, level).map_err(|err| match err {
-        Error::Alloc(_) => CompressError::OutOfMemory,
-        _ => CompressError::GzipCompressFailed,
-    })
+    let mut compressor =
+        libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
+
+    let mut output = Vec::new();
+    let result = compressor
+        .compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip)
+        .map_err(|_| CompressError::OutOfMemory)?;
+    if result.status != libdeflate::Status::Success {
+        return Err(CompressError::GzipCompressFailed);
+    }
+    Ok(output)
 }
 
 /// Check if a path is safe (no absolute paths or path traversal)

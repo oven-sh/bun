@@ -877,7 +877,8 @@ fn scope_index(zone: &[u8]) -> u32 {
         let mut buf = [0u8; 64];
         if !zone.is_empty() && zone.len() < buf.len() {
             buf[..zone.len()].copy_from_slice(zone);
-            let idx = bun_sys::net::if_nametoindex(bun_core::ZStr::from_buf(&buf, zone.len()));
+            // SAFETY: FFI; `buf` is NUL-terminated by construction.
+            let idx = unsafe { libc::if_nametoindex(buf.as_ptr().cast::<core::ffi::c_char>()) };
             if idx != 0 {
                 return idx;
             }

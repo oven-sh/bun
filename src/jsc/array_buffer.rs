@@ -854,13 +854,10 @@ impl Drop for MarkedArrayBuffer {
             return;
         }
         if self.is_private_copy {
-            // SAFETY: `from_private_copy` took the pages, and JSC did not get them.
-            unsafe {
-                bun_sys::Mmap::unmap_raw(
-                    self.buffer.ptr.cast(),
-                    core::ptr::without_provenance_mut(self.buffer.byte_len),
-                )
-            };
+            bun_sys::private_copy::unmap(
+                self.buffer.ptr.cast(),
+                core::ptr::without_provenance_mut(self.buffer.byte_len),
+            );
             return;
         }
         // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
@@ -894,16 +891,16 @@ impl MarkedArrayBuffer {
         }
     }
 
-    pub fn from_private_copy(copy: bun_sys::private_copy::PrivateCopy) -> MarkedArrayBuffer {
-        let copy = copy.into_raw();
+    /// `copy` is what [`bun_sys::private_copy::map`] returned for `len` bytes.
+    pub fn from_private_copy(copy: core::ptr::NonNull<u8>, len: usize) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: true,
             is_private_copy: true,
             buffer: ArrayBuffer {
-                len: copy.len(),
-                byte_len: copy.len(),
+                len,
+                byte_len: len,
                 typed_array_type: JSType::Uint8Array,
-                ptr: copy.as_ptr().cast(),
+                ptr: copy.as_ptr(),
                 ..Default::default()
             },
         }
@@ -932,7 +929,7 @@ impl MarkedArrayBuffer {
                     global,
                     core::ptr::NonNull::from(buf.byte_slice_mut()),
                     core::ptr::without_provenance_mut(len),
-                    bun_sys::Mmap::unmap_raw,
+                    bun_sys::private_copy::unmap,
                 )
             };
         }

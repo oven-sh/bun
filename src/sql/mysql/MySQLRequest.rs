@@ -1,41 +1,58 @@
 use super::protocol::command_type::CommandType;
-use super::protocol::packet_writer::PacketWriter;
+use super::protocol::new_writer::{NewWriter, WriterContext};
 
 bun_core::declare_scope!(MySQLRequest, visible);
 
-/// The sequence ids start over with every command.
-fn write_command(command: CommandType, argument: &[u8], out: &mut Vec<u8>) {
-    let mut packet = PacketWriter::start(out, 0);
-    packet.int1(command as u8);
-    packet.write(argument);
-    packet.end();
-}
-
-pub fn execute_query(query: &[u8], out: &mut Vec<u8>) {
+pub fn execute_query<Context: WriterContext>(
+    query: &[u8],
+    writer: NewWriter<Context>,
+) -> crate::Result<()> {
     bun_core::scoped_log!(
         MySQLRequest,
         "executeQuery len: {} {}",
         query.len(),
         bstr::BStr::new(query)
     );
-    write_command(CommandType::COM_QUERY, query, out);
+    // resets the sequence id to zero every time we send a query
+    let mut packet = writer.start(0)?;
+    writer.int1(CommandType::COM_QUERY as u8)?;
+    writer.write(query)?;
+
+    packet.end()?;
+    Ok(())
 }
 
-pub fn prepare_request(query: &[u8], out: &mut Vec<u8>) {
+pub fn prepare_request<Context: WriterContext>(
+    query: &[u8],
+    writer: NewWriter<Context>,
+) -> crate::Result<()> {
     bun_core::scoped_log!(MySQLRequest, "prepareRequest {}", bstr::BStr::new(query));
-    write_command(CommandType::COM_STMT_PREPARE, query, out);
+    let mut packet = writer.start(0)?;
+    writer.int1(CommandType::COM_STMT_PREPARE as u8)?;
+    writer.write(query)?;
+
+    packet.end()?;
+    Ok(())
 }
 
 /// The server sends no reply.
-pub fn close_statement(statement_id: u32, out: &mut Vec<u8>) {
+pub fn close_statement<Context: WriterContext>(
+    statement_id: u32,
+    writer: NewWriter<Context>,
+) -> crate::Result<()> {
     bun_core::scoped_log!(MySQLRequest, "closeStatement {}", statement_id);
-    write_command(
-        CommandType::COM_STMT_CLOSE,
-        &statement_id.to_le_bytes(),
-        out,
-    );
+    let mut packet = writer.start(0)?;
+    writer.int1(CommandType::COM_STMT_CLOSE as u8)?;
+    writer.int4(statement_id)?;
+
+    packet.end()?;
+    Ok(())
 }
 
-pub fn quit(out: &mut Vec<u8>) {
-    write_command(CommandType::COM_QUIT, b"", out);
+pub fn quit<Context: WriterContext>(writer: NewWriter<Context>) -> crate::Result<()> {
+    let mut packet = writer.start(0)?;
+    writer.int1(CommandType::COM_QUIT as u8)?;
+
+    packet.end()?;
+    Ok(())
 }

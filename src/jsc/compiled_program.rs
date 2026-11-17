@@ -784,6 +784,10 @@ mod write_execute {
         let version = (version.next().flatten(), version.next().flatten());
         // glibc 2.34 moved libutil, librt and the services `files` and `dns` into libc.so.6.
         let is_merged = version >= (Some(2), Some(34));
+        // pthread_exit() unwinds with it, and only a reload calls that.
+        if !is_removed(Feature::HotReload) {
+            load(c"libgcc_s.so.1");
+        }
         if !is_merged && !is_removed(Feature::Terminal) {
             load(c"libutil.so.1");
         }

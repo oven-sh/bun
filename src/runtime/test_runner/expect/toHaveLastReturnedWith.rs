@@ -1,0 +1,117 @@
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
+use super::FormatterTestExt;
+use bun_jsc::console_object::Formatter;
+
+use super::DiffFormatter;
+use super::Expect;
+use super::throw;
+
+impl Expect {
+    #[optimize(size)]
+    pub(crate) fn to_have_last_returned_with(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        bun_jsc::mark_binding!();
+        let expected = expected.to_js();
+        let (this, returns, _) = self.mock_prologue(
+            global_this,
+            this_value.to_js(),
+            "toHaveBeenLastReturnedWith",
+            "<green>expected<r>",
+            super::mock::MockKind::Returns,
+        )?;
+
+        let calls_count = u32::try_from(returns.get_length(global_this)?).unwrap();
+        let mut pass = false;
+        let mut last_return_value: JSValue = JSValue::UNDEFINED;
+        let mut last_call_threw = false;
+        let mut last_error_value: JSValue = JSValue::UNDEFINED;
+
+        if calls_count > 0 {
+            let last_result = returns.get_direct_index(global_this, calls_count - 1)?;
+
+            if last_result.is_object() {
+                let result_type = last_result.get(global_this, "type")?.unwrap_or(JSValue::UNDEFINED);
+                if result_type.is_string() {
+                    let type_str = result_type.to_bun_string(global_this)?;
+
+                    if type_str.eq_ascii(b"return") {
+                        last_return_value =
+                            last_result.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED);
+
+                        if last_return_value.jest_deep_equals(expected, global_this)? {
+                            pass = true;
+                        }
+                    } else if type_str.eq_ascii(b"throw") {
+                        last_call_threw = true;
+                        last_error_value =
+                            last_result.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED);
+                    }
+                }
+            }
+        }
+
+        if pass != this.flags.get().not() {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // Handle failure
+        let mut formatter = Formatter::new(global_this).with_quote_strings(true);
+
+        let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
+
+        if this.flags.get().not() {
+            return throw!(
+                this,
+                global_this,
+                Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),
+                concat!(
+                    "\n\n",
+                    "Expected mock function not to have last returned: <green>{}<r>\n",
+                    "But it did.\n",
+                ),
+                expected.to_fmt(&mut formatter),
+            );
+        }
+
+        if calls_count == 0 {
+            return throw!(
+                this,
+                global_this,
+                signature,
+                concat!("\n\n", "The mock function was not called."),
+            );
+        }
+
+        if last_call_threw {
+            return throw!(
+                this,
+                global_this,
+                signature,
+                concat!("\n\n", "The last call threw an error: <red>{}<r>\n"),
+                last_error_value.to_fmt(&mut formatter),
+            );
+        }
+
+        // Diff if possible
+        if expected.is_string() && last_return_value.is_string() {
+            let diff_format = DiffFormatter::new(global_this, last_return_value, expected, false)?;
+            return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
+        }
+
+        let mut formatter2 = super::make_formatter(global_this);
+        throw!(
+            this,
+            global_this,
+            signature,
+            "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
+            expected.to_fmt(&mut formatter),
+            last_return_value.to_fmt(&mut formatter2),
+        )
+    }
+}

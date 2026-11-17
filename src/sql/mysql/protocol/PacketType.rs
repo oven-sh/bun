@@ -3,17 +3,17 @@
 // is a transparent u8 newtype with associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub(crate) struct PacketType(pub(crate) u8);
+pub struct PacketType(pub u8);
 
 impl PacketType {
     // Server packets
-    pub(crate) const OK: Self = Self(0x00);
-    pub(crate) const LOCAL_INFILE: Self = Self(0xfb);
-    pub(crate) const EOF: Self = Self(0xfe);
-    pub(crate) const ERROR: Self = Self(0xff);
+    pub const OK: Self = Self(0x00);
+    pub const LOCAL_INFILE: Self = Self(0xfb);
+    pub const EOF: Self = Self(0xfe);
+    pub const ERROR: Self = Self(0xff);
 
     // Client/server packets
-    pub(crate) const MORE_DATA: Self = Self(0x01);
+    pub const MORE_DATA: Self = Self(0x01);
 
-    pub(crate) const AUTH_SWITCH: Self = Self(0xfe);
+    pub const AUTH_SWITCH: u8 = 0xfe;
 }

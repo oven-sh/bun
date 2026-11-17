@@ -1592,8 +1592,8 @@ fn spawn_maybe_sync(
                 // comparable with `now`.
                 if abort_signal_timeout.event_loop_timer.state.get()
                     == crate::timer::EventLoopTimerState::ACTIVE
-                    && abort_signal_timeout.event_loop_timer.clock.get()
-                        == crate::timer::Clock::Real
+                    && abort_signal_timeout.event_loop_timer.in_heap.get()
+                        == crate::timer::InHeap::Regular
                 {
                     let next_ts = abort_signal_timeout.event_loop_timer.next.get();
                     if user_timespec.eql(&Timespec::EPOCH)

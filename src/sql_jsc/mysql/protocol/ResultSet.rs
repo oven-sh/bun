@@ -1,4 +1,4 @@
-use crate::jsc::JSGlobalObject;
+use crate::jsc::{JSGlobalObject, JSValue};
 use crate::mysql::my_sql_value::DateTime;
 use bun_core::parse_int;
 
@@ -7,14 +7,17 @@ use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::encode_int::decode_length_int;
 use bun_sql::mysql::protocol::packet_reader::PacketReader;
+use bun_sql::shared::SQLQueryResultMode;
 
-use crate::shared::sql_data_cell::SQLDataCell;
+use crate::shared::CachedStructure;
+use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell};
 
 use super::decode_binary_value::{self, decode_binary_value};
 
 bun_core::declare_scope!(MySQLResultSet, visible);
 
 pub(crate) struct Row<'a> {
+    pub values: Vec<SQLDataCell>,
     pub columns: &'a [ColumnDefinition41],
     pub binary: bool,
     pub raw: bool,
@@ -23,6 +26,27 @@ pub(crate) struct Row<'a> {
 }
 
 impl<'a> Row<'a> {
+    pub(crate) fn to_js(
+        &mut self,
+        global_object: &JSGlobalObject,
+        array: JSValue,
+        structure: JSValue,
+        flags: SQLDataCellFlags,
+        result_mode: SQLQueryResultMode,
+        // Passed by ref because CachedStructure is non-Copy (owns Strong + Box).
+        cached_structure: Option<&CachedStructure>,
+    ) -> crate::jsc::JsResult<JSValue> {
+        SQLDataCell::to_js_object(
+            global_object,
+            array,
+            structure,
+            &mut self.values,
+            flags,
+            result_mode as u8,
+            cached_structure,
+        )
+    }
+
     fn parse_value(&self, column: &ColumnDefinition41, value: &[u8]) -> SQLDataCell {
         bun_core::scoped_log!(
             MySQLResultSet,
@@ -136,7 +160,7 @@ impl<'a> Row<'a> {
         }
     }
 
-    fn decode_text(&self, reader: PacketReader<'_>) -> Result<Vec<SQLDataCell>, AnyMySQLError> {
+    fn decode_text(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         let mut cells = Vec::with_capacity(self.columns.len());
 
         for (index, column) in self.columns.iter().enumerate() {
@@ -162,10 +186,11 @@ impl<'a> Row<'a> {
             cells.push(value);
         }
 
-        Ok(cells)
+        self.values = cells;
+        Ok(())
     }
 
-    fn decode_binary(&self, reader: PacketReader<'_>) -> Result<Vec<SQLDataCell>, AnyMySQLError> {
+    fn decode_binary(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         // Header
         let _ = reader.int::<u8>()?;
 
@@ -185,19 +210,24 @@ impl<'a> Row<'a> {
             let mut value = if is_null {
                 SQLDataCell::null()
             } else {
-                decode_binary_value(self.global_object, column, self.raw, self.bigint, reader)?
+                decode_binary_value(self.global_object, column, self.raw, self.bigint, reader)
+                    .map_err(|e| match e {
+                        crate::Error::MySqlProtocol(e) => e,
+                        other => other
+                            .name()
+                            .parse()
+                            .unwrap_or(AnyMySQLError::InvalidBinaryValue),
+                    })?
             };
             value.set_column(u32::try_from(i).expect("int cast"), &column.name_or_index);
             cells.push(value);
         }
 
-        Ok(cells)
+        self.values = cells;
+        Ok(())
     }
 
-    pub(crate) fn decode(
-        &self,
-        reader: PacketReader<'_>,
-    ) -> Result<Vec<SQLDataCell>, AnyMySQLError> {
+    pub(crate) fn decode(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         if self.binary {
             self.decode_binary(reader)
         } else {

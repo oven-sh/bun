@@ -345,8 +345,9 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 extern "C" fn bun_initialize_process() {
-    for (stream, is_terminal) in (0..).map(bun_core::Fd::from_uv).zip(&bun_stdio_tty) {
-        is_terminal.store(bun_sys::isatty(stream).into(), Ordering::Relaxed);
+    for (descriptor, is_terminal) in (0..).zip(&bun_stdio_tty) {
+        // SAFETY: `isatty` takes any integer.
+        is_terminal.store(unsafe { libc::isatty(descriptor) }, Ordering::Relaxed);
     }
 }
 

@@ -2269,9 +2269,10 @@ impl<'bump> PropertyUsage<'bump> {
     }
 }
 
-pub const PROPERTY_BITSET_BITS: usize = <PropertyIdTag as strum::VariantArray>::VARIANTS
-    .len()
-    .next_power_of_two();
+// `PropertyIdTag` is a dense `repr(u16)` enum with no
+// explicit discriminants whose last variant is `Custom`, so the variant count
+// is `Custom + 1`.
+pub const PROPERTY_BITSET_BITS: usize = (PropertyIdTag::Custom as usize + 1).next_power_of_two();
 pub type PropertyBitset =
     ArrayBitSet<PROPERTY_BITSET_BITS, { num_masks_for(PROPERTY_BITSET_BITS) }>;
 

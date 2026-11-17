@@ -424,7 +424,12 @@ impl RunCommand {
         }
 
         let image_path = win::exe_path_w().as_slice();
-        let (mut len, name) = if let Ok(temp_len) = win::GetTempPathW(buf)
+        // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
+        // trailing NUL) into `buf`.
+        let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
+
+        let (mut len, name) = if temp_len > 0
+            && temp_len < buf.len()
             && drive(&buf[..temp_len]).is_some_and(|temp| Some(temp) == drive(image_path))
         {
             // Ends with a separator.

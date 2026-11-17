@@ -1,4 +1,3 @@
-use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::new_reader::NewReader;
 
 pub struct CommandComplete<'a> {
@@ -6,7 +5,7 @@ pub struct CommandComplete<'a> {
 }
 
 impl<'a> CommandComplete<'a> {
-    pub fn decode_internal(reader: &NewReader<'a>) -> Result<Self, AnyPostgresError> {
+    pub fn decode_internal(reader: &NewReader<'a>) -> crate::Result<Self> {
         let remaining = reader.body_length()?;
 
         let (command_tag, _) = reader.string_within(remaining)?;

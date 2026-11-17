@@ -27,7 +27,7 @@ use bun_ptr::{AnyRefCounted, RefPtr};
 
 use crate::api::html_rewriter;
 use crate::api::server;
-use crate::webcore::s3::multipart::NetworkSink;
+use crate::webcore::s3::client::S3UploadStreamWrapper;
 
 // Request contexts are a single generic
 // `NewRequestContext<ThisServer, SSL, DEBUG, MUX>`; alias the eight
@@ -66,12 +66,14 @@ pub(crate) enum Tag {
     /// Task-only tag (never a context cell): drops the last ref of a
     /// `RewriterPipe` on behalf of a `PipePin`.
     HTMLRewriterPipeFree,
-    /// The pump of an S3 stream upload (`NetworkSink`).
+    /// The pump of an S3 stream upload (`S3UploadStreamWrapper`).
     S3UploadStream,
+    /// A `Bun.cron()` job whose tick returned a promise.
+    CronJob,
 }
 
 impl Tag {
-    pub(crate) const COUNT: usize = 11;
+    pub(crate) const COUNT: usize = 12;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -87,6 +89,7 @@ impl Tag {
             8 => Tag::HTMLRewriterSuspension,
             9 => Tag::HTMLRewriterPipeFree,
             10 => Tag::S3UploadStream,
+            11 => Tag::CronJob,
             _ => unreachable!(),
         }
     }
@@ -123,8 +126,11 @@ where
 impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
 }
-impl NativePromiseContextType for NetworkSink {
+impl NativePromiseContextType for S3UploadStreamWrapper {
     const TAG: Tag = Tag::S3UploadStream;
+}
+impl NativePromiseContextType for crate::api::cron::CronJob {
+    const TAG: Tag = Tag::CronJob;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -185,6 +191,7 @@ extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
     bun_removable_features::removable_definition!(Serve, Bun__NativePromiseContext__destroy);
     bun_removable_features::removable_definition!(HtmlRewriter, Bun__NativePromiseContext__destroy);
     bun_removable_features::removable_definition!(S3Client, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(Cron, Bun__NativePromiseContext__destroy);
     let tag = Tag::from_raw(tag);
     clear_remembered_cell(ctx, tag);
     DeferredDerefTask::schedule(ctx, tag);
@@ -223,6 +230,7 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
             Tag::DebugHTTPSServerMuxRequestContext => {
                 (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
             }
+            Tag::CronJob => (*ctx.cast::<crate::api::cron::CronJob>()).tick_cell_collected(),
             Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree | Tag::S3UploadStream => {}
         }
     }
@@ -284,8 +292,6 @@ impl DeferredDerefTask {
                 Tag::HTMLRewriterPipeFree => unsafe {
                     drop(RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()))
                 },
-                // SAFETY: the pump's ref. It is the last one only once the upload has finished and holds no JS value.
-                Tag::S3UploadStream => unsafe { drop(RefPtr::from_raw(ctx.cast::<NetworkSink>())) },
                 _ => {}
             }
             return;
@@ -342,8 +348,12 @@ impl DeferredDerefTask {
                 Tag::S3UploadStream => {
                     // The pump's promise was collected unsettled (the script running it is gone):
                     // as a rejection with no reason.
-                    let sink = RefPtr::from_raw(ctx.cast::<NetworkSink>());
-                    NetworkSink::on_pump_rejected(&sink, JSValue::ZERO);
+                    let upload = RefPtr::from_raw(ctx.cast::<S3UploadStreamWrapper>());
+                    (*upload.as_ptr()).handle_reject_stream(JSValue::ZERO);
+                }
+                Tag::CronJob => {
+                    // The tick's promise was collected unsettled.
+                    RefPtr::from_raw(ctx.cast::<crate::api::cron::CronJob>()).maybe_downgrade();
                 }
             }
         }
@@ -374,6 +384,8 @@ const _: () = assert!(
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
 const _: () = assert!(
-    core::mem::align_of::<crate::webcore::s3::multipart::NetworkSink>()
+    core::mem::align_of::<crate::webcore::s3::client::S3UploadStreamWrapper>()
         > DeferredDerefTask::TAG_MASK
 );
+const _: () =
+    assert!(core::mem::align_of::<crate::api::cron::CronJob>() > DeferredDerefTask::TAG_MASK);

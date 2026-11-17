@@ -178,6 +178,8 @@ impl<R> Default for CssRuleList<'_, R> {
 mod dc {
     use bun_alloc::Arena;
 
+    /// `DeclarationBlock::deep_clone` — field-walk over both
+    /// `DeclarationList`s, routing each `Property` through `dc::property`.
     #[inline]
     pub(crate) fn decl_block<'bump>(
         this: &crate::DeclarationBlock<'bump>,
@@ -187,11 +189,11 @@ mod dc {
             important_declarations: bun_alloc::vec_from_iter_in(
                 this.important_declarations
                     .iter()
-                    .map(|p| p.deep_clone(bump)),
+                    .map(|p| property(p, bump)),
                 bump,
             ),
             declarations: bun_alloc::vec_from_iter_in(
-                this.declarations.iter().map(|p| p.deep_clone(bump)),
+                this.declarations.iter().map(|p| property(p, bump)),
                 bump,
             ),
         }
@@ -227,6 +229,16 @@ mod dc {
     where
         F: crate::media_query::FeatureIdTrait,
     {
+        this.deep_clone(bump)
+    }
+
+    /// `Property::deep_clone` — routes to the real inherent
+    /// `Property::deep_clone` in properties_generated.rs.
+    #[inline]
+    pub(crate) fn property<'bump>(
+        this: &crate::properties::Property<'bump>,
+        bump: &'bump Arena,
+    ) -> crate::properties::Property<'bump> {
         this.deep_clone(bump)
     }
 }

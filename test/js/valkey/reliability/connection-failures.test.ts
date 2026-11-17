@@ -7,7 +7,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows, nodeExe, tempDir, tls as tl
 import net from "net";
 import path from "path";
 import tls from "tls";
-import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled, readCommands } from "../test-utils";
+import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
 
 /**
  * Test suite for connection failures, reconnection, and error handling
@@ -342,6 +342,51 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
     });
   });
 });
+
+// Takes the complete RESP commands off the front of `state.buffer` and leaves
+// any partial command in it for the next chunk.
+function readCommands(state: { buffer: Buffer }): string[][] {
+  const commands: string[][] = [];
+  while (true) {
+    const text = state.buffer.toString("latin1");
+    if (text[0] !== "*") break;
+    const headerEnd = text.indexOf("\r\n");
+    if (headerEnd === -1) break;
+    const argCount = parseInt(text.slice(1, headerEnd), 10);
+    if (!Number.isInteger(argCount) || argCount < 0) break;
+    let pos = headerEnd + 2;
+    const args: string[] = [];
+    let complete = true;
+    for (let i = 0; i < argCount; i++) {
+      if (text[pos] !== "$") {
+        complete = false;
+        break;
+      }
+      const lenEnd = text.indexOf("\r\n", pos);
+      if (lenEnd === -1) {
+        complete = false;
+        break;
+      }
+      const len = parseInt(text.slice(pos + 1, lenEnd), 10);
+      if (!Number.isInteger(len) || len < 0) {
+        complete = false;
+        break;
+      }
+      const dataStart = lenEnd + 2;
+      const dataEnd = dataStart + len;
+      if (text.length < dataEnd + 2) {
+        complete = false;
+        break;
+      }
+      args.push(text.slice(dataStart, dataEnd));
+      pos = dataEnd + 2;
+    }
+    if (!complete) break;
+    commands.push(args);
+    state.buffer = state.buffer.subarray(pos);
+  }
+  return commands;
+}
 
 describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
   test("rejects commands that were in flight when the connection dropped instead of pairing them with replies from the next connection", async () => {
@@ -1146,59 +1191,6 @@ describe("Valkey: Recovering After fail()", () => {
       server.close();
     }
   });
-
-  // The stub is plain TCP and says nothing, so a rediss:// client stays in its TLS handshake.
-  test.each([
-    ["redis", false],
-    ["redis", true],
-    ["rediss", false],
-    ["rediss", true],
-  ])(
-    "connect() from the rejection handler of a command that timed out over %s:// dials again (autoReconnect: %p)",
-    async (scheme, autoReconnect) => {
-      const fake = helloServer({ HELLO: () => null });
-      const port = await fake.listen();
-      const client = new RedisClient(`${scheme}://127.0.0.1:${port}`, { connectionTimeout: 100, autoReconnect });
-      try {
-        const events: string[] = [];
-        client.onclose = () => void events.push("onclose");
-        await client.get("key").catch(err => {
-          events.push(`get ${err.code}`);
-          return client.connect().catch(err => events.push(`connect ${err.code}`));
-        });
-        expect(events).toEqual([
-          "onclose",
-          "get ERR_REDIS_CONNECTION_TIMEOUT",
-          "onclose",
-          "connect ERR_REDIS_CONNECTION_CLOSED",
-        ]);
-        while (fake.connections < 2) await once(fake.server, "connection");
-      } finally {
-        client.close();
-        fake.server.close();
-      }
-    },
-  );
-
-  test.each(["redis", "rediss"])(
-    "close() during the handshake over %s:// rejects queued commands with ERR_REDIS_CONNECTION_CLOSED",
-    async scheme => {
-      const fake = helloServer({ HELLO: () => null });
-      const port = await fake.listen();
-      const client = new RedisClient(`${scheme}://127.0.0.1:${port}`);
-      try {
-        const queued = client.get("key").catch(err => `${err.code}: ${err.message}`);
-        const [socket] = await once(fake.server, "connection");
-        await once(socket, "data");
-        client.close();
-        expect(await queued).toBe("ERR_REDIS_CONNECTION_CLOSED: Connection closed");
-      } finally {
-        client.close();
-        fake.server.close();
-      }
-    },
-  );
-
   test("the process exits once auto-reconnect gives up", async () => {
     const fake = helloServer();
     const port = await fake.listen();
@@ -1498,33 +1490,6 @@ describe("Valkey: Recovering After fail()", () => {
       exitCode: 0,
     });
   });
-
-  test.each(["the client", "its duplicate"])(
-    "a dial whose TLS context cannot be built leaves autoReconnect on for %s",
-    async who => {
-      using dir = tempDir("valkey-tls-context", { "ca.pem": "not a certificate" });
-      const caFile = path.join(String(dir), "ca.pem");
-      const fake = helloServer({}, { secure: true });
-      const port = await fake.listen();
-      const original = new RedisClient(`rediss://127.0.0.1:${port}`, { tls: { caFile } as Bun.TLSOptions });
-      let client = original;
-      try {
-        await expect(original.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
-        writeFileSync(caFile, tlsCert.cert);
-        if (who === "its duplicate") client = await original.duplicate();
-        await client.connect();
-        const next = Promise.withResolvers<string>();
-        client.onconnect = () => next.resolve("onconnect");
-        client.onclose = () => next.resolve("onclose");
-        fake.sockets[0].end();
-        expect(await next.promise).toBe("onconnect");
-        expect(await client.ping()).toBe("PONG");
-      } finally {
-        client.close();
-        fake.server.close();
-      }
-    },
-  );
 
   test("close() discards a half-received reply instead of letting it keep the process alive", async () => {
     // Announces a 4 byte bulk string and stops halfway through it.

@@ -158,7 +158,19 @@ fn dispatch_frame(
                     ST_MAX_CONCURRENT_STREAMS => {
                         session.remote_max_concurrent_streams = uvalue;
                     }
-                    ST_HEADER_TABLE_SIZE => session.encoder.set_max_table_size(uvalue),
+                    ST_HEADER_TABLE_SIZE => {
+                        // RFC 9113 §4.3.1 / RFC 7541 §4.2: encoder MUST
+                        // acknowledge a reduced limit with a Dynamic Table
+                        // Size Update at the start of the next header
+                        // block. Track the minimum seen so a reduce-then-
+                        // raise between two blocks still signals the dip.
+                        session.pending_hpack_enc_capacity = Some(
+                            session
+                                .pending_hpack_enc_capacity
+                                .unwrap_or(uvalue)
+                                .min(uvalue),
+                        );
+                    }
                     ST_INITIAL_WINDOW_SIZE => {
                         // RFC 9113 §6.5.2 / §6.9.2: values above 2^31-1, or
                         // a delta that pushes any open stream's window past
@@ -548,18 +560,18 @@ fn dispatch_frame(
 /// Feed an orphaned (untracked-stream) header block through the HPACK
 /// decoder purely to keep the dynamic table in sync, then discard.
 pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
-    let mut scratch = Vec::new();
-    let block = &session.orphan_header_block;
-    let mut fields = session.decoder.decode(block, &mut scratch);
-    loop {
-        match fields.next() {
-            Ok(Some(_)) => {}
-            Ok(None) => break,
+    let mut offset: usize = 0;
+    while offset < session.orphan_header_block.len() {
+        // Disjoint field borrows: `hpack` (mut) vs `orphan_header_block` (shared).
+        let result = match session.hpack.decode(&session.orphan_header_block[offset..]) {
+            Ok(r) => r,
             Err(_) => {
                 session.fatal_error = Some(crate::Error::HTTP2CompressionError);
-                break;
+                session.orphan_header_block.clear();
+                return;
             }
-        }
+        };
+        offset += result.next;
     }
     session.orphan_header_block.clear();
 }
@@ -582,12 +594,10 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     // applied once decoding completes.
     let mut malformed = false;
 
-    let mut scratch = Vec::new();
-    let mut fields = session.decoder.decode(&stream.header_block, &mut scratch);
-    loop {
-        let result = match fields.next() {
-            Ok(Some(field)) => field,
-            Ok(None) => break,
+    let mut offset: usize = 0;
+    while offset < stream.header_block.len() {
+        let result = match session.hpack.decode(&stream.header_block[offset..]) {
+            Ok(r) => r,
             Err(_) => {
                 // The decoder has already committed earlier fields from this
                 // block to the connection-level dynamic table; the table is
@@ -599,7 +609,8 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
                 return;
             }
         };
-        if result.name.starts_with(b":") {
+        offset += result.next;
+        if !result.name.is_empty() && result.name[0] == b':' {
             // §8.3.2: only `:status` is defined for responses, MUST appear
             // before any regular field, and MUST NOT repeat. §8.1: not
             // allowed in trailers.
@@ -713,7 +724,8 @@ fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
 }
 
 /// RFC 9113 §8.2.1/§8.2.2 response-side validation: lowercase names, no
-/// hop-by-hop fields. A literal name can carry anything.
+/// hop-by-hop fields. Names from lshpack are already lowercase for table
+/// hits but a literal can carry anything.
 pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
     if name.is_empty() {
         return true;

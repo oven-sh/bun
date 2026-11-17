@@ -1508,7 +1508,7 @@ fn checksums() {
     assert_eq!(crc32_by_bits(0, b"123456789"), 0xCBF4_3926);
     assert_eq!(adler32_by_bytes(b"Wikipedia"), 0x11E6_0398);
     let lengths: Vec<usize> = match cfg!(miri) {
-        true => vec![3, 40, 700],
+        true => vec![3, 40, 956],
         false => (0..2400)
             .chain([4095, 4096, 4097, 5375, 5376, 5377, 5503, 5504, 5505])
             .chain([5552, 11_100, 65_536, 65_537, 70_001])

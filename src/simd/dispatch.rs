@@ -40,9 +40,10 @@ pub fn limit_to(target: Target) {
     limit_to_with(target, []);
 }
 
-/// As in `sse4+pclmulqdq`. Ignores a name that starts with no target.
+/// As in `sse4+pclmulqdq`. Ignores a name that starts with no target, and features that the CPU lacks.
 pub fn limit_to_named(name: &[u8]) {
-    let mut parts = name.split(|&it| it == b'+').flat_map(str::from_utf8);
+    let parts = name.split(|&it| it == b'+');
+    let mut parts = parts.map(|it| str::from_utf8(it).unwrap_or_default());
     let (name, mut targets) = (parts.next(), Target::ALL.into_iter());
     if let Some(target) = targets.find(|it| Some(it.name()) == name) {
         limit_to_with(target, parts);

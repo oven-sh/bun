@@ -1,4 +1,5 @@
 //! The CRC-32 of gzip, derived from libdeflate (LICENSE.md). The highest power of x is in the lowest bit.
+use crate::Aligned;
 use core::array::from_fn;
 
 const fn times_power_of_x(mut value: u32, mut exponent: usize) -> u32 {
@@ -37,6 +38,9 @@ mod folding_simd {
 
     /// As many as keep the multipliers busy.
     const CHAINS: usize = if cfg!(target_arch = "aarch64") { 16 } else { 8 };
+
+    const LONG: usize = 64;
+    const _: () = assert!(LONG >= U8::LEN);
 
     #[bun_simd::foreach_width]
     mod width {
@@ -95,8 +99,11 @@ mod folding_simd {
     /// At `count`, moves the first `count` bytes to the end. At `16 + count`, moves the others to the start.
     #[inline(always)]
     fn shift(at: usize) -> x128::U8 {
-        static SHIFTS: [u8; 48] = from_fn(const |i| if i / 16 == 1 { i as u8 % 16 } else { 0x80 });
-        x128::U8::from_slice(&SHIFTS[at..])
+        static SHIFTS: Aligned<[u8; 48]> =
+            Aligned(from_fn(
+                const |i| if i / 16 == 1 { i as u8 % 16 } else { 0x80 },
+            ));
+        x128::U8::from_slice(&SHIFTS.0[at..])
     }
 
     /// Barrett reduction
@@ -108,14 +115,28 @@ mod folding_simd {
         (v ^ times(times(v, quotient_of_x95), polynomial))[1] as u32
     }
 
-    #[export(or = instruction_simd::update)]
-    pub fn update(crc: u32, bytes: &[u8]) -> u32 {
-        let initial = x128::U64::from_first(crc.into());
-        let Some(before_last) = bytes.len().checked_sub(16) else {
-            let [all] = x128::U8::load_or_zero(bytes);
-            let at_end = (all ^ initial.bitcast::<x128::U8>()).lookup(shift(bytes.len()));
-            return reduce(at_end.bitcast()) ^ crc.unbounded_shr(8 * bytes.len() as u32);
-        };
+    /// `rest` is the end of `bytes`, and `sum` has what is before it.
+    #[inline(always)]
+    fn finish(mut sum: x128::U64, rest: &[u8], bytes: &[u8]) -> u32 {
+        let (blocks, rest) = rest.as_chunks();
+        let factors = x128::U64::from_array(const { factors(16) });
+        #[rustc_unroll(never)]
+        for block in blocks {
+            sum = width::x128::fold(sum, factors, x128::U8::load(block).bitcast());
+        }
+        if let (1.., Some(last)) = (rest.len(), bytes.last_chunk()) {
+            let (sum_bytes, to_start) = (sum.bitcast::<x128::U8>(), shift(16 + rest.len()));
+            let is_new = to_start.bitcast::<x128::I8>().simd_lt(0).cast();
+            let later = is_new.select(x128::U8::load(last), sum_bytes.lookup(to_start));
+            let earlier = sum_bytes.lookup(shift(rest.len()));
+            sum = width::x128::fold(earlier.bitcast(), factors, later.bitcast());
+        }
+        reduce(sum)
+    }
+
+    /// The registers that it needs cost the short inputs nothing.
+    #[inline(never)]
+    fn update_long(crc: u32, bytes: &[u8]) -> u32 {
         let (mut vectors, rest) = bytes.as_chunks();
         let chains = match CHAINS {
             16 => fold_into::<32, 16>(None, crc, &mut vectors),
@@ -125,27 +146,22 @@ mod folding_simd {
         let chains = fold_into::<8, 4>(chains, crc, &mut vectors);
         let chains = fold_into::<4, 2>(chains, crc, &mut vectors);
         let chains = fold_into::<2, 1>(chains, crc, &mut vectors);
-        let (blocks, rest) = rest.as_chunks();
-        let mut blocks = blocks
-            .iter()
-            .map(|it| x128::U8::load(it).bitcast::<x128::U64>());
-        let mut sum = match chains {
-            Some([all]) => fold_blocks(all),
-            None => blocks.next().map_or(initial, |first| first ^ initial),
-        };
-        let factors = x128::U64::from_array(const { factors(16) });
-        for block in blocks {
-            sum = width::x128::fold(sum, factors, block);
+        let Some([all]) = chains else { return crc };
+        finish(fold_blocks(all), rest, bytes)
+    }
+
+    #[export(or = instruction_simd::update)]
+    pub fn update(crc: u32, bytes: &[u8]) -> u32 {
+        if bytes.len() >= LONG {
+            return update_long(crc, bytes);
         }
-        if !rest.is_empty() {
-            let (sum_bytes, to_start) = (sum.bitcast::<x128::U8>(), shift(16 + rest.len()));
-            let is_new = to_start.bitcast::<x128::I8>().simd_lt(0).cast();
-            let last = x128::U8::from_slice(&bytes[before_last..]);
-            let later = is_new.select(last, sum_bytes.lookup(to_start));
-            let earlier = sum_bytes.lookup(shift(rest.len()));
-            sum = width::x128::fold(earlier.bitcast(), factors, later.bitcast());
+        let initial = x128::U32::from_first(crc).bitcast::<x128::U8>();
+        if let Some((first, rest)) = bytes.split_first_chunk() {
+            return finish((x128::U8::load(first) ^ initial).bitcast(), rest, bytes);
         }
-        reduce(sum)
+        let [all] = x128::U8::load_or_zero(bytes);
+        let at_end = (all ^ initial).lookup(shift(bytes.len()));
+        reduce(at_end.bitcast()) ^ crc.unbounded_shr(8 * bytes.len() as u32)
     }
 }
 
@@ -225,7 +241,7 @@ mod table_simd {
     pub fn update(crc: u32, bytes: &[u8]) -> u32 {
         let (vectors, rest) = bytes.as_chunks();
         let parts = vectors.split_last_chunk::<{ KEPT / 16 }>();
-        let (512.., Some(([first, others @ ..], last))) = (bytes.len(), parts) else {
+        let (768.., Some(([first, others @ ..], last))) = (bytes.len(), parts) else {
             return by_tables(crc, bytes);
         };
         // A byte can be dropped if it is added to the ones at these distances after it.

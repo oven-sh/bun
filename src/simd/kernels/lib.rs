@@ -166,11 +166,14 @@ pub fn index_of_any_char(text: &[u8], chars: &[u8]) -> Option<usize> {
 
 #[inline(always)]
 pub fn last_index_of_any_char(text: &[u8], chars: &[u8]) -> Option<usize> {
-    if let [a, b] = *chars {
-        return search::simd::last_index_of_either(text, a, b);
+    match *chars {
+        [a, b] => search::simd::last_index_of_either(text, a, b),
+        [a, b, c] => search::simd::last_index_of_one_of_three(text, a, b, c),
+        _ => {
+            let (ascii, others) = search::tables_of_set(chars);
+            search::simd::last_index_in_set(text, ascii, others)
+        }
     }
-    let (ascii, others) = search::tables_of_set(chars);
-    search::simd::last_index_in_set(text, ascii, others)
 }
 
 #[inline(always)]

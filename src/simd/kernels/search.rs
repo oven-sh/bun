@@ -74,6 +74,11 @@ pub(crate) mod simd {
         U8::position(text, move |v| v.simd_eq(a) | v.simd_eq(b) | v.simd_eq(c))
     }
 
+    #[export]
+    pub fn last_index_of_one_of_three(text: &[u8], a: u8, b: u8, c: u8) -> Option<usize> {
+        U8::rposition(text, move |v| v.simd_eq(a) | v.simd_eq(b) | v.simd_eq(c))
+    }
+
     /// Zero unless the byte is ASCII.
     fn row(v: U8, table: u128) -> U8 {
         U8::repeat(table.to_le_bytes()).lookup(v & 0x8F)

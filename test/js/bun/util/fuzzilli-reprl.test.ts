@@ -327,8 +327,8 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
       `
         const hot = new Int32Array(new SharedArrayBuffer(4));
         new Worker(${JSON.stringify("data:text/javascript," + encodeURIComponent(worker))}).postMessage(hot.buffer);
-        Atomics.wait(hot, 0, 0);
-        console.log("worker is spinning");
+        Atomics.wait(hot, 0, 0, 4000);
+        console.log(Atomics.load(hot, 0) === 1 ? "worker is spinning" : "the worker did not start");
       `,
       next("after the worker"),
     ]);

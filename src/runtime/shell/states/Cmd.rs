@@ -374,7 +374,7 @@ impl Cmd {
     /// Resolves argv[0] to a builtin or falls through to subprocess spawn
     /// (still gated).
     fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
-        // NUL-terminate every arg so builtins can borrow them as `*const c_char`.
+        // NUL-terminate every arg for the argv of a subprocess.
         for a in &mut interp.as_cmd_mut(this).args {
             if a.last() != Some(&0) {
                 a.push(0);

@@ -217,7 +217,7 @@ export default b.declarations(
   extendAll(["FileSystemRouter"], "%MatchedRoute%"),
 
   extendAll(["Cron", "ChildProcess"], "Bun.cron"),
-  extendAll(["Cron"], "%CronJob%"),
+  extendAll(["Cron"], "%CronJob%", "%CronTick%"),
 
   extendAll(["Secrets"], ...withMembers("Bun.secrets", "delete", "get", "set")),
 

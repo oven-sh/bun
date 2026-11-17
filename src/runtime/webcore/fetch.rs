@@ -1664,9 +1664,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 promise,
                 global: jsc::GlobalRef::from(global_this),
             };
-            // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
-            // `upload_stream` adopts the ref by value (no extra bump) and the
-            // MultiPartUpload derefs on completion.
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 url.s3_path(),

@@ -1691,6 +1691,32 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     return { priority, steps };
   }
 
+  // What two binaries of that build compile, timed on one machine.
+  const [, timedBuild] = /\[speed of ([0-9a-f-]{36})\]/.exec(getCommitMessage() ?? "") ?? [];
+  if (timedBuild) {
+    const platform: Platform = { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" };
+    const parts = 5;
+    const zip = "bun-linux-aarch64-hardened";
+    const steps = Array.from({ length: parts }, (_, index): CommandStep => {
+      return {
+        key: `speed-${index + 1}`,
+        label: `${getPlatformLabel(platform)} - speed ${index + 1}/${parts}`,
+        agents: getTestAgent(platform),
+        timeout_in_minutes: 40,
+        command: [
+          ...["unlocked", "unsigned"].flatMap(kind => [
+            `mkdir ${kind}`,
+            `buildkite-agent artifact download ${zip}.zip ${kind} --step linux-aarch64-hardened-${kind}-build-bun --build ${timedBuild}`,
+            `unzip -o ${kind}/${zip}.zip -d ${kind}`,
+          ]),
+          "bun install --ignore-scripts",
+          `bun scripts/compare-signed-builds.ts unlocked/${zip}/bun unsigned/${zip}/bun ${index + 1}/${parts}`,
+        ],
+      };
+    });
+    return { priority, steps };
+  }
+
   const { buildPlatforms = [], testPlatforms = [] } = options;
 
   // A build makes sure every image of the spec exists, not only the ones its

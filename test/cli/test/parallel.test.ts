@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
+import { closeSync, openSync, readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -1376,6 +1376,40 @@ describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () 
     });
     const xml = readFileSync(path.join(String(dir), "out.xml"), "utf8");
     expect(Number(/<testsuite name="a\.test\.js".* time="([^"]+)"/.exec(xml)![1])).toBeLessThan(1000);
+  });
+});
+
+// On Windows the coordinator still waits for the end of the pipe.
+describe.skipIf(isWindows)("--parallel: the run ends although a child of a test keeps fd 3 open", () => {
+  const crashed = ["✗ a.test.js (worker crashed: exit code 1)", "(pass) b", " 1 pass", " 1 fail"];
+  test.concurrent.each([
+    ["when the worker exits in a file", "process.exit(1);", {}, crashed, 1],
+    [
+      "when the worker exits in a file, with the exit reported later",
+      "process.exit(1);",
+      { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      crashed,
+      1,
+    ],
+    ["when the worker shuts down", "", {}, ["(pass) a", "(pass) b", " 2 pass", " 0 fail"], 0],
+  ])("%s", async (_, exit, env, results, exitCode) => {
+    using dir = tempDir("parallel-fd3-held", {
+      "a.test.js": `import {test} from "bun:test"; import {spawn} from "child_process"; import {openSync} from "fs";
+        test("a", () => {
+          spawn("cat", { stdio: [openSync("fifo", "r"), "ignore", "ignore", 3], detached: true }).unref();
+          ${exit}
+        });`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+    mkfifo(path.join(String(dir), "fifo"), 0o600);
+    // `cat` lives until this is closed.
+    const writeEnd = openSync(path.join(String(dir), "fifo"), "r+");
+    try {
+      const childEnv = { ...bunEnv, ...env, BUN_FEATURE_FLAG_NO_ORPHANS: undefined };
+      expect(await runOnOneWorker(String(dir), childEnv, "--no-isolate")).toEqual({ results, exitCode });
+    } finally {
+      closeSync(writeEnd);
+    }
   });
 });
 

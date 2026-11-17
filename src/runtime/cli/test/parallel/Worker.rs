@@ -285,7 +285,7 @@ impl Worker {
     /// Lets go of the process once it has exited and all that it sent has been read.
     pub(crate) fn take_exit(&mut self) -> Option<(bun_spawn::PidT, Status)> {
         let process = self.process.as_ref()?;
-        let status = process.status().filter(|_| self.ipc.done.get())?;
+        let status = process.status().filter(|_| is_drained(&self.ipc))?;
         let exit = (process.pid, status.clone());
         self.process = None;
         Some(exit)
@@ -313,6 +313,20 @@ impl Worker {
         // repeat_bufs / coverage_file frames; the worker exits on
         // `.shutdown` and its exit closes the peer end.
     }
+}
+
+/// For a peer that has exited, after `take_incoming` with no tick since. The channel does not end while a child of a test holds fd 3.
+fn is_drained(ipc: &Channel) -> bool {
+    #[cfg(unix)]
+    if !ipc.done.get() {
+        let mut asked = [bun_sys::posix::PollFd {
+            fd: ipc.backend.socket.get().fd().native(),
+            events: bun_sys::posix::POLL_IN,
+            revents: 0,
+        }];
+        return bun_sys::posix::poll(&mut asked, 0).is_ok_and(|count| count == 0);
+    }
+    ipc.done.get()
 }
 
 bun_spawn::link_impl_ProcessExit! {

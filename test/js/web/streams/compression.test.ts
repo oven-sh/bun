@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { addAbortSignal } from "node:stream";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import zlib from "node:zlib";
+import { streamOf } from "../../node/zlib/zlib-golden/engine";
 
 // CompressionStream et al are C++ subclasses of JSTransformStream so that
 // $inheritsTransformStream() returns true (node:stream utils). The JS-visible
@@ -840,13 +841,7 @@ describe("where a stream of the zlib formats ends", () => {
   const formats = Object.keys(streams) as (keyof typeof streams)[];
 
   async function outcome(format: keyof typeof streams, ...chunks: Uint8Array[]) {
-    const source = new ReadableStream({
-      start(controller) {
-        for (const chunk of chunks) controller.enqueue(chunk);
-        controller.close();
-      },
-    });
-    return new Response(source.pipeThrough(new DecompressionStream(format))).text().catch(error => error);
+    return new Response(streamOf(chunks).pipeThrough(new DecompressionStream(format))).text().catch(error => error);
   }
   const failure = (message: string) => expect.objectContaining({ name: "TypeError", message });
   const junk = expect.objectContaining({ name: "TypeError", code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" });

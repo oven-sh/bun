@@ -1,7 +1,7 @@
 // Streams that make use of all that the format allows.
 import { describe, expect, test } from "bun:test";
 import zlib from "node:zlib";
-import { inflate, piecesOf, type Mode } from "./engine";
+import { inflate, piecesOf, streamOf, type Mode } from "./engine";
 import { input, random } from "./inputs";
 import { fewerIfSlow } from "./observe";
 import { inGzip, inZlib, randomStream } from "./write";
@@ -55,7 +55,7 @@ describe("a valid stream is read whatever the sizes of input and output", () => 
       expect(plain.equals(Bun.gunzipSync(formats.gzip))).toBe(true);
       expect(plain.equals(zlib.inflateSync(formats.deflate, {}))).toBe(true);
       for (const [format, data] of Object.entries(formats)) {
-        const pieces = ReadableStream.from(piecesOf(data, 1 + (data.length >> 2)));
+        const pieces = streamOf(piecesOf(data, 1 + (data.length >> 2)));
         const inflated = pieces.pipeThrough(new DecompressionStream(format as "gzip"));
         expect(plain.equals(await new Response(inflated).bytes())).toBe(true);
       }

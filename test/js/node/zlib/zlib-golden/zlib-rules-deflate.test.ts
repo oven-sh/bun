@@ -7,6 +7,7 @@ import {
   Engine,
   inflate,
   nothing,
+  streamOf,
   Z_BLOCK,
   Z_FINISH,
   Z_FULL_FLUSH,
@@ -250,7 +251,7 @@ test.each(["deflate", "deflate-raw", "gzip"] as const)("CompressionStream(%p) wr
   const pieces = [data.subarray(0, 1), data.subarray(1, 300), nothing, data.subarray(300)];
   for (const piece of pieces) engine.write(piece);
   engine.write(nothing, Z_FINISH);
-  const compressed = ReadableStream.from(pieces).pipeThrough(new CompressionStream(format));
+  const compressed = streamOf(pieces).pipeThrough(new CompressionStream(format));
   expect(engine.output.equals(await new Response(compressed).bytes())).toBe(true);
 });
 

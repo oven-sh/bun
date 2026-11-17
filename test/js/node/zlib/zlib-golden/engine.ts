@@ -85,3 +85,11 @@ export function* piecesOf(data: Uint8Array, size: number | (() => number)) {
     at = end;
   } while (at < data.length);
 }
+
+export const streamOf = (pieces: Iterable<Uint8Array>) =>
+  new ReadableStream({
+    start(controller) {
+      for (const piece of pieces) controller.enqueue(piece);
+      controller.close();
+    },
+  });

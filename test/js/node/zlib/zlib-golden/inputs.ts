@@ -102,7 +102,7 @@ function fillMixed(out: Buffer, seed: number) {
   }
 }
 
-const made = new Map<string, Buffer>();
+const made = new Map<string, Buffer<ArrayBuffer>>();
 
 export function input(kind: Kind, length: number, seed = 1) {
   const key = `${kind} ${length} ${seed}`;

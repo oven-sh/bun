@@ -6,7 +6,7 @@ import { deflateDifferences, inParts, loadCases } from "./observe";
 const cases = (await loadCases()).rare;
 
 test("there is something to compress", () => {
-  expect(cases.length).toBe(85);
+  expect(cases.length).toBe(91);
 });
 
 test.each(inParts(cases, 10))("part %#", some => {

@@ -97,6 +97,18 @@ function turn(i: number) { let sum = 0; for (const line of lines) sum += /^(\\d+
 function turn(i: number) { const map = new Map<string, number>(); for (const key of keys) map.set(key + (i & 1), i); let sum = 0; for (const key of keys) sum += map.get(key + "0") ?? 1; return sum; }`),
   },
   {
+    name: "whole/callbacks-of-built-ins",
+    text: loop(`const numbers = Array.from({ length: 64 }, (_, id) => (id * 37) % 64);
+const turn = (i: number) => numbers.toSorted((a, b) => a - b)[i & 63] + "a1b2c3d4".replace(/\\d/g, digit => digit + i).length;`),
+  },
+  {
+    name: "whole/bound-and-spread-calls",
+    text: loop(`function sum(this: number, ...rest: number[]) { return this + rest.length + rest[0]; }
+const bound = [sum.bind(1, 2), sum.bind(3, 4, 5)];
+const lists = [[1], [1, 2, 3], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]];
+function turn(i: number) { let all = 0; for (const list of lists) all += bound[i & 1](...list) + sum.apply(i, list); return all; }`),
+  },
+  {
     name: "whole/evaluated-calls",
     text: loop(`const fib = new Function("return function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); } // " + process.pid)();
 const turn = (i: number): number => fib(10 + (i & 1));`),

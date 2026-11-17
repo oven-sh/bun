@@ -354,6 +354,72 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
 
+  // How a file runs depends on the type of its package and on what loads it,
+  // so the module type is part of the cache key. One text then has an entry
+  // for each module type that it ran with.
+  describe("the module type is part of the cache key", () => {
+    const filler = `// ${Buffer.alloc((50 * 1024 * 1.5) | 0, "-").toString()}\n`;
+    const run = (file: string) => {
+      const result = Bun.spawnSync({ cmd: [bunExe(), file], cwd: temp_dir, env });
+      return { stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode };
+    };
+    const setType = (type?: string) =>
+      writeFileSync(join(temp_dir, "package.json"), JSON.stringify({ name: "cache", type }));
+
+    test("a legacy HTML comment is judged again when the type of the package changes", () => {
+      writeFileSync(join(temp_dir, "comment.js"), `${filler}var a = 1;\n--> a comment\nconsole.log("ran", a);\n`);
+      setType();
+      expect(run("comment.js")).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
+      expect(newCacheCount()).toBe(1);
+      expect(run("comment.js")).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
+      expect(newCacheCount()).toBe(0);
+
+      setType("module");
+      const asModule = run("comment.js");
+      expect(asModule.stderr).toContain(
+        "error: Legacy HTML single-line comments are not allowed in ECMAScript modules",
+      );
+      expect({ stdout: asModule.stdout, exitCode: asModule.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+
+      setType("commonjs");
+      expect(run("comment.js")).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
+    });
+
+    test("a repeated parameter runs once the package says that the file is CommonJS", () => {
+      writeFileSync(
+        join(temp_dir, "repeated.js"),
+        `${filler}function f(a, a) { return a; }\nconsole.log("ran", f(1, 2));\n`,
+      );
+      // With no type in the package the file runs as a module, where the engine rejects a repeated parameter.
+      setType();
+      const asModule = run("repeated.js");
+      expect(asModule.stderr).toContain("SyntaxError");
+      expect({ stdout: asModule.stdout, exitCode: asModule.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+
+      setType("commonjs");
+      expect(run("repeated.js")).toEqual({ stdout: "ran 2\n", stderr: "", exitCode: 0 });
+    });
+
+    // `import()` takes the module type of a `.cjs` file from "package.json", and `require()` knows that it is CommonJS.
+    test("a .cjs file that import() loads first runs under require()", () => {
+      setType();
+      writeFileSync(
+        join(temp_dir, "repeated.cjs"),
+        `${filler}function f(a, a) { return a; }\nglobalThis.answer = f(1, 2);\n`,
+      );
+      writeFileSync(
+        join(temp_dir, "import.mjs"),
+        `await import("./repeated.cjs").catch(() => {});\nconsole.log("imported");\n`,
+      );
+      writeFileSync(
+        join(temp_dir, "require.cjs"),
+        `require("./repeated.cjs");\nconsole.log("ran", globalThis.answer);\n`,
+      );
+      expect(run("import.mjs")).toEqual({ stdout: "imported\n", stderr: "", exitCode: 0 });
+      expect(run("require.cjs")).toEqual({ stdout: "ran 2\n", stderr: "", exitCode: 0 });
+    });
+  });
+
   // A define replaces an identifier at parse time, so the define table is part
   // of the cache key. The cache is shared by every project of the user, and
   // keyed by source bytes, so two projects with the same file must not see

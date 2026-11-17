@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import vm from "node:vm";
 
@@ -1046,43 +1045,6 @@ describe("sloppy CommonJS runs as written", () => {
     expect(exitCode).toBe(0);
   });
 
-  // How a file runs depends on the type of its package and on what loads it. The transpiler cache
-  // has to keep the answers for one text apart.
-  test.concurrent("the transpiler cache keeps the module types of a file apart", async () => {
-    const padding = `// ${Buffer.alloc(8 * 1024, "-").toString()}\n`;
-    using dir = tempDir("strict-mode-module-type-cache", {
-      "package.json": JSON.stringify({ name: "cache" }),
-      "comment.js": `${padding}var a = 1;\n--> a comment\nconsole.log("ran", a);\n`,
-      "repeated.js": `${padding}function f(a, a) { return a; }\nconsole.log("ran", f(1, 2));\n`,
-      "repeated.cjs": `${padding}function f(a, a) { return a; }\nglobalThis.answer = f(1, 2);\n`,
-      "import.mjs": `await import("./repeated.cjs").catch(() => {});\nconsole.log("imported");\n`,
-      "require.cjs": `require("./repeated.cjs");\nconsole.log("ran", globalThis.answer);\n`,
-    });
-    const cwd = String(dir);
-    const env = { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(cwd, "cache") };
-    const setType = (type: string) => writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "cache", type }));
-
-    expect(await run(cwd, "comment.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
-    expect(await run(cwd, "comment.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
-    // With no type in the package the file runs as a module, where the engine rejects a repeated parameter.
-    const asModule = await run(cwd, "repeated.js", env);
-    expect({ stdout: asModule.stdout, exitCode: asModule.exitCode }).toEqual({ stdout: "", exitCode: 1 });
-    expect(asModule.stderr).toContain("SyntaxError");
-
-    setType("module");
-    const comment = await run(cwd, "comment.js", env);
-    expect(comment.stderr).toContain(`error: ${htmlCommentError}`);
-    expect({ stdout: comment.stdout, exitCode: comment.exitCode }).toEqual({ stdout: "", exitCode: 1 });
-
-    setType("commonjs");
-    expect(await run(cwd, "repeated.js", env)).toEqual({ stdout: "ran 2\n", stderr: "", exitCode: 0 });
-    expect(await run(cwd, "comment.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
-
-    // `import()` and `require()` do not give a `.cjs` file the same module type.
-    expect(await run(cwd, "import.mjs", env)).toEqual({ stdout: "imported\n", stderr: "", exitCode: 0 });
-    expect(await run(cwd, "require.cjs", env)).toEqual({ stdout: "ran 2\n", stderr: "", exitCode: 0 });
-  });
-
   // What happens to valid sloppy mode code in a file that has no `import`, `export`, `require` or `module`.
   // Node decides by the file: a `.cjs` file and a `.js` file run it. A `.mjs` file and a `.js` file of a
   // "type": "module" package reject what strict mode code cannot hold.
@@ -1165,16 +1127,21 @@ describe("sloppy CommonJS runs as written", () => {
     expect(exitCode).toBe(0);
 
     // Where that is not the answer of Node, and what tracks it.
-    const differsFromNode = { ".cjs through import(): #40940": 0, ".js: #44802": 0, ".mjs and type module: #32175": 0 };
+    const differsFromNode = {
+      ".cjs through import(): its module type comes from package.json alone": 0,
+      ".js: #44802": 0,
+      ".mjs and type module: #32175": 0,
+    };
     loads.forEach(({ input, kind, how }, i) => {
       const node = validInStrictMode.has(input) || kinds.find(k => k.kind === kind)!.nodeRuns ? "runs" : "SyntaxError";
       if (answers[i] === node) return;
-      if (kind === ".cjs") differsFromNode[".cjs through import(): #40940"] += +(how === "import");
+      if (kind === ".cjs")
+        differsFromNode[".cjs through import(): its module type comes from package.json alone"] += +(how === "import");
       else if (kind === ".js") differsFromNode[".js: #44802"]++;
       else differsFromNode[".mjs and type module: #32175"]++;
     });
     expect(differsFromNode).toEqual({
-      ".cjs through import(): #40940": 20,
+      ".cjs through import(): its module type comes from package.json alone": 20,
       ".js: #44802": 40,
       ".mjs and type module: #32175": 128,
     });

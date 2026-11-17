@@ -4686,6 +4686,14 @@ describe("bundler", () => {
     // With an `export` statement, only a module loader takes the output.
     { name: "ESMWithExport", format: "esm", exports: true, strict: inESMOutput },
     { name: "StrictBannerESM", format: "esm", banner: '"use strict";', strict: inStrictMode },
+    // The printer drops the "use strict" of the entry point from ESM output, so the output is as without it.
+    {
+      name: "StrictEntryESM",
+      format: "esm",
+      useStrict: true,
+      strict: inESMOutput,
+      refuses: refusedByESMOutputThatLoadsAsAScript,
+    },
     { name: "CJS", format: "cjs", strict: false },
     { name: "IIFE", format: "iife", strict: false },
     { name: "StrictEntryCJS", format: "cjs", useStrict: true, strict: inStrictMode },
@@ -4763,6 +4771,26 @@ describe("bundler", () => {
     format: "cjs",
     bundleErrors: { "/dep.cjs": sloppyOnlySyntax.map(syntax => `${syntax} ${inStrictMode}`) },
   });
+  // The same with ESM output: the file with an `export` statement is the one that only a module loader takes.
+  for (const entryPoints of [
+    ["/script.js", "/module.js"],
+    ["/module.js", "/script.js"],
+  ]) {
+    itBundled(
+      `edgecase/SloppyOnlySyntaxInOneOfTwoESMOutputFilesIsAnError${entryPoints[0] === "/module.js" ? "ModuleFirst" : ""}`,
+      {
+        files: {
+          "/script.js": `import dep from "./with.cjs";\nconsole.log(dep);\n`,
+          "/module.js": `import dep from "./with.cjs";\nexport default dep;\n`,
+          "/with.cjs": `var o = { v: 5 };\nwith (o) module.exports = v;\n`,
+        },
+        entryPoints,
+        outdir: "/out",
+        format: "esm",
+        bundleErrors: { "/with.cjs": [`With statements ${inESMOutput}`] },
+      },
+    );
+  }
   itBundled("edgecase/SloppyOnlySyntaxInTheSloppyOneOfTwoCJSOutputFiles", {
     files: {
       "/sloppy.js": `import dep from "./dep.cjs";\nconsole.log(dep);\n`,
@@ -4782,6 +4810,19 @@ describe("bundler", () => {
     files: {
       "/a.js": `import dep from "./dep.cjs";\nconsole.log("a", dep);\n`,
       "/b.js": `import dep from "./dep.cjs";\nconsole.log("b", dep);\n`,
+      "/dep.cjs": sloppyOnlyDependency,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    bundleErrors: { "/dep.cjs": sloppyOnlySyntax.map(syntax => `${syntax} ${inESMOutput}`) },
+  });
+  // A chunk that imports another chunk has an `import` statement, also when it exports nothing.
+  itBundled("edgecase/SloppyOnlySyntaxInChunkThatImportsAChunkIsAnError", {
+    files: {
+      "/a.js": `import "./shared.js";\nimport dep from "./dep.cjs";\nconsole.log("a", dep);\n`,
+      "/b.js": `import "./shared.js";\nconsole.log("b");\n`,
+      "/shared.js": `console.log("shared");\n`,
       "/dep.cjs": sloppyOnlyDependency,
     },
     entryPoints: ["/a.js", "/b.js"],

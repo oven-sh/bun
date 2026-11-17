@@ -177,6 +177,5 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForBunRequest { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForJSConnectionsList { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSHTTPParser { nullptr };
 };
 } // namespace WebCore

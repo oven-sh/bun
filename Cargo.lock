@@ -774,6 +774,7 @@ dependencies = [
 name = "bun_http1"
 version = "0.0.0"
 dependencies = [
+ "bitflags",
  "bun_core",
  "bun_http_types",
  "thiserror",
@@ -1631,6 +1632,7 @@ dependencies = [
  "bun_hash",
  "bun_histogram",
  "bun_http",
+ "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
  "bun_install",

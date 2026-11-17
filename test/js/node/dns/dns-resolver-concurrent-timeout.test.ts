@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 // The resolver's per-type pending cache has a fixed 32 slots; any query
 // issued past that is dispatched to c-ares without a cache slot. Before the
-// fix, `any_requests_pending()` (which gates the 1s c-ares timeout poll timer)
+// fix, the check that gates the 1s c-ares timeout poll timer
 // looked only at the cache bitsets, so once the 32 tracked queries completed
 // the timer was disarmed and any still-pending untracked query never saw its
 // ETIMEOUT: its promise stayed pending forever and the process never exited.

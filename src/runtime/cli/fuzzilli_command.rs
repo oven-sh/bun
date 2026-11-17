@@ -118,16 +118,27 @@ mod reprl {
         serve(vm)
     }
 
-    /// Handshake, then one program per `exec` until the control pipe closes.
+    /// A reset, then `HELO` or the status of the last program, then the next program, until the control pipe closes.
     fn serve(vm: &VirtualMachine) -> ! {
-        // The first program of a child also runs on a global that `reset` made: Fuzzilli confirms a crash
-        // by running its program again, and that run is the first program of a new child.
-        reset(vm);
+        let mut program: Vec<u8> = Vec::new();
+        let mut passed: Option<bool> = None;
+        loop {
+            let is_reusable = reset(vm);
+            match passed {
+                None => handshake(),
+                Some(ok) => report(vm, ok, is_reusable),
+            }
+            if !read_program(&mut program) {
+                break;
+            }
+            passed = Some(run_program(vm, &program));
+        }
+        exit(vm, 0)
+    }
 
+    fn handshake() {
         let control_in = File::borrow(&CONTROL_READ_FD);
         let control_out = File::borrow(&CONTROL_WRITE_FD);
-        let data_in = File::borrow(&DATA_READ_FD);
-
         if control_out.write_all(b"HELO").is_err() {
             protocol_error(format_args!("could not write HELO"));
         }
@@ -138,53 +149,54 @@ mod reprl {
                 bstr::BStr::new(&helo)
             ));
         }
+    }
 
-        let mut program: Vec<u8> = Vec::new();
-        loop {
-            let mut command = [0u8; 4];
-            match control_in.read_all(&mut command) {
-                // The fuzzer closed the control pipe: this child is done.
-                Ok(0) => break,
-                Ok(4) if command == *b"exec" => {}
-                _ => protocol_error(format_args!(
-                    "expected exec, got {:?}",
-                    bstr::BStr::new(&command)
-                )),
-            }
-            let mut size = [0u8; 8];
-            if !matches!(control_in.read_all(&mut size), Ok(8)) {
-                protocol_error(format_args!("could not read the program size"));
-            }
-            let size = u64::from_le_bytes(size);
-            if size > MAX_PROGRAM_SIZE {
-                protocol_error(format_args!("program size {} is too large", size));
-            }
-            let size = size as usize;
-            program.resize(size, 0);
-            if !matches!(data_in.read_all(&mut program[..size]), Ok(n) if n == size) {
-                protocol_error(format_args!("could not read {} program bytes", size));
-            }
-
-            let ok = run_program(vm, &program);
-            let is_reusable = reset(vm);
-
-            // The fuzzer reads the program's output once it has the status.
-            Output::flush();
-            if !is_reusable {
-                // libreprl takes the exit code of a child that leaves here as the status, and starts a new child.
-                bun_core::pretty_errorln!(
-                    "[REPRL] work of the program outlived the reset: this child ends"
-                );
-                exit(vm, if ok { 0 } else { 1 });
-            }
-            let status: u32 = if ok { 0 } else { 1 << 8 };
-            if control_out.write_all(&status.to_le_bytes()).is_err() {
-                protocol_error(format_args!("could not write the status"));
-            }
-            Bun__REPRL__resetCoverage();
+    /// Reads the next program. Returns false when the fuzzer has closed the control pipe.
+    fn read_program(program: &mut Vec<u8>) -> bool {
+        let control_in = File::borrow(&CONTROL_READ_FD);
+        let data_in = File::borrow(&DATA_READ_FD);
+        let mut command = [0u8; 4];
+        match control_in.read_all(&mut command) {
+            Ok(0) => return false,
+            Ok(4) if command == *b"exec" => {}
+            _ => protocol_error(format_args!(
+                "expected exec, got {:?}",
+                bstr::BStr::new(&command)
+            )),
         }
+        let mut size = [0u8; 8];
+        if !matches!(control_in.read_all(&mut size), Ok(8)) {
+            protocol_error(format_args!("could not read the program size"));
+        }
+        let size = u64::from_le_bytes(size);
+        if size > MAX_PROGRAM_SIZE {
+            protocol_error(format_args!("program size {} is too large", size));
+        }
+        let size = size as usize;
+        program.resize(size, 0);
+        if !matches!(data_in.read_all(&mut program[..size]), Ok(n) if n == size) {
+            protocol_error(format_args!("could not read {} program bytes", size));
+        }
+        true
+    }
 
-        exit(vm, 0)
+    /// Writes the status of a program. A child that cannot run another program ends here.
+    fn report(vm: &VirtualMachine, ok: bool, is_reusable: bool) {
+        // The fuzzer reads the program's output once it has the status.
+        Output::flush();
+        if !is_reusable {
+            // libreprl takes the exit code of a child that leaves here as the status, and starts a new child.
+            bun_core::pretty_errorln!(
+                "[REPRL] work of the program outlived the reset: this child ends"
+            );
+            exit(vm, if ok { 0 } else { 1 });
+        }
+        let status: u32 = if ok { 0 } else { 1 << 8 };
+        let control_out = File::borrow(&CONTROL_WRITE_FD);
+        if control_out.write_all(&status.to_le_bytes()).is_err() {
+            protocol_error(format_args!("could not write the status"));
+        }
+        Bun__REPRL__resetCoverage();
     }
 
     fn exit(vm: &VirtualMachine, code: u8) -> ! {
@@ -204,7 +216,7 @@ mod reprl {
         vm.unhandled_error_counter.get() == 0
     }
 
-    /// Retires the realm of the program and makes the global of the next one. Returns whether this child can run it.
+    /// Retires the current realm and makes the global of the next program. Returns whether this child can run it.
     fn reset(vm: &VirtualMachine) -> bool {
         crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
         vm.swap_global_for_test_isolation();

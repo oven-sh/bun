@@ -422,6 +422,8 @@ impl SendQueue {
                 offer.handle.close_next_tick(&global);
             }
         }
+        // It roots the `Worker`, which holds the `Subprocess`.
+        drop(self.cluster.take());
         match owner {
             SendQueueOwner::Subprocess(subprocess) => subprocess.handle_ipc_close(),
             SendQueueOwner::Instance => IPCInstance::handle_ipc_close(),

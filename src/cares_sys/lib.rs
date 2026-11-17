@@ -1,3 +1,4 @@
+#![feature(adt_const_params)]
 #![allow(non_camel_case_types)]
 #![warn(unused_must_use)]
 

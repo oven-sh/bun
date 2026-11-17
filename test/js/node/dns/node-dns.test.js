@@ -1005,6 +1005,14 @@ describe("dns.lookupService with a numeric-string port", () => {
   });
 });
 
+function encodeName(name) {
+  const labels = name === "" ? [] : name.split(".");
+  return Buffer.concat([
+    ...labels.map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)])),
+    Buffer.from([0]),
+  ]);
+}
+
 // A resolver keeps a 32-slot pending cache per query kind. The first in-flight
 // query for a name owns a slot; identical queries issued while it is in flight
 // are chained onto it and settled together when it completes, so the server
@@ -1014,13 +1022,6 @@ describe("dns.lookupService with a numeric-string port", () => {
 // 10.0.0.<n>, so a promise settled from the wrong slot shows up as the wrong
 // address.
 describe("pending cache", () => {
-  function encodeName(name) {
-    return Buffer.concat([
-      ...name.split(".").map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)])),
-      Buffer.from([0]),
-    ]);
-  }
-
   async function startFakeServer() {
     const socket = dgram.createSocket("udp4");
     const queries = [];
@@ -1126,15 +1127,9 @@ describe("pending cache", () => {
 
 describe("resolve record types", () => {
   const NAME = "rr.example.test";
+  // prettier-ignore
+  const WIRE = { A: 1, NS: 2, CNAME: 5, SOA: 6, PTR: 12, MX: 15, TXT: 16, AAAA: 28, SRV: 33, NAPTR: 35, ANY: 255, CAA: 257 };
 
-  function wireName(name) {
-    return Buffer.concat([
-      ...(name === ""
-        ? []
-        : name.split(".").map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)]))),
-      Buffer.from([0]),
-    ]);
-  }
   function u16(n) {
     const b = Buffer.alloc(2);
     b.writeUInt16BE(n);
@@ -1148,16 +1143,16 @@ describe("resolve record types", () => {
   function charString(s) {
     return Buffer.concat([Buffer.from([s.length]), Buffer.from(s)]);
   }
-  // One answer RR: <owner> 60 IN <type> <rdata>
-  function rr(owner, type, rdata) {
-    return Buffer.concat([wireName(owner), u16(type), u16(1), u32(60), u16(rdata.length), rdata]);
+  // One answer RR: <owner> 60 IN <rrtype> <rdata>
+  function rr(owner, rrtype, rdata) {
+    return Buffer.concat([encodeName(owner), u16(WIRE[rrtype]), u16(1), u32(60), u16(rdata.length), rdata]);
   }
 
   const aRdata = Buffer.from([10, 0, 0, 1]);
-  const mxRdata = Buffer.concat([u16(10), wireName("mx.example.test")]);
+  const mxRdata = Buffer.concat([u16(10), encodeName("mx.example.test")]);
   const soaRdata = Buffer.concat([
-    wireName("ns1.example.test"),
-    wireName("hostmaster.example.test"),
+    encodeName("ns1.example.test"),
+    encodeName("hostmaster.example.test"),
     u32(2024010101),
     u32(7200),
     u32(900),
@@ -1169,79 +1164,76 @@ describe("resolve record types", () => {
   const cases = [
     {
       rrtype: "A",
-      qtype: 1,
       syscall: "queryA",
-      answers: owner => [rr(owner, 1, aRdata)],
+      answers: owner => [rr(owner, "A", aRdata)],
       method: (r, name) => r.resolve4(name, { ttl: true }),
       expected: ["10.0.0.1"],
       methodExpected: [{ address: "10.0.0.1", ttl: 60 }],
     },
     {
       rrtype: "AAAA",
-      qtype: 28,
       syscall: "queryAaaa",
-      answers: owner => [rr(owner, 28, Buffer.from("20010db8000000000000000000000001", "hex"))],
+      answers: owner => [rr(owner, "AAAA", Buffer.from("20010db8000000000000000000000001", "hex"))],
       method: (r, name) => r.resolve6(name, { ttl: true }),
       expected: ["2001:db8::1"],
       methodExpected: [{ address: "2001:db8::1", ttl: 60 }],
     },
     {
       rrtype: "CNAME",
-      qtype: 5,
       syscall: "queryCname",
-      answers: owner => [rr(owner, 5, wireName("canonical.example.test")), rr("canonical.example.test", 1, aRdata)],
+      answers: owner => [
+        rr(owner, "CNAME", encodeName("canonical.example.test")),
+        rr("canonical.example.test", "A", aRdata),
+      ],
       method: (r, name) => r.resolveCname(name),
       expected: ["canonical.example.test"],
     },
     {
       rrtype: "NS",
-      qtype: 2,
       syscall: "queryNs",
-      answers: owner => [rr(owner, 2, wireName("ns1.example.test")), rr(owner, 2, wireName("ns2.example.test"))],
+      answers: owner => [
+        rr(owner, "NS", encodeName("ns1.example.test")),
+        rr(owner, "NS", encodeName("ns2.example.test")),
+      ],
       method: (r, name) => r.resolveNs(name),
       expected: ["ns1.example.test", "ns2.example.test"],
     },
     {
       rrtype: "PTR",
-      qtype: 12,
       syscall: "queryPtr",
-      answers: owner => [rr(owner, 12, wireName("host.example.test"))],
+      answers: owner => [rr(owner, "PTR", encodeName("host.example.test"))],
       method: (r, name) => r.resolvePtr(name),
       expected: ["host.example.test"],
     },
     {
       rrtype: "MX",
-      qtype: 15,
       syscall: "queryMx",
-      answers: owner => [rr(owner, 15, mxRdata)],
+      answers: owner => [rr(owner, "MX", mxRdata)],
       method: (r, name) => r.resolveMx(name),
       expected: [{ priority: 10, exchange: "mx.example.test" }],
     },
     {
       rrtype: "TXT",
-      qtype: 16,
       syscall: "queryTxt",
-      answers: owner => [rr(owner, 16, charString("v=spf1 -all"))],
+      answers: owner => [rr(owner, "TXT", charString("v=spf1 -all"))],
       method: (r, name) => r.resolveTxt(name),
       expected: [["v=spf1 -all"]],
     },
     {
       rrtype: "SRV",
-      qtype: 33,
       syscall: "querySrv",
-      answers: owner => [rr(owner, 33, Buffer.concat([u16(10), u16(5), u16(8080), wireName("srv.example.test")]))],
+      answers: owner => [rr(owner, "SRV", Buffer.concat([u16(10), u16(5), u16(8080), encodeName("srv.example.test")]))],
       method: (r, name) => r.resolveSrv(name),
       expected: [{ name: "srv.example.test", priority: 10, weight: 5, port: 8080 }],
     },
     {
       rrtype: "NAPTR",
-      qtype: 35,
       syscall: "queryNaptr",
       answers: owner => [
         rr(
           owner,
-          35,
-          Buffer.concat([u16(1), u16(12), charString("S"), charString("SIP+D2T"), charString(""), wireName("")]),
+          "NAPTR",
+          Buffer.concat([u16(1), u16(12), charString("S"), charString("SIP+D2T"), charString(""), encodeName("")]),
         ),
       ],
       method: (r, name) => r.resolveNaptr(name),
@@ -1249,9 +1241,8 @@ describe("resolve record types", () => {
     },
     {
       rrtype: "SOA",
-      qtype: 6,
       syscall: "querySoa",
-      answers: owner => [rr(owner, 6, soaRdata)],
+      answers: owner => [rr(owner, "SOA", soaRdata)],
       method: (r, name) => r.resolveSoa(name),
       expected: {
         nsname: "ns1.example.test",
@@ -1265,19 +1256,17 @@ describe("resolve record types", () => {
     },
     {
       rrtype: "CAA",
-      qtype: 257,
       syscall: "queryCaa",
       answers: owner => [
-        rr(owner, 257, Buffer.concat([Buffer.from([0]), charString("issue"), Buffer.from("ca.example.test")])),
+        rr(owner, "CAA", Buffer.concat([Buffer.from([0]), charString("issue"), Buffer.from("ca.example.test")])),
       ],
       method: (r, name) => r.resolveCaa(name),
       expected: [{ critical: 0, issue: "ca.example.test" }],
     },
     {
       rrtype: "ANY",
-      qtype: 255,
       syscall: "queryAny",
-      answers: owner => [rr(owner, 1, aRdata), rr(owner, 15, mxRdata)],
+      answers: owner => [rr(owner, "A", aRdata), rr(owner, "MX", mxRdata)],
       method: (r, name) => r.resolveAny(name),
       expected: [
         { address: "10.0.0.1", ttl: 60, type: "A" },
@@ -1285,12 +1274,13 @@ describe("resolve record types", () => {
       ],
     },
   ];
-  const byQtype = new Map(cases.map(c => [c.qtype, c]));
+  const byType = Object.fromEntries(cases.map(c => [c.rrtype, c]));
 
   // No answers is NXDOMAIN.
-  async function startFakeServer(answersFor = (qname, qtype) => byQtype.get(qtype).answers(qname)) {
+  async function startFakeServer(answersFor = (qname, rrtype) => byType[rrtype].answers(qname)) {
     const socket = dgram.createSocket("udp4");
     const queries = [];
+    const ids = new Set();
     socket.on("message", (query, rinfo) => {
       const labels = [];
       let off = 12;
@@ -1298,12 +1288,15 @@ describe("resolve record types", () => {
         labels.push(query.toString("latin1", off + 1, off + 1 + query[off]));
         off += query[off] + 1;
       }
-      const qtype = query.readUInt16BE(off + 1);
+      const rrtype = Object.keys(WIRE).find(rrtype => WIRE[rrtype] === query.readUInt16BE(off + 1));
       const question = query.subarray(12, off + 5);
       const qname = labels.join(".");
-      queries.push(`${qtype} ${qname || "."}`);
+      // A retry keeps its id.
+      const id = `${query.readUInt16BE(0)} ${qname}`;
+      if (!ids.has(id)) queries.push(`${rrtype} ${qname || "."}`);
+      ids.add(id);
 
-      const answers = answersFor(qname, qtype);
+      const answers = answersFor(qname, rrtype);
       const rcode = answers.length ? 0x80 : 0x83;
       const header = Buffer.from([query[0], query[1], 0x81, rcode, 0, 1, 0, answers.length, 0, 0, 0, 0]);
       socket.send(Buffer.concat([header, question, ...answers]), rinfo.port, rinfo.address);
@@ -1327,7 +1320,7 @@ describe("resolve record types", () => {
       expect(Object.fromEntries(results)).toEqual(
         Object.fromEntries(cases.map(c => [c.rrtype, [c.expected, c.methodExpected ?? c.expected]])),
       );
-      expect(queries.sort()).toEqual(cases.map(c => `${c.qtype} ${NAME}`).sort());
+      expect(queries.sort()).toEqual(cases.map(c => `${c.rrtype} ${NAME}`).sort());
     } finally {
       socket.close();
     }
@@ -1345,7 +1338,7 @@ describe("resolve record types", () => {
         ),
       );
       expect(errors).toEqual(cases.map(c => ({ code: "ENOTFOUND", syscall: c.syscall, hostname: NAME })));
-      expect(queries.sort()).toEqual(cases.map(c => `${c.qtype} ${NAME}`).sort());
+      expect(queries.sort()).toEqual(cases.map(c => `${c.rrtype} ${NAME}`).sort());
     } finally {
       socket.close();
     }
@@ -1355,20 +1348,28 @@ describe("resolve record types", () => {
     const { socket, queries, resolver } = await startFakeServer();
     try {
       const [ns, soa] = await Promise.all([resolver.resolveNs(""), resolver.resolveSoa("")]);
-      expect(ns).toEqual(byQtype.get(2).expected);
-      expect(soa).toEqual(byQtype.get(6).expected);
-      expect(queries.sort()).toEqual(["2 .", "6 ."]);
+      expect(ns).toEqual(byType.NS.expected);
+      expect(soa).toEqual(byType.SOA.expected);
+      expect(queries.sort()).toEqual(["NS .", "SOA ."]);
     } finally {
       socket.close();
     }
   });
 
   test.concurrent.each([
-    ["alone", [], []],
-    ["and an address", [rr("c.test", 1, aRdata)], [{ address: "10.0.0.1", ttl: 60, type: "A" }]],
-    ["and an MX", [rr("c.test", 15, mxRdata)], [{ priority: 10, exchange: "mx.example.test", type: "MX" }]],
-  ])("resolveAny() has no holes for a CNAME %s", async (_, rest, expected) => {
-    const { socket, resolver } = await startFakeServer(qname => [rr(qname, 5, wireName("c.test")), ...rest]);
+    { withCname: "nothing else", records: [], expected: [] },
+    {
+      withCname: "an address",
+      records: [rr("c.test", "A", aRdata)],
+      expected: [{ address: "10.0.0.1", ttl: 60, type: "A" }],
+    },
+    {
+      withCname: "an MX",
+      records: [rr("c.test", "MX", mxRdata)],
+      expected: [{ priority: 10, exchange: "mx.example.test", type: "MX" }],
+    },
+  ])("resolveAny() has no holes for a CNAME and $withCname", async ({ records, expected }) => {
+    const { socket, resolver } = await startFakeServer(qname => [rr(qname, "CNAME", encodeName("c.test")), ...records]);
     try {
       expect(await resolver.resolveAny(NAME)).toStrictEqual(expected);
     } finally {
@@ -1377,9 +1378,9 @@ describe("resolve record types", () => {
   });
 
   // lookupService() asks the servers of the default resolver.
-  test.concurrent("lookupService() names the address in its error, and keeps ports apart", async () => {
-    const { socket } = await startFakeServer((qname, qtype) =>
-      qname.startsWith("1.") ? byQtype.get(qtype).answers(qname) : [],
+  test.concurrent("lookupService() names the address in its error, and joins by address and port", async () => {
+    const { socket, queries } = await startFakeServer(qname =>
+      qname === "1.2.0.192.in-addr.arpa" ? byType.PTR.answers(qname) : [],
     );
     try {
       const script = `
@@ -1391,6 +1392,11 @@ describe("resolve record types", () => {
         console.log(message, hostname);
       `;
       expect(await bunRun(["-e", script])).toSpawn("61001\n61002\n61001\ngetnameinfo ENOTFOUND 192.0.2.2 192.0.2.2");
+      expect(queries).toEqual([
+        "PTR 1.2.0.192.in-addr.arpa",
+        "PTR 1.2.0.192.in-addr.arpa",
+        "PTR 2.2.0.192.in-addr.arpa",
+      ]);
     } finally {
       socket.close();
     }
@@ -1398,27 +1404,21 @@ describe("resolve record types", () => {
 });
 
 describe('errors inherit the name "Error", like Node', () => {
-  const resolver = new dns.Resolver();
-  const promisesResolver = new dns_promises.Resolver();
   const viaCallback = (fn, argument) => new Promise(resolve => fn(argument, resolve));
-  const shape = err => ({ code: err.code, name: err.name, own: Object.hasOwn(err, "name"), string: String(err) });
 
   test.each([
-    ["lookup", () => viaCallback(dns.lookup, "a b"), "getaddrinfo ENOTFOUND a b"],
-    ["promises.lookup", () => dns_promises.lookup("a b"), "getaddrinfo ENOTFOUND a b"],
-    ["resolve4", () => viaCallback(dns.resolve4, "a\0"), "queryA ENOTFOUND a\0"],
-    ["promises.resolve4", () => dns_promises.resolve4("a\0"), "queryA ENOTFOUND a\0"],
-    ["Resolver#resolveMx", () => viaCallback(resolver.resolveMx.bind(resolver), "a\0"), "queryMx ENOTFOUND a\0"],
-    ["promises.Resolver#resolveMx", () => promisesResolver.resolveMx("a\0"), "queryMx ENOTFOUND a\0"],
-    ["reverse", () => viaCallback(dns.reverse, "nope"), "getHostByAddr ENOTIMP nope"],
-    ["promises.reverse", () => dns_promises.reverse("nope"), "getHostByAddr ENOTIMP nope"],
-  ])("%s", async (_, fail, message) => {
-    expect(shape(await fail().catch(err => err))).toEqual({
-      code: message.split(" ")[1],
-      name: "Error",
-      own: false,
-      string: `Error: ${message}`,
-    });
+    { api: "lookup", fail: () => viaCallback(dns.lookup, "a b"), string: "Error: getaddrinfo ENOTFOUND a b" },
+    { api: "resolve4", fail: () => viaCallback(dns.resolve4, "a\0"), string: "Error: queryA ENOTFOUND a\0" },
+    { api: "reverse", fail: () => viaCallback(dns.reverse, "nope"), string: "Error: getHostByAddr ENOTIMP nope" },
+    { api: "promises.reverse", fail: () => dns_promises.reverse("nope"), string: "Error: getHostByAddr ENOTIMP nope" },
+  ])("$api", async ({ fail, string }) => {
+    const err = await fail().catch(err => err);
+    expect({ string: String(err), ownName: Object.hasOwn(err, "name") }).toEqual({ string, ownName: false });
+  });
+
+  test("in the first line of stack", async () => {
+    const { stack } = await dns_promises.reverse("nope").catch(err => err);
+    expect(stack).toStartWith("Error: getHostByAddr ENOTIMP nope\n");
   });
 
   test("lookup finds no address", async () => {

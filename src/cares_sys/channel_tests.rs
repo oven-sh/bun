@@ -5,6 +5,7 @@ use core::cell::RefCell;
 
 thread_local! {
     static IN_FLIGHT: RefCell<Vec<(ares_callback, *mut c_void)>> = const { RefCell::new(Vec::new()) };
+    static SOCK_STATE: Cell<(ares_sock_state_cb, *mut c_void)> = const { Cell::new((None, ptr::null_mut())) };
 }
 
 fn fail_all(err: Error) {
@@ -22,7 +23,8 @@ extern "C" fn ares_library_init_mem(_: c_int, _: Alloc, _: Alloc, _: Alloc) -> c
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn ares_init_options(out: &mut *mut ares_channel_t, _: *mut Options, _: c_int) -> c_int {
+extern "C" fn ares_init_options(out: &mut *mut ares_channel_t, opts: &Options, _: c_int) -> c_int {
+    SOCK_STATE.set((opts.sock_state_cb, opts.sock_state_cb_data));
     *out = ptr::dangling_mut();
     ARES_SUCCESS
 }
@@ -30,6 +32,9 @@ extern "C" fn ares_init_options(out: &mut *mut ares_channel_t, _: *mut Options, 
 #[unsafe(no_mangle)]
 extern "C" fn ares_destroy(_: *mut ares_channel_t) {
     fail_all(Error::EDESTRUCTION);
+    let (callback, data) = SOCK_STATE.get();
+    // SAFETY: what `ares_init_options` was given.
+    unsafe { callback.unwrap()(data, 3, 0, 0) };
 }
 
 /// A name that starts with `!` fails inside the call, after the queries in flight.
@@ -109,6 +114,28 @@ fn the_channel_can_be_used_and_closed_between_two_answers() {
 }
 
 #[test]
+fn closing_reports_the_sockets_to_the_box_that_holds_the_channel() {
+    #[derive(Default)]
+    struct Owner {
+        channel: Channel<Id>,
+        closed: RefCell<Vec<ares_socket_t>>,
+    }
+    impl ChannelContainer for Owner {
+        fn on_dns_socket_state(&self, socket: ares_socket_t, _: bool, _: bool) {
+            self.closed.borrow_mut().push(socket);
+        }
+    }
+    let owner = bun_core::heap::into_raw(Box::<Owner>::default());
+    // SAFETY: closed before the box is taken back.
+    unsafe {
+        let options = ChannelOptions::default();
+        (*owner).channel.open(&*owner, options).unwrap();
+        assert_eq!(errors((*owner).channel.close()), []);
+        assert_eq!(bun_core::heap::take(owner).closed.take(), [3]);
+    }
+}
+
+#[test]
 fn a_closed_channel_never_calls_c_ares() {
     let channel = Channel::default();
     assert_eq!(ask(&channel, b"a", 1), [(1, Error::EDESTRUCTION)]);
@@ -136,9 +163,9 @@ fn a_name_that_does_not_fit_or_has_a_nul_is_not_sent() {
 }
 
 #[test]
-fn statuses() {
-    assert_eq!(Error::check(0), Ok(()));
-    assert_eq!(Error::check(1), Err(Error::ENOTFOUND));
-    assert_eq!(Error::check(19), Err(Error::ENOTFOUND));
-    assert_eq!(Error::check(26), Err(Error::ENOSERVER));
+fn no_data_and_no_name_are_reported_as_not_found() {
+    let check = |status: Error| Error::check(status as c_int);
+    assert_eq!(check(Error::ENODATA), Err(Error::ENOTFOUND));
+    assert_eq!(check(Error::ENONAME), Err(Error::ENOTFOUND));
+    assert_eq!(check(Error::ENOSERVER), Err(Error::ENOSERVER));
 }

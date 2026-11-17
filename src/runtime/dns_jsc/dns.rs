@@ -578,6 +578,7 @@ impl PendingQuery {
             // No list and no error is an empty answer.
             Err(None) => Vec::new(),
         };
+        self.resolver.update_timer();
         self.resolve(|global| super::options_jsc::results_to_js(&list, global));
     }
 }
@@ -686,7 +687,7 @@ impl Resolver {
         };
         guard.abort_handle.leave();
         guard.request_completed(guard.channel.close());
-        debug_assert!(guard.polls.get().is_empty());
+        guard.polls.with_mut(PollsMap::clear_retaining_capacity);
         result
     }
 }
@@ -1620,9 +1621,9 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, PollType>;
 
 /// `DNSResolver`, declared in `dns_internals.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Self::destroy)]
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
-    /// Drops before `polls`, which closing it reads.
     channel: c_ares::Channel<PendingQuery>,
     /// The context whose script made the resolver: its channel is that context's, whoever is first
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
@@ -1827,6 +1828,18 @@ impl Resolver {
         }
     }
 
+    /// Not `Drop`: c-ares reports the sockets it closes through a `&Self`, which would alias the `&mut`.
+    ///
+    /// # Safety
+    /// `this` is the box of a resolver that lost its last ref.
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            drop((*this).channel.close());
+            drop(bun_core::heap::take(this));
+        }
+    }
+
     #[inline]
     pub(crate) fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
@@ -1863,13 +1876,10 @@ impl Resolver {
     ) -> JSValue {
         let (promise, query) =
             PendingQuery::join_or_create(self, kind, hash, name, global_this, context);
-        if let Some(query) = query {
-            self.request_sent(send(query));
-        }
-        promise
-    }
-
-    fn request_sent(&self, answers: c_ares::Answers<PendingQuery>) {
+        let Some(query) = query else {
+            return promise;
+        };
+        let answers = send(query);
         if self.channel.has_active_queries() {
             self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
         } else {
@@ -1878,15 +1888,20 @@ impl Resolver {
             self.add_timer(None, 0);
         }
         answers.for_each(PendingQuery::complete_cares);
+        promise
     }
 
     fn request_completed(&self, answers: c_ares::Answers<PendingQuery>) {
+        self.update_timer();
+        answers.for_each(PendingQuery::complete_cares);
+    }
+
+    fn update_timer(&self) {
         if self.channel.has_active_queries() {
             self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
         } else {
             self.remove_timer();
         }
-        answers.for_each(PendingQuery::complete_cares);
     }
 
     fn add_timer(&self, now: Option<&bun::timespec>, delay_ms: i64) {
@@ -1925,7 +1940,7 @@ impl Resolver {
                 Some(made_in) => self.vm.context_of(made_in),
                 None => self.vm.root_context(),
             };
-            // SAFETY: it stays in its box, which queries hold (teardown closes the global one first). The callback only touches `polls`.
+            // SAFETY: it stays in its box until `destroy`, or teardown for the global one, closes the channel. The callback only touches `polls`.
             unsafe {
                 self.channel.open(self, self.options)?;
                 bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context);
@@ -2482,7 +2497,8 @@ impl Resolver {
                 .throw());
         }
 
-        let mut entries = Self::servers_from_js(global_this, servers.to_js())?;
+        let entries = Self::servers_from_js(global_this, servers.to_js());
+        let mut entries = entries.inspect_err(|_| self.update_timer())?;
         let mut head = None;
         for entry in entries.iter_mut().rev() {
             entry.next = head;

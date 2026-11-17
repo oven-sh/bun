@@ -149,17 +149,12 @@ pub(super) const ROOM_FOR_LENGTHS: [Code; COMMAND_SYMBOLS] = {
     room
 };
 
-/// What to prepend the codes to, for [`Command::with_distance`].
-pub(super) const fn room_for_distances<const N: usize>(params: &DistanceParams) -> [Code; N] {
-    let first = DISTANCE_SHORT_CODES + params.direct_codes;
-    let mut room = [Code::EMPTY; N];
-    let mut symbol = first;
-    while symbol < params.alphabet.size {
-        let extra_bits = 1 + ((symbol - first) >> (params.postfix_bits + 1));
-        room[symbol as usize] = Code::new(extra_bits, 0);
-        symbol += 1;
+/// What to prepend the code to, for [`Command::with_distance`].
+pub(super) const fn room_for_distance(params: &DistanceParams, symbol: u32) -> Code {
+    match symbol.checked_sub(DISTANCE_SHORT_CODES + params.direct_codes) {
+        Some(past) => Code::new(1 + (past >> (params.postfix_bits + 1)), 0),
+        None => Code::EMPTY,
     }
-    room
 }
 
 #[inline(always)]

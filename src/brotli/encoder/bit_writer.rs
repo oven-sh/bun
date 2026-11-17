@@ -120,7 +120,7 @@ impl BitWriter {
     fn grow(&mut self, needed: usize) {
         debug_assert!(needed <= self.buffer.capacity());
         let with_spare = (needed + 1024).min(self.buffer.capacity());
-        self.buffer.resize(needed.max(with_spare), 0);
+        memory::resize(&mut self.buffer, needed.max(with_spare), 0);
     }
 
     pub(super) fn write_bits(&mut self, bits: Bits) {

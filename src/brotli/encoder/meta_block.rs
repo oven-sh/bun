@@ -401,7 +401,7 @@ impl<const N: usize> GreedySplitter<N> {
         let max_blocks = symbols / min_block_size + 1;
         let max_types = max_blocks.min(MAX_BLOCK_TYPES / groups + 1);
         let mut histograms = memory::empty(max_types * groups)?;
-        histograms.resize(groups, Histogram::EMPTY);
+        memory::resize(&mut histograms, groups, Histogram::EMPTY);
         Ok(Self {
             alphabet_size,
             groups,
@@ -545,8 +545,8 @@ impl<const N: usize> GreedySplitter<N> {
         self.split.type_count += 1;
         self.current += self.groups;
         if !is_final {
-            self.histograms
-                .resize(self.current + self.groups, Histogram::EMPTY);
+            let count = self.current + self.groups;
+            memory::resize(&mut self.histograms, count, Histogram::EMPTY);
         }
     }
 

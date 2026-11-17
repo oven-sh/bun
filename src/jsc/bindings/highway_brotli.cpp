@@ -633,7 +633,7 @@ static HWY_INLINE uint32_t BrotliShortCodesOfFive(const uint8_t* HWY_RESTRICT by
 }
 
 template<class Distance, class Insert>
-static HWY_INLINE void Improve(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT nodes, size_t stride, hn::Vec<DI32> lengths, hn::Vec<DI32> end,
+static HWY_INLINE hn::Mask<DF32> Improve(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT nodes, size_t stride, hn::Vec<DI32> lengths, hn::Vec<DI32> end,
     hn::Vec<DF32> cost, const Distance& distance, const Insert& insert)
 {
     const DF32 df;
@@ -641,7 +641,7 @@ static HWY_INLINE void Improve(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT
     const auto old = hn::LoadU(df, costs);
     const auto better = hn::And(hn::Lt(cost, old), hn::RebindMask(df, hn::Lt(lengths, end)));
     if (hn::AllFalse(df, better))
-        return;
+        return better;
     hn::StoreU(hn::IfThenElse(better, cost, old), df, costs);
     const auto put = [&](uint32_t* to, hn::Vec<DU32> value) HWY_ATTR {
         hn::StoreU(hn::IfThenElse(hn::RebindMask(du, better), value, hn::LoadU(du, to)), du, to);
@@ -649,6 +649,7 @@ static HWY_INLINE void Improve(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT
     put(nodes, hn::BitCast(du, lengths));
     put(nodes + stride, distance());
     put(nodes + 2 * stride, insert());
+    return better;
 }
 
 static HWY_INLINE void BrotliTryLengths(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT nodes, size_t stride, size_t length, size_t end,
@@ -664,6 +665,21 @@ static HWY_INLINE void BrotliTryLengths(float* HWY_RESTRICT costs, uint32_t* HWY
             costs + length, nodes + length, stride, lengths, hn::Set(di, static_cast<int32_t>(end)), cost,
             [&]() HWY_ATTR { return hn::Set(du, distance); }, [&]() HWY_ATTR { return hn::Set(du, insert); });
     }
+}
+
+static HWY_INLINE size_t BrotliTryLengthsAtCost(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT nodes, size_t stride, size_t length, size_t end,
+    float cost, uint32_t distance, uint32_t insert)
+{
+    const DU32 du;
+    const DI32 di;
+    auto lengths = hn::Iota(di, static_cast<int32_t>(length)), longest = hn::Zero(di);
+    for (; length < end; length += 4, lengths = hn::Add(lengths, hn::Set(di, 4))) {
+        const auto better = Improve(
+            costs + length, nodes + length, stride, lengths, hn::Set(di, static_cast<int32_t>(end)), hn::Set(DF32(), cost),
+            [&]() HWY_ATTR { return hn::Set(du, distance); }, [&]() HWY_ATTR { return hn::Set(du, insert); });
+        longest = hn::IfThenElse(hn::RebindMask(di, better), lengths, longest);
+    }
+    return hn::ReduceMax(di, longest);
 }
 
 static HWY_INLINE void BrotliTryMatches(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT nodes, size_t stride, size_t length, size_t end,
@@ -772,11 +788,17 @@ extern "C" __attribute__((always_inline)) uint32_t highway_brotli_short_codes_of
     return HWY_STATIC_DISPATCH(BrotliShortCodesOfFive)(bytes, last_start, ring_mask, position, pair, distances, ranked, hopeless, others);
 }
 
-// These two touch up to `end + 3` numbers of `costs`, of the tables by length, and of three rows of `nodes`.
+// These three touch up to `end + 3` numbers of `costs`, of three rows of `nodes`, and of the tables by length that they take.
 extern "C" __attribute__((always_inline)) void highway_brotli_try_lengths(float* costs, uint32_t* nodes, size_t stride, size_t length,
     size_t end, const float* extra_bits, const float* symbol_costs, float base, uint32_t distance, uint32_t insert)
 {
     HWY_STATIC_DISPATCH(BrotliTryLengths)(costs, nodes, stride, length, end, extra_bits, symbol_costs, base, distance, insert);
+}
+
+extern "C" __attribute__((always_inline)) size_t highway_brotli_try_lengths_at_cost(float* costs, uint32_t* nodes, size_t stride,
+    size_t length, size_t end, float cost, uint32_t distance, uint32_t insert)
+{
+    return HWY_STATIC_DISPATCH(BrotliTryLengthsAtCost)(costs, nodes, stride, length, end, cost, distance, insert);
 }
 
 // `length` is below `end`.

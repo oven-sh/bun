@@ -193,7 +193,7 @@ impl<'a> Search<'a> {
         best.length.max(3)
     }
 
-    /// Raises `best` to `to_beat`, and `length` to what positions from `nearest` back have to exceed then.
+    /// Raises `best` to `to_beat`, and `length` to what positions from `nearest` back have to exceed then, if that saves time.
     #[inline(always)]
     fn raise(
         &self,
@@ -202,6 +202,8 @@ impl<'a> Search<'a> {
         words: &QuickWordSearch,
         best: &mut Match,
     ) -> usize {
+        /// Shorter matches do not take long to compare.
+        const LONG: usize = 32;
         if best.score >= self.to_beat || !self.reaches(nearest) {
             return length;
         }
@@ -215,9 +217,17 @@ impl<'a> Search<'a> {
         if best.score == MIN_SCORE && words.is_active() && !matches() {
             return length;
         }
-        best.score = self.to_beat;
         let too_short = (self.to_beat - score(0, nearest)) as u32 / SCORE_PER_BYTE as u32;
-        length.max(max_length.min(too_short as usize))
+        let too_short = max_length.min(too_short as usize);
+        // In runs, all positions can pass such a filter, and have to be compared up to where the run ends.
+        if too_short >= LONG
+            && load32(self.padded, too_short - 3)
+                == load32(self.window.from(self.position - nearest), too_short - 3)
+        {
+            return length;
+        }
+        best.score = self.to_beat;
+        length.max(too_short)
     }
 
     #[inline(always)]

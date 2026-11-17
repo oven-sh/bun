@@ -2,7 +2,7 @@
 
 use super::bit_writer::{BitWriter, Bits, Code};
 use super::block_splitter::{Block, BlockSplit};
-use super::command::{Command, ROOM_FOR_LENGTHS, room_for_distances};
+use super::command::{Command, ROOM_FOR_LENGTHS, room_for_distance};
 use super::histogram::Histogram;
 use super::huffman::{TreeBuilder, assign_codes, max_description_size};
 use super::log2::log2_floor;
@@ -316,22 +316,6 @@ fn write_trivial_context_map(
     Ok(())
 }
 
-fn build_and_write_codes<const N: usize>(
-    histograms: &[Histogram<N>],
-    alphabet: Alphabet,
-    room: &[Code; N],
-    spare: usize,
-    trees: &mut TreeBuilder,
-    writer: &mut BitWriter,
-) -> Result<Vec<[Code; N]>> {
-    let mut all_codes = memory::filled(*room, histograms.len() + spare)?;
-    for (codes, histogram) in all_codes.iter_mut().zip(histograms) {
-        writer.try_reserve(max_description_size(alphabet))?;
-        trees.build_and_write(&histogram.counts, alphabet, codes, writer);
-    }
-    Ok(all_codes)
-}
-
 #[inline(never)]
 pub(super) fn write_full_meta_block(
     length: usize,
@@ -375,40 +359,44 @@ pub(super) fn write_full_meta_block(
             None => write_trivial_context_map(tree_count, context_bits, trees, writer)?,
         }
     }
-    let mut literals = build_and_write_codes(
-        &block.literal_histograms,
-        Alphabet::LITERALS,
-        &[Code::EMPTY; _],
-        1,
-        trees,
-        writer,
+    let room_for_distances = memory::collected(
+        (0..distance.alphabet.size).map(|symbol| room_for_distance(distance, symbol)),
     )?;
-    let symbols = build_and_write_codes(
-        &block.command_histograms,
-        Alphabet::COMMANDS,
-        &ROOM_FOR_LENGTHS,
-        0,
-        trees,
-        writer,
-    )?;
-    let distances = build_and_write_codes(
-        &block.distance_histograms,
-        distance.alphabet,
-        &room_for_distances(distance),
-        0,
-        trees,
-        writer,
-    )?;
+    let table_size = block.literal_histograms.len() * LITERAL_SYMBOLS + SLOTS;
+    let command_codes = block.command_histograms.len() * COMMAND_SYMBOLS;
+    let distance_codes = block.distance_histograms.len() * room_for_distances.len();
+    let mut all = memory::empty(table_size + command_codes + distance_codes)?;
+    let mut append = |all: &mut Vec<Code>, counts: &[u32], alphabet, room: &[Code]| -> Result<()> {
+        let first = all.len();
+        all.extend_from_slice(room);
+        writer.try_reserve(max_description_size(alphabet))?;
+        trees.build_and_write(counts, alphabet, &mut all[first..], writer);
+        Ok(())
+    };
+    for Histogram { counts, .. } in &block.literal_histograms {
+        let room = &[Code::EMPTY; LITERAL_SYMBOLS];
+        append(&mut all, counts, Alphabet::LITERALS, room)?;
+    }
+    memory::resize(&mut all, table_size, Code::EMPTY);
+    for Histogram { counts, .. } in &block.command_histograms {
+        append(&mut all, counts, Alphabet::COMMANDS, &ROOM_FOR_LENGTHS)?;
+    }
+    for Histogram { counts, .. } in &block.distance_histograms {
+        append(&mut all, counts, distance.alphabet, &room_for_distances)?;
+    }
 
+    let (table, rest) = all.split_at_mut(table_size);
+    let (symbols, distances) = rest.split_at(command_codes);
     let codes = Codes {
-        commands: &symbols,
-        distances: &distances,
+        commands: symbols.as_chunks().0,
+        distances,
+        distance_symbols: room_for_distances.len(),
         distance_map,
     };
     write_commands(
         commands,
         &block.literals,
-        literals.as_flattened_mut(),
+        table,
         &codes,
         &mut switchers,
         writer,
@@ -419,28 +407,30 @@ pub(super) fn write_full_meta_block(
 const SLOTS: usize = 128;
 const BATCH_SIZE: usize = 384;
 
-struct Codes<'a, const DISTANCES: usize> {
+struct Codes<'a> {
     commands: &'a [[Code; COMMAND_SYMBOLS]],
-    distances: &'a [[Code; DISTANCES]],
+    distances: &'a [Code],
+    distance_symbols: usize,
     distance_map: Option<&'a [u32]>,
 }
 
-impl<const DISTANCES: usize> Codes<'_, DISTANCES> {
-    fn distances_by_context(&self, kind: usize) -> [&[Code; DISTANCES]; DISTANCE_CONTEXTS] {
-        core::array::from_fn(|context| match self.distance_map {
-            Some(map) => &self.distances[map[kind * DISTANCE_CONTEXTS + context] as usize],
-            None => &self.distances[kind],
+impl Codes<'_> {
+    fn distances_by_context(&self, kind: usize) -> [&[Code]; DISTANCE_CONTEXTS] {
+        core::array::from_fn(|context| {
+            let tree = (self.distance_map)
+                .map_or(kind, |map| map[kind * DISTANCE_CONTEXTS + context] as usize);
+            &self.distances[tree * self.distance_symbols..][..self.distance_symbols]
         })
     }
 }
 
 /// The codes of the current block types.
-struct CurrentCodes<'a, const DISTANCES: usize> {
+struct CurrentCodes<'a> {
     commands: &'a [Code; COMMAND_SYMBOLS],
-    distances: [&'a [Code; DISTANCES]; DISTANCE_CONTEXTS],
+    distances: [&'a [Code]; DISTANCE_CONTEXTS],
 }
 
-impl<const DISTANCES: usize> CurrentCodes<'_, DISTANCES> {
+impl CurrentCodes<'_> {
     #[inline(always)]
     fn lengths(&self, command: &Command) -> Code {
         command.with_lengths(self.commands[command.symbol()])
@@ -497,11 +487,11 @@ fn write_literals(literals: &[u16], table: &[Code], writer: &mut BitWriter) {
 }
 
 /// `table` has the codes of the literals, and [`SLOTS`] more.
-fn write_commands<const DISTANCES: usize>(
+fn write_commands(
     mut commands: &[Command],
     literals: &Literals,
     table: &mut [Code],
-    codes: &Codes<'_, DISTANCES>,
+    codes: &Codes<'_>,
     [literal_blocks, command_blocks, distance_blocks]: &mut [BlockSwitcher<'_>; 3],
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -579,8 +569,14 @@ pub(super) fn write_plain_meta_block(
         assign_codes(&lengths, &mut codes);
         codes
     };
-    const ROOM_FOR_DISTANCES: [Code; PLAIN_DISTANCE_SYMBOLS] =
-        room_for_distances(&DistanceParams::new(0, 0, true));
+    const ROOM_FOR_DISTANCES: [Code; PLAIN_DISTANCE_SYMBOLS] = {
+        let (mut room, mut symbol) = ([Code::EMPTY; _], 0);
+        while symbol < room.len() {
+            room[symbol] = room_for_distance(&DistanceParams::new(0, 0, true), symbol as u32);
+            symbol += 1;
+        }
+        room
+    };
     static FIXED_DISTANCE_CODES: [Code; PLAIN_DISTANCE_SYMBOLS] = {
         let mut codes = ROOM_FOR_DISTANCES;
         assign_codes(&[6; 64], &mut codes);
@@ -636,7 +632,8 @@ pub(super) fn write_plain_meta_block(
     };
     let codes = Codes {
         commands: core::slice::from_ref(command_codes),
-        distances: core::slice::from_ref(distance_codes),
+        distances: distance_codes,
+        distance_symbols: PLAIN_DISTANCE_SYMBOLS,
         distance_map: None,
     };
     let mut switchers = core::array::from_fn(|_| BlockSwitcher::single_block());

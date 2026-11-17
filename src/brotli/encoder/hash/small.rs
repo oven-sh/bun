@@ -63,7 +63,7 @@ impl<const BUCKETS: usize> Hasher for Small<BUCKETS> {
 
     fn try_reserve(&mut self, block: &InputBlock<'_>) -> Result<()> {
         memory::try_reserve(&mut self.links, block.length)?;
-        self.links.resize(block.end(), NOT_STORED);
+        memory::resize(&mut self.links, block.end(), NOT_STORED);
         Ok(())
     }
 

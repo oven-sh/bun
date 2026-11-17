@@ -173,7 +173,7 @@ impl<E: Entry> Forest<E> {
                 .try_reserve_exact(len.max(self.max_len) - self.entries.len())
                 .map_err(|_| DecodeError::AllocTreeGroups)?;
         }
-        self.entries.resize(len, E::default());
+        memory::resize(&mut self.entries, len, E::default());
         Ok(())
     }
 

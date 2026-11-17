@@ -228,8 +228,11 @@ impl TreeBuilder {
     ) -> CountByLength {
         let leaf_count = used.len();
         self.nodes.clear();
-        self.nodes
-            .resize(2 * (leaf_count + BROTLI_LEAF_SLACK), u64::MAX);
+        memory::resize(
+            &mut self.nodes,
+            2 * (leaf_count + BROTLI_LEAF_SLACK),
+            u64::MAX,
+        );
         let (leaves, parents) = self.nodes.split_at_mut(leaf_count + BROTLI_LEAF_SLACK);
         let set_leaves = |leaves: &mut [u64], scratch: &mut [u64], min_count| {
             for (leaf, symbol) in scratch[..leaf_count].iter_mut().rev().zip(used) {

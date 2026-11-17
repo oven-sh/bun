@@ -257,7 +257,7 @@ impl Table {
     fn cleared<const SIZE: usize>(&mut self) -> Result<&mut [u32; SIZE]> {
         self.0.clear();
         memory::try_reserve(&mut self.0, SIZE)?;
-        self.0.resize(SIZE, 0);
+        memory::resize(&mut self.0, SIZE, 0);
         self.0.first_chunk_mut().ok_or(memory::AllocError)
     }
 }

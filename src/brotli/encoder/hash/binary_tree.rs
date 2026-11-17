@@ -123,7 +123,7 @@ impl BinaryTree {
         let needed = most.min(2 * block.end());
         let capacity = if block.may_be_all() { needed } else { most };
         memory::try_reserve_total(&mut self.children, capacity)?;
-        self.children.resize(needed, NONE);
+        memory::resize(&mut self.children, needed, NONE);
         if length >= 3 && position >= Self::LOOKAHEAD {
             let start = position - Self::LOOKAHEAD + 1;
             for earlier in start..position.min(start + length) {

@@ -86,7 +86,7 @@ impl RingBuffer {
         if self.position <= self.meta_block_end {
             limit = limit.min(self.meta_block_end + 1);
         }
-        self.bytes.resize(limit.min(self.size) + SLACK, 0);
+        memory::resize(&mut self.bytes, limit.min(self.size) + SLACK, 0);
     }
 
     /// Appends what fits before the end, and returns how much that is.
@@ -129,7 +129,7 @@ impl RingBuffer {
             return Err(Stop::NeedsOutput);
         }
         if self.is_at_window_end() {
-            self.bytes.resize(self.size + SLACK, 0);
+            memory::resize(&mut self.bytes, self.size + SLACK, 0);
             self.bytes.copy_within(self.size..self.position, 0);
             self.position -= self.size;
             self.flushed = 0;

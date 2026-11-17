@@ -6,7 +6,7 @@ use core::ops::RangeInclusive;
 
 use bun_highway::{
     BROTLI_SLOT_SHIFT, BrotliPlace, BrotliStart, BrotliWays, brotli_short_codes,
-    brotli_short_codes_of_five, brotli_try_lengths, brotli_try_matches,
+    brotli_short_codes_of_five, brotli_try_lengths, brotli_try_lengths_at_cost, brotli_try_matches,
 };
 
 use super::command::{
@@ -16,7 +16,7 @@ use super::command::{
 use super::hash::{BinaryTree, Candidate, Candidates};
 use super::histogram::DISTANCE_SYMBOLS;
 use super::input_block::InputBlock;
-use super::literal_cost;
+use super::literal_cost::{self, Sum};
 use super::log2::{const_log2, fast_log2};
 use super::matching::{bytes_at, match_length};
 use super::prepared_dictionary::PreparedDictionary;
@@ -24,8 +24,9 @@ use super::ring_buffer::Window;
 use super::symbol_set::SymbolSet;
 use super::words::WordMatches;
 use crate::format::{
-    Alphabet, COMMAND_SYMBOLS, COPY_LENGTH_CODES, FIRST_COMMAND_WITH_DISTANCE, INSERT_LENGTH_CODES,
-    LITERAL_SYMBOLS, SHORT_CODE_BASES, SHORT_CODE_DELTAS, SHORT_COPY_END,
+    Alphabet, COMMAND_SYMBOLS, COPY_LENGTH_CODES, DISTANCE_SHORT_CODES,
+    FIRST_COMMAND_WITH_DISTANCE, INSERT_LENGTH_CODES, LITERAL_SYMBOLS, SHORT_CODE_BASES,
+    SHORT_CODE_DELTAS, SHORT_COPY_END,
 };
 use crate::memory::{self, Result};
 
@@ -110,12 +111,12 @@ static INSERT_EXTRA_BITS: [f32; INSERT_LENGTH_CODES.len()] = {
 struct SymbolCosts {
     commands: [f32; COMMAND_SYMBOLS],
     /// Of the command symbol, for each insert length code.
-    with_distance: [CostByCopyLength; 24],
+    with_distance: [CostByCopyLength; INSERT_LENGTH_CODES.len()],
     with_last_distance: [CostByCopyLength; 8],
     distances: [f32; DISTANCE_SYMBOLS],
     cheapest_command: f32,
     /// For each insert length code, the most that another one saves for the same copy.
-    most_saved: [f32; 24],
+    most_saved: [f32; INSERT_LENGTH_CODES.len()],
 }
 
 static FIRST_GUESS: SymbolCosts = {
@@ -235,17 +236,6 @@ fn set_costs(histogram: &[u32], count_missing: bool, costs: &mut [f32]) {
             0 => missing_cost,
             _ => (log2_total - fast_log2(count as usize) as f32).max(1.0),
         };
-    }
-}
-
-/// Carries the rounding error along.
-fn accumulate(costs: &mut [f32]) {
-    let (mut total, mut carry) = (0.0, 0.0);
-    for cost in costs {
-        carry += *cost;
-        *cost = total + carry;
-        carry -= *cost - total;
-        total = *cost;
     }
 }
 
@@ -403,7 +393,6 @@ impl<'a> Paths<'a> {
         let mut literals = memory::empty(block.length + 1)?;
         literals.push(0.0);
         literal_cost::estimate(block.data_from(block.position), &mut literals);
-        accumulate(&mut literals);
         let distances = block.params.distance;
         let is_usual = block.dictionary.is_none()
             && distances.postfix_bits == 0
@@ -428,10 +417,10 @@ impl<'a> Paths<'a> {
     fn start_over(&mut self, symbols: &'a SymbolCosts, literal_costs: &[f32; LITERAL_SYMBOLS]) {
         self.symbols = symbols;
         let data = self.block.data_from(self.block.position);
+        let mut sum = Sum::default();
         for (cost, &literal) in self.literals[1..].iter_mut().zip(data) {
-            *cost = literal_costs[usize::from(literal)];
+            *cost = sum.add(literal_costs[usize::from(literal)]);
         }
-        accumulate(&mut self.literals);
         self.starts = Starts::new();
         self.costs[1..].fill(UNREACHED);
     }
@@ -647,12 +636,9 @@ impl<'a> Paths<'a> {
             let cost =
                 base + f32::from(range.extra_bits) + self.symbols.commands[usize::from(symbol)];
             let end = (last + 1).min(usize::from(range.base) + (1 << range.extra_bits));
-            for length in length..end {
-                let copy = length as u32;
-                if self.try_node(offset + length, cost, Node { copy, ..node }) {
-                    longest = length;
-                }
-            }
+            let (ways, lengths) = (self.ways_from(offset), length..end);
+            let taken = brotli_try_lengths_at_cost(ways, lengths, cost, node.distance, node.insert);
+            longest = longest.max(taken);
             length = end;
         }
         longest
@@ -760,7 +746,7 @@ impl<'a> Paths<'a> {
         &mut self,
         attempt: &Attempt,
         [rank, other_rank]: [usize; 2],
-        [a, b, c, d]: &[Candidate; LANES],
+        candidates: &[Candidate; LANES],
         count: usize,
         longest: usize,
     ) {
@@ -772,13 +758,14 @@ impl<'a> Paths<'a> {
         };
         let best = start(self.insert_from(rank, attempt.offset));
         let other = start(self.insert_from(other_rank, attempt.offset));
-        if let Some(distance_costs) = symbols.distances[16..].first_chunk() {
+        let after_short_codes = &symbols.distances[DISTANCE_SHORT_CODES as usize..];
+        if let Some(distance_costs) = after_short_codes.first_chunk() {
             brotli_try_matches(
                 self.ways_from(attempt.offset),
                 attempt.min_length..longest + 1,
                 &COPY_EXTRA_BITS,
                 [best, other],
-                &[a.0, b.0, c.0, d.0],
+                &candidates.map(|candidate| candidate.0),
                 count,
                 distance_costs,
             );
@@ -921,7 +908,7 @@ impl<'a> Paths<'a> {
         // And one for the literals after them.
         commands.try_reserve(count + 1)?;
         let first = commands.list.len();
-        commands.list.resize(first + count, Command::insert_only(0));
+        memory::resize(&mut commands.list, first + count, Command::insert_only(0));
         offset = end;
         for slot in commands.list[first..].iter_mut().rev() {
             let node = self.node(offset);

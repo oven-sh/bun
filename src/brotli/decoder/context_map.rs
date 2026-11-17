@@ -4,8 +4,8 @@ use super::bit_reader::BitReader;
 use super::huffman::{Forest, Symbol, read_symbol};
 use super::prefix_code::PrefixCodeReader;
 use super::{Stop, read_count};
-use crate::DecodeError;
 use crate::format::Alphabet;
+use crate::{DecodeError, memory};
 
 #[derive(Default, Clone, Copy)]
 enum Phase {
@@ -43,7 +43,7 @@ impl ContextMap {
                     self.trees
                         .try_reserve(size)
                         .map_err(|_| DecodeError::AllocContextMap)?;
-                    self.trees.resize(size, 0);
+                    memory::resize(&mut self.trees, size, 0);
                     if self.tree_count == 1 {
                         return Ok(());
                     }

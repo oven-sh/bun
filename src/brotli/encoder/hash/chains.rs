@@ -29,7 +29,7 @@ impl<T: Copy + Default> ByPosition<T> {
     fn try_reserve(&mut self, block: &InputBlock<'_>) -> Result<()> {
         let size = block.end().min(1 << 16).next_power_of_two();
         memory::try_reserve_total(&mut self.0, size)?;
-        self.0.resize(size, T::default());
+        memory::resize(&mut self.0, size, T::default());
         Ok(())
     }
 

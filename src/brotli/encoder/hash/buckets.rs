@@ -3,6 +3,7 @@ use core::hint::{Locality, prefetch_read};
 use super::{Filter, Hasher, Match, RecentDistances, Search, Small, prefetch_for_store};
 use crate::encoder::input_block::InputBlock;
 use crate::encoder::matching::{HASH_MULTIPLIER_64, hash_of_four};
+use crate::encoder::symbol_set::SymbolSet;
 use crate::encoder::words::QuickWordSearch;
 use crate::memory::{self, Result};
 
@@ -116,7 +117,7 @@ impl Table {
         self.slots
             .extend_from_within(head.next() - count..head.next());
         let next = self.slots.len();
-        self.slots.resize(next + room, 0);
+        memory::resize(&mut self.slots, next + room, 0);
         Head::new(count, room, next)
     }
 }
@@ -238,15 +239,10 @@ impl<const LONG: bool> Hasher for Buckets<LONG> {
     }
 }
 
-/// A bit for each tag that equals `tag`, starting at `first` and going around.
+/// A bit for each tag that equals `tag`.
 #[inline(never)] // Inlined, it does not always become vector instructions.
-fn equal_tags<const SIZE: usize>(tags: &[u8; SIZE], tag: u8, first: usize) -> u32 {
-    let equal = (0..SIZE).fold(0, |bits, i| bits | (u32::from(tags[i] == tag) << i));
-    if SIZE == 16 {
-        u32::from((equal as u16).rotate_right(first as u32))
-    } else {
-        equal.rotate_right(first as u32)
-    }
+fn equal_tags<const SIZE: usize>(tags: &[u8; SIZE], tag: u8) -> u64 {
+    SymbolSet::matching(tags, |other| other == tag).words()[0]
 }
 
 /// Keeps 8 more bits of the hash with each position, to skip those that differ (qualities 5 and 6).
@@ -339,11 +335,12 @@ impl<const LONG: bool, const BUCKETS: usize, const SIZE: usize> Hasher
         let (count, positions, tags) = (self.counts[key], &self.positions[key], &self.tags[key]);
         let newest = usize::from(count.wrapping_neg()) % SIZE;
         let used = usize::from(count).min(SIZE);
-        let mut candidates = equal_tags(tags, tag, newest) & ((1u64 << used) - 1) as u32;
+        let equal = equal_tags(tags, tag);
+        // From `newest` on, going around.
+        let mut candidates = (equal | (equal << SIZE)) & (((1 << used) - 1) << newest);
         let mut best = Match::NONE;
         let length = search.try_recent(recent, 4, &mut best);
-        let first_of =
-            |candidates: u32| positions[(newest + candidates.trailing_zeros() as usize) % SIZE];
+        let first_of = |candidates: u64| positions[candidates.trailing_zeros() as usize % SIZE];
         let nearest = match candidates {
             0 => 0,
             _ => search.position.wrapping_sub(first_of(candidates) as usize),
@@ -351,12 +348,11 @@ impl<const LONG: bool, const BUCKETS: usize, const SIZE: usize> Hasher
         let length = search.raise(length, nearest, &self.words, &mut best);
         let mut filter = Filter::new(search, length);
         while candidates != 0 {
-            let candidate = first_of(candidates);
-            let distance = search.position.wrapping_sub(candidate as usize);
-            if !search.reaches(distance) {
+            let candidate = first_of(candidates) as usize;
+            if !search.reaches_back_to(candidate) {
                 break;
             }
-            filter.try_position(search, candidate as usize, distance, &mut best);
+            filter.try_position(search, candidate, search.position - candidate, &mut best);
             candidates &= candidates - 1;
         }
         self.insert(key, tag, search.position);

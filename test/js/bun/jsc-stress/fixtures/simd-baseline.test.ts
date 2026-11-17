@@ -291,6 +291,37 @@ describe("Brotli encoder: Highway runtime dispatch", () => {
     );
     expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(expected);
   });
+
+  test("counts that are far from their place or too large to sort", () => {
+    const sumsOf = (gaps: number[]) => {
+      const isSum = [true];
+      for (let i = 1; i < 240; i++) isSum[i] = gaps.some(gap => isSum[i - gap]);
+      return [...Array(15).fill(5), ...isSum.map(is => (is ? 20 : 5))];
+    };
+    const large = [16400, 32744, 32745].map(count => Array(21).fill(1).with(10, count));
+    const streams = [sumsOf([4, 10, 23]), sumsOf([10, 23, 57, 132]), ...large].map(counts =>
+      brotliCompressSync(Buffer.concat(counts.map((count, i) => Buffer.alloc(count, 255 - i))), {
+        params: { [constants.BROTLI_PARAM_QUALITY]: 0 },
+      }),
+    );
+    expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(0x38d935b8);
+  });
+
+  // Each part takes its bytes from values that start `step` after those of the previous one.
+  test.each([
+    { seed: 7, parts: 10, size: 300, masks: [0xff, 0x0f], step: 0, expected: 0xeef0b62d },
+    { seed: 6, parts: 20, size: 300, masks: [0xff, 0x7f, 0x83, 0x87], step: 0, expected: 0xbebb1aef },
+    { seed: 1, parts: 72, size: 540, masks: [0x3f], step: 16, expected: 0x7355a11b },
+  ])("$parts parts with values of their own", ({ seed, parts, size, masks, step, expected }) => {
+    state = seed;
+    const values = Buffer.alloc(step * parts + 256).map((_, i) => (step ? random() >> 8 : i));
+    const bytes = Buffer.alloc(parts * size).map((_, i) => {
+      const part = Math.floor(i / size);
+      return values[step * part + ((random() >> 8) & masks[part % masks.length])];
+    });
+    const params = { [constants.BROTLI_PARAM_QUALITY]: 10 };
+    expect(Bun.hash.crc32(brotliCompressSync(bytes, { params }))).toBe(expected);
+  });
 });
 
 describe("JPEG codec: Highway runtime dispatch", () => {

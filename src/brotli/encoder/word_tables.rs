@@ -1,6 +1,8 @@
 //! Hash tables over the static dictionary, built at compile time.
 #![allow(clippy::large_unopt_stack_frames, clippy::large_const_arrays)] // None of them exist at run time.
 
+use core::ops::Range;
+
 use super::matching::{bytes_at, hash_of_four};
 use super::words::OMIT_LAST;
 use crate::dictionary::{
@@ -156,6 +158,11 @@ fn tagged_with(tags: &[u8; 16], four: u8, five: u8) -> u32 {
     })
 }
 
+#[inline(always)]
+fn alike_among(Range { start, end }: Range<usize>, [four, five]: [u8; 2]) -> u32 {
+    tagged_with(&bytes_at(&ALL.tags, start), four, five) & ((1 << (end - start).min(16)) - 1)
+}
+
 /// From the longest to the shortest. Of the words that match for just four bytes, those with the lowest address are among them.
 #[inline(always)]
 pub(super) fn all_words(first_eight: u64) -> impl Iterator<Item = (PackedWord, Case)> {
@@ -164,11 +171,8 @@ pub(super) fn all_words(first_eight: u64) -> impl Iterator<Item = (PackedWord, C
         usize::from(ALL.starts[key]),
         usize::from(ALL.starts[key + 1]),
     );
-    let [four, five] = tags_of(first_eight);
-    let alike_at = move |at: usize| {
-        tagged_with(&bytes_at(&ALL.tags, at), four, five) & ((1 << (end - at).min(16)) - 1)
-    };
-    let mut alike = alike_at(at);
+    let tags = tags_of(first_eight);
+    let mut alike = alike_among(at..end, tags);
     core::iter::from_fn(
         #[inline(always)]
         move || {
@@ -177,7 +181,7 @@ pub(super) fn all_words(first_eight: u64) -> impl Iterator<Item = (PackedWord, C
                 if at >= end {
                     return None;
                 }
-                alike = alike_at(at);
+                alike = alike_among(at..end, tags);
             }
             let index = at + alike.trailing_zeros() as usize;
             alike &= alike - 1;

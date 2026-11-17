@@ -23,6 +23,23 @@ static SMALL: [f64; 256] = {
     table
 };
 
+pub(super) const FRACTION_BITS: u32 = f32::MANTISSA_DIGITS - 1;
+
+#[inline(always)]
+pub(super) fn fixed_point_log2(value: u8) -> u32 {
+    static FIXED: [u32; 256] = {
+        let (mut table, mut i) = ([0; 256], 0);
+        while i < 256 {
+            let scaled = SMALL[i] * (1 << FRACTION_BITS) as f64;
+            table[i] = scaled as u32;
+            assert!(table[i] as f64 == scaled);
+            i += 1;
+        }
+        table
+    };
+    FIXED[usize::from(value)]
+}
+
 /// Zero for zero.
 #[inline(always)]
 pub(super) fn fast_log2(value: usize) -> f64 {

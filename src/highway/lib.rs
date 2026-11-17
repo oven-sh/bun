@@ -347,6 +347,17 @@ unsafe extern "C" {
         insert: u32,
     );
 
+    fn highway_brotli_try_lengths_at_cost(
+        costs: *mut f32,
+        nodes: *mut u32,
+        stride: usize,
+        length: usize,
+        end: usize,
+        cost: f32,
+        distance: u32,
+        insert: u32,
+    ) -> usize;
+
     fn highway_brotli_try_matches(
         costs: *mut f32,
         nodes: *mut u32,
@@ -1947,18 +1958,25 @@ pub struct BrotliWays<'a> {
 }
 
 impl BrotliWays<'_> {
-    /// The two at `offset`, and the length of a row.
+    /// The two at `offset`, from where there are `reach` numbers in each row, and the length of a row.
     #[inline(always)]
-    fn reaching<const N: usize>(self, end: usize) -> (*mut f32, *mut u32, usize) {
-        const { assert!(N >= 3) };
+    fn reaching(self, reach: usize) -> (*mut f32, *mut u32, usize) {
         let (stride, offset) = (self.costs.len(), self.offset as usize);
-        assert!(end <= N - 3 && offset + N <= stride && 3 * stride <= self.nodes.len());
+        assert!(offset + reach <= stride && 3 * stride <= self.nodes.len());
         let (costs, nodes) = (self.costs.as_mut_ptr(), self.nodes.as_mut_ptr());
         (
             costs.wrapping_add(offset),
             nodes.wrapping_add(offset),
             stride,
         )
+    }
+
+    /// For lengths below `end`, which there are tables of `N` numbers for.
+    #[inline(always)]
+    fn reaching_as_far_as_tables<const N: usize>(self, end: usize) -> (*mut f32, *mut u32, usize) {
+        const { assert!(N >= 3) };
+        assert!(end <= N - 3);
+        self.reaching(N)
     }
 }
 
@@ -1980,7 +1998,7 @@ pub fn brotli_try_lengths<const N: usize>(
     start: BrotliStart<'_, N>,
     distance: u32,
 ) {
-    let (costs, nodes, stride) = ways.reaching::<N>(lengths.end);
+    let (costs, nodes, stride) = ways.reaching_as_far_as_tables::<N>(lengths.end);
     // SAFETY: the kernel touches up to `N` numbers of the tables, and of each row from the offset on (asserted above).
     unsafe {
         highway_brotli_try_lengths(
@@ -1995,6 +2013,26 @@ pub fn brotli_try_lengths<const N: usize>(
             distance,
             start.insert,
         );
+    }
+}
+
+/// [`brotli_try_lengths`] where all cost the same. Returns the longest that it took, or zero.
+#[inline(always)]
+pub fn brotli_try_lengths_at_cost(
+    ways: BrotliWays<'_>,
+    lengths: core::ops::Range<usize>,
+    cost: f32,
+    distance: u32,
+    insert: u32,
+) -> usize {
+    let (length, end) = (lengths.start, lengths.end);
+    assert!(end <= i32::MAX as usize - 3);
+    let (costs, nodes, stride) = ways.reaching(end + 3);
+    // SAFETY: the kernel touches up to `end + 3` numbers of each row from the offset on (asserted above).
+    unsafe {
+        highway_brotli_try_lengths_at_cost(
+            costs, nodes, stride, length, end, cost, distance, insert,
+        )
     }
 }
 
@@ -2015,7 +2053,7 @@ pub fn brotli_try_matches<const N: usize>(
     distance_costs: &[f32; 64],
 ) {
     assert!(lengths.start < lengths.end);
-    let (costs, nodes, stride) = ways.reaching::<N>(lengths.end);
+    let (costs, nodes, stride) = ways.reaching_as_far_as_tables::<N>(lengths.end);
     // SAFETY: as in `brotli_try_lengths`.
     unsafe {
         highway_brotli_try_matches(
@@ -2105,6 +2143,7 @@ pub unsafe fn parse_mappings(
 #[cfg(test)]
 mod brotli_tests {
     use super::*;
+    use std::cell::Cell;
 
     /// The kernels are only linked into the full binary.
     macro_rules! stubs {
@@ -2118,13 +2157,46 @@ mod brotli_tests {
     type In = *const u8;
     type Out = *mut u8;
     stubs! {
-        highway_brotli_find_switches(In, usize, In, usize, usize, f64, Out, Out, Out) -> ();
-        highway_brotli_estimate_costs(In, In, usize, In, In, In, Out, u32, Out) -> ();
         highway_brotli_remove_pairs(Out, Out, usize, u32, u32) -> usize;
         highway_brotli_pairs_in_16(In) -> u64;
         highway_brotli_pairs_in_64(In) -> u64;
         highway_brotli_try_lengths(Out, Out, usize, usize, usize, In, In, f32, u32, u32) -> ();
+        highway_brotli_try_lengths_at_cost(Out, Out, usize, usize, usize, f32, u32, u32) -> usize;
         highway_brotli_try_matches(Out, Out, usize, usize, usize, In, In, usize, In, In, f32, u32, In, f32, u32) -> ();
+    }
+
+    thread_local! {
+        static SIZES: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn highway_brotli_find_switches(
+        _: In,
+        length: usize,
+        _: In,
+        alphabet_size: usize,
+        groups: usize,
+        _: f64,
+        _: Out,
+        _: Out,
+        _: Out,
+    ) {
+        SIZES.set([length, alphabet_size, groups]);
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn highway_brotli_estimate_costs(
+        _: In,
+        _: In,
+        size: usize,
+        _: In,
+        _: In,
+        _: In,
+        _: Out,
+        limit: u32,
+        _: Out,
+    ) {
+        SIZES.set([size, limit as usize, 0]);
     }
 
     #[unsafe(no_mangle)]
@@ -2185,6 +2257,8 @@ mod brotli_tests {
             })
         };
         assert!(fits(3, 3, 15, 5));
+        assert!(fits(8, 3, 18, 6));
+        assert_eq!(SIZES.get(), [5, 2, 3]);
         assert!(!fits(2, 3, 15, 5));
         assert!(!fits(3, 3, 14, 5));
         assert!(!fits(3, 3, 15, 4));
@@ -2209,8 +2283,9 @@ mod brotli_tests {
                 )
             })
         };
-        let enough = BROTLI_SPARE_LOGARITHMS + 4;
+        let enough = 256 + 4;
         assert!(fits(704, [704; 4], enough));
+        assert_eq!(SIZES.get(), [704, 2 * 4, 0]);
         assert!(!fits(712, [712; 4], enough));
         assert!(!fits(12, [12; 4], enough));
         for nth in 0..4 {
@@ -2310,6 +2385,24 @@ mod brotli_tests {
         assert_eq!(fit(17, 51, u32::MAX, [2, 9]), [false; 2]);
         assert_eq!(fit(17, 51, 5, [9, 9]), [true, false]);
         assert_eq!(fit(17, 51, 5, [usize::MAX, 9]), [true, false]);
+    }
+
+    #[test]
+    fn try_lengths_at_cost() {
+        let fits = |costs, nodes, offset, end| {
+            let ways = BrotliWays {
+                costs: &mut vec![0.0; costs],
+                nodes: &mut vec![0; nodes],
+                offset,
+            };
+            returns(|| brotli_try_lengths_at_cost(ways, 2..end, 0.0, 0, 0))
+        };
+        assert!(fits(17, 51, 5, 9));
+        assert!(!fits(17, 51, 5, 10));
+        assert!(!fits(17, 51, 6, 9));
+        assert!(!fits(17, 50, 5, 9));
+        assert!(!fits(17, 51, u32::MAX, 9));
+        assert!(!fits(17, 51, 5, usize::MAX));
     }
 }
 

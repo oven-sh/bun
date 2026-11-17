@@ -31,9 +31,15 @@ pub(crate) fn empty<T>(capacity: usize) -> Result<Vec<T>> {
     Ok(vec)
 }
 
-pub(crate) fn filled<T: Clone>(value: T, len: usize) -> Result<Vec<T>> {
+/// `Vec::resize` checks each element for overlap in hardened builds.
+#[inline(always)]
+pub(crate) fn resize<T: Copy>(vec: &mut Vec<T>, len: usize, value: T) {
+    vec.resize_with(len, || value);
+}
+
+pub(crate) fn filled<T: Copy>(value: T, len: usize) -> Result<Vec<T>> {
     let mut vec = empty(len)?;
-    vec.resize(len, value);
+    resize(&mut vec, len, value);
     Ok(vec)
 }
 
@@ -53,7 +59,7 @@ pub(crate) fn zeroed_array<T: Zeroable, const N: usize>() -> Result<Box<[T; N]>>
     zeroed(N)?.try_into().map_err(|_| AllocError)
 }
 
-pub(crate) fn filled_array<T: Clone, const N: usize>(value: T) -> Result<Box<[T; N]>> {
+pub(crate) fn filled_array<T: Copy, const N: usize>(value: T) -> Result<Box<[T; N]>> {
     filled(value, N)?.try_into().map_err(|_| AllocError)
 }
 

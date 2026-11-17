@@ -195,9 +195,13 @@ impl PathFinder {
     fn begin(&mut self, histograms: &[u32], alphabet_size: usize) {
         let groups = (histograms.len() / alphabet_size).div_ceil(LANES);
         self.costs.clear();
-        self.costs.resize(groups, [0.0; LANES]);
+        memory::resize(&mut self.costs, groups, [0.0; LANES]);
         self.symbol_costs.clear();
-        (self.symbol_costs).resize(alphabet_size * groups, [TOO_MUCH; LANES]);
+        memory::resize(
+            &mut self.symbol_costs,
+            alphabet_size * groups,
+            [TOO_MUCH; LANES],
+        );
         for (i, histogram) in histograms.chunks_exact(alphabet_size).enumerate() {
             let log2_total = fast_log2(histogram.iter().sum::<u32>() as usize);
             let targets = self.symbol_costs[i / LANES..].iter_mut().step_by(groups);

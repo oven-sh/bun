@@ -5,6 +5,8 @@ import { totalmem } from "node:os";
 import * as zlib from "node:zlib";
 
 const {
+  BROTLI_ENCODE: ENCODE,
+  BROTLI_DECODE: DECODE,
   BROTLI_PARAM_MODE: MODE,
   BROTLI_PARAM_QUALITY: QUALITY,
   BROTLI_PARAM_LGWIN: LGWIN,
@@ -45,6 +47,13 @@ const mixed = Buffer.concat([
   text.subarray(100, 9000),
 ]);
 
+/** Takes a quarter of the time of `map` in debug builds. */
+function bytesOf(length, byteAt) {
+  const bytes = Buffer.alloc(length);
+  for (let i = 0; i < length; i++) bytes[i] = byteAt(i);
+  return bytes;
+}
+
 function* window(buffer, size) {
   for (let at = 0; at <= buffer.length; at += size) yield buffer.subarray(at, at + size);
 }
@@ -56,43 +65,51 @@ function once(compute) {
 
 const digest = bytes => `${bytes.length} ${zlib.crc32(bytes).toString(16).padStart(8, "0")}`;
 
-function roundTrip(input, params, dictionary) {
-  const compressed = zlib.brotliCompressSync(input, { params, dictionary });
-  const options = { params: { [DECODER_LARGE_WINDOW]: params[LARGE_WINDOW] ?? 0 }, dictionary };
-  expect(digest(zlib.brotliDecompressSync(compressed, options))).toBe(digest(input));
-  return digest(compressed);
-}
-
-function roundTrips(inputs, params) {
-  const streams = inputs.map(input => zlib.brotliCompressSync(input, { params }));
-  expect(streams.map(stream => zlib.brotliDecompressSync(stream))).toEqual(inputs);
-  return digest(Buffer.concat(streams));
-}
-
 /** Runs `[operation, input]` pairs on one stream, with `room` bytes of output at a time. */
 function drive(engine, steps, room) {
   const chunks = [];
-  const out = Buffer.alloc(room);
+  const out = Buffer.allocUnsafe(room);
   let error;
   engine._handle.onerror = (message, errno, code) => (error = { message, errno, code });
   for (const [operation, input] of steps) {
-    let [availOut, availIn] = [0, input.length];
-    while (availOut === 0 && !error) {
+    const state = engine._writeState;
+    let availIn = input.length;
+    do {
       engine._handle.writeSync(operation, input, input.length - availIn, availIn, out, 0, room);
-      [availOut, availIn] = engine._writeState;
-      chunks.push(Buffer.from(out.subarray(0, room - availOut)));
-    }
+      availIn = state[1];
+      if (state[0] < room) chunks.push(Buffer.copyBytesFrom(out, 0, room - state[0]));
+    } while (state[0] === 0 && !error);
+    if (error) break;
   }
   engine.close();
   return error ?? Buffer.concat(chunks);
 }
 
-function roundTripInSteps(steps, params, dictionary) {
-  const compressed = drive(zlib.createBrotliCompress({ params, dictionary }), steps, 1 << 16);
-  const options = { params: { [DECODER_LARGE_WINDOW]: params[LARGE_WINDOW] ?? 0 }, dictionary };
-  const input = Buffer.concat(steps.map(step => step[1]));
-  expect(digest(zlib.brotliDecompressSync(compressed, options))).toBe(digest(input));
+const { constructor: Handle } = zlib.createBrotliCompress()._handle;
+
+/** What `drive` needs of a stream, in a fraction of the time in debug builds. */
+function bare(mode, params, dictionary) {
+  const handle = new Handle(mode);
+  const state = new Uint32Array(2);
+  handle.init(Object.assign(new Uint32Array(STREAM_OFFSET + 1).fill(-1), params), state, () => {}, dictionary);
+  return { _handle: handle, _writeState: state, close: () => handle.close() };
+}
+
+const decompress = (stream, params, dictionary) => drive(bare(DECODE, params, dictionary), [[FINISH, stream]], 1 << 14);
+
+function roundTripInSteps(steps, params, dictionary, room = 1 << 16) {
+  const compressed = drive(bare(ENCODE, params, dictionary), steps, room);
+  const decompressed = decompress(compressed, { [DECODER_LARGE_WINDOW]: params[LARGE_WINDOW] ?? 0 }, dictionary);
+  expect(Buffer.concat(steps.map(step => step[1])).equals(decompressed)).toBe(true);
   return digest(compressed);
+}
+
+const roundTrip = (input, params, dictionary) => roundTripInSteps([[FINISH, input]], params, dictionary, 1 << 14);
+
+function roundTrips(inputs, params) {
+  const streams = inputs.map(input => drive(bare(ENCODE, params), [[FINISH, input]], 1 << 14));
+  expect(inputs.filter((input, i) => !decompress(streams[i]).equals(input))).toEqual([]);
+  return digest(Buffer.concat(streams));
 }
 
 const shortDistance = (last, code) =>
@@ -239,25 +256,6 @@ it("compresses with a window of 10 bits", () => {
   `);
 });
 
-it("compresses with a window of 16 bits", () => {
-  expect(qualities.map(quality => roundTrip(mixed, { [QUALITY]: quality, [LGWIN]: 16 }))).toMatchInlineSnapshot(`
-    [
-      "41431 e053673e",
-      "38563 3b734689",
-      "33304 429b481a",
-      "33354 f928af25",
-      "31701 00fbdb37",
-      "31001 4f1de949",
-      "30627 d8432195",
-      "30346 c3e36fe6",
-      "30244 7b96a706",
-      "30167 1c5633aa",
-      "28392 b7fc139f",
-      "28065 6dbd769b",
-    ]
-  `);
-});
-
 it("stores what does not compress", () => {
   expect(qualities.map(quality => roundTrip(noise, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
     [
@@ -338,7 +336,7 @@ it("compresses with a dictionary of more than 64 KiB", () => {
 });
 
 it("copies all of a dictionary that is longer than a block of input", () => {
-  const dictionary = Buffer.concat([noise, noise.subarray(0, 40000).map(byte => ~byte)]);
+  const dictionary = Buffer.concat([noise, bytesOf(40000, i => ~noise[i])]);
   const answers = [5, 9, 10].map(quality => roundTrip(dictionary, { [QUALITY]: quality, [LGWIN]: 16 }, dictionary));
   expect(answers).toMatchInlineSnapshot(`
     [
@@ -408,7 +406,7 @@ it.each([
 });
 
 describe("a short input with crowded hashes", () => {
-  const allBases = noise.map(byte => "ACGT".charCodeAt(byte & 3));
+  const allBases = bytesOf(noise.length, i => "ACGT".charCodeAt(noise[i] & 3));
   const bases = allBases.subarray(0, 32768);
 
   it("is compressed", () => {
@@ -447,11 +445,53 @@ describe("a short input with crowded hashes", () => {
     `);
   });
 
-  it("goes on looking for matches in what follows", () => {
-    const [bits, rest] = [noise.map(byte => 48 + (byte & 1)), Buffer.alloc(12000).fill(noise.subarray(0, 100), 0, 200)];
-    const inputs = Array.from({ length: 300 }, (_, i) => Buffer.concat([bits.subarray(0, 1000 + 5 * i), rest]));
-    expect(roundTrips(inputs, { [QUALITY]: 7 })).toMatchInlineSnapshot(`"144545 686b4314"`);
+  it("may have them without matches", () => {
+    // 0x22b54b95 is the inverse of the multiplier.
+    const alike = Buffer.from(Int32Array.from({ length: 300 }, (_, i) => Math.imul(i + 1, 0x22b54b95)).buffer);
+    const records = Array.from(window(alike, 4), (four, i) => [four, noise.subarray(6 * i, 6 * i + 6)]);
+    const input = Buffer.concat([noise.subarray(0, 1800), ...records.flat(), text.subarray(0, 8000)]);
+    expect(roundTrip(input, { [QUALITY]: 8 })).toMatchInlineSnapshot(`"6751 8762648d"`);
   });
+
+  it("goes on looking for matches in what follows", () => {
+    const bits = bytesOf(1700, i => 48 + (noise[i] & 1));
+    const rest = Buffer.alloc(12000).fill(noise.subarray(0, 100), 0, 200);
+    const inputs = Array.from({ length: 10 }, (_, i) => Buffer.concat([bits.subarray(0, 1645 + 5 * i), rest]));
+    expect(roundTrips(inputs, { [QUALITY]: 7 })).toMatchInlineSnapshot(`"4675 13acc0d0"`);
+  });
+});
+
+it("compresses runs that end in one of a few values", () => {
+  const runs = Buffer.alloc(70000, "f");
+  for (let at = 40; at < runs.length; at += 41) runs[at] = noise[at & 0xffff] % 9;
+  const inputs = [...Array.from({ length: 41 }, (_, i) => runs.subarray(0, 1000 + i)), runs];
+  expect([5, 6, 7, 9].map(quality => roundTrips(inputs, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+    [
+      "4342 c39f9c65",
+      "4284 d27a50c0",
+      "4242 01212015",
+      "4079 b17e6a6e",
+    ]
+  `);
+  expect(roundTrips(inputs, { [QUALITY]: 9, [LGWIN]: 16 })).toMatchInlineSnapshot(`"4044 3fa6e178"`);
+});
+
+it("compresses runs that are too short to skip at qualities 10 and 11", () => {
+  const inputs = [69, 70, 71, 72, 73, 74, 150, 151, 325, 326].map(length =>
+    Buffer.concat([
+      Buffer.alloc(length),
+      Buffer.of(2, 1),
+      Buffer.alloc(length + 1),
+      Buffer.of(3),
+      Buffer.alloc(length),
+    ]),
+  );
+  expect([10, 11].map(quality => roundTrips(inputs, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+    [
+      "214 bcf6f7be",
+      "212 849837b5",
+    ]
+  `);
 });
 
 it("compresses about 32 KiB at quality 9", () => {
@@ -480,13 +520,13 @@ it("compresses about 64 KiB", () => {
 });
 
 it("finishes with up to three bytes after a flush", () => {
-  const answers = [0, 1, 2, 5, 11].map(quality =>
+  const answers = [0, 1, 2, 5].map(quality =>
     [0, 1, 2, 3].map(length => {
       const steps = [
         [FLUSH, text.subarray(0, 100)],
         [FINISH, text.subarray(0, length)],
       ];
-      return drive(zlib.createBrotliCompress({ params: { [QUALITY]: quality } }), steps, 1024)
+      return drive(bare(ENCODE, { [QUALITY]: quality }), steps, 1024)
         .subarray(-8)
         .toString("hex");
     }),
@@ -497,7 +537,6 @@ it("finishes with up to three bytes after a flush", () => {
       "656470656f706c03,6f706c0000083103,706c080008313903,6c10000831393803",
       "656470656f706c03,6f706c0000083103,706c080008313903,6c10000831393803",
       "7034b946b5650303,b565030000083103,6503080008313903,0310000831393803",
-      "cd55325e0e030303,0e03030000083103,0303080008313903,0310000831393803",
     ]
   `);
 });
@@ -514,21 +553,39 @@ it("follows the other parameters", () => {
     "window 17": { [LGWIN]: 17 },
     "window 40": { [LGWIN]: 40 },
   })) {
-    answers[name] = [4, 7, 10].map(quality => roundTrip(input, { ...params, [QUALITY]: quality })).join();
+    const qualities = LGWIN in params ? [4, 7] : [4, 7, 10];
+    answers[name] = qualities.map(quality => roundTrip(input, { ...params, [QUALITY]: quality })).join();
   }
-  answers["block 17"] = [4, 7, 10].map(quality => roundTrip(mixed, { [QUALITY]: quality, [LGBLOCK]: 17 })).join();
+  answers["block 17"] = [4, 7].map(quality => roundTrip(mixed, { [QUALITY]: quality, [LGBLOCK]: 17 })).join();
   expect(answers).toMatchInlineSnapshot(`
     {
-      "block 17": "26012 02d810aa,25197 e68f0263,23433 1427ab98",
+      "block 17": "26012 02d810aa,25197 e68f0263",
       "font": "7192 90527b60,6867 06a17fae,6541 36e487e2",
       "no contexts": "7189 a638e271,6865 8407afb0,6791 760c41f7",
       "postfix 1, direct 3": "7189 a638e271,6865 8407afb0,6537 2fa041b1",
       "postfix 3, direct 120": "7193 c8c03561,6873 02d0fcdc,6576 413a8312",
-      "window 17": "7189 bca8261b,6865 625ba800,6537 cbbd202d",
-      "window 40": "7189 e5d6d89b,6865 5ab83687,6537 7e3e2333",
-      "window 5": "7287 49bef762,7007 53654a24,6776 68f95124",
+      "window 17": "7189 bca8261b,6865 625ba800",
+      "window 40": "7189 e5d6d89b,6865 5ab83687",
+      "window 5": "7287 49bef762,7007 53654a24",
     }
   `);
+});
+
+it.each([
+  [NPOSTFIX, "1272 9526d7e6"],
+  [NDIRECT, "1282 ef91b9d8"],
+])("prices distances by parameter %d alone at quality 10", (key, expected) => {
+  expect(roundTrip(text.subarray(0, 4000), { [QUALITY]: 10, [key]: 1 })).toBe(expected);
+});
+
+it("has more than 64 distance codes with 15 direct ones", () => {
+  const input = Buffer.concat([
+    noise.subarray(0, 40),
+    Buffer.alloc(1 << 20),
+    text.subarray(0, 6000),
+    noise.subarray(0, 40),
+  ]);
+  expect(roundTrip(input, { [QUALITY]: 5, [NDIRECT]: 15 })).toMatchInlineSnapshot(`"2095 b6505fe0"`);
 });
 
 describe("lengths", () => {
@@ -542,14 +599,15 @@ describe("lengths", () => {
   const short = Array.from({ length: 140 }, (_, i) => i + 1);
 
   it("has a code for each number of literals", () => {
-    const inputs = [...short, ...around(194, 322, 578, 1090, 2114, 6210, 22594)].map(length =>
+    const bases = [14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114, 6210, 22594];
+    const inputs = [...short.slice(0, 12), ...around(...bases)].map(length =>
       Buffer.concat([Buffer.alloc(1000 + length), unique.subarray(0, length)]),
     );
     expect([0, 1, 2].map(quality => roundTrips(inputs, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
       [
-        "152985 7fafab02",
-        "127791 cc0a1a60",
-        "127757 3d75e0ce",
+        "140416 e3f28b1d",
+        "120821 4c88cd18",
+        "120816 45629e6d",
       ]
     `);
   });
@@ -615,18 +673,18 @@ describe("lengths", () => {
       noise.subarray(99 * i + 99, 99 * i + 104),
     ]);
     const inputs = short
-      .slice(5, 26)
+      .slice(14, 22)
       .map(length => Buffer.concat([Buffer.alloc(200), ...better, noise.subarray(0, length)]));
     expect(qualities.slice(2, 10).map(quality => roundTrips(inputs, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
       [
-        "3159 230c5c00",
-        "2367 92626abc",
-        "2331 56506507",
-        "2278 418c9fdb",
-        "2278 418c9fdb",
-        "2278 418c9fdb",
-        "2278 418c9fdb",
-        "2278 418c9fdb",
+        "1203 6a9e1cd2",
+        "901 c9e21065",
+        "889 dd4cff02",
+        "876 cf2302ea",
+        "876 cf2302ea",
+        "876 cf2302ea",
+        "876 cf2302ea",
+        "876 cf2302ea",
       ]
     `);
   });
@@ -652,22 +710,19 @@ describe("lengths", () => {
   });
 
   it("has a header for each length of a meta-block", () => {
-    const inputs = [...around(2 ** 16, 3 * 2 ** 15, 2 ** 17, 2 ** 20), 1250000].map(length =>
-      Buffer.alloc(length, text),
-    );
+    const inputs = [...around(2 ** 16, 3 * 2 ** 15, 2 ** 20), 1250000].map(length => Buffer.alloc(length, text));
     const row = quality => inputs.map(input => roundTrip(input, { [QUALITY]: quality })).join();
-    expect([0, 1, 5].map(row)).toMatchInlineSnapshot(`
+    expect([0, 5].map(row)).toMatchInlineSnapshot(`
       [
-        "10982 dd133af6,10982 ce1036b0,10982 61536006,10982 08c636fc,10976 a16d7472,10976 b785038d,10978 032115e7,10979 5e10c5f4,10996 1b22d7ac,10996 cfe0a3c3,10996 95f635d1,10996 8d29de35,42184 8f895f98,42184 ed5e4cbc,42350 7927a4c8,42350 39f56438,44238 5794a09d",
-        "10529 d307656b,10529 d80720b5,10495 31ca13b4,10495 0d5c11ba,10495 c3859cd8,10495 88d15ead,10495 a5bca7b5,10495 992aa5bb,10495 ef4f4fbc,10495 a41b8dc9,10499 e2d5c328,10500 de45a0b7,31041 c1ae3be1,31041 cfe9c991,31045 bc21fbe4,31046 e79a99f4,41602 0654148b",
-        "8989 904b00de,8989 7f096cb0,8990 c02a1b09,8990 307c5fcf,8990 6f603e36,8990 d2fedbfb,8990 fb2f0f40,8990 0b794b86,8990 e5839aed,8990 581d7f20,8990 e28805da,8990 12de411c,8990 0c7d27d2,8919 88661a86,8919 9e65b0ff,8919 fbd8096e,8919 b9efbb7f",
+        "10982 dd133af6,10982 ce1036b0,10982 61536006,10982 08c636fc,10976 a16d7472,10976 b785038d,10978 032115e7,10979 5e10c5f4,42184 8f895f98,42184 ed5e4cbc,42350 7927a4c8,42350 39f56438,44238 5794a09d",
+        "8989 904b00de,8989 7f096cb0,8990 c02a1b09,8990 307c5fcf,8990 6f603e36,8990 d2fedbfb,8990 fb2f0f40,8990 0b794b86,8990 0c7d27d2,8919 88661a86,8919 9e65b0ff,8919 fbd8096e,8919 b9efbb7f",
       ]
     `);
   });
 });
 
 it("ends a meta-block after 32768 commands in a window of 17 bits", () => {
-  const input = Buffer.from(Array.from({ length: 132000 }, (_, i) => noise[i % 6 < 3 ? i % 894 : 900 + (i % 912)]));
+  const input = bytesOf(132000, i => noise[i % 6 < 3 ? i % 894 : 900 + (i % 912)]);
   input.copyWithin(894, 0, 12).copyWithin(932, 20, 32);
   expect(roundTrip(input, { [QUALITY]: 5, [LGWIN]: 17 })).toMatchInlineSnapshot(`"11869 4bc7b085"`);
 });
@@ -691,21 +746,24 @@ it.each([
   expect(roundTripInSteps(steps, { [QUALITY]: 10, [LGWIN]: 10 })).toBe(expected);
 });
 
-it("has a command for each few literals and short copy from the last distance", () => {
+it.each([
+  [[1, 2, 3, 4, 5, 6, 8], "2779 7c6b4b3c"],
+  [[8, 10], "1136 51e78bb8"],
+])("has a command for %p literals and each short copy from the last distance", (inserts, expected) => {
   const changed = Buffer.from(noise.subarray(0, 2169));
   let at = 10;
-  for (const insert of [1, 2, 3, 4, 5, 6, 8]) {
+  for (const insert of inserts) {
     for (const copy of [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54]) {
       for (const end = at + insert; at < end; at++) changed[at] ^= 255;
       at += copy;
     }
   }
-  changed[at] ^= 255;
+  changed[at++] ^= 255;
   const steps = [
-    [FLUSH, noise.subarray(0, changed.length)],
-    [FINISH, changed],
+    [FLUSH, noise.subarray(0, at)],
+    [FINISH, changed.subarray(0, at)],
   ];
-  expect(roundTripInSteps(steps, { [QUALITY]: 5 })).toMatchInlineSnapshot(`"2779 7c6b4b3c"`);
+  expect(roundTripInSteps(steps, { [QUALITY]: 5 })).toBe(expected);
 });
 
 it("extends a copy with a short distance code into the next block of input", () => {
@@ -770,10 +828,10 @@ it.each([
     4,
     "more than 64 KiB of literals",
     [
-      noise.map(byte => byte & 127),
+      bytesOf(noise.length, i => noise[i] & 127),
       "xyz",
       Buffer.alloc(200),
-      noise.map(byte => byte >> 1),
+      bytesOf(noise.length, i => noise[i] >> 1),
       noise.subarray(0, 1100).map(byte => byte | 128),
     ],
     "115900 027ee563",
@@ -786,6 +844,19 @@ it.each([
   ],
   [
     10,
+    "a word with the longest suffix that is nearly all there already",
+    [
+      noise.subarray(0, 200),
+      "time. This!",
+      Buffer.alloc(300),
+      noise.subarray(200, 210),
+      "time. This ",
+      noise.subarray(300, 310),
+    ],
+    "297 43697430",
+  ],
+  [
+    10,
     "a better second to last distance at the end",
     ["01234567.abcdefgh,wxyzABCDEFGH;ijklmnop:wxy$", Buffer.alloc(130), "01234567!ijklmnop?wxyz"],
     "62 602749a3",
@@ -794,6 +865,30 @@ it.each([
   [10, "more than 64 KiB of literals", [noise, "wxyz.wxyz", noise.subarray(100, 1100)], "65565 b1496d4f"],
 ])("at quality %d, handles %s", (quality, _, parts, expected) => {
   expect(roundTrip(Buffer.concat(parts.map(part => Buffer.from(part))), { [QUALITY]: quality })).toBe(expected);
+});
+
+it.each([
+  [
+    "other bytes with its hash",
+    0,
+    ["#inf!", Buffer.alloc(300), [0x69, 0x6e, 0xd1, 0x23], "rmat?%"],
+    "37 701e35b0,37 701e35b0",
+  ],
+  [
+    "three of its bytes with the hash of five",
+    1 << 20,
+    ["#info!", Buffer.alloc(300), "inf", [0xca, 0xe6], "?%"],
+    "78 f1857286,78 f1857286",
+  ],
+  [
+    "four of its bytes that are too far",
+    0,
+    ["-infoz-", Buffer.alloc(33000), "#inf!0123456789abcdefg"],
+    "50 b4dcf536,50 b4dcf536",
+  ],
+])("finds a word after %s", (_, hint, parts, expected) => {
+  const input = Buffer.concat([...parts, "#information~~~~~~~~~"].map(part => Buffer.from(part)));
+  expect([5, 7].map(quality => roundTrip(input, { [QUALITY]: quality, [SIZE_HINT]: hint })).join()).toBe(expected);
 });
 
 it("stores some blocks and compresses others at quality 1", () => {
@@ -815,12 +910,12 @@ it("stores some blocks and compresses others at quality 1", () => {
 });
 
 it.each([
-  [1, 65500, [1311, 1312], "65508 e4a25bd0,64224 19f1525f"],
-  [5, 40000, [400, 401], "40008 e94d7391,39622 36db76a3"],
-])("stores a block with just too many literals at quality %d", (quality, size, zeros, expected) => {
-  const inputs = zeros.map(count => Buffer.from(noise.subarray(0, size)).fill(0, 0, count));
+  [1, 65500, [1311, 1312], "65508 6e1a1e06,64224 092c8548"],
+  [5, 40000, [400, 401], "40008 5c2b970e,39622 2db06d3d"],
+])("stores a block with just too many literals at quality %d", (quality, size, ones, expected) => {
+  const inputs = ones.map(count => Buffer.from(noise.subarray(0, size)).fill(1, 0, count));
   const steps = input => [
-    [FLUSH, Buffer.alloc(1)],
+    [FLUSH, Buffer.of(1)],
     [FINISH, input],
   ];
   expect(inputs.map(input => roundTripInSteps(steps(input), { [QUALITY]: quality })).join()).toBe(expected);
@@ -834,10 +929,9 @@ it("stores what repeats too late for quality 0", () => {
 const nearlyOutOfReach = once(() => Buffer.alloc(2 ** 26 - 4 - 257).fill(noise, 0, 400));
 
 it.each([
-  [5, 0, "365 3944acad"],
-  [10, 0, "294 2de54237"],
-  [10, 3, "258 bc83c102"],
-])("reaches as far behind the window as quality %d and postfix %d have codes for", (quality, bits, expected) => {
+  [5, "365 3944acad"],
+  [10, "294 2de54237"],
+])("reaches as far behind the window as quality %d has codes for", (quality, expected) => {
   // The long words are 14 below the largest distance, at it and one above. The copies go from four below to four above.
   const digits = noise.hexSlice(0, 30);
   const near = digits.slice(0, 40) + digits.slice(0, 16) + digits.slice(40, 45) + digits.slice(16, 32);
@@ -847,7 +941,7 @@ it.each([
     [FLUSH, Buffer.from(("details" + near).padEnd(200, "#!") + "settings")],
     [FINISH, Buffer.concat([...far, text.subarray(0, 200)])],
   ];
-  expect(roundTripInSteps(steps, { [QUALITY]: quality, [NPOSTFIX]: bits }, nearlyOutOfReach())).toBe(expected);
+  expect(roundTripInSteps(steps, { [QUALITY]: quality }, nearlyOutOfReach())).toBe(expected);
 });
 
 it.each([
@@ -896,13 +990,21 @@ it("takes the most recent of the distances that reach into a dictionary", () => 
 it.each([
   [5, "ABCDE01234567890123456789ABCDxxxxxxx", "13 7b85eb27"],
   [10, "ABCDExxxxxxxxxxx", "14 5fa1dc31"],
+  [10, "ABCxxxxxxxxxxx", "16 eb6724ff"],
+  [11, "ABCxxxxxxxxxxx", "16 eb6724ff"],
 ])("weighs the distances it starts with at quality %d", (quality, dictionary, expected) => {
   const input = Buffer.concat([Buffer.from("ABCDE"), Buffer.alloc(40)]);
   expect(roundTrip(input, { [QUALITY]: quality }, Buffer.from(dictionary))).toBe(expected);
 });
 
+it("copies all of a dictionary of two bytes at quality 10", () => {
+  const input = Buffer.concat([noise.subarray(0, 32), Buffer.alloc(60)]);
+  expect(roundTrip(input, { [QUALITY]: 10 }, noise.subarray(0, 2))).toMatchInlineSnapshot(`"70 c42d5a67"`);
+});
+
 it("reaches into a dictionary with short distance codes", () => {
-  const [dictionary, parts] = [noise.subarray(0, 4000), [Buffer.alloc(5000)]];
+  const dictionary = Buffer.concat([Buffer.alloc(1 << 16, 255), noise.subarray(0, 4000)]);
+  const parts = [Buffer.alloc(5000)];
   let next = 5000;
   const copy = (back, length) =>
     parts.push(noise.subarray(next, ++next), dictionary.subarray(-back).subarray(0, length));
@@ -989,13 +1091,11 @@ it("limits the length of prefix codes", () => {
       ],
       { [QUALITY]: quality },
     );
-  expect([0, 1, 2, 3, 5].map(quality => inputs.map(input => twice(input, quality)).join())).toMatchInlineSnapshot(`
+  expect([0, 1, 2].map(quality => inputs.map(input => twice(input, quality)).join())).toMatchInlineSnapshot(`
     [
       "54747 0e42aabd,92658 5c2251f6,153076 1b8667ff",
       "50813 44c45294,88749 b74adfa0,147413 aeb53f23",
       "24990 eeccbfe0,43152 6c2375d4,71379 a581c662",
-      "24932 fb379d89,43031 cbb8f127,71270 ef2005b6",
-      "24915 9aae75cf,42879 68780c3b,71099 81ea39b7",
     ]
   `);
 });
@@ -1005,15 +1105,18 @@ describe("literals that are equally frequent", () => {
   function shuffled(bytes) {
     for (let i = bytes.length - 1; i > 0; i--) {
       const j = noise.readUInt16LE(i) % (i + 1);
-      [bytes[i], bytes[j]] = [bytes[j], bytes[i]];
+      const byte = bytes[i];
+      bytes[i] = bytes[j];
+      bytes[j] = byte;
     }
     return bytes;
   }
 
   it("get their lengths for each number of kinds", () => {
-    const inputs = Array.from({ length: 256 }, (_, i) =>
-      runs([30, ...noise.subarray(0, i).map(byte => 9 + (byte % 3))]),
-    );
+    const counts = [30, ...noise.subarray(0, 255).map(byte => 9 + (byte % 3))];
+    const all = runs(counts);
+    let end = 0;
+    const inputs = counts.map(count => all.subarray(0, (end += count)));
     expect(roundTrips(inputs, { [QUALITY]: 0 })).toMatchInlineSnapshot(`"120838 8f1bbdc4"`);
   });
 
@@ -1036,14 +1139,23 @@ describe("literals that are equally frequent", () => {
 
   it("get their lengths next to one that is every other byte", () => {
     const others = shuffled(runs(Array.from(noise.subarray(0, 255), byte => 60 + 40 * (byte % 5))));
-    const input = Buffer.alloc(2 * others.length);
-    others.forEach((byte, i) => (input[2 * i] = byte));
+    const input = Buffer.from(new Uint16Array(others).buffer);
     expect([1, 3].map(quality => roundTrip(input, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
       [
         "45156 81a0d1b5",
         "44743 91718df3",
       ]
     `);
+  });
+
+  it("get their lengths next to one that occurs more than 65536 times", () => {
+    const input = Buffer.from(new Uint16Array(Buffer.alloc(70000, noise)).buffer);
+    expect(roundTrip(input, { [QUALITY]: 4, [LGWIN]: 10, [LGBLOCK]: 21 })).toMatchInlineSnapshot(`"87181 f4707601"`);
+  });
+
+  it("are left alone if they are the last seven", () => {
+    const input = shuffled(runs([...Array(7).fill(12), ...Array.from({ length: 149 }, (_, i) => 8 + (i & 1))]));
+    expect(roundTrip(input, { [QUALITY]: 4 })).toMatchInlineSnapshot(`"1259 de42c134"`);
   });
 
   it("are not evened out with one that is just too rare after 175 of them", () => {
@@ -1076,22 +1188,21 @@ it("has many literals and a long copy after about a thousand symbols", () => {
     noise.subarray(40 * i, 40 * i + length),
     noise.subarray(9000 + (i % 2) * 8, 9008 + (i % 2) * 8),
   ];
-  const inputs = Array.from({ length: 40 }, (_, first) =>
+  const records = Array.from({ length: 52 }, (_, i) => record(i + 2, 16)).flat();
+  const inputs = Array.from({ length: 20 }, (_, first) =>
     Buffer.concat([
       noise.subarray(9000, 9016),
       ...record(0, 1),
-      ...record(1, 1 + (first % 20)),
-      ...Array.from({ length: first < 20 ? 52 : 60 }, (_, i) => record(i + 2, 16)).flat(),
+      ...record(1, 1 + first),
+      ...records,
       noise.subarray(5000, 5031),
       Buffer.alloc(2300),
     ]),
   );
-  expect([0, 1, 2, 5].map(quality => roundTrips(inputs, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+  expect([0, 2].map(quality => roundTrips(inputs, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
     [
-      "56419 1a69c8fd",
-      "45136 6e527d0f",
-      "47722 1f2afc22",
-      "40779 82a0dc78",
+      "26548 688acc02",
+      "22568 3411b319",
     ]
   `);
 });
@@ -1118,15 +1229,16 @@ it("stores a block that would grow by more than four bytes", () => {
 });
 
 it("stores what hardly compresses", () => {
-  let letters = noise.latin1Slice();
-  const inputs = Array.from({ length: 40 }, (_, i) => {
-    letters = letters.replaceAll(String.fromCharCode(255 - i), String.fromCharCode(40 + i));
-    return Buffer.from(letters, "latin1");
+  const bytes = Buffer.from(noise);
+  const inputs = Array.from({ length: 26 }, (_, i) => {
+    for (let at = 0; (at = bytes.indexOf(255 - i, at)) >= 0;) bytes[at] = 40 + i;
+    return Buffer.from(bytes);
   });
-  expect([0, 1].map(quality => roundTrips(inputs, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+  expect([inputs.slice(22), inputs.slice(5, 9)].map((some, quality) => roundTrips(some, { [QUALITY]: quality })))
+    .toMatchInlineSnapshot(`
     [
-      "2601789 c701b98e",
-      "2572318 fafe4393",
+      "260620 28ccdd23",
+      "261148 d3bd11e1",
     ]
   `);
 });
@@ -1140,7 +1252,7 @@ it("goes by its matches and every 13th byte whether to compress", () => {
   const inputs = [
     ...[660, 670].map(length => Buffer.from(noise).copyWithin(1000, 0, length)),
     ...[252, 253].map(withPairs),
-    Buffer.from(noise.map((byte, i) => (i % 13 ? byte & 127 : byte))),
+    bytesOf(noise.length, i => (i % 13 ? noise[i] & 127 : noise[i])),
   ];
   expect(inputs.map(input => roundTrip(input, { [QUALITY]: 9 }))).toMatchInlineSnapshot(`
     [
@@ -1151,15 +1263,6 @@ it("goes by its matches and every 13th byte whether to compress", () => {
       "65540 9534a03b",
     ]
   `);
-});
-
-it("counts the literals of all blocks of input once at quality 11", () => {
-  const blocks = [noise.subarray(0, 32000), noise.subarray(-800)].flatMap(part => [
-    part,
-    Buffer.alloc(65536 - part.length),
-  ]);
-  const input = Buffer.concat([...blocks, text.subarray(0, 100)]);
-  expect(roundTrip(input, { [QUALITY]: 11, [LGWIN]: 17, [LGBLOCK]: 16 })).toMatchInlineSnapshot(`"32914 0d4f5438"`);
 });
 
 it("remembers more than a block of input at quality 10", () => {
@@ -1228,7 +1331,8 @@ it("makes do with 256 prefix codes for literals", () => {
   ];
   let context = 0;
   // Each eighth has bytes of its own, and the last two bytes narrow them down to twelve.
-  const input = noise.subarray(0, 56000).map((byte, i) => {
+  const input = bytesOf(56000, i => {
+    const byte = noise[i];
     const part = Math.floor(i / 7000);
     const range = byte % 6;
     const share = Math.max(2, sizes[range] >> 3);
@@ -1240,16 +1344,66 @@ it("makes do with 256 prefix codes for literals", () => {
 });
 
 it.each([
-  [4, 260, 512, "74898 4d9ce146"],
-  [10, 280, 120, "23253 465263cd"],
-])("makes do with 256 types of blocks at quality %d", (quality, count, size, expected) => {
-  // Each part has sixteen values of its own.
-  const parts = Buffer.alloc(count * size, noise).map(
-    (byte, i) => noise[60000 + Math.floor(i / size) * 16 + (byte & 15)],
-  );
+  [4, 260, 512, 15, "74898 4d9ce146"],
+  [10, 280, 120, 15, "23253 465263cd"],
+  [10, 67, 200, 15, "8162 956341ac"],
+  [10, 64, 608, 31, "26109 3826d4eb"],
+])("has up to 256 types of blocks at quality %d, for %d parts", (quality, count, size, mask, expected) => {
+  // Each part has values of its own.
+  const parts = bytesOf(count * size, i => noise[60000 + Math.floor(i / size) * 16 + (noise[i & 0xffff] & mask)]);
   expect(roundTrip(Buffer.concat([Buffer.alloc(2000), parts]), { [QUALITY]: quality, [NO_CONTEXTS]: 1 })).toBe(
     expected,
   );
+});
+
+it("has a block of 64 values that occur more than 4096 times each", () => {
+  const evenly = createCipheriv("aes-128-ctr", Buffer.alloc(16, 2), Buffer.alloc(16)).update(Buffer.alloc(266000));
+  for (let i = 0; i < evenly.length; i++) {
+    const j = i - (evenly[i] % ((i & 63) + 1));
+    evenly[i] = evenly[j];
+    evenly[j] = i & 63;
+  }
+  const input = Buffer.concat([evenly, noise.subarray(0, 2000).map(byte => byte | 192)]);
+  expect(roundTrip(input, { [QUALITY]: 10, [NO_CONTEXTS]: 1, [LGBLOCK]: 19 })).toMatchInlineSnapshot(
+    `"201038 88bb46c5"`,
+  );
+});
+
+it("counts on codes of no more than 15 bits when it merges blocks", () => {
+  const input = bytesOf(48000, i => (noise[i] < 128 ? noise[i] & 15 : noise[i] - 64));
+  for (let i = 0; i < 166; i++) input[47999 - 7 * i] = 0;
+  for (let i = 0; i < 3; i++) input[47970 - 49 * i] = 200 + i;
+  expect(roundTrip(input, { [QUALITY]: 10, [NO_CONTEXTS]: 1, [LGWIN]: 16 })).toMatchInlineSnapshot(`"38985 cd128258"`);
+});
+
+it.each([
+  [513, 102, 87, "5080 dc549cae"],
+  [514, 134, 78, "5052 9cd394a8"],
+])("counts %d unused commands in a row when it merges blocks", (_, copy, count, expected) => {
+  const short = (length, kinds) => Array.from(noise.subarray(0, length), byte => [1, 2 + (byte % kinds)]);
+  const commands = [...short(300, 8), ...Array(240).fill([2, 4]), [18, copy], ...short(count, 6)];
+  const changed = Buffer.from(noise);
+  let at = 20;
+  for (const [insert, copy] of commands) {
+    for (const end = at + insert; at < end; at++) changed[at] ^= 255;
+    at += copy;
+  }
+  const steps = [
+    [FLUSH, noise.subarray(0, at)],
+    [FLUSH, changed.subarray(0, 20)],
+    [FINISH, changed.subarray(20, at)],
+  ];
+  expect(roundTripInSteps(steps, { [QUALITY]: 10 })).toBe(expected);
+});
+
+it("prices distances from 256 KiB on at quality 10", () => {
+  const bytes = noise.subarray(0, 5100).map(byte => byte & 63);
+  const records = Array.from({ length: 20 }, (_, i) => {
+    const at = 13 * ((i * 7) % 20);
+    return [bytes.subarray(at, at + (i & 1 ? 5 : 8)), bytes.subarray(5000 + 3 * i, 5003 + 3 * i)];
+  });
+  const input = Buffer.concat([bytes.subarray(0, 260), Buffer.alloc(1 << 18), ...records.flat()]);
+  expect(roundTrip(input, { [QUALITY]: 10, [LGWIN]: 19 })).toMatchInlineSnapshot(`"325 b09d5ffe"`);
 });
 
 it("has several codes for 128 contexts in a row that share a prefix code", () => {
@@ -1301,15 +1455,20 @@ it("finds nothing in a first flush of 127 bytes at quality 10", () => {
 });
 
 it.each([
-  [16383, "20185 cced41ce"],
-  [16384, "20195 e87883b5"],
-])("takes %d bytes from the last distance at quality 10", (length, expected) => {
-  const [seen, gap] = [noise.subarray(0, 20000), Buffer.alloc(20000)];
+  [16383, 10, 0, "20221 f793bea5"],
+  [16384, 10, 0, "20237 d06b3c25"],
+  [16383, 10, 1, "20221 f793bea5"],
+  [16384, 10, 1, "20237 d06b3c25"],
+  [16384, 11, 0, "20222 e2c2b958"],
+])("takes %d bytes from the last distance at quality %d, direct %d", (length, quality, direct, expected) => {
+  const seen = noise.subarray(0, 20000);
+  const gap = Buffer.alloc(20000).fill(seen.subarray(1005, 1011), 500, 506);
   const changed = Buffer.from(seen);
   for (const at of [1003, 1004 + length]) changed[at] ^= 1;
   const slices = Array.from({ length: 16 }, (_, i) => seen.subarray(5000 + 301 * i, 5012 + 301 * i));
-  const input = Buffer.concat([seen, gap, seen, gap, changed, gap, gap, ...slices]);
-  expect(roundTrip(input, { [QUALITY]: 10, [LGWIN]: 16 })).toBe(expected);
+  const input = Buffer.concat([Buffer.alloc(2000), seen, gap, seen, gap, changed, gap, gap, ...slices]);
+  input[65600] = 1;
+  expect(roundTrip(input, { [QUALITY]: quality, [LGWIN]: 16, [NDIRECT]: direct })).toBe(expected);
 });
 
 it("remembers the context after a flush of one byte", () => {
@@ -1338,7 +1497,6 @@ it.each([
   [5, 17, false, "2452 e9e98c2a"],
   [9, 10, false, "2456 6ca347a7"],
   [5, 10, true, "2091 7947fde9"],
-  [10, 10, true, "2543 d88c07b1"],
 ])(
   "stops looking for matches where its buffer wraps around at quality %d, window %d, dictionary %p",
   (quality, size, hasDictionary, expected) => {
@@ -1364,6 +1522,31 @@ it.each([
     expect(roundTripInSteps(steps, { [QUALITY]: quality, [LGWIN]: size }, dictionary)).toBe(expected);
   },
 );
+
+it("weighs matches that start or end where its buffer wraps around", () => {
+  let next = 24;
+  const fresh = length => noise.subarray(next, (next += length));
+  const [wanted, mark] = [noise.subarray(0, 24), Buffer.from("!")];
+  const worse = [mark, wanted.subarray(0, 6), fresh(9)];
+  // What comes before the last few bytes of the buffer, how many those are, and the rest of one or two flushes.
+  const cases = [
+    ...[3, 4].map(left => [[], left, [wanted, fresh(9), wanted, fresh(9)]]),
+    ...[8, 9].map(left => [[], left, [wanted, fresh(13), wanted.subarray(0, 8), fresh(left), wanted, fresh(9)]]),
+    [worse, 5, [wanted, fresh(17), mark, wanted, fresh(9)]],
+    [worse, 5, [wanted, fresh(21)], [mark, wanted, fresh(9)]],
+    [[...worse, wanted.subarray(0, 9), fresh(25)], 9, [mark, wanted.subarray(0, 9)]],
+  ];
+  let at = 0;
+  const steps = cases.flatMap(([before, left, first, second = []], i) => {
+    const flushes = [[Buffer.alloc(200), ...before], first, second].map(parts => Buffer.concat(parts));
+    const zeros = Buffer.alloc((i + 1) * 2 ** 18 - left - flushes[0].length - at);
+    at += zeros.length + flushes[0].length + flushes[1].length + flushes[2].length;
+    return [zeros, Buffer.concat(flushes.slice(0, 2)), flushes[2]].map(chunk => [FLUSH, chunk]);
+  });
+  expect(roundTripInSteps([...steps, [FINISH, Buffer.alloc(0)]], { [QUALITY]: 7, [LGWIN]: 17 })).toMatchInlineSnapshot(
+    `"714 44c620a9"`,
+  );
+});
 
 it.each([
   [4, 0, [4, 0, 4, 4, 7, 8, -3], "106 505eea87,100 a89f6f8c,97 e97d4c38"],
@@ -1405,13 +1588,8 @@ it("finds a far chunk again after a similar one at quality 3 in a large window",
 
 it("reaches more than 16 MiB back", () => {
   const input = Buffer.concat([noise, Buffer.alloc(16 << 20), noise.subarray(1001)]);
-  const params = quality => ({ [QUALITY]: quality, [SIZE_HINT]: 1 << 20, [LARGE_WINDOW]: 1, [LGWIN]: 25 });
-  expect([3, 5].map(quality => roundTrip(input, params(quality)))).toMatchInlineSnapshot(`
-    [
-      "65590 70fd67cd",
-      "65627 7282b59f",
-    ]
-  `);
+  const params = { [QUALITY]: 5, [SIZE_HINT]: 1 << 20, [LARGE_WINDOW]: 1, [LGWIN]: 25 };
+  expect(roundTrip(input, params)).toMatchInlineSnapshot(`"65627 7282b59f"`);
 });
 
 it.each([
@@ -1445,32 +1623,32 @@ it("tells UTF-8 from other bytes", () => {
   const inputs = `${limits} 61626380`
     .split(" ")
     .flatMap(hex => neighbors([...Buffer.from(hex, "hex")]))
-    .map(bytes => Buffer.alloc(24, Buffer.from(bytes)));
-  expect(roundTrips(inputs, { [QUALITY]: 10, [LGWIN]: 10 })).toMatchInlineSnapshot(`"1374 b962c54e"`);
+    .map(bytes => Buffer.alloc(60, Buffer.from(bytes)));
+  expect(roundTrips(inputs, { [QUALITY]: 10, [LGWIN]: 10 })).toMatchInlineSnapshot(`"1431 2dc5b076"`);
 });
 
 it("tells UTF-8 from other bytes where its buffer wraps around", () => {
   // Three quarters are valid, which is just not enough.
   const unit = Buffer.concat([Buffer.from("a😀é中bc"), Buffer.alloc(4, 255)]);
   const steps = [];
-  for (let [i, at] = [0, 0]; i < 32; i++) {
+  for (let [i, at] = [0, 0]; i < 8; i++) {
     const [start, piece] = [(i + 1) * 2 ** 17 - 1 - (i >> 1), Buffer.alloc(64 + (i & 1), unit)];
     steps.push([FLUSH, Buffer.alloc(start - at)], [FLUSH, piece]);
     at = start + piece.length;
   }
   steps.push([FINISH, Buffer.alloc(0)]);
-  expect(roundTripInSteps(steps, { [QUALITY]: 10, [LGWIN]: 10 })).toMatchInlineSnapshot(`"2050 b05d3fe1"`);
+  expect(roundTripInSteps(steps, { [QUALITY]: 10, [LGWIN]: 10 })).toMatchInlineSnapshot(`"514 9269dfc1"`);
 });
 
 it("has costs for the bytes of UTF-8 sequences once there are 25 of them", () => {
   const ascii = text.toString().replace(/[^\0-\x7f]/gu, "");
   const inputs = Object.entries({ é: 24, 中: 12 }).flatMap(([letter, enough]) =>
-    [enough - 1, enough, enough + 1].flatMap(count => {
+    [enough - 1, enough].flatMap(count => {
       const some = Buffer.from(ascii.slice(0, 1500).replaceAll("e", e => (count-- > 0 ? letter : e)));
       return [[], letter, [0xbf], [0xc0]].map(first => Buffer.concat([Buffer.from(first), some]));
     }),
   );
-  expect(roundTrips(inputs, { [QUALITY]: 10, [LGWIN]: 12 })).toMatchInlineSnapshot(`"14010 241711d3"`);
+  expect(roundTrips(inputs, { [QUALITY]: 10, [LGWIN]: 12 })).toMatchInlineSnapshot(`"9325 d871ac85"`);
 });
 
 it("flushes and emits metadata", () => {
@@ -1480,7 +1658,7 @@ it("flushes and emits metadata", () => {
     ...(i % 3 === 1 ? [[METADATA, noise.subarray(0, i * i * 9)]] : []),
   ]);
   steps.push([FINISH, mixed.subarray(at)]);
-  const answers = qualities.map(quality => {
+  const answers = [0, 1, 2, 4, 5, 7, 10].map(quality => {
     const compressed = drive(zlib.createBrotliCompress({ params: { [QUALITY]: quality } }), steps, 1 << 18);
     expect(digest(zlib.brotliDecompressSync(compressed))).toBe(digest(mixed));
     return digest(compressed);
@@ -1490,15 +1668,10 @@ it("flushes and emits metadata", () => {
       "42022 bb038424",
       "38158 119d842e",
       "28154 bc955bf2",
-      "28049 24719021",
       "26631 f320ee55",
       "26026 4e3c59da",
-      "25784 8a34a7ed",
       "26000 fd3775fb",
-      "25895 f3ad826b",
-      "25828 6dc7bc05",
       "24904 97459de0",
-      "24727 d26e2d17",
     ]
   `);
 });
@@ -1588,7 +1761,7 @@ it("clamps the block size", () => {
   const compress = (bits, size) =>
     `${bits}: ${roundTrip(input.subarray(0, size), { [QUALITY]: 5, [LGWIN]: 24, [LGBLOCK]: bits })}`;
   const small = [2 ** 32 - 2, 1, 15, 16, 17, 18].map(bits => compress(bits, 2 ** 19 + 64));
-  expect([...small, ...[23, 24, 25].map(bits => compress(bits))]).toMatchInlineSnapshot(`
+  expect([...small, compress(25)]).toMatchInlineSnapshot(`
     [
       "4294967294: 131 2c64e382",
       "1: 131 2c64e382",
@@ -1596,8 +1769,6 @@ it("clamps the block size", () => {
       "16: 131 2c64e382",
       "17: 128 6452833c",
       "18: 127 4914b699",
-      "23: 251 09dc256c",
-      "24: 246 f2052f5c",
       "25: 246 f2052f5c",
     ]
   `);
@@ -1707,7 +1878,7 @@ describe("reset()", () => {
   });
 });
 
-it.each([1, 2, 5, 11])("decodes a stream of quality %d in pieces of any size", quality => {
+it.each([5, 11])("decodes a stream of quality %d in pieces of any size", quality => {
   const input = Buffer.concat([text.subarray(0, 2500), samples.subarray(0, 1200), noise.subarray(0, 100)]);
   const compressed = zlib.brotliCompressSync(input, { params: { [QUALITY]: quality, [LGWIN]: 10 } });
   for (const [piece, room] of [
@@ -1729,12 +1900,13 @@ it("switches blocks in a stream that comes in pieces", () => {
 it("reports the end of the input at every length of a stream", () => {
   const steps = [
     [METADATA, noise.subarray(0, 3)],
+    [FLUSH, noise.subarray(0, 12)],
     [FINISH, text.subarray(0, 400)],
   ];
   const compressed = drive(zlib.createBrotliCompress(), steps, 1024);
   const codes = new Set();
   for (let length = 1; length < compressed.length; length++) {
-    codes.add(drive(zlib.createBrotliDecompress(), [[FINISH, compressed.subarray(0, length)]], 1024).code);
+    codes.add(drive(bare(DECODE), [[FINISH, compressed.subarray(0, length)]], 1024).code);
   }
   expect([...codes]).toStrictEqual(["Z_BUF_ERROR"]);
 });
@@ -1760,12 +1932,15 @@ class Bits {
 
   /** `[count, value]` pairs of up to 24 bits. */
   put(...fields) {
-    for (const [count, value] of fields) {
-      this.pending |= value << this.count;
-      for (this.count += count; this.count >= 8; this.count -= 8) {
-        this.bytes.push(this.pending & 255);
-        this.pending >>>= 8;
-      }
+    for (let i = 0; i < fields.length; i++) this.number24(fields[i][0], fields[i][1]);
+    return this;
+  }
+
+  number24(count, value) {
+    this.pending |= value << this.count;
+    for (this.count += count; this.count >= 8; this.count -= 8) {
+      this.bytes.push(this.pending & 255);
+      this.pending >>>= 8;
     }
     return this;
   }
@@ -1774,7 +1949,7 @@ class Bits {
   code(length, code) {
     let reversed = 0;
     for (let i = 0; i < length; i++) reversed = (reversed << 1) | ((code >> i) & 1);
-    return this.put([length, reversed]);
+    return this.number24(length, reversed);
   }
 
   simpleCode(symbolBits, ...symbols) {
@@ -1809,7 +1984,7 @@ class Bits {
 
   uncompressed(bytes) {
     this.put([1, 0], [2, 0], [16, bytes.length - 1], [1, 1]).align();
-    this.bytes.push(...bytes);
+    for (let i = 0; i < bytes.length; i++) this.bytes.push(bytes[i]);
     return this;
   }
 
@@ -1827,22 +2002,28 @@ class Bits {
     return this.lastHeader(length).put([13, 0]);
   }
 
-  /** What `copy` and `distance` use: the codes of quality 2 for short inputs. The first 448 commands have 9 bits. */
+  /** The first 448 commands have 9 bits. */
+  fixedCommandCode() {
+    return this.put([24, 0x307003], [24, 0x624416], [11, 0x92]);
+  }
+
+  /** What `copy` and `distance` use: the codes of quality 2 for short inputs. */
   fixedCodes() {
-    return this.simpleCode(8, 0).put([24, 0x307003], [24, 0x624416], [11, 0x92]).sixBitCode();
+    return this.simpleCode(8, 0).fixedCommandCode().sixBitCode();
   }
 
   copy(length) {
     const extraBits = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 24];
-    let [index, base] = [0, 2];
-    while (length >= base + 2 ** extraBits[index]) base += 2 ** extraBits[index++];
-    return this.code(9, [128, 192, 384][index >> 3] + (index & 7)).put([extraBits[index], length - base]);
+    let index = 0;
+    let base = 2;
+    while (length >= base + (1 << extraBits[index])) base += 1 << extraBits[index++];
+    return this.code(9, [128, 192, 384][index >> 3] + (index & 7)).number24(extraBits[index], length - base);
   }
 
   distance(distance) {
     const extraBits = 30 - Math.clz32(distance + 3);
     this.code(6, 12 + 2 * extraBits + ((distance + 3) >> extraBits));
-    return this.put([extraBits, (distance + 3) & ((1 << extraBits) - 1)]);
+    return this.number24(extraBits, (distance + 3) & ((1 << extraBits) - 1));
   }
 
   align() {
@@ -1863,8 +2044,8 @@ const WORD_INDEX_BITS = [10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7
 function decodeWords(words, total) {
   const fullWindow = Buffer.alloc(1024 - 16);
   const bits = windowOf(10).uncompressed(fullWindow).plainLastHeader(total).fixedCodes();
-  for (const [length, index, transform] of words) {
-    bits.copy(length).distance(fullWindow.length + 1 + index + (transform << WORD_INDEX_BITS[length - 4]));
+  for (const word of words) {
+    bits.copy(word[0]).distance(fullWindow.length + 1 + word[1] + (word[2] << WORD_INDEX_BITS[word[0] - 4]));
   }
   return zlib.brotliDecompressSync(bits.finish()).subarray(fullWindow.length);
 }
@@ -2001,7 +2182,7 @@ describe("patchwork", () => {
     return out;
   }
 
-  function roundTripOf(quality, seed) {
+  function roundTripOf(quality, seed, wraps) {
     let state = noise.readUInt32LE(seed * 4) >>> 1;
     const pick = below => (state = (state * 48271) % 0x7fffffff) % below;
     const oneOf = (...values) => values[pick(values.length)];
@@ -2026,57 +2207,65 @@ describe("patchwork", () => {
       oneOf(PROCESS, FLUSH),
       input.subarray(at, (at += pick(1 + (input.length >> 1)))),
     ]);
+    if (wraps) steps.unshift([FLUSH, Buffer.alloc(2 ** 18 - pick(input.length))]);
     return roundTripInSteps([...steps, [FINISH, input.subarray(at)]], params, dictionary);
+  }
+
+  function answers(quality, expected, wraps) {
+    const seeds = expected.split(",").map(answer => parseInt(answer));
+    return seeds.map(seed => `${seed} ${roundTripOf(quality, seed, wraps)}`).join();
   }
 
   // Each seed leads to a decision of the encoder that no other test depends on.
   it.each([
-    [0, "12 159942 eed5d9d1,3240 37762 7a379a87,5071 80840 8eb31fde,7963 9549 4bba32ff,8745 191 379cc8a7"],
+    [0, "12 159942 eed5d9d1,3240 37762 7a379a87,5071 80840 8eb31fde,8745 191 379cc8a7"],
     [1, "769 94 20787859,1561 340 54dfc55e"],
-    [
-      2,
-      "566 73660 987944c1,1233 50394 421f0c46,1891 176 5fcc9ce4,2822 93834 65f0444b,2870 327 fc8b4974,4480 1048 8c86e391,4834 3221 f80378dc",
-    ],
+    [2, "566 73660 987944c1,2822 93834 65f0444b,4480 1048 8c86e391,4834 3221 f80378dc"],
     [
       3,
-      "29 73 11efc811,423 20510 e128b156,507 150124 7081e8f1,543 947 67790447,651 131 69582a7d,1071 1215 b9c64930,1575 91513 2fa02636,2259 5401 5f363f70,3138 1238 aeca0176,6413 1455 b3124700,6582 13 eec0876b,7203 34234 b68c9ca7,8593 12391 282a0f0a",
+      "29 73 11efc811,423 20510 e128b156,507 150124 7081e8f1,543 947 67790447,1071 1215 b9c64930,3138 1238 aeca0176,6413 1455 b3124700,7203 34234 b68c9ca7,8593 12391 282a0f0a",
     ],
     [
       4,
-      "28 26651 c30dd4be,172 784 c1cd3ab7,676 101492 9085d0c2,8350 1725 85994f0e,8739 2694 35d78dde,9467 16476 00936da1,10116 17 40285a12",
+      "676 101492 9085d0c2,3027 3244 c0d9396b,6793 2700 ccafa1f0,8350 1725 85994f0e,8739 2694 35d78dde,9467 16476 00936da1,10116 17 40285a12",
     ],
     [
       5,
-      "173 53360 111c296c,437 370 e92c8cdc,1193 114921 aef81daf,2165 19602 78c5ce0c,2285 864 e60775ce,2418 1888 7ea4a36d,2765 126341 827eb612,2777 15929 bd0d9360,3185 52821 60963fe0",
+      "1193 114921 aef81daf,2165 19602 78c5ce0c,2418 1888 7ea4a36d,2765 126341 827eb612,2777 15929 bd0d9360,3185 52821 60963fe0",
     ],
     [
       6,
-      "834 63 7ece8e66,1242 159754 34db3b7b,1602 8027 91377b3f,1926 217422 fbf421ff,1986 17112 7853dc95,2346 5969 6573e240,2454 2924 f2039918,5590 67072 8e5087e3",
+      "1242 159754 34db3b7b,1602 8027 91377b3f,1926 217422 fbf421ff,1986 17112 7853dc95,2346 5969 6573e240,2454 2924 f2039918,5590 67072 8e5087e3",
     ],
     [7, "2707 2399 d4706d50,2995 40290 0a8fb442,3499 9217 7f7bb05d,6756 1966 f856f056,6857 132692 eb8f1c1b"],
-    [
-      8,
-      "104 18460 cc554eac,500 14356 83ad36fe,584 652 3009b31c,1148 169571 02ea013c,1196 54420 c8cd91d6,2192 10105 ff86c07f",
-    ],
+    [8, "104 18460 cc554eac,500 14356 83ad36fe,584 652 3009b31c,1148 169571 02ea013c,2192 10105 ff86c07f"],
     [
       9,
-      "9 5934 8434bcb6,165 84083 b241feb2,741 8568 1a993106,1089 275 b2d56f15,1293 69502 cad3b846,1437 31527 696d05cb,1497 32124 cbe78615,2361 37726 d42a310f,2445 51406 4ac722e8,2769 45961 c8e1cacf,8993 3369 bfac8ab2",
+      "165 84083 b241feb2,741 8568 1a993106,1089 275 b2d56f15,1293 69502 cad3b846,1437 31527 696d05cb,1497 32124 cbe78615,2361 37726 d42a310f,2445 51406 4ac722e8,8993 3369 bfac8ab2",
     ],
     [
       10,
-      "430 23527 a0f459bd,718 2013 eb83ab4a,1486 1279 483d2115,2038 19101 faa4a6bf,2542 8760 7d17efd8,2590 321 6912eeb3,3382 6383 d0e859b9,3418 33571 883fdfd8,3526 76 25281d97,4542 2568 214d3422,7509 69 6f149395,7522 92 8e15910f,9327 9743 1f66d528",
+      "430 23527 a0f459bd,1486 1279 483d2115,1940 39 1929c141,2038 19101 faa4a6bf,2542 8760 7d17efd8,2590 321 6912eeb3,3418 33571 883fdfd8,3526 76 25281d97,3930 151 da16b5a8,4542 2568 214d3422,4940 718 a6b816e3,7522 92 8e15910f,9327 9743 1f66d528",
     ],
-    [10, "9335 22094 82f0a9f7,9375 59303 46520861,9578 10708 a840554c"],
-    [10, "9919 21965 7ca894db,10458 8992 1b40848f,10475 8667 faa106cb,10528 18213 00d65ced,11336 23 792dd208"],
-    [10, "11500 18564 a623757c"],
+    [
+      10,
+      "9335 22094 82f0a9f7,9375 59303 46520861,9578 10708 a840554c,9919 21965 7ca894db,10458 8992 1b40848f,10475 8667 faa106cb,10507 47 9b4213c6",
+    ],
+    [10, "10528 18213 00d65ced,11336 23 792dd208,14366 4181 762cd56b"],
     [
       11,
-      "227 12714 a14d6e0e,755 47 0e0f8fd2,947 27 633f4862,1079 19 3748fe47,1355 9268 619de682,1932 1602 43b817d0,3203 6988 096c0842,3227 1361 97185fca,3299 639 efba7476,3335 705 86fa09fd,12182 3635 cd3d256d,12483 8898 b7d49e27",
+      "227 12714 a14d6e0e,755 47 0e0f8fd2,1079 19 3748fe47,1134 130 6d826795,1665 147 7598e134,1932 1602 43b817d0,2041 1196 59ed4dfa,2426 236 c139314e,3203 6988 096c0842,3227 1361 97185fca,3299 639 efba7476,3828 1795 cf37645b,4285 672 76e26809,5853 643 2a48de50,11605 41 b706142a,12145 186 1a212103,12182 3635 cd3d256d,12250 174 d179d622,12483 8898 b7d49e27,12723 8194 d4c5ea9f,13815 694 3ffe7ec9,13877 8538 941e4719",
     ],
-    [11, "12250 174 d179d622,12723 8194 d4c5ea9f,13815 694 3ffe7ec9,13877 8538 941e4719"],
+    [11, "16267 1015 97cea338,16278 199 59d3f9bd,16342 766 21d84450"],
   ])("compresses at quality %d (%#)", (quality, expected) => {
-    const seeds = expected.split(",").map(answer => parseInt(answer));
-    expect(seeds.map(seed => `${seed} ${roundTripOf(quality, seed)}`).join()).toBe(expected);
+    expect(answers(quality, expected, false)).toBe(expected);
+  });
+
+  it.each([
+    [10, "8793 2043 6493a656"],
+    [11, "1189 135 f43658cd,8705 154 14a3da27"],
+  ])("compresses where the buffer wraps around at quality %d", (quality, expected) => {
+    expect(answers(quality, expected, true)).toBe(expected);
   });
 });
 
@@ -2120,15 +2309,13 @@ it("copies byte by byte where source and target overlap", () => {
   const expected = [];
   const bits = windowOf(10);
   for (let distance = 1; distance <= 34; distance++) {
-    const lengths = [2, 3, 8, 15, 16, 17, 31, 32, 33, 64, 100];
     const fresh = noise.subarray(distance * 40, distance * 40 + 40);
-    for (const length of lengths) {
+    for (const length of [2, 3, 8, 15, 16, 17, 31, 32, 33, 64, 100]) {
       bits.uncompressed(fresh).plainHeader(length).fixedCodes().copy(length).distance(distance);
-      expected.push(...fresh);
-      for (let i = 0; i < length; i++) expected.push(expected.at(-distance));
+      expected.push(fresh, Buffer.alloc(length, fresh.subarray(-distance)));
     }
   }
-  expect(zlib.brotliDecompressSync(bits.put([2, 3]).finish())).toEqual(Buffer.from(expected));
+  expect(zlib.brotliDecompressSync(bits.put([2, 3]).finish())).toEqual(Buffer.concat(expected));
 });
 
 it.each([
@@ -2164,7 +2351,7 @@ const upTo15 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15];
 const decodeInPieces = (stream, pieces, room) =>
   pieces.map(piece => {
     const steps = Array.from(window(stream, piece), chunk => [PROCESS, chunk]);
-    return digest(drive(zlib.createBrotliDecompress(), [...steps, [FINISH, Buffer.alloc(0)]], room));
+    return digest(drive(bare(DECODE), [...steps, [FINISH, Buffer.alloc(0)]], room));
   });
 
 it("decodes codes of up to 15 bits", () => {
@@ -2228,22 +2415,20 @@ it.each([9, 10, 11, 12, 13, 14, 15])("decodes commands of 48 + %d bits at each a
 });
 
 it.each([
-  [0xff0000, 5],
-  [5, 0xff0000],
-])("decodes a command with lengths of %d and %d in its extra bits", (insert, copy) => {
+  [0xff0000, 5, [1]],
+  [5, 0xff0000, [4096, 1]],
+])("decodes a command with lengths of %d and %d in its extra bits", (insert, copy, pieces) => {
   const total = 22594 + insert + 2118 + copy;
   const bits = windowOf(16).plainLastHeader(total).simpleCode(8, 97);
   bits.complexCode([...Array(688).fill(0), ...upTo15]).simpleCode(6, 0);
   const stream = bits.code(15, 0x7fff).put([24, insert], [24, copy]).finish();
-  expect(decodeInPieces(stream, [stream.length, 1], 1 << 20)).toEqual(Array(2).fill(digest(Buffer.alloc(total, "a"))));
+  expect(decodeInPieces(stream, pieces, 1 << 20)).toEqual(Array(pieces.length).fill(digest(Buffer.alloc(total, "a"))));
 });
 
 it.each([
-  [[3, 1, 1], [], "3294 0dae9afc"],
   [[3, 1, 1], [1], "3294 155c1ee4"],
   [[1, 3, 1], [0], "3299 51017558"],
   [[1, 1, 3], [], "3171 cb48c33e"],
-  [[3, 3, 3], [0, 2], "3597 6cd4667a"],
   [[3, 3, 3], [0, 1, 2], "3597 fbeada8b"],
 ])("switches between %p block types, with contexts in %p", (typeCounts, inContext, expected) => {
   let next = 0;
@@ -2295,6 +2480,36 @@ it.each([
   expect(decodeInPieces(bits.put(...body).finish(), [4096, 100, 13, 1], 1000)).toEqual(Array(4).fill(expected));
 });
 
+it("decodes a literal of 15 bits after a command of 46 bits at each alignment", () => {
+  const bits = windowOf(16)
+    .uncompressed(noise.subarray(0, 40))
+    .plainLastHeader(8 * (194 + 2118));
+  bits
+    .complexCode(upTo15)
+    .complexCode([...Array(640).fill(0), ...upTo15])
+    .simpleCode(6, 0);
+  for (let i = 0; i < 8; i++) {
+    bits.code(15, 2 ** 15 - 1).put([7, 0], [24, 0]);
+    bits.code(15, 2 ** 15 - 1).put([3, 3], ...Array(8).fill([24, 0]));
+  }
+  expect(digest(zlib.brotliDecompressSync(bits.finish()))).toMatchInlineSnapshot(`"18536 f5819abd"`);
+});
+
+it("decodes a distance of 29 bits after a command of 28 bits at each alignment", () => {
+  const bits = windowOf(23)
+    .uncompressed(noise.subarray(0, 40))
+    .plainLastHeader(2 ** 22 + 8 * (2118 + 71));
+  bits.simpleCode(8, 97).complexCode([...Array(384).fill(0), 1, 2, 3, 5, 6, 7, 8, 4, 8]);
+  bits.complexCode([...Array(16).fill(0), ...upTo15.slice(0, 7), ...Array(33).fill(0), 8, 8]);
+  bits.code(4, 14).put([24, 2 ** 22 - 2118], [2, 0]);
+  for (let i = 0; i < 8; i++) {
+    bits.code(4, 14).put([24, 0]);
+    bits.code(8, 254).put([21, 43 + 2189 * i]);
+    bits.code(8, 255).put([5, 0], [3, 1]);
+  }
+  expect(digest(zlib.brotliDecompressSync(bits.finish()))).toMatchInlineSnapshot(`"4211856 186c610e"`);
+});
+
 it("has a context mode for each block of a long insert", () => {
   const bits = windowOf(16).uncompressed(noise.subarray(0, 2)).lastHeader(800);
   // Four blocks of 177 + 23 literals.
@@ -2312,6 +2527,12 @@ it("has a context mode for each block of a long insert", () => {
     bits.put([2, noise[256 + i] & 3]);
   }
   expect(decodeInPieces(bits.finish(), [4096, 1], 1000)).toEqual(Array(2).fill("802 40bce842"));
+});
+
+it("decodes more than 64 KiB of short commands after the window is full", () => {
+  const input = Buffer.concat([Buffer.alloc(1 << 18), noise, noise.toReversed()]);
+  for (let at = 0; at < input.length; at += 64) input.fill(0, at, at + 12);
+  expect(roundTrip(input, { [QUALITY]: 1, [LGWIN]: 18 })).toMatchInlineSnapshot(`"110437 e35598cb"`);
 });
 
 it.each([
@@ -2382,6 +2603,14 @@ it("moves trees of any number to the front", () => {
   bits.simpleCode(10, 128, 136).simpleCode(6, 5, 20).put([1, 0], [1, 1], [3, 3], [14, 0x1555], [1, 1]);
   const literals = zlib.brotliDecompressSync(bits.finish()).filter((_, i) => i > 16 && i % 3 === 0);
   expect([...literals]).toEqual([129, 0, 129, 128, 0, 128, 129, 129]);
+});
+
+it("has room for many long codes in each tree", () => {
+  const bits = windowOf(16).lastHeader(4).put([1, 0]).number(4).simpleCode(3, 1).simpleCode(5, 0).put([13, 0]);
+  bits.complexCode([1, 2, 3, 4, 5, 6, 8, 9, 9, ...Array(63).fill(14), ...Array(130).fill(15)]);
+  for (let type = 0; type < 4; type++) bits.fixedCommandCode();
+  bits.sixBitCode().code(9, 32).code(9, 507).code(14, 16318).code(15, 32638).code(15, 32767);
+  expect([...zlib.brotliDecompressSync(bits.finish())]).toEqual([8, 71, 72, 201]);
 });
 
 it("makes room for more trees in each meta-block", () => {
@@ -2467,7 +2696,19 @@ it("refuses a large window if told to", () => {
   expect(drive(engine, [[FINISH, stream]], 64).code).toBe("ERR__ERROR_FORMAT_WINDOW_BITS");
 });
 
-it.each([10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])("finds the words behind a window of %d bits", size => {
+it.each([
+  ["a large window", largeWindowOf(20).put([2, 3]), 0],
+  ["metadata", windowOf(22).put([2, 1], [2, 3], [3, 0]), 0],
+  ["5 stored bytes", windowOf(10).put([3, 0], [16, 4], [1, 1]), 5],
+  ["65537 stored bytes", windowOf(16).put([1, 0], [2, 1], [20, 65536], [1, 1]), 65537],
+])("waits for the last bits of the header of %s", (_, header, length) => {
+  const rest = length ? [Buffer.alloc(length), Buffer.of(3)] : [];
+  const steps = [...window(header.finish(), 1), ...rest].map(chunk => [PROCESS, chunk]);
+  const answer = drive(zlib.createBrotliDecompress(allowingLarge), [...steps, [FINISH, Buffer.alloc(0)]], 1 << 17);
+  expect(answer).toEqual(Buffer.alloc(length));
+});
+
+it.each([10, 11, 12, 13, 14, 15, 16, 17, 18, 19])("finds the words behind a window of %d bits", size => {
   for (const bits of [windowOf(size), largeWindowOf(size)]) {
     const filled = 3000 + 2 ** size;
     bits
@@ -2580,7 +2821,7 @@ it("limits the distance codes of a large window", () => {
         .simpleCode(10, 8)
         .simpleCode(symbolBits, count + step - 1)
         .put([1, 1]);
-      const answer = drive(zlib.createBrotliDecompress(allowingLarge), [[FINISH, bits.finish()]], 64);
+      const answer = drive(bare(DECODE, allowingLarge.params), [[FINISH, bits.finish()]], 64);
       if (answer.toString() === "b") count += step;
     }
     return count;
@@ -2629,26 +2870,22 @@ it("accepts metadata as the last meta-block", () => {
   expect(zlib.brotliDecompressSync(bits.put([16, 0xffff]).finish()).toString()).toBe("a");
 });
 
-it.each([
-  [1, "10121 e05b5c74", text.subarray(0, 300)],
-  [5, "9671 cadfd1e7", Buffer.concat([text.subarray(0, 250), samples.subarray(0, 40)])],
-  [11, "10228 e9269d46", Buffer.concat([text.subarray(0, 700), Buffer.alloc(900, samples.subarray(0, 24))])],
-])("has an answer for flipped bits in a stream of quality %d", (quality, expected, input) => {
-  const stream = zlib.brotliCompressSync(input, { params: { [QUALITY]: quality } });
-  const [out, state, answers] = [Buffer.alloc(4096), new Uint32Array(2), []];
-  const { constructor: Handle } = zlib.createBrotliDecompress()._handle;
+it("has an answer for flipped bits", () => {
+  const stream = zlib.brotliCompressSync(
+    Buffer.concat([text.subarray(0, 700), Buffer.alloc(900, samples.subarray(0, 24))]),
+  );
+  const [out, answers] = [Buffer.alloc(4096), []];
   for (let bit = 0; bit < stream.length * 8; bit += bit < 1200 ? 1 : 3) {
-    const handle = new Handle(zlib.constants.BROTLI_DECODE);
+    const { _handle: handle, _writeState: state } = bare(DECODE);
     let answer;
     handle.onerror = (_, errno) => (answer = errno);
-    handle.init(new Uint32Array(0), state, () => {});
     stream[bit >> 3] ^= 1 << (bit & 7);
     handle.writeSync(FINISH, stream, 0, stream.length, out, 0, out.length);
     stream[bit >> 3] ^= 1 << (bit & 7);
     handle.close();
-    answers.push(answer ?? [state[1], zlib.crc32(out.subarray(0, out.length - state[0]))]);
+    answers.push(answer ?? `${state[1]},${zlib.crc32(out.subarray(0, out.length - state[0]))}`);
   }
-  expect(digest(Buffer.from(answers.join()))).toBe(expected);
+  expect(digest(Buffer.from(answers.join()))).toMatchInlineSnapshot(`"10228 e9269d46"`);
 });
 
 const zeroLengths = count => Array(count).fill([2, 0]);

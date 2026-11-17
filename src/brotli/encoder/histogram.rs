@@ -2,10 +2,11 @@
 
 use bun_highway::{BROTLI_SPARE_LOGARITHMS, brotli_estimate_costs};
 
-use super::log2::fast_log2;
+use super::log2::{FRACTION_BITS, fast_log2, fixed_point_log2};
 use super::symbol_set::SymbolSet;
 use crate::format::{
-    COMMAND_SYMBOLS, DistanceParams, LITERAL_SYMBOLS, MAX_DIRECT_CODES, MAX_POSTFIX_BITS,
+    CODE_LENGTH_CODES, COMMAND_SYMBOLS, DistanceParams, LITERAL_SYMBOLS, MAX_DIRECT_CODES,
+    MAX_POSTFIX_BITS, REPEAT_ZERO_CODE_LENGTH, repeat_extra_bits,
 };
 use crate::memory::{self, Result};
 
@@ -156,7 +157,7 @@ impl Estimator {
         let mut logarithms = memory::empty(known + BROTLI_SPARE_LOGARITHMS)?;
         logarithms.push([1e6, 0.0]);
         logarithms.extend((1..known).map(|count| [fast_log2(count), count as f64]));
-        logarithms.resize(known + BROTLI_SPARE_LOGARITHMS, [0.0; 2]);
+        memory::resize(&mut logarithms, known + BROTLI_SPARE_LOGARITHMS, [0.0; 2]);
         Ok(Self { logarithms })
     }
 
@@ -169,6 +170,9 @@ impl Estimator {
         let nothing = Indexed::empty(counts.len()).counts;
         if used.len() <= 4 {
             return cost_of_few(&used, total, counts, nothing);
+        }
+        if let Ok(total) = total.try_into() {
+            return cost_of_little(&used, total, counts, nothing);
         }
         let (totals, gaps) = ([total as u32; 4], used.gaps().map(|gaps| [gaps; 4]));
         let logarithms = &mut self.logarithms;
@@ -191,6 +195,8 @@ impl Estimator {
         ids: &[u32],
         costs: &mut [f64],
     ) {
+        /// With more symbols, four estimates at a time are faster.
+        const MAX_ONE_BY_ONE: usize = 96;
         // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/bit_cost_inc.h#L13
         let (mut waiting, mut counts) = ([0; 4], [common.counts; 4]);
         let (mut totals, mut gaps) = ([0; 4], [[0; 4]; 2]);
@@ -200,6 +206,8 @@ impl Estimator {
             let (total, used) = (common.total + other.total, common.used.union(&other.used));
             if used.len() <= 4 {
                 costs[id as usize] = cost_of_few(&used, total, common.counts, other.counts);
+            } else if let (..=MAX_ONE_BY_ONE, Ok(total)) = (used.len(), total.try_into()) {
+                costs[id as usize] = cost_of_little(&used, total, common.counts, other.counts);
             } else {
                 all_used = all_used.union(&used);
                 (waiting[count], counts[count], totals[count]) = (id, other.counts, total as u32);
@@ -241,6 +249,48 @@ fn cost_of_few(used: &SymbolSet, total: usize, counts: &[u32], more: &[u32]) -> 
     }
 }
 
+/// `used` has the symbols of both. Nothing is rounded before the code lengths are counted.
+#[inline(never)]
+fn cost_of_little(used: &SymbolSet, total: u8, counts: &[u32], more: &[u32]) -> f64 {
+    // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/bit_cost_inc.h#L70
+    const RUN: u32 = (2 * u8::MAX as u32 + 1).next_power_of_two();
+    /// For so many zeros in a row: the number of codes for a run, times `RUN`, or of zeros that make no run.
+    static GAPS: [u16; COMMAND_SYMBOLS.next_power_of_two()] = {
+        let (mut gaps, mut zeros) = ([0; _], 0usize);
+        while zeros < gaps.len() {
+            gaps[zeros] = match zeros {
+                ..3 => zeros as u16,
+                _ => ((zeros - 2).ilog2() / 3 + 1) as u16 * RUN as u16,
+            };
+            zeros += 1;
+        }
+        gaps
+    };
+    let more = &more[..counts.len()];
+    let log2_total = fixed_point_log2(total);
+    let (mut saved, mut gaps, mut next_symbol) = (0, 0, 0);
+    // Up to 8 bits, and then the code for runs of zeros.
+    let mut lengths = [0u32; 16];
+    for symbol in used {
+        let count = (counts[symbol] + more[symbol]) as u8;
+        gaps += u32::from(GAPS[(symbol - next_symbol) % GAPS.len()]);
+        next_symbol = symbol + 1;
+        let log2_count = fixed_point_log2(count);
+        saved += u64::from(count) * u64::from(log2_count);
+        let rounded = log2_total - log2_count + (1 << (FRACTION_BITS - 1));
+        lengths[(rounded >> FRACTION_BITS) as usize % 16] += 1;
+    }
+    let bits = (u64::from(total) * u64::from(log2_total) - saved) as i64 as f64;
+    let max_length = lengths[2..9].iter().rposition(|&count| count != 0);
+    let max_length = max_length.map_or(1, |index| index as u32 + 2);
+    lengths[0] += gaps % RUN;
+    lengths[9] = gaps / RUN;
+    let extra_bits = repeat_extra_bits(REPEAT_ZERO_CODE_LENGTH.into()) * lengths[9];
+    bits / f64::from(1 << FRACTION_BITS)
+        + f64::from(extra_bits + CODE_LENGTH_CODES as u32 + 2 * max_length)
+        + entropy_of(lengths[..10].iter().copied(), lengths.iter().sum())
+}
+
 pub(super) fn count_bytes(bytes: &[u8]) -> [u32; LITERAL_SYMBOLS] {
     // An increment has to wait for the previous one of the same counter.
     let mut counts = [[0; LITERAL_SYMBOLS]; 2];
@@ -266,11 +316,18 @@ pub(super) fn count_every_nth_byte<const N: usize>(bytes: &[u8]) -> [u32; LITERA
 /// The entropy, but at least one bit for each symbol.
 #[inline(never)]
 pub(super) fn bits_entropy(counts: &[u32]) -> f64 {
-    let sum = counts.iter().sum::<u32>() as usize;
+    let frequent = SymbolSet::matching(counts, |count| count > 1);
+    let frequent = (&frequent).into_iter().map(|symbol| counts[symbol]);
+    entropy_of(frequent, counts.iter().sum())
+}
+
+/// Counts below 2 can be missing.
+#[inline(always)]
+fn entropy_of(counts: impl Iterator<Item = u32>, sum: u32) -> f64 {
     let mut bits = 0.0;
-    for symbol in &SymbolSet::matching(counts, |count| count > 1) {
-        bits -= f64::from(counts[symbol]) * fast_log2(counts[symbol] as usize);
+    for count in counts {
+        bits -= f64::from(count) * fast_log2(count as usize);
     }
-    bits += sum as f64 * fast_log2(sum);
-    bits.max(sum as f64)
+    bits += f64::from(sum) * fast_log2(sum as usize);
+    bits.max(f64::from(sum))
 }

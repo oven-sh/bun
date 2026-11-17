@@ -1350,6 +1350,15 @@ describe.concurrent("where the scanner is looked up", () => {
     expect(await install(files)).toEqual({ ran: "the user", exitCode: 0 });
   });
 
+  it("a trailing slash in the user's bunfig means the directory", async () => {
+    const files = {
+      "home/.bunfig.toml": bunfig("./s/"),
+      "home/s/index.ts": scannerOf("the directory"),
+      "home/s.ts": scannerOf("the file"),
+    };
+    expect(await install(files)).toEqual({ ran: "the directory", exitCode: 0 });
+  });
+
   it("a relative path in a --config file starts at that file", async () => {
     const files = {
       "ci/bunfig.toml": bunfig("./s.ts"),

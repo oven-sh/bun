@@ -77,7 +77,7 @@ pub(crate) fn root_package_json_path() -> Box<[u8]> {
 
 pub(crate) fn workspace_package_json_path(workspace_path: &[u8]) -> Box<[u8]> {
     let top_level = FileSystem::get().top_level_dir();
-    let path = Path::resolved_portable(&[top_level, workspace_path, b"package.json"]);
+    let path = Path::resolve_any_sep(&[top_level, workspace_path, b"package.json"]);
     path.as_bytes().into()
 }
 
@@ -140,7 +140,8 @@ pub(crate) fn select_targets(
 
     let patterns = manager.options.filter_patterns;
 
-    let subject = |rel: &[u8]| workspace_selection::posix_dir(top_level, rel).unwrap_or_default();
+    let subject =
+        |rel: &[u8]| workspace_selection::abs_posix_dir(top_level, rel).unwrap_or_default();
     let mut candidates: Vec<(WorkspaceTarget, Box<[u8]>)> = Vec::with_capacity(members.count() + 1);
     candidates.push((
         WorkspaceTarget {
@@ -332,7 +333,7 @@ fn local_path_too_long(request: &UpdateRequest) -> ! {
 }
 
 fn resolve_from_cwd(cwd: &[u8], request: &UpdateRequest, path: &[u8]) -> PoolPath {
-    PoolPath::resolved_portable(&[cwd, path]).unwrap_or_else(|_| local_path_too_long(request))
+    PoolPath::resolve_any_sep(&[cwd, path]).unwrap_or_else(|_| local_path_too_long(request))
 }
 
 /// `None` means the global package.json, which stores `abs` itself, like `-g /abs/path` does.
@@ -343,7 +344,7 @@ fn spell_relative_to(
     abs: &[u8],
 ) -> Vec<u8> {
     let rel: &[u8] = match package_json_path.and_then(bun_paths::dirname) {
-        Some(target_dir) => &PoolPath::relative_portable(target_dir, abs)
+        Some(target_dir) => &PoolPath::relative_any_sep(target_dir, abs)
             .unwrap_or_else(|_| local_path_too_long(request)),
         None => abs,
     };

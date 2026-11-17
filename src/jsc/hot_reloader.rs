@@ -490,13 +490,16 @@ impl bun_watcher::WatcherContext for HotReloader {
                                         // that the file exists; harmless in
                                         // practice (re-watching a missing
                                         // entrypoint is a no-op downstream).
-                                        let mut name = bun_paths::StackPath::<256>::new();
-                                        let exists = name
-                                            .set(bun_paths::basename(self.main.file))
-                                            .is_ok()
-                                            && files[event.index as usize].as_ref().is_some_and(
-                                                |dir| bun_sys::faccessat(dir.fd(), &name).is_ok(),
-                                            );
+                                        let name = bun_paths::StackPath::<256>::from(
+                                            bun_paths::basename(self.main.file),
+                                        );
+                                        let exists = if let Ok(name) = &name
+                                            && let Some(dir) = &files[event.index as usize]
+                                        {
+                                            bun_sys::faccessat(dir.fd(), name).is_ok()
+                                        } else {
+                                            false
+                                        };
                                         if exists {
                                             self.main.is_waiting_for_dir_change = false;
                                             self.changed_paths.record(self.main.file);

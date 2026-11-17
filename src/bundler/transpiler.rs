@@ -276,13 +276,14 @@ impl<'a> Transpiler<'a> {
                 // Bust directory cache and try again
                 let dir =
                     bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(entry_point);
-                let mut buster_name = bun_paths::Path::new();
-                if bun_paths::is_absolute(entry_point) && !dir.is_empty() {
-                    buster_name.push_portable(dir);
+                let buster_name = if bun_paths::is_absolute(entry_point) && !dir.is_empty() {
+                    let mut normalized_dir = bun_paths::Path::new();
+                    normalized_dir.push_any_sep(dir);
+                    normalized_dir
                 } else {
                     let top_level_dir = Fs::FileSystem::get().top_level_dir();
-                    buster_name.resolve_portable(&[top_level_dir, entry_point, b".."]);
-                }
+                    bun_paths::Path::resolve_any_sep(&[top_level_dir, entry_point, b".."])
+                };
 
                 // Only re-query if we previously had something cached.
                 if self.resolver.bust_dir_cache(&buster_name) {
@@ -2298,8 +2299,8 @@ impl<'a> Transpiler<'a> {
             return crate::linker::dupe(_entry);
         }
 
-        // A relative path does not lead into such a directory.
-        if cfg!(unix) && strings::contains_char(entry, b'\\') {
+        // `relative_to` would turn a `\` that is part of a name into a separator.
+        if bun_paths::has_literal_backslash(entry) {
             return crate::linker::dupe(entry);
         }
 

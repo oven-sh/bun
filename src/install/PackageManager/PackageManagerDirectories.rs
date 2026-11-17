@@ -335,7 +335,7 @@ fn get_temporary_directory_run(
 
     // The node-gyp shim is written via `handle` and put on PATH via `name`.
     let name: &'static [u8] = if tried_dot_tmp {
-        let joined = path::Path::joined(&[&cache.path, b".tmp"]);
+        let joined = path::Path::join(&[&cache.path, b".tmp"]);
         bun_core::handle_oom(FileSystem::get().dirname_store().append(&joined))
     } else {
         temp_dir_name
@@ -354,22 +354,23 @@ fn get_temporary_directory_run(
 #[inline(never)]
 fn ensure_cache_directory(this: &mut PackageManager) -> sys::Maybe<&'static CacheDirectory> {
     if this.options.enable.contains(Enable::CACHE) {
-        let (configured, base) = (this.options.cache_directory, this.options.env_base());
-        let is_linked_to = PackageInstall::supported_method() == Method::Symlink;
-        if let Ok(dir) = fetch_cache_directory_path(this.env_mut(), base, Some(configured))
-            && (!is_linked_to || is_importable_from(&dir.path))
-            && let Ok(handle) = Dir::cwd().make_open_path(&dir.path, Default::default())
+        let configured = this.options.cache_directory;
+        let env_base_dir = this.options.env_base_dir();
+        let uses_symlink_backend = PackageInstall::supported_method() == Method::Symlink;
+        if let Ok(CacheDir { path, .. }) =
+            fetch_cache_directory_path(this.env_mut(), env_base_dir, Some(configured))
+            && (!uses_symlink_backend || node_can_import_from(&path))
+            && let Ok(handle) = Dir::cwd().make_open_path(&path, Default::default())
         {
-            let path = ZBox::from_vec(dir.path);
+            let path = ZBox::from_vec(path);
             return Ok(CACHE_DIRECTORY.get_or_init(|| CacheDirectory { handle, path }));
         }
         this.options.enable.set(Enable::CACHE, false);
     }
 
     let handle = Dir::cwd().make_open_path(b"node_modules/.cache", Default::default())?;
-    let path =
-        path::VecPath::resolved(&[FileSystem::get().top_level_dir(), b"node_modules/.cache"])
-            .into_zbox();
+    let path = path::VecPath::resolve(&[FileSystem::get().top_level_dir(), b"node_modules/.cache"])
+        .into_zbox();
     Ok(CACHE_DIRECTORY.get_or_init(|| CacheDirectory { handle, path }))
 }
 
@@ -380,15 +381,15 @@ pub struct CacheDir {
     pub is_cwd_fallback: bool,
 }
 
-/// Node.js does not import a module whose real path has a `\` in a name.
-pub fn is_importable_from(dir: &[u8]) -> bool {
-    cfg!(windows) || !bun_core::strings::contains_char(dir, b'\\')
+/// Node.js refuses to import a module whose real path has a `\` in a name.
+pub fn node_can_import_from(dir: &[u8]) -> bool {
+    !path::has_literal_backslash(dir)
 }
 
-/// An empty variable counts as unset, because `abs(&[b""])` would be the project directory.
+/// An empty variable counts as unset, because it would resolve to the project directory.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
-    env_base: options::EnvBase,
+    env_base_dir: &[u8],
     configured: Option<&[u8]>,
 ) -> sys::Maybe<CacheDir> {
     const CWD_FALLBACK: &[u8] = b"node_modules/.bun-cache";
@@ -398,20 +399,20 @@ pub fn fetch_cache_directory_path(
     let home = env_var::XDG_CACHE_HOME
         .get_not_empty()
         .or_else(|| env_var::HOME.get_not_empty());
-    let (base, dir, below): (_, _, &[u8]) = if let Some(dir) = cache_dir {
-        (options::EnvBase::Project, dir, b"")
+    let top_level_dir = FileSystem::get().top_level_dir();
+    let (base_dir, dir, subdir): (_, _, &[u8]) = if let Some(dir) = cache_dir {
+        (top_level_dir, dir, b"")
     } else if let Some(dir) = variable(b"BUN_INSTALL") {
-        (env_base, dir, b"install/cache")
+        (env_base_dir, dir, b"install/cache")
     } else if let Some(dir) = home {
-        (env_base, dir, b".bun/install/cache")
+        (env_base_dir, dir, b".bun/install/cache")
     } else {
-        (options::EnvBase::Project, CWD_FALLBACK, b"")
+        (top_level_dir, CWD_FALLBACK, b"")
     };
 
-    let mut abs = base
-        .resolve(dir, below)
-        .map_err(|_| sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(dir))?;
-    abs.trim_trailing_sep();
+    let Ok(abs) = options::resolve_env_dir(base_dir, dir, subdir) else {
+        return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(dir));
+    };
     Ok(CacheDir {
         path: abs.to_vec(),
         is_cwd_fallback: dir == CWD_FALLBACK,
@@ -907,7 +908,7 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
         return Ok(());
     }
     manager.options.global_bin_dir =
-        options::open_global_bin_dir(manager.options.env_base(), ctx.install.as_deref())?;
+        options::open_global_bin_dir(manager.options.env_base_dir(), ctx.install.as_deref())?;
     let mut out_buffer = bun_paths::path_buffer_pool::get();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
     let path = FileSystem::get()
@@ -935,7 +936,7 @@ pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryErr
     }
 
     let global_dir = match options::open_global_dir(
-        this.options.env_base(),
+        this.options.env_base_dir(),
         this.options.explicit_global_directory,
     ) {
         Ok(d) => Dir::from_fd(d),
@@ -998,9 +999,9 @@ fn path_for_cached_folder<'a>(
     if !is_package_in_cache(this, folder_name, tag) {
         return Err(Error::FileNotFound);
     }
-    let mut path = path::SlicePath::new_in(buf);
-    path.resolve(&[&get_cache_directory(this).path, folder_name])?;
-    Ok(path.into_z())
+    let mut path = path::SlicePath::new(buf);
+    path.resolve_in_place(&[&get_cache_directory(this).path, folder_name])?;
+    Ok(path.into_zstr())
 }
 
 pub fn path_for_resolution<'a>(

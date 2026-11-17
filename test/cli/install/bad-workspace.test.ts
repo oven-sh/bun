@@ -750,16 +750,16 @@ describe.concurrent.skipIf(isWindows)("working directory close to PATH_MAX", () 
     };
 
     test.each([
-      ["pm ls --all", "<cwd> node_modules\n", 0],
-      ["pm licenses", "warn: 1 package in bun.lock is not installed and was skipped\n", 0],
-      ["pm untrusted", "ENAMETOOLONG", 1],
-    ])("bun %s", async (command, printed, code) => {
+      ["pm ls --all", "stdout", "<cwd> node_modules\n", 0],
+      ["pm licenses", "stderr", "warn: 1 package in bun.lock is not installed and was skipped\n", 0],
+      ["pm untrusted", "stderr", "ENAMETOOLONG", 1],
+    ] as const)("bun %s", async (command, stream, printed, exitCode) => {
       using project = deepProject(cwdBytes, files);
 
-      const { stdout, stderr, exitCode } = await runBun(command.split(" "), project.cwd);
+      const result = await runBun(command.split(" "), project.cwd);
 
-      expect((stdout + stderr).replaceAll(project.cwd, "<cwd>")).toContain(printed);
-      expect(exitCode).toBe(code);
+      expect(result[stream].replaceAll(project.cwd, "<cwd>")).toContain(printed);
+      expect(result.exitCode).toBe(exitCode);
     });
   });
 

@@ -1,18 +1,18 @@
 use bun_alloc::AllocError;
-use bun_paths::{OSPathChar, OSPathSlice, OsPath};
+use bun_paths::{OSPath, OSPathChar, OSPathSlice, Path};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
 pub(crate) struct FileCopier {
-    pub(crate) src_path: OsPath,
-    pub(crate) dest_subpath: OsPath,
+    pub(crate) src_path: OSPath,
+    pub(crate) dest_subpath: OSPath,
     pub(crate) walker: Walker,
 }
 
 impl FileCopier {
     pub(crate) fn init(
         src_dir: Fd,
-        src_path: OsPath,
-        dest_subpath: OsPath,
+        src_path: OSPath,
+        dest_subpath: OSPath,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<FileCopier, AllocError> {
         Ok(FileCopier {
@@ -35,17 +35,12 @@ impl FileCopier {
     // `Drop` impl is needed.
 
     pub(crate) fn copy(&mut self) -> sys::Result<()> {
-        #[cfg(windows)]
-        let dest_subpath_u8 = &{
-            let mut path = bun_paths::Path::from(&self.dest_subpath);
-            path.remove_win32_prefix();
-            path
-        };
-        #[cfg(not(windows))]
-        let dest_subpath_u8 = &self.dest_subpath;
+        // `make_open_path` only takes bytes.
+        let mut dest_subpath_u8 = Path::from(&self.dest_subpath);
+        dest_subpath_u8.strip_nt_prefix();
         let dest_dir = match bun_sys::make_path::make_open_path(
             &Dir::cwd(),
-            dest_subpath_u8,
+            &dest_subpath_u8,
             Default::default(),
         ) {
             Ok(d) => d,
@@ -77,9 +72,12 @@ impl FileCopier {
                     _ => continue,
                 }
 
-                let too_long = sys::Tag::copyfile.too_long();
-                let src = self.src_path.child(entry.path).map_err(too_long)?;
-                let dest = self.dest_subpath.child(entry.path).map_err(too_long)?;
+                let (Ok(src), Ok(dest)) = (
+                    self.src_path.push_scoped(entry.path),
+                    self.dest_subpath.push_scoped(entry.path),
+                ) else {
+                    return Err(sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile));
+                };
 
                 if entry.kind == EntryKind::Directory {
                     if bun_sys::windows::CreateDirectoryExW(&src, &dest).is_err() {
@@ -87,7 +85,7 @@ impl FileCopier {
                         bun_sys::make_path::make_path::<OSPathChar>(&dest_dir, entry.path)?;
                     }
                 } else if let Err(first_err) = bun_sys::copy_file::copy_file(&src, &dest) {
-                    // `dest_dir` exists, so a file that is directly in it has no missing parent.
+                    // No parent to create, so this is the real error. Skipping it would publish an incomplete entry.
                     let Some(entry_dirname) = bun_paths::dirname(entry.path) else {
                         return Err(first_err);
                     };

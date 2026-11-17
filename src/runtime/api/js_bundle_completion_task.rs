@@ -303,7 +303,7 @@ impl JSBundleCompletionTask {
                 check_command::warn_about_skipped_typed_files(option, &mut self.log);
             }
             let working_directory = bun_resolver::fs::FileSystem::get().top_level_dir();
-            let outdir = bun_paths::VecPath::resolved(&[
+            let outdir = paths::VecPath::resolve(&[
                 working_directory,
                 &config.dir.list,
                 &config.outdir.list,
@@ -754,7 +754,7 @@ impl JSBundleCompletionTask {
                 for (i, output_file) in output_files.iter_mut().enumerate() {
                     let path: Box<[u8]> = if !outdir.is_empty() {
                         let parts = [top_level_dir, &dir, &outdir, &output_file.dest_path];
-                        Box::from(bun_paths::Path::resolved(&parts).as_bytes())
+                        paths::Path::resolve(&parts).as_bytes().into()
                     } else {
                         output_file.dest_path.clone()
                     };

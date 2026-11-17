@@ -6,13 +6,13 @@ use bun_ast::{E, Expr, G};
 use bun_core::{Global, Output, strings};
 use bun_semver as semver;
 
-use super::add_remove_with_filter::workspace_package_json_path;
 use bun_install::dependency::{self, DependencyExt as _, TagExt as _};
 use bun_install::lockfile::CatalogMap;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
 
+use super::add_remove_with_filter::workspace_package_json_path;
 use super::package_manager_options::{Do, Enable};
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult};
 use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};

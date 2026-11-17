@@ -24,7 +24,7 @@ const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Envi
 
 fn change_directory(cwd: &[u8]) {
     // Free the copy here, because `exit` doesn't return and nothing would free it later.
-    let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory_of_cwd(cwd)));
+    let changed = bun_sys::chdir(&directory_of_cwd(cwd));
     if let bun_sys::Result::Err(err) = changed {
         Output::err(
             err,

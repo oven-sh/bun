@@ -6,7 +6,7 @@ planned by cargo and run by ninja (`scripts/build/rust.ts`, `scripts/build/rust/
 
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
-- `bun_paths` (`src/paths/`) — `Path` (building, joining, normalizing), `Style` (reading), the path-buffer pool
+- `bun_paths` (`src/paths/`) — `Path`, `dirname` and friends, the path-buffer pool
 - `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
@@ -214,70 +214,64 @@ strings::to_utf16_alloc(...)             // encoding conversions
 
 ## Paths (`bun_paths`)
 
-Never use `std::path` for runtime path logic. Build paths with `bun_paths::Path`.
-It is always NUL-terminated and derefs to `ZStr` (and on to `[u8]`), so `&path`
-goes straight into `bun_sys`. No path makes it panic, and an operation that
-fails leaves the path as it was.
+Never use `std::path`. Build paths with `bun_paths::Path`. It is NUL-terminated and derefs to `ZStr`
+(then `[u8]`), so `&path` goes straight into `bun_sys`. No input makes it panic, and a failed
+operation leaves it unchanged.
 
 ```rust
 use bun_paths::Path;
 
-let json = Path::resolved(&[dir, b"package.json"]);    // path.resolve
-let rel  = Path::relative(from, to);                   // path.relative
-let cwd  = Path::filled(|buf| bun_sys::getcwd_z(buf).map(ZStr::as_bytes))?; // no copy
+let json = Path::from_parts(&[dir, b"package.json"]); // dir + separator + name
+let abs  = Path::resolve(&[cwd, arg]);                // path.resolve
+let rel  = Path::relative(from, to);                  // path.relative
 
-let mut path = Path::top_level_dir();
-path.push(b"node_modules");                            // separator + name, no normalizing
+let mut path = Path::from_top_level_dir();
+path.push(b"node_modules");
 for name in names {
-    bun_sys::unlink(&path.child(name))?;               // cut back when the guard drops
+    bun_sys::unlink(&path.push_scoped(name))?;        // `name` is removed when the guard drops
 }
-write!(path, "-{hash:x}");                             // `append`; `push_fmt` adds a separator
+write!(path, "-{hash:x}");                            // no separator; `push_fmt` adds one
 ```
 
-All of these are `PathIn<Backend, Style>` and have the same methods. What can
-lengthen a path returns `T` if the backend grows, else `Result<T, NameTooLong>`.
-`?` makes that `ENAMETOOLONG`; a `bun_sys::Error` needs `.map_err(Tag::open.too_long())`.
+| Type               | Storage                         | Too long | When to use                                                        |
+| ------------------ | ------------------------------- | -------- | ------------------------------------------------------------------ |
+| `Path`             | pooled buffer, then `Vec`       | grows    | default; the syscall returns `ENAMETOOLONG`                        |
+| `PoolPath`         | pooled buffer                   | `Err`    | must fit a `PathBuffer`, or too long must not look like "missing"  |
+| `OSPath`           | pooled buffer, `u16` on Windows | `Err`    | wide and NT calls (`make_long_path`, `make_nt_path`)               |
+| `VecPath`          | `Vec`                           | grows    | stored (`into_vec`, `into_zbox`), or more than 4 are alive at once |
+| `StackPath<N>`     | inline array                    | `Err`    | known to be short, or allocating is not allowed                    |
+| `SlicePath`        | the caller's buffer             | `Err`    | returning a `&ZStr` into that buffer (`into_zstr`)                 |
+| `ForwardSlashPath` | like `Path`, always writes `/`  | grows    | output that is printed, hashed or saved                            |
 
-| Type           | Storage                          | Too long | Use it                                                           |
-| -------------- | -------------------------------- | -------- | ---------------------------------------------------------------- |
-| `Path`         | pooled buffer, then the heap     | grows    | by default: the system call reports a path that is too long      |
-| `PoolPath`     | pooled buffer                    | `Err`    | when it has to fit a `PathBuffer`, or "absent" leads to a write  |
-| `OsPath`       | pooled buffer, `u16` on Windows  | `Err`    | for the wide and NT calls (`add_long_prefix`, `add_nt_prefix`)   |
-| `VecPath`      | `Vec` (`into_vec`, `into_zbox`)  | grows    | when it is kept, or more than 4 are alive (the size of the pool) |
-| `StackPath<N>` | inline, not zeroed               | `Err`    | when it is known to be short, or nothing may be allocated        |
-| `SlicePath`    | the caller's buffer (`into_z`)   | `Err`    | for `fn(buf: &'a mut PathBuffer) -> &'a ZStr`                    |
-| `SlashPath`    | as `Path`, writes `/` on Windows | grows    | for what is printed, hashed or saved                             |
+All are aliases of `GenericPath<Backend, Style>`. Types that grow return `T`, the others
+`Result<T, NameTooLong>`. Always handle the `Err`: the path still has its old value, usually the parent
+directory. `NameTooLong` converts into `SystemErrno::ENAMETOOLONG`.
 
-- `set`/`from` and `append` copy as is. `push`/`from_parts` only tidy the seam: `..` stays and
-  an absolute part does not start over. `join`, `resolve`, `normalize` and `relative` are Node's,
-  except that `resolve` keeps a trailing separator and has no working directory to fall back on.
-- On POSIX a `\` is part of a name. For what somebody has written, maybe on Windows (package.json,
-  lockfiles, bunfig.toml, flags, options), use `resolve_portable` and `push_portable`. They read it
-  as a separator, except in an absolute part, in a name that a working directory or `$HOME` has
-  too (`/home/DOMAIN\user`). A name that the disk has listed is not written: `push` it.
-  `relative_portable` never returns a `\` in a name, for what is printed or saved. `relative` leads to
-  its target, for a symlink.
-- Arguments are `&[u8]` or `&[u16]`, whatever the path holds. They are transcoded as WTF-8/WTF-16.
-- `scope()` cuts the path back on drop, `prefix(n)` and `tail(n)` lend a NUL-terminated part.
-- Never ignore an `Err`: the path is still the parent of what was meant.
+- `from`, `set`, `extend_from_slice` and `prepend` copy as is.
+- `push` and `from_parts` add one separator and write native ones. `..` is kept, and an absolute part
+  does not replace the path.
+- `join`, `resolve` and `relative` are Node's, except that `resolve` does not fall back to the cwd.
+  `resolve_in_place` uses the path as the first part.
+- `push_scoped` and `save` restore the length when the guard drops.
+- Arguments can be `&[u8]` or `&[u16]` and are transcoded (WTF-8/WTF-16), except for `relative` and
+  `prepend`.
 
-To read a borrowed slice use `bun_paths::{dirname, basename, extension, stem}`, or `Style` for the
-rest and for another platform's grammar (`platform::{Auto, Slash, Posix, Windows, Loose}`):
+On POSIX `\` is an ordinary character. For text that may have been written on Windows (package.json,
+lockfiles, bunfig.toml, flags) use the `*_any_sep` methods. They read `\` as a separator, except in a
+component of an absolute path that `$HOME` or a working directory also has (`/home/DOMAIN\user`). Use
+`push` for names from a directory listing and `relative` for symlink targets.
+`strings::without_trailing_slash` also strips `\`; for a real path use `without_trailing_sep`.
 
-```rust
-use bun_paths::{Style, platform::Auto};
+To inspect a slice use `bun_paths::{dirname, basename, extension, stem, components, ancestors,
+strip_prefix, without_trailing_sep}`. `strip_prefix(path, dir)` compares whole components: `/ab` is not
+in `/a`. For another platform's syntax, import `PathStyle` and call the same functions on
+`platform::{Posix, Windows, Loose}`.
 
-Auto::strip_dir(path, dir)    // Option<&[u8]>: what is below `dir`. Not `starts_with`: `/ab` is not in `/a`
-Auto::ancestors(path)         // `path`, its parent, .., the root (`/`, `C:\`, `\\server\share\`)
-Auto::components(path)        // the names after the root, from either end
-```
-
-`resolve_path::{join*, relative*, normalize*}` are the older functions. Many return a thread-local
-buffer that the next call overwrites, panic on a long input, or turn `\` into `/` on POSIX: do not
-add callers. `join_abs*` is `resolve_portable`. `strings::without_trailing_slash` cuts a `\` off a POSIX name, which
-`Style::without_trailing_sep` does not. For a scratch buffer that is not a path under construction, use
-`path_buffer_pool::get()` (`os_path_buffer_pool` is `u16` on Windows) and not the stack, since a
-`PathBuffer` is 96 KB on Windows.
+Do not add callers of `resolve_path::{join*, relative*, normalize*}`. Many return a thread-local buffer
+that the next call overwrites, panic on long input, or turn `\` into `/` on POSIX. `join_abs*` is
+`resolve_any_sep`, but keeps a trailing separator: follow it with `copy_trailing_sep_from(arg)` where
+`x/` must not mean the file `x`. For scratch space use `path_buffer_pool::get()`
+(`os_path_buffer_pool` for `u16` on Windows), not the stack: a `PathBuffer` is 96 KB on Windows.
 
 ## URL Parsing (`bun_url::whatwg`)
 

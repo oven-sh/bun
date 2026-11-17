@@ -318,7 +318,7 @@ test.concurrent("a negative workspace pattern does not remove a member listed by
   expect(Object.values(parseLockfile(packageDir).workspace_paths)).toEqual(["packages/pkg1"]);
 });
 
-test.concurrent.skipIf(isWindows)("a glob does not take a name with a backslash for a nested directory", async () => {
+test.concurrent.skipIf(isWindows)("workspace globs skip directories with a backslash in the name", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -369,7 +369,7 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
     return await Promise.all([proc.stderr.text(), proc.exited]);
   }
 
-  test.concurrent("a link in a folder dependency does not bring in a file from anywhere", async () => {
+  test.concurrent("skips a symlink in a folder dependency that points outside the project", async () => {
     using dir = tempDir("fs-root-link", {
       "package.json": JSON.stringify({ name: "fs-root", dependencies: { pkg: "file:./pkg" } }),
       "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
@@ -385,7 +385,7 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("is not copied into a project below it", async () => {
+  test.concurrent("file:.. that resolves to / is refused", async () => {
     using dir = tempDir("fs-root-folder", {
       "package.json": JSON.stringify({ name: "fs-root", version: "1.0.0" }),
       "app/package.json": JSON.stringify({ name: "app", dependencies: { "fs-root": "file:.." } }),

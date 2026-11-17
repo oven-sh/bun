@@ -137,7 +137,7 @@ pub(crate) fn open_global_node_modules(
         None => b"",
     };
     manager.global_dir = Some(Dir::from_fd(package_manager_options::open_global_dir(
-        manager.options.env_base(),
+        manager.options.env_base_dir(),
         explicit_global_dir,
     )?));
 
@@ -175,7 +175,7 @@ pub(crate) fn link_global_bins(
     }
     let name = lockfile.str(&package.name);
 
-    let node_modules_path = match bun_sys::fd_path(Fd::from_std_dir(node_modules)) {
+    let node_modules_path = match bun_sys::get_fd_path_owned(Fd::from_std_dir(node_modules)) {
         Ok(p) => p,
         Err(e) => {
             if manager.options.log_level != LogLevel::Silent {
@@ -240,8 +240,8 @@ fn link(ctx: command::Context) -> crate::Result<()> {
         #[cfg(windows)]
         {
             if let Err(e) = bun_sys::sys_uv::symlink_uv(
-                &bun_paths::Path::top_level_dir(),
-                &bun_paths::Path::resolved(&[pm::global_link_dir_path(manager), name]),
+                &bun_paths::Path::from_top_level_dir(),
+                &bun_paths::Path::resolve(&[pm::global_link_dir_path(manager), name]),
                 bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
             ) {
                 bun_core::pretty_errorln!(
@@ -254,7 +254,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
         #[cfg(not(windows))]
         {
             if let Err(e) = node_modules.sym_link(
-                &bun_paths::Path::top_level_dir(),
+                &bun_paths::Path::from_top_level_dir(),
                 name,
                 // is_directory
                 true,

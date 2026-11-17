@@ -572,8 +572,9 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
 
-                    let dir_info =
-                        (entry.path()).and_then(|path| resolver.read_dir_info_ignore_error(&path));
+                    let dir_info = entry
+                        .build_abs_path()
+                        .and_then(|path| resolver.read_dir_info_ignore_error(&path));
                     if let Some(dir_info) = dir_info {
                         self.load(resolver, &dir_info, base_dir);
                     }
@@ -704,7 +705,7 @@ impl Route {
         let base = &base_[0..base_.len() - extname.len()];
 
         // The public path and the longer absolute path are both built in `route_file_buf`.
-        let dir = bun_paths::string_paths::without_trailing_slash_portable(entry.dir());
+        let dir = bun_paths::string_paths::without_trailing_any_sep(entry.dir());
         if dir.len() + 1 + base_.len() >= MAX_PATH_BYTES {
             log.add_error_fmt(
                 None,
@@ -825,7 +826,7 @@ impl Route {
 
             // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
             let Ok(entry_abs_path) = entry.abs_path_or_try_fill(|| {
-                let abs_path = entry.path().ok_or(())?;
+                let abs_path = entry.build_abs_path().ok_or(())?;
                 let opened;
                 let fd = if let Some(cached) = entry.cache().fd.unwrap_valid() {
                     cached

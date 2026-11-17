@@ -8,8 +8,8 @@ use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
-use bun_paths::string_paths::without_trailing_slash_portable;
-use bun_paths::{NameTooLong, PoolPath, VecPath};
+use bun_paths::string_paths::without_trailing_any_sep;
+use bun_paths::{NameTooLong, Path, PoolPath};
 
 /// Network policy for this install.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -272,6 +272,16 @@ impl AuthType {
 impl Options {
     pub fn should_print_command_name(&self) -> bool {
         self.log_level != LogLevel::Silent && self.do_.contains(Do::SUMMARY)
+    }
+
+    /// What a relative `$BUN_INSTALL` is resolved against. With `--global`, the project itself is found through it.
+    pub fn env_base_dir(&self) -> &'static [u8] {
+        let fs = bun_paths::fs::FileSystem::instance();
+        if self.global {
+            fs.initial_top_level_dir()
+        } else {
+            fs.top_level_dir()
+        }
     }
 
     /// Returns the dependency groups that are installed for a package with this resolution.
@@ -613,7 +623,8 @@ pub use bun_install_types::NodeLinker::NodeLinker;
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 fn make_open_dir(mut path: &[u8]) -> crate::Result<bun_sys::Fd> {
     if cfg!(unix) {
-        path = without_trailing_slash_portable(path);
+        // `dir\` was written on Windows.
+        path = without_trailing_any_sep(path);
     }
     bun_sys::Dir::cwd()
         .make_open_path(path, Default::default())
@@ -621,51 +632,40 @@ fn make_open_dir(mut path: &[u8]) -> crate::Result<bun_sys::Fd> {
         .map_err(Into::into)
 }
 
-/// What a relative `$BUN_INSTALL` and the like start from.
-#[derive(Clone, Copy)]
-pub enum EnvBase {
-    Project,
-    /// With `--global` the project is the global directory, which is one of them.
-    StartDir,
-}
-
-impl EnvBase {
-    fn of(self, dir: &[u8]) -> &'static [u8] {
-        if cfg!(unix) && dir.starts_with(b"\\") {
-            return b"/";
-        }
-        let fs = bun_paths::fs::FileSystem::instance();
-        match self {
-            EnvBase::Project => fs.top_level_dir(),
-            EnvBase::StartDir => fs.initial_top_level_dir(),
-        }
-    }
-
-    /// `<dir>/<below>`. `dir` comes from the environment and can have any length.
-    pub(crate) fn resolve(self, dir: &[u8], below: &[u8]) -> Result<PoolPath, NameTooLong> {
-        PoolPath::resolved_portable(&[self.of(dir), &expand_home(dir), below])
-    }
-
-    /// `dir` for Bun, and for the system, which follows a symlink that is in front of a `..`.
-    pub fn readings(self, dir: &[u8]) -> [Box<[u8]>; 2] {
-        let expanded = expand_home(dir);
-        let resolved = VecPath::resolved_portable(&[self.of(dir), &expanded]);
-        [resolved.into_vec().into(), expanded]
+/// On POSIX, `\a` is an absolute path that was written on Windows.
+fn base_dir_for<'a>(base_dir: &'a [u8], dir: &[u8]) -> &'a [u8] {
+    if cfg!(unix) && dir.starts_with(b"\\") {
+        b"/"
+    } else {
+        base_dir
     }
 }
 
-impl Options {
-    pub fn env_base(&self) -> EnvBase {
-        match self.global {
-            true => EnvBase::StartDir,
-            false => EnvBase::Project,
-        }
-    }
+/// Resolves `<dir>/<subdir>`. `dir` comes from the environment and can have any length.
+pub(crate) fn resolve_env_dir(
+    base_dir: &[u8],
+    dir: &[u8],
+    subdir: &[u8],
+) -> Result<PoolPath, NameTooLong> {
+    PoolPath::resolve_any_sep(&[base_dir_for(base_dir, dir), &expand_home(dir), subdir])
 }
 
-pub fn open_global_dir(base: EnvBase, explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
+/// The two differ when a symlink comes before a `..`.
+pub fn env_dir_resolved_and_as_written(base_dir: &[u8], dir: &[u8]) -> [Box<[u8]>; 2] {
+    let as_written = expand_home(dir);
+    let resolved = Path::resolve_any_sep(&[base_dir_for(base_dir, dir), &as_written]);
+    [resolved.as_bytes().into(), as_written]
+}
+
+/// Unlike [`resolve_env_dir`], an absolute `dir` is opened as it is written.
+fn make_open_env_dir(base_dir: &[u8], dir: &[u8]) -> crate::Result<bun_sys::Fd> {
+    let path = Api::BunInstall::resolve_path(base_dir_for(base_dir, dir), dir);
+    make_open_dir(&path)
+}
+
+pub fn open_global_dir(base_dir: &[u8], explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get_not_empty() {
-        return make_open_dir(&Api::BunInstall::resolve_path(base.of(home_dir), home_dir));
+        return make_open_env_dir(base_dir, home_dir);
     }
 
     if !explicit_global_dir.is_empty() {
@@ -673,25 +673,29 @@ pub fn open_global_dir(base: EnvBase, explicit_global_dir: &[u8]) -> crate::Resu
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
-        return make_open_dir(&base.resolve(home_dir, b"install/global")?);
+        return make_open_dir(&resolve_env_dir(base_dir, home_dir, b"install/global")?);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
         .get_not_empty()
         .or_else(|| env_var::HOME.get_not_empty())
     {
-        return make_open_dir(&base.resolve(home_dir, b".bun/install/global")?);
+        return make_open_dir(&resolve_env_dir(
+            base_dir,
+            home_dir,
+            b".bun/install/global",
+        )?);
     }
 
     Err(crate::Error::NoGlobalDirectoryFound)
 }
 
 pub(crate) fn open_global_bin_dir(
-    base: EnvBase,
+    base_dir: &[u8],
     opts_: Option<&Api::BunInstall>,
 ) -> crate::Result<bun_sys::Fd> {
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get_not_empty() {
-        return make_open_dir(&Api::BunInstall::resolve_path(base.of(home_dir), home_dir));
+        return make_open_env_dir(base_dir, home_dir);
     }
 
     if let Some(home_dir) = opts_
@@ -702,14 +706,14 @@ pub(crate) fn open_global_bin_dir(
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
-        return make_open_dir(&base.resolve(home_dir, b"bin")?);
+        return make_open_dir(&resolve_env_dir(base_dir, home_dir, b"bin")?);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
         .get_not_empty()
         .or_else(|| env_var::HOME.get_not_empty())
     {
-        return make_open_dir(&base.resolve(home_dir, b".bun/bin")?);
+        return make_open_dir(&resolve_env_dir(base_dir, home_dir, b".bun/bin")?);
     }
 
     Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)

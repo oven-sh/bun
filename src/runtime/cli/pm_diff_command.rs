@@ -92,15 +92,16 @@ pub(crate) fn exec(
         .map(|&arg| {
             use bun_paths::VecPath;
             let home = bun_core::env_var::HOME.get_not_empty();
-            match (arg.strip_prefix(b"~/"), home) {
-                (Some(rest), Some(home)) => {
-                    VecPath::resolved_portable(&[original_cwd, home, rest]).into_vec()
-                }
+            let mut path = match (arg.strip_prefix(b"~/"), home) {
+                (Some(rest), Some(home)) => VecPath::resolve_any_sep(&[original_cwd, home, rest]),
                 _ if looks_like_path(arg) && !bun_paths::is_absolute(arg) => {
-                    VecPath::resolved_portable(&[original_cwd, arg]).into_vec()
+                    VecPath::resolve_any_sep(&[original_cwd, arg])
                 }
-                _ => arg.to_vec(),
-            }
+                _ => return arg.to_vec(),
+            };
+            // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
+            path.copy_trailing_sep_from(arg);
+            path.into_vec()
         })
         .collect();
 

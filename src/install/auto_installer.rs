@@ -267,10 +267,9 @@ impl hooks::AutoInstaller for PackageManager {
                 _ => return None,
             }
         };
-        let mut resolved = SlicePath::new_in(buf);
-        resolved.resolve_portable(&[base, path]).ok()?;
-        resolved.trim_trailing_sep();
-        Some(resolved.into_z())
+        let mut resolved = SlicePath::new(buf);
+        resolved.resolve_any_sep_in_place(&[base, path]).ok()?;
+        Some(resolved.into_zstr())
     }
 
     fn path_for_resolution<'b>(
@@ -337,12 +336,12 @@ impl hooks::AutoInstaller for PackageManager {
             && let hooks::URI::Local(path) = tarball.uri
         {
             let Ok(joined) =
-                &PoolPath::resolved_portable(&[package_json_dir, path.slice(version_buf)])
+                PoolPath::resolve_any_sep(&[package_json_dir, path.slice(version_buf)])
             else {
                 return hooks::EnqueueResult::NotFound;
             };
             absolute.extend_from_slice(b"file:");
-            absolute.extend_from_slice(joined);
+            absolute.extend_from_slice(&joined);
             from_package_json_dir = <Self as hooks::AutoInstaller>::parse_dependency(
                 self,
                 SemverString::init(name, name),

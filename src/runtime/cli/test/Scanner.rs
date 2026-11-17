@@ -171,7 +171,7 @@ impl<'a> Scanner<'a> {
         }
 
         while let Some(entry) = self.dirs_to_scan.pop_front() {
-            let Some(path2) = fs::path_of_entry(entry.dir_path, entry.name.slice()) else {
+            let Some(path2) = fs::join_dir_entry(entry.dir_path, entry.name.slice()) else {
                 continue;
             };
             let (parent, rel_path): (Fd, &[u8]) = match &entry.relative_dir {
@@ -326,8 +326,11 @@ impl<'a> Scanner<'a> {
                     }
                 }
 
+                let Some(dir_path) = entry.build_abs_path() else {
+                    return;
+                };
                 // Prune ignored directory trees early so we never traverse them.
-                if (entry.path()).is_none_or(|path| self.matches_path_ignore_pattern(&path)) {
+                if self.matches_path_ignore_pattern(&dir_path) {
                     return;
                 }
 
@@ -350,11 +353,11 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                let Some(path) = fs::path_of_entry(entry.dir, entry.base()) else {
+                let Some(path) = fs::join_dir_entry(entry.dir, entry.base()) else {
                     return;
                 };
-                // As the resolver is going to read it.
-                let path: &[u8] = &bun_paths::Path::resolved_portable(&[&path]);
+                // Convert `\` the way the resolver will when it loads this file.
+                let path: &[u8] = &bun_paths::Path::resolve_any_sep(&[&path]);
 
                 if !self.does_absolute_path_match_filter(path) {
                     let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);

@@ -4,8 +4,7 @@ use core::mem;
 use bun_collections::{ArrayHashMap, AutoBitSet, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::platform::Slash;
-use bun_paths::{self as path, MAX_PATH_BYTES, PathIn, Pool};
+use bun_paths::{self as path, ForwardSlashPath, MAX_PATH_BYTES};
 use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
@@ -117,19 +116,20 @@ fn name_range_on_disk(source: &bun_ast::Source) -> bun_ast::Range {
     }
 }
 
-/// The form that `dependency::Value::Folder` has in local packages. `None` if it is too long.
+/// Returns the path in the form that `dependency::Value::Folder` has in local packages, or `None` if it
+/// is too long.
 pub(crate) fn folder_relative_to_top_level_dir(
     pkg_dir: &[u8],
     folder: &[u8],
-) -> Option<PathIn<Pool, Slash>> {
+) -> Option<ForwardSlashPath> {
     let top_level_dir = FileSystem::get().top_level_dir();
-    let joined = lockfile::resolve_to_store(top_level_dir, &[pkg_dir, folder]).ok()?;
-    let mut relative = PathIn::<Pool, Slash>::relative(top_level_dir, &joined).ok()?;
+    let joined = lockfile::resolve_for_lockfile(top_level_dir, &[pkg_dir, folder]).ok()?;
+    let mut relative = ForwardSlashPath::relative(top_level_dir, &joined);
     // empty when the package depends on itself
     if relative.is_empty() {
-        relative.set(b".").ok()?;
+        relative.set(b".");
     }
-    Some(relative)
+    (relative.len() < MAX_PATH_BYTES).then_some(relative)
 }
 
 #[cold]
@@ -2212,10 +2212,11 @@ impl Package<u64> {
                     && (!is_link || dependency::is_link_path(target.slice(buf))) =>
             {
                 let Some(relative) =
-                    &folder_relative_to_top_level_dir(source.path.name().dir, target.slice(buf))
+                    folder_relative_to_top_level_dir(source.path.name().dir, target.slice(buf))
                 else {
                     return Err(unsafe_folder_path(log, buf));
                 };
+                let relative = relative.as_bytes();
                 dependency_version.value = if is_link {
                     let path = dependency::link_path_for_lockfile(relative);
                     dependency::Value::Symlink(string_builder.append::<String>(&path))
@@ -2326,7 +2327,7 @@ impl Package<u64> {
                     dependency_version.value = dependency::Value::Workspace(path);
                 } else if features.is_main || features.is_workspace {
                     let workspace = workspace_str.slice(buf);
-                    let relative_buf;
+                    let relative_path;
                     // An empty spec names no workspace and no path, so it resolves like `*`.
                     let relative: &[u8] = if workspace == b"*"
                         || strings::trim(workspace, &strings::WHITESPACE_CHARS).is_empty()
@@ -2334,12 +2335,13 @@ impl Package<u64> {
                         b"*"
                     } else {
                         // `.` for `workspace:.` in the root package.json
-                        relative_buf =
-                            folder_relative_to_top_level_dir(source.path.name().dir, workspace);
-                        match &relative_buf {
-                            Some(relative) => relative,
-                            None => return Err(unsafe_folder_path(log, buf)),
-                        }
+                        let Some(path) =
+                            folder_relative_to_top_level_dir(source.path.name().dir, workspace)
+                        else {
+                            return Err(unsafe_folder_path(log, buf));
+                        };
+                        relative_path = path;
+                        &relative_path
                     };
                     let path = string_builder.append::<String>(relative);
                     let buf = string_builder.string_bytes.as_slice();
@@ -3114,7 +3116,7 @@ impl Package<u64> {
                                     continue;
                                 }
                                 if strings::eql_long(&value.name, &entry.name) {
-                                    let note_abs_path = path::Path::resolved_portable(&[
+                                    let note_abs_path = path::Path::resolve_any_sep(&[
                                         root_dir,
                                         note_path,
                                         b"package.json",
@@ -3146,7 +3148,7 @@ impl Package<u64> {
                         };
 
                         let abs_path =
-                            path::Path::resolved_portable(&[root_dir, path_, b"package.json"]);
+                            path::Path::resolve_any_sep(&[root_dir, path_, b"package.json"]);
 
                         let src = match bun_ast::to_source(&abs_path, Default::default()) {
                             Ok(s) => s,

@@ -13,6 +13,7 @@ use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_parsers::json as JSON;
 use bun_paths::Path;
+use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::package_manager_command::PackageManagerCommand;
@@ -110,8 +111,8 @@ impl PmLicensesCommand {
             Global::exit(1);
         }
 
-        let mut path = Path::top_level_dir();
-        if !bun_sys::exists_z(&path.child(b"node_modules")) {
+        let top_level_dir = FileSystem::get().top_level_dir();
+        if !bun_sys::exists_z(&Path::from_parts(&[top_level_dir, b"node_modules"])) {
             if not_silent {
                 Output::err_generic("node_modules not found, nothing to list", ());
                 bun_core::note!("run 'bun install' first");
@@ -229,7 +230,7 @@ impl PmLicensesCommand {
             let is_npm = resolution.tag == ResolutionTag::Npm;
 
             let mut info = if isolated {
-                store.read_info(&mut path, pkg_names[pkg_id], resolution, buf, &mut log)
+                store.read_info(top_level_dir, pkg_names[pkg_id], resolution, buf, &mut log)
             } else {
                 None
             };
@@ -237,7 +238,8 @@ impl PmLicensesCommand {
             let mut other_version: Option<PackageInfo> = None;
             if info.is_none() {
                 if let Some(location) = &locations[pkg_id] {
-                    info = read_package_info(&mut path.child(location), &mut log);
+                    info =
+                        read_package_info(&Path::from_parts(&[top_level_dir, location]), &mut log);
                 }
                 if is_npm {
                     other_version = info.take_if(|info| match &info.version {
@@ -248,11 +250,16 @@ impl PmLicensesCommand {
             }
 
             if info.is_none() && !isolated {
-                info = store.read_info(&mut path, pkg_names[pkg_id], resolution, buf, &mut log);
+                info = store.read_info(top_level_dir, pkg_names[pkg_id], resolution, buf, &mut log);
             }
 
             if info.is_none() && is_npm {
-                info = disk.take(&mut path, &mut log, pkg_names[pkg_id].slice(buf), &version);
+                info = disk.take(
+                    top_level_dir,
+                    &mut log,
+                    pkg_names[pkg_id].slice(buf),
+                    &version,
+                );
             }
 
             let (info, list) = match (info, other_version) {
@@ -371,9 +378,8 @@ fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
     out
 }
 
-fn read_package_info(dir: &mut Path, log: &mut Log) -> Option<PackageInfo> {
-    let dir_len = dir.len();
-    let path = dir.child(b"package.json");
+fn read_package_info(dir: &[u8], log: &mut Log) -> Option<PackageInfo> {
+    let path = Path::from_parts(&[dir, b"package.json"]);
     let contents = File::read_from(Fd::cwd(), &path).ok()?;
     bun_ast::initialize_store_or_reset();
     let source = Source::init_path_string(path.as_bytes(), contents.as_slice());
@@ -386,7 +392,7 @@ fn read_package_info(dir: &mut Path, log: &mut Log) -> Option<PackageInfo> {
                 homepage: string_field(&json, b"homepage").or_else(|| repository_of(&json)),
                 author: author_of(&json),
                 description: string_field(&json, b"description"),
-                path: path[..dir_len].into(),
+                path: dir.into(),
             },
             Err(_) => PackageInfo {
                 name: None,
@@ -395,7 +401,7 @@ fn read_package_info(dir: &mut Path, log: &mut Log) -> Option<PackageInfo> {
                 homepage: None,
                 author: None,
                 description: None,
-                path: path[..dir_len].into(),
+                path: dir.into(),
             },
         },
     )
@@ -494,30 +500,33 @@ impl BunStore {
 
     fn read_info(
         &mut self,
-        top_level_dir: &mut Path,
+        top_level_dir: &[u8],
         pkg_name: bun_semver::String,
         resolution: &Resolution,
         buf: &[u8],
         log: &mut Log,
     ) -> Option<PackageInfo> {
         let entry = self.lookup(top_level_dir, pkg_name, resolution, buf)?;
-        let mut dir = top_level_dir.child(b"node_modules/.bun");
-        dir.push(entry);
-        dir.push(b"node_modules");
-        dir.push(pkg_name.slice(buf));
-        read_package_info(&mut dir, log)
+        let dir = Path::from_parts(&[
+            top_level_dir,
+            b"node_modules/.bun",
+            entry,
+            b"node_modules",
+            pkg_name.slice(buf),
+        ]);
+        read_package_info(&dir, log)
     }
 
     pub(crate) fn lookup(
         &mut self,
-        top_level_dir: &mut Path,
+        top_level_dir: &[u8],
         pkg_name: bun_semver::String,
         resolution: &Resolution,
         buf: &[u8],
     ) -> Option<&[u8]> {
         let entries = self.entries.get_or_insert_with(|| {
-            let store = list_dir(&top_level_dir.child(b"node_modules/.bun"));
-            store.into_iter().map(|(name, _)| name).collect()
+            let listing = list_dir(&Path::from_parts(&[top_level_dir, b"node_modules/.bun"]));
+            listing.into_iter().map(|(name, _)| name).collect()
         });
         if entries.is_empty() {
             return None;
@@ -556,14 +565,14 @@ fn disk_key(name: &[u8], version: &[u8]) -> Vec<u8> {
 impl DiskIndex {
     fn take(
         &mut self,
-        top_level_dir: &mut Path,
+        top_level_dir: &[u8],
         log: &mut Log,
         name: &[u8],
         version: &[u8],
     ) -> Option<PackageInfo> {
         let entries = self.entries.get_or_insert_with(|| {
             let mut entries = StringHashMap::default();
-            let mut node_modules = top_level_dir.child(b"node_modules");
+            let mut node_modules = Path::from_parts(&[top_level_dir, b"node_modules"]);
             Self::scan_node_modules(&mut node_modules, 0, log, &mut entries);
             entries
         });
@@ -580,16 +589,18 @@ impl DiskIndex {
             if name.starts_with(b".") || (depth > 0 && kind == FileKind::SymLink) {
                 continue;
             }
-            let mut path = path.child(&name);
+            let mut entry_path = path.push_scoped(&name);
             if !name.starts_with(b"@") {
-                Self::scan_package(&mut path, depth, log, out);
-                continue;
-            }
-            for (name, kind) in list_dir(&path) {
-                if name.starts_with(b".") || (depth > 0 && kind == FileKind::SymLink) {
-                    continue;
+                Self::scan_package(&mut entry_path, depth, log, out);
+            } else {
+                for (scoped_name, scoped_kind) in list_dir(&entry_path) {
+                    if scoped_name.starts_with(b".")
+                        || (depth > 0 && scoped_kind == FileKind::SymLink)
+                    {
+                        continue;
+                    }
+                    Self::scan_package(&mut entry_path.push_scoped(&scoped_name), depth, log, out);
                 }
-                Self::scan_package(&mut path.child(&name), depth, log, out);
             }
         }
     }
@@ -609,7 +620,7 @@ impl DiskIndex {
             }
         }
         if depth < MAX_SCAN_DEPTH {
-            Self::scan_node_modules(&mut path.child(b"node_modules"), depth + 1, log, out);
+            Self::scan_node_modules(&mut path.push_scoped(b"node_modules"), depth + 1, log, out);
         }
     }
 }

@@ -2288,7 +2288,7 @@ pub fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -
 }
 
 /// Returns false if `out` is too short (lone surrogates pass through, three bytes each).
-pub fn try_write_wtf16_as_wtf8(input: &[u16], mut out: BorrowedCursor<'_, u8>) -> bool {
+pub fn try_write_utf16_as_wtf8(input: &[u16], mut out: BorrowedCursor<'_, u8>) -> bool {
     if input.is_empty() {
         return true;
     }
@@ -2339,7 +2339,7 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     if utf16.is_empty() {
         return Ok(list);
     }
-    let input = WithUtf8Len::utf16(utf16);
+    let input = simdutf::WithUtf8Len::utf16(utf16);
     list.try_reserve(input.utf8_len() + 16)
         .map_err(|_| AllocError)?;
     // Replaces unpaired surrogates with U+FFFD.

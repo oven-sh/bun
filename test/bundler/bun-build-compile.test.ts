@@ -68,7 +68,7 @@ describe("Bun.build compile", () => {
   });
 
   test.concurrent.each(["./index.js", "../index.js", ".."])(
-    "without an outfile, %s is index in outdir",
+    "without outfile, entry point %s is written to outdir/index",
     async entrypoint => {
       const options = {
         entrypoints: [entrypoint],

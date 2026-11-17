@@ -4,7 +4,7 @@ use bun_alloc::AllocError;
 use bun_ast::{E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_paths::string_paths::without_trailing_slash_portable;
+use bun_paths::string_paths::without_trailing_any_sep;
 use bun_semver as semver;
 use bun_semver::String;
 use bun_sys::Fd;
@@ -276,7 +276,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
     let rc_name = env(b"YARN_RC_FILENAME").unwrap_or(b".yarnrc.yml");
     let home = bun_core::env_var::HOME
         .get_not_empty()
-        .map(without_trailing_slash_portable);
+        .map(without_trailing_any_sep);
 
     let mut folder: &[u8] = crate::bun_fs::FileSystem::get().top_level_dir_without_trailing_slash();
     let mut in_project = true;
@@ -287,7 +287,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
         read_home |= home == Some(folder);
         match bun_paths::dirname(folder) {
             Some(parent) if parent.len() < folder.len() => {
-                folder = without_trailing_slash_portable(parent);
+                folder = without_trailing_any_sep(parent);
             }
             _ => break,
         }

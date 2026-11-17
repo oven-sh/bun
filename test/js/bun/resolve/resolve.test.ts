@@ -2437,7 +2437,7 @@ test.concurrent.each(["import", "require"])(
   },
 );
 
-describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a backslash in its name: %s", name => {
+describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("in a directory named %s", name => {
   async function run(files: Record<string, string>, ...args: string[]) {
     using dir = tempDir("resolve-backslash", { "up.cjs": `module.exports = "up";`, [name]: files });
     await using proc = Bun.spawn({
@@ -2481,7 +2481,7 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
     });
   });
 
-  test.each(["system", "bun"])("a script in the %s shell", async shell => {
+  test.each(["system", "bun"])("bun run --shell=%s", async shell => {
     expect(await run(project, "run", "--silent", `--shell=${shell}`, "where")).toEqual({
       stdout: "<dir>\n",
       stderr: "",
@@ -2489,7 +2489,7 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
     });
   });
 
-  test("a file that was not there when the directory was listed", async () => {
+  test("resolves a file created after the directory was cached", async () => {
     const entry = `
       await Bun.write(import.meta.dir + "/late.cjs", "module.exports = 1");
       console.log(require(import.meta.dir + "/late.cjs"));
@@ -2499,7 +2499,7 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
     expect(await run({ "entry.ts": entry }, "entry.ts")).toEqual({ stdout: "1\n2\n", stderr: "", exitCode: 0 });
   });
 
-  test("what a module knows of its path", async () => {
+  test("cwd, import.meta.path, Bun.main and __filename keep the backslash", async () => {
     const entry = `
       process.chdir("lib");
       process.chdir("..");
@@ -2515,7 +2515,7 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
     });
   });
 
-  test("below it, a backslash that was written on Windows is still a separator", async () => {
+  test("backslashes in specifiers, main and tsconfig paths are separators", async () => {
     const files = {
       ...project,
       "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["${configDir}\\lib\\*"] } } }),
@@ -2540,25 +2540,25 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
     });
   });
 
-  test("below it, a name with a backslash does not change what is loaded", async () => {
+  test("files with a backslash in their own name are not resolved", async () => {
     const files = {
-      "lib/x.cjs": `module.exports = "written";`,
-      "lib\\x.cjs": `module.exports = "listed";`,
-      "d/e\\..\\..\\lib\\x.cjs": `module.exports = "listed";`,
+      "lib/x.cjs": `module.exports = "separator";`,
+      "lib\\x.cjs": `module.exports = "literal";`,
+      "d/e\\..\\..\\lib\\x.cjs": `module.exports = "literal";`,
       "entry.ts": String.raw`
         require("fs").symlinkSync(".", "link");
         for (const path of ["/lib\\x.cjs", "/link/lib\\x.cjs", "/d/e\\..\\..\\lib\\x.cjs"])
-          console.log(await import(import.meta.dir + path).then(it => it.default, it => it.code));
+          console.log(await import(import.meta.dir + path).then(module => module.default, error => error.code));
       `,
     };
     expect(await run(files, "entry.ts")).toEqual({
-      stdout: "ERR_MODULE_NOT_FOUND\nERR_MODULE_NOT_FOUND\nwritten\n",
+      stdout: "ERR_MODULE_NOT_FOUND\nERR_MODULE_NOT_FOUND\nseparator\n",
       stderr: "",
       exitCode: 0,
     });
   });
 
-  test("after process.chdir() has left it", async () => {
+  test("resolves after process.chdir() out of it", async () => {
     const entry = `process.chdir(".."); console.log(require("./lib/index.cjs"), (await import("@/x")).default);`;
     expect(await run({ ...project, "entry.ts": entry }, "entry.ts")).toEqual({
       stdout: "<dir>/lib/index.cjs x\n",
@@ -2568,12 +2568,12 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
   });
 
   test("Bun.build({ files })", async () => {
-    const entry = `
+    const entry = String.raw`
       const { outputs } = await Bun.build({
         entrypoints: ["./disk.js"],
         files: {
           [process.cwd() + "/a.js"]: "import './lib/b.js'",
-          [process.cwd() + "/lib\\\\b.js"]: "import x from './x.js'; console.log(x)",
+          [process.cwd() + "/lib\\b.js"]: "import x from './x.js'; console.log(x)",
         },
       });
       eval(await outputs[0].text());
@@ -2585,7 +2585,7 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
     });
   });
 
-  test("bun build --no-bundle from another directory, if it is the home", async () => {
+  test("bun build --no-bundle with an absolute entry point in HOME", async () => {
     using dir = tempDir("resolve-backslash-no-bundle", { [name]: { "x.js": "console.log(1);" }, app: {} });
     const HOME = join(String(dir), name);
     await using proc = Bun.spawn({
@@ -2599,7 +2599,7 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "console.log(1);\n", stderr: "", exitCode: 0 });
   });
 
-  test("after process.chdir() has been there", async () => {
+  test("resolves after process.chdir() into it and back", async () => {
     using dir = tempDir("resolve-backslash-chdir", {
       [name]: { "lazy.cjs": `module.exports = () => require("./x.cjs");`, "x.cjs": `module.exports = "there";` },
       [`${name.replace("\\", "/")}/x.cjs`]: `module.exports = "elsewhere";`,
@@ -2613,7 +2613,7 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
     expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn("there");
   });
 
-  test.each(["home", "scratch"])("from another directory, in %s, if the home directory has the name", async parent => {
+  test.each(["home", "scratch"])("runs from another cwd when HOME has the same name (%s)", async parent => {
     using dir = tempDir("resolve-backslash-home", {
       home: { [name]: project },
       scratch: { [name]: project },
@@ -2623,7 +2623,7 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a 
     expect(await bunRun([join(String(dir), parent, name, "index.ts")], { HOME })).toSpawn("x x x up main exports");
   });
 
-  test("a macro", async () => {
+  test("macros", async () => {
     const files = {
       "macro.ts": `export const value = () => "inlined";`,
       "entry.ts": `import { value } from "./macro.ts" with { type: "macro" }; console.log(value());`,

@@ -905,7 +905,7 @@ fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
         cache_dir_path,
         &entry.as_bytes()[..name_len],
         &entry.as_bytes()[name_len + 1..],
-        &bun_paths::Path::resolved(&[cache_dir_path, entry]),
+        &bun_paths::Path::resolve(&[cache_dir_path, entry]),
     );
 }
 
@@ -1015,7 +1015,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
         }
     };
     // `PackageManager::init` has changed directory since it was typed.
-    let Ok(abs_file) = &bun_paths::PoolPath::resolved_portable(&[original_cwd, file]) else {
+    let Ok(abs_file) = bun_paths::PoolPath::resolve_any_sep(&[original_cwd, file]) else {
         bun_core::pretty_errorln!("<r><red>error<r><d>:<r> \\<file\\> is too long");
         Global::exit(1);
     };
@@ -1024,7 +1024,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
     let dry_run = pm.options.dry_run;
     let timer = bun_core::time::Timer::start();
     let result = if is_pack {
-        pack(pm, abs_file).map(|summary| {
+        pack(pm, &abs_file).map(|summary| {
             if !quiet {
                 bun_core::prettyln!(
                     "<green>{}<r> {} package{} ({} file{}, {}) into <b>{}<r> <d>[{}]<r>",
@@ -1047,7 +1047,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
             }
         })
     } else {
-        unpack(pm, abs_file).map(|summary| {
+        unpack(pm, &abs_file).map(|summary| {
             if !quiet {
                 bun_core::prettyln!(
                     "<green>{}<r> {} package{} ({} new, {} already cached, {}) <d>[{}]<r>",

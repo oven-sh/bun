@@ -661,6 +661,13 @@ fn lay_links_below(
     rel.truncate(dir_len);
 }
 
+/// Returns the part of `real` that follows the directory `root`, or `None` if `real` is not inside
+/// `root`. Both must be real paths.
+fn path_below<'a>(root: &[u8], real: &'a [u8]) -> Option<&'a [u8]> {
+    // `strip_prefix` ignores case on Windows, but real paths have to match exactly.
+    path::strip_prefix(real, root).filter(|_| real.starts_with(root))
+}
+
 fn read_link(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
     let mut text = path::path_buffer_pool::get();
     let len = sys::readlinkat(dir, &bun_core::ZBox::from_bytes(name), &mut text[..]).ok()?;
@@ -681,7 +688,6 @@ impl FolderLink {
     /// Decides what the symlink at `rel` in the folder becomes in the copy. `src` is the symlink's
     /// parent directory, and `rel[dir_len..]` is its name there.
     fn of(paths: &RealPaths, rel: &[u8], dir_len: usize, src: &Dir) -> FolderLink {
-        use path::{Style as _, platform::Auto};
         const NOWHERE: FolderLink = FolderLink::LeftOut("target does not exist");
         let root: &[u8] = &paths.folder;
 
@@ -694,10 +700,8 @@ impl FolderLink {
             return NOWHERE;
         };
         // The install backends skip `node_modules`, so a target inside one is not in the copy.
-        // Of real paths, also the case is the same.
-        let below = |dir: &[u8]| Auto::strip_dir(real, dir).filter(|_| real.starts_with(dir));
-        let in_folder = below(root)
-            .is_some_and(|rest| !Auto::components(rest).any(|name| name == b"node_modules"));
+        let in_folder = path_below(root, real)
+            .is_some_and(|rest| !path::components(rest).any(|part| part == b"node_modules"));
 
         // A symlink is kept only if both its resolved target and its literal text stay in the
         // folder. The text alone is not enough, because it can pass through another symlink.
@@ -716,8 +720,8 @@ impl FolderLink {
                 "directory links must be relative and stay inside the folder"
             });
         }
-        // A project in `/`, as in many a container, does not vouch for the whole file system.
-        let in_project = *paths.project != *b"/" && below(&paths.project).is_some();
+        // A project at `/` (common in containers) must not make every file count as inside it.
+        let in_project = *paths.project != *b"/" && path_below(&paths.project, real).is_some();
         if !in_folder && !in_project {
             return FolderLink::LeftOut("target is outside the project");
         }
@@ -746,8 +750,8 @@ fn lay_link(
             }
             #[cfg(windows)]
             {
-                if let Ok(mut dir) = sys::fd_path(dest.fd())
-                    && sys::sys_uv::link(&real, &dir.child(name)).is_ok()
+                if let Ok(dir) = sys::get_fd_path_owned(dest.fd())
+                    && sys::sys_uv::link(&real, &path::Path::from_parts(&[&dir, name])).is_ok()
                 {
                     return Ok(());
                 }
@@ -2006,7 +2010,7 @@ impl<'a> PackageInstall<'a> {
         // delete it.
         let top_level_dir = bun_fs::FileSystem::get().top_level_dir();
         let absolute_path =
-            path::Path::resolved(&[top_level_dir, &self.node_modules.path, &temp_path]);
+            path::Path::resolve(&[top_level_dir, &self.node_modules.path, &temp_path]);
         let task = Box::new(UninstallTask {
             absolute_path: absolute_path.as_bytes().into(),
             task: WorkPoolTask::default(),

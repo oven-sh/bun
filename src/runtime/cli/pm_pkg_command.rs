@@ -12,8 +12,7 @@ use bun_core::{Global, Output};
 use bun_install::PackageManager;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::platform::Auto;
-use bun_paths::{Path, Style as _};
+use bun_paths::Path;
 
 pub(crate) struct PmPkgCommand;
 
@@ -135,7 +134,7 @@ impl PmPkgCommand {
     }
 
     fn find_package_json(cwd: &[u8]) -> Box<[u8]> {
-        for dir in Auto::ancestors(cwd) {
+        for dir in bun_paths::ancestors(cwd) {
             let pkg_path = Path::from_parts(&[dir, b"package.json"]);
             if bun_sys::exists_z(&pkg_path) {
                 return pkg_path.as_bytes().into();
@@ -343,7 +342,7 @@ impl PmPkgCommand {
                 let bin_path = str.slice8();
                 let pkg_dir = bun_paths::dirname(&pkg.path).unwrap_or(cwd);
 
-                if !bun_sys::exists_z(&Path::resolved_portable(&[pkg_dir, bin_path])) {
+                if !bun_sys::exists_z(&Path::resolve_any_sep(&[pkg_dir, bin_path])) {
                     bun_core::warn!(
                         "No bin file found at {}",
                         bun_core::fmt::EscapeControlChars(bstr::BStr::new(bin_path))

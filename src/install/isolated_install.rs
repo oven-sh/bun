@@ -336,7 +336,8 @@ pub fn store_folders(
             ResolutionTag::Root => {}
             ResolutionTag::Workspace => {
                 entry_dir.extend_from_slice(lockfile.str(holder_res.workspace()));
-                bun_paths::slashes_to_posix_in_place(&mut entry_dir);
+                // The lockfile may have been written on Windows.
+                paths::slashes_to_posix_in_place(&mut entry_dir);
             }
             _ => write!(
                 entry_dir,
@@ -1444,8 +1445,7 @@ pub(crate) fn move_node_modules_aside(
     keep_links: bool,
     log_level: LogLevel,
 ) -> Option<OldModules> {
-    let mut node_modules = Path::from(b"node_modules");
-    let mut old_modules = Path::from(&node_modules);
+    let mut old_modules = Path::from(b"node_modules");
     let rand = fast_random();
     old_modules.push_fmt(format_args!(
         "{}{}",
@@ -1467,6 +1467,7 @@ pub(crate) fn move_node_modules_aside(
         Some(is_linked)
     };
 
+    let mut node_modules = Path::from(b"node_modules");
     if is_linked(&node_modules) == Some(false) {
         move_entries_aside(&mut node_modules, &mut old_modules, keep_links, log_level);
     }
@@ -1477,16 +1478,22 @@ pub(crate) fn move_node_modules_aside(
             continue;
         }
         let mut workspace_node_modules = Path::new();
-        workspace_node_modules.push_portable(workspace_path);
+        workspace_node_modules.push_any_sep(workspace_path);
         workspace_node_modules.push(b"node_modules");
         if is_linked(&workspace_node_modules) != Some(false) {
             continue;
         }
 
         // Don't use the folder's name, because `apps/web` and `packages/web` would collide.
-        let mut to = old_modules.scope();
-        to.push_fmt(format_args!(".old_{i}_modules"));
-        move_entries_aside(&mut workspace_node_modules, &mut to, false, log_level);
+        let mut old_workspace_modules = old_modules.save();
+        old_workspace_modules.push_fmt(format_args!(".old_{i}_modules"));
+
+        move_entries_aside(
+            &mut workspace_node_modules,
+            &mut old_workspace_modules,
+            false,
+            log_level,
+        );
         let _ = sys::rmdir(&workspace_node_modules);
     }
     LinkedNodeModules::warn_not_cleared(log_level, &not_cleared);
@@ -1547,8 +1554,10 @@ fn move_entries_aside(from: &mut Path, to: &mut Path, keep_links: bool, log_leve
             continue;
         }
 
-        let (mut from, mut to) = (from.child(name), to.child(name));
+        let mut from = from.push_scoped(name);
+        let mut to = to.push_scoped(name);
         let is_scope = entry.kind == sys::EntryKind::Directory && name[0] == b'@';
+        // A scope that is too long to open falls through, so that the failure is reported.
         if is_scope && from.len() < paths::MAX_PATH_BYTES {
             move_entries_aside(&mut from, &mut to, keep_links, log_level);
             let _ = sys::rmdir(&from);
@@ -1687,7 +1696,7 @@ pub(crate) fn install_isolated_packages(
     }
 
     let has_global_store = manager.options.enable.global_virtual_store()
-        && package_manager::is_importable_from(&manager.get_cache_directory().path);
+        && package_manager::node_can_import_from(&manager.get_cache_directory().path);
     let global_store_path: Option<VecPath> = if has_global_store {
         'global_store_path: {
             let store::entry::EntryColumnsMut {
@@ -1985,13 +1994,17 @@ pub(crate) fn install_isolated_packages(
 
             // <cache_dir>/links — created lazily by the first task that misses.
             let cache_dir_path = &manager.get_cache_directory().path;
-            break 'global_store_path Some(VecPath::resolved(&[cache_dir_path, b"links"]));
+            break 'global_store_path Some(VecPath::resolve(&[cache_dir_path, b"links"]));
         }
     } else {
         None
     };
 
-    let linked = LinkedNodeModules::at(&Path::top_level_dir().child(b"node_modules"));
+    let linked = {
+        let mut node_modules = Path::from_top_level_dir();
+        node_modules.push(b"node_modules");
+        LinkedNodeModules::at(&node_modules)
+    };
 
     // setup node_modules/.bun
     let mut old_modules: Option<OldModules> = None;
@@ -2223,7 +2236,7 @@ pub(crate) fn install_isolated_packages(
                     if !is_new_bun_modules {
                         use bun_sys::FdExt as _;
                         let _ = installer
-                            .local_store_entry_path(entry_id)
+                            .abs_local_store_entry_path(entry_id)
                             .and_then(|old_copy| Fd::cwd().delete_tree(&old_copy));
                     }
                     installer.set_step(entry_id, Step::Done);
@@ -2242,7 +2255,7 @@ pub(crate) fn install_isolated_packages(
                 ResolutionTag::Symlink => {
                     // Same target check as the hoisted linker's `install_from_link`.
                     match installer
-                        .store_path(entry_id)
+                        .abs_store_path(entry_id)
                         .and_then(|target| expect_directory(&target).map(|()| target))
                     {
                         Ok(target) => installer.start_link_task(entry_id, &target),
@@ -2280,10 +2293,10 @@ pub(crate) fn install_isolated_packages(
 
                     // folders are always hardlinked to keep them up-to-date
                     if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
-                        if let Ok(store_path) = installer::in_project(|path| {
-                            installer.push_real_store_path(path, entry_id, Which::Final)
-                        }) && let (Ok(src), Ok(dest)) =
-                            (sys::Dir::open(folder), sys::Dir::open(&store_path))
+                        if let Ok(store_path) =
+                            installer.abs_real_store_path(entry_id, Which::Final)
+                            && let (Ok(src), Ok(dest)) =
+                                (sys::Dir::open(folder), sys::Dir::open(&store_path))
                             && crate::package_install::is_linked_folder(&src, &dest)
                         {
                             installer.start_relink_task(entry_id);
@@ -2327,7 +2340,7 @@ pub(crate) fn install_isolated_packages(
                                     .unwrap_or(false);
                             }
                             // Likewise, the package directory appears here only once fully linked.
-                            let Ok(mut store_path) = installer.local_store_entry_path(entry_id) else {
+                            let Ok(mut store_path) = installer.abs_local_store_entry_path(entry_id) else {
                                 break 'needs_install true;
                             };
                             let local_entry_len = store_path.len();

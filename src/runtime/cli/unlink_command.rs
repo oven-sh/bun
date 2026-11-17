@@ -23,7 +23,7 @@ impl UnlinkCommand {
         let (lockfile, package) = link_command::load_package_for_link(manager, "unlinking")?;
         let name = lockfile.str(&package.name);
 
-        let link_path = Path::resolved(&[global_link_dir_path(manager), name]);
+        let link_path = Path::resolve(&[global_link_dir_path(manager), name]);
         if !sys::lstat(&link_path).is_ok_and(|stat| sys::S::ISLNK(stat.st_mode as _)) {
             bun_core::pretty_errorln!(
                 "<r><green>success:<r> package \"{}\" is not globally linked, so there's nothing to do.",

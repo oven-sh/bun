@@ -141,7 +141,8 @@ impl Context {
         original_cwd: &[u8],
         tarball_path: &[u8],
     ) -> Result<Context, PackError> {
-        let abs_tarball_path = path::Path::resolved_portable(&[original_cwd, tarball_path]);
+        let mut abs_tarball_path = path::Path::resolve_any_sep(&[original_cwd, tarball_path]);
+        abs_tarball_path.copy_trailing_sep_from(tarball_path);
 
         let tarball_bytes = match File::read_from(Fd::cwd(), &abs_tarball_path) {
             Ok(b) => b,

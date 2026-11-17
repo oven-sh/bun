@@ -11,8 +11,7 @@ use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Loc, S, Stmt};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_glob::BunGlobWalker;
-use bun_paths::platform::Slash;
-use bun_paths::{PathIn, Pool, PoolPath, fs, resolve_path};
+use bun_paths::{ForwardSlashPath, PoolPath, fs, resolve_path};
 
 use crate::lexer::T;
 use crate::p::P;
@@ -225,8 +224,7 @@ fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
 }
 
 fn absolute_from(dir: &[u8], path: &[u8]) -> Option<Vec<u8>> {
-    let mut absolute = PoolPath::resolved_portable(&[dir, path]).ok()?;
-    absolute.trim_trailing_sep();
+    let absolute = PoolPath::resolve_any_sep(&[dir, path]).ok()?;
     Some(absolute.to_vec())
 }
 
@@ -237,11 +235,11 @@ fn with_posix_separators(path: &[u8]) -> Vec<u8> {
 }
 
 fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
-    let mut path = PathIn::<Pool, Slash>::relative(from, to).ok()?;
+    let mut path = ForwardSlashPath::relative(from, to);
     if !path.starts_with(b"../") {
-        path.replace_prefix(0, b"./").ok()?;
+        path.prepend(b"./");
     }
-    Some(path.to_vec())
+    (path.len() < bun_paths::MAX_PATH_BYTES).then(|| path.to_vec())
 }
 
 fn is_not_an_import_path(path: &[u8], is_bundling: bool) -> bool {
@@ -395,7 +393,7 @@ fn find_files(
         shared_dir = Some(shared);
 
         if pattern.is_name {
-            if let Ok(file) = PoolPath::resolved_portable(&[&pattern.dir, &pattern.glob])
+            if let Ok(file) = PoolPath::resolve_any_sep(&[&pattern.dir, &pattern.glob])
                 && matches!(
                     bun_sys::exists_at_type(bun_sys::Fd::cwd(), &file),
                     Ok(bun_sys::ExistsAtType::File)
@@ -563,9 +561,8 @@ impl<'a> Arguments<'a, '_> {
         let root = fs::FileSystem::instance().top_level_dir().to_vec();
         let root = &root[..strings::index_of_char_usize(&root, 0).unwrap_or(root.len())];
         let source = self.source;
-        let importer_dir = (source.path.is_file() && bun_paths::is_absolute(source.path.text))
-            .then(|| bun_paths::dirname(source.path.text))
-            .flatten();
+        let importer_dir = bun_paths::dirname(source.path.text)
+            .filter(|_| source.path.is_file() && bun_paths::is_absolute(source.path.text));
         let is_relative = globs
             .iter()
             .all(|(glob, _)| matches!(glob.first(), Some(b'.' | b'!')));

@@ -405,3 +405,33 @@ test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake 
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawn({ timeout }) kills the child while fake timers are active
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawnSync({ timeout }) times out while fake timers are active
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > child_process.spawnSync({ timeout }) times out while fake timers are active
+# --aot refuses an entry point below a directory with a backslash in its name: the type checker cannot read that path.
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > Bun.build
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > Bun.build({ files })
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > backslashes in specifiers, main and tsconfig paths are separators
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun index.ts
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun run ./index.ts
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun test
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > cwd, import.meta.path, Bun.main and __filename keep the backslash
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > files with a backslash in their own name are not resolved
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > macros
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > resolves a file created after the directory was cached
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > resolves after process.chdir() out of it
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > runs from another cwd when HOME has the same name (home)
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > runs from another cwd when HOME has the same name (scratch)
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > Bun.build
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > Bun.build({ files })
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > backslashes in specifiers, main and tsconfig paths are separators
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun index.ts
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun run ./index.ts
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun test
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > cwd, import.meta.path, Bun.main and __filename keep the backslash
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > files with a backslash in their own name are not resolved
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > macros
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > resolves a file created after the directory was cached
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > resolves after process.chdir() out of it
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > runs from another cwd when HOME has the same name (home)
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > runs from another cwd when HOME has the same name (scratch)
+# These require() a path that is computed at run time.
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > resolves after process.chdir() into it and back
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > resolves after process.chdir() into it and back

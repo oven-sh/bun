@@ -8,8 +8,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
-use bun_paths::platform;
-use bun_paths::{EnvPath, Path, Style as _};
+use bun_paths::{EnvPath, Path};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 
@@ -285,7 +284,7 @@ impl PackageManager {
         // need to clone because this is a copy before Lockfile.cleanWithLogger
         let name = root_package.name.slice(buf);
 
-        let top_level_dir = Path::top_level_dir();
+        let top_level_dir = Path::from_top_level_dir();
 
         let add_node_gyp_rebuild_script = root_package
             .scripts
@@ -352,14 +351,14 @@ impl PackageManager {
         let mut inherited_path = list.is_dependency.then_some(env_path.slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
-        for (depth, dir) in platform::Auto::ancestors(cwd).enumerate() {
+        for (depth, dir) in bun_paths::ancestors(cwd).enumerate() {
             if depth > 0 && !strings::contains(dir, store_entry) {
                 if let Some(inherited) = inherited_path.take() {
                     path.append(inherited)?;
                 }
             }
 
-            path.append_entry(&Path::from_parts(&[dir, b"node_modules/.bin"]));
+            path.append(&Path::from_parts(&[dir, b"node_modules/.bin"]))?;
         }
 
         match inherited_path {
@@ -439,7 +438,7 @@ fn put_npm_package_env(
         .map
         .retain(|key, _| !key.starts_with(b"npm_package_") && !key.starts_with(b"npm_lifecycle_"));
 
-    let package_json_path = Path::joined(&[package_dir, b"package.json"]);
+    let package_json_path = Path::join(&[package_dir, b"package.json"]);
     script_env.put(b"npm_package_json", package_json_path.as_bytes())?;
     script_env.put(b"npm_package_name", package_name)?;
 

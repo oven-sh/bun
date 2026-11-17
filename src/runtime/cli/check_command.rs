@@ -9,7 +9,7 @@ use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided, sees_beside};
+use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided, check_entry_point_dirs};
 use bun_sema_driver::{
     Category, CommandLine, CompilerOption, Diagnostic, FlagError, PlanOptions, Progress,
     RejectedFlag, Report, Request, ScriptKind,
@@ -148,9 +148,8 @@ fn parse(args: &[&ZStr]) -> Options {
         Global::exit(0);
     }
     if let Some(cwd) = parsed.option(b"--cwd") {
-        // The `ZBox` is a temporary so that it's freed before `exit`, which never returns.
-        let directory = super::script_or_command::directory_of_cwd(cwd);
-        let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory));
+        // The path is a temporary so that it's freed before `exit`, which never returns.
+        let changed = bun_sys::chdir(&super::script_or_command::directory_of_cwd(cwd));
         if let bun_sys::Result::Err(err) = changed {
             Output::err(
                 err,
@@ -759,7 +758,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     if paths.is_empty() {
         return true;
     }
-    if !sees_beside(cwd, &paths, log) {
+    if !check_entry_point_dirs(cwd, &paths, log) {
         return false;
     }
     let paths = Paths::EntryPoints(Entries {
@@ -950,12 +949,13 @@ fn check_and_report(entries: Entries, provided: Provided) -> bool {
     bun_removable_features::removable_definition!(Check, check_and_report);
     let cwd = working_directory();
     let mut log = bun_ast::Log::init();
-    if !sees_beside(&cwd, entries.paths, &mut log) {
+    if !check_entry_point_dirs(&cwd, entries.paths, &mut log) {
         let _ = log.print(Output::error_writer());
         Output::flush();
         return false;
     }
-    let (paths, then) = (&Paths::EntryPoints(entries), |report| report);
+    let paths = &Paths::EntryPoints(entries);
+    let then = |report| report;
     let report = run(&cwd, tsconfig_override(), paths, &[], 0, provided, then);
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {
         return report.is_ok();

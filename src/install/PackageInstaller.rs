@@ -218,10 +218,11 @@ impl NodeModulesFolder {
                     .or_else(|| rest.is_empty().then_some(rest))
             })
             .unwrap_or(self.path.as_slice());
-        // Windows takes a `..` that is left in an absolute path for a name.
-        match cfg!(windows) {
-            true => Path::joined(&[folder, file_path]),
-            false => Path::from_parts(&[folder, file_path]),
+        // Windows needs `..` resolved. Elsewhere skip it: a warm install calls this for every package.
+        if cfg!(windows) {
+            Path::join(&[folder, file_path])
+        } else {
+            Path::from_parts(&[folder, file_path])
         }
     }
 
@@ -457,7 +458,7 @@ pub(crate) fn abs_node_modules_path(
         &mut rel_buf,
         &mut depth_buf,
     );
-    let mut abs = PoolPath::top_level_dir().ok()?;
+    let mut abs = PoolPath::from_top_level_dir().ok()?;
     abs.push(rel).ok()?;
     Some(abs)
 }
@@ -776,8 +777,9 @@ impl<'a> PackageInstaller<'a> {
                     string_buf,
                     extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
                     seen: Some(&mut self.seen_bin_links),
-                    target_node_modules_path: (target_node_modules_path_opt.as_ref())
-                        .map(PoolPath::as_slice),
+                    target_node_modules_path: target_node_modules_path_opt
+                        .as_deref()
+                        .map(ZStr::as_bytes),
                     node_modules_path: &node_modules_path,
                     is_behind_link,
                     err: None,
@@ -1142,10 +1144,10 @@ impl<'a> PackageInstaller<'a> {
         {
             // Open it relative to the directory that's already open, so the full path doesn't have
             // to fit in a buffer.
-            let scope_path = match cfg!(windows) {
-                true => PoolPath::joined(&[&node_modules.path, scope])?,
-                false => PoolPath::from(scope)?,
-            };
+            #[cfg(not(windows))]
+            let scope_path = PoolPath::from(scope)?;
+            #[cfg(windows)]
+            let scope_path = PoolPath::join(&[&node_modules.path, scope])?;
             crate::prune::remove_planted_link(&open.dir, &scope_path)?;
             open.scope.clear();
             open.scope.extend_from_slice(scope);
@@ -2114,7 +2116,7 @@ impl<'a> PackageInstaller<'a> {
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
                             // A folder that a package ships inside itself is linked from where it
                             // is.
-                            match PoolPath::resolved_portable(&[
+                            match PoolPath::resolve_any_sep(&[
                                 dir_name,
                                 installer.cache_dir_subpath,
                             ]) {
@@ -2128,8 +2130,8 @@ impl<'a> PackageInstaller<'a> {
                                     destination_dir,
                                     &self.manager().total_tasks,
                                 ),
-                                Err(too_long) => package_install::InstallResult::fail(
-                                    too_long.into(),
+                                Err(err) => package_install::InstallResult::fail(
+                                    err.into(),
                                     package_install::Step::OpeningCacheDir,
                                 ),
                             }
@@ -2352,17 +2354,16 @@ impl<'a> PackageInstaller<'a> {
                     && self.metas[package_id as usize].has_install_script()
                 {
                     // `hasInstallScript` is a false positive when binding.gyp is not published.
-                    let count =
-                        self.package_path(alias.slice(string_buf!()))
-                            .map_or(0, |folder_path| {
-                                self.get_installed_package_scripts_count(
-                                    alias.slice(string_buf!()),
-                                    package_id,
-                                    resolution.tag,
-                                    &folder_path,
-                                    log_level,
-                                )
-                            });
+                    let folder_path = self.package_path(alias.slice(string_buf!()));
+                    let count = folder_path.map_or(0, |folder_path| {
+                        self.get_installed_package_scripts_count(
+                            alias.slice(string_buf!()),
+                            package_id,
+                            resolution.tag,
+                            &folder_path,
+                            log_level,
+                        )
+                    });
                     if count > 0 {
                         if log_level.is_verbose() {
                             bun_core::pretty_error!(

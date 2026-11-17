@@ -276,7 +276,8 @@ pub mod fs {
                 }
             };
             // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the
-            // same cwd. `resolve_path::relative*` reach `bun_paths::fs::FileSystem::
+            // same cwd. `bun_paths::resolve_path::relative*` and
+            // (in debug builds) `Path::from_top_level_dir` need `bun_paths::fs::FileSystem::
             // instance()` (a strict `OnceLock` — panics if unset), and the
             // doc-comment on that `init` names this as the intended seeding
             // point. This keeps both halves in lockstep.
@@ -682,7 +683,7 @@ pub mod fs {
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
         DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
-        FilenameStoreAppender, dir_entry, path_of_entry,
+        FilenameStoreAppender, dir_entry, join_dir_entry,
     };
 
     use bun_core::Generation;
@@ -1179,8 +1180,10 @@ pub mod fs {
                 fd: Fd::INVALID,
             };
 
-            let absolute_path_c: &ZStr = &path_of_entry(dir_, base)
-                .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG))?;
+            let Some(absolute_path) = join_dir_entry(dir_, base) else {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            };
+            let absolute_path_c: &ZStr = &absolute_path;
 
             #[cfg(windows)]
             {

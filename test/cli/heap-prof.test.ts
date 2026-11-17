@@ -267,11 +267,12 @@ test.skipIf(isWindows)("a backslash in --heap-prof-dir is part of the name", asy
     cmd: [bunExe(), "--heap-prof", "--heap-prof-dir", "a\\b", "--heap-prof-name", "p.heapprofile", "-e", "1"],
     cwd: String(dir),
     env: bunEnv,
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  const exitCode = await proc.exited;
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
   expect(readdirSync(String(dir), { recursive: true }).sort()).toEqual(["a\\b", "a\\b/p.heapprofile"]);
   expect(exitCode).toBe(0);
 });

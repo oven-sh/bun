@@ -1,8 +1,6 @@
 use bun_alloc::AllocError;
 
 use crate::DELIMITER;
-use crate::platform::Auto;
-use crate::style::len_without_seps;
 
 fn trim_path_delimiters(input: &[u8]) -> &[u8] {
     let mut trimmed = input;
@@ -34,19 +32,18 @@ impl EnvPath {
 
     pub fn append(&mut self, input: &[u8]) -> Result<(), AllocError> {
         let trimmed = trim_path_delimiters(input);
-        self.append_entry(&trimmed[..len_without_seps::<Auto, _>(trimmed, 1)]);
-        Ok(())
-    }
 
-    /// One directory, which is taken as it is.
-    pub fn append_entry(&mut self, entry: &[u8]) {
-        if entry.is_empty() {
-            return;
+        if trimmed.is_empty() {
+            return Ok(());
         }
+
         if !self.buf.is_empty() {
-            self.buf.reserve(entry.len() + 1);
+            self.buf.reserve(trimmed.len() + 1);
             self.buf.push(DELIMITER);
+            self.buf.extend_from_slice(trimmed);
+        } else {
+            self.buf.extend_from_slice(trimmed);
         }
-        self.buf.extend_from_slice(entry);
+        Ok(())
     }
 }

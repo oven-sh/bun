@@ -21,7 +21,7 @@ describe("bun", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("$PATH gets node_modules/.bin of the working directory and of each parent once", async () => {
+  test("$PATH has node_modules/.bin of the cwd and of each parent once", async () => {
     using dir = tempDir("run-path-entries", {
       "package.json": JSON.stringify({ scripts: { path: "echo $PATH" } }),
     });
@@ -34,10 +34,13 @@ describe("bun", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const parents = [String(dir)];
-    while (dirname(parents.at(-1)!) !== parents.at(-1)) parents.push(dirname(parents.at(-1)!));
+    const expected: string[] = [];
+    for (let parent = String(dir); ; parent = dirname(parent)) {
+      expected.push(join(parent, "node_modules", ".bin"));
+      if (parent === dirname(parent)) break;
+    }
     const bins = stdout.split(delimiter).filter(entry => entry.endsWith(".bin"));
-    expect(bins.slice(0, parents.length)).toEqual(parents.map(parent => join(parent, "node_modules", ".bin")));
+    expect(bins.slice(0, expected.length)).toEqual(expected);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

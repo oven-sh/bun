@@ -653,7 +653,7 @@ test.skipIf(isWindows).each(["relative", "absolute"])(
   },
 );
 
-test.skipIf(isWindows)("keyFile is in a directory with a backslash in its name", async () => {
+test.skipIf(isWindows)("keyFile and certFile load when the cwd contains a backslash", async () => {
   using dir = tempDir("bun-serve-ssl-backslash", {
     "a\\b": {
       "key.pem": tlsCert.key,
@@ -668,7 +668,7 @@ test.skipIf(isWindows)("keyFile is in a directory with a backslash in its name",
   expect(await bunRun(join(String(dir), "a\\b", "serve.js"))).toSpawn("served");
 });
 
-test.skipIf(isWindows).each(["/", "\\"])("a keyFile with a trailing %s is not the file without it", sep => {
+test.skipIf(isWindows).each(["/", "\\"])("keyFile with a trailing %s is rejected", sep => {
   using dir = tempDir("bun-serve-ssl-slash", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert });
   const certFile = join(String(dir), "cert.pem");
   expect(() =>

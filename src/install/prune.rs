@@ -9,9 +9,7 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::SEP;
-use bun_paths::platform::Auto;
-use bun_paths::{NameTooLong, PoolPath, Style as _};
+use bun_paths::{NameTooLong, Path, PoolPath, SEP};
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -2144,11 +2142,11 @@ impl LinkedNodeModules {
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
     pub(crate) fn resolve(&self, path: &mut PoolPath) -> Result<bool, NameTooLong> {
-        if Auto::strip_dir(path, &self.abs_path).is_none() {
+        let Some(below) = bun_paths::strip_prefix(path, &self.abs_path) else {
             return Ok(false);
-        }
+        };
         if !self.real_path.is_empty() {
-            path.replace_prefix(self.abs_path.len(), &self.real_path)?;
+            *path = PoolPath::from_parts(&[&self.real_path, below])?;
         }
         Ok(true)
     }
@@ -2659,15 +2657,11 @@ pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
 
 /// For each component of `path` (absolute, or from the cwd) after `path[..real_len]`.
 pub(crate) fn remove_planted_links(path: &[u8], mut real_len: usize) -> sys::Maybe<()> {
-    if real_len >= path.len() {
-        return Ok(());
-    }
     let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-    let mut path = PoolPath::from(path).map_err(sys::Tag::lstat.too_long())?;
     while real_len < path.len() {
         let rest = &path[real_len + 1..];
         real_len += 1 + strings::index_of_any(rest, separators).unwrap_or(rest.len());
-        remove_planted_link(&Dir::cwd(), &path.prefix(real_len))?;
+        remove_planted_link(&Dir::cwd(), &Path::from(&path[..real_len]))?;
     }
     Ok(())
 }
@@ -3134,7 +3128,7 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
         // An entry's folder name depends on its peers, which depend on the options of the install
         // that created it, so this run's name for the entry may not exist on disk.
         if !is_dangling(&store_dir, &package) {
-            Installer::link_hidden_name(store, lockfile, entry_id, name, false);
+            let _ = Installer::link_hidden_name(store, lockfile, entry_id, name, false);
         }
     }
 }

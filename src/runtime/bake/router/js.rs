@@ -1,7 +1,5 @@
 //! `JSFrameworkRouter`: a JS class for testing the router.
 
-use bun_paths::strings;
-
 use bun_alloc::{AllocError, Arena};
 use bun_collections::BoundedArray;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -47,13 +45,9 @@ impl JSFrameworkRouter {
             global,
         )?;
 
-        let abs_root: Box<[u8]> =
-            strings::without_trailing_slash_portable(paths::resolve_path::join_abs::<
-                paths::platform::Auto,
-            >(
-                bun_resolver::fs::FileSystem::get().top_level_dir(),
-                root.slice(),
-            ))
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
+        let abs_root: Box<[u8]> = paths::Path::resolve_any_sep(&[top_level_dir, root.slice()])
+            .as_bytes()
             .into();
 
         let types: Box<[Type]> = Box::new([Type {

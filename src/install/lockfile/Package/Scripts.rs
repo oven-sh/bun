@@ -118,7 +118,7 @@ impl Scripts {
         if !self.install.is_empty() || !self.preinstall.is_empty() {
             return false;
         }
-        bun_sys::exists_z(&Path::joined(&[package_dir, b"binding.gyp"]))
+        bun_sys::exists_z(&Path::join(&[package_dir, b"binding.gyp"]))
             && gypfile.unwrap_or_else(|| read_gypfile(package_dir))
     }
 
@@ -382,7 +382,7 @@ pub(crate) fn gypfile_from_json(json: Expr) -> bool {
 
 /// An unreadable package.json keeps the default script.
 fn read_gypfile(package_dir: &[u8]) -> bool {
-    let path = Path::joined(&[package_dir, b"package.json"]);
+    let path = Path::join(&[package_dir, b"package.json"]);
     let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), &path) else {
         return true;
     };

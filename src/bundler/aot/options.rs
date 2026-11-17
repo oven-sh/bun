@@ -16,7 +16,7 @@ use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
-use bun_sema_driver::host::{from_argument, from_native, sees_beside, to_native};
+use bun_sema_driver::host::{check_entry_point_dirs, from_argument, from_native, to_native};
 
 use super::paths::{absolute_path, relative_path, report_long_path};
 use crate::bun_fs::PathName;
@@ -52,7 +52,8 @@ pub(crate) fn options_from_bundler<'r>(
         log,
     );
     let entry_points = entry_points.map(|list| follow_links(input, list));
-    let entry_points = entry_points.filter(|list| sees_beside(input.working_directory, list, log));
+    let entry_points =
+        entry_points.filter(|list| check_entry_point_dirs(input.working_directory, list, log));
     let entry_points = entry_points.and_then(|list| start_with_first_script(input, list, log));
     let paths = (entry_points.as_ref()).and_then(|list| path_options(input, list, log));
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {

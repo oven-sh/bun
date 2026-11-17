@@ -5,9 +5,9 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::platform::{self, Posix};
+use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{Heap, OsPath, Path, PathIn, Platform, Style as _, VecPath};
+use bun_paths::{ForwardSlashPath, OSPath, Path, Platform, VecPath};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bin;
@@ -655,12 +655,12 @@ pub fn do_patch_commit(
     // project is written relative to the project root.
     let project = with_slashes(FileSystem::get().top_level_dir());
     if bun_paths::is_absolute(&patches_dir) {
-        let mut portable = bun_paths::SlashPath::new();
-        portable.push_portable(&patches_dir);
-        if resolve_path::is_parent_or_equal(&project, &portable)
+        let mut abs_patches_dir = ForwardSlashPath::new();
+        abs_patches_dir.push_any_sep(&patches_dir);
+        if resolve_path::is_parent_or_equal(&project, &abs_patches_dir)
             != resolve_path::ParentEqual::Unrelated
         {
-            patches_dir = bun_paths::SlashPath::relative_portable(&project, &portable).to_vec();
+            patches_dir = ForwardSlashPath::relative_any_sep(&project, &abs_patches_dir).to_vec();
         }
     }
 
@@ -780,11 +780,11 @@ fn diff_against_cache(
         }
     };
 
+    let symlinks_dir = TempTree(temp_path_in(b"node_modules"));
     // The `./` that `from_cwd` adds puts a `/./` in the folder prefixes that are stripped from the
     // diff afterwards, which no path inside the package can match.
-    let links = TempTree(temp_sibling(b"node_modules/_"));
-    let [old, new] = [(old_folder, b"old"), (new_folder, b"new")]
-        .map(|(folder, link)| path_for_git(cwd, folder, &Path::from_parts(&[&links.0, link])));
+    let old = git_diff_path(cwd, old_folder, &symlinks_dir.0, b"old");
+    let new = git_diff_path(cwd, new_folder, &symlinks_dir.0, b"new");
     let paths = match (old, new) {
         (Ok(old), Ok(new)) => bun_patch::git_diff_preprocess_paths(&old, &new),
         (Err(e), _) | (_, Err(e)) => {
@@ -1156,7 +1156,7 @@ fn make_bins_executable(
     // `bin::Linker` sets the mode of the files it links to. The links themselves are not needed, so
     // they go in a temporary folder.
     let links = TempTree(temp_sibling(folder));
-    let Ok(cache_path) = sys::fd_path(cache_dir) else {
+    let Ok(cache_path) = sys::get_fd_path_owned(cache_dir) else {
         return;
     };
     bin::Linker {
@@ -1213,7 +1213,7 @@ fn cache_dir_path(cache_dir: Fd) -> Vec<u8> {
 /// Returns `path` with every symlink resolved. The part that doesn't exist yet is appended
 /// unchanged.
 fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
-    let path = bun_paths::string_paths::without_trailing_slash_portable(path);
+    let path = bun_paths::string_paths::without_trailing_any_sep(path);
     let mut buf = bun_paths::path_buffer_pool::get();
     let mut existing = path;
     loop {
@@ -1248,13 +1248,16 @@ fn is_in_global_store(cache_path: &[u8], real: &[u8]) -> bool {
 /// Returns the part of `folder` before its first `node_modules`. A `..` can lead out of one again,
 /// so it is applied first.
 fn outermost_package(folder: &[u8]) -> Vec<u8> {
-    let mut folder = PathIn::<Heap, Posix>::from(folder);
-    folder.normalize();
-    let is_node_modules = |dir: &&[u8]| Posix::basename(dir) == b"node_modules";
-    if let Some(outermost) = Posix::ancestors(&folder).filter(is_node_modules).last() {
-        folder.truncate(outermost.len() - b"node_modules".len());
+    let mut spill = Vec::new();
+    let folder = resolve_path::join_spill::<platform::Posix>(&mut spill, &[folder]);
+    let mut start = 0;
+    for name in strings::split(folder, b"/") {
+        if name == b"node_modules" {
+            return folder[..start].to_vec();
+        }
+        start += name.len() + 1;
     }
-    folder.into_vec()
+    folder.to_vec()
 }
 
 /// Returns true if `real`, which has its symlinks resolved, is inside `subfolder` of the package
@@ -1293,8 +1296,10 @@ fn real_folder(
     };
 
     let real = resolve(folder);
-    let mut link = VecPath::from_vec(resolve(bun_paths::dirname(folder).unwrap_or_default()));
-    link.join(&[bun_paths::basename(folder)]);
+    let link = VecPath::join(&[
+        &resolve(bun_paths::dirname(folder).unwrap_or_default()),
+        bun_paths::basename(folder),
+    ]);
     // The only link that an install puts in a package's place leads into the isolated store.
     let installed_in: &[u8] = if is_link(&link) {
         b"node_modules/.bun"
@@ -1365,15 +1370,18 @@ fn is_link_position(folder: &[u8]) -> bool {
 
 /// Uses the same naming as an install's staging folder, so that `bun prune` removes it if a crash
 /// leaves it behind.
-fn temp_sibling(folder: &[u8]) -> Vec<u8> {
-    let mut path = VecPath::from(folder);
-    path.pop();
+fn temp_path_in(dir: &[u8]) -> Vec<u8> {
+    let mut path = VecPath::from(dir);
     path.push_fmt(format_args!(
         "{}{:016x}",
         StagingPath::PREFIX,
         bun_core::fast_random()
     ));
     path.into_vec()
+}
+
+fn temp_sibling(folder: &[u8]) -> Vec<u8> {
+    temp_path_in(bun_paths::dirname(folder).unwrap_or_default())
 }
 
 /// Deleted on drop, unless it was renamed away or kept.
@@ -1560,16 +1568,22 @@ fn from_cwd(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     [&b"./"[..], relative].concat()
 }
 
-/// [`from_cwd`], or the way through a new `link` if git would quote it, so that it can't be stripped from the diff.
-fn path_for_git(cwd: &[u8], folder: &[u8], link: &Path) -> sys::Result<Vec<u8>> {
+/// Goes through a new symlink if git would quote the path, which then couldn't be stripped from the diff.
+fn git_diff_path(
+    cwd: &[u8],
+    folder: &[u8],
+    symlinks_dir: &[u8],
+    link_name: &[u8],
+) -> sys::Result<Vec<u8>> {
     let path = from_cwd(cwd, folder);
-    let is_quoted = |byte: &u8| matches!(byte, b'\\' | b'"') || byte.is_ascii_control();
-    if cfg!(windows) || !path.iter().any(is_quoted) {
+    let git_quotes = |byte: &u8| matches!(byte, b'\\' | b'"') || byte.is_ascii_control();
+    if cfg!(windows) || !path.iter().any(git_quotes) {
         return Ok(path);
     }
-    Fd::cwd().make_path(link.dirname().unwrap_or_default())?;
-    sys::symlink(&Path::from(folder), link)?;
-    Ok([&b"./"[..], link, b"/."].concat())
+    let link = Path::from_parts(&[symlinks_dir, link_name]);
+    Fd::cwd().make_path(symlinks_dir)?;
+    sys::symlink(&Path::from(folder), &link)?;
+    Ok([&b"./"[..], &link, b"/."].concat())
 }
 
 /// Copies the whole cache entry to `to`. Nothing is skipped, because `--commit` records any file
@@ -1582,13 +1596,16 @@ fn copy_cache_entry(
     // Open the cache entry before changing anything, because it may no longer exist.
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(cache_dir_subpath, ITERATE)?;
 
-    let dest_subpath = OsPath::from_parts(&[to])?;
+    // `from_parts` writes native separators.
+    let dest_subpath = OSPath::from_parts(&[to])?;
 
+    // unused if not windows
     #[cfg(not(windows))]
-    let src_path = OsPath::new();
+    let src_path = OSPath::new();
     #[cfg(windows)]
     let src_path = {
-        let mut path = OsPath::filled(|buf| sys::get_fd_path_w(cache_dir, buf).map(|it| &*it))??;
+        let mut path_buf = bun_paths::w_path_buffer_pool::get();
+        let mut path = OSPath::from(sys::get_fd_path_w(cache_dir, &mut path_buf)?)?;
         path.push(cache_dir_subpath)?;
         path
     };

@@ -923,7 +923,7 @@ fn create_overlapped_pipe_pair(
     } else {
         ""
     };
-    let mut name_w = bun_paths::PathIn::<bun_paths::Stack<97, u16>>::new();
+    let mut name_w = bun_paths::OSPath::new();
     write!(name_w, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}")
         .map_err(|_| CreatePtyError::OpenPtyFailed)?;
 

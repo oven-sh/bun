@@ -1,11 +1,10 @@
-use bun_core::strings;
-use bun_paths::platform::Auto;
-use bun_paths::{PoolPath, Style as _};
+use bun_core::{ZStr, strings};
+use bun_paths::{Path, PoolPath};
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
-pub(crate) struct Symlinker {
-    pub(crate) dest: PoolPath,
-    pub(crate) target: PoolPath,
+pub(crate) struct Symlinker<'a> {
+    pub(crate) dest: &'a ZStr,
+    pub(crate) target: &'a ZStr,
     /// The directories of `dest` after `dest[..real_len]` may be links that came with the project.
     pub(crate) real_len: usize,
     /// When greater than `real_len`, `dest[..node_modules_len]` is a workspace's `node_modules`. If
@@ -18,40 +17,40 @@ pub(crate) struct Symlinker {
     /// relative `target`. `LinkedNodeModules::resolve` explains why.
     pub(crate) is_absolute: bool,
     #[cfg(windows)]
-    pub(crate) fallback_junction_target: PoolPath,
+    pub(crate) fallback_junction_target: &'a ZStr,
 }
 
-impl Symlinker {
+impl Symlinker<'_> {
     /// True if it looked at a directory, which may be gone now.
     fn remove_planted_parents(&mut self) -> bun_sys::Result<bool> {
-        let parent_len = self.dest.dirname().map_or(0, <[u8]>::len);
-        if parent_len <= self.real_len {
+        let parent = bun_paths::dirname(self.dest);
+        let Some(parent) = parent.filter(|dir| dir.len() > self.real_len) else {
             return Ok(false);
-        }
+        };
         if self.real_len < self.node_modules_len {
-            let node_modules = self.dest.prefix(self.node_modules_len);
+            let node_modules = Path::from(&self.dest[..self.node_modules_len]);
             if crate::prune::LinkedNodeModules::is_at(&node_modules) == Some(true) {
                 return Err(bun_sys::Error::from_code(Errno::ELOOP, bun_sys::Tag::lstat));
             }
             self.real_len = self.node_modules_len;
         }
-        crate::prune::remove_planted_links(&self.dest[..parent_len], self.real_len)?;
-        self.real_len = parent_len;
+        crate::prune::remove_planted_links(parent, self.real_len)?;
+        self.real_len = parent.len();
         Ok(true)
     }
 
     pub(crate) fn symlink(&self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
-            let fallback = &self.fallback_junction_target;
+            let fallback = self.fallback_junction_target;
             if self.is_absolute {
-                return bun_sys::symlink_or_junction(&self.dest, fallback, None);
+                return bun_sys::symlink_or_junction(self.dest, fallback, None);
             }
-            return bun_sys::symlink_or_junction(&self.dest, &self.target, Some(fallback));
+            return bun_sys::symlink_or_junction(self.dest, self.target, Some(fallback));
         }
         #[cfg(not(windows))]
         {
-            return bun_sys::symlink(&self.target, &self.dest);
+            return bun_sys::symlink(self.target, self.dest);
         }
     }
 
@@ -71,13 +70,13 @@ impl Symlinker {
                 };
                 match symlink_err1.get_errno() {
                     Errno::ENOENT => {
-                        let Some(dest_parent) = self.dest.dirname() else {
+                        let Some(dest_parent) = bun_paths::dirname(self.dest) else {
                             return Err(symlink_err1);
                         };
                         let _ = Fd::cwd().make_path(dest_parent);
                     }
                     Errno::EEXIST if !self.is_behind_link => {
-                        let _ = Fd::cwd().delete_tree(&self.dest);
+                        let _ = Fd::cwd().delete_tree(self.dest);
                     }
                     _ => return Err(symlink_err1),
                 }
@@ -85,7 +84,7 @@ impl Symlinker {
             }
             Strategy::ExpectExisting => {
                 let mut current_link_buf = bun_paths::path_buffer_pool::get();
-                let current_link_len = match bun_sys::readlink(&self.dest, &mut current_link_buf) {
+                let current_link_len = match bun_sys::readlink(self.dest, &mut current_link_buf) {
                     Ok(len) => len,
                     Err(readlink_err) => {
                         if self.remove_planted_parents()? {
@@ -97,7 +96,7 @@ impl Symlinker {
                                 if linked
                                     .as_ref()
                                     .is_err_and(|err| err.get_errno() == Errno::ENOENT)
-                                    && let Some(dest_parent) = self.dest.dirname()
+                                    && let Some(dest_parent) = bun_paths::dirname(self.dest)
                                 {
                                     let _ = Fd::cwd().make_path(dest_parent);
                                     linked = self.symlink();
@@ -112,19 +111,24 @@ impl Symlinker {
                             }
                             // Keep the copy that `bun patch <pkg>` made, or a mount point (EBUSY).
                             _ => {
-                                let too_long = bun_sys::Tag::access.too_long();
-                                if bun_sys::exists_z(
-                                    &self.dest.child(b"package.json").map_err(too_long)?,
-                                ) {
+                                let Ok(package_json) =
+                                    PoolPath::from_parts(&[self.dest, b"package.json"])
+                                else {
+                                    return Err(bun_sys::Error::from_code(
+                                        Errno::ENAMETOOLONG,
+                                        bun_sys::Tag::access,
+                                    ));
+                                };
+                                if bun_sys::exists_z(&package_json) {
                                     return Ok(false);
                                 }
                                 if !self.is_behind_link {
-                                    if bun_sys::rmdir(&self.dest)
+                                    if bun_sys::rmdir(self.dest)
                                         .is_err_and(|err| err.get_errno() == Errno::EBUSY)
                                     {
                                         return Ok(false);
                                     }
-                                    let _ = Fd::cwd().delete_tree(&self.dest);
+                                    let _ = Fd::cwd().delete_tree(self.dest);
                                 }
                                 return self.symlink().map(|()| true);
                             }
@@ -134,15 +138,15 @@ impl Symlinker {
                 let mut current_link: &[u8] = &current_link_buf[..current_link_len];
 
                 // libuv adds a trailing slash to junctions.
-                current_link = Auto::without_trailing_sep(current_link);
+                current_link = bun_paths::without_trailing_sep(current_link);
 
-                if !self.is_absolute && strings::eql_long(current_link, &self.target) {
+                if !self.is_absolute && strings::eql_long(current_link, self.target) {
                     return Ok(false);
                 }
 
                 #[cfg(windows)]
                 {
-                    if strings::eql_long(current_link, &self.fallback_junction_target) {
+                    if strings::eql_long(current_link, self.fallback_junction_target) {
                         return Ok(false);
                     }
                 }
@@ -153,9 +157,9 @@ impl Symlinker {
 
                 // The wrong package. On Windows a directory link, dangling or not, needs rmdir.
                 if cfg!(not(windows))
-                    || bun_sys::rmdir(&self.dest).is_err_and(|err| err.get_errno() == Errno::EPERM)
+                    || bun_sys::rmdir(self.dest).is_err_and(|err| err.get_errno() == Errno::EPERM)
                 {
-                    let _ = bun_sys::unlink(&self.dest);
+                    let _ = bun_sys::unlink(self.dest);
                 }
 
                 return self.symlink().map(|()| true);

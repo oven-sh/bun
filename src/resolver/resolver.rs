@@ -1965,7 +1965,8 @@ impl<'a> Resolver<'a> {
                 } else if !dir.abs_real_path.is_empty()
                     // When the directory is a symlink, we don't need to call getFdPath.
                     && let Some(real_path) =
-                        Fs::path_of_entry(dir.abs_real_path, query.entry().base())
+                        Fs::join_dir_entry(dir.abs_real_path, query.entry().base())
+                    // `open` needs room for the NUL.
                     && real_path.len() < bun_paths::MAX_PATH_BYTES
                 {
                     let store_fd = self.store_fd;
@@ -4293,7 +4294,7 @@ impl<'a> Resolver<'a> {
             Ok::<_, ()>(Interned::from_static(
                 self.fs_ref()
                     .dirname_store
-                    .append_slice(&query.entry().path().ok_or(())?)
+                    .append_slice(&query.entry().build_abs_path().ok_or(())?)
                     .expect("unreachable"),
             ))
         }) else {
@@ -6108,8 +6109,8 @@ impl<'a> Resolver<'a> {
         }
 
         let base = bun_paths::basename(path);
-        // What it imports would be looked for in another directory.
-        if cfg!(unix) && strings::contains_char(base, b'\\') {
+        // `\` is read as a separator, so this file's imports would resolve from the wrong directory.
+        if ::bun_paths::has_literal_backslash(base) {
             dec_ret!(None);
         }
 
@@ -6136,7 +6137,7 @@ impl<'a> Resolver<'a> {
                     Ok::<_, ()>(Interned::from_static(
                         self.fs_ref()
                             .dirname_store
-                            .append_slice(&query.entry().path().ok_or(())?)
+                            .append_slice(&query.entry().build_abs_path().ok_or(())?)
                             .expect("unreachable"),
                     ))
                 }) else {
@@ -6505,7 +6506,7 @@ impl<'a> Resolver<'a> {
                             }
                             info.abs_real_path = symlink;
                         } else if !parent_.abs_real_path.is_empty()
-                            && let Some(joined) = Fs::path_of_entry(parent_.abs_real_path, base)
+                            && let Some(joined) = Fs::join_dir_entry(parent_.abs_real_path, base)
                         {
                             // this might leak a little i'm not sure
                             symlink = self

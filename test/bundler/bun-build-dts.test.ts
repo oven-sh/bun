@@ -55,7 +55,7 @@ describe.concurrent("bun build --dts", () => {
     expect(readFileSync(join(String(dir), "package.json"), "utf8")).toBe(project["package.json"]);
   });
 
-  test.skipIf(isWindows)("leaves alone what a name with backslashes would lead to on Windows", async () => {
+  test.skipIf(isWindows)("an output name with backslashes does not escape outdir", async () => {
     const outside = { "outside.js": "outside\n//# debugId=1\n", "outside.js.map": "{}" };
     const name = String.raw`x\..\..\..\outside.json`;
     using dir = tempDir("build-dts-backslash", { ...outside, app: project });
@@ -71,15 +71,18 @@ describe.concurrent("bun build --dts", () => {
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 
-  describe.skipIf(isWindows).each(["a\\b/out", "c\\d"])("everything is written to %s", outdir => {
+  describe.skipIf(isWindows).each([
+    ["a\\b/out", ["a\\b", "app"]],
+    ["c\\d", ["a\\b", "app", "c\\d"]],
+  ])("outdir %s", (outdir, entries) => {
     const api = `
       const { outputs } = await Bun.build({ entrypoints: ["./src/index.ts"], outdir: process.argv[2], dts: true });
       await Promise.all(outputs.map(output => output.text()));
     `;
-    test.each([[["build", "./src/index.ts", "--dts", "--outdir"]], [["build.js"]]])("by %j", async args => {
+    test.each(["build ./src/index.ts --dts --outdir", "build.js"])("bun %s writes every file into it", async args => {
       using dir = tempDir("build-dts-outdir", { "a\\b": {}, app: { ...project, "build.js": api } });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), ...args, join(String(dir), outdir)],
+        cmd: [bunExe(), ...args.split(" "), join(String(dir), outdir)],
         cwd: join(String(dir), "app"),
         env: { ...bunEnv, HOME: join(String(dir), "a\\b") },
         stdout: "ignore",
@@ -87,30 +90,31 @@ describe.concurrent("bun build --dts", () => {
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(readdirSync(String(dir)).sort()).toEqual([...new Set(["a\\b", "app", outdir.split("/")[0]])]);
+      expect(stderr).toBe("");
+      expect(readdirSync(String(dir)).sort()).toEqual(entries);
       expect(readdirSync(join(String(dir), outdir)).sort()).toEqual([
         "index.aot.ts",
         "index.d.ts",
         "index.js",
         "join.d.ts",
       ]);
-      expect(stderr).not.toContain("error");
       expect(exitCode).toBe(0);
     });
   });
 
-  test
-    .skipIf(isWindows)
-    .each([
-      "build ./src/index.ts --outdir out --dts",
-      "build ./src/index.ts --outdir out --check",
-      "compile ./src/index.ts --outfile out",
-      "run --check ./src/index.ts",
-    ])("%s is refused where tsconfig.json is out of sight", async args => {
-    using dir = tempDir("build-dts-cwd", { "a\\b": project, a: { b: project } });
+  test.skipIf(isWindows).each([
+    ["build ./src/index.ts --outdir out --dts", "src/index.ts"],
+    ["build ./src/index.ts --outdir out --check", "src/index.ts"],
+    ["compile ./src/index.ts --outfile out", "src/index.ts"],
+    ["compile . --outfile out", ""],
+    ["run --check ./src/index.ts", "src/index.ts"],
+    ["run --check script", ""],
+  ])("%s errors when the cwd contains a backslash", async (args, entryPoint) => {
+    const files = { ...project, "package.json": JSON.stringify({ scripts: { script: "echo ran" } }) };
+    using dir = tempDir("build-dts-cwd", { "a\\b": files, a: { b: files } });
     const built = await bun(join(String(dir), "a\\b"), ...args.split(" "));
     expect(built.stderr.trim()).toBe(
-      `error: The type checker cannot read a path that has a backslash in a directory's name: ${join(String(dir), "a\\b/src/index.ts")}`,
+      `error: The type checker cannot read a path that has a backslash in a directory's name: ${join(String(dir), "a\\b", entryPoint)}`,
     );
     expect(built.exitCode).toBe(1);
   });

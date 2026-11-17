@@ -7,9 +7,9 @@
 //! resolve unchanged.
 
 use crate::PathChar;
+use crate::path_style::len_without_trailing_sep;
 use crate::platform::Auto;
 use crate::resolve_path;
-use crate::style::len_without_seps;
 use crate::windows;
 use bun_core::strings;
 use bun_core::{WStr, ZStr};
@@ -394,31 +394,31 @@ pub fn starts_with_windows_drive_letter_t<T: PathChar>(s: &[T]) -> bool {
 
 pub use crate::strings::without_trailing_slash;
 
-/// [`without_trailing_slash`], but a `\` stays where [`crate::PathIn::push_portable`] would keep it.
+/// Strips trailing `/` and `\`, but keeps a `\` that ends a known POSIX directory name.
 #[inline]
-pub fn without_trailing_slash_portable(path: &[u8]) -> &[u8] {
-    let path = &path[..len_without_seps::<Auto, _>(path, 1)];
+pub fn without_trailing_any_sep(path: &[u8]) -> &[u8] {
+    let path = &path[..len_without_trailing_sep::<Auto>(path, 1)];
     if cfg!(unix) && path.ends_with(b"\\") {
-        return without_written_backslashes(path);
+        return without_trailing_backslashes(path);
     }
     path
 }
 
 #[cold]
 #[inline(never)]
-fn without_written_backslashes(path: &[u8]) -> &[u8] {
+fn without_trailing_backslashes(path: &[u8]) -> &[u8] {
     if !crate::is_absolute(path) {
         return without_trailing_slash(path);
     }
-    let mut portable = crate::Path::new();
-    portable.push_portable(path);
-    &path[..portable.len()]
+    let mut trimmed = crate::Path::new();
+    trimmed.push_any_sep(path);
+    &path[..trimmed.len()]
 }
 
 /// Does not strip the device root (C:\ or \\Server\Share\ portion off of the path)
 pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     if cfg!(unix) || input.len() < 3 || input[1] != b':' {
-        return without_trailing_slash_portable(input);
+        return without_trailing_any_sep(input);
     }
 
     let root_len = resolve_path::windows_filesystem_root(input).len();

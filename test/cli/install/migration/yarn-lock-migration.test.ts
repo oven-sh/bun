@@ -3751,7 +3751,8 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     expect(ci.exitCode).toBe(0);
   });
 
-  test.each(["ui", "library"])("link:./%s/ is the directory without the slash", async name => {
+  // The lockfile stores up to 8 bytes inline and anything longer in its string buffer.
+  test.each(["ui", "library"])("link:./%s/ with a trailing slash installs", async name => {
     using server = await serve([]);
     using dir = tempDir("yarn-migration-link-slash", {
       "package.json": JSON.stringify({ name: "app", dependencies: { t: `link:./${name}/` } }),

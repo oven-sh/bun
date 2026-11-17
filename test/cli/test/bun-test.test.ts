@@ -2493,13 +2493,19 @@ describe.concurrent("test file discovery (scanner)", () => {
     },
   );
 
-  test.skipIf(isWindows)("a directory with a backslash in its name does not hide another one", async () => {
+  test.skipIf(isWindows)("skips a\\b but still scans a/b", async () => {
     using dir = tempDir("scanner-backslash", {
       "a\\b": { "other.test.ts": "" },
       "t": { "a\\b": { "other.test.ts": "" }, "a": { "b": { "exists.test.ts": existsTest } } },
     });
 
-    await using proc = Bun.spawn({ cmd: [bunExe(), "test"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("Ran 1 test across 1 file.");
@@ -2508,9 +2514,7 @@ describe.concurrent("test file discovery (scanner)", () => {
   });
 
   // The directory walk joins parent + entry name for every directory it
-  // descends into and every candidate test file. With pathIgnorePatterns
-  // configured it additionally joins each directory before queueing it, so the
-  // same tree is scanned once per configuration to reach both code paths.
+  // descends into and every candidate test file.
   for (const [config, files] of [
     ["no bunfig", {}],
     ["pathIgnorePatterns configured", { "bunfig.toml": `[test]\npathIgnorePatterns = ["unrelated/**"]\n` }],

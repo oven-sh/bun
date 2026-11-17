@@ -12,7 +12,7 @@ use crate::dependency::{self};
 use crate::install::{Features, Lockfile, PackageID};
 use crate::lockfile::Package as LockfilePackage;
 use crate::lockfile_real::package::ResolverContext;
-use crate::lockfile_real::{StringBuilder, resolve_to_store};
+use crate::lockfile_real::{StringBuilder, resolve_for_lockfile};
 use crate::npm;
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::process_dependency_list::{ListedDependencies, OnlyDependencies};
@@ -50,7 +50,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
         let rel: &[u8] = match &mut paths {
             Some(Paths { rel, .. }) => {
                 if !strings::starts_with_char(rel, b'.') && !bun_paths::is_absolute(rel) {
-                    rel.replace_prefix(0, &[b'.', bun_paths::SEP]);
+                    rel.prepend(&[b'.', bun_paths::SEP]);
                 }
                 rel
             }
@@ -136,9 +136,9 @@ impl ResolverContext for NewResolver<'_> {
 }
 
 struct Paths {
-    /// Of the `package.json`.
+    /// The absolute path of the `package.json`.
     abs: PoolPath,
-    /// Of the folder, from the project.
+    /// The folder, relative to the project root.
     rel: Path,
 }
 
@@ -152,7 +152,7 @@ fn normalize_package_json_path(
         GlobalOrRelative::Global(path) => path,
         GlobalOrRelative::Relative(_) => top_level_dir,
     };
-    let mut abs = resolve_to_store(base, &[non_normalized_path]).ok()?;
+    let mut abs = resolve_for_lockfile(base, &[non_normalized_path]).ok()?;
     let rel = Path::relative(top_level_dir, &abs);
     abs.push(b"package.json").ok()?;
     Some(Paths { abs, rel })
@@ -320,11 +320,13 @@ pub(crate) fn get_or_put(
     else {
         return FolderResolution::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
     };
+    // replace before getting hash
     if cfg!(windows) {
         bun_paths::dangerously_convert_path_to_posix_in_place(paths.abs.as_mut_slice());
         bun_paths::dangerously_convert_path_to_posix_in_place(paths.rel.as_mut_slice());
     }
-    let (abs, rel): (&ZStr, &[u8]) = (&paths.abs, &paths.rel);
+    let abs: &ZStr = &paths.abs;
+    let rel: &[u8] = &paths.rel;
 
     // Must agree with the resolver picked for each variant below.
     let kind = match global_or_relative {
@@ -354,7 +356,7 @@ pub(crate) fn get_or_put(
             (ResolutionTag::Symlink, &*link_path, Features::LINK)
         }
         GlobalOrRelative::Relative(dependency::version::Tag::Folder) => {
-            // A folder is copied.
+            // A `file:` folder is copied, which would take the whole file system.
             let is_root = matches!(bun_paths::dirname(abs), Some(b"/" | [_, b':', b'/']));
             if is_root && rel.starts_with(b"..") {
                 manager.log_mut().add_error_fmt(

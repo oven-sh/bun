@@ -1415,7 +1415,7 @@ fn workspace_ref_literal(
     for relative_dir in workspace_names.keys() {
         let GetResult::Entry(entry) = pm.workspace_package_json_cache.get_with_path(
             log,
-            &bun_paths::Path::resolved_portable(&[root_dir, relative_dir, b"package.json"]),
+            &bun_paths::Path::resolve_any_sep(&[root_dir, relative_dir, b"package.json"]),
             GetJSONOptions {
                 init_reset_store: false,
                 guess_indentation: true,

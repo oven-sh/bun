@@ -667,6 +667,18 @@ describe.concurrent("flags", () => {
     expect(await sortedNames(dir)).toEqual(["index.js", "package.json"]);
   });
 
+  test.skipIf(isWindows)("--filename with a trailing slash is a directory", async () => {
+    using dir = tempDir("pack-filename-trailing-slash", {
+      "package.json": JSON.stringify({ name: "pack-dest-test", version: "1.1.1" }),
+      "index.js": indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir, ["--filename=out/"]);
+    expect(err).toContain(`failed to open tarball file destination: "<dir>/out/"`);
+    expect(await sortedNames(dir)).toEqual(["index.js", "package.json"]);
+    expect(exitCode).toBe(1);
+  });
+
   // The destination used to be opened a second time to hash it, which on a FIFO waits for another writer forever.
   // This end is open before pack starts and the tarball fits the pipe's buffer, so nothing here can block;
   // a pack that does is killed by `timeout`.

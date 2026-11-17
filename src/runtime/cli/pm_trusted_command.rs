@@ -111,9 +111,9 @@ impl Blocked {
     fn find_all(pm: &mut PackageManager, linker: NodeLinker) -> crate::Result<Vec<Blocked>> {
         // If there is no `node_modules/.bun`, another tool created `node_modules`. In that case,
         // look for each package where it resolves from.
-        if linker == NodeLinker::Isolated
-            && bun_sys::exists_z(&Path::top_level_dir().child(b"node_modules/.bun"))
-        {
+        let mut store = Path::from_top_level_dir();
+        store.push(b"node_modules/.bun");
+        if linker == NodeLinker::Isolated && bun_sys::exists_z(&store) {
             return Self::find_in_store(pm);
         }
         // The tree saved in the lockfile also has the dependencies that packages bundle, and no
@@ -126,11 +126,11 @@ impl Blocked {
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut blocked: Vec<Blocked> = Vec::new();
-        let mut top_level_dir = Path::top_level_dir();
+        let mut top_level_dir = Path::from_top_level_dir();
 
         let mut link_buf = bun_paths::path_buffer_pool::get();
         for folder in bun_install::isolated_install::store_folders(pm, lockfile)? {
-            let mut entry_dir = top_level_dir.child(&folder.entry_dir);
+            let entry_dir = top_level_dir.push_scoped(&folder.entry_dir);
             let is_link = lockfile.packages.items_resolution()[folder.pkg_id as usize].tag
                 == ResolutionTag::Symlink;
             let name = if is_link {
@@ -138,12 +138,8 @@ impl Blocked {
             } else {
                 lockfile.packages.items_name()[folder.pkg_id as usize]
             };
-            let Some(scripts_list) = Self::scripts_at(
-                pm,
-                folder.dep_id,
-                folder.pkg_id,
-                &entry_dir.child(b"node_modules").child(name.slice(buf)),
-            )?
+            let path = Path::from_parts(&[&entry_dir, b"node_modules", name.slice(buf)]);
+            let Some(scripts_list) = Self::scripts_at(pm, folder.dep_id, folder.pkg_id, &path)?
             else {
                 continue;
             };
@@ -167,12 +163,12 @@ impl Blocked {
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
         let mut blocked: Vec<Blocked> = Vec::new();
-        let mut top_level_dir = Path::top_level_dir();
+        let mut top_level_dir = Path::from_top_level_dir();
 
         let mut tree_iterator =
             tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
         while let Some(node_modules) = tree_iterator.next(None) {
-            let mut path = top_level_dir.child(node_modules.relative_path);
+            let mut path = top_level_dir.push_scoped(node_modules.relative_path);
             if !bun_sys::exists_z(&path) {
                 continue;
             }
@@ -185,7 +181,7 @@ impl Blocked {
                     continue;
                 }
                 let alias = &lockfile.buffers.dependencies.as_slice()[dep_id as usize].name;
-                let folder = path.child(alias.slice(buf));
+                let folder = path.push_scoped(alias.slice(buf));
                 if let Some(scripts_list) = Self::scripts_at(pm, dep_id, package_id, &folder)? {
                     blocked.push(Blocked {
                         dep_id,

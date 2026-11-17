@@ -2055,29 +2055,23 @@ describe("production headers and import.meta.env", () => {
   });
 });
 
-test.skipIf(isWindows).each([
-  ["a\\b", "../web", "../web/index.html"],
-  ["a\\b", "./a\\b", "a/b/index.html"],
-])("the dev server in %s has the module that the page in %s starts with", async (cwd, pages, id) => {
+test.concurrent.skipIf(isWindows).each([
+  ["../web", "../web/index.html"],
+  ["./a\\b", "a/b/index.html"],
+])("dev server entry module id matches when the cwd contains a backslash (page in %s)", async (pages, id) => {
+  const cwd = "a\\b";
   using dir = tempDir("html-backslash", {
     [join(cwd, pages, "index.html")]: `<script type="module" src="./main.js"></script>`,
     [join(cwd, pages, "main.js")]: `console.log("main");`,
-    [join(cwd, "serve.js")]: `
-      const { default: page } = await import(require("path").join(import.meta.dir, ${JSON.stringify(pages)}, "index.html"));
+    [join(cwd, "serve.ts")]: `
+      import { join } from "node:path";
+      const { default: page } = await import(join(import.meta.dir, ${JSON.stringify(pages)}, "index.html"));
       using server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
       const [, src] = (await (await fetch(server.url)).text()).match(/src="([^"]+)"/);
       const bundle = await (await fetch(new URL(src, server.url))).text();
       console.log(bundle.match(/main: "(.+)"/)[1], bundle.match(/"(.+\\.html)": \\[/)[1]);
     `,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "serve.js"],
-    cwd: join(String(dir), cwd),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe(`${id} ${id}\n`);
-  expect(exitCode).toBe(0);
+  const { stdout, stderr, exitCode } = await runServeFixture(join(String(dir), cwd));
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: `${id} ${id}`, exitCode: 0 });
 });

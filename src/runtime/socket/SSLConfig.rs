@@ -304,21 +304,22 @@ fn handle_path(
             .throw());
     }
     // Opened later (for fetch, on the HTTP thread), and the SSL_CTX caches key on this string.
-    let mut path = bun_paths::Path::top_level_dir();
+    let mut path = if cfg!(windows) || !bun_paths::is_absolute_posix(name) {
+        bun_paths::Path::from_top_level_dir()
+    } else {
+        bun_paths::Path::new()
+    };
     // The kernel resolves `..` through symlinks, so it is left in. Win32 resolves it as `resolve` does, which also knows `C:foo` and `\foo`.
     if cfg!(windows) {
-        path.resolve(&[name]);
-        path.trim_trailing_sep();
+        path.resolve_in_place(&[name]);
     } else {
-        if bun_paths::is_absolute(name) {
-            path.clear();
-        }
-        path.push_portable(name);
+        path.push_any_sep(name);
     }
-    // `push` drops a separator at the end, with which no file opens.
-    let names_directory = name.ends_with(b"/") || (name.ends_with(b"\\") && !path.ends_with(b"\\"));
+    // `push_any_sep` drops a trailing separator, with which no file opens.
+    let has_trailing_sep =
+        name.ends_with(b"/") || (name.ends_with(b"\\") && !path.ends_with(b"\\"));
     if name.is_empty()
-        || (cfg!(not(windows)) && names_directory)
+        || (cfg!(not(windows)) && has_trailing_sep)
         || bun_sys::access(&path, bun_sys::posix::F_OK).is_err()
     {
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {field} path")));

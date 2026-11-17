@@ -1320,7 +1320,7 @@ it(".query and .params support names that look like array indices", () => {
   expect(params[0]).toBe("hello");
 });
 
-it.skipIf(isWindows)("a name with a backslash does not stand for another file or directory", async () => {
+it.skipIf(isWindows)("ignores names whose backslashes lead to another file or directory", async () => {
   using dir = tempDir("fs-router-backslash", {
     "outside.js": "",
     "pages": { "index.js": "", "a\\..": { "b.js": "" }, "..\\outside.js": "" },

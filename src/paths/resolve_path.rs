@@ -1,8 +1,9 @@
 use core::cell::{OnceCell, UnsafeCell};
 use core::mem::MaybeUninit;
 
+use crate::PathStyle as _;
 use crate::fs as Fs;
-use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, Style};
+use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, has_literal_backslash};
 use bun_core::{ZStr, strings};
 
 // Thread-local scratch buffers. Stored in `UnsafeCell` (not `RefCell`)
@@ -706,8 +707,8 @@ fn relative_platform_in<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     to: &[u8],
 ) -> &'a [u8] {
     let is_posix = cfg!(unix) && matches!(P::P, Platform::Posix | Platform::Loose);
-    let has_backslash = is_posix && [cwd, from, to].into_iter().any(has_backslash);
-    if has_backslash && let Some(len) = relative_through_known_name::<P>(buf, cwd, from, to) {
+    let has_backslash = is_posix && [cwd, from, to].into_iter().any(has_literal_backslash);
+    if has_backslash && let Some(len) = relative_with_backslash_component::<P>(buf, cwd, from, to) {
         return &buf[..len];
     }
     let is_normalized = |path: &[u8]| {
@@ -784,31 +785,31 @@ fn relative_platform_in<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     relative_normalized_buf::<P, ALWAYS_COPY>(buf, normalized_from, normalized_to)
 }
 
-#[inline(always)]
-fn has_backslash(path: &[u8]) -> bool {
-    strings::contains_char(path, SEP_WINDOWS)
-}
-
-/// A name that keeps its `\` is left with one `..`, and is the same with a `/` for it. `None` if there is no such name.
+/// A known directory name with a `\` is one component, equal to its `/` spelling. `None` if there is none.
 #[cold]
 #[inline(never)]
-fn relative_through_known_name<P: PlatformT>(
+fn relative_with_backslash_component<P: PlatformT>(
     buf: &mut [u8],
     cwd: &[u8],
     from: &[u8],
     to: &[u8],
 ) -> Option<usize> {
-    let resolve = |path: &[u8]| {
-        (!P::P.is_absolute(path) || path[0] == SEP_POSIX)
-            .then(|| crate::Path::resolved_portable(&[cwd, path]))
-    };
-    let (from, mut to) = (resolve(from)?, resolve(to)?);
-    if !has_backslash(&from) && !has_backslash(&to) {
+    let is_windows_absolute = |path: &[u8]| P::P.is_absolute(path) && path[0] != SEP_POSIX;
+    if is_windows_absolute(from) || is_windows_absolute(to) {
         return None;
     }
-    let common = crate::style::common_len::<platform::Loose, u8>(&from, &to);
+    let resolve = |path: &[u8]| match path.first() {
+        Some(&SEP_POSIX) => crate::GenericPath::join_abs_any_sep(path, &[]),
+        _ => crate::GenericPath::join_abs_any_sep(cwd, &[path]),
+    };
+    let (from, mut to) = (resolve(from), resolve(to));
+    if !has_literal_backslash(&from) && !has_literal_backslash(&to) {
+        return None;
+    }
+    // Where `to` spells the start of `from` with the other separator, give it the spelling of `from`.
+    let common = crate::path_style::common_path_prefix_len::<platform::Loose, u8>(&from, &to);
     to.as_mut_slice()[..common].copy_from_slice(&from[..common]);
-    let relative = crate::Path::relative_portable(&from, &to);
+    let relative = crate::Path::relative_any_sep(&from, &to);
     buf[..relative.len()].copy_from_slice(&relative);
     Some(relative.len())
 }
@@ -1302,11 +1303,11 @@ pub mod platform {
     pub type Auto = Posix;
     #[cfg(all(not(windows), not(unix)))]
     pub type Auto = Loose;
-    /// Reads like [`Auto`] and writes `/`, for what is printed, hashed or saved.
+    /// Reads like [`Auto`] and writes `/`, for output that is printed, hashed or saved.
     #[cfg(unix)]
-    pub type Slash = Posix;
+    pub(crate) type ForwardSlash = Posix;
     #[cfg(not(unix))]
-    pub type Slash = Loose;
+    pub(crate) type ForwardSlash = Loose;
 }
 
 impl Platform {
@@ -1574,7 +1575,7 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 }
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
-/// See [`crate::PathIn::resolve_portable`] for what a `\` is on POSIX
+/// without querying the filesystem
 /// This is the equivalent of path.resolve
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
@@ -1618,7 +1619,7 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
 }
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
-/// See [`crate::PathIn::resolve_portable`] for what a `\` is on POSIX
+/// without querying the filesystem
 /// This is the equivalent of path.resolve
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
@@ -1960,8 +1961,8 @@ fn _join_abs_string_buf<'a, P: PlatformT>(
     }
 
     if cfg!(unix) && cwd.first() == Some(&SEP_POSIX) {
-        // Not built in `buf`, which can be where one of the parts is.
-        let path = crate::PathIn::resolved_portable_below(cwd, parts);
+        // `buf` may alias a part, so build elsewhere and copy.
+        let path = crate::GenericPath::join_abs_any_sep(cwd, parts);
         buf[..path.len()].copy_from_slice(&path);
         return &buf[..path.len()];
     }
@@ -2729,7 +2730,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn relative_to_a_name_with_a_backslash_is_normalized() {
+    fn relative_normalizes_backslashes() {
         for (from, to, expected) in [
             (r"/a\A", r"/a\A/b", "b"),
             (r"/a\A/b", r"/y", "../../y"),

@@ -16,8 +16,7 @@ use bun_install::LogLevel;
 use bun_install::PackageManager;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::platform::Auto;
-use bun_paths::{Path, Style as _};
+use bun_paths::Path;
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_which::which;
@@ -368,7 +367,7 @@ impl PmVersionCommand {
     }
 
     fn find_package_dir(start_dir: &[u8]) -> Vec<u8> {
-        Auto::ancestors(start_dir)
+        bun_paths::ancestors(start_dir)
             .find(|dir| bun_sys::exists_at(Fd::cwd(), &Path::from_parts(&[dir, b"package.json"])))
             .unwrap_or(start_dir)
             .to_vec()

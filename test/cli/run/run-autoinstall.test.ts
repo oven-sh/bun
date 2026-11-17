@@ -136,7 +136,7 @@ async function runAutoInstallWithEnv(env: Record<string, string>, cwd: string, .
 
 const printNoDepsVersion = `console.log(require("no-deps").version);\n`;
 
-test.skipIf(isWindows)("auto-install with a backslash in the name of the home directory", async () => {
+test.skipIf(isWindows)("auto-install works when HOME contains a backslash", async () => {
   using registry = fixtureRegistry();
   using dir = tempDir("autoinstall-home-backslash", {
     "DOMAIN\\user/.keep": "",

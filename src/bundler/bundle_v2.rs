@@ -972,7 +972,7 @@ pub mod bv2_impl {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
             }
             impl FileMap {
-                /// Keys are stored with forward slashes (`file_map_from_js`).
+                /// Keys are stored with forward slashes, except in a POSIX directory name (`file_map_from_js`).
                 fn get_key_value(&self, specifier: &[u8]) -> Option<(&[u8], &[u8])> {
                     if self.map.is_empty() {
                         return None;
@@ -1048,7 +1048,7 @@ pub mod bv2_impl {
                         }
                         let normalized_source_file = &mut source_file_buf[..abs_source_file.len()];
                         normalized_source_file.copy_from_slice(abs_source_file);
-                        bun_paths::split_unknown_names(normalized_source_file);
+                        bun_paths::slashes_to_posix_keeping_known_dirs(normalized_source_file);
 
                         let mut buf = bun_paths::path_buffer_pool::get();
                         let source_dir = bun_paths::resolve_path::dirname::<

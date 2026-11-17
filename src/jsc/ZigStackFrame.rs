@@ -157,7 +157,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
                     self.root_path.len() > b"/".len()
                 };
                 if not_root && source_slice.starts_with(self.root_path) {
-                    let root_path = strings::without_trailing_slash_portable(self.root_path);
+                    let root_path = strings::without_trailing_any_sep(self.root_path);
                     let relative_path = strings::without_leading_path_separator(
                         &source_slice[self.root_path.len()..],
                     );

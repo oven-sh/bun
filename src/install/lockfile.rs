@@ -13,7 +13,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, UnwrapOrOom as _};
-use bun_paths::{SEP, resolve_path};
+use bun_paths::{NameTooLong, Path, PoolPath, SEP, SEP_STR, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -257,8 +257,7 @@ impl LinkedMembers {
             if self.real_folders.contains_key(folder) {
                 continue;
             }
-            let abs =
-                bun_paths::Path::resolved_portable(&[FileSystem::get().top_level_dir(), folder]);
+            let abs = Path::resolve_any_sep(&[FileSystem::get().top_level_dir(), folder]);
             let is_link = !sys::lstat(&abs).is_ok_and(|st| {
                 sys::kind_from_mode(st.st_mode as sys::Mode) != sys::EntryKind::SymLink
             });
@@ -290,7 +289,7 @@ impl LinkedMembers {
     /// fails.
     pub(crate) fn real_path_of(path: &[u8]) -> Box<[u8]> {
         let mut real_buf = bun_paths::path_buffer_pool::get();
-        let path = bun_paths::Path::resolved_portable(&[FileSystem::get().top_level_dir(), path]);
+        let path = Path::resolve_any_sep(&[FileSystem::get().top_level_dir(), path]);
         match sys::realpath(&path, &mut *real_buf) {
             Ok(real_path) => real_path.into(),
             Err(_) => Box::default(),
@@ -744,10 +743,11 @@ impl Lockfile {
                     continue;
                 }
                 let Some(relative) =
-                    &package::folder_relative_to_top_level_dir(pkg_dir.slice(buf), declared_path)
+                    package::folder_relative_to_top_level_dir(pkg_dir.slice(buf), declared_path)
                 else {
                     continue;
                 };
+                let relative = relative.as_bytes();
                 let mut string_buf = SemverStringBuf {
                     bytes: &mut self.buffers.string_bytes,
                     pool: &mut self.string_pool,
@@ -1910,17 +1910,18 @@ pub mod printer {
 impl<'a> Printer<'a> {
     #[cold]
     pub fn print(log: &mut bun_ast::Log, input_lockfile_path: &[u8]) -> Result<(), BunError> {
-        let mut lockfile_path = if bun_paths::is_absolute(input_lockfile_path) {
-            bun_paths::Path::from(input_lockfile_path)
+        let lockfile_path = if bun_paths::is_absolute(input_lockfile_path) {
+            Path::from(input_lockfile_path)
         } else {
-            let mut path = bun_paths::Path::filled(|buf| sys::getcwd_z(buf).map(ZStr::as_bytes))?;
-            path.resolve_portable(&[input_lockfile_path]);
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
+            let mut path = Path::from(sys::getcwd_z(&mut cwd_buf)?);
+            path.resolve_any_sep_in_place(&[input_lockfile_path]);
             path
         };
 
         if lockfile_path.first() == Some(&SEP) {
-            let dir_len = lockfile_path.dirname().map_or(1, <[u8]>::len);
-            let _ = sys::chdir(&lockfile_path.prefix(dir_len));
+            let dir = lockfile_path.dirname().unwrap_or(SEP_STR.as_bytes());
+            let _ = sys::chdir(&Path::from(dir));
         }
 
         // An entry point (`bun bun.lockb`): the resolver FS singleton may not exist yet.
@@ -2174,25 +2175,20 @@ pub(crate) fn linked_workspace_path_in(
     range.satisfies(version, range_buf, buf).then_some(path)
 }
 
-/// For what a lockfile gets relative to `base`, where a `\` is a separator even if it came with an absolute path.
-pub(crate) fn resolve_to_store(
-    base: &[u8],
-    parts: &[&[u8]],
-) -> Result<bun_paths::PoolPath, bun_paths::NameTooLong> {
-    let mut path = bun_paths::PoolPath::from(base)?;
-    path.resolve_portable(parts)?;
-    if cfg!(not(windows)) && strings::contains_char(&path, b'\\') {
-        let stored = bun_paths::Path::relative_portable(base, &path);
-        path.resolve(&[base, &stored])?;
+/// Resolves `parts` against `base`. Every `\` outside of `base` is a separator, as it is in a lockfile.
+pub(crate) fn resolve_for_lockfile(base: &[u8], parts: &[&[u8]]) -> Result<PoolPath, NameTooLong> {
+    let mut path = PoolPath::from(base)?;
+    path.resolve_any_sep_in_place(parts)?;
+    if bun_paths::has_literal_backslash(&path) {
+        let relative = Path::relative_any_sep(base, &path);
+        return PoolPath::resolve(&[base, &relative]);
     }
     Ok(path)
 }
 
-/// For paths from a lockfile, which can be absolute, have a `..` or come from Windows. `None` if the result is too long.
-pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::PoolPath> {
-    let mut path = resolve_to_store(FileSystem::get().top_level_dir(), parts).ok()?;
-    path.trim_trailing_sep();
-    Some(path)
+/// [`resolve_for_lockfile`] against the project root. `None` if it doesn't fit in a path buffer.
+pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<PoolPath> {
+    resolve_for_lockfile(FileSystem::get().top_level_dir(), parts).ok()
 }
 
 impl Lockfile {

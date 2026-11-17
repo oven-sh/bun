@@ -8,8 +8,8 @@ use bun_alloc::{AllocError, allocators};
 use bun_core::Generation;
 use bun_core::MutableString;
 use bun_core::vec::{BorrowedBuf, append_with};
+use bun_paths::MAX_PATH_BYTES;
 use bun_paths::strings;
-use bun_paths::{MAX_PATH_BYTES, Path};
 use bun_ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
@@ -24,11 +24,11 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 // `bun_core::strings`; `bun_resolver::fs_full::BOM` re-exports it.
 pub use bun_core::strings::BOM;
 
-/// The absolute path of `name`, which `dir` lists. `None` if it is too long.
-pub fn path_of_entry(dir: &[u8], name: &[u8]) -> Option<Path> {
-    let mut path = Path::resolved_portable(&[bun_core::top_level_dir(), dir]);
+/// The absolute path of the entry `name` of `dir`. `None` if it is longer than `MAX_PATH_BYTES`.
+pub fn join_dir_entry(dir: &[u8], name: &[u8]) -> Option<bun_paths::Path> {
+    let mut path = bun_paths::Path::resolve_any_sep(&[bun_core::top_level_dir(), dir]);
     path.push(name);
-    // The resolver does not leave room for a NUL in its buffers.
+    // `<=`: the resolver's buffers need no NUL.
     (path.len() <= MAX_PATH_BYTES).then_some(path)
 }
 
@@ -192,13 +192,16 @@ impl Entry {
         self.dir
     }
 
-    /// [`path_of_entry`], unless the resolver would read it as the path of another file.
+    /// `None` if it is too long, or if the name has a `\` that the resolver would read as a separator.
     #[inline]
-    pub fn path(&self) -> Option<Path> {
-        path_of_entry(self.dir, self.base()).filter(|path| {
-            !(cfg!(unix) && strings::contains_char(self.base(), b'\\'))
-                || Path::resolved_portable(&[path]).as_slice() == path.as_slice()
-        })
+    pub fn build_abs_path(&self) -> Option<bun_paths::Path> {
+        let path = join_dir_entry(self.dir, self.base())?;
+        if bun_paths::has_literal_backslash(self.base())
+            && bun_paths::Path::resolve_any_sep(&[&path]).as_bytes() != path.as_bytes()
+        {
+            return None;
+        }
+        Some(path)
     }
 
     /// Returns `Interned::EMPTY` until a fill has been published. Lock-free.

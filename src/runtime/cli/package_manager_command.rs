@@ -9,10 +9,12 @@ use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, 
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
-    package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
+    package_json_write_back,
+    package_manager_options::{LogLevel, env_dir_resolved_and_as_written},
+    setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
-use bun_paths as Path;
+use bun_paths::{Path, resolve_path};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
@@ -41,16 +43,16 @@ struct NodeModulesFolder {
 /// `bun pm ls` lists what's on disk. The lockfile also has optional dependencies that were never
 /// installed, and pruned entries.
 struct InstalledFilter {
-    top_level_dir: bun_paths::Path,
+    top_level_dir: &'static [u8],
     store: BunStore,
 }
 
 impl InstalledFilter {
     /// `None` when there is no `node_modules`.
     fn init() -> Option<Self> {
-        let mut top_level_dir = bun_paths::Path::top_level_dir();
-        let has_node_modules = bun_sys::exists_z(&top_level_dir.child(b"node_modules"));
-        has_node_modules.then(|| Self {
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        let node_modules = Path::from_parts(&[top_level_dir, b"node_modules"]);
+        bun_sys::exists_z(&node_modules).then(|| Self {
             top_level_dir,
             store: BunStore::init(),
         })
@@ -79,9 +81,9 @@ impl InstalledFilter {
             // A pruned checkout (`turbo prune`, a Docker layer) is missing some of the lockfile's
             // workspaces.
             ResolutionTag::Workspace => {
-                // Windows treats a `..` that is left in an absolute path as a literal name.
-                let parts = [&self.top_level_dir, resolution.workspace().slice(buf)];
-                return bun_sys::exists_z(&bun_paths::Path::resolved_portable(&parts));
+                // Resolve `..`: Windows treats one that is left in an absolute path as a literal name.
+                let workspace = resolution.workspace().slice(buf);
+                return bun_sys::exists_z(&Path::resolve_any_sep(&[self.top_level_dir, workspace]));
             }
             _ => {}
         }
@@ -89,11 +91,11 @@ impl InstalledFilter {
         let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
             .name
             .slice(buf);
-        let is_linked = bun_sys::exists_z(&self.top_level_dir.child(dir).child(alias));
-        is_linked
+        bun_sys::exists_z(&Path::from_parts(&[self.top_level_dir, dir, alias]))
             || (or_in_store
-                && (self.store)
-                    .lookup(&mut self.top_level_dir, name, resolution, buf)
+                && self
+                    .store
+                    .lookup(self.top_level_dir, name, resolution, buf)
                     .is_some())
     }
 }
@@ -191,8 +193,11 @@ impl PackageManagerCommand {
                 "the bun executable",
                 bun_core::self_exe_path().ok().map(|exe| exe.as_bytes()),
             ),
-            ("$BUN_INSTALL", bun_install.map(|it| &*it[0])),
-            ("$BUN_INSTALL", bun_install.map(|it| &*it[1])),
+            ("$BUN_INSTALL", bun_install.map(|[resolved, _]| &**resolved)),
+            (
+                "$BUN_INSTALL",
+                bun_install.map(|[_, as_written]| &**as_written),
+            ),
             (
                 "the project directory",
                 Some(Fs::FileSystem::get().top_level_dir()),
@@ -212,8 +217,8 @@ impl PackageManagerCommand {
                 Err(_) => path,
             };
             if !matches!(
-                Path::resolve_path::is_parent_or_equal(dir, real),
-                Path::resolve_path::ParentEqual::Unrelated
+                resolve_path::is_parent_or_equal(dir, real),
+                resolve_path::ParentEqual::Unrelated
             ) {
                 return Some(what);
             }
@@ -335,10 +340,8 @@ impl PackageManagerCommand {
             PmViewCommand::view(pm, spec, fields, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
-            let output_path: &[u8] = &bun_paths::Path::resolved(&[
-                Fs::FileSystem::get().top_level_dir(),
-                pm.options.bin_path,
-            ]);
+            let output_path: &[u8] =
+                &Path::resolve(&[Fs::FileSystem::get().top_level_dir(), pm.options.bin_path]);
             bun_core::prettyln!("{}", bstr::BStr::new(output_path));
             if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {
                 bun_core::prettyln!("\n");
@@ -423,9 +426,9 @@ impl PackageManagerCommand {
                         .and_then(|install| install.cache_directory),
                 };
                 let configured = cli.cache_dir.or(user_cache_dir.as_deref());
-                let env_base = pm.options.env_base();
+                let env_base_dir = pm.options.env_base_dir();
                 let cache_dir =
-                    match fetch_cache_directory_path(&mut process_env, env_base, configured) {
+                    match fetch_cache_directory_path(&mut process_env, env_base_dir, configured) {
                         Ok(cache_dir) => cache_dir,
                         Err(err) => Self::crash_getting_cache_directory(err),
                     };
@@ -451,9 +454,10 @@ impl PackageManagerCommand {
                 };
                 let (rm_path, has_global_store) =
                     found.unwrap_or((cache_dir.path.as_slice(), false));
-                let bun_install = (process_env.get(b"BUN_INSTALL"))
+                let bun_install = process_env
+                    .get(b"BUN_INSTALL")
                     .filter(|dir| !dir.is_empty())
-                    .map(|dir| env_base.readings(dir));
+                    .map(|dir| env_dir_resolved_and_as_written(env_base_dir, dir));
                 let protected = found
                     .and_then(|(real, _)| Self::protected_in(real, bun_install.as_ref(), &cwd));
                 // The packages that bunx installed are inside the install cache, so count them

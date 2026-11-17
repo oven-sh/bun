@@ -2181,7 +2181,7 @@ pub(crate) mod strings_impl {
     }
     // ─── path basename ─────────────────────────────────────────────────────
     // Minimal code-unit trait so the generic basename impls can live at T0
-    // without pulling `bun_paths::PathChar` (T1), which extends it, down.
+    // without depending on `bun_paths::PathChar` (T1), which extends it.
     pub trait PathByte: Eq + crate::Pod {
         fn from_u8(b: u8) -> Self;
         /// `s` as the concrete slice it is, for code with a different kernel per width.

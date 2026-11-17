@@ -4,109 +4,128 @@ use core::cell::Cell;
 use core::fmt;
 
 use bun_core::strings;
-use bun_simdutf_sys::simdutf::{SIMDUTFResult, Status};
 
-use crate::backend::{Out, Overflow};
-use crate::path_unit::KNOWN_DIR_IN_TESTS;
+use crate::path_backend::PathBackend;
+use crate::path_style::VolumeKind;
+use crate::path_unit::PathUnit;
 use crate::platform::{Posix, Windows};
-use crate::style::Volume;
-use crate::style::sealed::Grammar;
 use crate::{
-    Backend, Borrowed, Heap, MAX_PATH_BYTES, NameTooLong, PATH_MAX_WIDE, Path, PathIn, PathUnit,
-    Pool, PoolPath, SlicePath, Spill, Stack, StackPath, Style, VecPath,
+    GenericPath, MAX_PATH_BYTES, NameTooLong, PATH_MAX_WIDE, Path, PathStyle, PoolBackend,
+    PoolOrVecBackend, PoolPath, SliceBackend, SlicePath, StackBackend, StackPath, VecBackend,
+    VecPath,
 };
 
-unsafe fn slice<'a, T>(units: *const T, len: usize) -> &'a [T] {
-    // SAFETY: the callers of the stand-ins pass a slice as a pointer and a length.
-    unsafe { core::slice::from_raw_parts(units, len) }
-}
+/// What `fs::with_known_dirs` reports in tests.
+pub(crate) const KNOWN_DIR: &[u8] = br"/a\A/..\bc/a\/\a/C:\a/a\A\a/b\..\..\a/\";
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_index_of_untidy_slash(path: *const u8, len: usize) -> usize {
-    // SAFETY: see `slice`.
-    let path = unsafe { slice(path, len) };
-    let is_untidy = |at: &usize| {
-        matches!(
-            path[*at..],
-            [b'/', b'/', ..]
-                | [b'/', b'.']
-                | [b'/', b'.', b'/', ..]
-                | [b'/', b'.', b'.']
-                | [b'/', b'.', b'.', b'/', ..]
-        )
-    };
-    (0..len).find(is_untidy).unwrap_or(len)
-}
+/// Stand in for the C++ functions, which are not linked into this test binary.
+mod ffi_stubs {
+    use bun_core::strings;
+    use bun_simdutf_sys::simdutf::{SIMDUTFResult, Status};
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_last_index_of_slash(path: *const u8, len: usize) -> usize {
-    // SAFETY: see `slice`.
-    strings::last_index_of_char(unsafe { slice(path, len) }, b'/').unwrap_or(len)
-}
+    const SURROGATE: Status = Status(6);
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_count_slashes(path: *const u8, len: usize) -> usize {
-    // SAFETY: see `slice`.
-    strings::count_char(unsafe { slice(path, len) }, b'/')
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize {
-    // SAFETY: see `slice`.
-    let (a, b) = unsafe { (slice(a, len), slice(b, len)) };
-    (0..len).find(|&at| a[at] != b[at]).unwrap_or(len)
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_memmem16(h: *const u16, n: usize, nd: *const u16, k: usize) -> usize {
-    // SAFETY: see `slice`.
-    let (h, nd) = unsafe { (slice(h, n), slice(nd, k)) };
-    (0..n)
-        .find(|&at| h[at..].starts_with(nd))
-        .unwrap_or(usize::MAX)
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
-    units: *const u16,
-    len: usize,
-) -> usize {
-    // SAFETY: see `slice`.
-    char::decode_utf16(unsafe { slice(units, len) }.iter().copied())
-        .map(|c| c.map_or(3, char::len_utf8))
-        .sum()
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
-    units: *const u16,
-    len: usize,
-    out: *mut u8,
-) -> SIMDUTFResult {
-    let mut count = 0;
-    // SAFETY: see `slice`.
-    for c in char::decode_utf16(unsafe { slice(units, len) }.iter().copied()) {
-        let Ok(c) = c else {
-            return SIMDUTFResult {
-                status: Status(6),
-                count,
-            };
-        };
-        for byte in c.encode_utf8(&mut [0; 4]).bytes() {
-            // SAFETY: that the caller has reserved the room is what Miri checks here.
-            unsafe { out.add(count).write(byte) };
-            count += 1;
-        }
+    unsafe fn slice_from_raw<'a, T>(units: *const T, len: usize) -> &'a [T] {
+        // SAFETY: the callers of the stubs pass a slice as a pointer and a length.
+        unsafe { core::slice::from_raw_parts(units, len) }
     }
-    SIMDUTFResult {
-        status: Status::SUCCESS,
-        count,
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_untidy_slash(path: *const u8, len: usize) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        let path = unsafe { slice_from_raw(path, len) };
+        let is_untidy = |at: &usize| {
+            matches!(
+                path[*at..],
+                [b'/', b'/', ..]
+                    | [b'/', b'.']
+                    | [b'/', b'.', b'/', ..]
+                    | [b'/', b'.', b'.']
+                    | [b'/', b'.', b'.', b'/', ..]
+            )
+        };
+        (0..len).find(is_untidy).unwrap_or(len)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_last_index_of_slash(path: *const u8, len: usize) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        strings::last_index_of_char(unsafe { slice_from_raw(path, len) }, b'/').unwrap_or(len)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_count_slashes(path: *const u8, len: usize) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        strings::count_char(unsafe { slice_from_raw(path, len) }, b'/')
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_common_prefix_length(
+        a: *const u8,
+        b: *const u8,
+        len: usize,
+    ) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        let (a, b) = unsafe { (slice_from_raw(a, len), slice_from_raw(b, len)) };
+        (0..len).find(|&at| a[at] != b[at]).unwrap_or(len)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_memmem16(
+        h: *const u16,
+        n: usize,
+        nd: *const u16,
+        k: usize,
+    ) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        let (h, nd) = unsafe { (slice_from_raw(h, n), slice_from_raw(nd, k)) };
+        (0..n)
+            .find(|&at| h[at..].starts_with(nd))
+            .unwrap_or(usize::MAX)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
+        units: *const u16,
+        len: usize,
+    ) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        char::decode_utf16(unsafe { slice_from_raw(units, len) }.iter().copied())
+            .map(|c| c.map_or(3, char::len_utf8))
+            .sum()
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
+        units: *const u16,
+        len: usize,
+        out: *mut u8,
+    ) -> SIMDUTFResult {
+        let mut count = 0;
+        // SAFETY: see `slice_from_raw`.
+        for c in char::decode_utf16(unsafe { slice_from_raw(units, len) }.iter().copied()) {
+            let Ok(c) = c else {
+                return SIMDUTFResult {
+                    status: SURROGATE,
+                    count,
+                };
+            };
+            for byte in c.encode_utf8(&mut [0; 4]).bytes() {
+                // SAFETY: the caller reserved the space, which Miri checks here.
+                unsafe { out.add(count).write(byte) };
+                count += 1;
+            }
+        }
+        SIMDUTFResult {
+            status: Status::SUCCESS,
+            count,
+        }
     }
 }
 
 thread_local!(static ALLOCATIONS: Cell<usize> = const { Cell::new(0) });
 
-/// Miri rejects how `System` frees an over-aligned box on Windows.
+/// Off under Miri, which rejects how `System` frees an over-aligned box on Windows.
 #[cfg(not(miri))]
 mod counting {
     use std::alloc::{GlobalAlloc, Layout, System};
@@ -115,7 +134,7 @@ mod counting {
 
     struct Counting;
 
-    // SAFETY: it is `System`.
+    // SAFETY: forwards to `System`.
     unsafe impl GlobalAlloc for Counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             ALLOCATIONS.set(ALLOCATIONS.get() + 1);
@@ -133,16 +152,16 @@ mod counting {
 }
 
 struct LooseOnPosix;
-impl Grammar for LooseOnPosix {
+impl PathStyle for LooseOnPosix {
     const SEP: u8 = b'/';
-    const LOOSE: bool = true;
+    const BACKSLASH_IS_SEP: bool = true;
     const WIN32: bool = false;
 }
 
 struct LooseOnWindows;
-impl Grammar for LooseOnWindows {
+impl PathStyle for LooseOnWindows {
     const SEP: u8 = b'/';
-    const LOOSE: bool = true;
+    const BACKSLASH_IS_SEP: bool = true;
     const WIN32: bool = true;
 }
 
@@ -164,7 +183,7 @@ fn text(bytes: &[u8]) -> &str {
     core::str::from_utf8(bytes).unwrap()
 }
 
-fn cwd() -> &'static str {
+fn init_cwd() -> &'static str {
     crate::fs::FileSystem::init(b"/cwd/");
     text(crate::fs::top_level_dir())
 }
@@ -172,143 +191,131 @@ fn cwd() -> &'static str {
 #[derive(Debug, Clone)]
 enum Op {
     Set(String),
-    Append(String),
+    ExtendFromSlice(String),
+    Prepend(String),
     WriteFmt(String, String),
     Push(String),
-    PushPortable(String),
+    PushAnySep(String),
     PushFmt(String, String),
-    Pop,
     SetBasename(String),
     SetExtension(String),
-    ReplacePrefix(usize, String),
-    EndWithSep,
-    TrimTrailingSep,
-    Normalize,
+    PushTrailingSep,
+    CopyTrailingSepFrom(String),
     Join(Vec<String>),
     Resolve(Vec<String>),
-    ResolvePortable(Vec<String>),
-    SetRelative(String, String),
-    SetRelativePortable(String, String),
-    AddLongPrefix,
-    AddNtPrefix,
-    RemoveWin32Prefix,
+    ResolveAnySep(Vec<String>),
+    Relative(String, String),
+    RelativeAnySep(String, String),
+    MakeLongPath,
+    MakeNtPath,
+    StripNtPrefix,
 }
 
-fn apply<B: Backend<Unit: Unit>, S: Style, C: Unit>(
-    path: &mut PathIn<B, S>,
-    before: &str,
+const NORMALIZE: Op = Op::Join(Vec::new());
+
+fn apply<B: PathBackend<Unit: Unit>, S: PathStyle, C: Unit>(
+    path: &mut GenericPath<B, S>,
     op: &Op,
-) -> Out<B, ()> {
-    let with_parts = |parts: &[String], run: &mut dyn FnMut(&[&[C]]) -> Out<B, ()>| {
+) -> B::Output<()> {
+    let with_parts = |parts: &[String], f: &mut dyn FnMut(&[&[C]]) -> B::Output<()>| {
         let parts: Vec<Vec<C>> = parts.iter().map(|part| C::encode(part)).collect();
-        run(&parts.iter().map(|part| &part[..]).collect::<Vec<_>>())
+        f(&parts.iter().map(|part| &part[..]).collect::<Vec<_>>())
     };
+    let encode = B::Unit::encode;
     match op {
-        Op::Set(it) => return path.set(&C::encode(it)),
-        Op::Append(it) => return path.append(&C::encode(it)),
-        Op::WriteFmt(a, b) => return write!(path, "{a}{b}"),
-        Op::Push(it) => return path.push(&C::encode(it)),
-        Op::PushPortable(it) => return path.push_portable(&C::encode(it)),
-        Op::PushFmt(a, b) => return path.push_fmt(format_args!("{a}{b}")),
-        Op::SetBasename(it) => return path.set_basename(&C::encode(it)),
-        Op::SetExtension(it) => return path.set_extension(&C::encode(it)),
-        Op::ReplacePrefix(chars, it) => {
-            let prefix: String = before.chars().take(*chars).collect();
-            return path.replace_prefix(B::Unit::encode(&prefix).len(), &B::Unit::encode(it));
+        Op::Set(arg) => path.set(&C::encode(arg)),
+        Op::ExtendFromSlice(arg) => path.extend_from_slice(&C::encode(arg)),
+        Op::Prepend(arg) => path.prepend(&encode(arg)),
+        Op::WriteFmt(a, b) => write!(path, "{a}{b}"),
+        Op::Push(arg) => path.push(&C::encode(arg)),
+        Op::PushAnySep(arg) => path.push_any_sep(&C::encode(arg)),
+        Op::PushFmt(a, b) => path.push_fmt(format_args!("{a}{b}")),
+        Op::SetBasename(arg) => path.set_basename(&C::encode(arg)),
+        Op::SetExtension(arg) => path.set_extension(&C::encode(arg)),
+        Op::PushTrailingSep => path.push_trailing_sep(),
+        Op::CopyTrailingSepFrom(arg) => path.copy_trailing_sep_from(&C::encode(arg)),
+        Op::Join(parts) => with_parts(parts, &mut |parts| B::output(path.try_join(parts))),
+        Op::Resolve(parts) => with_parts(parts, &mut |parts| path.resolve_in_place(parts)),
+        Op::ResolveAnySep(parts) => {
+            with_parts(parts, &mut |parts| path.resolve_any_sep_in_place(parts))
         }
-        Op::EndWithSep => return path.end_with_sep(),
-        Op::Normalize => return path.normalize(),
-        Op::Join(parts) => return with_parts(parts, &mut |parts| path.join(parts)),
-        Op::Resolve(parts) => return with_parts(parts, &mut |parts| path.resolve(parts)),
-        Op::ResolvePortable(parts) => {
-            return with_parts(parts, &mut |parts| path.resolve_portable(parts));
+        Op::Relative(from, to) => B::output(path.try_relative::<false>(&encode(from), &encode(to))),
+        Op::RelativeAnySep(from, to) => {
+            B::output(path.try_relative::<true>(&encode(from), &encode(to)))
         }
-        Op::SetRelative(from, to) => {
-            return path.set_relative(&B::Unit::encode(from), &B::Unit::encode(to));
+        Op::MakeLongPath => path.make_long_path(),
+        Op::MakeNtPath => path.make_nt_path(),
+        Op::StripNtPrefix => {
+            path.strip_nt_prefix();
+            B::output(Ok(()))
         }
-        Op::SetRelativePortable(from, to) => {
-            return path.set_relative_portable(&B::Unit::encode(from), &B::Unit::encode(to));
-        }
-        Op::AddLongPrefix => return path.add_long_prefix(),
-        Op::AddNtPrefix => return path.add_nt_prefix(),
-        Op::Pop => drop(path.pop()),
-        Op::TrimTrailingSep => path.trim_trailing_sep(),
-        Op::RemoveWin32Prefix => path.remove_win32_prefix(),
     }
-    B::Error::out(Ok(()))
 }
 
-fn run<S: Style>(before: &str, op: &Op) -> String {
-    cwd();
-    let mut path = PathIn::<Heap, S>::from(before.as_bytes());
-    apply::<_, S, u8>(&mut path, before, op);
+fn actual<S: PathStyle>(before: &str, op: &Op) -> String {
+    init_cwd();
+    let mut path = GenericPath::<VecBackend, S>::from(before.as_bytes());
+    apply::<_, S, u8>(&mut path, op);
     text(&path).to_owned()
 }
 
-/// What the operations are meant to do, in terms of lists of names.
+/// Slow reference implementation.
 mod model {
     use super::*;
 
     pub(super) struct Parsed {
-        pub(super) kind: Volume,
-        /// Tidy.
+        pub(super) kind: VolumeKind,
+        /// Normalized, e.g. `C:`.
         pub(super) volume: String,
         pub(super) root: String,
         /// What follows the volume.
         pub(super) tail: String,
-        pub(super) names: Vec<String>,
+        pub(super) components: Vec<String>,
     }
 
     impl Parsed {
         fn has_sep(&self) -> bool {
-            self.tail.len() > self.names_text().len()
-        }
-        fn names_text(&self) -> &str {
-            let volume_len = self.root.len().min(self.root.len() - self.root_sep_len());
-            &self.tail[self.root.len() - volume_len..]
-        }
-        fn root_sep_len(&self) -> usize {
-            usize::from(self.root.ends_with(['/', '\\']) && self.tail.starts_with(['/', '\\']))
+            self.root.ends_with(['/', '\\']) && self.tail.starts_with(['/', '\\'])
         }
         pub(super) fn is_absolute(&self) -> bool {
-            self.has_sep() || matches!(self.kind, Volume::Share | Volume::Device)
+            self.has_sep() || matches!(self.kind, VolumeKind::Unc | VolumeKind::Device)
         }
     }
 
-    pub(super) fn is_sep<S: Style>(c: char) -> bool {
-        c == '/' || (S::LOOSE && c == '\\')
+    pub(super) fn is_sep<S: PathStyle>(c: char) -> bool {
+        c == '/' || (S::BACKSLASH_IS_SEP && c == '\\')
     }
 
-    fn sep<S: Style>() -> String {
+    fn sep<S: PathStyle>() -> String {
         char::from(S::SEP).to_string()
     }
 
-    pub(super) fn names<S: Style>(path: &str) -> Vec<String> {
+    pub(super) fn components<S: PathStyle>(path: &str) -> Vec<String> {
         let chars: Vec<char> = path.chars().collect();
-        let names = chars
+        let components = chars
             .split(|&c| is_sep::<S>(c))
-            .filter(|name| !name.is_empty());
-        names.map(String::from_iter).collect()
+            .filter(|component| !component.is_empty());
+        components.map(String::from_iter).collect()
     }
 
-    fn with_seps<S: Style>(path: &str) -> String {
-        let write = |c| {
+    fn normalize_seps<S: PathStyle>(path: &str) -> String {
+        let normalize = |c| {
             if is_sep::<S>(c) {
                 char::from(S::SEP)
             } else {
                 c
             }
         };
-        path.chars().map(write).collect()
+        path.chars().map(normalize).collect()
     }
 
-    pub(super) fn parse<S: Style>(path: &str) -> Parsed {
+    pub(super) fn parse<S: PathStyle>(path: &str) -> Parsed {
         let chars: Vec<char> = path.chars().collect();
         let sep_at = |at: usize| chars.get(at).is_some_and(|&c| is_sep::<S>(c));
-        let all = names::<S>(path);
+        let all = components::<S>(path);
         let is_double = S::WIN32 && sep_at(0) && sep_at(1) && chars.len() > 2 && !sep_at(2);
         let is_nt = S::SEP == b'\\' && (path == r"\??" || path.starts_with(r"\??\"));
-        let is_drive = S::LOOSE
+        let is_drive = S::BACKSLASH_IS_SEP
             && !sep_at(0)
             && chars.get(1) == Some(&':')
             && chars[0].len_utf16() == 1
@@ -316,15 +323,17 @@ mod model {
 
         let (kind, volume, volume_len) = if is_double || is_nt {
             let is_device = is_nt || all[0] == "." || all[0] == "?";
-            let is_unc = all.get(1).is_some_and(|it| it.eq_ignore_ascii_case("unc"));
+            let is_unc = all
+                .get(1)
+                .is_some_and(|name| name.eq_ignore_ascii_case("unc"));
             let count = all.len().min(if is_device && is_unc { 4 } else { 2 });
             let ends = (1..=chars.len())
                 .filter(|&at| !sep_at(at - 1) && (sep_at(at) || at == chars.len()));
             (
                 if is_device {
-                    Volume::Device
+                    VolumeKind::Device
                 } else {
-                    Volume::Share
+                    VolumeKind::Unc
                 },
                 sep::<S>().repeat(if is_nt { 1 } else { 2 }) + &all[..count].join(&sep::<S>()),
                 ends.take(count).last().unwrap(),
@@ -335,30 +344,30 @@ mod model {
             } else {
                 chars[0]
             };
-            (Volume::Drive, format!("{letter}:"), 2)
+            (VolumeKind::Drive, format!("{letter}:"), 2)
         } else {
-            (Volume::None, String::new(), 0)
+            (VolumeKind::None, String::new(), 0)
         };
         let tail = String::from_iter(&chars[volume_len..]);
         Parsed {
             kind,
             volume,
             root: String::from_iter(&chars[..volume_len + usize::from(sep_at(volume_len))]),
-            names: names::<S>(&tail),
+            components: components::<S>(&tail),
             tail,
         }
     }
 
-    fn guarded<S: Style>(before: &Parsed, mut path: String) -> String {
-        if before.kind == Volume::None && parse::<S>(&path).kind != Volume::None {
+    fn prevent_new_volume<S: PathStyle>(before: &Parsed, mut path: String) -> String {
+        if before.kind == VolumeKind::None && parse::<S>(&path).kind != VolumeKind::None {
             path.insert_str(before.root.len(), &format!(".{}", sep::<S>()));
         }
         path
     }
 
-    fn reduced(parsed: &Parsed) -> Vec<String> {
+    fn collapse_dots(parsed: &Parsed) -> Vec<String> {
         let mut kept: Vec<String> = Vec::new();
-        for name in &parsed.names {
+        for name in &parsed.components {
             if name == ".." && kept.last().is_some_and(|last| last != "..") {
                 kept.pop();
             } else if name != "." && !(name == ".." && parsed.is_absolute()) {
@@ -368,72 +377,75 @@ mod model {
         kept
     }
 
-    fn render<S: Style>(parsed: &Parsed) -> String {
-        let mut kept = reduced(parsed);
+    fn render<S: PathStyle>(parsed: &Parsed, trailing_sep: bool) -> String {
+        let mut kept = collapse_dots(parsed);
         if kept.is_empty() && !parsed.is_absolute() {
             kept.push(".".into());
         }
         let mut path = parsed.volume.clone();
-        if parsed.has_sep() || parsed.kind == Volume::Share {
+        if parsed.has_sep() || parsed.kind == VolumeKind::Unc {
             path += &sep::<S>();
         }
         path += &kept.join(&sep::<S>());
-        if !kept.is_empty() && parsed.tail.ends_with(is_sep::<S>) {
+        if !kept.is_empty() && trailing_sep {
             path += &sep::<S>();
         }
-        guarded::<S>(parsed, path)
+        prevent_new_volume::<S>(parsed, path)
     }
 
-    /// `path` with the root of a path that has no volume.
-    fn without_volume<S: Style>(path: &str, is_absolute: bool) -> Parsed {
+    /// Parses `path` as if it had no drive or share.
+    fn without_volume<S: PathStyle>(path: &str, is_absolute: bool) -> Parsed {
         Parsed {
-            kind: Volume::None,
+            kind: VolumeKind::None,
             volume: String::new(),
             root: path.chars().take(usize::from(is_absolute)).collect(),
             tail: path.into(),
-            names: names::<S>(path),
+            components: components::<S>(path),
         }
     }
 
-    fn join<S: Style>(parts: &[&str]) -> String {
-        let parts: Vec<&str> = parts.iter().copied().filter(|it| !it.is_empty()).collect();
+    fn join<S: PathStyle>(parts: &[&str]) -> String {
+        let parts = parts.iter().copied().filter(|part| !part.is_empty());
+        let parts: Vec<&str> = parts.collect();
         let first = parse::<S>(parts.first().unwrap_or(&""));
         let all = parts.join(&sep::<S>());
-        render::<S>(&match first.kind {
-            Volume::None => without_volume::<S>(&all, first.is_absolute()),
+        let parsed = match first.kind {
+            VolumeKind::None => without_volume::<S>(&all, first.is_absolute()),
             _ => parse::<S>(&all),
-        })
+        };
+        render::<S>(&parsed, parsed.tail.ends_with(is_sep::<S>))
     }
 
-    pub(super) fn is_same<S: Style>(a: &str, b: &str) -> bool {
-        let (a, b) = (with_seps::<S>(a), with_seps::<S>(b));
+    pub(super) fn eq_path<S: PathStyle>(a: &str, b: &str) -> bool {
+        let (a, b) = (normalize_seps::<S>(a), normalize_seps::<S>(b));
         a == b || (S::WIN32 && a.eq_ignore_ascii_case(&b))
     }
 
-    fn resolve_to_parsed<S: Style>(parts: &[&str]) -> Parsed {
-        let parts = parts.iter().filter(|it| !it.is_empty());
-        let parts: Vec<(&str, Parsed)> = parts.map(|&it| (it, parse::<S>(it))).collect();
+    fn resolve_to_parsed<S: PathStyle>(parts: &[&str]) -> Parsed {
+        let parts = parts.iter().filter(|part| !part.is_empty());
+        let parts: Vec<(&str, Parsed)> = parts.map(|&part| (part, parse::<S>(part))).collect();
         let raw_volume =
             |(part, parsed): &(&str, Parsed)| part[..part.len() - parsed.tail.len()].to_owned();
         let volume = parts
             .iter()
             .map(raw_volume)
-            .rfind(|it| !it.is_empty())
+            .rfind(|volume| !volume.is_empty())
             .unwrap_or_default();
         let is_base = |at: usize| {
             let parsed = &parts[at].1;
             parsed.is_absolute()
-                || (at == 0 && parsed.kind == Volume::Drive && parsed.tail.is_empty())
+                || (at == 0 && parsed.kind == VolumeKind::Drive && parsed.tail.is_empty())
         };
         let is_relevant = |at: &usize| {
-            let its = raw_volume(&parts[*at]);
-            its.is_empty() || with_seps::<S>(&its).eq_ignore_ascii_case(&with_seps::<S>(&volume))
+            let part_volume = normalize_seps::<S>(&raw_volume(&parts[*at]));
+            part_volume.is_empty()
+                || part_volume.eq_ignore_ascii_case(&normalize_seps::<S>(&volume))
         };
         let relevant: Vec<usize> = (0..parts.len()).filter(is_relevant).collect();
         let start = relevant.iter().rposition(|&at| is_base(at)).unwrap_or(0);
         let tails = relevant[start..].iter().map(|&at| &parts[at].1.tail[..]);
         let tail = tails
-            .filter(|it| !it.is_empty())
+            .filter(|tail| !tail.is_empty())
             .collect::<Vec<_>>()
             .join("/");
         let is_absolute = (0..parts.len()).any(is_base);
@@ -441,49 +453,49 @@ mod model {
             return without_volume::<S>(&tail, is_absolute);
         }
         let is_drive = !volume.starts_with(is_sep::<S>);
-        let glue = match (is_drive, tail.is_empty()) {
-            (true, _) if is_absolute => "/",
-            (false, false) => &sep::<S>(),
-            _ => "",
+        let needs_sep = if is_drive {
+            is_absolute
+        } else {
+            !tail.is_empty()
         };
-        parse::<S>(&format!("{volume}{glue}{tail}"))
+        let sep = if needs_sep { sep::<S>() } else { String::new() };
+        parse::<S>(&format!("{volume}{sep}{tail}"))
     }
 
-    pub(super) fn resolve<S: Style>(parts: &[&str]) -> String {
-        render::<S>(&resolve_to_parsed::<S>(parts))
+    pub(super) fn resolve<S: PathStyle>(parts: &[&str]) -> String {
+        render::<S>(&resolve_to_parsed::<S>(parts), false)
     }
 
-    fn relative<S: Style>(from: &str, to: &str) -> String {
-        let [from, to] = [from, to].map(|path| resolve_to_parsed::<S>(&[cwd(), path]));
-        if !is_same::<S>(&from.volume, &to.volume) {
-            let path = render::<S>(&to);
-            let root = parse::<S>(&path).root;
-            return trimmed::<S>(&path, root.len()).into();
+    fn relative<S: PathStyle>(from: &str, to: &str) -> String {
+        let from = resolve_to_parsed::<S>(&[init_cwd(), from]);
+        let to = resolve_to_parsed::<S>(&[init_cwd(), to]);
+        if !eq_path::<S>(&from.volume, &to.volume) {
+            return render::<S>(&to, false);
         }
-        let (from, to) = (reduced(&from), reduced(&to));
+        let (from, to) = (collapse_dots(&from), collapse_dots(&to));
         let common = from
             .iter()
             .zip(&to)
-            .take_while(|(a, b)| is_same::<S>(a, b))
+            .take_while(|(a, b)| eq_path::<S>(a, b))
             .count();
-        let mut names = vec!["..".to_owned(); from.len() - common];
-        names.extend_from_slice(&to[common..]);
-        guarded::<S>(&parse::<S>(""), names.join(&sep::<S>()))
+        let mut components = vec!["..".to_owned(); from.len() - common];
+        components.extend_from_slice(&to[common..]);
+        prevent_new_volume::<S>(&parse::<S>(""), components.join(&sep::<S>()))
     }
 
-    fn trimmed<S: Style>(path: &str, least: usize) -> &str {
-        &path[..path.trim_end_matches(is_sep::<S>).len().max(least)]
+    pub(super) fn without_trailing_sep<S: PathStyle>(path: &str, min_len: usize) -> &str {
+        &path[..path.trim_end_matches(is_sep::<S>).len().max(min_len)]
     }
 
-    fn push<S: Style>(path: &str, part: &str, sep_is_wanted: bool) -> String {
+    fn push<S: PathStyle>(path: &str, part: &str) -> String {
         let parsed = parse::<S>(part);
         if path.is_empty() && !parsed.root.is_empty() {
-            return guarded::<S>(
+            return prevent_new_volume::<S>(
                 &parsed,
-                with_seps::<S>(trimmed::<S>(part, parsed.root.len())),
+                normalize_seps::<S>(without_trailing_sep::<S>(part, parsed.root.len())),
             );
         }
-        let mut rest = trimmed::<S>(part, 0);
+        let mut rest = without_trailing_sep::<S>(part, 0);
         loop {
             rest = rest.trim_start_matches(is_sep::<S>);
             match rest.strip_prefix('.') {
@@ -499,21 +511,20 @@ mod model {
             }
             .into();
         }
-        let needs_sep = sep_is_wanted && !path.is_empty() && !path.ends_with(is_sep::<S>);
-        let glue = if needs_sep { sep::<S>() } else { String::new() };
-        let pushed = format!("{path}{glue}{}", with_seps::<S>(rest));
+        let needs_sep = !path.is_empty() && !path.ends_with(is_sep::<S>);
+        let sep = if needs_sep { sep::<S>() } else { String::new() };
+        let pushed = format!("{path}{sep}{}", normalize_seps::<S>(rest));
         match path.len() {
-            0 | 1 => guarded::<S>(&parse::<S>(path), pushed),
+            0 | 1 => prevent_new_volume::<S>(&parse::<S>(path), pushed),
             _ => pushed,
         }
     }
 
-    /// Without the last name and the separators around it.
-    pub(super) fn parent<S: Style>(path: &str) -> &str {
+    pub(super) fn parent<S: PathStyle>(path: &str) -> &str {
         let parsed = parse::<S>(path);
-        let path = trimmed::<S>(path, parsed.root.len());
-        let name_len = parsed.names.last().map_or(0, String::len);
-        trimmed::<S>(&path[..path.len() - name_len], parsed.root.len())
+        let path = without_trailing_sep::<S>(path, parsed.root.len());
+        let name_len = parsed.components.last().map_or(0, String::len);
+        without_trailing_sep::<S>(&path[..path.len() - name_len], parsed.root.len())
     }
 
     pub(super) fn extension(name: &str) -> &str {
@@ -523,117 +534,116 @@ mod model {
         }
     }
 
-    fn add_namespace<S: Style>(path: &str, prefix: &str) -> String {
+    fn add_namespace_prefix<S: PathStyle>(path: &str, prefix: &str) -> String {
         if S::SEP != b'\\' {
             return path.into();
         }
         let path = join::<S>(&[path]);
         let parsed = parse::<S>(&path);
         match (parsed.kind, parsed.is_absolute(), prefix == r"\??\") {
-            (Volume::Drive, true, _) | (Volume::None, true, true) => format!("{prefix}{path}"),
-            (Volume::Share, ..) => format!(r"{prefix}UNC{}", &path[1..]),
-            (Volume::Device, _, true) => format!(r"\??{}", &path[3..]),
+            (VolumeKind::Drive, true, _) | (VolumeKind::None, true, true) => {
+                format!("{prefix}{path}")
+            }
+            (VolumeKind::Unc, ..) => format!(r"{prefix}UNC{}", &path[1..]),
+            (VolumeKind::Device, _, true) => format!(r"\??{}", &path[3..]),
             _ => path,
         }
     }
 
-    fn remove_namespace<S: Style>(path: &str) -> String {
+    fn strip_nt_prefix<S: PathStyle>(path: &str) -> String {
         let parsed = parse::<S>(path);
-        if parsed.kind != Volume::Device || &path[2..3] != "?" {
+        if parsed.kind != VolumeKind::Device || &path[2..3] != "?" {
             return path.into();
         }
         let inner = path[3..].trim_start_matches(is_sep::<S>);
-        let volume = names::<S>(&parsed.volume);
+        let volume = components::<S>(&parsed.volume);
         if volume.len() > 2 {
             let share = sep::<S>().repeat(2) + inner[3..].trim_start_matches(is_sep::<S>);
-            if parse::<S>(&share).kind == Volume::Share {
+            if parse::<S>(&share).kind == VolumeKind::Unc {
                 return share;
             }
-        } else if parse::<S>(inner).kind == Volume::Drive && parse::<S>(inner).is_absolute() {
+        } else if parse::<S>(inner).kind == VolumeKind::Drive && parse::<S>(inner).is_absolute() {
             return inner.into();
         }
         path.into()
     }
 
-    fn with_known_names(path: &str) -> String {
-        let is_known = |name: &str| text(KNOWN_DIR_IN_TESTS).split('/').any(|it| it == name);
-        let portable = |name: &str| {
+    fn convert_backslashes_except_known(path: &str) -> String {
+        let is_known = |name: &str| text(KNOWN_DIR).split('/').any(|known| known == name);
+        let convert = |name: &str| {
             let pieces: Vec<&str> = name.split('\\').collect();
             let kept = (1..=pieces.len()).rfind(|&n| is_known(&pieces[..n].join(r"\")));
-            let (kept, written) = pieces.split_at(kept.unwrap_or(1));
-            [&[&kept.join(r"\")[..]], written].concat().join("/")
+            let (kept, rest) = pieces.split_at(kept.unwrap_or(1));
+            [&[&kept.join(r"\")[..]], rest].concat().join("/")
         };
-        path.split('/').map(portable).collect::<Vec<_>>().join("/")
+        path.split('/').map(convert).collect::<Vec<_>>().join("/")
     }
 
-    fn portable(part: &String) -> String {
+    fn any_sep_to_posix(part: &String) -> String {
         match part.chars().next() {
-            Some('/') => with_known_names(part),
-            Some('\\') => format!("./{}", with_seps::<LooseOnPosix>(part)),
-            _ => with_seps::<LooseOnPosix>(part),
+            Some('/') => convert_backslashes_except_known(part),
+            Some('\\') => format!("./{}", normalize_seps::<LooseOnPosix>(part)),
+            _ => normalize_seps::<LooseOnPosix>(part),
         }
     }
 
-    pub(super) fn run<S: Style>(path: &str, op: &Op) -> String {
-        let with = |parts: &'_ [String], run: fn(&[&str]) -> String| {
+    pub(super) fn expected<S: PathStyle>(path: &str, op: &Op) -> String {
+        let with_path = |parts: &'_ [String], f: fn(&[&str]) -> String| {
             let mut all = vec![path];
             all.extend(parts.iter().map(|part| &part[..]));
-            run(&all)
+            f(&all)
         };
         let parsed = parse::<S>(path);
         match op {
-            Op::Set(it) => it.clone(),
-            Op::Append(it) => format!("{path}{it}"),
+            Op::Set(arg) => arg.clone(),
+            Op::ExtendFromSlice(arg) => format!("{path}{arg}"),
+            Op::Prepend(arg) => format!("{arg}{path}"),
             Op::WriteFmt(a, b) => format!("{path}{a}{b}"),
-            Op::Push(it) => push::<S>(path, it, true),
-            Op::PushPortable(it) if S::LOOSE || it.is_empty() => push::<S>(path, it, true),
-            Op::PushPortable(it) if path.is_empty() && it.starts_with('/') => {
-                push::<S>(path, &with_known_names(it), true)
+            Op::Push(arg) => push::<S>(path, arg),
+            Op::PushAnySep(arg) if S::BACKSLASH_IS_SEP || arg.is_empty() => push::<S>(path, arg),
+            Op::PushAnySep(arg) if path.is_empty() && arg.starts_with('/') => {
+                push::<S>(path, &convert_backslashes_except_known(arg))
             }
-            Op::PushPortable(it) => {
-                push::<S>(path, &format!("./{}", with_seps::<LooseOnPosix>(it)), true)
+            Op::PushAnySep(arg) => {
+                push::<S>(path, &format!("./{}", normalize_seps::<LooseOnPosix>(arg)))
             }
-            Op::PushFmt(a, b) => push::<S>(path, &format!("{a}{b}"), true),
-            Op::Pop if parsed.names.is_empty() => path.into(),
-            Op::Pop => parent::<S>(path).into(),
-            Op::SetBasename(it) => {
-                let follows_drive = parsed.names.len() == 1 && !parsed.is_absolute();
-                push::<S>(parent::<S>(path), it, !follows_drive)
-            }
-            Op::SetExtension(it) => match parsed.names.last().map(|name| &name[..]) {
-                None | Some("." | "..") => path.into(),
+            Op::PushFmt(a, b) => push::<S>(path, &format!("{a}{b}")),
+            Op::SetBasename(arg) => match parsed.components.last() {
+                None => push::<S>(path, arg),
                 Some(name) => {
-                    let path = trimmed::<S>(path, 0);
-                    format!("{}{it}", &path[..path.len() - extension(name).len()])
+                    let path = without_trailing_sep::<S>(path, 0);
+                    format!("{}{arg}", &path[..path.len() - name.len()])
                 }
             },
-            Op::ReplacePrefix(chars, it) => it.chars().chain(path.chars().skip(*chars)).collect(),
-            Op::EndWithSep if path.is_empty() || path.ends_with(is_sep::<S>) => path.into(),
-            Op::EndWithSep => format!("{path}{}", sep::<S>()),
-            Op::TrimTrailingSep => trimmed::<S>(path, parsed.root.len()).into(),
-            Op::Normalize => join::<S>(&[path]),
-            Op::Join(parts) => with(parts, join::<S>),
-            Op::Resolve(parts) => with(parts, resolve::<S>),
-            Op::ResolvePortable(parts) => {
-                let resolved = match S::LOOSE {
-                    true => with(parts, resolve::<S>),
-                    false => with(&Vec::from_iter(parts.iter().map(portable)), resolve::<S>),
-                };
-                let last = parts.concat().pop();
-                match last.is_some_and(|it| r"/\".replace(&sep::<S>(), "").contains(it)) {
-                    true => run::<S>(&resolved, &Op::TrimTrailingSep),
-                    false => resolved,
+            Op::SetExtension(arg) => match parsed.components.last().map(|name| &name[..]) {
+                None | Some("." | "..") => path.into(),
+                Some(name) => {
+                    let path = without_trailing_sep::<S>(path, 0);
+                    format!("{}{arg}", &path[..path.len() - extension(name).len()])
                 }
+            },
+            Op::PushTrailingSep if path.is_empty() || path.ends_with(is_sep::<S>) => path.into(),
+            Op::PushTrailingSep => format!("{path}{}", sep::<S>()),
+            Op::CopyTrailingSepFrom(arg) if arg.ends_with(is_sep::<S>) => {
+                expected::<S>(path, &Op::PushTrailingSep)
             }
-            Op::SetRelative(from, to) => relative::<S>(from, to),
-            Op::SetRelativePortable(from, to) if S::LOOSE => relative::<S>(from, to),
-            Op::SetRelativePortable(from, to) => {
-                let relative = relative::<S>(&portable(from), &portable(to));
-                reduced(&without_volume::<LooseOnPosix>(&relative, false)).join("/")
+            Op::CopyTrailingSepFrom(_) => path.into(),
+            Op::Join(parts) => with_path(parts, join::<S>),
+            Op::Resolve(parts) => with_path(parts, resolve::<S>),
+            Op::ResolveAnySep(parts) if S::BACKSLASH_IS_SEP => with_path(parts, resolve::<S>),
+            Op::ResolveAnySep(parts) => {
+                let parts: Vec<String> = parts.iter().map(any_sep_to_posix).collect();
+                with_path(&parts, resolve::<S>)
             }
-            Op::AddLongPrefix => add_namespace::<S>(path, r"\\?\"),
-            Op::AddNtPrefix => add_namespace::<S>(path, r"\??\"),
-            Op::RemoveWin32Prefix => remove_namespace::<S>(path),
+            Op::Relative(from, to) => relative::<S>(from, to),
+            Op::RelativeAnySep(from, to) if S::BACKSLASH_IS_SEP => relative::<S>(from, to),
+            Op::RelativeAnySep(from, to) => {
+                let relative = relative::<S>(&any_sep_to_posix(from), &any_sep_to_posix(to));
+                collapse_dots(&without_volume::<LooseOnPosix>(&relative, false)).join("/")
+            }
+            Op::MakeLongPath => add_namespace_prefix::<S>(path, r"\\?\"),
+            Op::MakeNtPath => add_namespace_prefix::<S>(path, r"\??\"),
+            Op::StripNtPrefix => strip_nt_prefix::<S>(path),
         }
     }
 }
@@ -666,96 +676,113 @@ impl Random {
     }
 
     fn op(&mut self, round: usize) -> Op {
-        match round % 26 {
+        const ARMS: usize = 25;
+        match round % ARMS {
             0 => Op::Set(self.path()),
-            1 => Op::Append(self.path()),
-            2 => Op::WriteFmt(self.path(), self.path()),
-            3 => Op::Push(self.path()),
-            4 => Op::PushPortable(self.path()),
-            5 => Op::PushFmt(self.path(), self.path()),
-            6 => Op::Pop,
+            1 => Op::ExtendFromSlice(self.path()),
+            2 => Op::Prepend(self.path()),
+            3 => Op::WriteFmt(self.path(), self.path()),
+            4 => Op::Push(self.path()),
+            5 => Op::PushAnySep(self.path()),
+            6 => Op::PushFmt(self.path(), self.path()),
             7 => Op::SetBasename(self.path()),
             8 => Op::SetExtension(self.path()),
-            9 => Op::ReplacePrefix(self.below(6), self.path()),
-            10 => Op::EndWithSep,
-            11 => Op::TrimTrailingSep,
-            12 => Op::Normalize,
-            13 | 14 => Op::Join(self.paths()),
-            15 | 16 => Op::Resolve(self.paths()),
-            17 => Op::ResolvePortable(self.paths()),
-            18 => Op::SetRelative(self.path(), self.path()),
-            19 | 20 => {
+            9 => Op::PushTrailingSep,
+            10 => NORMALIZE,
+            11 | 12 => Op::Join(self.paths()),
+            13 | 14 => Op::Resolve(self.paths()),
+            15 => Op::ResolveAnySep(self.paths()),
+            16 => Op::Relative(self.path(), self.path()),
+            17 | 18 => {
                 let base = self.path();
-                Op::SetRelative(base.clone() + &self.path(), base + &self.path())
+                Op::Relative(base.clone() + &self.path(), base + &self.path())
             }
-            21 => Op::SetRelativePortable(self.path(), self.path()),
-            22 => {
+            19 => Op::RelativeAnySep(self.path(), self.path()),
+            20 => {
                 let base = self.path();
-                Op::SetRelativePortable(base.clone() + &self.path(), base + &self.path())
+                Op::RelativeAnySep(base.clone() + &self.path(), base + &self.path())
             }
-            23 => Op::AddLongPrefix,
-            24 => Op::AddNtPrefix,
-            _ => Op::RemoveWin32Prefix,
+            21 => Op::MakeLongPath,
+            22 => Op::MakeNtPath,
+            23 => Op::CopyTrailingSepFrom(self.path()),
+            _ => Op::StripNtPrefix,
         }
     }
 }
 
 const ROUNDS: usize = if cfg!(miri) { 4 } else { 5_000 };
 
-fn is_terminated<B: Backend, S: Style>(path: &PathIn<B, S>) -> bool {
-    // SAFETY: that this is in bounds and initialized is the invariant of `PathIn`.
-    unsafe { *path.tail(usize::MAX).as_ptr() == <B::Unit as crate::PathByte>::from_u8(0) }
+fn is_terminated<B: PathBackend, S: PathStyle>(path: &GenericPath<B, S>) -> bool {
+    // SAFETY: the unit after the path is in bounds and initialized.
+    unsafe { *path.as_slice().as_ptr_range().end == *B::Unit::NUL }
 }
 
-/// It works if and only if the result fits, and changes nothing otherwise.
-fn check_every_capacity<S: Style, U: Unit, C: Unit>(before: &str, op: &Op, after: &str) {
+/// Succeeds exactly when the result fits. Otherwise the path is unchanged.
+fn check_every_capacity<S: PathStyle, U: Unit, C: Unit>(before: &str, op: &Op, after: &str) {
+    const EXTRA_CAPACITIES: usize = if cfg!(miri) { 2 } else { 48 };
     let (initial, expected) = (U::encode(before), U::encode(after));
-    let mut grown = PathIn::<Heap<U>, S>::from(&initial);
-    apply::<_, S, C>(&mut grown, before, op);
+    let mut grown = GenericPath::<VecBackend<U>, S>::from(&initial);
+    apply::<_, S, C>(&mut grown, op);
     assert_eq!(grown.as_slice(), expected, "{before:?} {op:?}");
     assert!(is_terminated(&grown));
 
-    let slack = if cfg!(miri) { 2 } else { 48 };
-    let around = expected.len().max(initial.len() + 1);
-    for capacity in around.saturating_sub(1).max(initial.len() + 1)..around + slack {
+    let min_capacity = initial.len() + 1;
+    let tightest = expected.len().max(min_capacity);
+    for capacity in (tightest - 1).max(min_capacity)..tightest + EXTRA_CAPACITIES {
         let mut buffer = vec![U::from_u8(b'#'); capacity + 1];
-        let mut path = PathIn::<Borrowed<'_, U>, S>::new_in(&mut buffer[..capacity]);
+        let mut path = GenericPath::<SliceBackend<'_, U>, S>::new(&mut buffer[..capacity]);
         path.set(&initial).unwrap();
-        let result = apply::<_, S, C>(&mut path, before, op);
+        let result = apply::<_, S, C>(&mut path, op);
         assert_eq!(
             result.is_ok(),
             expected.len() < capacity,
             "{before:?} {op:?} {capacity}"
         );
-        let left = if result.is_ok() { &expected } else { &initial };
-        assert_eq!(&**path.into_z(), left, "{before:?} {op:?} {capacity}");
-        assert_eq!(buffer[left.len()], U::from_u8(0));
+        let contents = if result.is_ok() { &expected } else { &initial };
+        assert_eq!(
+            &**path.into_zstr(),
+            contents,
+            "{before:?} {op:?} {capacity}"
+        );
+        assert_eq!(buffer[contents.len()], *U::NUL);
         assert_eq!(buffer[capacity], U::from_u8(b'#'));
     }
 }
 
-fn check_against_model<S: Style>() {
+fn check_against_model<S: PathStyle>() {
     let mut random = Random(0x9E37_79B9_7F4A_7C15);
     for round in 0..12 * ROUNDS {
-        let (before, op) = (random.path(), random.op(round));
-        let check = match random.below(4) {
+        let op = random.op(round);
+        let before = match op {
+            Op::Relative(..) | Op::RelativeAnySep(..) => String::new(),
+            _ => random.path(),
+        };
+        // Only `u8` paths have known directories.
+        let uses_known_dirs = !S::BACKSLASH_IS_SEP
+            && matches!(
+                op,
+                Op::PushAnySep(_) | Op::ResolveAnySep(_) | Op::RelativeAnySep(..)
+            );
+        let check = match random.below(if uses_known_dirs { 2 } else { 4 }) {
             0 => check_every_capacity::<S, u8, u8>,
             1 => check_every_capacity::<S, u8, u16>,
             2 => check_every_capacity::<S, u16, u8>,
             _ => check_every_capacity::<S, u16, u16>,
         };
-        check(&before, &op, &model::run::<S>(&before, &op));
+        check(&before, &op, &model::expected::<S>(&before, &op));
     }
 }
 
-fn check_views<S: Style, U: Unit>(path: &str, dir: &str) {
+fn check_style_getters<S: PathStyle, U: Unit>(path: &str, dir: &str) {
     let (units, parsed) = (U::encode(path), model::parse::<S>(path));
-    let after_drive = if parsed.kind == Volume::Drive {
+    let after_drive = if parsed.kind == VolumeKind::Drive {
         &parsed.tail
     } else {
         path
     };
-    let name = &model::names::<S>(after_drive).pop().unwrap_or_default()[..];
+    let name = &model::components::<S>(after_drive)
+        .pop()
+        .unwrap_or_default()[..];
     let stem = &name[..name.len() - model::extension(name).len()];
     assert_eq!(S::root(&units), U::encode(&parsed.root), "{path:?}");
     assert_eq!(S::is_absolute(&units), parsed.is_absolute(), "{path:?}");
@@ -767,7 +794,11 @@ fn check_views<S: Style, U: Unit>(path: &str, dir: &str) {
         "{path:?}"
     );
 
-    let names: Vec<Vec<U>> = parsed.names.iter().map(|name| U::encode(name)).collect();
+    let names: Vec<Vec<U>> = parsed
+        .components
+        .iter()
+        .map(|name| U::encode(name))
+        .collect();
     assert!(
         S::components(&units).eq(names.iter().map(|name| &name[..])),
         "{path:?}"
@@ -776,6 +807,13 @@ fn check_views<S: Style, U: Unit>(path: &str, dir: &str) {
         S::components(&units)
             .rev()
             .eq(names.iter().rev().map(|name| &name[..])),
+        "{path:?}"
+    );
+
+    let trimmed = model::without_trailing_sep::<S>(path, parsed.root.len());
+    assert_eq!(
+        S::without_trailing_sep(&units),
+        U::encode(trimmed),
         "{path:?}"
     );
 
@@ -793,26 +831,22 @@ fn check_views<S: Style, U: Unit>(path: &str, dir: &str) {
         names.len() + usize::from(root_counts),
         "{path:?}"
     );
-    for (ups, ancestor) in S::ancestors(&units).enumerate() {
-        let rest = S::strip_dir(&units, ancestor).unwrap_or_else(|| panic!("{path:?} {ups}"));
-        assert!(
-            rest.split(|&it| S::is_sep(it))
-                .filter(|it| !it.is_empty())
-                .count()
-                == ups
-        );
+    for (depth, ancestor) in S::ancestors(&units).enumerate() {
+        let rest = S::strip_prefix(&units, ancestor).unwrap_or_else(|| panic!("{path:?} {depth}"));
+        let below = rest.split(|&unit| S::is_sep(unit));
+        assert_eq!(below.filter(|name| !name.is_empty()).count(), depth);
     }
 
-    if let Some(rest) = S::strip_dir(path.as_bytes(), dir.as_bytes()).map(text) {
+    if let Some(rest) = S::strip_prefix(path.as_bytes(), dir.as_bytes()).map(text) {
         assert!(path.ends_with(rest) && !rest.starts_with(model::is_sep::<S>));
         assert!(
-            parsed.names.ends_with(&model::names::<S>(rest)),
+            parsed.components.ends_with(&model::components::<S>(rest)),
             "{path:?} {dir:?}"
         );
-        let both = [model::names::<S>(dir), model::names::<S>(rest)].concat();
-        assert!(model::is_same::<S>(
+        let both = [model::components::<S>(dir), model::components::<S>(rest)].concat();
+        assert!(model::eq_path::<S>(
             &both.join("/"),
-            &model::names::<S>(path).join("/")
+            &model::components::<S>(path).join("/")
         ));
         assert_eq!(
             dir.starts_with(model::is_sep::<S>),
@@ -821,7 +855,7 @@ fn check_views<S: Style, U: Unit>(path: &str, dir: &str) {
     }
 }
 
-fn check_laws<S: Style>() {
+fn check_invariants<S: PathStyle>() {
     let mut random = Random(0x2545_F491_4F6C_DD1D);
     let kind = |path: &str| {
         let parsed = model::parse::<S>(path);
@@ -829,40 +863,45 @@ fn check_laws<S: Style>() {
     };
     for _ in 0..ROUNDS {
         let (a, b, c) = (random.path(), random.path(), random.path());
-        check_views::<S, u8>(&(a.clone() + &b), &a);
-        check_views::<S, u16>(&(a.clone() + &b), &a.to_ascii_uppercase());
+        check_style_getters::<S, u8>(&(a.clone() + &b), &a);
+        check_style_getters::<S, u16>(&(a.clone() + &b), &a.to_ascii_uppercase());
 
-        let normal = run::<S>(&a, &Op::Normalize);
-        assert_eq!(run::<S>(&normal, &Op::Normalize), normal, "{a:?}");
+        let normal = actual::<S>(&a, &NORMALIZE);
+        assert_eq!(actual::<S>(&normal, &NORMALIZE), normal, "{a:?}");
         assert_eq!(kind(&normal), kind(&a), "{a:?}");
 
         let parts = [a.as_bytes(), b.as_bytes(), c.as_bytes()];
         let rest = vec![b.clone(), c.clone()];
-        let joined = PathIn::<Heap, S>::joined(&parts);
-        assert_eq!(text(&joined), run::<S>(&a, &Op::Join(rest.clone())));
-        let resolved = PathIn::<Heap, S>::resolved(&parts);
+        let joined = GenericPath::<VecBackend, S>::join(&parts);
+        assert_eq!(text(&joined), actual::<S>(&a, &Op::Join(rest.clone())));
+        let resolved = GenericPath::<VecBackend, S>::resolve(&parts);
         assert!(
-            model::is_same::<S>(text(&resolved), &run::<S>(&a, &Op::Resolve(rest))),
+            model::eq_path::<S>(text(&resolved), &actual::<S>(&a, &Op::Resolve(rest))),
             "{a:?} {b:?} {c:?}"
         );
         let pushed = [&a, &b, &c].iter().fold(String::new(), |path, part| {
-            run::<S>(&path, &Op::Push(part.to_string()))
+            actual::<S>(&path, &Op::Push(part.to_string()))
         });
-        assert_eq!(text(&PathIn::<Heap, S>::from_parts(&parts)), pushed);
+        assert_eq!(
+            text(&GenericPath::<VecBackend, S>::from_parts(&parts)),
+            pushed
+        );
 
         let (from, to) = (a.clone() + &b, a.clone() + &c);
-        let relative = PathIn::<Heap, S>::relative(from.as_bytes(), to.as_bytes());
-        let [arrived, wanted] = [&[cwd(), &from, text(&relative)][..], &[cwd(), &to]]
-            .map(|parts| run::<S>(&model::resolve::<S>(parts), &Op::EndWithSep));
-        let is_on_no_volume = kind(&wanted).0 == Volume::None && kind(&arrived).0 != Volume::None;
+        let relative = GenericPath::<VecBackend, S>::relative(from.as_bytes(), to.as_bytes());
+        let resolve =
+            |parts: &[&str]| actual::<S>(&model::resolve::<S>(parts), &Op::PushTrailingSep);
+        let followed = resolve(&[init_cwd(), &from, text(&relative)]);
+        let target = resolve(&[init_cwd(), &to]);
+        let only_from_has_volume =
+            kind(&target).0 == VolumeKind::None && kind(&followed).0 != VolumeKind::None;
         assert!(
-            is_on_no_volume || model::is_same::<S>(&arrived, &wanted),
+            only_from_has_volume || model::eq_path::<S>(&followed, &target),
             "{from:?} {to:?}"
         );
 
-        let mut path = PathIn::<Heap, S>::from(a.as_bytes());
-        drop(path.child(b.as_bytes()));
-        drop(path.prefix(random.below(8)));
+        let mut path = GenericPath::<VecBackend, S>::from(a.as_bytes());
+        drop(path.push_scoped(b.as_bytes()));
         assert_eq!(text(&path), a);
     }
 }
@@ -872,22 +911,22 @@ macro_rules! for_each_style {
         mod $name {
             use super::*;
             #[test]
-            fn follows_the_model_at_every_capacity() {
+            fn matches_model_at_every_capacity() {
                 check_against_model::<$style>();
             }
             #[test]
-            fn laws() {
-                check_laws::<$style>();
+            fn invariants() {
+                check_invariants::<$style>();
             }
         }
     )*};
 }
 for_each_style!(posix: Posix, windows: Windows, loose_on_posix: LooseOnPosix, loose_on_windows: LooseOnWindows);
 
-/// `RtlDetermineDosPathNameType_U`, and `\??\`, which is looked for first, or its start.
-fn kind_to_win32(path: &str) -> &'static str {
+/// Mirrors `RtlDetermineDosPathNameType_U`, plus the `\??\` prefix.
+fn win32_path_type(path: &str) -> &'static str {
     let path: Vec<u16> = path.encode_utf16().collect();
-    let is = |at: usize, set: &str| set.encode_utf16().any(|it| path.get(at) == Some(&it));
+    let is = |at: usize, set: &str| set.encode_utf16().any(|unit| path.get(at) == Some(&unit));
     if is(0, r"\") && is(1, "?") && is(2, "?") && (is(3, r"\") || path.len() == 3) {
         "nt"
     } else if is(0, r"\/") && !is(1, r"\/") {
@@ -907,62 +946,63 @@ fn kind_to_win32(path: &str) -> &'static str {
 }
 
 #[test]
-fn win32_sees_the_same_kind_of_path_after() {
+fn windows_ops_preserve_win32_path_type() {
     let mut random = Random(0xD1B5_4A32_D192_ED03);
     for _ in 0..ROUNDS {
         let (a, b) = (random.path(), random.path());
-        let has_no_server = kind_to_win32(&a) == "unc" && Windows::root(a.as_bytes()).len() == 1;
+        let has_no_server = win32_path_type(&a) == "unc" && Windows::root(a.as_bytes()).len() == 1;
         let kind = if has_no_server {
             "rooted"
         } else {
-            kind_to_win32(&a)
+            win32_path_type(&a)
         };
         assert_eq!(
-            kind_to_win32(&run::<Windows>(&a, &Op::Normalize)),
+            win32_path_type(&actual::<Windows>(&a, &NORMALIZE)),
             kind,
             "{a:?}"
         );
         if matches!(kind, "relative" | "rooted" | "drive" | "unc" | "device") && !a.is_empty() {
-            let joined = run::<Windows>(&a, &Op::Join(vec![b.clone()]));
-            assert_eq!(kind_to_win32(&joined), kind, "{a:?} {b:?}");
+            let joined = actual::<Windows>(&a, &Op::Join(vec![b.clone()]));
+            assert_eq!(win32_path_type(&joined), kind, "{a:?} {b:?}");
         }
         for root in [r"\", "x", r"C:\", r"\\s\h"] {
-            let pushed = run::<Windows>(root, &Op::Push(b.clone()));
-            assert_eq!(kind_to_win32(&pushed), kind_to_win32(root), "{b:?}");
+            let pushed = actual::<Windows>(root, &Op::Push(b.clone()));
+            assert_eq!(win32_path_type(&pushed), win32_path_type(root), "{b:?}");
         }
     }
 }
 
 #[test]
-fn a_win32_prefix_is_another_spelling_of_the_same_path() {
+fn namespace_prefix_round_trips() {
     let mut random = Random(0xA076_1D64_78BD_642F);
     for _ in 0..ROUNDS {
         let rest = vec![random.path(), random.path()];
         for (base, add) in [
-            (r"C:\a", Op::AddLongPrefix),
-            (r"世:\", Op::AddNtPrefix),
-            (r"\\s\h\a", Op::AddLongPrefix),
-            (r"\\s\h", Op::AddNtPrefix),
+            (r"C:\a", Op::MakeLongPath),
+            (r"世:\", Op::MakeNtPath),
+            (r"\\s\h\a", Op::MakeLongPath),
+            (r"\\s\h", Op::MakeNtPath),
         ] {
-            let joined = run::<Windows>(base, &Op::Join(rest.clone()));
-            let prefixed = run::<Windows>(&joined, &add);
+            let joined = actual::<Windows>(base, &Op::Join(rest.clone()));
+            let prefixed = actual::<Windows>(&joined, &add);
             assert_eq!(
-                run::<Windows>(&run::<Windows>(base, &add), &Op::Join(rest.clone())),
+                actual::<Windows>(&actual::<Windows>(base, &add), &Op::Join(rest.clone())),
                 prefixed
             );
-            assert_eq!(run::<Windows>(&prefixed, &add), prefixed);
-            assert_eq!(run::<Windows>(&prefixed, &Op::RemoveWin32Prefix), joined);
+            assert_eq!(actual::<Windows>(&prefixed, &add), prefixed);
+            assert_eq!(actual::<Windows>(&prefixed, &Op::StripNtPrefix), joined);
         }
     }
 }
 
-fn parts(parts: &[&str]) -> Vec<String> {
+fn owned(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|&part| part.to_owned()).collect()
 }
 
-/// From `test-path-*.js` of Node v26.12.1.
+// The `*_matches_node` cases are from `test-path-*.js` of Node v26.12.1.
+
 #[test]
-fn agrees_with_node() {
+fn normalize_matches_node() {
     for (path, expected) in [
         ("./fixtures///b/../b/c.js", "fixtures/b/c.js"),
         ("/foo/../../../bar", "/bar"),
@@ -976,7 +1016,7 @@ fn agrees_with_node() {
         ("", "."),
         ("./", "./"),
     ] {
-        assert_eq!(run::<Posix>(path, &Op::Normalize), expected);
+        assert_eq!(actual::<Posix>(path, &NORMALIZE), expected);
     }
     for (path, expected) in [
         (
@@ -999,8 +1039,12 @@ fn agrees_with_node() {
             r"\\server\share\?\D:\file",
         ),
     ] {
-        assert_eq!(run::<Windows>(path, &Op::Normalize), expected);
+        assert_eq!(actual::<Windows>(path, &NORMALIZE), expected);
     }
+}
+
+#[test]
+fn join_matches_node() {
     for (all, expected) in [
         (&["//foo", "bar"][..], r"\\foo\bar\"),
         (&["//foo/", "/bar"], r"\\foo\bar\"),
@@ -1013,14 +1057,26 @@ fn agrees_with_node() {
         (&["./upload", "/../C:/Windows"], r".\C:\Windows"),
         (&["test", "..", "D:"], r".\D:"),
     ] {
-        assert_eq!(run::<Windows>("", &Op::Join(parts(all))), expected);
+        assert_eq!(actual::<Windows>("", &Op::Join(owned(all))), expected);
+    }
+}
+
+#[test]
+fn resolve_matches_node() {
+    for (all, expected) in [
+        (&["/var/lib", "../", "file/"][..], "/var/file"),
+        (&["/var/lib", "/../", "file/"], "/file"),
+        (&["/some/dir", ".", "/absolute/"], "/absolute"),
+    ] {
+        assert_eq!(actual::<Posix>("", &Op::Resolve(owned(all))), expected);
     }
     for (all, expected) in [
         (&[r"C:/blah\blah", "d:/games", "C:../a"][..], r"C:\blah\a"),
         (&["C:/ignore", "C:/some/file"], r"C:\some\file"),
+        (&["D:/ignore", "D:some/dir//"], r"D:\ignore\some\dir"),
         (
-            &["//server/share", "..", r"relative\x"],
-            r"\\server\share\relative\x",
+            &["//server/share", "..", r"relative\"],
+            r"\\server\share\relative",
         ),
         (&["C:/", "//"], r"C:\"),
         (&["C:/", "//server//share"], r"\\server\share\"),
@@ -1031,8 +1087,12 @@ fn agrees_with_node() {
         ),
         (&[r"\\.\PHYSICALDRIVE0"], r"\\.\PHYSICALDRIVE0"),
     ] {
-        assert_eq!(run::<Windows>("", &Op::Resolve(parts(all))), expected);
+        assert_eq!(actual::<Windows>("", &Op::Resolve(owned(all))), expected);
     }
+}
+
+#[test]
+fn relative_matches_node() {
     for (from, to, expected) in [
         (r"c:/blah\blah", "D:/games", r"D:\games"),
         ("c:/aaaa/bbbb", "c:/aaaa", ".."),
@@ -1045,24 +1105,28 @@ fn agrees_with_node() {
         (r"C:\baz", r"\\foo\bar\baz", r"\\foo\bar\baz"),
     ] {
         assert_eq!(
-            run::<Windows>("", &Op::SetRelative(from.into(), to.into())),
+            actual::<Windows>("", &Op::Relative(from.into(), to.into())),
             expected
         );
     }
+}
+
+#[test]
+fn long_path_matches_node() {
     for (path, expected) in [
         ("C:/foo", r"\\?\C:\foo"),
         ("//foo//bar/baz", r"\\?\UNC\foo\bar\baz"),
         (r"\\?\foo", r"\\?\foo"),
         (r"\\.\pipe\somepipe", r"\\.\pipe\somepipe"),
     ] {
-        assert_eq!(run::<Windows>(path, &Op::AddLongPrefix), expected);
+        assert_eq!(actual::<Windows>(path, &Op::MakeLongPath), expected);
     }
 }
 
 #[test]
 fn differs_from_node() {
     for (all, expected) in [
-        (&[r"c:\a", "b/"][..], r"C:\a\b\"),
+        (&[r"c:\a", "b"][..], r"C:\a\b"),
         (&[r"C:\a", "D:b"], r"D:\b"),
         (&["C:", "a"], r"C:\a"),
         (&["a", "b"], r"a\b"),
@@ -1074,24 +1138,27 @@ fn differs_from_node() {
         (&[r"\a", r"..\??\C:\b"], r"\.\??\C:\b"),
         (&[r"C:\a", r"\\server"], r"\\server\"),
     ] {
-        assert_eq!(run::<Windows>("", &Op::Resolve(parts(all))), expected);
+        assert_eq!(actual::<Windows>("", &Op::Resolve(owned(all))), expected);
     }
-    let across_shares = Op::SetRelative(r"\\s\a\x".into(), r"\\s\b\y".into());
-    assert_eq!(run::<Windows>("", &across_shares), r"\\s\b\y");
+    let across_shares = Op::Relative(r"\\s\a\x".into(), r"\\s\b\y".into());
+    assert_eq!(actual::<Windows>("", &across_shares), r"\\s\b\y");
     assert_eq!(Windows::dirname(br"\\?\UNC\s\h"), None);
 }
 
 #[test]
-fn only_win32_has_no_case() {
-    let relative = Op::SetRelative("c:/a".into(), "C:/b".into());
-    assert_eq!(run::<LooseOnWindows>("", &relative), "../b");
-    assert_eq!(run::<LooseOnPosix>("", &relative), "C:/b");
-    assert_eq!(LooseOnWindows::strip_dir(b"c:/a", b"C:/"), Some(&b"a"[..]));
-    assert_eq!(LooseOnPosix::strip_dir(b"c:/a", b"C:/"), None);
+fn case_insensitive_only_on_windows() {
+    let relative = Op::Relative("c:/a".into(), "C:/b".into());
+    assert_eq!(actual::<LooseOnWindows>("", &relative), "../b");
+    assert_eq!(actual::<LooseOnPosix>("", &relative), "C:/b");
+    assert_eq!(
+        LooseOnWindows::strip_prefix(b"c:/a", b"C:/"),
+        Some(&b"a"[..])
+    );
+    assert_eq!(LooseOnPosix::strip_prefix(b"c:/a", b"C:/"), None);
 }
 
 #[test]
-fn a_backslash_stays_in_the_longest_known_name_of_an_absolute_part() {
+fn resolve_any_sep_keeps_backslash_in_known_dir_names() {
     for (part, expected) in [
         (r"/x/a\A/y\z", r"/x/a\A/y/z"),
         (r"/x\y/../a\A\a\z", r"/x/a\A\a/z"),
@@ -1100,14 +1167,40 @@ fn a_backslash_stays_in_the_longest_known_name_of_an_absolute_part() {
         (r"/z\a\A", "/z/a/A"),
         (r"a\A", r"/x\y/a/A"),
     ] {
-        let resolve = Op::ResolvePortable(vec![part.into()]);
-        assert_eq!(run::<Posix>(r"/x\y", &resolve), expected);
+        let resolve = Op::ResolveAnySep(vec![part.into()]);
+        assert_eq!(actual::<Posix>(r"/x\y", &resolve), expected);
+    }
+}
+
+#[test]
+fn wide_paths_have_no_known_dir_names() {
+    let path = GenericPath::<VecBackend<u16>, Posix>::resolve_any_sep(&[br"/x/a\A"]);
+    assert_eq!(path.as_slice(), u16::encode("/x/a/A"));
+}
+
+#[test]
+#[cfg(unix)]
+fn resolve_path_join_abs_keeps_trailing_slash() {
+    for (cwd, parts, expected) in [
+        ("/a", &["b/"][..], "/a/b/"),
+        ("/a", &["b/", ""], "/a/b/"),
+        ("/a", &["b/../"], "/a/"),
+        ("/a", &["/b/"], "/b/"),
+        ("/a", &["../"], "/"),
+        ("/a/", &[""], "/a/"),
+        ("/a/", &["."], "/a"),
+        ("/a/", &["b/.."], "/a"),
+        ("/a/", &[r"b\"], "/a/b"),
+    ] {
+        let parts: Vec<&[u8]> = parts.iter().map(|part| part.as_bytes()).collect();
+        let joined = crate::resolve_path::join_abs_string::<Posix>(cwd.as_bytes(), &parts);
+        assert_eq!(text(joined), expected, "{cwd} {parts:?}");
     }
 }
 
 #[test]
 #[cfg(unix)]
-fn the_older_relative_takes_either_spelling_of_a_known_name() {
+fn resolve_path_relative_handles_known_dir_names() {
     for (from, to, expected) in [
         (r"/x/a\A/q", r"/x/f", "../../f"),
         (r"/x/a\A/q", r"/x/a/A/q/f", "f"),
@@ -1115,6 +1208,8 @@ fn the_older_relative_takes_either_spelling_of_a_known_name() {
         (r"/x/a\A/q", r"/x/a/B", "../../a/B"),
         (r"/x/a\A/q", r"/x/a/AB", "../../a/AB"),
         (r"/x/q", r"/x/a\A/f", "../a/A/f"),
+        (r"/x/a\", r"/x/a", "../a"),
+        (r"/x/a\", r"/x/a/", ""),
     ] {
         let relative = crate::resolve_path::relative(from.as_bytes(), to.as_bytes());
         assert_eq!(text(relative), expected, "{from} {to}");
@@ -1123,39 +1218,42 @@ fn the_older_relative_takes_either_spelling_of_a_known_name() {
 
 #[test]
 #[cfg(unix)]
-fn a_backslash_at_the_end_stays_in_a_known_name() {
-    use crate::string_paths::without_trailing_slash_portable as trimmed;
-    assert_eq!(trimmed(br"/a\//"), br"/a\");
-    assert_eq!(trimmed(br"./a\/"), b"./a");
-    assert_eq!(trimmed(br"/a\\/"), br"/a\");
-    assert_eq!(trimmed(br"/bc\/\\\"), br"/bc\/\");
-    assert_eq!(trimmed(br"/bc\\/"), b"/bc");
-    assert_eq!(trimmed(b"//"), b"/");
-    assert_eq!(trimmed(b""), b"");
+fn without_trailing_any_sep_keeps_known_backslash() {
+    use crate::string_paths::without_trailing_any_sep as trim;
+    assert_eq!(trim(br"/a\//"), br"/a\");
+    assert_eq!(trim(br"./a\/"), b"./a");
+    assert_eq!(trim(br"/a\\/"), br"/a\");
+    assert_eq!(trim(br"/bc\/\\\"), br"/bc\/\");
+    assert_eq!(trim(br"/bc\\/"), b"/bc");
+    assert_eq!(trim(b"//"), b"/");
+    assert_eq!(trim(b""), b"");
 }
 
 #[test]
 fn relative_can_be_longer_than_its_operands() {
-    let up = Op::SetRelative("/a".repeat(99) + "/.", "/".into());
-    assert_eq!(run::<Posix>("", &up), [".."; 99].join("/"));
-    assert_eq!(run::<Windows>("", &up), [".."; 99].join(r"\"));
+    let up = Op::Relative("/a".repeat(99) + "/.", "/".into());
+    assert_eq!(actual::<Posix>("", &up), [".."; 99].join("/"));
+    assert_eq!(actual::<Windows>("", &up), [".."; 99].join(r"\"));
 }
 
 #[test]
-fn transcoding_is_lossless_and_total() {
+fn transcodes_lone_surrogates_and_invalid_utf8() {
     let lone = [u16::from(b'a'), 0xD800, u16::from(b'/'), 0xDC00];
-    let narrow = PathIn::<Heap, Posix>::from(&lone);
+    let narrow = GenericPath::<VecBackend, Posix>::from(&lone);
     assert_eq!(narrow.as_slice(), b"a\xED\xA0\x80/\xED\xB0\x80");
-    assert_eq!(PathIn::<Heap<u16>, Posix>::from(&narrow).as_slice(), lone);
-    let invalid = PathIn::<Heap<u16>, Posix>::from(b"\x80\xFF\xE4\xB8");
+    assert_eq!(
+        GenericPath::<VecBackend<u16>, Posix>::from(&narrow).as_slice(),
+        lone
+    );
+    let invalid = GenericPath::<VecBackend<u16>, Posix>::from(b"\x80\xFF\xE4\xB8");
     assert_eq!(invalid.as_slice(), [0xFFFD; 4]);
 
-    let mut exact = PathIn::<Stack<9>, Posix>::new();
+    let mut exact = GenericPath::<StackBackend<9>, Posix>::new();
     assert_eq!(exact.set(&lone), Ok(()));
-    assert_eq!(exact.append(&[0xD800u16]), Err(NameTooLong));
+    assert_eq!(exact.extend_from_slice(&[0xD800u16]), Err(NameTooLong));
     assert_eq!(exact.as_slice(), narrow.as_slice());
     let mut buffer = [0u16; 3];
-    let mut exact = PathIn::<Borrowed<'_, u16>, Posix>::new_in(&mut buffer);
+    let mut exact = GenericPath::<SliceBackend<'_, u16>, Posix>::new(&mut buffer);
     assert_eq!(exact.set("世世".as_bytes()), Ok(()));
     assert_eq!(exact.set(b"\x80\x80\x80"), Err(NameTooLong));
     assert_eq!(exact.as_slice(), u16::encode("世世"));
@@ -1163,62 +1261,70 @@ fn transcoding_is_lossless_and_total() {
 
 fn check_pool_limit<U: Unit>(limit: usize) {
     let name = vec![U::from_u8(b'a'); limit];
-    let mut fixed = PathIn::<Pool<U>, Posix>::from(&name[..limit - 3]).unwrap();
+    let mut fixed = GenericPath::<PoolBackend<U>, Posix>::from(&name[..limit - 3]).unwrap();
     assert_eq!(fixed.push(b"bc"), Err(NameTooLong));
     assert_eq!(fixed.push(b"b"), Ok(()));
     assert_eq!(fixed.len(), limit - 1);
     assert!(is_terminated(&fixed));
-    assert!(PathIn::<Pool<U>, Posix>::from(&name).is_err());
-    let collapsed = PathIn::<Pool<U>, Posix>::joined(&[&name, &U::encode("../b")]).unwrap();
+    assert!(GenericPath::<PoolBackend<U>, Posix>::from(&name).is_err());
+    let collapsed =
+        GenericPath::<PoolBackend<U>, Posix>::join(&[&name, &U::encode("../b")]).unwrap();
     assert_eq!(collapsed.as_slice(), U::encode("b"));
 
-    let mut spilled = PathIn::<Spill<U>, Posix>::from(&name[..limit - 3]);
-    spilled.push(b"b");
+    let mut grown = GenericPath::<PoolOrVecBackend<U>, Posix>::from(&name[..limit - 3]);
+    grown.push(b"b");
     {
-        let mut scope = spilled.child(b"c");
+        let mut scope = grown.push_scoped(b"c");
         assert_eq!(scope.len(), limit + 1);
         scope.push(&name);
         scope.push(&name);
         assert_eq!(scope.len(), 3 * limit + 3);
         assert!(is_terminated(&scope));
     }
-    assert_eq!(spilled.as_slice(), fixed.as_slice());
-    assert!(is_terminated(&spilled));
-    assert_eq!(PathIn::<Spill<U>, Posix>::from(&name).as_slice(), name);
+    assert_eq!(grown.as_slice(), fixed.as_slice());
+    assert!(is_terminated(&grown));
+    assert_eq!(
+        GenericPath::<PoolOrVecBackend<U>, Posix>::from(&name).as_slice(),
+        name
+    );
 }
 
 #[test]
-fn pool_stops_and_spill_goes_on() {
+fn pool_fails_at_limit_and_pool_or_vec_grows() {
     check_pool_limit::<u8>(MAX_PATH_BYTES);
     if cfg!(not(miri)) {
         check_pool_limit::<u16>(PATH_MAX_WIDE);
     }
 }
 
-fn check_stack<S: Style, U: Unit, const N: usize>(fits: bool) {
-    type Edit<S, U, const N: usize> = fn(&mut PathIn<Stack<N, U>, S>) -> Result<(), NameTooLong>;
+fn check_stack<S: PathStyle, U: Unit, const N: usize>(fits: bool) {
+    type Edit<S, U, const N: usize> =
+        fn(&mut GenericPath<StackBackend<N, U>, S>) -> Result<(), NameTooLong>;
     const LONG: &[u8] = b"a/../b/../c";
-    let edits: [Edit<S, U, N>; 10] = [
+    let edits: [Edit<S, U, N>; 8] = [
         |path| path.set(LONG),
-        |path| path.append(LONG),
+        |path| path.extend_from_slice(LONG),
         |path| write!(path, "{}", text(LONG)),
         |path| path.push(LONG),
-        |path| path.push_portable(LONG),
+        |path| path.push_any_sep(LONG),
         |path| path.push_fmt(format_args!("{}", text(LONG))),
-        |path| path.join(&[LONG]),
-        |path| path.resolve_portable(&[LONG]),
-        |path| path.set_relative(U::lit(b"//"), U::lit(b"..")),
-        |path| path.set_relative_portable(U::lit(b"//"), &br"/b\a".map(U::from_u8)),
+        |path| path.try_join(&[LONG]),
+        |path| path.resolve_any_sep_in_place(&[LONG]),
     ];
-    cwd();
+    init_cwd();
     let allocations = ALLOCATIONS.get();
     for edit in edits {
-        let mut path = PathIn::<Stack<N, U>, S>::new();
+        let mut path = GenericPath::<StackBackend<N, U>, S>::new();
         path.set(b"..").unwrap();
         assert_eq!(edit(&mut path).is_ok(), fits);
         assert!(fits || path.as_slice() == U::lit(b".."));
         assert!(is_terminated(&path));
     }
+    let to = br"/b\a".map(U::from_u8);
+    let relative = GenericPath::<StackBackend<N, U>, S>::relative(U::lit(b"//"), U::lit(b".."));
+    assert_eq!(relative.is_ok(), fits);
+    let relative = GenericPath::<StackBackend<N, U>, S>::relative_any_sep(U::lit(b"//"), &to);
+    assert_eq!(relative.is_ok(), fits);
     assert_eq!(ALLOCATIONS.get(), allocations);
 }
 
@@ -1231,22 +1337,20 @@ fn stack_does_not_allocate() {
 }
 
 #[test]
-fn empty_paths_are_terminated_without_storage() {
-    static EMPTY: VecPath = VecPath::new();
-    assert!(
-        is_terminated(&EMPTY) && is_terminated(&Path::new()) && is_terminated(&PoolPath::new())
-    );
+fn empty_paths_are_nul_terminated() {
+    assert!(is_terminated(&Path::new()));
+    assert!(is_terminated(&PoolPath::new()));
+    assert!(is_terminated(&VecPath::new()));
     assert!(is_terminated(&StackPath::<1>::new()));
     assert!(VecPath::new().into_vec().is_empty());
     assert!(VecPath::new().as_mut_slice().is_empty());
-    assert!(!VecPath::new().pop());
-    let mut nowhere = SlicePath::new_in(&mut []);
-    assert_eq!(nowhere.push(b"a"), Err(NameTooLong));
-    assert!(nowhere.into_z().as_bytes_with_nul() == b"\0");
+    let mut empty = SlicePath::new(&mut []);
+    assert_eq!(empty.push(b"a"), Err(NameTooLong));
+    assert!(empty.into_zstr().as_bytes_with_nul() == b"\0");
 }
 
 #[test]
-fn a_pooled_buffer_goes_back_and_shows_nothing_old() {
+fn pooled_buffer_is_reused_without_stale_bytes() {
     let first = Path::from(b"/secret/token");
     let address = first.as_ptr();
     drop(first);
@@ -1258,15 +1362,13 @@ fn a_pooled_buffer_goes_back_and_shows_nothing_old() {
 }
 
 #[test]
-fn heap_moves_in_and_out_without_a_copy() {
-    let mut vec = Vec::with_capacity(8);
-    vec.extend_from_slice(b"ab");
-    let address = vec.as_ptr();
-    let mut path = VecPath::from_vec(vec);
-    path.append(b"cd");
+fn vec_path_moves_out_without_a_copy() {
+    let path = VecPath::from(b"abc");
+    let address = path.as_ptr();
     let vec = path.into_vec();
-    assert_eq!((vec.as_ptr(), &vec[..]), (address, &b"abcd"[..]));
-    assert_eq!(VecPath::from(b"abc").into_vec().capacity(), 4);
+    assert_eq!(vec.as_ptr().cast(), address);
+    assert_eq!(vec, b"abc");
+    assert_eq!(vec.capacity(), 4);
     assert_eq!(
         VecPath::from(b"abc").into_zbox().as_bytes_with_nul(),
         b"abc\0"
@@ -1274,41 +1376,9 @@ fn heap_moves_in_and_out_without_a_copy() {
 }
 
 #[test]
-fn filled_takes_the_result_from_wherever_it_is() {
-    for range in [0..2, 1..3, 0..0] {
-        let path = Path::filled(|buffer| {
-            buffer[..4].copy_from_slice(b"abcd");
-            Ok::<_, ()>(&buffer[range.clone()])
-        });
-        let path = path.unwrap();
-        assert_eq!(path.as_slice(), &b"abcd"[range]);
-        assert!(is_terminated(&path));
-    }
-    assert_eq!(
-        Path::filled(|_| Ok::<_, ()>(b"static")).unwrap().as_slice(),
-        b"static"
-    );
-    assert_eq!(Path::filled(|_| Err(1)).err(), Some(1));
-    assert_eq!(
-        Path::filled(|all| Ok::<_, ()>(all)).unwrap().len(),
-        MAX_PATH_BYTES
-    );
-    assert!(PoolPath::filled(|all| Ok::<_, ()>(all)).unwrap().is_err());
-}
-
-#[test]
-fn prefix_and_tail_are_terminated() {
-    let mut path = Path::from(b"ab/cd");
-    assert_eq!(path.prefix(2).as_bytes_with_nul(), b"ab\0");
-    assert_eq!(path.prefix(9).as_bytes_with_nul(), b"ab/cd\0");
-    assert_eq!(path.tail(3).as_bytes_with_nul(), b"cd\0");
-    assert_eq!(path.as_bytes_with_nul(), b"ab/cd\0");
-}
-
-#[test]
-fn a_formatter_that_ignores_an_error_leaves_no_hole() {
-    struct Careless;
-    impl fmt::Display for Careless {
+fn write_fmt_rolls_back_when_display_ignores_error() {
+    struct IgnoresErrors;
+    impl fmt::Display for IgnoresErrors {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             let _ = f.write_str("too long for it");
             f.write_str("b")
@@ -1316,7 +1386,10 @@ fn a_formatter_that_ignores_an_error_leaves_no_hole() {
     }
     let mut path = StackPath::<8>::new();
     path.set(b"a").unwrap();
-    assert_eq!(write!(path, "{Careless}"), Err(NameTooLong));
-    assert_eq!(path.push_fmt(format_args!("{Careless}")), Err(NameTooLong));
+    assert_eq!(write!(path, "{IgnoresErrors}"), Err(NameTooLong));
+    assert_eq!(
+        path.push_fmt(format_args!("{IgnoresErrors}")),
+        Err(NameTooLong)
+    );
     assert_eq!(path.as_bytes_with_nul(), b"a\0");
 }

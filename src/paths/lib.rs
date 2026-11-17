@@ -6,7 +6,7 @@
 #![feature(adt_const_params, core_io_borrowed_buf)]
 
 pub mod error;
-pub use error::{Error, Result};
+pub use error::{Error, NameTooLong, Result};
 
 // `bun.w_path_buffer_pool` — u16 sibling. Backed by the same generic
 // thread-local pool as the u8 one (path_buffer_pool.rs already handles both
@@ -248,7 +248,7 @@ pub fn join_sep_maybe_z<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
 /// NOT full `dirname` — this is the naive "slice before last
 /// separator" used by a handful of callers that want exactly that. For full
 /// `dirname` semantics (Option, trailing-slash handling, root preservation)
-/// use `bun_core::dirname`.
+/// use [`dirname`].
 pub fn dirname_simple(p: &[u8]) -> &[u8] {
     crate::resolve_path::last_index_of_sep(p)
         .map(|i| &p[..i])
@@ -256,22 +256,58 @@ pub fn dirname_simple(p: &[u8]) -> &[u8] {
 }
 pub use bun_core::strings::{PathByte, basename_posix, basename_windows};
 
-/// [`Style::basename`] of the host.
+/// [`PathStyle::dirname`] for the host platform.
+#[inline]
+pub fn dirname<C: PathUnit>(p: &[C]) -> Option<&[C]> {
+    platform::Auto::dirname(p)
+}
+
+/// [`PathStyle::basename`] for the host platform.
 #[inline]
 pub fn basename<C: PathUnit>(p: &[C]) -> &[C] {
     platform::Auto::basename(p)
 }
 
-/// [`Style::extension`] of the host.
+/// [`PathStyle::extension`] for the host platform.
 #[inline]
 pub fn extension<C: PathUnit>(p: &[C]) -> &[C] {
     platform::Auto::extension(p)
 }
 
-/// [`Style::stem`] of the host.
+/// [`PathStyle::stem`] for the host platform.
 #[inline]
 pub fn stem<C: PathUnit>(p: &[C]) -> &[C] {
     platform::Auto::stem(p)
+}
+
+/// [`PathStyle::without_trailing_sep`] for the host platform.
+#[inline]
+pub fn without_trailing_sep(p: &[u8]) -> &[u8] {
+    platform::Auto::without_trailing_sep(p)
+}
+
+/// [`PathStyle::strip_prefix`] for the host platform.
+#[inline]
+pub fn strip_prefix<'a>(p: &'a [u8], dir: &[u8]) -> Option<&'a [u8]> {
+    platform::Auto::strip_prefix(p, dir)
+}
+
+/// [`PathStyle::components`] for the host platform.
+#[inline]
+pub fn components(p: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> {
+    platform::Auto::components(p)
+}
+
+/// [`PathStyle::ancestors`] for the host platform.
+#[inline]
+pub fn ancestors(p: &[u8]) -> impl Iterator<Item = &[u8]> {
+    platform::Auto::ancestors(p)
+}
+
+/// True if a POSIX path has a `\`, which much of Bun reads as a separator.
+#[inline]
+pub fn has_literal_backslash(p: &[u8]) -> bool {
+    cfg!(unix) && strings::contains_char(p, b'\\')
 }
 
 // LAYERING: `PathBuffer` / `WPathBuffer` / `MAX_PATH_BYTES` / `PATH_MAX_WIDE`
@@ -327,23 +363,19 @@ pub use resolve_path::{
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
 // POSIX).
 pub use path_buffer_pool::os_path_buffer_pool;
-pub mod backend;
-pub use backend::{Backend, Borrowed, Fixed, Heap, NameTooLong, Pool, Spill, Stack};
 #[path = "Path.rs"]
-pub mod path;
-pub use path::{OsPath, Path, PathIn, PoolPath, SlashPath, SlicePath, StackPath, VecPath};
+mod path;
+pub use path::{
+    ForwardSlashPath, GenericPath, OSPath, Path, PoolPath, SlicePath, StackPath, VecPath,
+};
+mod path_backend;
+pub use path_backend::{PoolBackend, PoolOrVecBackend, SliceBackend, StackBackend, VecBackend};
+mod path_ops;
+pub use path_ops::slashes_to_posix_keeping_known_dirs;
+mod path_style;
+pub use path_style::PathStyle;
 mod path_unit;
-pub use path_unit::PathUnit;
-pub mod style;
-pub use style::Style;
-mod tidy;
-pub use tidy::split_unknown_names;
-
-/// [`Style::dirname`] of the host.
-#[inline]
-pub fn dirname<C: PathUnit>(p: &[C]) -> Option<&[C]> {
-    platform::Auto::dirname(p)
-}
+use path_unit::PathUnit;
 #[path = "EnvPath.rs"]
 pub mod env_path;
 pub use env_path::EnvPath;
@@ -351,7 +383,7 @@ pub use env_path::EnvPath;
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from
 // `bun_sys::windows` so tier-1 callers
-// (this crate's `string_paths.rs`, `Path.rs` and `tidy.rs`) can resolve them
+// (this crate's `string_paths.rs`, `Path.rs` and `path_ops.rs`) can resolve them
 // without depending upward on `bun_sys`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
@@ -424,10 +456,10 @@ pub mod fs {
     use core::sync::atomic::{AtomicU32, Ordering};
     use std::sync::OnceLock;
 
-    use bun_core::strings::contains_char;
     use bun_core::{RwLock, ZStr};
 
-    use crate::Style as _;
+    use crate::PathStyle as _;
+    use crate::has_literal_backslash;
     use crate::platform::Posix;
     use crate::resolve_path::{is_sep_any, is_sep_native, last_index_of_sep};
 
@@ -445,7 +477,7 @@ pub mod fs {
 
     static INSTANCE: OnceLock<FileSystem> = OnceLock::new();
 
-    /// [`FileSystem::top_level_dir`]. A release build that asks too early gets `.`.
+    /// Like [`FileSystem::top_level_dir`], but release builds get `.` before `init`.
     #[inline]
     pub(crate) fn top_level_dir() -> &'static [u8] {
         debug_assert!(INSTANCE.get().is_some());
@@ -454,25 +486,34 @@ pub mod fs {
             .map_or_else(bun_core::top_level_dir, FileSystem::top_level_dir)
     }
 
-    /// `/a\b/c\d`, from every top-level directory so far: what was loaded there outlasts `process.chdir()`.
-    static NAMES_WITH_BACKSLASH: RwLock<Vec<u8>> = RwLock::new(Vec::new());
+    /// `/`-separated components with a `\`, from every top-level dir so far: loaded modules outlive `chdir`.
+    static BACKSLASH_COMPONENTS: RwLock<Vec<u8>> = RwLock::new(Vec::new());
 
-    /// See [`bun_core::set_top_level_dir`].
+    /// [`bun_core::set_top_level_dir`], also recording the components that have a `\`.
     pub fn set_top_level_dir(dir: &'static [u8]) {
-        if cfg!(unix) && contains_char(dir, b'\\') {
-            let mut names = NAMES_WITH_BACKSLASH.write();
-            for name in Posix::components(dir).filter(|name| contains_char(name, b'\\')) {
-                if !Posix::components(&names[..]).any(|it| it == name) {
-                    names.push(b'/');
-                    names.extend_from_slice(name);
+        if has_literal_backslash(dir) {
+            let mut seen = BACKSLASH_COMPONENTS.write();
+            for component in Posix::components(dir).filter(|c| has_literal_backslash(c)) {
+                if !Posix::components(&seen[..]).any(|c| c == component) {
+                    seen.push(b'/');
+                    seen.extend_from_slice(component);
                 }
             }
         }
         bun_core::set_top_level_dir(dir);
     }
 
-    #[cfg(all(unix, not(test)))]
-    pub(crate) fn with_known_dirs(read: impl FnOnce(&[&[u8]])) {
+    #[cfg(test)]
+    pub(crate) fn with_known_dirs(f: impl FnOnce(&[&[u8]])) {
+        f(&[b"", crate::path_tests::KNOWN_DIR]);
+    }
+
+    /// `$HOME` and every directory that has been the top-level dir.
+    #[cfg(not(test))]
+    pub(crate) fn with_known_dirs(f: impl FnOnce(&[&[u8]])) {
+        if !cfg!(unix) {
+            return f(&[]);
+        }
         let mut cwd;
         let initial = match INSTANCE.get() {
             Some(fs) => fs.initial_top_level_dir(),
@@ -482,7 +523,7 @@ pub mod fs {
             }
         };
         let home = bun_core::env_var::HOME.get().unwrap_or_default();
-        read(&[initial, home, &NAMES_WITH_BACKSLASH.read()]);
+        f(&[initial, home, &BACKSLASH_COMPONENTS.read()]);
     }
 
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
@@ -509,7 +550,7 @@ pub mod fs {
         /// to the workspace root. The canonical
         /// writable storage lives in `bun_core::TOP_LEVEL_DIR` (updated by
         /// `bun_resolver::FileSystem::set_top_level_dir`). Delegate the read
-        /// there so `Path::top_level_dir` observes the post-chdir value
+        /// there so `Path::from_top_level_dir` observes the post-chdir value
         /// instead of the `OnceLock` snapshot taken at process start.
         #[inline]
         pub fn top_level_dir(&self) -> &[u8] {

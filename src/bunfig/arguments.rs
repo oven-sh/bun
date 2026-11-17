@@ -10,8 +10,8 @@ use bun_core::{self, Global, Output, env_var};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
 use bun_options_types::context::Context;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path::{self, platform};
-use bun_paths::{PathBuffer, SlicePath, Style as _};
+use bun_paths::resolve_path;
+use bun_paths::{PathBuffer, SlicePath};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::bunfig::{Bunfig, Counts};
@@ -37,9 +37,10 @@ fn join_config_path<'buf>(
     path: &[u8],
     buf: &'buf mut PathBuffer,
 ) -> Option<&'buf ZStr> {
-    let mut config_path = SlicePath::new_in(buf);
-    config_path.resolve_portable(&[dir, path]).ok()?;
-    Some(config_path.into_z())
+    let mut config_path = SlicePath::new(buf);
+    config_path.resolve_any_sep_in_place(&[dir, path]).ok()?;
+    config_path.copy_trailing_sep_from(path).ok()?;
+    Some(config_path.into_zstr())
 }
 
 /// The XDG specification says to ignore `$XDG_CONFIG_HOME` when it is empty or a relative path.
@@ -157,7 +158,7 @@ pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> 
     {
         return Ok(true);
     }
-    for dir in platform::Auto::ancestors(dir) {
+    for dir in bun_paths::ancestors(dir) {
         if let Some(path) = join_config_path(dir, b"bunfig.toml", &mut config_buf)
             && file_has_security_scanner(path)?
         {

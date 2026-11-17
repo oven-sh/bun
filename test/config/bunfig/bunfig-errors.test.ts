@@ -298,7 +298,7 @@ describe.concurrent("bun lint and bun fmt", () => {
   });
 });
 
-test.skipIf(isWindows)("bunfig.toml is found in a directory with a backslash in its name", async () => {
+test.skipIf(isWindows)("bunfig.toml is loaded when the cwd contains a backslash", async () => {
   using dir = tempDir("bunfig-backslash", { "a\\b": { "bunfig.toml": `[define]\nFROM = '"bunfig"'\n` } });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-p", "FROM"],

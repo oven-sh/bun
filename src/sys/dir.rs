@@ -299,7 +299,7 @@ pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
     unlinkat_with_flags(dirfd, path, AT_REMOVEDIR)
 }
 
-/// `unlinkat` taking a non-sentinel slice.
+/// `unlinkat` taking a non-sentinel slice (NUL-terminates into a path buffer).
 fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
     unlinkat_with_flags(dirfd, &bun_paths::Path::from(path), flags)
 }
@@ -330,7 +330,8 @@ impl Dir {
     /// on Windows it selects junction vs. file-symlink and
     /// callers route through `sys_uv::symlink_uv` instead.
     pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
-        let [target, link_name] = [target, link_name].map(bun_paths::Path::from);
+        let target = bun_paths::Path::from(target);
+        let link_name = bun_paths::Path::from(link_name);
         symlinkat(&target, self.fd, &link_name)
     }
 
@@ -472,7 +473,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn a_path_that_is_too_long_is_not_cut_short() {
+    fn long_path_is_not_truncated() {
         let path = [&b"/".repeat(bun_paths::MAX_PATH_BYTES), &b"name"[..]].concat();
         let errno = |result: Maybe<()>| result.unwrap_err().get_errno();
         assert_eq!(errno(unlinkat_a(Fd::cwd(), &path, 0)), E::ENAMETOOLONG);

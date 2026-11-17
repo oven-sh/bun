@@ -1,21 +1,26 @@
 use bun_alloc::AllocError;
-use bun_paths::{OSPathSlice, OsPath};
+use bun_paths::{NameTooLong, OSPath, OSPathSlice};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 
+// The walker opens each directory from its parent, so `entry.path` can have any length.
 pub(crate) struct Hardlinker {
-    pub(crate) src: OsPath,
-    pub(crate) dest: OsPath,
+    pub(crate) src: OSPath,
+    pub(crate) dest: OSPath,
     pub(crate) walker: Walker,
+}
+
+fn name_too_long(_: NameTooLong) -> sys::Error {
+    sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::link)
 }
 
 impl Hardlinker {
     pub(crate) fn init(
         folder_dir: Fd,
-        src: OsPath,
-        dest: OsPath,
+        src: OSPath,
+        dest: OSPath,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
@@ -43,7 +48,6 @@ impl Hardlinker {
             );
             bun_core::output::flush();
         }
-        let too_long = sys::Tag::link.too_long();
 
         #[cfg(windows)]
         {
@@ -52,11 +56,10 @@ impl Hardlinker {
                 Ok(s) => &*s,
                 Err(_) => return Err(sys::Error::from_code(sys::E::ACCES, sys::Tag::link)),
             };
-            let mut destfile_path = OsPath::new();
 
             while let Some(entry) = self.walker.next()? {
-                let src = self.src.child(entry.path).map_err(too_long)?;
-                let dest = self.dest.child(entry.path).map_err(too_long)?;
+                let src = self.src.push_scoped(entry.path).map_err(name_too_long)?;
+                let dest = self.dest.push_scoped(entry.path).map_err(name_too_long)?;
 
                 match entry.kind {
                     EntryKind::Directory => {
@@ -64,10 +67,9 @@ impl Hardlinker {
                     }
                     EntryKind::File => {
                         // `dest` is absolute for an entry of the global virtual store.
-                        destfile_path.clear();
-                        (destfile_path.resolve(&[dest_cwd, &dest]))
-                            .and_then(|()| destfile_path.add_nt_prefix())
-                            .map_err(too_long)?;
+                        let mut destfile_path =
+                            OSPath::resolve(&[dest_cwd, &dest]).map_err(name_too_long)?;
+                        destfile_path.make_nt_path().map_err(name_too_long)?;
 
                         let Err(link_err1) = sys::link_w(&src, &destfile_path) else {
                             continue;
@@ -112,7 +114,7 @@ impl Hardlinker {
         #[cfg(not(windows))]
         {
             while let Some(entry) = self.walker.next()? {
-                let dest = self.dest.child(entry.path).map_err(too_long)?;
+                let dest = self.dest.push_scoped(entry.path).map_err(name_too_long)?;
 
                 match entry.kind {
                     EntryKind::Directory => Fd::cwd().make_path(&dest)?,

@@ -231,7 +231,7 @@ describe("transpiler cache", () => {
     }
     expect(existsSync(cache_dir)).toBeFalse();
   });
-  test.skipIf(isWindows)("is below a home directory with a backslash in its name", async () => {
+  test.skipIf(isWindows)("is written to XDG_CACHE_HOME when it contains a backslash", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "backslash"));
     mkdirSync(join(temp_dir, "x\\y"));
 

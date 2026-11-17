@@ -2877,7 +2877,7 @@ fn enqueue_local_tarball(
         match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
             None => (stored_string(path), true),
             Some(base_dir) => (
-                stored_string(&Path::resolved_portable(&[
+                stored_string(&Path::resolve_any_sep(&[
                     FileSystem::get().top_level_dir(),
                     base_dir,
                     path,
@@ -3766,7 +3766,8 @@ fn get_or_put_resolved_package(
                     // Copied out of `string_bytes`, which `StringBuilder::allocate` may grow.
                     let name_slice: Vec<u8> = this.lockfile.str(&name).to_vec();
                     let folder_path: Vec<u8> =
-                        crate::resolution::portable_path(this.lockfile.str(&folder)).into_owned();
+                        crate::resolution::with_forward_slashes(this.lockfile.str(&folder))
+                            .into_owned();
                     let mut builder = this.lockfile.string_builder();
 
                     builder.count(&name_slice);
@@ -3818,7 +3819,7 @@ fn get_or_put_resolved_package(
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::Value::Symlink(symlink) => {
-            // Reading a package.json grows the lockfile's string buffer, so the path cannot stay in there.
+            // Copied, because reading a package.json grows the lockfile's string buffer.
             let path = Path::from(this.lockfile.str(symlink));
             let base = if dependency::is_link_path(&path) {
                 GlobalOrRelative::Relative(dependency::version::Tag::Symlink)
@@ -3864,10 +3865,12 @@ fn resolve_project_folder(
     version: &dependency::Version,
     path: SemverString,
 ) -> FolderResolutionValue {
+    // Copied, because reading a package.json grows the lockfile's string buffer.
+    let path = Path::from(this.lockfile.str(&path));
     FolderResolution::get_or_put(
         GlobalOrRelative::Relative(version.tag()),
         version,
-        &Path::from(this.lockfile.str(&path)),
+        &path,
         this,
     )
 }

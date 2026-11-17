@@ -18,7 +18,7 @@ use bun_clap as clap;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
-use bun_paths as Path;
+use bun_paths::PoolPath;
 
 use std::sync::OnceLock;
 
@@ -1830,19 +1830,17 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         if let Some(cwd_) = args.option(b"--cwd").filter(|_| first_parse) {
             let final_path = if cwd_.starts_with(b".") {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                Path::PoolPath::resolved_portable(&[bun_sys::getcwd_z(&mut buf)?, cwd_])
+                PoolPath::resolve_any_sep(&[bun_sys::getcwd_z(&mut buf)?, cwd_])
             } else {
-                Path::PoolPath::from(cwd_)
+                PoolPath::from(cwd_)
             };
-            let changed = match &final_path {
-                Ok(path) => bun_sys::chdir(path),
-                Err(too_long) => Err(bun_sys::Tag::chdir.too_long()(*too_long)),
-            };
-            if let Err(err) = changed {
+            let final_path = final_path.as_deref().ok();
+            let too_long = bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir);
+            if let Err(err) = final_path.map_or(Err(too_long), bun_sys::chdir) {
                 Output::err_generic(
                     "failed to change directory to \"{}\": {}\n",
                     (
-                        bstr::BStr::new(final_path.as_ref().map_or(cwd_, |path| path)),
+                        bstr::BStr::new(final_path.map_or(cwd_, |p| p.as_bytes())),
                         bstr::BStr::new(err.name()),
                     ),
                 );

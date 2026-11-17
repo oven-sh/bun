@@ -189,7 +189,7 @@ impl Drop for MouseTracking {
 impl UpdateInteractiveCommand {
     fn build_package_json_path(workspace_path: &[u8]) -> Path {
         let root_dir = FileSystem::get().top_level_dir();
-        Path::resolved_portable(&[root_dir, workspace_path, b"package.json"])
+        Path::resolve_any_sep(&[root_dir, workspace_path, b"package.json"])
     }
 
     fn save_package_json(

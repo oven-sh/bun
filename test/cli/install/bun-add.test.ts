@@ -3053,7 +3053,7 @@ describe("a relative local path typed from a directory below package.json", () =
   });
 
   it.skipIf(isWindows)("a path whose re-spelled form does not fit a path buffer is an error", async () => {
-    // More `../` than they save of the directory that has both `package_dir` and `add_dir`.
+    // Deep enough that the `../` segments make the relative path longer than the absolute one.
     const app = join(package_dir, ...Array(Math.ceil(add_dir.length / 3) + 3).fill("a"));
     const cwd = join(app, "src");
     await mkdir(cwd, { recursive: true });

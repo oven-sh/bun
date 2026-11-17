@@ -746,15 +746,16 @@ fn root_patched_dependencies<'a>(
 ) -> Option<(&'a bun_ast::Source<'a>, bun_ast::Expr)> {
     // Auto-install does not call `init`, so the path is empty. It uses the package.json next to the
     // lockfile that it loaded.
-    let path: &[u8] = match root_package_json_path {
-        [] => &bun_paths::Path::resolved(&[root_dir, b"package.json"]),
-        path => path,
+    let path = if root_package_json_path.is_empty() {
+        bun_paths::Path::resolve(&[root_dir, b"package.json"])
+    } else {
+        bun_paths::Path::from(root_package_json_path)
     };
     let opts = GetJsonOptions {
         init_reset_store: false,
         ..Default::default()
     };
-    let GetJsonResult::Entry(entry) = cache.get_with_path(log, path, opts) else {
+    let GetJsonResult::Entry(entry) = cache.get_with_path(log, &path, opts) else {
         return None;
     };
     let patched = entry.root.get_object(b"patchedDependencies")?;

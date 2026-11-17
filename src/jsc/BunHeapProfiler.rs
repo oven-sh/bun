@@ -3,7 +3,7 @@ use bun_core::Output;
 use bun_core::String as BunString;
 
 use crate::VM;
-use crate::bun_cpu_profiler::{output_path, write_file_creating_dir};
+use crate::bun_cpu_profiler::{build_output_path, write_file_creating_dir};
 
 pub struct HeapProfilerConfig {
     // The config originates from CLI args and lives until process exit, so
@@ -43,8 +43,8 @@ pub(crate) fn generate_and_write_profile(
     } else {
         ".heapprofile"
     };
-    let path = output_path(config.dir, config.name, "Heap", extension)
-        .map_err(|too_long| Error::Sys(too_long.into()))?;
+    let path = build_output_path(config.dir, config.name, "Heap", extension)
+        .map_err(|err| Error::Sys(err.into()))?;
 
     write_file_creating_dir(&path, profile_slice.slice()).map_err(|_| Error::WriteFailed)?;
 

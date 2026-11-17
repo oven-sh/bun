@@ -8,9 +8,8 @@ use bun_alloc::Arena;
 use bun_ast::Expr;
 use bun_core::{Global, Output};
 use bun_options_types::context::ContextData;
-use bun_paths::platform::Auto;
-use bun_paths::string_paths::without_trailing_slash_portable;
-use bun_paths::{Style as _, VecPath};
+use bun_paths::VecPath;
+use bun_paths::string_paths::without_trailing_any_sep;
 
 pub(crate) use self::declarations::{add_declaration_files, is_declaration_file};
 pub(crate) use self::package_files::add_package_files;
@@ -85,7 +84,7 @@ impl Project {
                 package_json: Some(PackageJsonFile { path, contents }),
             },
             None => Project {
-                directory: without_trailing_slash_portable(working_directory).to_vec(),
+                directory: without_trailing_any_sep(working_directory).to_vec(),
                 package_json: None,
             },
         }
@@ -109,24 +108,20 @@ impl Project {
 }
 
 fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
-    let mut absolute = VecPath::resolved_portable(&[working_directory, path]);
-    absolute.trim_trailing_sep();
-    absolute.into_vec()
+    VecPath::resolve_any_sep(&[working_directory, path]).into_vec()
 }
 
-/// The bundler writes to it as it is spelled.
+/// Unlike [`absolute_path`], keeps a `\` on POSIX, as the bundler does when it writes.
 fn absolute_outdir(working_directory: &[u8], outdir: &[u8]) -> Vec<u8> {
-    let mut absolute = VecPath::resolved(&[working_directory, outdir]);
-    absolute.trim_trailing_sep();
-    absolute.into_vec()
+    VecPath::resolve(&[working_directory, outdir]).into_vec()
 }
 
 fn is_inside(ancestor: &[u8], path: &[u8]) -> bool {
-    Auto::strip_dir(path, ancestor).is_some_and(|below| !below.is_empty())
+    bun_paths::strip_prefix(path, ancestor).is_some_and(|below| !below.is_empty())
 }
 
 fn check_outdir(project: &Project, outdir: &[u8]) -> Result<(), LibraryError> {
-    if Auto::strip_dir(&project.directory, outdir).is_some() {
+    if bun_paths::strip_prefix(&project.directory, outdir).is_some() {
         return Err(LibraryError::OutdirHoldsProject {
             outdir: outdir.to_vec(),
         });

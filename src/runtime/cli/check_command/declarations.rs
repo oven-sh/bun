@@ -6,7 +6,7 @@ use bun_paths::platform::Auto;
 use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::program::FileId;
-use bun_sema_driver::host::{Provided, from_native, sees_beside, to_native};
+use bun_sema_driver::host::{Provided, check_entry_point_dirs, from_native, to_native};
 use bun_sema_driver::typed_files::{ModuleTypes, tsconfig_of_package};
 use bun_sema_driver::{Category, PlanOptions, Report, Request, ScriptKind, format};
 use bun_threading::Guarded;
@@ -70,7 +70,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     if paths.is_empty() {
         return true;
     }
-    if !sees_beside(cwd, &paths, log) {
+    if !check_entry_point_dirs(cwd, &paths, log) {
         return false;
     }
     let entry_paths = paths;

@@ -4,7 +4,6 @@ use std::borrow::Cow;
 
 use bstr::BStr;
 
-use bun_alloc::AllocError;
 use bun_core::fmt::{PathFormatOptions, PathSep, fmt_path_u8 as fmt_path};
 use bun_core::strings;
 use bun_semver as semver;
@@ -18,19 +17,17 @@ use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;
 
-/// For a path in bun.lock, which has `\` for `/` if Windows wrote it. It does not become absolute.
-pub(crate) fn portable_path(path: &[u8]) -> Cow<'_, [u8]> {
-    if cfg!(windows) || !strings::contains_char(path, b'\\') {
+/// For a path that Windows may have written to bun.lock. `\a` becomes `./a`, not `/a`. No-op on Windows.
+pub(crate) fn with_forward_slashes(path: &[u8]) -> Cow<'_, [u8]> {
+    if !bun_paths::has_literal_backslash(path) {
         return path.into();
     }
-    let dot: &[u8] = if path[0] == b'\\' { b"." } else { b"" };
-    let mut path = [dot, path].concat();
+    let mut path = path.to_vec();
+    if path[0] == b'\\' {
+        path.insert(0, b'.');
+    }
     bun_paths::slashes_to_posix_in_place(&mut path);
     path.into()
-}
-
-pub(crate) fn append_path(path: &[u8], string_buf: &mut StringBuf) -> Result<String, AllocError> {
-    string_buf.append(&portable_path(path))
 }
 
 impl Resolution {
@@ -184,23 +181,20 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
 
         if let Some(link) = strings::without_prefix_if_possible_comptime(res_str, b"link:") {
-            return Ok(Self::init(TaggedValue::Symlink(append_path(
-                link, string_buf,
-            )?)));
+            let link = string_buf.append(&with_forward_slashes(link))?;
+            return Ok(Self::init(TaggedValue::Symlink(link)));
         }
 
         if let Some(workspace) =
             strings::without_prefix_if_possible_comptime(res_str, b"workspace:")
         {
-            return Ok(Self::init(TaggedValue::Workspace(append_path(
-                workspace, string_buf,
-            )?)));
+            let workspace = string_buf.append(&with_forward_slashes(workspace))?;
+            return Ok(Self::init(TaggedValue::Workspace(workspace)));
         }
 
         if let Some(folder) = strings::without_prefix_if_possible_comptime(res_str, b"file:") {
-            return Ok(Self::init(TaggedValue::Folder(append_path(
-                folder, string_buf,
-            )?)));
+            let folder = string_buf.append(&with_forward_slashes(folder))?;
+            return Ok(Self::init(TaggedValue::Folder(folder)));
         }
 
         match dependency::VersionTag::infer(res_str) {

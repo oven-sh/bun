@@ -266,7 +266,7 @@ pub struct Entry {
 impl Entry {
     pub(crate) fn save(
         destination_dir: Fd,
-        file_name: &ZStr,
+        destination_path: &ZStr,
         input_byte_length: u64,
         input_hash: u64,
         features_hash: u64,
@@ -280,7 +280,7 @@ impl Entry {
         // atomically write to a tmpfile and then move it to the final destination
         let mut tmpname_buf = bun_paths::path_buffer_pool::get();
         let tmpfilename = FileSystem::tmpname(
-            paths::extension(file_name),
+            paths::extension(destination_path.as_bytes()),
             &mut tmpname_buf[..],
             input_hash,
         )?;
@@ -372,7 +372,9 @@ impl Entry {
             }
         }
 
-        tmpfile.finish(file_name).map_err(|(err, _)| err)?;
+        let base_len = paths::basename(destination_path).len();
+        let base = destination_path.substring(destination_path.len() - base_len);
+        tmpfile.finish(base).map_err(|(err, _)| err)?;
         Ok(())
     }
 
@@ -578,9 +580,10 @@ impl RuntimeTranspilerCache {
         let mut hex = [0u8; 2 * size_of::<u64>()];
         bun_core::fmt::bytes_to_hex_lower(&input_hash.to_ne_bytes(), &mut hex);
         let path = CACHE_DIR.with(|dir| {
-            let mut path = PoolPath::from(dir.get_or_init(Self::find_cache_dir).as_ref()?).ok()?;
+            let dir = dir.get_or_init(Self::find_cache_dir).as_ref()?;
+            let mut path = PoolPath::from(dir).ok()?;
             path.push(&hex).ok()?;
-            path.append(SUFFIX).ok()?;
+            path.extend_from_slice(SUFFIX).ok()?;
             Some(path)
         });
         path.ok_or_else(|| {
@@ -611,17 +614,17 @@ impl RuntimeTranspilerCache {
         let top = FileSystem::get().top_level_dir();
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get_not_empty() {
-            return Some(VecPath::resolved_portable(&[top, dir, b"bun/@t@"]));
+            return Some(VecPath::resolve_any_sep(&[top, dir, b"bun/@t@"]));
         }
 
-        // On a mac, this is different than ~/.bun/install/cache, and not configurable by the user.
-        let below_home: &[u8] = if cfg!(target_os = "macos") {
+        // macOS uses ~/Library/Caches, not the install cache.
+        let cache_subdir: &[u8] = if cfg!(target_os = "macos") {
             b"Library/Caches/bun/@t@"
         } else {
             b".bun/install/cache/@t@"
         };
         let home = env_var::HOME.get_not_empty()?;
-        Some(VecPath::resolved_portable(&[top, home, below_home]))
+        Some(VecPath::resolve_any_sep(&[top, home, cache_subdir]))
     }
 
     pub(crate) fn from_file(
@@ -718,7 +721,7 @@ impl RuntimeTranspilerCache {
 
         Entry::save(
             cache_dir.as_ref().map_or_else(Fd::cwd, sys::File::fd),
-            cache_file_path.tail(cache_file_path.len() - cache_file_path.basename().len()),
+            &cache_file_path,
             input_byte_length,
             input_hash,
             features_hash,

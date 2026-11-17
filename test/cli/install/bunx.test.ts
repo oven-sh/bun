@@ -1841,8 +1841,8 @@ describe.skipIf(isWindows)("cache directory", () => {
     });
   });
 
-  // Node.js does not import a module from there.
-  it.concurrent("is in the temp directory if the home directory has a backslash in its name", async () => {
+  // Node.js refuses to import a module whose real path contains a backslash.
+  it.concurrent("is in the temp directory when HOME contains a backslash", async () => {
     using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
     const HOME = join(box.home, "DOMAIN\\user");

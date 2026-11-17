@@ -3919,7 +3919,7 @@ mod windows_impl {
             super::open_dir_at_windows_a(dir, path.as_bytes(), options)
         } else {
             let mut wbuf = bun_paths::w_path_buffer_pool::get();
-            let wpath = super::nt_path(&mut wbuf, path, Tag::mkdir)?;
+            let wpath = super::to_nt_path_checked(&mut wbuf, path, Tag::mkdir)?;
             super::open_dir_at_windows_nt_path(dir, wpath, options)
         };
         made.map(super::File::from_fd).map(drop)
@@ -3929,8 +3929,8 @@ mod windows_impl {
         let to_dir = to_dir.as_fd();
         let mut wf = bun_paths::w_path_buffer_pool::get();
         let mut wt = bun_paths::w_path_buffer_pool::get();
-        let from_w = super::nt_path(&mut wf, from, Tag::rename)?;
-        let to_w = super::nt_path(&mut wt, to, Tag::rename)?;
+        let from_w = super::to_nt_path_checked(&mut wf, from, Tag::rename)?;
+        let to_w = super::to_nt_path_checked(&mut wt, to, Tag::rename)?;
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
     }
     pub(crate) fn renameat2(
@@ -3951,7 +3951,7 @@ mod windows_impl {
         // AT_REMOVEDIR on Windows = 0x200.
         const AT_REMOVEDIR: i32 = 0x200;
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = super::nt_path(&mut wbuf, path, Tag::unlink)?;
+        let wpath = super::to_nt_path_checked(&mut wbuf, path, Tag::unlink)?;
         super::windows::DeleteFileBun(
             wpath,
             super::windows::DeleteFileOptions {
@@ -5669,7 +5669,7 @@ pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd
     let dir = dir.as_fd();
     let mut buf = bun_paths::path_buffer_pool::get();
     if path.len() >= buf.0.len() {
-        return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
+        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(path));
     }
     buf.0[..path.len()].copy_from_slice(path);
     let z = ZStr::nul_terminate(&mut buf, path.len());
@@ -6358,15 +6358,19 @@ fn convert_path_u8_to_u16<'a>(buf: &'a mut [u16], path: &[u8]) -> Maybe<&'a mut 
     Ok(bun_core::convert_utf8_to_utf16_in_buffer(buf, path))
 }
 
-/// `to_nt_path` makes an empty name of one that is too long, which next to a directory handle is that directory.
+/// `to_nt_path` returns an empty name if `path` is too long, which would mean the directory itself.
 #[cfg(windows)]
-fn nt_path<'a>(buf: &'a mut [u16], path: &ZStr, syscall: Tag) -> Maybe<&'a bun_core::WStr> {
+fn to_nt_path_checked<'a>(
+    buf: &'a mut [u16],
+    path: &ZStr,
+    syscall: Tag,
+) -> Maybe<&'a bun_core::WStr> {
     use bun_paths::string_paths::{fits_in_wide_path_buffer, to_nt_path, without_nt_prefix};
-    let nt_path = to_nt_path(buf, path);
-    if !fits_in_wide_path_buffer(without_nt_prefix(path)) || nt_path.is_empty() != path.is_empty() {
+    let wpath = to_nt_path(buf, path);
+    if !fits_in_wide_path_buffer(without_nt_prefix(path)) || wpath.is_empty() != path.is_empty() {
         return Err(Error::from_code(E::ENAMETOOLONG, syscall).with_path(path));
     }
-    Ok(nt_path)
+    Ok(wpath)
 }
 
 #[cfg(windows)]
@@ -6626,7 +6630,7 @@ fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
 pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Maybe<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let dword = nt_query_attributes_at(dir, nt_path(&mut wbuf, sub, Tag::access)?)?;
+    let dword = nt_query_attributes_at(dir, to_nt_path_checked(&mut wbuf, sub, Tag::access)?)?;
     Ok(WindowsFileAttributes {
         is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
         is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
@@ -6661,7 +6665,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         // `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
         // built from the (optionally NT-prefixed) wide path.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        exists_at_type_nt(dir, nt_path(&mut wbuf, sub, Tag::access)?)
+        exists_at_type_nt(dir, to_nt_path_checked(&mut wbuf, sub, Tag::access)?)
     }
 }
 /// Wide-path arm of `exists_at_type`. Takes an already-wide path (Windows
@@ -6703,7 +6707,7 @@ pub fn get_fcntl_flags(fd: Fd) -> Maybe<FcntlInt> {
 }
 #[cfg(windows)]
 pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
-    Err(Error::from_code_int(libc::ENOSYS, Tag::fcntl))
+    Err(Error::from_code(E::ENOSYS, Tag::fcntl))
 }
 #[inline]
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {
@@ -7048,9 +7052,10 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
-/// [`get_fd_path`] in a buffer of the pool.
-pub fn fd_path(fd: Fd) -> Maybe<bun_paths::Path> {
-    bun_paths::Path::filled(|buf| Ok(get_fd_path(fd, buf)?))
+/// [`get_fd_path`], returning an owned path.
+pub fn get_fd_path_owned(fd: Fd) -> Maybe<bun_paths::Path> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    Ok(bun_paths::Path::from(get_fd_path(fd, &mut buf)?))
 }
 
 /// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
@@ -8717,7 +8722,7 @@ pub fn write_file_with_path_buffer(
         PathOrFileDescriptor::Fd(fd) => File::borrow(fd),
         PathOrFileDescriptor::Path(bytes) => {
             if bytes.len() >= path_buf.0.len() {
-                return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
+                return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(bytes));
             }
             path_buf.0[..bytes.len()].copy_from_slice(bytes);
             let z = ZStr::nul_terminate(path_buf, bytes.len());

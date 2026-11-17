@@ -201,18 +201,18 @@ pub(super) fn relative_path<'a>(
         return path;
     }
 
-    // The bundler's `pretty` paths have no `\`.
+    // A `\` takes the slow path, which converts it like the bundler's `pretty` paths.
     if path.len() > root.len()
         && path[root.len()] == b'/'
         && path.starts_with(root)
-        && !(cfg!(unix) && bun_core::strings::contains_char(&path[root.len()..], b'\\'))
+        && !paths::has_literal_backslash(&path[root.len()..])
     {
         return &path[root.len() + 1..];
     }
 
-    let mut relative = paths::PathIn::<_, paths::platform::Slash>::new_in(relative_path_buf);
-    match relative.set_relative_portable(root, path) {
-        Ok(()) => relative.into_z(),
+    let mut relative = paths::SlicePath::new(relative_path_buf);
+    match relative.set(&paths::ForwardSlashPath::relative_any_sep(root, path)) {
+        Ok(()) => relative.into_zstr(),
         Err(paths::NameTooLong) => path,
     }
 }

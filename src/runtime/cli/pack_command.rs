@@ -144,7 +144,12 @@ impl PackCommand {
             if option.is_empty() {
                 continue;
             }
-            let Ok(abs) = path::PoolPath::resolved_portable(&[original_cwd, *option]) else {
+            let mut abs = path::PoolPath::new();
+            let result = abs
+                .resolve_any_sep_in_place(&[original_cwd, *option])
+                // `--filename out/` names a directory, so writing the tarball to it has to fail.
+                .and_then(|()| abs.copy_trailing_sep_from(option));
+            if result.is_err() {
                 Output::err_generic(
                     "archive {} too long: \"{}\"",
                     (
@@ -153,7 +158,7 @@ impl PackCommand {
                     ),
                 );
                 Global::crash();
-            };
+            }
             *option = crate::cli::cli_dupe(&abs);
         }
 
@@ -2113,7 +2118,7 @@ fn tarball_destination<'a>(
     tarball_name: TarballNameFormatter<'_>,
     dest_buf: &'a mut [u8],
 ) -> (&'a ZStr, usize) {
-    let mut dest = path::SlicePath::new_in(dest_buf);
+    let mut dest = path::SlicePath::new(dest_buf);
     if !pack_filename.is_empty() {
         if dest.set(pack_filename).is_err() {
             Output::err_generic(
@@ -2122,7 +2127,7 @@ fn tarball_destination<'a>(
             );
             Global::crash();
         }
-        return (dest.into_z(), 0);
+        return (dest.into_zstr(), 0);
     }
 
     #[cold]
@@ -2137,7 +2142,7 @@ fn tarball_destination<'a>(
         Global::crash();
     }
     if dest
-        .resolve_portable(&[abs_workspace_path, pack_destination])
+        .resolve_any_sep_in_place(&[abs_workspace_path, pack_destination])
         .is_err()
     {
         too_long(pack_destination, tarball_name);
@@ -2146,7 +2151,7 @@ fn tarball_destination<'a>(
     if dest.push_fmt(format_args!("{tarball_name}")).is_err() {
         too_long(&dest, tarball_name);
     }
-    (dest.into_z(), dir_len)
+    (dest.into_zstr(), dir_len)
 }
 
 pub(crate) fn fmt_tarball_filename<'a>(
@@ -2228,7 +2233,7 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<Fd> 
         .expect("unreachable");
     let mut tmp = path::VecPath::from(abs_tarball_dest);
     tmp.set_basename(UNFINISHED_TARBALL_PREFIX);
-    tmp.append(name);
+    tmp.extend_from_slice(name);
     let file = File::openat(
         Fd::cwd(),
         &tmp,

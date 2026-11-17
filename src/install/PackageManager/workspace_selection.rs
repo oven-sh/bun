@@ -4,9 +4,9 @@ use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
-use bun_paths::platform::{Posix, Slash};
+use bun_paths::platform::Posix;
 use bun_paths::resolve_path::platform_to_posix_in_place;
-use bun_paths::{Heap, PathIn, Pool, slashes_to_posix_in_place};
+use bun_paths::{GenericPath, PoolPath, VecBackend, slashes_to_posix_in_place};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -107,12 +107,12 @@ impl NegatedWorkspaces {
     }
 }
 
-/// For `Candidate::abs_posix_dir` and the globs it is matched with, in which a `\` would be an escape. `None` if it is too long.
-pub fn posix_dir(base: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
-    let mut dir = PathIn::<Pool, Slash>::resolved_portable(&[base, path]).ok()?;
+/// Has no `\`, because globs read it as an escape. `None` if it is too long.
+pub fn abs_posix_dir(base: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
+    let mut dir = PoolPath::resolve_any_sep(&[base, path]).ok()?;
     slashes_to_posix_in_place(dir.as_mut_slice());
-    let mut dir = PathIn::<Heap, Posix>::joined(&[&dir]);
-    dir.trim_trailing_sep();
+    // Converting can leave a `//` or a `..`.
+    let dir = GenericPath::<VecBackend, Posix>::resolve(&[&dir]);
     Some(dir.into_vec().into())
 }
 
@@ -149,7 +149,7 @@ fn parse(raw: &[u8], original_cwd: &[u8]) -> Selector {
     }
 
     let resolve = |part: &[u8]| -> Prepared<Box<[u8]>> {
-        let Some(joined) = posix_dir(original_cwd, part) else {
+        let Some(joined) = abs_posix_dir(original_cwd, part) else {
             Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
             Global::crash();
         };
@@ -515,7 +515,7 @@ pub fn select_lockfile_workspaces(
                 _ => b".",
             };
             // A path out of bun.lock that fits no path buffer is selected by its name only.
-            posix_dir(top_level_dir, rel).unwrap_or_default()
+            abs_posix_dir(top_level_dir, rel).unwrap_or_default()
         })
         .collect();
 

@@ -318,6 +318,7 @@ pub mod api {
                     .is_none_or(|&c| bun_core::path_sep::is_sep_any(c))
             {
                 let mut expanded = [home, rest].concat();
+                // `~\a\b` was written on Windows.
                 if cfg!(unix) && rest.starts_with(b"\\") {
                     bun_paths::slashes_to_posix_in_place(&mut expanded[home.len()..]);
                 }
@@ -327,12 +328,14 @@ pub mod api {
             if path.is_empty() || bun_paths::is_absolute(path) || !bun_paths::is_absolute(dir) {
                 return path.into();
             }
-            let resolved = bun_paths::Path::resolved_portable(&[dir, path]);
+            let mut resolved = bun_paths::Path::resolve_any_sep(&[dir, path]);
+            // As an import, `./scanner/` is the directory and `./scanner` can be `scanner.ts`.
+            resolved.copy_trailing_sep_from(path);
             // A path that is too long could not be opened anyway, so keep `path`.
-            match resolved.len() > bun_paths::MAX_PATH_BYTES {
-                true => path.into(),
-                false => resolved.as_bytes().into(),
+            if resolved.len() > bun_paths::MAX_PATH_BYTES {
+                return path.into();
             }
+            resolved.as_bytes().into()
         }
     }
 

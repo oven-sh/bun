@@ -157,10 +157,14 @@ impl FileSystemRouter {
                                 continue 'outer;
                             }
                         }
-                        let Some(full_path) = entry.path().map(|path| path.to_vec()) else {
+                        // Copy, so that the pooled buffer is released before recursing.
+                        let Some(full_path) = entry.build_abs_path().map(|path| path.to_vec())
+                        else {
                             continue 'outer;
                         };
-                        let _ = (vm.transpiler).with_mut(|t| t.resolver.bust_dir_cache(&full_path));
+                        let _ = vm
+                            .transpiler
+                            .with_mut(|t| t.resolver.bust_dir_cache(&full_path));
                         Self::bust_dir_cache_recursive(&full_path);
                     }
                 }

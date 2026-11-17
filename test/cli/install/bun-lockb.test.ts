@@ -2,7 +2,17 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, statSync } from "fs";
 import { copyFile, exists, open, rm, symlink, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isLinux, isRoot, isWindows, runBunInstall, tempDir, textLockfile } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isRoot,
+  isWindows,
+  MAX_PATH_BYTES,
+  runBunInstall,
+  tempDir,
+  textLockfile,
+} from "harness";
 import { join } from "path";
 import { installEnv, TestRegistry, toml } from "registry";
 
@@ -16,16 +26,16 @@ afterAll(() => {
   registry.stop();
 });
 
-// An argument cannot be longer than the path buffer of Windows.
-it.skipIf(isWindows)("printing a lockfile whose path is longer than PATH_MAX says that it is not found", async () => {
+// On Windows the path buffer is longer than any argument.
+it.skipIf(isWindows)("a .lockb path longer than the path buffer prints 'lockfile not found'", async () => {
   using dir = tempDir("lockb-long-path", {});
-  const name = Buffer.alloc(5000, "a").toString() + ".lockb";
+  const name = Buffer.alloc(MAX_PATH_BYTES, "a").toString() + ".lockb";
 
-  await using proc = spawn({ cmd: [bunExe(), name], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: `lockfile not found: "${join(String(dir), name)}"\n` });
-  expect(exitCode).toBe(1);
+  expect(await run(String(dir), name)).toEqual({
+    stdout: "",
+    stderr: `lockfile not found: "${join(String(dir), name)}"\n`,
+    exitCode: 1,
+  });
 });
 
 it("should not print anything to stderr when running bun.lockb", async () => {

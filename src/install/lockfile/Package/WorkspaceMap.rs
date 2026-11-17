@@ -6,10 +6,10 @@ use bun_core::strings;
 use bun_glob as glob;
 use bun_paths as path;
 use bun_paths::resolve_path;
-use bun_paths::{MAX_PATH_BYTES, NameTooLong, PoolPath, SEP_STR, SlashPath};
+use bun_paths::{ForwardSlashPath, MAX_PATH_BYTES, PoolPath, SEP_STR};
 
 use super::DependencyGroup;
-use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces, resolve_to_store};
+use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces, resolve_for_lockfile};
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
@@ -313,8 +313,7 @@ fn add_glob_error(
     root_dir: &[u8],
     err: &bun_sys::Error,
 ) -> crate::Error {
-    let mut failed_path = path::Path::resolved(&[root_dir, &err.path]);
-    failed_path.trim_trailing_sep();
+    let failed_path = path::Path::resolve(&[root_dir, &err.path]);
     let _ = bun_ast::add_error_pretty!(
         log,
         Some(source),
@@ -326,10 +325,6 @@ fn add_glob_error(
         bun_core::fmt::escape_control_chars(&failed_path),
     );
     crate::Error::InstallFailed
-}
-
-fn package_json_in(root_dir: &[u8], workspace: &[u8]) -> Result<PoolPath, NameTooLong> {
-    resolve_to_store(root_dir, &[workspace, b"package.json"])
 }
 
 impl WorkspaceMap {
@@ -378,7 +373,6 @@ impl WorkspaceMap {
         let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
         let mut negated = NegatedWorkspaces::default();
         let root_dir: &[u8] = package_json_dir(source);
-        let mut dir = SlashPath::new();
 
         let scratch = Arena::new();
 
@@ -408,9 +402,11 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let processed = match package_json_in(root_dir, input_path) {
+            let mut dir = ForwardSlashPath::new();
+            let processed = match resolve_for_lockfile(root_dir, &[input_path, b"package.json"]) {
                 Ok(abs_package_json_path) => {
-                    dir.set_relative(root_dir, workspace_dir_of(&abs_package_json_path));
+                    let abs_dir = workspace_dir_of(&abs_package_json_path);
+                    dir = ForwardSlashPath::relative(root_dir, abs_dir);
                     // skip root package.json
                     if dir.is_empty() {
                         continue;
@@ -425,7 +421,7 @@ impl WorkspaceMap {
                         missing_workspace,
                     )
                 }
-                Err(too_long) => Err(too_long.into()),
+                Err(err) => Err(err.into()),
             };
 
             let workspace_entry = match processed {
@@ -553,15 +549,16 @@ impl WorkspaceMap {
                     );
 
                     let parts = [root_dir, entry_dir, b"package.json"];
-                    let processed = match PoolPath::resolved(&parts) {
+                    let processed = match PoolPath::resolve(&parts) {
                         Ok(abs_package_json_path) => {
-                            dir.set_relative(root_dir, workspace_dir_of(&abs_package_json_path));
+                            let abs_dir = workspace_dir_of(&abs_package_json_path);
+                            let dir = ForwardSlashPath::relative(root_dir, abs_dir);
                             // Skip the root package.json, which `**` or `../*` can match again.
                             if dir.is_empty() {
                                 continue;
                             }
-                            // In the lockfile this would be the path of another directory.
-                            if strings::contains_char(&dir, b'\\') {
+                            // bun.lock reads `\` as a separator.
+                            if path::has_literal_backslash(&dir) {
                                 continue;
                             }
 
@@ -573,11 +570,12 @@ impl WorkspaceMap {
                                 log,
                                 missing_workspace,
                             )
+                            .map(|entry| (dir, entry))
                         }
-                        Err(too_long) => Err(too_long.into()),
+                        Err(err) => Err(err.into()),
                     };
 
-                    let workspace_entry = match processed {
+                    let (workspace_path, workspace_entry) = match processed {
                         Ok(processed) => processed,
                         Err(err) => {
                             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -603,7 +601,7 @@ impl WorkspaceMap {
                     };
                     workspace_names.insert(
                         string_builder.as_deref_mut(),
-                        &dir,
+                        &workspace_path,
                         Entry {
                             is_behind_link,
                             ..workspace_entry
@@ -632,9 +630,9 @@ impl WorkspaceMap {
     /// symlink.
     pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
         let root_dir: &[u8] = package_json_dir(source);
-        let dir: &[u8] = &SlashPath::relative(root_dir, abs_dir);
-        // See `resolve_to_store` for the `\`.
-        if dir.is_empty() || strings::contains_char(dir, b'\\') {
+        let dir: &[u8] = &ForwardSlashPath::relative(root_dir, abs_dir);
+        // bun.lock reads `\` as a separator.
+        if dir.is_empty() || path::has_literal_backslash(dir) {
             return false;
         }
         let scratch = Arena::new();
@@ -654,9 +652,9 @@ impl WorkspaceMap {
                 continue;
             }
             // A workspace listed by its exact path is a member even if a negated pattern matches.
-            if package_json_in(root_dir, input_path).is_ok_and(|abs| {
-                SlashPath::relative(root_dir, workspace_dir_of(&abs)).as_bytes() == dir
-            }) {
+            if resolve_for_lockfile(root_dir, &[input_path])
+                .is_ok_and(|abs| ForwardSlashPath::relative(root_dir, &abs).as_bytes() == dir)
+            {
                 return true;
             }
         }

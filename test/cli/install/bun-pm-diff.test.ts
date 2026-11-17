@@ -1764,6 +1764,16 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(mixed.exitCode).toBe(0);
   });
 
+  test("a trailing slash makes ./x.tgz/ a folder", async () => {
+    using dir = tempDir("pm-diff-tgz-folder", { "one.tgz": v1, "two": { ...v1, "index.js": v2["index.js"] } });
+
+    const { stdout, stderr, exitCode } = await diff(["./one.tgz/", "./two", "--name-only"], String(dir));
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a tarball entry larger than 64 MiB is read whole", async () => {
     // The tarball reader used to reject any entry over 64 MiB as "invalid archive entry size". blob.bin is the same
     // bytes on both sides, so a tarball read that is short, skips the entry, or scrambles it shows up as a blob.bin line.

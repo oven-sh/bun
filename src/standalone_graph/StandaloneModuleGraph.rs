@@ -1997,7 +1997,7 @@ pub(crate) fn to_bytes(
                 let mut dump_rel: Vec<u8> = Vec::new();
                 options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
                     .expect("write to Vec<u8>");
-                let dest_z = path::Path::joined(&[dump_code_dir, &dump_rel]);
+                let dest_z = path::Path::join(&[dump_code_dir, &dump_rel]);
 
                 // Scoped block to handle dump failures without skipping module emission
                 'dump: {

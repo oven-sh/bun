@@ -2,7 +2,7 @@ use core::ffi::c_int;
 
 use crate::VM;
 use bun_core::String as BunString;
-use bun_paths::{NameTooLong, OsPath, Path};
+use bun_paths::{NameTooLong, OSPath, Path};
 use bun_sys::{self, Errno, Fd};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -71,7 +71,7 @@ pub(crate) fn write_sampling_profiler_report(
     }
     let report = report.to_utf8();
 
-    let path = output_path(directory, b"", "SamplingProfile", ".txt")?;
+    let path = build_output_path(directory, b"", "SamplingProfile", ".txt")?;
 
     write_file_creating_dir(&path, report.slice()).map_err(|_| ProfilerError::WriteFailed)
 }
@@ -110,38 +110,41 @@ fn write_profile_to_file(
     let profile_slice = profile_string.to_utf8();
 
     let extension = if is_md_format { ".md" } else { ".cpuprofile" };
-    let is_name_shared = !config.name.is_empty() && config.md_format && config.json_format;
-    let name: &[u8] = match is_name_shared {
-        true => &[config.name, extension.as_bytes()].concat(),
-        false => config.name,
-    };
-    let path = output_path(config.dir, name, "CPU", extension)?;
+    let mut name = config.name.to_vec();
+    // Both formats would get the same custom name, so add the extension.
+    if !name.is_empty() && config.md_format && config.json_format {
+        name.extend_from_slice(extension.as_bytes());
+    }
+    let path = build_output_path(config.dir, &name, "CPU", extension)?;
 
     write_file_creating_dir(&path, profile_slice.slice()).map_err(|_| ProfilerError::WriteFailed)
 }
 
 /// Writes `contents` to `path`. On ENOENT, EPERM or EACCES it creates the directory and retries once.
-pub(crate) fn write_file_creating_dir(path: &OsPath, contents: &[u8]) -> bun_sys::Maybe<()> {
-    let write = || bun_sys::File::write_file_os_path(Fd::cwd(), path, contents);
-    write().or_else(|err| match (err.get_errno(), path.dirname()) {
-        (Errno::ENOENT | Errno::EPERM | Errno::EACCES, Some(dir)) => {
-            let _ = bun_sys::Dir::cwd().make_path(&Path::from(dir));
-            write()
-        }
-        _ => Err(err),
-    })
+pub(crate) fn write_file_creating_dir(path: &OSPath, contents: &[u8]) -> bun_sys::Maybe<()> {
+    let result = bun_sys::File::write_file_os_path(Fd::cwd(), path, contents);
+    if let Err(err) = &result
+        && matches!(
+            err.get_errno(),
+            Errno::ENOENT | Errno::EPERM | Errno::EACCES
+        )
+        && let Some(dir) = path.dirname()
+    {
+        let _ = bun_sys::Dir::cwd().make_path(&Path::from(dir));
+        return bun_sys::File::write_file_os_path(Fd::cwd(), path, contents);
+    }
+    result
 }
 
-/// `dir` and `name` can be empty. As in Node, they can be absolute and a `\` is only a separator on Windows.
-pub(crate) fn output_path(
+/// `path.resolve(cwd, dir, name)`. An empty `name` gets Node's default file name.
+pub(crate) fn build_output_path(
     dir: &[u8],
     name: &[u8],
     default_prefix: &str,
     default_extension: &str,
-) -> Result<OsPath, NameTooLong> {
-    let mut path = OsPath::top_level_dir()?;
-    path.resolve(&[dir, name])?;
-    path.trim_trailing_sep();
+) -> Result<OSPath, NameTooLong> {
+    let mut path = OSPath::from_top_level_dir()?;
+    path.resolve_in_place(&[dir, name])?;
     if name.is_empty() {
         push_diagnostic_filename(&mut path, default_prefix, default_extension)?;
     }
@@ -151,7 +154,7 @@ pub(crate) fn output_path(
 /// Node's DiagnosticFilename: `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
 /// https://github.com/nodejs/node/blob/main/src/util.cc (MakeFilename)
 fn push_diagnostic_filename(
-    path: &mut OsPath,
+    path: &mut OSPath,
     prefix: &str,
     extension: &str,
 ) -> Result<(), NameTooLong> {

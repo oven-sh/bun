@@ -451,7 +451,7 @@ fn read_package_json(
         }
     };
 
-    let mut dir_path = match bun_sys::fd_path(package_dir.fd()) {
+    let mut json_path = match bun_sys::get_fd_path_owned(package_dir.fd()) {
         Ok(dir_path) => dir_path,
         Err(err) => {
             log.add_error_fmt(
@@ -466,9 +466,10 @@ fn read_package_json(
             return Err(Error::InstallFailed);
         }
     };
+    json_path.push(b"package.json");
     let path = bun_resolver::fs::FileSystem::get()
         .dirname_store()
-        .append(&dir_path.child(b"package.json"))?;
+        .append(&json_path)?;
 
     Ok(ExtractData {
         url,
@@ -502,7 +503,7 @@ impl CacheStaging {
         let tmp_name =
             Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
                 .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-        let tmp_path = Path::VecPath::resolved(&[cache_dir_path, tmp_name]).into_vec();
+        let tmp_path = bun_paths::VecPath::resolve(&[cache_dir_path, tmp_name]).into_vec();
         Ok(Self {
             entry: UnfinishedEntry::new(cache_dir, tmp_name),
             tmp_path,
@@ -957,7 +958,7 @@ impl GitSubprocess {
     /// a repository if this folder turned out not to be one.
     fn git_dir_arg(&self, clone_id: Task::Id) -> Vec<u8> {
         let folder_name = bare_repo_folder_name(clone_id);
-        let git_dir = Path::Path::resolved(&[&self.cache_dir.path, &folder_name]);
+        let git_dir = bun_paths::Path::resolve(&[&self.cache_dir.path, &folder_name]);
         [b"--git-dir=", git_dir.as_bytes()].concat()
     }
 

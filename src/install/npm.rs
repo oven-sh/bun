@@ -1148,6 +1148,8 @@ pub mod package_manifest {
     use super::*;
     use bun_paths::StackPath;
 
+    type ManifestFileName = StackPath<{ 16 + "-".len() + 16 + ".npm".len() + 1 }>;
+
     pub struct Serializer;
 
     /// The `save_async` tasks that have not finished.
@@ -1288,7 +1290,7 @@ pub mod package_manifest {
             // This needs many more call sites, doesn't have much impact on this location.
             #[cfg(windows)]
             let path_to_use_for_opening_file =
-                &bun_paths::Path::resolved(&[&temp_dir.path, tmp_path]);
+                &bun_paths::Path::resolve(&[&temp_dir.path, tmp_path]);
             #[cfg(not(windows))]
             let path_to_use_for_opening_file = tmp_path;
             let tmpdir = temp_dir.handle.fd();
@@ -1355,7 +1357,7 @@ pub mod package_manifest {
 
             #[cfg(windows)]
             {
-                let cache_path_abs = &bun_paths::Path::resolved(&[&temp_dir.cache.path, outpath]);
+                let cache_path_abs = &bun_paths::Path::resolve(&[&temp_dir.cache.path, outpath]);
                 drop(file);
                 bun_sys::renameat(
                     Fd::cwd(),
@@ -1484,13 +1486,13 @@ pub mod package_manifest {
             THREAD_POOL.schedule(batch);
         }
 
-        fn manifest_file_name(file_id: u64, url_hash: u64) -> Result<StackPath<40>, Error> {
+        fn manifest_file_name(file_id: u64, url_hash: u64) -> Result<ManifestFileName, Error> {
             let mut name = StackPath::new();
             write!(name, "{}", bun_fmt::hex_int_lower::<16>(file_id))?;
             if url_hash != *registry::DEFAULT_URL_HASH {
                 write!(name, "-{}", bun_fmt::hex_int_lower::<16>(url_hash))?;
             }
-            name.append(b".npm")?;
+            name.extend_from_slice(b".npm")?;
             Ok(name)
         }
 

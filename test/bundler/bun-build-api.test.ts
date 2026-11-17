@@ -46,7 +46,7 @@ describe("Bun.build", () => {
     expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
   });
 
-  test.skipIf(isWindows)("the path of an output is where it has been written", async () => {
+  test.skipIf(isWindows)("outputs[].path keeps a backslash in outdir and naming", async () => {
     using dir = tempDir("bun-build-api-backslash", { "entry.js": `console.log(1);` });
 
     const { outputs } = await Bun.build({
@@ -2721,7 +2721,7 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
   test("fails the build when an in-memory entry point's directory is too long", async () => {
     // Windows can't look up a key this long in `files`, so it looks for the directory on disk and Bun.build() throws.
     const message = isWindows
-      ? "ENOSYS: failed to open root directory"
+      ? "ENAMETOOLONG: failed to open root directory"
       : "ENAMETOOLONG: Failed to get full path for directory";
     expect(
       await run(`

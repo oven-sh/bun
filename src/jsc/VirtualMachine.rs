@@ -4853,13 +4853,14 @@ impl VirtualMachine {
                     let mut busted_working_directory = false;
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
-                            let mut native = bun_paths::SlicePath::new_in(buf);
-                            if native.push_portable(dir).is_err() {
+                            // Normalized without trailing slash.
+                            let mut normalized_dir = bun_paths::SlicePath::new(buf);
+                            if normalized_dir.push_any_sep(dir).is_err() {
                                 return Err(crate::CrateError::ModuleNotFound);
                             }
                             // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
                             busted_as_spelled = bust_dir_cache(dir);
-                            native.into_z().as_bytes()
+                            normalized_dir.into_zstr().as_bytes()
                         } else {
                             // Absolute but root — fall through to join.
                             &b""[..]

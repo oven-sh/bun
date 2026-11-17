@@ -241,13 +241,13 @@ pub(crate) fn create_index_link(
         if Dir::borrow(&cache_dir).make_path(name).is_err() {
             return;
         }
-        let link = &bun_paths::Path::resolved(&[cache_dir_path, name, version]);
+        let link = &bun_paths::Path::resolve(&[cache_dir_path, name, version]);
         let _ = sys::sys_uv::symlink_uv(target, link, sys::windows::libuv::UV_FS_SYMLINK_JUNCTION);
     }
     #[cfg(not(windows))]
     {
         let _ = cache_dir_path;
-        let link = &bun_paths::Path::joined(&[name, version]);
+        let link = &bun_paths::Path::join(&[name, version]);
         if let Err(err) = sys::symlinkat(target, cache_dir, link)
             && err.get_errno() == E::ENOENT
             && Dir::borrow(&cache_dir).make_path(name).is_ok()

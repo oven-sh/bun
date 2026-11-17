@@ -397,6 +397,7 @@ pub(crate) fn typed_files_for_build(
     if !report.incomplete.is_empty() {
         return warn(format_args!("they could not be type checked"));
     }
+    // `typed` is in the order of `written`, whose paths have the bundler's spelling.
     let typed_files = (found.typed.into_iter().zip(written)).filter_map(|((_, text), file)| {
         let path = typed_path_beside(file.path)?;
         Some(TypedFile { path, text })

@@ -9,7 +9,7 @@ use core::mem::size_of;
 use bun_alloc::{AllocError, Arena};
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
-use bun_paths::{self as paths, SlashPath};
+use bun_paths::{self as paths, ForwardSlashPath};
 use bun_resolver::{DirInfo, Resolver};
 
 use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOptional;
@@ -615,8 +615,9 @@ impl FrameworkRouter {
                             }
                         }
 
-                        let child_info =
-                            (file.path()).and_then(|path| r.read_dir_info_ignore_error(&path));
+                        let child_info = file
+                            .build_abs_path()
+                            .and_then(|path| r.read_dir_info_ignore_error(&path));
                         if let Some(child_info) = child_info {
                             self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
                         }
@@ -641,16 +642,17 @@ impl FrameworkRouter {
                         }
 
                         let t = &self.types[t_index.get() as usize];
-                        let Some(abs_path) = file.path() else {
+                        let Some(abs_path) = file.build_abs_path() else {
                             continue 'outer;
                         };
                         let abs_path: &[u8] = &abs_path;
 
                         // Parse the pattern from the path relative to this type's root, which can be outside `self.root`.
-                        let mut rel_path = SlashPath::relative(&t.abs_root, abs_path);
-                        rel_path.replace_prefix(0, b"/");
+                        let mut rel_path = ForwardSlashPath::relative(&t.abs_root, abs_path);
+                        rel_path.prepend(b"/");
                         let rel_path: &[u8] = &rel_path;
-                        let full_rel_path: &[u8] = &SlashPath::relative(&self.root, abs_path);
+                        let full_rel_path: &[u8] =
+                            &ForwardSlashPath::relative(&self.root, abs_path);
 
                         let mut log = TinyLog::empty();
                         // The arena is reset at the end of every arm via

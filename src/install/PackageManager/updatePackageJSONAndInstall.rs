@@ -646,11 +646,15 @@ struct MoreInstructions<'a> {
 
 impl fmt::Display for MoreInstructions<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use ShellCompletions::Shell::{Bash, Zsh};
+        // Inside the double quotes of a POSIX shell, a `\` has to be doubled.
+        let is_posix_shell = matches!(
+            self.shell,
+            ShellCompletions::Shell::Bash | ShellCompletions::Shell::Zsh
+        );
         let path = bun_core::fmt::fmt_path_u8(
             self.folder,
             bun_core::fmt::PathFormatOptions {
-                escape_backslashes: cfg!(not(windows)) && matches!(self.shell, Bash | Zsh),
+                escape_backslashes: cfg!(not(windows)) && is_posix_shell,
                 path_sep: if cfg!(windows) {
                     bun_core::fmt::PathSep::Windows
                 } else {
@@ -663,7 +667,7 @@ impl fmt::Display for MoreInstructions<'_> {
                 // Unfortunately really difficult to do this in one line on PowerShell.
                 write!(writer, "{}", path)
             }
-            Bash | Zsh => {
+            ShellCompletions::Shell::Bash | ShellCompletions::Shell::Zsh => {
                 write!(writer, "export PATH=\"{}:$PATH\"", path)
             }
             ShellCompletions::Shell::Fish => {

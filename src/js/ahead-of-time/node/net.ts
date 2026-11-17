@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 52199adfd5599ac7324bd06a9f1755b868f85c939bccb1b84234b4df78b768af.
+// Written against that file with the SHA-256 70b02a36b1a0dab208e806bb4d245c2f24cbc45f3f276508d6745b605f5050c0.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -54,7 +54,6 @@ const kDestroyOnRead: typeof netSymbols.kDestroyOnRead = netSymbols.kDestroyOnRe
 const kForeignListener: typeof netSymbols.kForeignListener = netSymbols.kForeignListener;
 const kHandleClosed: typeof netSymbols.kHandleClosed = netSymbols.kHandleClosed;
 const kSharesWrites: typeof netSymbols.kSharesWrites = netSymbols.kSharesWrites;
-const kListenersRemoved: typeof netSymbols.kListenersRemoved = netSymbols.kListenersRemoved;
 const kPreHandshakeWrite: typeof netSymbols.kPreHandshakeWrite = netSymbols.kPreHandshakeWrite;
 const readInProgress = netSymbols.readInProgress;
 const kReadStop: typeof netSymbols.kReadStop = netSymbols.kReadStop;
@@ -2683,12 +2682,6 @@ Socket.prototype.pause = function pause(this: $Node.Socket) {
     readStop(this, handle);
   }
   return Duplex.prototype.pause.$call(this);
-};
-
-Socket.prototype.removeAllListeners = function removeAllListeners(this: $Node.Socket, _event?: $Node.EventName) {
-  const ret = Duplex.prototype.removeAllListeners.$apply(this, arguments);
-  (this.server as any)?.[kListenersRemoved]?.(this);
-  return ret;
 };
 
 Socket.prototype[kReadStop] = function () {

@@ -46,7 +46,6 @@ const {
   kSharesWrites,
   kForeignListener,
   kHandleClosed,
-  kListenersRemoved,
   kSNIContexts,
   readInProgress,
 } = require("internal/net/symbols");
@@ -559,8 +558,6 @@ Server.prototype[kClusterHandle] = undefined;
 
 Server.prototype[kClusterListeningId] = 0;
 
-Server.prototype[kClusterPendingBind] = -1;
-
 function rethrowUncaught(err) {
   throw err;
 }
@@ -801,7 +798,9 @@ Server.prototype.address = function () {
 
 Server.prototype.listen = function () {
   // Before anything is registered, like net.Server: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2270-L2272
-  if (this[serverSymbol] || this[kClusterPendingBind] === this[kClusterListeningId]) throw $ERR_SERVER_ALREADY_LISTEN();
+  const pendingBind = this[kClusterPendingBind];
+  if (this[serverSymbol] || (pendingBind !== undefined && pendingBind === this[kClusterListeningId]))
+    throw $ERR_SERVER_ALREADY_LISTEN();
   const server = this;
   let port, host;
   let socketPath;
@@ -936,7 +935,7 @@ Server.prototype.listen = function () {
     server[kClusterPendingBind] = listeningId;
     cluster._trackServer(server, track => {
       if (listeningId !== server[kClusterListeningId]) return;
-      server[kClusterPendingBind] = -1;
+      server[kClusterPendingBind] = undefined;
       if (cluster.worker?.exitedAfterDisconnect) return;
       try {
         server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
@@ -963,7 +962,7 @@ function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
         handle?.close();
         return;
       }
-      server[kClusterPendingBind] = -1;
+      server[kClusterPendingBind] = undefined;
       if (errno) {
         const ex = new ExceptionWithHostPort(errno, "bind", address, queryPort);
         if (typeof reply?.bunHint === "string") ex.message += `\n  note: ${reply.bunHint}`;
@@ -996,7 +995,7 @@ function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
   require("node:dns").lookup(address, (err, ip, family) => {
     if (listeningId !== server[kClusterListeningId]) return;
     if (!err) return query(ip, port, family === 6 ? 6 : 4);
-    server[kClusterPendingBind] = -1;
+    server[kClusterPendingBind] = undefined;
     server.emit("error", err);
   });
 }
@@ -2409,6 +2408,7 @@ function nativeConnectionListener(server: Server, socket) {
   socket.on("resume", nativeSocketOnResume);
   socket.on("pause", onSocketPause);
   socket.on("newListener", unconsumeForListener);
+  socket.removeAllListeners = removeAllListeners;
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
   socket._final = nativeSocketFinal;
@@ -2457,12 +2457,15 @@ function tookReadsFromParser(socket) {
     socket.listenerCount("data", noopOnData) === 0
   );
 }
-Server.prototype[kListenersRemoved] = function (socket) {
-  if (socket[kHandle] === undefined || socket[kHandedOff]) return;
+function removeAllListeners(this: any, _event) {
+  const socket = this;
+  NetSocket.prototype.removeAllListeners.$apply(socket, arguments);
+  if (socket[kHandle] === undefined || socket[kHandedOff]) return socket;
   if (tookReadsFromParser(socket)) stopParsing(socket);
   else if (socket.parser?._consumed && socket.listenerCount("newListener", unconsumeForListener) === 0)
     socket.on("newListener", unconsumeForListener);
-};
+  return socket;
+}
 
 function nativeSocketOnResume(this: any) {
   if (this._paused) {

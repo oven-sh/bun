@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 1fdb693b14fb1c4ec3684f15bdb39d034baeade426f14348a2d312b91e64d682.
+// Written against that file with the SHA-256 d26fb5466bf27a290968d75e9bf372975e894d82b068e407daca3792128a6c29.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -85,7 +85,6 @@ const netSymbols = require("internal/net/symbols");
 const kForeignListener: typeof netSymbols.kForeignListener = netSymbols.kForeignListener;
 const kHandleClosed: typeof netSymbols.kHandleClosed = netSymbols.kHandleClosed;
 const kSharesWrites: typeof netSymbols.kSharesWrites = netSymbols.kSharesWrites;
-const kListenersRemoved: typeof netSymbols.kListenersRemoved = netSymbols.kListenersRemoved;
 const readInProgress = netSymbols.readInProgress;
 const kSNIContexts: typeof netSymbols.kSNIContexts = netSymbols.kSNIContexts;
 const { STATUS_CODES, drainMicrotasks, getMaxHTTPHeaderSize, onDataIncomingMessage, RE_CONN_CLOSE } = http;
@@ -653,7 +652,6 @@ declare global {
       /** The listener that `createServer()` was given. A request goes to it by value while it is all that `emit("request")` would call. */
       $requestListener: RequestListener | undefined;
       readonly listening: boolean;
-      [kListenersRemoved](socket: HttpServerSocket): void;
       /** The native server while it listens, for those who ask whether there is one. */
       _handle: NativeHTTPServer | null;
       /** `net.Socket` counts the sockets it accepts and closes for this server. */
@@ -706,7 +704,7 @@ declare global {
       [kListenerGeneration]: ListenerGeneration | undefined;
       [kClusterHandle]: any;
       [kClusterListeningId]: number;
-      [kClusterPendingBind]: number;
+      [kClusterPendingBind]?: number;
       [kConstructed]?: boolean;
       [kHttpAllowHalfOpen]: boolean;
       [kMaxHeadersCount]: number | null;
@@ -985,8 +983,6 @@ Server.prototype[kClusterHandle] = undefined;
 
 Server.prototype[kClusterListeningId] = 0;
 
-Server.prototype[kClusterPendingBind] = -1;
-
 function rethrowUncaught(err: unknown) {
   throw err;
 }
@@ -1236,7 +1232,9 @@ Server.prototype.address = function (this: $Node.HttpServer) {
 
 Server.prototype.listen = function (this: $Node.HttpServer) {
   // Before anything is registered, like net.Server: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2270-L2272
-  if (this[serverSymbol] || this[kClusterPendingBind] === this[kClusterListeningId]) throw $ERR_SERVER_ALREADY_LISTEN();
+  const pendingBind = this[kClusterPendingBind];
+  if (this[serverSymbol] || (pendingBind !== undefined && pendingBind === this[kClusterListeningId]))
+    throw $ERR_SERVER_ALREADY_LISTEN();
   const server = this;
   let port: number | string | null | undefined, host: string | undefined;
   let socketPath: string | undefined;
@@ -1372,7 +1370,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
       server[kClusterPendingBind] = listeningId;
       cluster!._trackServer(server, track => {
         if (listeningId !== server[kClusterListeningId]) return;
-        server[kClusterPendingBind] = -1;
+        server[kClusterPendingBind] = undefined;
         if (cluster!.worker?.exitedAfterDisconnect) return;
         try {
           server[kRealListen](tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
@@ -1408,7 +1406,7 @@ function listenInCluster(
         handle?.close();
         return;
       }
-      server[kClusterPendingBind] = -1;
+      server[kClusterPendingBind] = undefined;
       if (errno) {
         const ex = new ExceptionWithHostPort(errno, "bind", address as string, queryPort as number);
         if (typeof reply?.bunHint === "string") ex.message += `\n  note: ${reply.bunHint}`;
@@ -1441,7 +1439,7 @@ function listenInCluster(
   require("node:dns").lookup(address, (err, ip, family) => {
     if (listeningId !== server[kClusterListeningId]) return;
     if (!err) return query(ip as string, port, family === 6 ? 6 : 4);
-    server[kClusterPendingBind] = -1;
+    server[kClusterPendingBind] = undefined;
     server.emit("error", err);
   });
 }
@@ -3202,6 +3200,7 @@ function nativeConnectionListener(server: $Node.HttpServer, socket: $Node.HttpSe
   socket.on("resume", nativeSocketOnResume);
   socket.on("pause", onSocketPause);
   socket.on("newListener", unconsumeForListener);
+  socket.removeAllListeners = removeAllListeners;
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
   socket._final = nativeSocketFinal;
@@ -3274,12 +3273,15 @@ function tookReadsFromParser(socket: $Node.HttpServerSocket) {
     socket.listenerCount("data", noopOnData) === 0
   );
 }
-Server.prototype[kListenersRemoved] = function (this: $Node.HttpServer, socket: $Node.HttpServerSocket) {
-  if (socket[kHandle] === undefined || socket[kHandedOff]) return;
+function removeAllListeners(this: $Node.HttpServerSocket, _event?: string | symbol) {
+  const socket = this;
+  NetSocket!.prototype.removeAllListeners.$apply(socket, arguments);
+  if (socket[kHandle] === undefined || socket[kHandedOff]) return socket;
   if (tookReadsFromParser(socket)) stopParsing(socket);
   else if (socket.parser?._consumed && socket.listenerCount("newListener", unconsumeForListener) === 0)
     socket.on("newListener", unconsumeForListener);
-};
+  return socket;
+}
 
 function nativeSocketOnResume(this: $Node.HttpServerSocket) {
   if (this._paused) {

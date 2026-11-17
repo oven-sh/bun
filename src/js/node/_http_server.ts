@@ -1561,7 +1561,6 @@ function detachFromHttp(socket, req) {
   delete socket._onTimeout;
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
-  delete socket._final;
   delete socket._destroy;
   const server = socket.server;
   server[kTrackedConnections].delete(socket);
@@ -1592,7 +1591,11 @@ function handOffSocket(socket, req, pipeline) {
 }
 // The listener gets the rest of the read as `head`.
 function leaveHttp(socket) {
-  if (socket[kHandle].leaveHttp(true)) socket[kHandle] = undefined;
+  if (socket[kHandle].leaveHttp(true)) leftHttp(socket);
+}
+function leftHttp(socket) {
+  socket[kHandle] = undefined;
+  delete socket._final;
 }
 // ws.handleUpgrade() while uWS still owns the connection: from a 'request' listener, or before the body of the Upgrade request has ended.
 Server.prototype[kLeaveHttp] = function (socket, req) {
@@ -1608,7 +1611,7 @@ Server.prototype[kLeaveHttp] = function (socket, req) {
   if (socket[kHandle] === undefined) return;
   if (!socket[kHandedOff]) detachFromHttp(socket, req);
   if (!http.leaveHttp(false)) return;
-  socket[kHandle] = undefined;
+  leftHttp(socket);
   socket[kUpgradeStream] = undefined;
   res?.detachSocket(socket);
   if (socket[kConnectionState] !== undefined) socket.once("close", abortWaitingResponses.bind(undefined, socket));
@@ -2381,8 +2384,18 @@ function onSocketPause(this: any) {
 
 // Without net.Socket's tick: what the response writes after socket.end() is dropped, as in Node, where both share the socket's Writable.
 function nativeSocketFinal(this: any, callback) {
+  if (this[kHandedOff]) {
+    NetSocket.prototype._final.$call(this, finishBehindResponses.bind(undefined, this, callback));
+    return;
+  }
   this._handle?.shutdown();
-  callback();
+  finishBehindResponses(this, callback);
+}
+// The FIN waits for the response bytes that uWS still holds. An empty write completes behind them, or at the close, which reports what failed.
+function finishBehindResponses(socket, callback) {
+  const http = socket[kHandle];
+  if (http === undefined || http.closed || http.finSent) callback();
+  else NetSocket.prototype._write.$call(socket, kEmptyBuffer, "buffer", () => callback());
 }
 
 // net.Socket queues 'close' from here. Node's comes from the handle, so it doesn't run in the AsyncLocalStorage store of the request whose end closes the connection.
@@ -2423,7 +2436,8 @@ function onConnectionClosed(this: any, tracked, left) {
   const http = this;
   const socket = left ?? http.duplex;
   if (socket[kHandle] !== http) return;
-  socket[kHandle] = undefined;
+  if (left === undefined) socket[kHandle] = undefined;
+  else if (http.closed) leftHttp(socket);
   if (left !== undefined) {
     // Not closed: the body of an accepted Upgrade request has ended, and the connection is the socket's from here on.
     socket.removeListener("end", socket.end);

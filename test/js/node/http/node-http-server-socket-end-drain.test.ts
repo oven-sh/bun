@@ -168,6 +168,72 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
   });
 });
 
+// Windows takes all 8 MiB in one send, so there nothing waits for the client.
+describe.skipIf(isWindows).each(["http", "https"] as const)(
+  "%s: a socket that ends behind 8 MiB the client hasn't read",
+  protocol => {
+    const size = 8 * 1024 * 1024;
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+
+    async function respond(act: (req: IncomingMessage, client: net.Socket) => void | Promise<void>) {
+      const server = protocol === "https" ? https.createServer(tlsCert) : http.createServer();
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true };
+      const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      const [req, res] = (await once(server, "request")) as [IncomingMessage, ServerResponse];
+      const events: string[] = [];
+      req.on("aborted", () => events.push("req aborted"));
+      res.on("finish", () => events.push("res finish"));
+      req.socket.on("finish", () => events.push("socket finish"));
+      const socketClosed = once(req.socket, "close");
+      res.end(Buffer.alloc(size, "a"));
+      await act(req, client);
+      await turn();
+      await turn();
+      return {
+        server,
+        events,
+        socketClosed,
+        async read() {
+          let received = 0;
+          client.on("data", chunk => (received += chunk.length));
+          await new Promise(resolve => client.once("end", () => client.end()).once("close", resolve));
+          return received;
+        },
+        [Symbol.dispose]() {
+          client.destroy();
+          server.closeAllConnections();
+          server.close();
+        },
+      };
+    }
+
+    test.concurrent.each([
+      ["destroySoon()", (req: IncomingMessage) => req.socket.destroySoon()],
+      ["end()", (req: IncomingMessage) => void req.socket.end()],
+      [
+        "the client's FIN",
+        async (req: IncomingMessage, client: net.Socket) => {
+          client.end();
+          await once(req.socket, "end");
+        },
+      ],
+    ])("%s: nothing finishes or aborts until the bytes are out", async (_name, act) => {
+      using exchange = await respond(act);
+      const early = [...exchange.events];
+      const whole = (await exchange.read()) > size;
+      await exchange.socketClosed;
+      expect({ early, whole, late: exchange.events.toSorted() }).toEqual({
+        early: [],
+        whole: true,
+        late: ["res finish", "socket finish"],
+      });
+    });
+  },
+);
+
 // An http.Server socket has allowHalfOpen: end() sends the FIN, and the request in flight still gets its body.
 describe.each(["http", "https"] as const)("%s: the request body behind the FIN of socket.end()", protocol => {
   const createServer = (onRequest: http.RequestListener) =>

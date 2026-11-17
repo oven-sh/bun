@@ -2278,7 +2278,6 @@ function detachFromHttp(socket: $Node.HttpServerSocket, req: $Node.IncomingMessa
   delete (socket as any)._onTimeout;
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
-  delete (socket as any)._final;
   delete (socket as any)._destroy;
   const server = socket.server as $Node.HttpServer;
   server[kTrackedConnections].delete(socket);
@@ -2309,7 +2308,11 @@ function handOffSocket(socket: $Node.HttpServerSocket, req: $Node.IncomingMessag
 }
 // The listener gets the rest of the read as `head`.
 function leaveHttp(socket: $Node.HttpServerSocket) {
-  if (socket[kHandle]!.leaveHttp(true)) socket[kHandle] = undefined;
+  if (socket[kHandle]!.leaveHttp(true)) leftHttp(socket);
+}
+function leftHttp(socket: $Node.HttpServerSocket) {
+  socket[kHandle] = undefined;
+  delete (socket as any)._final;
 }
 // ws.handleUpgrade() while uWS still owns the connection: from a 'request' listener, or before the body of the Upgrade request has ended.
 Server.prototype[kLeaveHttp] = function (
@@ -2329,7 +2332,7 @@ Server.prototype[kLeaveHttp] = function (
   if (socket[kHandle] === undefined) return;
   if (!socket[kHandedOff]) detachFromHttp(socket, req);
   if (!http.leaveHttp(false)) return;
-  socket[kHandle] = undefined;
+  leftHttp(socket);
   socket[kUpgradeStream] = undefined;
   res?.detachSocket(socket);
   if (socket[kConnectionState] !== undefined) socket.once("close", abortWaitingResponses.bind(undefined, socket));
@@ -3200,8 +3203,18 @@ function onSocketPause(this: $Node.HttpServerSocket) {
 
 // Without net.Socket's tick: what the response writes after socket.end() is dropped, as in Node, where both share the socket's Writable.
 function nativeSocketFinal(this: $Node.HttpServerSocket, callback: $Node.ErrorCallback) {
+  if (this[kHandedOff]) {
+    NetSocket!.prototype._final.$call(this, finishBehindResponses.bind(undefined, this, callback));
+    return;
+  }
   this._handle?.shutdown();
-  callback();
+  finishBehindResponses(this, callback);
+}
+// The FIN waits for the response bytes that uWS still holds. An empty write completes behind them, or at the close, which reports what failed.
+function finishBehindResponses(socket: $Node.HttpServerSocket, callback: $Node.ErrorCallback) {
+  const http = socket[kHandle];
+  if (http === undefined || http.closed || http.finSent) callback();
+  else NetSocket!.prototype._write.$call(socket, kEmptyBuffer, "buffer", () => callback());
 }
 
 // net.Socket queues 'close' from here. Node's comes from the handle, so it doesn't run in the AsyncLocalStorage store of the request whose end closes the connection.
@@ -3250,7 +3263,8 @@ function onConnectionClosed(
   const http = this;
   const socket = left ?? http.duplex!;
   if (socket[kHandle] !== http) return;
-  socket[kHandle] = undefined;
+  if (left === undefined) socket[kHandle] = undefined;
+  else if (http.closed) leftHttp(socket);
   socket.$isPrepared = false;
   if (left !== undefined) {
     // Not closed: the body of an accepted Upgrade request has ended, and the connection is the socket's from here on.

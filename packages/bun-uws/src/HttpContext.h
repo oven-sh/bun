@@ -1030,8 +1030,7 @@ private:
                 }
                 /* socket.end() issued while bytes were queued: Node's FIN follows them and the socket stays open for the peer's.
                  * A re-armed onWritable means a fresh pinned write, as above. */
-                if (!responseDone
-                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)
                     && httpResponseData->onWritable == nullptr
                     && !us_socket_is_shut_down(s)
                     && asyncSocket->hasFullyDrained()) {

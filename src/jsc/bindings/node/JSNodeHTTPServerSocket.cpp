@@ -733,7 +733,7 @@ bool JSNodeHTTPServerSocket::leaveHttp(bool restOfReadTaken)
         return false;
     }
     flushResponseBytesAhead();
-    if (us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
+    if (ended || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
     uint64_t responseBytesWritten = 0;

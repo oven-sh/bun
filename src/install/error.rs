@@ -32,12 +32,6 @@ pub enum Error {
     TarballFailedToExtract,
     #[error("TarballFailedToDownload")]
     TarballFailedToDownload,
-    #[error("BadRequest")]
-    BadRequest,
-    #[error("TooManyRequests")]
-    TooManyRequests,
-    #[error("HTTPInternalServerError")]
-    HTTPInternalServerError,
     #[error("UnexpectedNotModified")]
     UnexpectedNotModified,
     #[error("PackageFailedToParse")]
@@ -253,9 +247,6 @@ impl Error {
             Self::TarballHTTP5xx => "TarballHTTP5xx",
             Self::TarballFailedToExtract => "TarballFailedToExtract",
             Self::TarballFailedToDownload => "TarballFailedToDownload",
-            Self::BadRequest => "BadRequest",
-            Self::TooManyRequests => "TooManyRequests",
-            Self::HTTPInternalServerError => "HTTPInternalServerError",
             Self::UnexpectedNotModified => "UnexpectedNotModified",
             Self::PackageFailedToParse => "PackageFailedToParse",
             Self::BufferTooSmall => "BufferTooSmall",

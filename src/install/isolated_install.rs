@@ -18,9 +18,6 @@ pub mod symlinker;
 
 pub(crate) use file_copier::FileCopier;
 pub use store::Store;
-/// Alias so `crate::isolated_install::store::EntryId` (used by
-/// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
-pub use store::entry::Id as EntryId;
 
 use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
@@ -2499,13 +2496,11 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
 
-                    let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
-
                     match package_manager::enqueue_install_task(
                         installer.manager_mut(),
                         dep_id,
                         pkg_id,
-                        ctx,
+                        Some(package_manager::fetch_table::Waiter::Isolated(entry_id)),
                         patch_info.name_and_version_hash(),
                     ) {
                         Ok(()) => {}

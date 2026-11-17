@@ -628,6 +628,27 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
     });
   });
 
+  test("bun update of the name and of a peer links the workspace", async () => {
+    using repo = project({ dependencies: { sib: "latest" } });
+    using peers = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const name = decodeURIComponent(new URL(request.url).pathname.slice(1));
+        const peerDependencies = name === "@s/host" ? { "@s/peer": "^1.0.0" } : {};
+        const version = { name, version: "1.0.0", peerDependencies, dist: { tarball: `${peers.url}unused.tgz` } };
+        return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+      },
+    });
+    await write(join(repo.dir, ".npmrc"), `@s:registry=${peers.url}\n`);
+    await write(
+      join(repo.dir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { "@s/host": "1.0.0" } }),
+    );
+    const ok = { errors: [], exitCode: 0, requests: ["/sib"] };
+    expect(await repo.bun("install", "--lockfile-only")).toEqual(ok);
+    expect(await repo.bun("update", "sib", "@s/peer", "-r", "--lockfile-only", "--no-cache")).toEqual(ok);
+  });
+
   test("linkWorkspacePackages = false gets the 404", async () => {
     using repo = project({ dependencies: { sib: "latest" } }, undefined, "linkWorkspacePackages = false\n");
     expect(await repo.bun("install")).toEqual({

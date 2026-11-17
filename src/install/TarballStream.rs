@@ -699,21 +699,9 @@ impl TarballStream {
             let Job::Extract { tarball, data, .. } = &mut (*task).job else {
                 unreachable!("`create_extract_task_for_streaming` built it");
             };
-            match (*this).populate_result(tarball, &mut (*task).log) {
-                Ok(extracted) => {
-                    *data = Some(extracted);
-                    (*task).err = None;
-                    (*task).status = TaskStatus::Success;
-                }
-                Err(err) => {
-                    (*task).err = Some(err);
-                    (*task).status = TaskStatus::Fail;
-                }
-            }
+            *data = (*this).populate_result(tarball, &mut (*task).log);
 
-            if let Some(crate::Error::Http(err)) = (*task).err
-                && (*task).status != TaskStatus::Success
-            {
+            if let Err(crate::Error::Http(err)) = *data {
                 // The connection died before the body was complete: a failed
                 // download, not a failed extraction. Hand the NetworkTask back
                 // to `run_tasks` the way `notify()` does for one that failed
@@ -999,5 +987,5 @@ fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     &s[i..]
 }
 
-use crate::package_manager_task::{Job, Status as TaskStatus, Task};
+use crate::package_manager_task::{Job, Task};
 use crate::resolution::Tag as ResolutionTag;

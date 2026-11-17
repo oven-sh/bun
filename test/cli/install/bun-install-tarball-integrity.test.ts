@@ -931,6 +931,19 @@ describe.concurrent.each(
       expect(await box.lockfile("app")).toBe(lockfile);
       expect(exitCode).toBe(1);
     });
+
+    it("bun add under another name still reads it for the package that bun.lock records", async () => {
+      const { box, requests } = await changed("tarball-added-under-another-name");
+      using _ = box;
+
+      await box.put("app", await tarball("v2", {}, "renamed"));
+      await rm(join(box.root, "cache"), { recursive: true });
+      await rm(join(box.root, "app", "node_modules"), { recursive: true });
+      const { stderr, exitCode } = await box.run("app", "add", `second@${box.spec}`);
+      expect(stderr).toContain("Integrity check failed for tarball: pkg");
+      expect(box.requests.length - requests).toBe(kind === "URL" ? 2 : 0);
+      expect(exitCode).toBe(1);
+    }, 30_000);
   });
 
   it("bun update installs the dependencies of the tarball's new build", async () => {
@@ -1131,9 +1144,8 @@ describe.concurrent.each(
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mismatch (%s)", linker => {
   // Regression test for #29646 — with the isolated linker, a SHA-512 mismatch
-  // during the resolve-phase tarball extract left `task_queue` /
-  // `network_dedupe_map` populated, so the install phase's later
-  // `enqueuePackageForDownload` returned early on `found_existing` and the
+  // during the resolve-phase tarball extract left the task on
+  // record, so the install phase's later request for it returned early and the
   // installer waited forever for a callback that was never dispatched.
   //
   // We trigger the mismatch by advertising one tarball's SHA-512 in the

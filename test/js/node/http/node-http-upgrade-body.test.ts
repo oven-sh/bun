@@ -269,7 +269,6 @@ describe("an Upgrade request with a body", () => {
 });
 
 describe.each(["http", "https"])("%s: an Upgrade request with a body", scheme => {
-  const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
   const upgrade = (framing: string) =>
     `POST /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n${framing}\r\n\r\n`;
 
@@ -287,11 +286,6 @@ describe.each(["http", "https"])("%s: an Upgrade request with a body", scheme =>
       closed,
       read: () => client.on("data", chunk => (received += chunk.toString("latin1"))),
       marks: () => received.match(/<[^>]*>/g),
-      async until(text: string) {
-        while (!received.includes(text)) {
-          await Promise.race([once(client, "data"), closed.then(() => Promise.reject(new Error(received)))]);
-        }
-      },
       [Symbol.dispose]() {
         client.destroy();
         server.closeAllConnections();
@@ -299,69 +293,6 @@ describe.each(["http", "https"])("%s: an Upgrade request with a body", scheme =>
       },
     };
   }
-
-  describe.each([
-    ["Content-Length", "Content-Length: 4", "BO", "DY"],
-    ["chunked", "Transfer-Encoding: chunked", "2\r\nBO\r\n", "2\r\nDY\r\n0\r\n\r\n"],
-  ])("pipelined behind two responses (%s)", (_name, framing, first, rest) => {
-    test.concurrent.each([
-      ["in the read of its head", "whole"],
-      ["before they are sent", "before"],
-      ["after they are sent", "after"],
-      ["after they were sent from a 'data' listener of its first bytes", "inside"],
-    ])("goes to 'upgrade' when the body ends %s", async (_when, when) => {
-      const owed: http.ServerResponse[] = [];
-      const answer = () => owed.splice(0).forEach(res => res.end(`<${res.req.url}>`));
-      using connection = await open((req, res) => void owed.push(res));
-      const { server, client, until } = connection;
-      let body = "";
-      (server as any).shouldUpgradeCallback = (req: http.IncomingMessage) => {
-        req.on("data", chunk => {
-          body += chunk;
-          if (when === "inside") answer();
-        });
-        return true;
-      };
-      server.on("upgrade", (req, socket, head) => {
-        if (head.length) socket.unshift(head);
-        socket.on("error", () => {});
-        socket.on("data", chunk => socket.write(`<${chunk}>`));
-        socket.write("<101>");
-      });
-      connection.read();
-
-      const heads = get("/1") + get("/2") + upgrade(framing);
-      client.write(when === "whole" ? heads + first + rest + "a" : heads + first);
-      await until("<101>");
-      if (when === "after") {
-        answer();
-        await until("</2>");
-      }
-      if (when !== "whole") client.write(rest + "a");
-      await until("<a>");
-      answer();
-      await until("</2>");
-      client.write("b");
-      await until("<b>");
-
-      expect({ body, marks: connection.marks()!.toSorted() }).toEqual({
-        body: "BODY",
-        marks: ["</1>", "</2>", "<101>", "<a>", "<b>"],
-      });
-    });
-  });
-
-  test.concurrent("pipelined, closes the response ahead when the client leaves before the body has ended", async () => {
-    const { promise: responseClosed, resolve } = Promise.withResolvers<void>();
-    using connection = await open((req, res) => void res.on("close", resolve));
-    const { server, client } = connection;
-    client.write(get("/1") + upgrade("Content-Length: 4") + "BO");
-    const [, stream] = await once(server, "upgrade");
-    stream.on("error", () => {}).resume();
-    client.destroy();
-    await Promise.all([responseClosed, once(stream, "close")]);
-    expect(await promisify(server.getConnections).call(server)).toBe(0);
-  });
 
   test.concurrent.each([
     ["at the end of the request", "end()", false],

@@ -417,21 +417,14 @@ void JSNodeHTTPServerSocket::onUpgradeBodyEnded()
     if (duplex) {
         args.append(duplex);
     }
-    if (!m_pipelinedResponses.isEmpty()) {
-        // The request still waits behind responses, which need uWS. The parser stops here, and the rest of the read comes as a read of its own.
-        detachParser();
-        if (isClosed()) {
-            return;
-        }
-        is_ssl ? uWS::HttpContext<true>::getSocketContextDataS(socket)->socketLeft(socket, socket, false) : uWS::HttpContext<false>::getSocketContextDataS(socket)->socketLeft(socket, socket, false);
-    } else if (!leaveHttp(false)) {
+    if (!leaveHttp(false)) {
         detachParser();
         return;
     }
     if (!callback || !duplex || globalObject->scriptExecutionStatus(globalObject, this) != ScriptExecutionStatus::Running) {
         return;
     }
-    // onclose(socket): the connection is open, and what arrives is the socket's from here on.
+    // onclose(socket): the connection is open, and it's the socket's from here on.
     Bun__EventLoop__enter(globalObject);
     callStoredCallback(globalObject, callback, this, args);
     Bun__EventLoop__exit(globalObject);
@@ -904,7 +897,7 @@ void JSNodeHTTPServerSocket::onReadParsed()
     if (isClosed()) {
         return;
     }
-    if (auto* res = m_pipelinedResponses.isEmpty() ? currentResponse() : m_pipelinedResponses.last().response.get()) {
+    if (auto* res = currentResponse()) {
         Bun__NodeHTTPResponse_onReadParsed(res->wrapped());
     }
 }

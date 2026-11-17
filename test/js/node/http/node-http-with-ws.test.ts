@@ -1207,36 +1207,3 @@ test.concurrent.each(["another stream", "its own destroyed socket, patched to lo
     expect(exitCode).toBe(0);
   },
 );
-
-test("ws takes a pipelined Upgrade request whose body is incomplete", async () => {
-  let owed: http.ServerResponse | undefined;
-  await using server = http.createServer((req, res) => void (owed = res));
-  const wsServer = new WebSocketServer({ server });
-  const size = 256 * 1024;
-  const { promise: message, resolve } = Promise.withResolvers<number>();
-  wsServer.on("connection", ws => ws.on("message", (data: Buffer) => resolve(data.length)));
-  const client = net.connect(await listen(server), "127.0.0.1");
-  try {
-    client.write(
-      "GET /first HTTP/1.1\r\nHost: x\r\n\r\n" +
-        "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n" +
-        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nContent-Length: 4\r\n\r\nBO",
-    );
-    const [answer] = await Promise.race([
-      once(client, "data"),
-      once(server, "request").then(() => once(server, "request")),
-    ]);
-    expect(String(answer).split("\r\n")[0]).toBe("HTTP/1.1 101 Switching Protocols");
-    owed!.end();
-    // A binary frame with a 64-bit length and a mask of zeros.
-    const head = Buffer.alloc(14);
-    head.set([0x82, 0xff]);
-    head.writeUInt32BE(size, 6);
-    client.write(Buffer.concat([Buffer.from("DY"), head, Buffer.alloc(size)]));
-    expect(await message).toBe(size);
-  } finally {
-    client.destroy();
-    for (const ws of wsServer.clients) ws.terminate();
-    wsServer.close();
-  }
-});

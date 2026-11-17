@@ -20,6 +20,43 @@ function extractHash(html: string, file_kind: "css" | "js") {
   return html.match(re)?.[1];
 }
 
+test.concurrent.each([true, { hmr: false }])(
+  "HTML development=%s keeps JSX development runtime with NODE_ENV=production",
+  async development => {
+    using dir = tempDir("html-jsx-development", {
+      "index.html": '<script type="module" src="./in.jsx"></script>',
+      "in.jsx": "document.body.innerText = <div/>;",
+      "node_modules/react/jsx-dev-runtime.js": 'export function jsxDEV() { return "DEV_SENTINEL"; }',
+      "node_modules/react/jsx-runtime.js": 'export function jsx() { return "PROD_SENTINEL"; }',
+      "main.ts": `
+      import page from "./index.html";
+      using server = Bun.serve({ port: 0, development: ${JSON.stringify(development)}, routes: { "/": page } });
+      const response = await fetch(server.url);
+      const html = await response.text();
+      const src = html.match(/<script[^>]+src="([^"]+)"/)[1];
+      const script = await fetch(new URL(src, server.url));
+      const js = await script.text();
+      console.log(js.includes("DEV_SENTINEL"), js.includes("PROD_SENTINEL"));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, NODE_ENV: "production", BUN_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("true false\n");
+    if (typeof development === "object") {
+      expect(stderr).toContain("bundle index.html");
+    } else {
+      expect(stderr).toContain("Bundled page");
+    }
+    expect(exitCode).toBe(0);
+  },
+);
+
 test("serve html", async () => {
   await using dir = tempDir("html-css-js", {
     "dashboard.html": /*html*/ `

@@ -74,6 +74,11 @@ impl Framework {
             out.options.conditions.append_slice(&[b"node"])?;
         }
 
+        out.options.force_node_env = match mode {
+            Mode::Development => bun_bundler::options::ForceNodeEnv::Development,
+            Mode::ProductionStatic => bun_bundler::options::ForceNodeEnv::Production,
+        };
+        out.options.jsx.development = mode == Mode::Development;
         out.options.production = mode != Mode::Development;
         out.options.tree_shaking = mode != Mode::Development;
         // The dev server never minifies.
@@ -103,8 +108,6 @@ impl Framework {
 
         out.configure_linker();
         out.configure_defines()?;
-
-        out.options.jsx.development = mode == Mode::Development;
 
         add_import_meta_defines(
             &mut out.options.define,

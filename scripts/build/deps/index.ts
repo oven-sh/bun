@@ -14,7 +14,6 @@ import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
-import { libdeflate } from "./libdeflate.ts";
 import { libuv } from "./libuv.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lsqpack } from "./lsqpack.ts";
@@ -40,7 +39,6 @@ export const allDeps: readonly Dependency[] = [
 
   zlib,
   zstd,
-  libdeflate,
   cares,
   highway,
   libuv,
@@ -65,7 +63,6 @@ export {
   boringssl,
   cares,
   highway,
-  libdeflate,
   libuv,
   lolhtml,
   lsqpack,

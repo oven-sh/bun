@@ -163,6 +163,8 @@ const noUnify: readonly string[] = [
   // The highway TUs of the WebP codec — same reason.
   "src/jsc/bindings/highway_webp_decoder.cpp",
   "src/jsc/bindings/highway_webp_encoder.cpp",
+  // The highway TU for the checksums of gzip and zlib — same reason.
+  "src/jsc/bindings/highway_checksums.cpp",
   // The highway TU of the Brotli encoder — same reason.
   "src/jsc/bindings/highway_brotli.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType

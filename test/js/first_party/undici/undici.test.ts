@@ -15,8 +15,8 @@ import {
   WebSocket as UndiciWebSocket,
 } from "undici";
 
-import { createServer } from "../../../http-test-server";
 import { mkfifo } from "mkfifo";
+import { createServer } from "../../../http-test-server";
 
 describe("undici", () => {
   let serverCtl: ReturnType<typeof createServer>;

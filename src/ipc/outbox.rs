@@ -165,10 +165,11 @@ impl<H, C: Default> Outbox<H, C> {
         Some((&rest[..rest.len().min(MAX_WRITE_LEN)], handle))
     }
 
-    /// `None`: the write failed.
+    /// `None`: the write failed. So did one that reports more than it was given.
     pub fn end_write(&mut self, written: Option<usize>) -> Wrote<C> {
         self.in_flight = false;
-        let Some(written) = written else {
+        let left = (self.queue.front()).map_or(usize::MAX, |it| it.bytes.len() - it.written);
+        let Some(written) = written.filter(|written| *written <= left) else {
             return Wrote::Failed;
         };
         let done = self.queue.pop_front_if(|first| {

@@ -298,6 +298,15 @@ fn a_write_is_capped_and_goes_on() {
 }
 
 #[test]
+fn a_write_that_reports_too_much_failed() {
+    let mut out = Out::default();
+    push(&mut out, b"abc".into(), Some("h"), None);
+    assert_eq!(write(&mut out, Queued, 1).unwrap(), "abc with h, blocked");
+    assert!(out.begin_write(Writable).is_some());
+    assert!(matches!(out.end_write(Some(3)), Wrote::Failed));
+}
+
+#[test]
 fn what_is_left_at_the_close() {
     let mut out = Out::default();
     push(&mut out, b"a".into(), None, Some(1));

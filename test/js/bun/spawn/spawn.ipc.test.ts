@@ -852,6 +852,43 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
     expect(result).toEqual({ stdout: ["true"], stderr: "", exitCode: 0 });
   });
 
+  it("is delivered while a callback of a disposed Bun.ModuleGraph runs the event loop", async () => {
+    const result = await runPair(
+      `
+        const done = Promise.withResolvers();
+        const child = spawnChild({
+          ipc(message, _, handle) {
+            console.log(message, handle?.constructor.name);
+            handle?.on("error", () => {});
+            if (message === "last") done.resolve();
+          },
+        });
+        const graph = new Bun.ModuleGraph();
+        const data = () => {
+          graph.dispose();
+          child.send("go");
+          runEventLoopUntil(done.promise);
+          child.disconnect();
+        };
+        const { port } = graph.run(() => Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data } }));
+        const client = await Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {} } });
+        client.write("x");
+        await child.exited;
+      `,
+      `
+        const server = await listen();
+        process.on("message", () => {
+          const socket = require("node:net").connect(server.address().port, "127.0.0.1", () => {
+            process.send("socket", socket);
+            process.send("last");
+          });
+        });
+        process.on("disconnect", () => process.exit(0));
+      `,
+    );
+    expect(result).toEqual({ stdout: ["socket Socket", "last undefined"], stderr: "", exitCode: 0 });
+  });
+
   it("is closed by a parent, which has no use for one in a cluster message", async () => {
     const result = await runPair(
       `

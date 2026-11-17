@@ -769,7 +769,7 @@ impl SendQueue {
                     // The object that `parseHandle` made closes it.
                     received.into_raw();
                     if emit.is_callable() {
-                        emit.call(global, JSValue::UNDEFINED, &[])?;
+                        emit.call_for_running_script(global, JSValue::UNDEFINED, &[])?;
                     }
                 }
                 return Ok(());

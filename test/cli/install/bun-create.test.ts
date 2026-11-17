@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, githubTarball, isASAN, isPosix, tempDir, tls, tmpdirSync } from "harness";
@@ -212,10 +212,11 @@ it.each([
   ["damaged", (gz: Buffer) => gz.fill(0, gz.length - 8)],
 ])("extracts nothing from a template tarball that is %s", async (_, spoil) => {
   const gz = spoil(gzipSync(Buffer.concat([tarEntry("pkg/file.txt", Buffer.from("template")), Buffer.alloc(1024)])));
+  const fetch = jest.fn(() => new Response(gz, { headers: { "content-type": "application/x-gzip" } }));
   using server = Bun.serve({
     tls,
     port: 0,
-    fetch: () => new Response(gz, { headers: { "content-type": "application/x-gzip" } }),
+    fetch,
   });
   const { out, err, exitCode } = await create(
     x_dir,
@@ -225,7 +226,8 @@ it.each([
       GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
     },
   );
-  expect(err).toContain("Decompressing owner/template");
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(err).toContain("error:");
   expect(out).not.toContain("Success!");
   expect(readdirSync(x_dir)).toEqual([]);
   expect(exitCode).toBe(1);

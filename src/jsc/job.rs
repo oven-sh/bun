@@ -479,14 +479,16 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     };
     // SAFETY: as above.
     let result = unsafe { ((*header).complete)(header, &global.js_thread(context)) };
-    clear_stack_below_caller();
+    if cfg!(all(windows, target_arch = "x86_64")) {
+        clear_stack_below_caller();
+    }
     result
 }
 
-/// A mitigation: frames of later callbacks have words that nothing writes, where the collector finds what a job left.
+/// A mitigation: callees need not write the home slots of their arguments, where the collector finds what a job left.
 #[inline(never)]
 fn clear_stack_below_caller() {
-    // Those of an immediate reach 1.2 KB below the task queue's on Windows x64.
+    // The native frames of an immediate end 1.2 KB below the task queue's.
     core::hint::black_box(&mut [0u64; 256]);
 }
 

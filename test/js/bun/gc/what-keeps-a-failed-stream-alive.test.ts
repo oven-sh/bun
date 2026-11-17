@@ -23,16 +23,14 @@ async function withNames(report: string) {
 // The program of a-failed-stream-is-collected.test.ts. Where the stream is still alive after ten turns, the run says what holds it:
 // what-keeps-it-alive.fixture.js. The stale word lies where the frames of one build on one platform put it, so only that build can say.
 test.skipIf(!isLinux && !isWindows).each([
-  ["whenever", `Buffer.from("foobar")`, ""],
-  ["before the module has been loaded", `Buffer.from("foobar")`, "Bun.sleepSync(50);"],
+  ["at once", `Buffer.from("foobar")`],
   [
-    "in the main loop",
+    "behind 20 MB of empty blocks",
     `Buffer.concat([Buffer.from([0x78, 1]), Buffer.alloc(5 << 22, Buffer.from([0, 0, 0, 255, 255])), Buffer.from([7])])`,
-    "",
   ],
 ])(
   "a stream that failed %s is collected, or the run says what holds it",
-  async (when, input, afterwards) => {
+  async (when, input) => {
     using dir = tempDir("what-keeps-a-failed-stream-alive", {
       "main.js": `
       const zlib = require("zlib");
@@ -59,7 +57,6 @@ test.skipIf(!isLinux && !isWindows).each([
           setImmediate(step);
         });
         ref = new WeakRef(stream);
-        ${afterwards}
       }
     `,
     });

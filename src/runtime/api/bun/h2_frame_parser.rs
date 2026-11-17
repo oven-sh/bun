@@ -4272,6 +4272,10 @@ impl H2FrameParser {
                 .engine
                 .enforced_max_header_list_size
                 .set(this_ref.engine.local_settings.get().max_header_list_size);
+            this_ref
+                .engine
+                .enforced_enable_push
+                .set(this_ref.engine.local_settings.get().enable_push);
 
             if let Some(max_pings) = settings_js.get(global_object, "maxOutstandingPings")? {
                 if max_pings.is_number() {

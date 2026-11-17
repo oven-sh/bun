@@ -2153,6 +2153,28 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     expect(ctx.c.frames.filter(f => f.type === FrameType.RST_STREAM)).toEqual([]);
   });
 
+  test("a PUSH_PROMISE that crosses settings({ enablePush: false }) is cancelled, and one after its ACK is an error", async () => {
+    using ctx = await openRequest();
+    const { raw, client, req } = ctx;
+    let streams = 0;
+    client.on("stream", () => streams++);
+    req.on("error", () => {});
+    const error = once(client, "error");
+    client.settings({ enablePush: false });
+    raw.socket!.write(Buffer.concat([pushPromise(2), encodeFrame(FrameType.HEADERS, 0x4, 2, STATUS_200)]));
+    const reply = await raw.waitFor(f => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY);
+    expect([reply.type, reply.streamId, reply.payload.readUInt32BE(0)]).toEqual([
+      FrameType.RST_STREAM,
+      2,
+      ErrorCode.CANCEL,
+    ]);
+    raw.sendFrame(FrameType.HEADERS, 0x4, 1, STATUS_200);
+    await once(req, "response");
+    raw.socket!.write(Buffer.concat([encodeFrame(FrameType.SETTINGS, 0x1, 0), pushPromise(4)]));
+    expect((await error)[0].code).toBe("ERR_HTTP2_ERROR");
+    expect(streams).toBe(0);
+  });
+
   test("session.close() completes when a PUSH_PROMISE arrives after it and no response follows", async () => {
     using ctx = await openRequest();
     const { raw, client } = ctx;

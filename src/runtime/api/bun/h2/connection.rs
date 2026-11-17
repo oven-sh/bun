@@ -237,6 +237,8 @@ pub(crate) struct Connection {
     acked_max_frame_size: Cell<u32>,
     /// The SETTINGS_MAX_HEADER_LIST_SIZE the peer has ACKed. Like nghttp2, a submitted value applies from its ACK on.
     pub enforced_max_header_list_size: Cell<u32>,
+    /// The SETTINGS_ENABLE_PUSH the peer has ACKed. A push can cross the frame that turns it off.
+    pub enforced_enable_push: Cell<bool>,
     /// In send order (§6.5.3).
     pending_local_settings_acks: JsCell<VecDeque<PendingSettings>>,
     invalid_frame_count: Cell<u32>,
@@ -301,6 +303,7 @@ impl Default for Connection {
             acked_local_initial_window: Cell::new(DEFAULT_WINDOW_SIZE),
             acked_max_frame_size: Cell::new(Settings::default().max_frame_size),
             enforced_max_header_list_size: Cell::new(Settings::default().max_header_list_size),
+            enforced_enable_push: Cell::new(Settings::default().enable_push),
             pending_local_settings_acks: JsCell::new(VecDeque::new()),
             invalid_frame_count: Cell::new(0),
             max_settings: Cell::new(32),
@@ -743,6 +746,7 @@ impl Connection {
         self.acked_max_frame_size.set(acked.max_frame_size);
         self.enforced_max_header_list_size
             .set(acked.max_header_list_size);
+        self.enforced_enable_push.set(acked.enable_push);
         if has_header_table_size {
             // The peer may be using a larger one already.
             let largest = self
@@ -1459,7 +1463,8 @@ impl Connection {
         }
         // 6.6: a client that disabled push (SETTINGS_ENABLE_PUSH=0) must treat the receipt of a
         // PUSH_PROMISE as a connection error of type PROTOCOL_ERROR.
-        if !self.local_settings.get().enable_push {
+        let wants_push = self.local_settings.get().enable_push;
+        if !wants_push && !self.enforced_enable_push.get() {
             self.send_go_away(
                 sink,
                 ErrorCode::PROTOCOL_ERROR,
@@ -1478,11 +1483,14 @@ impl Connection {
         }
 
         // Like nghttp2, don't reserve the stream after our GOAWAY. Later frames on its id are dropped as frames on a closed stream.
-        let discard = self.goaway_sent.get();
+        let discard = self.goaway_sent.get() || !wants_push;
         if !discard {
             self.insert_stream(promised, State::ReservedRemote);
         }
         self.last_peer_id.set(promised);
+        if !wants_push {
+            self.send_rst_stream(sink, promised, ErrorCode::CANCEL);
+        }
 
         let meta = HeaderBlockMeta {
             target: promised,

@@ -61,10 +61,10 @@ pub trait TimeZone {
 impl CronExpression {
     /// Five fields, or a nickname.
     pub fn parse(input: &[u8]) -> Result<CronExpression, CronError> {
-        let mut expr = strings::trim(input, b" \t");
+        let expr = strings::trim(input, b" \t");
         if expr.first() == Some(&b'@') {
-            expr = strings::in_map_case_insensitive(expr, &NICKNAMES)
-                .ok_or(CronError::InvalidField)?;
+            return strings::in_map_case_insensitive(expr, &NICKNAMES)
+                .ok_or(CronError::InvalidField);
         }
 
         let mut fields = strings::tokenize_any(expr, b" \t");
@@ -231,12 +231,31 @@ pub(crate) const ALL_DAYS: u64 = (1 << 32) - 2;
 const ALL_MONTHS: u64 = (1 << 13) - 2;
 const ALL_WEEKDAYS: u64 = (1 << 7) - 1;
 
+const HOURLY: CronExpression = CronExpression {
+    minutes: 1,
+    hours: ALL_HOURS,
+    days: ALL_DAYS,
+    months: ALL_MONTHS,
+    weekdays: ALL_WEEKDAYS,
+    day_or_weekday: false,
+};
+const DAILY: CronExpression = CronExpression { hours: 1, ..HOURLY };
+const WEEKLY: CronExpression = CronExpression {
+    weekdays: 1,
+    ..DAILY
+};
+const MONTHLY: CronExpression = CronExpression { days: 2, ..DAILY };
+const YEARLY: CronExpression = CronExpression {
+    months: 2,
+    ..MONTHLY
+};
+
 bun_core::comptime_string_map! {
-    static NICKNAMES: &'static [u8] = {
-        b"@yearly" => b"0 0 1 1 *",  b"@annually" => b"0 0 1 1 *",
-        b"@monthly" => b"0 0 1 * *", b"@weekly" => b"0 0 * * 0",
-        b"@daily" => b"0 0 * * *",   b"@midnight" => b"0 0 * * *",
-        b"@hourly" => b"0 * * * *",
+    static NICKNAMES: CronExpression = {
+        b"@yearly" => YEARLY,   b"@annually" => YEARLY,
+        b"@monthly" => MONTHLY, b"@weekly" => WEEKLY,
+        b"@daily" => DAILY,     b"@midnight" => DAILY,
+        b"@hourly" => HOURLY,
     };
 }
 
@@ -308,7 +327,7 @@ fn parse_field(
 }
 
 fn has(set: u64, value: i32) -> bool {
-    set >> u32::try_from(value).expect("int cast") & 1 != 0
+    (set.checked_shr(value.cast_unsigned())).is_some_and(|shifted| shifted & 1 != 0)
 }
 
 /// Ascending.

@@ -39,8 +39,8 @@ pub(crate) fn register(
     let script = resolve_script(global, path).ok_or_else(|| invalid("Failed to resolve path"))?;
 
     // The path goes into a crontab line, in single quotes.
-    if let Some(i) = strings::index_of_any(&script, b"'%\n\r") {
-        return Err(invalid(match script[i] {
+    if let Some(byte) = strings::index_of_any(&script, b"'%\n\r").and_then(|i| script.get(i)) {
+        return Err(invalid(match byte {
             b'\'' => "Path must not contain single quotes",
             b'%' => "Path must not contain percent signs (cron interprets % as newline)",
             _ => "Path must not contain line breaks",
@@ -121,8 +121,8 @@ enum Failure {
     #[error("Process error: {}", BStr::new(.0.name()))]
     Wait(sys::Error),
     #[cfg(windows)]
-    #[error("{}", BStr::new(bun_cron::schtasks::explain_failure(.0)))]
-    Stderr(Vec<u8>),
+    #[error("{}", BStr::new(.0))]
+    Stderr(Box<[u8]>),
     #[cfg(windows)]
     #[error(transparent)]
     TooManyTriggers(#[from] bun_cron::schtasks::TooManyTriggers),
@@ -140,7 +140,7 @@ type Next = Result<Option<Command>, Failure>;
 /// A step is over when its child has exited and the child's output has ended, in either order.
 enum Child {
     Running,
-    Exited(Status),
+    Exited(Result<(), Failure>),
     OutputEnded(sys::Result<Vec<u8>>),
 }
 
@@ -154,7 +154,7 @@ impl OsJobs {
             removable_body_behind_value!(Cron, {
                 for job in self.0.take() {
                     // The child outlives the VM, and the file is its input or the installed plist.
-                    if let Some(file) = job.step.take().and_then(Step::into_file) {
+                    if let Some(file) = job.step.take().and_then(|(step, _)| step.into_file()) {
                         ScopeGuard::into_inner(file);
                     }
                 }
@@ -170,8 +170,8 @@ pub(crate) struct OsJob {
     promise: JsCell<JSPromiseStrong>,
     global: GlobalRef,
     _keep_alive: JsKeepAlive,
-    step: Cell<Option<Step>>,
-    child: Cell<Child>,
+    /// `None` between two steps.
+    step: Cell<Option<(Step, Child)>>,
     process: Cell<Option<ProcessHandle>>,
     /// Of the child's stdout, or on Windows its stderr.
     output: BufferedReader,
@@ -192,7 +192,6 @@ impl OsJob {
             global: GlobalRef::from(global),
             _keep_alive: JsKeepAlive::active(),
             step: Cell::new(None),
-            child: Cell::new(Child::Running),
             process: Cell::new(None),
             output: BufferedReader::init(),
         });
@@ -267,17 +266,16 @@ impl OsJob {
         if let Some(stdout) = spawned.stdout.take().map(File::into_raw) {
             use bun_io::PosixFlags;
             (self.output).update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let started = self.output.start(bun_io::js_vm_ctx(), stdout, true);
-            let output = self.take_output(started.unwrap_or_else(ReadResult::Err));
-            child = output.map_or(Child::Running, Child::OutputEnded);
+            let read = (self.output.start(bun_io::js_vm_ctx(), stdout, true))
+                .map_err(|_| "Failed to start reading stdout")?;
+            child = (self.take_output(read)).map_or(Child::Running, Child::OutputEnded);
         }
         #[cfg(windows)]
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
             (self.output.start_with_pipe(pipe)).map_err(|_| "Failed to start reading stderr")?;
             child = Child::Running;
         }
-        self.child.set(child);
-        self.step.set(Some(step));
+        self.step.set(Some((step, child)));
         Ok(spawned.to_process_handle(event_loop))
     }
 
@@ -299,37 +297,53 @@ impl OsJob {
         let Some(output) = this.take_output(read) else {
             return;
         };
-        match this.child.replace(Child::Running) {
-            Child::Running => this.child.set(Child::OutputEnded(output)),
-            Child::Exited(status) => Self::end_step(this, status, output),
-            first @ Child::OutputEnded(_) => {
+        match this.step.take() {
+            Some((step, Child::Running)) => this.step.set(Some((step, Child::OutputEnded(output)))),
+            Some((step, Child::Exited(exit))) => Self::end_step(this, step, exit, output),
+            other @ (Some((_, Child::OutputEnded(_))) | None) => {
                 debug_assert!(false, "the output ended twice");
-                this.child.set(first);
+                this.step.set(other);
             }
         }
     }
 
     fn on_process_exit(this: ThisPtr<Self>, status: Status) {
-        match this.child.replace(Child::Running) {
-            Child::Running => this.child.set(Child::Exited(status)),
-            Child::OutputEnded(output) => Self::end_step(this, status, output),
-            Child::Exited(_) => debug_assert!(false, "the child exited twice"),
+        let exit = match status {
+            Status::Running => return,
+            Status::Exited(exited) if exited.code == 0 => Ok(()),
+            Status::Exited(exited) => Err(Failure::Exited(exited.code)),
+            Status::Signaled(signal) => Err(Failure::Signaled(signal)),
+            Status::Err(err) => Err(Failure::Wait(err)),
+        };
+        match this.step.take() {
+            Some((step, Child::Running)) => this.step.set(Some((step, Child::Exited(exit)))),
+            Some((step, Child::OutputEnded(output))) => Self::end_step(this, step, exit, output),
+            other @ (Some((_, Child::Exited(_))) | None) => {
+                debug_assert!(false, "the child exited twice");
+                this.step.set(other);
+            }
         }
     }
 
-    fn end_step(this: ThisPtr<Self>, status: Status, output: sys::Result<Vec<u8>>) {
+    fn end_step(
+        this: ThisPtr<Self>,
+        step: Step,
+        exit: Result<(), Failure>,
+        output: sys::Result<Vec<u8>>,
+    ) {
         this.process.set(None);
-        let step = this.step.take().expect("set by spawn");
-        Self::run(this, after(step, status, output));
+        Self::run(this, after(step, exit, output));
     }
 
     fn finish(this: ThisPtr<Self>, result: Result<(), Failure>) {
         let _entered = VirtualMachine::get().enter_event_loop_scope();
         // Dropped before the scope ends, which is where the reactions run.
-        let job = runtime_state().cron_os_jobs.0.with_mut(|jobs| {
-            let i = jobs.iter().position(|job| job.as_ptr() == this.as_ptr());
-            jobs.swap_remove(i.expect("cron job finished twice"))
-        });
+        let Some(job) = runtime_state().cron_os_jobs.0.with_mut(|jobs| {
+            let i = jobs.iter().position(|job| job.as_ptr() == this.as_ptr())?;
+            Some(jobs.swap_remove(i))
+        }) else {
+            return;
+        };
         let global = job.global;
         let _ = job.promise.with_mut(|promise| match result {
             Ok(()) => promise.resolve(&global, JSValue::UNDEFINED),
@@ -343,21 +357,19 @@ impl OsJob {
 }
 
 /// Takes `step`, so that its file is gone before the promise settles.
-fn after(step: Step, status: Status, output: sys::Result<Vec<u8>>) -> Next {
+fn after(step: Step, exit: Result<(), Failure>, output: sys::Result<Vec<u8>>) -> Next {
     let output = output.map_err(Failure::Read)?;
-    if status.is_ok() || step.tolerates(&status) {
-        return step.next(&output);
+    let failure = match exit {
+        Err(failure) if !step.tolerates(&failure) => failure,
+        _ => return step.next(&output),
+    };
+    #[cfg(windows)]
+    if let Failure::Exited(_) = failure
+        && let explained @ [_, ..] = bun_cron::schtasks::explain_failure(&output)
+    {
+        return Err(Failure::Stderr(explained.into()));
     }
-    Err(match status {
-        #[cfg(windows)]
-        Status::Exited(_) if !bun_cron::schtasks::explain_failure(&output).is_empty() => {
-            Failure::Stderr(output)
-        }
-        Status::Exited(exited) => Failure::Exited(exited.code),
-        Status::Signaled(signal) => Failure::Signaled(signal),
-        Status::Err(err) => Failure::Wait(err),
-        Status::Running => unreachable!(),
-    })
+    Err(failure)
 }
 
 /// A path that is unlinked when it drops.
@@ -385,7 +397,7 @@ fn write_temp_file(
 ) -> Result<OwnedFile, Failure> {
     let mut buf = bun_paths::path_buffer_pool::get();
     let name = FileSystem::tmpname(suffix.as_bytes(), &mut buf.0, bun_core::fast_random())
-        .expect("a path buffer holds a temporary name");
+        .map_err(|_| "Out of memory")?;
     let dir = bun_resolver::fs::RealFS::platform_temp_dir();
     let path = resolve_path::join_abs_string::<platform::Auto>(dir, &[name.as_bytes()]);
     write_file(path, (sys::O::EXCL, 0o600), contents, errors)
@@ -425,9 +437,9 @@ mod backend {
     }
 
     impl Step {
-        pub(super) fn tolerates(&self, status: &Status) -> bool {
+        pub(super) fn tolerates(&self, failure: &Failure) -> bool {
             // How `crontab -l` says that there is no table.
-            matches!((self, status), (Step::List { .. }, Status::Exited(exited)) if exited.code == 1)
+            matches!((self, failure), (Step::List { .. }, Failure::Exited(1)))
         }
 
         pub(super) fn next(self, output: &[u8]) -> Next {
@@ -503,9 +515,10 @@ mod backend {
     }
 
     impl Step {
-        pub(super) fn tolerates(&self, status: &Status) -> bool {
+        pub(super) fn tolerates(&self, failure: &Failure) -> bool {
             // There may be nothing to boot out.
-            !matches!(self, Step::Bootstrap) && !matches!(status, Status::Err(_))
+            !matches!(self, Step::Bootstrap)
+                && matches!(failure, Failure::Exited(_) | Failure::Signaled(_))
         }
 
         pub(super) fn next(self, _: &[u8]) -> Next {
@@ -578,9 +591,9 @@ mod backend {
     }
 
     impl Step {
-        pub(super) fn tolerates(&self, status: &Status) -> bool {
+        pub(super) fn tolerates(&self, failure: &Failure) -> bool {
             // There may be no such task.
-            matches!((self, status), (Step::Delete, Status::Exited(_)))
+            matches!((self, failure), (Step::Delete, Failure::Exited(_)))
         }
 
         pub(super) fn next(self, _: &[u8]) -> Next {

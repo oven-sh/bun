@@ -141,7 +141,7 @@ impl Resolver<'_, '_> {
             .map(|key| (user, key))
     }
 
-    fn is_stored_to(&self, entry: ExprId) -> bool {
+    pub(super) fn is_stored_to(&self, entry: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut target = entry;
         while let Parent::Expr(parent) = bound.parent_of_expr(target)

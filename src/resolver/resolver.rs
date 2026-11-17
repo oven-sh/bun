@@ -7,6 +7,7 @@
 
 use crate::{is_package_path, is_package_path_not_absolute};
 
+use core::cell::{OnceCell, UnsafeCell};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -216,23 +217,14 @@ mod bun_sys {
     // and reach this module via the `pub use ::bun_sys::*` glob above.
 }
 
-/// `bun_sys::Fd` extension surface — thin method-syntax wrappers over the
-/// free functions `::bun_sys::{close, get_fd_path}` and `Fd::native`, so the
-/// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)`.
+/// Lets the resolver body spell `::bun_sys::close` as `fd.close()`.
 trait FdExt: Sized {
     fn close(self);
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline]
     fn close(self) {
         let _ = ::bun_sys::close(self);
-    }
-    #[inline]
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]> {
-        ::bun_sys::get_fd_path(self, buf)
-            .map(|s| &*s)
-            .map_err(Into::into)
     }
 }
 trait FdZero {
@@ -270,8 +262,7 @@ pub use ::bun_options_types::global_cache::GlobalCache;
 use crate::options;
 use crate::result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
-    ResultUnion,
+    MatchStatus, PathPair, Result, ResultFlags, ResultUnion,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
@@ -372,47 +363,19 @@ pub struct Bufs {
     #[cfg(windows)]
     pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
 }
-// `Bufs` is modeled as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
-// leaked `Box<Bufs>` pointer. `BufsSlot`'s `Drop` reclaims that box when a
-// worker/transpiler-pool thread exits; the main thread's lives process-lifetime.
 // The `bufs!()` macro hands out `&mut` to a
 // single field. This relies on the caller never holding two `bufs!()` borrows
 // simultaneously across the same field.
-struct BufsSlot(core::cell::Cell<*mut Bufs>);
-impl Drop for BufsSlot {
-    fn drop(&mut self) {
-        // Reclaim the per-thread `Box<Bufs>` when a worker/transpiler-pool
-        // thread exits. Main-thread Bufs lives as long as the process, but
-        // every worker that touches the resolver allocates a fresh ~116 KiB
-        // box that was previously stranded.
-        let p = self.0.get();
-        if !p.is_null() {
-            // SAFETY: produced by `Box::leak` in `bufs_storage_init`; this
-            // thread is exiting so no resolver call frame holds a `bufs!()`
-            // borrow into it.
-            drop(unsafe { Box::from_raw(p) });
-        }
-    }
-}
 thread_local! {
-    static BUFS_PTR: BufsSlot = const { BufsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
+    static BUFS: OnceCell<Box<UnsafeCell<Bufs>>> = const { OnceCell::new() };
 }
 
 #[inline(always)]
 fn bufs_storage_get() -> *mut Bufs {
-    // Fast path: TLS access + null check. `BUFS_PTR` is a `BufsSlot` (it has a
-    // `Drop`), so `with()` goes through `thread_local!`'s destructor-state check
-    // before the `Cell::get` load — still only a few instructions, no
-    // RefCell/Option/closure machinery on the hot path (benches: misc/require-fs).
-    let p = BUFS_PTR.with(|s| s.0.get());
-    if !p.is_null() {
-        return p;
-    }
-    bufs_storage_init()
+    BUFS.with(|bufs| bufs.get_or_init(bufs_storage_init).get())
 }
 
-#[cold]
-fn bufs_storage_init() -> *mut Bufs {
+fn bufs_storage_init() -> Box<UnsafeCell<Bufs>> {
     // SAFETY: every field of `Bufs` is a byte/integer array (`PathBuffer` =
     // `[u8; N]`, `[u8; 512]`, `[FD; 256]` where `Fd` is a `#[repr(transparent)]`
     // integer newtype with no niche) or `[MaybeUninit<_>; 256]`, so the
@@ -420,9 +383,7 @@ fn bufs_storage_init() -> *mut Bufs {
     // because integers must be initialized: a never-written `[u8; N]` is UB
     // even though every bit pattern is a valid `u8`. Runs once per thread;
     // `alloc_zeroed` of ~100 KiB is usually fresh OS-zeroed pages.
-    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_zeroed().assume_init() });
-    BUFS_PTR.with(|s| s.0.set(p));
-    p
+    unsafe { Box::new_zeroed().assume_init() }
 }
 
 /// `bufs(.field)` → `bufs!(field)` returns `&mut <field type>`.
@@ -439,22 +400,8 @@ macro_rules! bufs {
 // (the resolver mutex is one of the two documented guards for the entries singleton).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
-type BinFolderArray = BoundedArray<&'static [u8], 128>;
-static BIN_FOLDERS: bun_core::RacyCell<BinFolderArray> =
-    bun_core::RacyCell::new(BoundedArray::new());
-static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
-
-// LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
-// register directory watches. The concrete callback lives in `bun_watcher`
-// (lower tier); defining the vtable shape there and re-exporting here keeps a
-// single type so `Watcher::get_resolve_watcher()` flows directly into
-// `Resolver.watcher` without a seam converter.
-pub use bun_watcher::AnyResolveWatcher;
-
-// NOTE: const fn-pointer generics (`adt_const_params` for fn ptrs) and
-// const params depending on type params are both forbidden. Carry a
-// runtime fn-pointer alongside the context — `init` produces the
-// `AnyResolveWatcher` erased shim.
+static BIN_FOLDERS: bun_threading::Guarded<BoundedArray<&'static [u8], 128>> =
+    bun_threading::Guarded::new(BoundedArray::new());
 
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
@@ -483,7 +430,7 @@ pub struct Resolver<'a> {
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
 
-    pub watcher: Option<AnyResolveWatcher>,
+    pub watcher: Option<Arc<bun_watcher::Watcher>>,
 
     pub caches: CacheSet,
     pub generation: Generation,
@@ -496,7 +443,6 @@ pub struct Resolver<'a> {
     /// factory and caches the pointer here. A failed init (e.g. unreadable
     /// top-level directory) is returned as an error and leaves this `None`.
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
-    pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
     // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
     // set (e.g. bake/production/mod.rs assigns this then calls `configure_defines()`
@@ -602,18 +548,14 @@ impl<'a> Resolver<'a> {
     /// Per-worker constructor — replaces the bundler's prior bitwise
     /// copy-from-`from` for the resolver
     /// portion. Every `Copy` / raw-pointer field is copied from `from`; the
-    /// per-worker `caches` (the only `Drop`-carrying field, via the
+    /// `watcher` is cloned, and the per-worker `caches` (which drop the
     /// `Json` cache's `MimallocArena`) and `debug_logs`/`timer` are freshly
     /// constructed so nothing the parent owns is aliased into the worker.
     ///
     /// `opts` and `log` are supplied by the caller (the worker projects a
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
-    ///
-    /// # Safety
-    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
-    /// loader that `from.env_loader` points to must outlive `'a`.
-    pub unsafe fn for_worker(
-        from: &Resolver<'_>,
+    pub fn for_worker(
+        from: &Resolver<'a>,
         log: NonNull<bun_ast::Log>,
         mut opts: options::BundleOptions,
     ) -> Resolver<'a> {
@@ -631,11 +573,10 @@ impl<'a> Resolver<'a> {
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
-            watcher: from.watcher,
+            watcher: from.watcher.clone(),
             caches: CacheSet::init(),
             generation: from.generation,
             package_manager: from.package_manager,
-            on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
             store_fd: from.store_fd,
             standalone_module_graph: from.standalone_module_graph,
@@ -819,8 +760,7 @@ impl<'a> Resolver<'a> {
     /// [`__bun_resolver_init_package_manager`] (defined `#[no_mangle]` in
     /// `bun_install::auto_installer`). The factory performs
     /// `HTTPThread.init` + `PackageManager.initWithRuntime` and returns the
-    /// process-static singleton as a `dyn AutoInstaller`. We then wire
-    /// `on_wake` and cache the pointer. Reached from
+    /// process-static singleton as a `dyn AutoInstaller`. Reached from
     /// the auto-install path (`load_node_modules` global-cache block) when
     /// [`use_package_manager`] is `true`. Errs (without caching, but sticky
     /// inside the factory) when the one-time init fails, e.g. the top-level
@@ -861,8 +801,6 @@ impl<'a> Resolver<'a> {
                 importer_dir,
             )
         }?;
-        // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
-        unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         self.package_manager = Some(pm);
         Ok(pm.as_ptr())
     }
@@ -997,7 +935,6 @@ impl<'a> Resolver<'a> {
             watcher: None,
             generation: 0,
             package_manager: None,
-            on_wake_package_manager: Default::default(),
             env_loader: None,
             store_fd: false,
             standalone_module_graph: None,
@@ -1865,10 +1802,6 @@ impl<'a> Resolver<'a> {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
                 ResultUnion::Failure(e)
             }
-            ResultUnion::Pending(pending) => {
-                let _ = self.flush_debug_logs(FlushMode::Fail);
-                ResultUnion::Pending(pending)
-            }
             ResultUnion::NotFound => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
                 ResultUnion::NotFound
@@ -1888,7 +1821,7 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Result<'r>> {
         match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
             ResultUnion::Success(result) => Ok(result),
-            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
+            ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
         }
     }
@@ -2032,7 +1965,7 @@ impl<'a> Resolver<'a> {
                 } else if !dir.abs_real_path.is_empty()
                     // When the directory is a symlink, we don't need to call getFdPath.
                     && let mut buf = bun_paths::path_buffer_pool::get()
-                    && let Some(out_len) =
+                    && let Some(joined) =
                         ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<
                             ::bun_paths::platform::Loose,
                         >(
@@ -2040,16 +1973,14 @@ impl<'a> Resolver<'a> {
                             &mut buf[..],
                             &[dir.abs_real_path, query.entry().base()],
                         )
-                        .map(|joined| joined.len())
                 {
                     let store_fd = self.store_fd;
 
                     if !query.entry().cache().fd.is_valid() && store_fd {
-                        let span = bun_core::ZStr::from_buf(&buf[..], out_len);
                         // I/O errors propagate so `resolveAndAutoInstall` can
                         // return them as `Result.Union.failure` — never
                         // panic on EACCES/EMFILE/ELOOP here.
-                        let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
+                        let file = bun_sys::open(joined, bun_sys::O::RDONLY, 0)
                             .map_err(Into::<crate::Error>::into)?;
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
@@ -2083,7 +2014,7 @@ impl<'a> Resolver<'a> {
                         }
                     }
 
-                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    let symlink = Fs::FilenameStore::instance().append_slice(joined.as_bytes())?;
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note_fmt(format_args!(
                             "Resolved symlink \"{}\" to \"{}\"",
@@ -2269,7 +2200,6 @@ impl<'a> Resolver<'a> {
                         let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
                         match self.check_relative_path(&on_disk, import_path, kind, global_cache) {
                             ResultUnion::Success(res) => return ResultUnion::Success(res),
-                            ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                             ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                             ResultUnion::NotFound => {}
                         }
@@ -2287,7 +2217,6 @@ impl<'a> Resolver<'a> {
             } else {
                 match self.check_relative_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
-                    ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                     ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                     ResultUnion::NotFound => {}
                 }
@@ -2422,7 +2351,6 @@ impl<'a> Resolver<'a> {
                     let on_disk = self.folder_on_disk_of_given_folder(given);
                     match self.check_package_path(&on_disk, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
                     }
@@ -2436,7 +2364,6 @@ impl<'a> Resolver<'a> {
             } else {
                 match self.check_package_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
-                    ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                     ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                     ResultUnion::NotFound => {}
                 }
@@ -2821,7 +2748,6 @@ impl<'a> Resolver<'a> {
 
                 ResultUnion::Success(result)
             }
-            MatchStatus::Pending(p) => ResultUnion::Pending(*p),
             MatchStatus::Failure(p) => ResultUnion::Failure(p),
             MatchStatus::NotFound => ResultUnion::NotFound,
         }
@@ -2865,10 +2791,17 @@ impl<'a> Resolver<'a> {
 
     /// Bust the directory cache for the given path, which may end in a separator.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        Self::bust_dir_cache_in(&mut self.fs_mut().fs, path)
+    }
+
+    /// [`Self::bust_dir_cache`] without a resolver: both caches are process-wide.
+    pub fn bust_dir_cache_in(fs: &mut Fs::file_system::RealFS, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
-        let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache_mut().remove(path);
+        let first_bust = fs.bust_entries_cache(path);
+        // SAFETY: the never-freed singleton of `dir_cache_mut`. Other threads can hold it too:
+        // `remove` touches nothing of the map before it takes the map's mutex.
+        let second_bust = unsafe { (*DirInfo::hash_map_instance()).remove(path) };
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",
@@ -3409,8 +3342,7 @@ impl<'a> Resolver<'a> {
                         };
 
                         for (dependency_id, dependency) in dependencies_list.iter().enumerate() {
-                            if !strings::eql_long(dependency.name.slice(string_buf), esm.name, true)
-                            {
+                            if !strings::eql_long(dependency.name.slice(string_buf), esm.name) {
                                 continue;
                             }
 
@@ -3516,7 +3448,7 @@ impl<'a> Resolver<'a> {
 
                     let resolution: Resolution = 'brk: {
                         if resolved_package_id == Install::INVALID_PACKAGE_ID {
-                            if dependency_version.tag == Dependency::version::Tag::Uninitialized {
+                            if dependency_version.tag() == Dependency::version::Tag::Uninitialized {
                                 let sliced_string =
                                     Semver::SlicedString::init(esm.version, esm.version);
                                 string_buf = esm.version;
@@ -3551,19 +3483,13 @@ impl<'a> Resolver<'a> {
                             &esm,
                             dependency_behavior,
                             &mut resolved_package_id,
-                            dependency_version.clone(),
+                            &dependency_version,
                             string_buf,
                         ) {
-                            DependencyToResolve::Resolution(res) => break 'brk res,
-                            DependencyToResolve::Pending(pending) => {
-                                if let Some(d) = self.debug_logs.as_mut() {
-                                    d.decrease_indent();
-                                }
-                                return MatchStatus::Pending(pending);
-                            }
+                            Some(res) => break 'brk res,
                             // The registry has no such package or version, or the install failed.
                             // The reason is already in the log.
-                            DependencyToResolve::NotFound => {
+                            None => {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
                                 }
@@ -3980,9 +3906,9 @@ impl<'a> Resolver<'a> {
         esm: &crate::package_json::Package<'_>,
         behavior: Dependency::Behavior,
         input_package_id_: &mut Install::PackageID,
-        version: Dependency::Version,
+        version: &Dependency::Version,
         version_buf: &[u8],
-    ) -> DependencyToResolve {
+    ) -> Option<Resolution> {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Enqueueing pending dependency \"{}@{}\"",
@@ -3997,10 +3923,7 @@ impl<'a> Resolver<'a> {
         // Init failure is unreachable in practice (`load_node_modules`
         // initialized the manager before calling here), but propagate rather
         // than unwrap so the invariant isn't load-bearing for safety.
-        let pm_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
-            Ok(pm) => pm,
-            Err(_) => return DependencyToResolve::NotFound,
-        };
+        let pm_ptr: *mut dyn AutoInstaller = self.get_package_manager().ok()?;
         macro_rules! pm {
             () => {
                 // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
@@ -4010,16 +3933,16 @@ impl<'a> Resolver<'a> {
         // we should never be trying to resolve a dependency that is already resolved
         debug_assert!(
             pm!()
-                .lockfile_resolve(esm.name, &version, version_buf)
+                .lockfile_resolve(esm.name, version, version_buf)
                 .is_none()
         );
 
         if input_package_id == Install::INVALID_PACKAGE_ID || input_package_id == 0 {
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            match pm!().enqueue_dependency_to_root(
+            return match pm!().enqueue_dependency_to_root(
                 esm.name,
-                &version,
+                version,
                 version_buf,
                 package_json_dir,
                 behavior,
@@ -4029,24 +3952,10 @@ impl<'a> Resolver<'a> {
                     resolution,
                 } => {
                     *input_package_id_ = package_id;
-                    return DependencyToResolve::Resolution(resolution);
+                    Some(resolution)
                 }
-                Install::EnqueueResult::Pending(id) => {
-                    let (cloned, string_buf) = esm.copy().expect("unreachable");
-
-                    return DependencyToResolve::Pending(Box::new(PendingResolution {
-                        esm: cloned,
-                        dependency: version,
-                        root_dependency_id: id,
-                        string_buf,
-                        tag: PendingResolutionTag::Resolve,
-                        ..Default::default()
-                    }));
-                }
-                Install::EnqueueResult::NotFound | Install::EnqueueResult::Failure(_) => {
-                    return DependencyToResolve::NotFound;
-                }
-            }
+                Install::EnqueueResult::NotFound | Install::EnqueueResult::Failure(_) => None,
+            };
         }
 
         // NOTE: the non-root path is genuinely unimplemented; this is not a stub.
@@ -4454,12 +4363,7 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        let entry = self
-            .caches
-            .fs
-            .read_file_with_allocator(file, dirname_fd, false, None, None)?;
-        let _file = entry.fd.unwrap_valid().map(::bun_sys::File::from_fd);
-        let entry_contents = entry.contents;
+        let contents = self.caches.fs.read_file_and_close(file, dirname_fd)?;
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
@@ -4470,16 +4374,7 @@ impl<'a> Resolver<'a> {
             .append_slice(file)
             .expect("unreachable");
 
-        // `use_shared_buffer = false` above, so `entry_contents` is
-        // `Contents::Owned`/`Empty`. `TSConfigJSON` owns `Box<[u8]>` copies of
-        // every field, so the source bytes are dead once `parse` returns and
-        // can be dropped with the local `Source`.
-        let contents = match entry_contents {
-            crate::cache::Contents::Owned(v) => v,
-            crate::cache::Contents::Empty => Vec::new(),
-            other => other.as_slice().to_vec(),
-        };
-
+        // `TSConfigJSON` owns copies of every field, so the bytes drop with `source`.
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
 
@@ -4516,10 +4411,17 @@ impl<'a> Resolver<'a> {
         Ok(Some(result))
     }
 
-    pub fn bin_dirs(&self) -> &[&'static [u8]] {
-        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites. The only caller is
-        // `bun getcompletes`, whose one resolver runs on the calling thread: nothing appends.
-        unsafe { (*BIN_FOLDERS.get()).const_slice() }
+    pub fn bin_dirs() -> Vec<&'static [u8]> {
+        BIN_FOLDERS.lock().const_slice().to_vec()
+    }
+
+    fn add_bin_dir(&self, bin_path: &[u8]) {
+        let mut folders = BIN_FOLDERS.lock();
+        if !folders.const_slice().contains(&bin_path)
+            && let Ok(stored) = self.fs_ref().dirname_store.append_slice(bin_path)
+        {
+            let _ = folders.append(stored);
+        }
     }
 
     pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
@@ -4867,8 +4769,7 @@ impl<'a> Resolver<'a> {
                     // queue index 0 — see the `path` construction above).
                     let nul_at = queue_top_unsafe_path.len();
                     let prev_char = path[nul_at];
-                    path[nul_at] = 0;
-                    let sentinel = bun_core::ZStr::from_buf(path, nul_at);
+                    let sentinel = bun_core::ZStr::nul_terminate(path, nul_at);
 
                     #[cfg(unix)]
                     let open_req: crate::CrateResult<FD> = {
@@ -5207,7 +5108,7 @@ impl<'a> Resolver<'a> {
                 .iter()
                 .zip(tsconfig.paths.values().iter())
             {
-                if strings::eql_long(key, path, true) {
+                if strings::eql_long(key, path) {
                     for original_path in value.iter() {
                         if self.is_type_only_tsconfig_path(original_path) {
                             continue;
@@ -6386,8 +6287,10 @@ impl<'a> Resolver<'a> {
             // For existent directories which don't find a match
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
-                if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
-                    watcher.watch(dir, fd);
+                if let Some(dir) = dir_entry.get().dir() {
+                    bun_removable_features::removable_body_of_either!(HotReload, Bundler, {
+                        watcher.on_maybe_watch_directory(dir)
+                    });
                 }
             }
         }
@@ -6524,29 +6427,14 @@ impl<'a> Resolver<'a> {
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
                             Default::default(),
-                        ) else {
+                        )
+                        .map(bun_sys::Dir::from_fd) else {
                             break 'append_bin_dir;
                         };
-                        let _close = bun_sys::CloseOnDrop::new(file);
                         let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
                             break 'append_bin_dir;
                         };
-                        let _unlock = BIN_FOLDERS_LOCK.lock_guard();
-
-                        // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
-                        unsafe {
-                            for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
-                                if *existing_folder == bin_path {
-                                    break 'append_bin_dir;
-                                }
-                            }
-
-                            let Ok(stored) = self.fs_ref().dirname_store.append_slice(bin_path)
-                            else {
-                                break 'append_bin_dir;
-                            };
-                            let _ = (*BIN_FOLDERS.get()).append(stored);
-                        }
+                        self.add_bin_dir(bin_path);
                     }
                 }
 
@@ -6556,30 +6444,14 @@ impl<'a> Resolver<'a> {
                             == Fs::file_system::EntryKind::Dir
                         {
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
+                                .map(bun_sys::Dir::from_fd)
                             else {
                                 break 'append_bin_dir;
                             };
-                            let _close = bun_sys::CloseOnDrop::new(file);
-                            let Ok(bin_path) = bun_sys::get_fd_path(file, bufs!(node_bin_path))
-                            else {
+                            let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
                                 break 'append_bin_dir;
                             };
-                            let _unlock = BIN_FOLDERS_LOCK.lock_guard();
-
-                            // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
-                            unsafe {
-                                for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
-                                    if *existing_folder == bin_path {
-                                        break 'append_bin_dir;
-                                    }
-                                }
-
-                                let Ok(stored) = self.fs_ref().dirname_store.append_slice(bin_path)
-                                else {
-                                    break 'append_bin_dir;
-                                };
-                                let _ = (*BIN_FOLDERS.get()).append(stored);
-                            }
+                            self.add_bin_dir(bin_path);
                         }
                     }
                 }
@@ -6938,7 +6810,7 @@ impl<'a> Resolver<'a> {
         let path = self.opts.tsconfig_override.as_deref()?;
         if self.opts.tsconfig_override_json.is_none() {
             let mut path = [path, b"\0"].concat();
-            let z = bun_core::ZStr::from_buf(&path, path.len() - 1);
+            let z = bun_core::ZStr::from_slice_with_nul(&path);
             let is_directory = bun_sys::directory_exists_at(FD::cwd(), z).unwrap_or(false);
             path.pop();
             // As for `tsc -p`, and for the type check.
@@ -7069,12 +6941,6 @@ impl core::ops::Deref for TSConfigRef {
 }
 
 // ─── nested helper types ───────────────────────────────────────────────────
-
-enum DependencyToResolve {
-    NotFound,
-    Pending(Box<PendingResolution>),
-    Resolution(Resolution),
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum BrowserMapPathKind {

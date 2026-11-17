@@ -9,10 +9,7 @@ use bun_alloc::Arena as ArenaAllocator;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::{MAIN_FILE_NAME, MainEntryPoint, VirtualMachine};
-use crate::{
-    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
-    ResolvedSource,
-};
+use crate::{self as jsc, ErrorableResolvedSource, JSGlobalObject, JSValue, ResolvedSource};
 
 // Re-exports.
 pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
@@ -24,9 +21,12 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 #[derive(Default)]
 pub struct ModuleLoader {
     pub transpile_source_code_arena: crate::JsCell<Option<Box<ArenaAllocator>>>,
+    /// Taken while a module is printed, and put back so that the next one reuses its buffer.
+    pub source_code_printer: core::cell::Cell<Option<Box<bun_js_printer::BufferPrinter>>>,
     pub eval_source: core::cell::OnceCell<Box<bun_ast::Source<'static>>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: core::cell::Cell<Option<&'static [u8]>>,
+    pub macro_load_states: bun_js_parser::Macro::MacroLoadStates,
 }
 
 static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
@@ -113,11 +113,6 @@ pub struct TranspileExtra<'a> {
     /// `Cell`s so the `.wasm` re-entry can change them and recurse.
     pub loader: core::cell::Cell<bun_ast::Loader>,
     pub module_type: core::cell::Cell<bun_bundler::options::ModuleType>,
-    /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null.
-    pub source_code_printer: *mut bun_js_printer::BufferPrinter,
-    /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.
-    /// Null forbids async resolution.
-    pub promise_ptr: *mut *mut JSInternalPromise,
 }
 
 unsafe extern "Rust" {

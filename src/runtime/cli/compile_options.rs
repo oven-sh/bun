@@ -27,7 +27,9 @@ pub(crate) const COMPILE_AOT_KEYS: &[&str] = &[
     "aotCheck",
     "aotExplain",
     "aotHarden",
+    "aotOrder",
     "aotOut",
+    "aotRecordOrder",
     "aotTesting",
 ];
 const EXPLAIN_ALLOWED: &str =
@@ -55,7 +57,6 @@ const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
 /// The words of `BUN_DEBUG_TEST_AOT_WORDS` that start with `TestRun`. With any of them the runner says what the build hands over.
 /// `TestRunLayers:0` asks for one program, which every run is.
 const TEST_RUN_WORDS: &[&[u8]] = &[
-    b"TestRunWithoutFunctionSource",
     b"TestRunSaysItsForm",
     b"TestRunShowsStandIn:1",
     b"TestRunLayers:0",
@@ -78,6 +79,7 @@ enum Form {
     Flag,
     One,
     Many,
+    Lists,
 }
 
 macro_rules! developer_flag {
@@ -96,6 +98,8 @@ const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("erase-types", Form::Flag),
     developer_flag!("refuse-code-from-disk", Form::Flag),
     developer_flag!("out", Form::One),
+    developer_flag!("order", Form::Lists),
+    developer_flag!("record-order", Form::Flag),
     developer_flag!("symbols", Form::Flag),
     ("no-builtin-modules", "--no-builtin-modules", Form::Flag),
 ];
@@ -275,6 +279,8 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::Developer("harden"), BuildApi) => "compile.aotHarden",
         (Name::Developer("testing"), BuildApi) => "compile.aotTesting",
         (Name::Developer("out"), BuildApi) => "compile.aotOut",
+        (Name::Developer("order"), BuildApi) => "compile.aotOrder",
+        (Name::Developer("record-order"), BuildApi) => "compile.aotRecordOrder",
         (Name::Developer(key), _) => developer_flag_name(key),
     };
     out.extend_from_slice(spelling.as_bytes());
@@ -605,6 +611,31 @@ impl CompileSettings {
     }
 }
 
+fn read_order_file(path: &[u8], order_files: &mut Vec<u8>) -> bun_sys::Maybe<()> {
+    const HEAD: &[u8] = b"aot-order v1";
+    let bytes = bun_sys::File::read_from(bun_sys::Fd::cwd(), path)?;
+    let text = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let end = strings::last_index_of_char(text, b'\n').map_or(0, |at| at + 1);
+    let mut lines = text[..end]
+        .split_inclusive(|&byte| byte == b'\n')
+        .map(|line| line.strip_suffix(b"\n").unwrap_or(line))
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        .skip_while(|line| line.trim_ascii().is_empty() || line.starts_with(b"#"))
+        .peekable();
+    if lines.peek().is_none_or(|&line| line != HEAD) {
+        bun_core::warn!(
+            "--aot-order: {} is not an order file. Nothing is placed by it",
+            bstr::BStr::new(path),
+        );
+        return Ok(());
+    }
+    for line in lines {
+        order_files.extend_from_slice(line);
+        order_files.push(b'\n');
+    }
+    Ok(())
+}
+
 pub(crate) fn apply_developer_word<'a>(
     key: &'static str,
     value: Option<&'a [u8]>,
@@ -644,6 +675,18 @@ pub(crate) fn apply_developer_word<'a>(
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),
+        "order" if text.is_empty() => {}
+        "order" => {
+            read_order_file(text, &mut options.order_files).map_err(|error| {
+                OptionError::DeveloperWord {
+                    key,
+                    word: key.as_bytes().to_vec(),
+                    sentence: format!("{} cannot be read: {}", bstr::BStr::new(text), error)
+                        .into_bytes(),
+                }
+            })?;
+        }
+        "record-order" => options.records_order = true,
         // The other words of --aot-testing are the engine's.
         "testing" if text == b"NoExecutable" => options.writes_no_executable = true,
         "testing" if text == b"FirstTexts" => options.takes_first_texts = true,
@@ -861,6 +904,11 @@ fn read_developer_words(
                 }
             }
             Form::Many => words.extend(args.options(name).iter().map(|&value| (key, Some(value)))),
+            Form::Lists => words.extend(
+                split_at_commas(args.options(name))
+                    .filter(|value| !value.is_empty())
+                    .map(|value| (key, Some(value))),
+            ),
         }
     }
     words
@@ -1039,8 +1087,8 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         exit_with_unknown_test_run_word(word);
     }
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
-        // For runner tests: no flag of `bun test` omits function source.
-        embeds_function_source: !words_read_here.contains(&&b"TestRunWithoutFunctionSource"[..]),
+        embeds_function_source: !(cmd == Tag::TestCommand
+            && args.flag(b"--no-compile-function-source")),
         erases_types: words_read_here.contains(&&b"erase-types"[..]),
         takes_first_texts: words_read_here.contains(&&b"FirstTexts"[..]),
         ir_output_path: (words_read_here.iter())

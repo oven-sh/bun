@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, describeWithContainer, isASAN, isLinux, isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import {
@@ -862,6 +862,25 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
         );
       });
     });
+
+    // The server flushes in the middle of a row, so hardly any read ends between two packets.
+    test("a long reply is not kept in memory", async () => {
+      const { stdout, exitCode } = await runScript(`
+        const sql = new Bun.SQL(process.env.MYSQL_URL, { max: 1 });
+        await sql\`SELECT 1\`;
+        const before = process.memoryUsage.rss();
+        // 64 MB on the wire. A row object leaves out the first of two columns with one name.
+        const rows = await sql\`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 128)
+          SELECT CAST(REPEAT('x', 4001) AS BINARY) AS a, 1 AS a FROM n, n AS m\`;
+        console.log(JSON.stringify({ rows: rows.length, grew: process.memoryUsage.rss() - before }));
+        await sql.close();
+      `);
+      const { rows, grew } = JSON.parse(stdout);
+      expect(rows).toBe(128 * 128);
+      expect(grew).toBeLessThan((isASAN ? 40 : 24) * 1024 * 1024);
+      expect(exitCode).toBe(0);
+    });
   });
 }
 
@@ -1037,6 +1056,39 @@ describe("scripted server", () => {
         outcomes: [[[], []], [{ owner: "A" }], [{ owner: "B" }]],
         commands: ["DO 1; DO 2", "A", "B"],
       });
+    } finally {
+      server.close();
+    }
+  });
+
+  test.each([0, 3])("the column transform runs the event loop with %p bytes left of its read", async behind => {
+    const reply = mysqlTextResultSet(1, [{ name: "owner", type: 0xfd }], [["A"], ["B"]]);
+    const firstRow = 5 + 4 + reply.readUIntLE(5, 3);
+    const asked = Promise.withResolvers<net.Socket>();
+    const { port, server } = await mysqlServer({ onCommand: socket => asked.resolve(socket) });
+    const write = (socket: net.Socket, bytes: Buffer) => (socket.write(bytes), loopbackFence());
+    try {
+      let socket: net.Socket;
+      let built: Promise<unknown> | undefined;
+      await using sql = new SQL({
+        url: `mysql://root@127.0.0.1:${port}/db`,
+        max: 1,
+        transform: {
+          column: name => {
+            // Bun.build() runs the event loop until an async setup() settles.
+            const setup = () => write(socket, reply.subarray(firstRow + behind));
+            built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+            return name.toUpperCase();
+          },
+        },
+      });
+      const rows = outcome(sql.unsafe("A").simple());
+      socket = await asked.promise;
+      await write(socket, reply.subarray(0, 7));
+      // No fence: with kqueue, its connect event is lost if it comes in the batch that reaches the transform.
+      socket.write(reply.subarray(7, firstRow + behind));
+      expect(await rows).toEqual([{ OWNER: "A" }, { OWNER: "B" }]);
+      await built;
     } finally {
       server.close();
     }

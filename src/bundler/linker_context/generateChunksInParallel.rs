@@ -8,9 +8,7 @@ use bun_collections::StringHashMap;
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_paths as path;
-use bun_threading::thread_pool as ThreadPoolLib;
 
-use crate::BundleV2;
 use crate::Chunk;
 use crate::Index;
 use crate::analyze_transpiled_module;
@@ -19,17 +17,17 @@ use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
 use crate::options::Loader;
 
+use crate::CompileResult;
 use crate::LinkerContext;
-use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
+use crate::linker_context::generate_compile_result_for_css_chunk::{
+    generate_compile_result_for_css_chunk, nest_external_imports,
+};
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
 use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
 use crate::linker_context::output_file_list_builder::OutputFileList as OutputFileListBuilder;
-use crate::linker_context::prepare_css_asts_for_chunk::{
-    PrepareCssAstTask, prepare_css_asts_for_chunk,
-};
 use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
-use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
+use crate::linker_context_mod::GenerateChunkCtx;
 
 use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
@@ -40,7 +38,8 @@ use crate::linker_context_mod::debug;
 // Const generics cannot vary the return type, so we always return
 // `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec.
 pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
-    c: &mut LinkerContext<'a>,
+    c: &mut LinkerContext<'_, 'a>,
+    log: &mut bun_ast::Log,
     chunks: &mut [Chunk<'a>],
 ) -> crate::Result<Vec<options::OutputFile>> {
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
@@ -59,25 +58,18 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
         }
         if !c.options.minify_identifiers {
-            c.renamer_rows = crate::linker_context::rename_symbols_in_chunk::renamer_rows(
-                c.graph.symbols.symbols_for_source.len(),
-                chunks,
-            );
+            c.renamer_rows =
+                crate::linker_context::rename_symbols_in_chunk::renamer_rows(c, chunks);
         }
-        let ctx = GenerateChunkCtx {
-            chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
-            c: bun_ptr::ParentRef::from_ref_mut(c),
-            chunks: bun_ptr::BackRef::new(&*chunks),
-        };
         c.worker_pool()
-            .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+            .each_ptr(&*c, |c, chunk, _| c.generate_js_renamer(chunk), chunks);
         if !c.options.minify_identifiers {
             // Top-level names are final; name each file's nested scopes in
             // parallel.
             let mut tasks =
                 crate::linker_context::rename_symbols_in_chunk::nested_rename_tasks(chunks);
             c.worker_pool().each_ptr(
-                ctx,
+                (&*c, &*chunks),
                 crate::linker_context::rename_symbols_in_chunk::run_nested_rename_task,
                 &mut tasks,
             );
@@ -98,174 +90,79 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 // Counts are in; name the cross-chunk bindings, pin them, then
                 // let every chunk name the rest.
                 crate::linker_context::cross_chunk_names::assign_minified(c, chunks)?;
-                c.worker_pool()
-                    .each_ptr(ctx, LinkerContext::finish_js_renamer, chunks);
+                c.worker_pool().each_ptr(
+                    (),
+                    |(), chunk, _| LinkerContext::finish_js_renamer(chunk),
+                    chunks,
+                );
             }
             crate::linker_context::cross_chunk_names::apply_to_clauses(c, chunks);
         }
         debug!("  DONE {} renamers", chunks.len());
     }
 
-    if c.source_maps.line_offset_tasks.len() > 0 {
+    if !c.source_maps.line_offsets.is_empty() {
         debug!(" START {} source maps (line offset)", chunks.len());
-        c.source_maps.line_offset_wait_group.wait();
-        // `c.arena().free(...)` + `.len = 0` → Vec drop semantics.
-        c.source_maps.line_offset_tasks = Box::default();
+        let column = c.graph.files.items_line_offset_table_mut();
+        c.source_maps.line_offsets.finish(column);
         debug!("  DONE {} source maps (line offset)", chunks.len());
     }
 
-    {
-        // Per CSS chunk:
-        // Remove duplicate rules across files. This must be done in serial, not
-        // in parallel, and must be done from the last rule to the first rule.
-        if c.parse_graph().css_file_count > 0 {
-            let total_count: usize = {
-                let mut total_count: usize = 0;
-                for chunk in chunks.iter() {
-                    if chunk.content.is_css() {
-                        total_count += 1;
-                    }
-                }
-                total_count
-            };
-
-            debug!(" START {} prepare CSS ast (total count)", total_count);
-
-            let group = bun_threading::WaitGroup::init_with_count(total_count);
-            let mut batch = ThreadPoolLib::Batch::default();
-            let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
-            for chunk in chunks.iter_mut() {
-                if chunk.content.is_css() {
-                    tasks.push(PrepareCssAstTask {
-                        task: ThreadPoolLib::CountedTask::new(prepare_css_asts_for_chunk, &group),
-                        // `.cast()` erases the inner `'a`: the task's pointers are to `'static` types.
-                        chunk: std::ptr::from_mut::<Chunk>(chunk).cast(),
-                        linker: std::ptr::from_mut::<LinkerContext>(c).cast(),
-                    });
-                    // Capacity pre-reserved → push never reallocates → ptr stays stable.
-                    let task = tasks.last_mut().unwrap();
-                    batch.push(ThreadPoolLib::Batch::from(&raw mut task.task.task));
-                }
-            }
-            debug_assert_eq!(tasks.len(), total_count);
-            c.worker_pool().schedule(batch);
-            group.wait();
-
-            debug!("  DONE {} prepare CSS ast (total count)", total_count);
-        } else if cfg!(debug_assertions) {
-            for chunk in chunks.iter() {
-                debug_assert!(!chunk.content.is_css());
-            }
+    for chunk in chunks.iter_mut() {
+        if let crate::chunk::Content::Css(css) = &mut chunk.content {
+            nest_external_imports(c, log, &mut css.imports_in_chunk_in_order);
         }
     }
 
     {
-        let mut chunk_contexts: Vec<GenerateChunkCtx> = Vec::with_capacity(chunks.len());
-
         {
             let mut total_count: usize = 0;
-            // `GenerateChunkCtx` fields are raw pointers; capture them
-            // before the `iter_mut()` borrow so the same slice backref can be
-            // stored in every ctx.
-            let c_ref = bun_ptr::ParentRef::from_ref_mut(c);
-            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
-            for chunk in chunks.iter_mut() {
-                chunk_contexts.push(GenerateChunkCtx {
-                    c: c_ref,
-                    chunks: chunks_ref,
-                    chunk: bun_ptr::BackRef::new_mut(chunk),
-                });
-                match &mut chunk.content {
+            let mut compile_results: Vec<Box<[CompileResult]>> = Vec::with_capacity(chunks.len());
+            for chunk in chunks.iter() {
+                let count = match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
-                        total_count += js.parts_in_chunk_in_order.len();
-                        chunk.compile_results_for_chunk =
-                            crate::chunk::CompileResultSlots::new(js.parts_in_chunk_in_order.len());
                         has_js_chunk = true;
+                        js.parts_in_chunk_in_order.len()
                     }
                     crate::chunk::Content::Css(css) => {
                         has_css_chunk = true;
-                        total_count += css.imports_in_chunk_in_order.len() as usize;
-                        chunk.compile_results_for_chunk = crate::chunk::CompileResultSlots::new(
-                            css.imports_in_chunk_in_order.len() as usize,
-                        );
+                        css.imports_in_chunk_in_order.len()
                     }
                     crate::chunk::Content::Html => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
-                        total_count += 1;
-                        chunk.compile_results_for_chunk = crate::chunk::CompileResultSlots::new(1);
+                        1
                     }
-                }
+                };
+                total_count += count;
+                compile_results.push((0..count).map(|_| CompileResult::default()).collect());
             }
-
-            debug_assert_eq!(chunks.len(), chunk_contexts.len());
 
             debug!(" START {} compiling part ranges", total_count);
-            // Pre-reserved to `total_count` so pushes never reallocate; the
-            // batch holds raw pointers into this buffer.
-            let group = bun_threading::WaitGroup::init_with_count(total_count);
-            let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
-            let mut batch = ThreadPoolLib::Batch::default();
-            for (chunk, chunk_ctx) in chunks.iter().zip(chunk_contexts.iter()) {
-                match &chunk.content {
-                    crate::chunk::Content::Javascript(js) => {
-                        for (i, part_range) in js.parts_in_chunk_in_order.iter().enumerate() {
-                            combined_part_ranges.push(PendingPartRange {
-                                part_range: *part_range,
-                                i: u32::try_from(i).expect("int cast"),
-                                task: ThreadPoolLib::CountedTask::new(
-                                    generate_compile_result_for_js_chunk,
-                                    &group,
-                                ),
-                                ctx: chunk_ctx,
-                            });
-                            batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut combined_part_ranges.last_mut().unwrap().task.task,
-                            ));
-                        }
-                    }
-                    crate::chunk::Content::Css(css) => {
-                        for i in 0..css.imports_in_chunk_in_order.len() as usize {
-                            combined_part_ranges.push(PendingPartRange {
-                                part_range: Default::default(),
-                                i: u32::try_from(i).expect("int cast"),
-                                task: ThreadPoolLib::CountedTask::new(
-                                    generate_compile_result_for_css_chunk,
-                                    &group,
-                                ),
-                                ctx: chunk_ctx,
-                            });
-                            batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut combined_part_ranges.last_mut().unwrap().task.task,
-                            ));
-                        }
-                    }
-                    crate::chunk::Content::Html => {
-                        combined_part_ranges.push(PendingPartRange {
-                            part_range: Default::default(),
-                            i: 0,
-                            task: ThreadPoolLib::CountedTask::new(
-                                generate_compile_result_for_html_chunk,
-                                &group,
-                            ),
-                            ctx: chunk_ctx,
-                        });
-                        batch.push(ThreadPoolLib::Batch::from(
-                            &raw mut combined_part_ranges.last_mut().unwrap().task.task,
-                        ));
-                    }
-                }
+            c.worker_pool().each_iter(
+                (&*c, &*chunks),
+                |&(c, chunks), (chunk, i, result)| {
+                    **result = generate_compile_result(c, chunks, chunk, *i);
+                },
+                total_count,
+                chunks
+                    .iter()
+                    .zip(&mut compile_results)
+                    .flat_map(|(chunk, results)| {
+                        let results = results.iter_mut().enumerate();
+                        results.map(move |(i, result)| (chunk, i, result))
+                    }),
+            );
+            for (chunk, results) in chunks.iter_mut().zip(compile_results) {
+                chunk.compile_results_for_chunk = results;
             }
-            debug_assert_eq!(combined_part_ranges.len(), total_count);
-            c.worker_pool().schedule(batch);
-            group.wait();
             debug!("  DONE {} compiling part ranges", total_count);
         }
 
-        if c.source_maps.quoted_contents_tasks.len() > 0 {
+        if !c.source_maps.quoted_contents.is_empty() {
             debug!(" START {} source maps (quoted contents)", chunks.len());
-            c.source_maps.quoted_contents_wait_group.wait();
-            c.source_maps.quoted_contents_tasks = Box::default();
+            let column = c.graph.files.items_quoted_source_contents_mut();
+            c.source_maps.quoted_contents.finish(column);
             debug!("  DONE {} source maps (quoted contents)", chunks.len());
         }
 
@@ -282,7 +179,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             for chunk in chunks.iter() {
                 for compile_result in chunk.compile_results_for_chunk.iter() {
                     let message: Cow<'static, [u8]> = match compile_result {
-                        crate::CompileResult::Javascript {
+                        CompileResult::Javascript {
                             result: bun_js_printer::PrintResult::Err(err),
                             ..
                         } => match err {
@@ -295,7 +192,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                     .into_bytes(),
                             ),
                         },
-                        crate::CompileResult::Css {
+                        CompileResult::Css {
                             result: Err(err), ..
                         } => Cow::Owned(
                             format!("Failed to generate CSS for this file ({})", err.name())
@@ -314,8 +211,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     } else {
                         None
                     };
-                    c.log_disjoint()
-                        .add_error(source, bun_ast::Loc::EMPTY, message);
+                    log.add_error(source, bun_ast::Loc::EMPTY, message);
                 }
             }
             if had_print_error {
@@ -323,6 +219,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             }
         }
 
+        let ctx = GenerateChunkCtx {
+            c,
+            chunks: bun_ptr::BackRef::new(&*chunks),
+        };
         // For dev server, only post-process CSS + HTML chunks.
         let chunks_to_do: &mut [Chunk] = if IS_DEV_SERVER {
             &mut chunks[1..]
@@ -333,11 +233,8 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             debug_assert!(chunks_to_do.len() > 0);
             debug!(" START {} postprocess chunks", chunks_to_do.len());
 
-            c.worker_pool().each_ptr(
-                chunk_contexts[0],
-                LinkerContext::generate_chunk,
-                chunks_to_do,
-            );
+            c.worker_pool()
+                .each_ptr(ctx, LinkerContext::generate_chunk, chunks_to_do);
 
             debug!("  DONE {} postprocess chunks", chunks_to_do.len());
         }
@@ -372,7 +269,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         let mut has_unusable_output_path = false;
         // Without an output directory the paths are only returned, so they can have any length.
         let opens_output_paths =
-            !c.resolver().opts.output_dir.is_empty() || c.options.compile_mode.is_executable();
+            !c.resolver.opts.output_dir.is_empty() || c.options.compile_mode.is_executable();
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk.
@@ -404,11 +301,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 [chunk.entry_point.source_index() as usize]
                 .path
                 .pretty;
-            if opens_output_paths
-                && !chunk
-                    .template
-                    .check_output_path(c.log_disjoint(), input, &rel_path)
-            {
+            if opens_output_paths && !chunk.template.check_output_path(log, input, &rel_path) {
                 has_unusable_output_path = true;
                 continue;
             }
@@ -475,7 +368,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 }
             }
 
-            c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
+            log.add_error(None, bun_ast::Loc::EMPTY, msg);
 
             for (name, template) in [
                 ("entry", entry_naming),
@@ -500,7 +393,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                         bstr::BStr::new(template),
                     )?;
                 }
-                c.log_mut().add_msg(bun_ast::Msg {
+                log.add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,
                     data: bun_ast::Data {
                         text: Cow::Owned(text),
@@ -531,7 +424,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     let bytecode_order = if external_string_table.is_none() {
         None
     } else {
-        c.options.bytecode_order.take()
+        c.bundle.bytecode_order.as_ref()
     };
     // (chunk index, its `Bytecode` output file, the URL its bytecode is keyed on), for `bytecode_order`.
     let mut linked_bytecode_chunks: Vec<(usize, u32, BunString)> = Vec::new();
@@ -543,25 +436,13 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             .as_ref()
             .expect("module_info is only generated for --compile --bytecode");
         // Build map from unique_key -> final resolved path
-        // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
-        let b: &mut BundleV2 =
-            unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
         let mut unique_key_to_path: StringHashMap<Box<[u8]>> = StringHashMap::default();
         for ch in chunks.iter() {
             if ch.unique_key.len() > 0 && ch.final_rel_path.len() > 0 {
                 // Use the per-chunk public_path to match what IntermediateOutput.code()
                 // uses during emission (browser chunks from server builds use the
                 // browser transpiler's public_path).
-                let public_path: &[u8] = if ch
-                    .flags
-                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-                {
-                    &b.transpiler_for_target(options::Target::Browser)
-                        .options
-                        .public_path
-                } else {
-                    c.options.public_path
-                };
+                let public_path: &[u8] = &c.options_for_chunk(ch).public_path;
                 let normalizer = cheap_prefix_normalizer(public_path, &ch.final_rel_path);
                 let mut resolved: Vec<u8> = Vec::new();
                 resolved.extend_from_slice(normalizer[0]);
@@ -587,7 +468,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         // Fix up each chunk's module_info; every chunk's strings go into one
         // table (`OutputKind::ModuleInfoStringTable`) their bodies index into.
         let mut table_ids: Vec<Vec<u32>> = Vec::new();
-        let unique_key_prefix: &[u8] = &c.unique_key_prefix;
+        let unique_key_prefix = c.unique_key_prefix;
         let paths = &unique_key_to_path;
         for chunk in chunks.iter_mut() {
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
@@ -673,27 +554,21 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         }
     }
 
-    let mut output_files =
-        OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
+    let mut output_files = OutputFileListBuilder::init(c, chunks)?;
 
-    // Copy the `ParentRef` out (not `c.resolver()`) so `root_path` borrows the
-    // local, not `c`, avoiding the split-borrow with `&mut *c` passed to
-    // `write_output_files_to_disk` below — `output_dir` lives in the resolver,
-    // disjoint from anything `c` mutates.
-    let resolver = c.resolver.expect("resolver set in load()");
-    let root_path: &[u8] = &resolver.opts.output_dir;
+    let root_path: &[u8] = &c.resolver.opts.output_dir;
     let is_standalone = c.options.compile_mode.is_standalone_html();
     let more_than_one_output = !is_standalone
-        && (c.parse_graph().additional_output_files.len() > 0
+        && (c.graph.additional_output_files.len() > 0
             || c.options.generate_bytecode_cache
             || (has_css_chunk && has_js_chunk)
             || (has_html_chunk && (has_js_chunk || has_css_chunk)));
 
-    if !c.resolver().opts.compile
+    if !c.resolver.opts.compile
         && more_than_one_output
-        && !c.resolver().opts.supports_multiple_outputs
+        && !c.resolver.opts.supports_multiple_outputs
     {
-        c.log_mut().add_error(
+        log.add_error(
             None,
             bun_ast::Loc::EMPTY,
             b"cannot write multiple output files without an output directory",
@@ -701,11 +576,8 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         return Err(crate::Error::MultipleOutputFilesWithoutOutputDir);
     }
 
-    // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
-    let bundler: &mut BundleV2 =
-        unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
     let mut static_route_visitor = StaticRouteVisitor {
-        c: &*c,
+        parse_graph: c.parse_graph(),
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
         stack: Vec::new(),
@@ -746,7 +618,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             let mut intermediate_output = core::mem::take(&mut chunks[ci].intermediate_output);
             let code_result = intermediate_output.code_standalone(
                 None,
-                c.parse_graph(),
+                c.bundle,
                 &c.graph,
                 c.options.public_path,
                 &chunks[ci],
@@ -855,10 +727,11 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     }
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
-    let is_compile = bundler.transpiler.options.compile_mode.is_executable();
+    let is_compile = c.options.compile_mode.is_executable();
     if root_path.len() > 0 && !is_compile {
         write_output_files_to_disk(
             c,
+            log,
             root_path,
             chunks,
             &mut output_files,
@@ -948,17 +821,9 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 
             let mut display_size: usize = 0;
 
-            let public_path: &[u8] = if chunks[chunk_index_in_chunks_list]
-                .flags
-                .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-            {
-                &bundler
-                    .transpiler_for_target(options::Target::Browser)
-                    .options
-                    .public_path
-            } else {
-                c.options.public_path
-            };
+            let public_path: &[u8] = &c
+                .options_for_chunk(&chunks[chunk_index_in_chunks_list])
+                .public_path;
 
             // Take `intermediate_output` by value so the `&mut self` it provides
             // to `code()` is disjoint from the `&chunks[i]` / `&[Chunk]` reads.
@@ -971,7 +836,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 ) {
                 intermediate_output.code_standalone(
                     None,
-                    c.parse_graph(),
+                    c.bundle,
                     &c.graph,
                     public_path,
                     &chunks[chunk_index_in_chunks_list],
@@ -985,13 +850,13 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 let chunk = &chunks[chunk_index_in_chunks_list];
                 intermediate_output.code(
                     None,
-                    c.parse_graph(),
+                    c.bundle,
                     &c.graph,
                     public_path,
                     chunk,
                     chunks,
                     &mut display_size,
-                    ReferencePathStyle::for_chunk(chunk, c.resolver().opts.compile),
+                    ReferencePathStyle::for_chunk(chunk, c.resolver.opts.compile),
                     SourceMapShiftTracking::for_source_map(
                         chunk.content.sourcemap(c.options.source_maps),
                     ),
@@ -1176,11 +1041,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                         } else {
                             // an error
                             // logger OOM-only
-                            // Split-borrow — `static_route_visitor.c` holds a
-                            // `&LinkerContext`; `log_disjoint` returns the
-                            // disjoint `Transpiler.log` backref so no `&mut c` is
-                            // materialized.
-                            let _ = c.log_disjoint().add_error_fmt(
+                            let _ = log.add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
@@ -1355,8 +1216,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         }
 
         if !is_standalone {
-            output_files
-                .insert_additional_output_files(&mut c.parse_graph_mut().additional_output_files);
+            output_files.insert_additional_output_files(&mut c.graph.additional_output_files);
         }
     }
 
@@ -1375,14 +1235,13 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     }
 
     // The internal modules the executable will carry bytecode for, as its builtins section has them.
-    let target_builtins = c.options.target_builtins.clone();
     let internal_modules = (c.options.generate_internal_module_bytecode
         && c.options.compile_mode.is_executable())
-    .then(|| builtins_of(target_builtins.as_deref()))
+    .then(|| builtins_of(c.options.target_builtins))
     .flatten()
     .map(|builtins| (wanted_internal_modules(c, &builtins), builtins));
     let mut linked_bytecode: Option<LinkedBytecode> = None;
-    if let Some(order) = &bytecode_order {
+    if let Some(order) = bytecode_order {
         let table = external_string_table
             .as_ref()
             .and_then(|table| table.get())
@@ -1395,17 +1254,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         let mut chunk_paths: Vec<Vec<u8>> = chunks
             .iter()
             .map(|chunk| {
-                let public_path: &[u8] = if chunk
-                    .flags
-                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-                {
-                    &bundler
-                        .transpiler_for_target(options::Target::Browser)
-                        .options
-                        .public_path
-                } else {
-                    c.options.public_path
-                };
+                let public_path: &[u8] = &c.options_for_chunk(chunk).public_path;
                 cheap_prefix_normalizer(public_path, &chunk.final_rel_path).concat()
             })
             .collect();
@@ -1457,7 +1306,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 if names.is_none() {
                     // JavaScriptCore compiled what the parser here does not take: nothing of the chunk can be listed
                     // in an order file, or placed by one.
-                    c.log_mut().add_warning_fmt(
+                    log.add_warning_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -1469,7 +1318,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 continue;
             }
             output_files.output_files[*chunk_index].bytecode_index = u32::MAX;
-            c.log_mut().add_error_fmt(
+            log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
@@ -1506,6 +1355,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     if let Some(internal_modules) = internal_modules {
         append_internal_module_bytecode(
             c,
+            log,
             &mut result,
             external_string_table.as_ref().and_then(|t| t.get()),
             linked_bytecode.as_mut(),
@@ -1535,7 +1385,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 functions_without_name,
             }) => {
                 if functions_without_name != 0 {
-                    c.log_mut().add_warning_fmt(
+                    log.add_warning_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -1545,11 +1395,9 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 }
                 // An order file of another program moves nothing: say so. (A share is not judged: a recording also lists
                 // functions of Bun's internal modules, which are not part of every link.)
-                let listed = bytecode_order
-                    .as_ref()
-                    .map_or(0, |order| order.hot_functions.len());
+                let listed = bytecode_order.map_or(0, |order| order.hot_functions.len());
                 if listed != 0 && named_hot_functions == 0 {
-                    c.log_mut().add_warning_fmt(
+                    log.add_warning_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -1578,7 +1426,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     Some(crate::bytecode_order::payload_file(payload, region_ends));
             }
             None => {
-                c.log_mut().add_error(
+                log.add_error(
                     None,
                     bun_ast::Loc::EMPTY,
                     b"Failed to encode the linked bytecode payload",
@@ -1658,11 +1506,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         }));
     }
     if let Some(table) = external_string_table {
-        let bytes = table.take(
-            bytecode_order
-                .as_ref()
-                .map_or(&[][..], |order| &order.hot_strings),
-        );
+        let bytes = table.take(bytecode_order.map_or(&[][..], |order| &order.hot_strings));
         debug!("Bytecode external string table: {} bytes", bytes.len());
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".bytecode-strings".to_vec().into_boxed_slice(),
@@ -1691,11 +1535,11 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
     }
     for file in files {
         debug_assert!(
-            !strings::contains(file.value.as_slice(), &c.unique_key_prefix),
+            !strings::contains(file.value.as_slice(), c.unique_key_prefix),
             "{} ({:?}) still contains the chunk placeholder prefix {}",
             bstr::BStr::new(&file.dest_path),
             file.output_kind,
-            bstr::BStr::new(&c.unique_key_prefix),
+            bstr::BStr::new(c.unique_key_prefix),
         );
     }
 }
@@ -1792,7 +1636,8 @@ fn wanted_internal_modules(
 /// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
 /// builtins section of the executable the bundle is going into.
 fn append_internal_module_bytecode(
-    c: &mut LinkerContext,
+    c: &LinkerContext,
+    log: &mut bun_ast::Log,
     output_files: &mut Vec<options::OutputFile>,
     external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
     // With an order file the internal modules are more modules of the link's one payload, and their output files say
@@ -1801,11 +1646,10 @@ fn append_internal_module_bytecode(
     (wanted, builtins): (Vec<u32>, bun_exe_format::builtins::Builtins<'_>),
 ) {
     use crate::bundle_v2::dispatch;
-    let target_section = c.options.target_builtins.as_deref();
+    let target_section = c.options.target_builtins;
     // `wanted`'s modules as the builtins section has them, and (for a link) what the order files call their code.
     let modules: Vec<Option<bun_exe_format::builtins::Module<'_>>> =
         wanted.iter().map(|&id| builtins.module(id)).collect();
-    let mut without_names: Vec<Vec<u8>> = Vec::new();
     for (index, id) in wanted.into_iter().enumerate() {
         let bytecode = if let Some(linked) = linked_bytecode.as_deref_mut() {
             // This executable's own builtins section has every module it has an id for.
@@ -1816,7 +1660,14 @@ fn append_internal_module_bytecode(
             // Another executable's builtins may be another version's, in a syntax the parser here does not take.
             let names = linked.internal_names[index].take();
             if names.is_none() {
-                without_names.push(module.name.to_vec());
+                log.add_warning_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "the bytecode order files cannot place the functions of {}: they have no names",
+                        bstr::BStr::new(module.name)
+                    ),
+                );
             }
             linked
                 .encoder
@@ -1875,15 +1726,27 @@ fn append_internal_module_bytecode(
             ..Default::default()
         }));
     }
-    for name in without_names {
-        c.log_mut().add_warning_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "the bytecode order files cannot place the functions of {}: they have no names",
-                bstr::BStr::new(&name)
-            ),
-        );
+}
+
+/// Runs on the pool, for element `i` of `chunk.compile_results_for_chunk`.
+fn generate_compile_result<'a>(
+    c: &LinkerContext<'_, 'a>,
+    chunks: &[Chunk<'a>],
+    chunk: &Chunk<'a>,
+    i: usize,
+) -> CompileResult {
+    let mut worker = crate::thread_pool::Worker::get(c.bundle);
+    match &chunk.content {
+        crate::chunk::Content::Javascript(js) => generate_compile_result_for_js_chunk(
+            &mut worker,
+            c,
+            chunk,
+            js.parts_in_chunk_in_order[i],
+        ),
+        crate::chunk::Content::Css(_) => {
+            generate_compile_result_for_css_chunk(&mut worker, c, chunk, i)
+        }
+        crate::chunk::Content::Html => generate_compile_result_for_html_chunk(c, chunk, chunks),
     }
 }
 

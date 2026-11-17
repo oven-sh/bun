@@ -9,10 +9,20 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_semver::String as SemverString;
 
+use super::{Command, PackageJSONEditor};
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
+use crate::PackageManager;
 use crate::Subcommand;
 use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
+use crate::hoisted_install::install_hoisted_packages;
+use crate::isolated_install::install_isolated_packages;
 use crate::lockfile::{self, Lockfile, reachable};
+use crate::lockfile_real::package::Diff;
+use crate::lockfile_real::package::PackageColumns as _;
+use crate::lockfile_real::{Printer, printer as LockfilePrinter};
+use crate::package_install::Summary as PackageInstallSummary;
+use crate::package_manager::Options::Enable;
+use crate::package_manager::{Options, WorkspaceFilter};
 use crate::resolution::Tag as ResolutionTag;
 use crate::resolvers::folder_resolver::FolderResolution;
 use crate::update_transitive::{
@@ -24,25 +34,13 @@ use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
     TaskCallbackContext, invalid_package_id,
 };
-// Bring the typed `items_<field>()` column accessors into scope for
-// `MultiArrayList<Package>` / `Slice<Package>`.
-use super::{Command, PackageJSONEditor};
-use crate::PackageManager;
-use crate::hoisted_install::install_hoisted_packages;
-use crate::isolated_install::install_isolated_packages;
-use crate::lockfile_real::package::Diff;
-use crate::lockfile_real::package::PackageColumns as _;
-use crate::lockfile_real::{Printer, printer as LockfilePrinter};
-use crate::package_install::Summary as PackageInstallSummary;
-use crate::package_manager::Options::Enable;
-use crate::package_manager::{Options, WorkspaceFilter};
 use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
 use crate::package_manager_real::enqueue::{self, add_dependency_error};
 use crate::package_manager_real::remove_stale_workspace_links::remove_stale_workspace_links;
-use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
+use crate::package_manager_real::run_tasks::{Caller, run_tasks};
 use crate::package_manager_real::{
     UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
     save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
@@ -82,9 +80,7 @@ pub fn install_with_manager(
 
     // An error from the options or the environment is printed at every log level.
     if manager.log_mut().has_errors() {
-        manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+        manager.log_mut().print(Output::error_writer())?;
         Global::crash();
     }
 
@@ -549,7 +545,7 @@ pub fn install_with_manager(
                         reresolve_owned_rows(manager, &pinned_rows, |dependency| {
                             all_name_hashes.binary_search(&dependency.name_hash).is_ok()
                                 || (catalogs_changed
-                                    && dependency.version.tag == DependencyVersionTag::Catalog)
+                                    && dependency.version.tag() == DependencyVersionTag::Catalog)
                                 || catalog_overridden
                                     .binary_search(&dependency.name_hash)
                                     .is_ok()
@@ -668,9 +664,7 @@ pub fn install_with_manager(
     warn_unchecked_sources(manager);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
-    manager
-        .log_mut()
-        .print(std::ptr::from_mut(Output::error_writer()))?;
+    manager.log_mut().print(Output::error_writer())?;
     manager.log_mut().reset();
     super::add_catalog::refuse_declared_positionals(manager);
     super::package_json_write_back::fold_resolved_positionals(manager);
@@ -728,7 +722,6 @@ pub fn install_with_manager(
                 && load_result.migrated_from().is_none();
             run_security_scanner(
                 manager,
-                ctx,
                 original_cwd,
                 &lockfile_before_clean,
                 &named.moved,
@@ -882,9 +875,7 @@ pub fn install_with_manager(
 
     if manager.options.lockfile_only {
         if log_level != Options::LogLevel::Silent {
-            manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()))?;
+            manager.log_mut().print(Output::error_writer())?;
         }
         if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
             Global::crash();
@@ -939,7 +930,6 @@ pub fn install_with_manager(
         let mut summary = if isolated {
             install_isolated_packages(
                 manager,
-                ctx,
                 install_root_dependencies,
                 &workspace_filters,
                 None,
@@ -948,7 +938,6 @@ pub fn install_with_manager(
         } else {
             install_hoisted_packages(
                 manager,
-                ctx,
                 &workspace_filters,
                 install_root_dependencies,
                 log_level,
@@ -980,9 +969,7 @@ pub fn install_with_manager(
         warn_unsupported_platform(manager, &workspace_filters, install_root_dependencies);
     }
     if log_level != Options::LogLevel::Silent {
-        manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+        manager.log_mut().print(Output::error_writer())?;
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
@@ -1081,7 +1068,7 @@ pub fn install_with_manager(
     }
 
     if runs_root_scripts {
-        run_root_lifecycle_scripts(manager, ctx, log_level)?;
+        run_root_lifecycle_scripts(manager, log_level)?;
     }
 
     if log_level != Options::LogLevel::Silent {
@@ -1106,15 +1093,6 @@ pub fn install_with_manager(
 // ─── runAndWaitFn closure family ──────────────────────────────────────────
 // A const-generic struct + three thin wrapper fns.
 
-/// `RunTasksCallbacks` impl for the void-callback `runTasks` call inside
-/// `runAndWaitFn::isDone` (no hooks, `progress_bar = true`). Only these
-/// flags differ from the default.
-struct InstallWaitCallbacks;
-impl RunTasksCallbacks for InstallWaitCallbacks {
-    type Ctx = ();
-    const PROGRESS_BAR: bool = true;
-}
-
 struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
     err: Option<crate::Error>,
     /// The wait also ends once only the deferred peers are left to resolve. The tarballs that are
@@ -1136,13 +1114,8 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
             this.drain_dependency_list();
 
-            // void RunTasksCallbacks — the trait dispatch needs a
-            // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
-            // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
             let log_level = this.options.log_level;
-            if let Err(err) =
-                run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level)
-            {
+            if let Err(err) = run_tasks(this, Caller::Resolver, CHECK_PEERS, log_level) {
                 closure.err = Some(err);
                 return true;
             }
@@ -1165,7 +1138,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         let pending_tasks = this.pending_task_count();
 
         if PackageManager::verbose_install() && pending_tasks > 0 {
-            if PackageManager::has_enough_time_passed_between_waiting_messages() {
+            if this.has_enough_time_passed_between_waiting_messages() {
                 bun_core::pretty_errorln!(
                     "<d>[PackageManager]<r> waiting for {} tasks\n",
                     pending_tasks,
@@ -1344,7 +1317,7 @@ fn print_summary_tree(
     // Ensure at this point buffering is enabled.
     // We deliberately do not disable it after this.
     Output::enable_buffering();
-    let writer = Output::writer_buffered();
+    let writer = &mut Output::writer_buffered();
     LockfilePrinter::Tree::print(
         &printer,
         // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
@@ -1480,7 +1453,7 @@ fn warn_unsupported_platform(
 
     let lockfile: &Lockfile = &manager.lockfile;
     let options = &manager.options;
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -1633,9 +1606,7 @@ fn report_lockfile_load_error(
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
         if manager.log_mut().errors > 0 {
-            manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()))?;
+            manager.log_mut().print(Output::error_writer())?;
         }
 
         Output::err(
@@ -1973,7 +1944,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     // borrow keeps the disjoint columns alive without raw pointers.
     let lockfile: &Lockfile = &manager.lockfile;
     let updating_packages = &mut manager.updating_packages;
-    let packages = lockfile.packages.slice();
+    let packages = &lockfile.packages;
     let resolutions = packages.items_resolution();
     // Bare `-r`/`--filter` edits the targets' package.json files only after resolve (`package_json_write_back`), so their rows are registered here instead.
     let register_rows =
@@ -2013,9 +1984,10 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         let workspace_package_ids = workspace_res_list.get(&lockfile.buffers.resolutions);
         debug_assert_eq!(workspace_deps.len(), workspace_package_ids.len());
         for (dep, &package_id) in workspace_deps.iter().zip(workspace_package_ids) {
-            if dep.version.tag != DependencyVersionTag::Npm
-                && dep.version.tag != DependencyVersionTag::DistTag
-            {
+            if !matches!(
+                dep.version.tag(),
+                DependencyVersionTag::Npm | DependencyVersionTag::DistTag
+            ) {
                 continue;
             }
             if package_id == invalid_package_id {
@@ -2024,7 +1996,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
 
             let name = dep.name.slice(&lockfile.buffers.string_bytes);
             let entry_ptr = if register_rows {
-                if dep.version.tag == DependencyVersionTag::DistTag && !update_to_latest {
+                if dep.version.tag() == DependencyVersionTag::DistTag && !update_to_latest {
                     continue;
                 }
                 let entry = updating_packages.get_or_put(name).unwrap_or_oom();
@@ -2077,9 +2049,7 @@ fn root_package_json_source(
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
     if manager.log_mut().errors > 0 {
-        manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+        manager.log_mut().print(Output::error_writer())?;
     }
     Output::err(
         err,
@@ -2238,7 +2208,7 @@ fn resolve_pending_tasks(
     } else if log_level != Options::LogLevel::Silent {
         bun_core::pretty_errorln!(
             "Resolved, downloaded and extracted [{}]",
-            manager.total_tasks,
+            manager.total_tasks.get(),
         );
         Output::flush();
     }
@@ -2565,7 +2535,6 @@ fn reresolve_rows_outside_overrides(
 #[inline(never)]
 fn run_security_scanner(
     manager: &mut PackageManager,
-    ctx: Command::Context,
     original_cwd: &[u8],
     before_clean: &Lockfile,
     moved: &[(DependencyID, PackageID)],
@@ -2579,7 +2548,6 @@ fn run_security_scanner(
     ));
     match security_scanner::perform_security_scan_after_resolution(
         manager,
-        ctx,
         original_cwd,
         &seeds,
         loaded_bun_lockfile,
@@ -2737,15 +2705,10 @@ fn write_yarn_lock_with_progress(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    // reshaped for borrowck — `Progress::start` returns
-    // `&mut self.root`, so re-access it via `manager.progress.root` after the
-    // `&mut manager` borrow ends instead of keeping a live `&mut Node`.
-    let mut node_started = false;
     if log_level.show_progress() {
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        let _ = manager.progress.start(b"Saving yarn.lock", 0);
+        manager.progress.start(b"Saving yarn.lock", 0);
         manager.progress.refresh();
-        node_started = true;
     } else if log_level != Options::LogLevel::Silent {
         bun_core::pretty_errorln!("Saved yarn.lock");
         Output::flush();
@@ -2753,11 +2716,11 @@ fn write_yarn_lock_with_progress(
 
     write_yarn_lock(manager)?;
     if log_level.show_progress() {
-        if node_started {
-            manager.progress.root.complete_one();
-        }
+        manager
+            .progress
+            .complete_one(crate::bun_progress::NodeId::Root);
         manager.progress.refresh();
-        manager.progress.root.end();
+        manager.progress.end();
         manager.progress = Default::default();
     }
     Ok(())
@@ -2767,7 +2730,6 @@ fn write_yarn_lock_with_progress(
 #[inline(never)]
 fn run_root_lifecycle_scripts(
     manager: &mut PackageManager,
-    ctx: Command::Context,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
@@ -2787,13 +2749,7 @@ fn run_root_lifecycle_scripts(
         let output_in_foreground = true;
         // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
         // moves it out (`package_name` is owned by the List and drops with it).
-        manager.spawn_package_lifecycle_scripts(
-            ctx,
-            scripts,
-            optional,
-            output_in_foreground,
-            None,
-        )?;
+        manager.spawn_package_lifecycle_scripts(scripts, optional, output_in_foreground, None)?;
 
         // .monotonic is okay because at this point, this value is only accessed from this
         // thread.

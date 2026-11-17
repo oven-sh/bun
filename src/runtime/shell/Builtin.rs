@@ -263,8 +263,7 @@ pub(crate) enum BuiltinInput {
     Ignore,
 }
 
-/// Refcounted wrapper around a `webcore.Blob`. `Rc` provides the refcount;
-/// `Drop` runs `Blob::deinit`.
+/// Refcounted wrapper around a `webcore.Blob`. `Rc` provides the refcount.
 pub(crate) struct BuiltinBlob {
     pub(crate) blob: crate::webcore::Blob,
 }
@@ -311,7 +310,7 @@ impl BuiltinIO {
     /// `Builtin.impl_` (disjoint from `stdout`/`stderr`) can write a borrowed
     /// slice without an intermediate heap clone.
     ///
-    /// `shell` is the `ShellExecEnv` owning this builtin (i.e. `cmd.base.shell`);
+    /// `shell` is the `ShellExecEnv` owning this builtin (i.e. `cmd.shell`);
     /// only used for the [`BuiltinIO::Buf`] arm.
     pub(crate) fn write_no_io_to(
         &mut self,
@@ -457,11 +456,11 @@ impl Builtin {
 
     /// Borrow `argv[1..][idx]` as `&ZStr` (NUL-terminated view).
     ///
-    /// Same invariant and lifetime decoupling as [`arg_bytes`]; for callers
+    /// Same invariant as [`arg_bytes`]; for callers
     /// that need to pass the argument to a `&ZStr`-taking syscall wrapper
     /// without re-copying.
     #[inline]
-    pub(crate) fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
+    pub(crate) fn arg_zstr(&self, idx: usize) -> &bun_core::ZStr {
         let p: *const c_char = self.args[idx];
         // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
         bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
@@ -531,15 +530,8 @@ impl Builtin {
                 // Clone the path bytes so the
                 // `&mut interp` open call below doesn't overlap a borrow into
                 // the Cmd node.
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(cmd).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
-                // SAFETY: `path_buf` ends in NUL by construction.
-                let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
+                let raw = &interp.as_cmd(cmd).redirection_file;
+                let path: &bun_core::ZStr = &bun_core::ZBox::from_bytes(&raw[..raw.len() - 1]);
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
                 let evtloop = interp.event_loop;
@@ -603,7 +595,7 @@ impl Builtin {
                         }
                         Ok(f) => {
                             note_shell_redirect(cwd, path.as_bytes(), redirect.to_flags());
-                            f
+                            f.into_raw()
                         }
                     }
                 };
@@ -796,13 +788,7 @@ impl Builtin {
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_cmd_mut(cmd)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
+            let stderr = unsafe { interp.as_cmd_mut(cmd).shell.buffered_stderr_mut() };
             stderr.append_slice(&buf);
         }
         let parent = interp.as_cmd(cmd).base.parent;
@@ -867,7 +853,7 @@ impl Builtin {
         // Split-borrow the Cmd so `shell`
         // and the builtin's stdout/stderr are accessible simultaneously.
         let cmd_node = interp.as_cmd_mut(cmd);
-        let shell = cmd_node.base.shell_mut();
+        let shell = &mut *cmd_node.shell;
         let crate::shell::states::cmd::Exec::Builtin(me) = &mut cmd_node.exec else {
             panic!("Cmd {} is not running a builtin", cmd);
         };
@@ -884,7 +870,7 @@ impl Builtin {
         interp: &'a Interpreter,
         cmd: NodeId,
     ) -> &'a crate::shell::interpreter::ShellExecEnv {
-        interp.as_cmd(cmd).base.shell()
+        &interp.as_cmd(cmd).shell
     }
 
     /// Event loop handle (forwarded from the interpreter).

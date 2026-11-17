@@ -3,7 +3,6 @@ use bun_jsc::{JSValue, JsResult};
 use super::JSValueTestExt;
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
-use bun_jsc::JsClass;
 use bun_core::strings;
 use crate::generated_bindgen::expect::js_ExpectAny;
 
@@ -41,7 +40,7 @@ impl Expect {
                 )));
             }
             if value.is_object() {
-                if ExpectAny::from_js_direct(value).is_some() {
+                if value.is_direct::<ExpectAny>() {
                     if let Some(inner_constructor_value) =
                         js_ExpectAny::constructor_value_get_cached(value)
                     {

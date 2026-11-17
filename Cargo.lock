@@ -137,7 +137,6 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
- "allocator-api2",
  "bun_mimalloc_sys",
  "bun_opaque",
  "bun_wyhash",
@@ -255,7 +254,6 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_paths",
  "bun_perf",
  "bun_ptr",
@@ -465,11 +463,11 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_ptr",
- "bun_simdutf_sys",
  "bun_wyhash",
  "hashbrown 0.15.5",
  "paste",
  "rustc-hash",
+ "scopeguard",
  "smallvec",
 ]
 
@@ -643,7 +641,6 @@ dependencies = [
  "bun_dotenv",
  "bun_io",
  "bun_ptr",
- "bun_sys",
  "bun_threading",
  "bun_uws",
  "strum",
@@ -735,6 +732,14 @@ name = "bun_histogram"
 version = "0.0.0"
 
 [[package]]
+name = "bun_hpack"
+version = "0.0.0"
+dependencies = [
+ "bun_wyhash",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_http"
 version = "0.0.0"
 dependencies = [
@@ -748,14 +753,14 @@ dependencies = [
  "bun_brotli",
  "bun_collections",
  "bun_core",
- "bun_dns",
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_hpack",
+ "bun_http1",
  "bun_http_types",
  "bun_io",
  "bun_libdeflate_sys",
- "bun_picohttp",
  "bun_ptr",
  "bun_removable_features",
  "bun_sys",
@@ -767,6 +772,16 @@ dependencies = [
  "bun_zstd",
  "scopeguard",
  "strum",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_http1"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bun_core",
+ "bun_http_types",
  "thiserror",
 ]
 
@@ -784,12 +799,12 @@ dependencies = [
  "bun_errno",
  "bun_highway",
  "bun_http",
+ "bun_http1",
  "bun_http_types",
  "bun_io",
  "bun_jsc",
  "bun_libdeflate_sys",
  "bun_opaque",
- "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_uws",
@@ -864,7 +879,6 @@ dependencies = [
  "bun_patch",
  "bun_paths",
  "bun_perf",
- "bun_picohttp",
  "bun_ptr",
  "bun_removable_features",
  "bun_resolver",
@@ -874,7 +888,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_which",
@@ -935,8 +948,17 @@ dependencies = [
  "bun_uws_sys",
  "enumset",
  "libc",
- "scopeguard",
  "strum",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_jpeg"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_highway",
  "thiserror",
 ]
 
@@ -965,7 +987,6 @@ dependencies = [
  "criterion",
  "enumset",
  "regex",
- "scopeguard",
  "smallvec",
  "strum",
  "thiserror",
@@ -1004,7 +1025,6 @@ dependencies = [
  "bun_crash_handler",
  "bun_io",
  "bun_options_types",
- "bun_ptr",
  "bun_sourcemap",
  "bun_wyhash",
  "const_format",
@@ -1053,6 +1073,7 @@ dependencies = [
  "bun_resolver",
  "bun_s3_signing",
  "bun_sha_hmac",
+ "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_spawn",
  "bun_sys",
@@ -1081,6 +1102,7 @@ name = "bun_libdeflate_sys"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_core",
  "bun_opaque",
 ]
 
@@ -1317,7 +1339,6 @@ dependencies = [
  "bun_paths",
  "bun_sys",
  "bun_url",
- "scopeguard",
  "strum",
 ]
 
@@ -1448,15 +1469,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_picohttp"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_core",
- "strum",
-]
-
-[[package]]
 name = "bun_platform"
 version = "0.0.0"
 dependencies = [
@@ -1487,7 +1499,6 @@ name = "bun_ptr"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_core",
  "bun_core_macros",
 ]
@@ -1581,7 +1592,6 @@ dependencies = [
  "bun_sys",
  "bun_url",
  "bun_wyhash",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -1625,13 +1635,16 @@ dependencies = [
  "bun_hash",
  "bun_highway",
  "bun_histogram",
+ "bun_hpack",
  "bun_http",
+ "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
  "bun_install",
  "bun_install_jsc",
  "bun_install_types",
  "bun_io",
+ "bun_jpeg",
  "bun_js_parser",
  "bun_js_parser_jsc",
  "bun_js_printer",
@@ -1649,7 +1662,6 @@ dependencies = [
  "bun_parsers",
  "bun_patch_jsc",
  "bun_paths",
- "bun_picohttp",
  "bun_platform",
  "bun_png",
  "bun_ptr",
@@ -1683,6 +1695,7 @@ dependencies = [
  "bun_uws_sys",
  "bun_valkey",
  "bun_watcher",
+ "bun_webp",
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
@@ -1710,7 +1723,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_http_types",
- "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
  "strum",
@@ -1795,7 +1807,7 @@ dependencies = [
  "bun_alloc",
  "bun_boringssl_sys",
  "bun_core",
- "bun_js_parser",
+ "bun_crash_handler",
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
@@ -1941,7 +1953,6 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_sys",
- "bun_windows_sys",
  "enumset",
  "libc",
  "strum",
@@ -1954,11 +1965,9 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_boringssl",
  "bun_collections",
  "bun_core",
- "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
  "strum",
@@ -1979,6 +1988,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_event_loop",
+ "bun_http",
  "bun_io",
  "bun_jsc",
  "bun_ptr",
@@ -2046,7 +2056,6 @@ dependencies = [
  "enum-map",
  "libc",
  "rustix",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -2079,7 +2088,6 @@ dependencies = [
  "bun_core",
  "bun_opaque",
  "bun_ptr",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -2098,7 +2106,6 @@ name = "bun_threading"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_ptr",
  "bun_safety",
@@ -2107,13 +2114,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_transpiler"
-version = "0.0.0"
-dependencies = [
- "bun_bundler",
 ]
 
 [[package]]
@@ -2151,6 +2151,7 @@ dependencies = [
  "bun_boringssl",
  "bun_core",
  "bun_jsc_macros",
+ "bun_ptr",
  "bun_uws_sys",
  "strum",
 ]
@@ -2165,6 +2166,7 @@ dependencies = [
  "bun_boringssl_sys",
  "bun_core",
  "bun_errno",
+ "bun_hpack",
  "bun_http_types",
  "bun_libuv_sys",
  "bun_opaque",
@@ -2195,13 +2197,21 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_paths",
- "bun_ptr",
  "bun_sys",
  "bun_threading",
  "bun_wyhash",
  "libc",
  "scopeguard",
  "strum",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_webp"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_highway",
  "thiserror",
 ]
 
@@ -2235,7 +2245,6 @@ name = "bun_zlib"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_zlib_sys",
  "strum",

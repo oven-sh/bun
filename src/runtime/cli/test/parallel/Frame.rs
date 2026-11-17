@@ -55,9 +55,12 @@ impl TryFrom<u8> for Kind {
     }
 }
 
+/// `payload_len` and `kind`.
+pub(crate) const HEADER_LEN: usize = 5;
+
 /// Upper bound on a single IPC frame payload. The protocol is internal but
 /// fd 3 is reachable from test JS via `fs.writeSync(3, ...)`; rejecting
-/// nonsensical lengths up-front prevents both a `5 + len` u32 overflow and
+/// nonsensical lengths up-front prevents both a `HEADER_LEN + len` u32 overflow and
 /// an unbounded allocation.
 pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 
@@ -93,7 +96,7 @@ impl Frame {
         // 4-byte prefixes of any further strings, which go empty) still fits.
         const TRUNC: &[u8] = b"\n... [output truncated: would exceed --parallel IPC frame limit]\n";
         const HEADROOM: usize = 4096;
-        let used: usize = (self.buf.len() - 5) + 4; // current payload + str-len prefix
+        let used: usize = (self.buf.len() - HEADER_LEN) + 4; // current payload + str-len prefix
         let room: usize = ((MAX_PAYLOAD as usize) - HEADROOM).saturating_sub(used);
         let (keep, marker): (usize, &[u8]) = if s.len() <= room {
             (s.len(), b"")
@@ -110,7 +113,7 @@ impl Frame {
     /// Finalize the header and return the encoded bytes. Caller hands them to
     /// `Channel.send`. Valid until the next `begin()`.
     pub(crate) fn finish(&mut self) -> &[u8] {
-        let payload_len: u32 = u32::try_from(self.buf.len() - 5).unwrap();
+        let payload_len: u32 = u32::try_from(self.buf.len() - HEADER_LEN).unwrap();
         debug_assert!(payload_len <= MAX_PAYLOAD);
         self.buf[0..4].copy_from_slice(&payload_len.to_le_bytes());
         &self.buf

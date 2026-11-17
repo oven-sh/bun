@@ -76,7 +76,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn names_functions_by_keys(&self) -> bool {
-        !self.inputs.options.obfuscates
+        !self.inputs.options.obfuscates || self.source != SourceKind::Program
     }
 
     /// The program evaluates a text as it is.

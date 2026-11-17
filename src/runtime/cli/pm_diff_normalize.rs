@@ -388,11 +388,11 @@ fn print_js<'a>(
         minify_syntax: options.minify_syntax,
         require_ref: Some(ast.require_ref),
         import_meta_ref: ast.import_meta_ref,
-        source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&chunk)),
+        source_map_handler: Some(&chunk),
         mangled_props: None,
         ..Default::default()
     };
-    bun_js_printer::print_ast::<_, false, true>(
+    bun_js_printer::print_ast::<false, true>(
         &mut printer,
         arena,
         &ast,

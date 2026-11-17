@@ -537,8 +537,7 @@ fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     name[..path.len()].copy_from_slice(path);
-    name[path.len()] = 0;
-    let name = bun_core::ZStr::from_buf(&name[..], path.len());
+    let name = bun_core::ZStr::nul_terminate(&mut name, path.len());
     let mut buffer = bun_paths::path_buffer_pool::get();
     Some(bun_sys::realpath(name, &mut buffer).ok()?.to_vec())
 }

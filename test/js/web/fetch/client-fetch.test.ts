@@ -1,6 +1,6 @@
 /* globals AbortController */
 
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createHash, randomFillSync } from "node:crypto";
 import { once } from "node:events";
@@ -707,4 +707,91 @@ test("a response Content-Length containing a digit separator is rejected instead
       e => ({ rejected: true as const, code: e.code }),
     );
   expect(outcome).toEqual({ rejected: true, code: "InvalidContentLength" });
+});
+
+describe.concurrent("response head", () => {
+  // The server never closes, so the outcome comes from the bytes alone.
+  async function fetchFrom(writes: Iterable<string>) {
+    const sockets: net.Socket[] = [];
+    await using server = net
+      .createServer(sock => {
+        sockets.push(sock);
+        sock.setNoDelay(true);
+        sock.on("error", () => {});
+        sock.once("data", async () => {
+          for (const bytes of writes) {
+            await new Promise(resolve => sock.write(bytes, "latin1", () => setImmediate(resolve)));
+          }
+        });
+      })
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`);
+      return [res.status, res.statusText, Object.fromEntries(res.headers), await res.text()];
+    } catch (e: any) {
+      return e.code;
+    } finally {
+      for (const sock of sockets) sock.destroy();
+    }
+  }
+
+  test.each([
+    ["HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", [200, "OK", { "content-length": "2" }, "ok"]],
+    ["HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok", [200, "OK", { "content-length": "2" }, "ok"]],
+    ["HTTP/1.1 200 OK\nContent-Length: 2\n\nok", [200, "OK", { "content-length": "2" }, "ok"]],
+    ["HTTP/1.1 204\r\n\r\n", [204, "", {}, ""]],
+    ["HTTP/1.1 204\r\n\n", [204, "", {}, ""]],
+    ["HTTP/1.1 204\n\n", [204, "", {}, ""]],
+    ["HTTP/1.1   204   All is well\r\n\r\n", [204, "All is well", {}, ""]],
+    ["HTTP/1.1 204 OK\r\nA:b\r\nC: \t d \t e\t \r\nF:\r\n\r\n", [204, "OK", { a: "b", c: "d \t e", f: "" }, ""]],
+    ["HTTP/1.1 204 OK\r\n!#$%&'*+-.^_`|~: \xe9\r\n\r\n", [204, "OK", { "!#$%&'*+-.^_`|~": "\xe9" }, ""]],
+    ["HTTP/1.1 100 A\r\n\r\nHTTP/1.1 103 B\r\nC: d\r\n\r\nHTTP/1.1 204 E\r\n\r\n", [204, "E", {}, ""]],
+    ["SSH-2.0\r\n", "Malformed_HTTP_Response"],
+    ["\r\nHTTP/1.1 204 OK\r\n\r\n", "Malformed_HTTP_Response"],
+    ["HTTP/2.0 204 OK\r\n\r\n", "Malformed_HTTP_Response"],
+    ["HTTP/1.1 20 OK\r\n\r\n", "Malformed_HTTP_Response"],
+    ["HTTP/1.1 2040 OK\r\n\r\n", "Malformed_HTTP_Response"],
+    ["HTTP/1.1 204 O\0K\r\n\r\n", "Malformed_HTTP_Response"],
+    ["HTTP/1.1 204 OK\r\nA : b\r\n\r\n", "Malformed_HTTP_Response"],
+    ["HTTP/1.1 204 OK\r\n: b\r\n\r\n", "Malformed_HTTP_Response"],
+    ["HTTP/1.1 204 OK\r\nA\r\n\r\n", "Malformed_HTTP_Response"],
+    ["HTTP/1.1 204 OK\r\nA: b\rc\r\n\r\n", "Malformed_HTTP_Response"],
+    ["HTTP/1.1 204 OK\r\nA: b\x7f\r\n\r\n", "Malformed_HTTP_Response"],
+  ])("%j", async (bytes, expected) => {
+    expect({ whole: await fetchFrom([bytes]), bytewise: await fetchFrom(bytes) }).toEqual({
+      whole: expected,
+      bytewise: expected,
+    });
+  });
+
+  test.each([63, 64, 65, 79, 80, 81, 95, 96, 97, 300])("parts of %d bytes", async length => {
+    const part = Buffer.alloc(length, "a").toString();
+    expect(
+      await Promise.all([
+        fetchFrom([`HTTP/1.1 204 ${part}\r\n${part}: ${part}\xe9\t"\r\n\r\n`]),
+        fetchFrom([`HTTP/1.1 204 ${part}\x7f\r\n\r\n`]),
+        fetchFrom([`HTTP/1.1 204 OK\r\n${part}(: b\r\n\r\n`]),
+        fetchFrom([`HTTP/1.1 204 OK\r\na: ${part}\x01${part}\r\n\r\n`]),
+      ]),
+    ).toEqual([
+      [204, part, { [part]: `${part}\xe9\t"` }, ""],
+      "Malformed_HTTP_Response",
+      "Malformed_HTTP_Response",
+      "Malformed_HTTP_Response",
+    ]);
+  });
+
+  test("up to 256 header lines", async () => {
+    const head = (lines: number) => `HTTP/1.1 204 OK\r\n${Buffer.alloc(lines * 4, "A:\r\n")}\r\n`;
+    expect((await fetchFrom([head(256)]))[0]).toBe(204);
+    expect(await fetchFrom([head(257)])).toBe("Malformed_HTTP_Response");
+  });
+
+  test("up to 1 MiB", async () => {
+    const [start, end] = ["HTTP/1.1 204 OK\r\nA: ", "\r\n\r\n"];
+    const head = (length: number) => start + Buffer.alloc(length - start.length - end.length, "b") + end;
+    expect((await fetchFrom([head(1024 * 1024)]))[0]).toBe(204);
+    expect(await fetchFrom([head(1024 * 1024 + 1)])).toBe("ResponseHeadersTooLarge");
+  });
 });

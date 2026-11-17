@@ -17,12 +17,13 @@ use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_collections::ByteVecExt;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
-use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice, RefPtr};
+use bun_ptr::{AsCtxPtr as _, BackRef, DetachablePtr, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
 use crate::generated_bindgen::html_rewriter::{
-    AttributeIteratorResult, ContentOptions, js_HTMLRewriter, js_HTMLRewriterTransform,
+    AttributeIteratorResult, ContentOptions, js_AttributeIterator, js_Comment, js_DocEnd,
+    js_DocType, js_Element, js_EndTag, js_HTMLRewriter, js_HTMLRewriterTransform, js_TextChunk,
 };
 use crate::generated_bindgen::html_rewriter_internals::{
     Bun__HTMLRewriter__onHandlerReject, Bun__HTMLRewriter__onHandlerResolve,
@@ -45,7 +46,7 @@ use lol_html::html_content::UserData as _;
 // returns). The `DetachablePtr` type invariant is discharged by
 // `handler_callback`: it parks the `&mut X` lol-html lends the closure
 // (`build_settings`, `EndTag::on_end_tag`), runs the JS callback, and its
-// scopeguard (or its suspend arm) nulls the slot before the closure returns — so
+// `Attached` (or its suspend arm) nulls the slot before the closure returns — so
 // a non-null load means the pointee is still inside lol-html's exclusive
 // borrow, and a JS object retained past its handler reads `None`.
 type RawElement = lol_html::html_content::Element<'static, 'static>;
@@ -387,7 +388,7 @@ impl HTMLRewriter {
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let (this_value, input) = (this_value.to_js(), input.to_js());
-        if let Some(response) = js_Response::from_js(input).map(BackRef::<Response>::from) {
+        if let Some(response) = js_Response::from_js(&input) {
             // An already-failed body surfaces its stored upstream error (abort
             // reason, connection error) instead of a generic "body already used"
             // — the error is the useful bit, and `wire_input` would otherwise
@@ -446,10 +447,7 @@ impl HTMLRewriter {
             if let Some(err) = out_response_value.to_error() {
                 return Err(cx.global().throw_value(err));
             }
-            out_response_value.ensure_still_alive();
-            let Some(out_response) =
-                js_Response::from_js(out_response_value).map(BackRef::<Response>::from)
-            else {
+            let Some(out_response) = js_Response::from_js(&out_response_value) else {
                 return Ok(out_response_value);
             };
 
@@ -492,40 +490,35 @@ enum RewritePhase {
     Done,
 }
 
-/// The JS wrapper a suspended handler is still using, plus the ref
-/// `handler_callback` took on it; dropping it detaches the wrapper first.
+/// A wrapper that points at a lol-html unit until this is dropped.
+struct Attached<Z: WrapperLike>(RefPtr<Z>);
+
+impl<Z: WrapperLike> Drop for Attached<Z> {
+    fn drop(&mut self) {
+        self.0.detach();
+    }
+}
+
+/// The JS wrapper a suspended handler is still using.
 enum SuspendedWrapper {
-    Element(RefPtr<Element>),
-    Comment(RefPtr<Comment>),
-    TextChunk(RefPtr<TextChunk>),
-    EndTag(RefPtr<EndTag>),
-    DocType(RefPtr<DocType>),
-    DocEnd(RefPtr<DocEnd>),
+    Element(Attached<Element>),
+    Comment(Attached<Comment>),
+    TextChunk(Attached<TextChunk>),
+    EndTag(Attached<EndTag>),
+    DocType(Attached<DocType>),
+    DocEnd(Attached<DocEnd>),
 }
 
 impl SuspendedWrapper {
     /// Point the wrapper at the heap copy lol-html parked on suspend.
     fn retarget(&self, rewriter: &mut LolRewriter) {
         match self {
-            Self::Element(p) => p.retarget(Element::suspended_raw(rewriter)),
-            Self::Comment(p) => p.retarget(Comment::suspended_raw(rewriter)),
-            Self::TextChunk(p) => p.retarget(TextChunk::suspended_raw(rewriter)),
-            Self::EndTag(p) => p.retarget(EndTag::suspended_raw(rewriter)),
-            Self::DocType(p) => p.retarget(DocType::suspended_raw(rewriter)),
-            Self::DocEnd(p) => p.retarget(DocEnd::suspended_raw(rewriter)),
-        }
-    }
-}
-
-impl Drop for SuspendedWrapper {
-    fn drop(&mut self) {
-        match self {
-            Self::Element(p) => WrapperLike::detach(&**p),
-            Self::Comment(p) => WrapperLike::detach(&**p),
-            Self::TextChunk(p) => WrapperLike::detach(&**p),
-            Self::EndTag(p) => WrapperLike::detach(&**p),
-            Self::DocType(p) => WrapperLike::detach(&**p),
-            Self::DocEnd(p) => WrapperLike::detach(&**p),
+            Self::Element(p) => p.0.retarget(Element::suspended_raw(rewriter)),
+            Self::Comment(p) => p.0.retarget(Comment::suspended_raw(rewriter)),
+            Self::TextChunk(p) => p.0.retarget(TextChunk::suspended_raw(rewriter)),
+            Self::EndTag(p) => p.0.retarget(EndTag::suspended_raw(rewriter)),
+            Self::DocType(p) => p.0.retarget(DocType::suspended_raw(rewriter)),
+            Self::DocEnd(p) => p.0.retarget(DocEnd::suspended_raw(rewriter)),
         }
     }
 }
@@ -565,22 +558,16 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
         .map(|p| BackRef::from(p.cast::<RewriterPipe>()))
 }
 
-/// [`RewriterPipe::schedule_background_pull`]'s task: same pointer as the pipe, its own tag.
-#[repr(transparent)]
-pub(crate) struct RewriterPipeBackgroundPull(RewriterPipe);
-impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
+/// [`RewriterPipe::schedule_background_pull`]'s task.
+pub(crate) struct RewriterPipeBackgroundPull;
+impl bun_event_loop::RefTask for RewriterPipeBackgroundPull {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HTMLRewriterBackgroundPull;
-    /// Give back what `schedule_background_pull` took: the cell's protect and the pipe's ref.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: the task's ref keeps the allocation live until the `deref_nn` below.
-        let pipe = BackRef::from(unsafe { NonNull::new_unchecked(this.cast::<RewriterPipe>()) });
-        if let Some(cell) = pipe.cell.try_get() {
-            cell.unprotect();
-        }
-        RewriterPipe::deref_nn(pipe.into());
+    type Ref = RefPtr<RewriterPipe>;
+    fn release_unrun(pipe: Self::Ref) {
+        pipe.background_pull_root.set(None);
     }
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -632,8 +619,8 @@ pub struct RewriterPipe {
     js_pump_reaction_pending: Cell<bool>,
     /// Bytes accepted from the input while suspended or output-backpressured.
     pending_input: JsCell<Vec<u8>>,
-    /// A [`Self::run_background_pull`] task is in the event-loop queue.
-    background_pull_queued: Cell<bool>,
+    /// The cell, while a [`Self::run_background_pull`] task is in the event-loop queue.
+    background_pull_root: JsCell<Option<jsc::ProtectedJSValue>>,
     /// That task should pull the input when it runs; cleared when a reader
     /// attaches and drives the input itself first.
     background_pull_armed: Cell<bool>,
@@ -684,13 +671,12 @@ pub struct RewriterPipe {
     // ── allocation lifetime ──────────────────────────────────────────────
     /// Owners that may still dispatch into this allocation: the Transform
     /// cell (releases in [`Self::finalize`]), the JS-pump controller's raw
-    /// `sink` (releases via [`Self::release_pump_ref`]), and a parked
+    /// `sink` (`pump_ref`), and a parked
     /// suspension's reaction/abandon task. GC sweeps cells in unspecified
     /// order within a cycle, so whichever owner releases last frees the Box.
     ref_count: Cell<u32>,
-    /// `ref_count` includes a JS-pump controller entry; consumed exactly once
-    /// by [`Self::release_pump_ref`].
-    pump_controller_attached: Cell<bool>,
+    /// The JS-pump controller's ref, until it detaches.
+    pump_ref: Cell<Option<PipePin>>,
 }
 
 impl RewriterPipe {
@@ -706,35 +692,15 @@ impl RewriterPipe {
         self.cell.with_mut(|r| r.finalize());
     }
 
-    /// Release one ref, deferring the release of the *last* ref to the event
-    /// loop: the native caller on the stack keeps dispatching into the
-    /// allocation in the same frame after the call that dropped it returns.
-    fn deref_outside_caller(&self) {
-        if self.ref_count.get() > 1 {
-            Self::deref_nn(NonNull::from(self));
-            return;
-        }
-        native_promise_context::DeferredDerefTask::schedule(
-            core::ptr::from_ref(self).cast_mut().cast(),
-            native_promise_context::Tag::HTMLRewriterPipeFree,
-        );
-    }
-
-    /// The JS-pump controller detached and can never dispatch into the pipe
-    /// again: release its ref. Deferred if last: the controller keeps using
-    /// the allocation in the same frame (`controller_finalize`, `close_sink`
-    /// or `end_sink` on the pointer that `take_sink` returned).
-    fn release_pump_ref(&self) {
-        if !self.pump_controller_attached.replace(false) {
-            return;
-        }
-        self.deref_outside_caller();
+    fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
     /// Queued by the `NativePromiseContext` destructor (via
     /// `DeferredDerefTask`) when the handler's promise was collected without
     /// settling: it will never resume this pipe. Runs on the JS thread,
-    /// outside GC sweep; the suspension's ref keeps `pipe` live until here.
+    /// outside GC sweep, under the suspension's ref.
     ///
     /// If the Transform cell is still alive (`cell` reads `Some`) —
     /// a reader or the output Response keeps the rewrite reachable — fail
@@ -749,32 +715,30 @@ impl RewriterPipe {
     /// failed: script is over and the streams die with the VM, so the handles
     /// are cleared raw and only the ref is released, so the pipe and its
     /// rewriter do not outlive the worker.
-    pub(crate) fn abandon_suspension(pipe: bun_ptr::BackRef<Self>) {
-        let this = &*pipe;
-        this.end_suspension();
+    pub(crate) fn abandon_suspension(&self) {
+        self.end_suspension();
         // Reached from a collection, not from the script that is waiting: failed for that script
         // (for nobody, if that was a `Bun.ModuleGraph` that has been disposed since).
-        let _context = VirtualMachine::get().enter_context(this.script_context);
+        let _context = VirtualMachine::get().enter_context(self.script_context);
         let vm_stopped = !VirtualMachine::get().script_allowed();
         // Held for `fail`, which allocates: nothing else on this stack reaches the cell.
         let cell = if vm_stopped {
             None
         } else {
-            this.cell.try_get().map(jsc::EnsureStillAlive)
+            self.cell.try_get().map(jsc::EnsureStillAlive)
         };
         if cell.is_none() {
-            this.input_source.set(SourceHandle::None);
-            this.output.set(None);
+            self.input_source.set(SourceHandle::None);
+            self.output.set(None);
         }
         if vm_stopped {
-            this.phase.set(RewritePhase::Done);
-            this.done.set(true);
+            self.phase.set(RewritePhase::Done);
+            self.done.set(true);
         } else {
-            this.fail(webcore::body::ValueError::Message(BunString::static_(
+            self.fail(webcore::body::ValueError::Message(BunString::static_(
                 "HTMLRewriter content handler returned a Promise that will never settle",
             )));
         }
-        Self::deref_nn(pipe.into());
     }
 
     /// Record a handler's exception for the enclosing lol-html call to pick
@@ -887,9 +851,7 @@ impl RewriterPipe {
         let Some(out) = self.output.get() else {
             return self.buffered_consumer.get();
         };
-        if out.sink.get().is_some()
-            || out.buffer_action.get().is_some()
-            || out.pending.get().state == streams::PendingState::Pending
+        if out.sink.get().is_some() || out.buffer_action.get().is_some() || out.pending.is_pending()
         {
             return true;
         }
@@ -931,7 +893,7 @@ impl RewriterPipe {
         // https://github.com/oven-sh/bun/issues/3334
         let headers = original.clone_init_headers(cx.global())?;
 
-        let pipe = bun_core::heap::alloc_nn(RewriterPipe {
+        let pipe = RefPtr::new(RewriterPipe {
             global: GlobalRef::from(cx.global()),
             cell: JsCell::new(JsRef::empty()),
             rewriter: JsCell::new(None),
@@ -941,7 +903,7 @@ impl RewriterPipe {
             input_ended: Cell::new(false),
             js_pump_reaction_pending: Cell::new(false),
             pending_input: JsCell::new(Vec::new()),
-            background_pull_queued: Cell::new(false),
+            background_pull_root: JsCell::new(None),
             background_pull_armed: Cell::new(false),
             output: Cell::new(None),
             output_buffer: JsCell::new(Vec::new()),
@@ -956,11 +918,11 @@ impl RewriterPipe {
             pending: JsCell::new(WritablePending::default()),
             done: Cell::new(false),
             ref_count: Cell::new(1),
-            pump_controller_attached: Cell::new(false),
+            pump_ref: Cell::new(None),
         });
         // Every field is `Cell`/`JsCell`, so a shared `&RewriterPipe` via
         // `BackRef` is sound across the re-entrant lol-html calls below.
-        let this = BackRef::from(pipe);
+        let this = BackRef::from(pipe.as_non_null());
 
         // The handler closures point into `Box`es owned by `(*pipe).context`,
         // which `pipe` keeps alive for the rewriter's whole lifetime.
@@ -999,7 +961,7 @@ impl RewriterPipe {
             },
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(cx.global());
-                pv.task = Some(pipe.cast::<c_void>());
+                pv.task = Some(pipe.as_non_null().cast::<c_void>());
                 pv.on_start_buffering = Some(RewriterPipe::on_start_buffering);
                 pv.on_start_streaming = Some(RewriterPipe::on_start_streaming);
                 pv.on_readable_stream_available = Some(RewriterPipe::on_readable_stream_available);
@@ -1026,12 +988,7 @@ impl RewriterPipe {
         // The cell's WriteBarrier slots root the Response and (later) the
         // input/output streams; the Response's `transform` slot roots the cell
         // so it survives as long as user code can reach the output.
-        let cell = js_HTMLRewriterTransform::to_js(pipe.as_ptr(), cx.global());
-        if !cell.is_cell() {
-            // No wrapper exists to own the initial ref, so drop it here.
-            Self::deref_nn(pipe);
-            return Err(cx.global().throw_out_of_memory());
-        }
+        let cell = js_HTMLRewriterTransform::to_js(pipe, cx.global());
         this.cell.set(JsRef::init_weak(cell));
         js_HTMLRewriterTransform::response_set_cached(cell, cx.global(), response_js_value);
         js_Response::transform_set_cached(response_js_value, cx.global(), cell);
@@ -1071,7 +1028,7 @@ impl RewriterPipe {
         value: &mut webcore::body::Value,
         stream: Option<ReadableStream>,
     ) {
-        // `pipe` is the `heap::alloc_nn` allocation from `init()`; every field
+        // `pipe` is the allocation from `init()`; every field
         // is `Cell`/`JsCell`, so the shared `BackRef` borrow is sound across
         // the re-entrant lol-html calls below.
         let this = pipe;
@@ -1107,7 +1064,7 @@ impl RewriterPipe {
         let Some(stream) = stream else {
             // lol-html consumes UTF-8; `use_as_any_blob()` encodes a non-ASCII
             // WTFStringImpl into an InternalBlob so `.slice()` is always UTF-8.
-            let mut any_blob = value.use_as_any_blob();
+            let any_blob = value.use_as_any_blob();
             let bytes = any_blob.slice();
             // Mark EOF first so a handler that suspends mid-feed resumes into
             // `end_rewrite` once its promise settles.
@@ -1116,7 +1073,6 @@ impl RewriterPipe {
                 this.end_rewrite();
             }
             // A suspended lol-html has already copied the unconsumed tail into its arena.
-            any_blob.detach();
             return;
         };
 
@@ -1152,9 +1108,8 @@ impl RewriterPipe {
 
         // JS-pump fallback: the controller that `assign_to_stream` creates holds
         // `pipe` raw as its `sink`, so it owns a ref, which it gives up with
-        // `release_pump_ref` wherever it detaches (including its `Drop`).
-        this.pump_controller_attached.set(true);
-        this.ref_();
+        // `pump_ref` wherever it detaches (including its `Drop`).
+        this.pump_ref.set(Some(this.pin()));
         let assignment_result =
             ReadableSinkController::assign_to_stream(cx.global(), stream.value, pipe.into());
         assignment_result.ensure_still_alive();
@@ -1228,47 +1183,31 @@ impl RewriterPipe {
     /// unobserved rewrite is otherwise reachable from nothing.
     fn schedule_background_pull(&self) {
         self.background_pull_armed.set(true);
-        if self.background_pull_queued.replace(true) {
+        if self.background_pull_root.get().is_some() {
             return;
         }
         let vm = self.global.bun_vm();
         if vm.is_shutting_down() {
-            self.background_pull_queued.set(false);
             return;
         }
-        if let Some(cell) = self.cell.try_get() {
-            cell.protect();
-        }
-        self.ref_();
-        vm.enqueue_task(bun_event_loop::Task::init(
-            core::ptr::from_ref(self)
-                .cast_mut()
-                .cast::<RewriterPipeBackgroundPull>(),
-        ));
+        self.background_pull_root
+            .set(Some(self.cell.get_or_undefined().protected()));
+        vm.enqueue_task(
+            bun_event_loop::Task::from_ref::<RewriterPipeBackgroundPull>(self.ref_guard()),
+        );
     }
 
-    pub(crate) fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {
-        // SAFETY: the task's ref (taken in `schedule_background_pull`) keeps
-        // the allocation live until the `deref_nn` below.
-        let this = BackRef::from(unsafe { NonNull::new_unchecked(pipe) });
-        let cell = this.cell.try_get();
-        this.background_pull_queued.set(false);
-        if this.background_pull_armed.replace(false)
-            && !this.done.get()
-            && this.phase.get() != RewritePhase::Done
-            && !this.driving.get()
-            && !this.is_suspended()
-            && !this.output_backpressured()
+    pub(crate) fn run_background_pull(&self) {
+        let _root = self.background_pull_root.take();
+        if self.background_pull_armed.replace(false)
+            && !self.done.get()
+            && self.phase.get() != RewritePhase::Done
+            && !self.driving.get()
+            && !self.is_suspended()
+            && !self.output_backpressured()
         {
-            this.drain_pending_input(PullPacing::AlreadyYielded);
+            self.drain_pending_input(PullPacing::AlreadyYielded);
         }
-        // The cell cannot have been collected while protected, so this balances
-        // the `protect()` exactly.
-        if let Some(cell) = cell {
-            cell.unprotect();
-        }
-        Self::deref_nn(this.into());
-        Ok(())
     }
 
     /// `PendingValue::on_start_streaming` — the output Response's body is
@@ -1325,7 +1264,7 @@ impl RewriterPipe {
     }
 
     /// `SinkHandle::write` entry — input bytes arrived.
-    pub fn write(&self, data: &StreamResult) -> Writable {
+    pub fn write(&self, data: &StreamResult<'_>) -> Writable {
         let _pin = self.pin();
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
@@ -1772,13 +1711,7 @@ impl RewriterPipe {
             .expect("lol-html suspended without the Transform cell");
         let promise = js_HTMLRewriterTransform::suspension_promise_get_cached(cell)
             .expect("suspension promise slot empty");
-        let pipe = core::ptr::from_ref(self).cast_mut();
-        let context = native_promise_context::create(&self.global, pipe, cell);
-        // The context destructor (promise GC'd unsettled) queues
-        // `abandon_suspension` (`DeferredDerefTask::schedule` runs it inline
-        // once the VM's task queue has closed); this ref keeps the pipe alive
-        // until that or the settle reaction releases it.
-        self.ref_();
+        let context = native_promise_context::create(&self.global, self.ref_guard(), cell);
         promise.then_with_value(
             &self.global,
             context,
@@ -1839,13 +1772,21 @@ impl RewriterPipe {
     }
 }
 
-/// Guard returned by [`RewriterPipe::pin`].
+/// A ref that leaves the free to the event loop: whoever is on the stack may still dispatch into the pipe.
 #[must_use = "dropping immediately releases the ref"]
 struct PipePin(BackRef<RewriterPipe>);
 
 impl Drop for PipePin {
     fn drop(&mut self) {
-        self.0.deref_outside_caller();
+        let refs = self.0.ref_count.get();
+        if refs > 1 {
+            self.0.ref_count.set(refs - 1);
+            return;
+        }
+        native_promise_context::DeferredDerefTask::schedule(
+            self.0.as_const_ptr().cast_mut().cast(),
+            native_promise_context::Tag::HTMLRewriterPipeFree,
+        );
     }
 }
 
@@ -1877,68 +1818,73 @@ impl Drop for RewriterPipe {
 impl crate::webcore::sink::JsSinkType for RewriterPipe {
     const NAME: &'static str = "HTMLRewriterSink";
 
+    type Entered<'a> = &'a Self;
+    unsafe fn enter<'a>(this: NonNull<Self>) -> &'a Self {
+        // SAFETY: trait contract.
+        unsafe { this.as_ref() }
+    }
+
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    // Unlike other sinks, the controller does not own the pipe: its ref is
-    // released by `controller_detached` below, and the free happens wherever
-    // the last ref drops.
-    unsafe fn finalize(_this: *mut Self) {}
-    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        RewriterPipe::write(self, data)
+    fn write_bytes(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
+        RewriterPipe::write(this, data)
     }
-    fn write_utf16(&mut self, text: &[u16]) -> Writable {
+    fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16]) -> Writable {
         let mut buf = Vec::new();
         let _ = buf.write_utf16(text);
-        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write(this, &StreamResult::Temporary(&buf))
     }
-    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
+    fn write_latin1(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
-            return RewriterPipe::write(self, data);
+            return RewriterPipe::write(this, data);
         }
         let mut buf = Vec::new();
         let _ = buf.write_latin1(bytes);
-        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write(this, &StreamResult::Temporary(&buf))
     }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        self.end_from_stream(err.map(StreamError::Error));
+    fn end(this: &mut Self::Entered<'_>, err: Option<SysError>) -> bun_sys::Result<()> {
+        this.end_from_stream(err.map(StreamError::Error));
         bun_sys::Result::Ok(())
     }
-    fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        self.end_from_stream(None);
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        _cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
+        this.end_from_stream(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
     fn flush_from_js(
-        &mut self,
+        this: &mut Self::Entered<'_>,
         cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         use streams::PendingState;
-        if self.pending.get().state == PendingState::Pending {
-            let prom_js = self.pending.with_mut(|p| p.promise(cx));
-            if let Some(cell) = self.cell.try_get() {
+        if this.pending.get().state == PendingState::Pending {
+            let prom_js = this.pending.with_mut(|p| p.promise(cx));
+            if let Some(cell) = this.cell.try_get() {
                 js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
             }
             return bun_sys::Result::Ok(prom_js);
         }
-        if self.done.get() || self.phase.get() == RewritePhase::Done {
+        if this.done.get() || this.phase.get() == RewritePhase::Done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 cx.global(),
                 JSValue::js_number(0.0),
             ));
         }
         if wait
-            && (self.driving.get()
-                || self.is_suspended()
-                || self.output_backpressured()
-                || self.background_pull_armed.get())
+            && (this.driving.get()
+                || this.is_suspended()
+                || this.output_backpressured()
+                || this.background_pull_armed.get())
         {
-            let prom_js = self.pending.with_mut(|p| {
+            let prom_js = this.pending.with_mut(|p| {
                 p.result = Writable::Owned(0);
                 p.promise(cx)
             });
-            if let Some(cell) = self.cell.try_get() {
+            if let Some(cell) = this.cell.try_get() {
                 js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
             }
             return bun_sys::Result::Ok(prom_js);
@@ -1949,7 +1895,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         ))
     }
     fn start(
-        &mut self,
+        _this: &mut Self::Entered<'_>,
         _config: Start,
         _context: &bun_jsc::ScriptExecutionContext,
     ) -> bun_sys::Result<()> {
@@ -1962,9 +1908,12 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
         AnyControlledSink::RewriterPipe(this)
     }
 
-    fn controller_detached(&mut self) {
-        RewriterPipe::release_pump_ref(self);
+    fn controller_detached(&self) {
+        self.pump_ref.set(None);
     }
+
+    /// `controller_detached` released the controller's ref: `_this` may already be freed.
+    unsafe fn controller_finalize(_this: *mut Self) {}
 
     unsafe fn close_with_error(
         this: *mut Self,
@@ -1977,8 +1926,8 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
         )));
         bun_sys::Result::Ok(())
     }
-    fn source(&mut self) -> &mut SourceHandle {
-        self.input_source.get_mut()
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
+        &this.input_source
     }
 }
 
@@ -1987,18 +1936,15 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
 pub(crate) fn on_handler_resolve(
     cx: &mut JsScope<'_>,
     _: JsLocal<'_>,
-    context: Option<NonNull<RewriterPipe>>,
+    context: Option<RefPtr<RewriterPipe>>,
 ) -> JsResult<()> {
     // `None` means the suspension was already abandoned.
     let Some(pipe) = context else {
         return Ok(());
     };
-    let pipe = BackRef::from(pipe);
     pipe.end_suspension();
     // Runs the rest of the transform: more handlers (script), sink writes, stream delivery.
     pipe.resume_rewrite();
-    // Balances the `ref_()` in `begin_suspension`.
-    RewriterPipe::deref_nn(pipe.into());
     // Handler errors are captured into the stream by the pipe; what can still be pending here is
     // what cannot be captured — a termination — and this reaction reports it rather than a value.
     if cx.global().has_exception() {
@@ -2010,20 +1956,17 @@ pub(crate) fn on_handler_resolve(
 pub(crate) fn on_handler_reject(
     cx: &mut JsScope<'_>,
     reason: JsLocal<'_>,
-    context: Option<NonNull<RewriterPipe>>,
+    context: Option<RefPtr<RewriterPipe>>,
 ) -> JsResult<()> {
     let global = cx.global();
     let Some(pipe) = context else {
         return Ok(());
     };
-    let pipe = BackRef::from(pipe);
     pipe.end_suspension();
     // Fails the output stream: delivers the error to its reader (script may run).
     pipe.fail(webcore::body::ValueError::JSValue(
         jsc::strong::Optional::create(reason.to_js(), global),
     ));
-    // Balances the `ref_()` in `begin_suspension`.
-    RewriterPipe::deref_nn(pipe.into());
     if global.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
@@ -2153,11 +2096,8 @@ impl HandlerLike for EndTagHandler {
 trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
     type Raw;
     /// `pipe` is the one whose lol-html call lends `value`.
-    fn init(value: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> NonNull<Self>;
-    /// Wraps the *existing* heap allocation `this` in a JS wrapper. `NonNull<Self>`, not `&self`:
-    /// deriving it from a `&self` would launder shared-borrow provenance into
-    /// the pointer the wrapper's ref is dropped through.
-    fn to_js(this: NonNull<Self>, global: &JSGlobalObject) -> JSValue;
+    fn init(value: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> RefPtr<Self>;
+    fn to_js(this: RefPtr<Self>, global: &JSGlobalObject) -> JSValue;
     /// Null out the wrapper's lol-html pointer and detach any sub-objects it
     /// handed to JS (Element's AttributeIterators). Every host-fn on the
     /// wrapper is a harmless no-op afterwards.
@@ -2169,8 +2109,8 @@ trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
     /// lifetime-erased raw pointer the wrapper stores. Null if the rewriter
     /// is not suspended on a `Self::Raw`.
     fn suspended_raw(rewriter: &mut LolRewriter) -> *mut Self::Raw;
-    /// Wrap a ref as the matching [`SuspendedWrapper`] variant.
-    fn into_suspended(wrapper: RefPtr<Self>) -> SuspendedWrapper;
+    /// The matching [`SuspendedWrapper`] variant.
+    fn into_suspended(wrapper: Attached<Self>) -> SuspendedWrapper;
 }
 
 /// Forwarding `WrapperLike` impl — every wrapper type's trait impl is a pure
@@ -2180,14 +2120,14 @@ trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
 /// `Element` implements the trait by hand: its `detach` also has to
 /// invalidate the `AttributeIterator`s it handed out.
 macro_rules! impl_wrapper_like {
-    ($ty:ident, $raw:ty, $field:ident, $suspended:ident) => {
+    ($ty:ident, $js:ident, $raw:ty, $field:ident, $suspended:ident) => {
         impl WrapperLike for $ty {
             type Raw = $raw;
-            fn init(v: *mut Self::Raw, _pipe: BackRef<RewriterPipe>) -> NonNull<Self> {
+            fn init(v: *mut Self::Raw, _pipe: BackRef<RewriterPipe>) -> RefPtr<Self> {
                 Self::init(v)
             }
-            fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
-                Self::to_js_nonnull(this, g)
+            fn to_js(this: RefPtr<Self>, g: &JSGlobalObject) -> JSValue {
+                $js::to_js(this, g)
             }
             fn detach(&self) {
                 self.$field.detach();
@@ -2200,7 +2140,7 @@ macro_rules! impl_wrapper_like {
                     core::ptr::from_mut(unit).cast()
                 })
             }
-            fn into_suspended(wrapper: RefPtr<Self>) -> SuspendedWrapper {
+            fn into_suspended(wrapper: Attached<Self>) -> SuspendedWrapper {
                 SuspendedWrapper::$ty(wrapper)
             }
         }
@@ -2283,16 +2223,7 @@ where
         }
     };
 
-    // After the early returns: only `to_js` below gives the wrapper's first ref an owner.
-    let wrapper: NonNull<Z> = Z::init(value, sink);
-
-    // Our ref across the handler call; the guard detaches then drops it. On
-    // the SUSPEND path the guard is disarmed and `SuspendedWrapper`'s drop
-    // does the same once the handler's promise settles instead.
-    // SAFETY: `wrapper` is the live allocation `init` just made.
-    let guard = scopeguard::guard(unsafe { RefPtr::init_ref(wrapper.as_ptr()) }, |w| {
-        w.detach()
-    });
+    let wrapper = Attached(Z::init(value, sink));
 
     // Use a TopExceptionScope to properly handle exceptions from the JavaScript
     // callback. A post-hoc `try_take_exception()`
@@ -2305,7 +2236,7 @@ where
     // the pending exception through it, and clear it explicitly.
     bun_jsc::top_scope!(scope, global);
 
-    let result = match cb.call(global, this_object, &[Z::to_js(wrapper, global)]) {
+    let result = match cb.call(global, this_object, &[Z::to_js(wrapper.0.clone(), global)]) {
         Ok(v) => v,
         Err(_) => {
             // A termination (a worker's stop, an enclosing vm run's timeout) is not this handler's
@@ -2378,11 +2309,8 @@ where
                 return HandlerOutcome::Stop;
             }
 
-            // Hand the wrapper to the suspension: it has to stay valid across
-            // the handler's `await`, so disarm the guard here.
-            let wrapper = scopeguard::ScopeGuard::into_inner(guard);
             // lol-html moves the unit as it returns, so null the wrapper until `park_suspension` retargets it.
-            wrapper.retarget(core::ptr::null_mut());
+            wrapper.0.retarget(core::ptr::null_mut());
             // The callback came out of the cell, and `drive_rewriter` keeps it alive.
             let cell = sink
                 .cell
@@ -2582,8 +2510,8 @@ pub(crate) struct TextChunk {
 impl TextChunk {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(text_chunk: *mut RawTextChunk) -> NonNull<TextChunk> {
-        bun_core::heap::alloc_nn(TextChunk {
+    pub(crate) fn init(text_chunk: *mut RawTextChunk) -> RefPtr<TextChunk> {
+        RefPtr::new(TextChunk {
             ref_count: Cell::new(1),
             text_chunk: DetachablePtr::new(text_chunk),
         })
@@ -2616,7 +2544,13 @@ impl TextChunk {
     }
 }
 
-impl_wrapper_like!(TextChunk, RawTextChunk, text_chunk, suspended_text_chunk);
+impl_wrapper_like!(
+    TextChunk,
+    js_TextChunk,
+    RawTextChunk,
+    text_chunk,
+    suspended_text_chunk
+);
 
 // ──────────────────────────── DocType ────────────────────────────────────
 
@@ -2632,8 +2566,8 @@ pub(crate) struct DocType {
 impl DocType {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(doctype: *mut RawDoctype) -> NonNull<DocType> {
-        bun_core::heap::alloc_nn(DocType {
+    pub(crate) fn init(doctype: *mut RawDoctype) -> RefPtr<DocType> {
+        RefPtr::new(DocType {
             ref_count: Cell::new(1),
             doctype: DetachablePtr::new(doctype),
         })
@@ -2674,7 +2608,7 @@ impl DocType {
     }
 }
 
-impl_wrapper_like!(DocType, RawDoctype, doctype, suspended_doctype);
+impl_wrapper_like!(DocType, js_DocType, RawDoctype, doctype, suspended_doctype);
 
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
@@ -2690,8 +2624,8 @@ pub(crate) struct DocEnd {
 impl DocEnd {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(doc_end: *mut RawDocumentEnd) -> NonNull<DocEnd> {
-        bun_core::heap::alloc_nn(DocEnd {
+    pub(crate) fn init(doc_end: *mut RawDocumentEnd) -> RefPtr<DocEnd> {
+        RefPtr::new(DocEnd {
             ref_count: Cell::new(1),
             doc_end: DetachablePtr::new(doc_end),
         })
@@ -2702,7 +2636,13 @@ impl DocEnd {
     }
 }
 
-impl_wrapper_like!(DocEnd, RawDocumentEnd, doc_end, suspended_document_end);
+impl_wrapper_like!(
+    DocEnd,
+    js_DocEnd,
+    RawDocumentEnd,
+    doc_end,
+    suspended_document_end
+);
 
 // ──────────────────────────── Comment ────────────────────────────────────
 
@@ -2718,8 +2658,8 @@ pub(crate) struct Comment {
 impl Comment {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(comment: *mut RawComment) -> NonNull<Comment> {
-        bun_core::heap::alloc_nn(Comment {
+    pub(crate) fn init(comment: *mut RawComment) -> RefPtr<Comment> {
+        RefPtr::new(Comment {
             ref_count: Cell::new(1),
             comment: DetachablePtr::new(comment),
         })
@@ -2766,7 +2706,7 @@ impl Comment {
     }
 }
 
-impl_wrapper_like!(Comment, RawComment, comment, suspended_comment);
+impl_wrapper_like!(Comment, js_Comment, RawComment, comment, suspended_comment);
 
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
@@ -2796,8 +2736,8 @@ impl EndTagHandler {
 impl EndTag {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(end_tag: *mut RawEndTag) -> NonNull<EndTag> {
-        bun_core::heap::alloc_nn(EndTag {
+    pub(crate) fn init(end_tag: *mut RawEndTag) -> RefPtr<EndTag> {
+        RefPtr::new(EndTag {
             ref_count: Cell::new(1),
             end_tag: DetachablePtr::new(end_tag),
         })
@@ -2837,7 +2777,7 @@ impl EndTag {
     }
 }
 
-impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
+impl_wrapper_like!(EndTag, js_EndTag, RawEndTag, end_tag, suspended_end_tag);
 
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
@@ -2932,8 +2872,8 @@ impl Drop for Element {
 impl Element {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(element: *mut RawElement, pipe: BackRef<RewriterPipe>) -> NonNull<Element> {
-        bun_core::heap::alloc_nn(Element {
+    pub(crate) fn init(element: *mut RawElement, pipe: BackRef<RewriterPipe>) -> RefPtr<Element> {
+        RefPtr::new(Element {
             ref_count: Cell::new(1),
             element: DetachablePtr::new(element),
             attribute_iterators: JsCell::new(Vec::new()),
@@ -3176,11 +3116,7 @@ impl Element {
         // R-2: `with_mut` — closure does not call into JS (push only).
         self.attribute_iterators
             .with_mut(|v| v.push(attr_iter.clone()));
-        // The JS wrapper owns this ref.
-        Some(AttributeIterator::to_js_nonnull(
-            attr_iter.into_non_null(),
-            global_object,
-        ))
+        Some(js_AttributeIterator::to_js(attr_iter, global_object))
     }
 }
 
@@ -3189,11 +3125,11 @@ impl Element {
 // hold a backref to it and read through it (see `invalidate`).
 impl WrapperLike for Element {
     type Raw = RawElement;
-    fn init(v: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> NonNull<Self> {
+    fn init(v: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> RefPtr<Self> {
         Self::init(v, pipe)
     }
-    fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
-        Self::to_js_nonnull(this, g)
+    fn to_js(this: RefPtr<Self>, g: &JSGlobalObject) -> JSValue {
+        js_Element::to_js(this, g)
     }
     fn detach(&self) {
         self.invalidate();
@@ -3213,7 +3149,7 @@ impl WrapperLike for Element {
                 core::ptr::from_mut(unit).cast()
             })
     }
-    fn into_suspended(wrapper: RefPtr<Self>) -> SuspendedWrapper {
+    fn into_suspended(wrapper: Attached<Self>) -> SuspendedWrapper {
         SuspendedWrapper::Element(wrapper)
     }
 }

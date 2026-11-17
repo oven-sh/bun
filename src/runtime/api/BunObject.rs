@@ -73,7 +73,7 @@ use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_zlib as zlib;
 
 use crate::node;
@@ -216,27 +216,7 @@ pub(crate) fn braces(
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
-    let mut lexer_output = 'lexer_output: {
-        if strings::is_all_ascii(brace_slice) {
-            break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
-                Ok(v) => v,
-                Err(err) => {
-                    return Err(
-                        global.throw_error(crate::Error::from(err), "failed to tokenize braces")
-                    );
-                }
-            };
-        }
-
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice) {
-            Ok(v) => break 'lexer_output v,
-            Err(err) => {
-                return Err(
-                    global.throw_error(crate::Error::from(err), "failed to tokenize braces")
-                );
-            }
-        }
-    };
+    let mut lexer_output = Braces::tokenize(brace_slice);
 
     let expansion_count = Braces::calculate_expanded_amount(&lexer_output.tokens[..]);
 
@@ -290,7 +270,6 @@ pub(crate) fn braces(
         lexer_output.contains_nested,
     ) {
         Ok(()) => {}
-        Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
             return Err(global.throw(format_args!("Unexpected token while expanding braces")));
         }
@@ -545,17 +524,9 @@ pub(crate) fn register_macro<'a>(
     if callback.as_callable().is_none() {
         return Err(heap.error(format_args!("Macro must be a function")));
     }
-    let callback = callback.to_js();
-
-    VirtualMachine::get().macros.with_mut(|macros| {
-        let get_or_put_result = macros.get_or_put(id).expect("unreachable");
-        if get_or_put_result.found_existing {
-            get_or_put_result.value_ptr.unprotect();
-        }
-
-        callback.protect();
-        *get_or_put_result.value_ptr = callback;
-    });
+    let vm = VirtualMachine::get();
+    let callback = jsc::Strong::create(callback.to_js(), vm.global());
+    vm.macros.with_mut(|macros| macros.insert(id, callback));
 
     Ok(())
 }
@@ -600,7 +571,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             }
 
-            let Ok(fd) = sys::openat_a(
+            let Ok(file) = sys::File::openat(
                 if cfg!(windows) {
                     Fd::INVALID
                 } else {
@@ -618,7 +589,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             };
 
-            let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
+            let fd = file.fd();
             #[cfg(windows)]
             {
                 let mut wpath = bun_paths::w_path_buffer_pool::get();
@@ -692,7 +663,7 @@ pub(crate) fn open_in_editor<'a>(
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(name) = editor_name {
-            if !strings::eql_long(&edit.name, name, true) {
+            if !strings::eql_long(&edit.name, name) {
                 let prev = core::mem::take(edit);
                 edit.name = name.to_vec();
                 edit.detect_editor(env);
@@ -826,7 +797,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         mode,
     )? {
         Ok(path) => path,
-        Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
+        Err(err) if err.is::<jsc::ResolveMessage>() => {
             return Ok(Resolved::NotFound(err));
         }
         // e.g. an onResolve plugin returned an invalid result
@@ -1041,7 +1012,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     // For a data-property options object the user's `{ fetch: fn }` on this
     // stack still retains them, but a Proxy- or accessor-backed options
     // object returns a fresh fn that nothing else holds. `compute_id`,
-    // `listen()`'s `set_routes`, and the `ptr_to_js` wrapper allocation can
+    // `listen()`'s `set_routes`, and the wrapper allocation can
     // all trigger a GC in that window, so gcProtect each handler for its
     // duration. `Protected`'s `Drop` unprotects on every exit path (including
     // a thrown `listen()` and the hot-reload early return).
@@ -1076,7 +1047,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();
                         server.context.set(context.id());
-                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
+                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `drop`.
                         unsafe { bun_jsc::AbortHandle::arm_owner(entry.ptr.cast::<$T>(), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
@@ -1103,19 +1074,17 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     }
 
     macro_rules! serve_with {
-        ($ServerType:ty, $tag:expr) => {{
+        ($ServerType:ty, $js:ident, $tag:expr) => {{
             let server = <$ServerType>::init(&mut config, global_object)?;
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `server` is the live heap-allocated server returned by `init`.
-            let route_list_object = <$ServerType>::listen(server);
-            if global_object.has_exception() {
+            let Some((server, route_list_object)) = <$ServerType>::listen(server) else {
                 return Ok(JSValue::ZERO);
-            }
-            // SAFETY: `listen` frees the server only when it throws.
-            let server_ref: &$ServerType = unsafe { &*server };
-            let obj = <$ServerType>::ptr_to_js(server, global_object);
+            };
+            let server = crate::generated_bindgen::server::$js::wrap(server, global_object);
+            let server_ref: &$ServerType = &server;
+            let obj = server.to_js();
             if route_list_object != JSValue::ZERO {
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
@@ -1158,12 +1127,10 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             drop(_handler_pins);
             server_ref.gc_hint_after_listen();
 
+            server_ref.context.set(context.id());
             // SAFETY: `server` is heap-allocated and leaves its context in
-            // `stop_listening` / `deinit`.
-            unsafe {
-                (*server).context.set(context.id());
-                bun_jsc::AbortHandle::arm_owner(server, context)
-            };
+            // `stop_listening` / `drop`.
+            unsafe { bun_jsc::AbortHandle::arm_owner(server.as_ptr(), context) };
 
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`
@@ -1175,14 +1142,14 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                         &server_ref.config.get().id,
                         HotMapEntry {
                             tag: $tag as u8,
-                            ptr: server.cast::<()>(),
+                            ptr: server.as_ptr().cast::<()>(),
                         },
                     );
                 }
             }
 
             if let Some(debugger) = vm.debugger.get() {
-                let any = AnyServer::from(server.cast_const());
+                let any = AnyServer::from(server.as_ptr().cast_const());
                 crate::server::http_server_agent::notify_server_started(
                     &debugger.http_server_agent,
                     any,
@@ -1204,13 +1171,29 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     let development = config.is_development();
     match (development, has_ssl_config) {
         (true, true) => bun_removable_features::removable_body!(TlsSockets, Abort, {
-            serve_with!(crate::api::DebugHTTPSServer, AnyServerTag::DebugHTTPSServer)
+            serve_with!(
+                crate::api::DebugHTTPSServer,
+                js_DebugHTTPSServer,
+                AnyServerTag::DebugHTTPSServer
+            )
         }),
-        (true, false) => serve_with!(crate::api::DebugHTTPServer, AnyServerTag::DebugHTTPServer),
+        (true, false) => serve_with!(
+            crate::api::DebugHTTPServer,
+            js_DebugHTTPServer,
+            AnyServerTag::DebugHTTPServer
+        ),
         (false, true) => bun_removable_features::removable_body!(TlsSockets, Abort, {
-            serve_with!(crate::api::HTTPSServer, AnyServerTag::HTTPSServer)
+            serve_with!(
+                crate::api::HTTPSServer,
+                js_HTTPSServer,
+                AnyServerTag::HTTPSServer
+            )
         }),
-        (false, false) => serve_with!(crate::api::HTTPServer, AnyServerTag::HTTPServer),
+        (false, false) => serve_with!(
+            crate::api::HTTPServer,
+            js_HTTPServer,
+            AnyServerTag::HTTPServer
+        ),
     }
 }
 
@@ -1232,20 +1215,17 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
 
     #[cfg(not(windows))]
     {
-        use core::ffi::c_void;
-
         if path.len() > MAX_PATH_BYTES {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
         }
         node::types::Valid::path_null_bytes(path, global_this)?;
         let mut buf = bun_paths::path_buffer_pool::get();
-        let buf_len = buf.len();
-        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
             bun_paths::resolve_path::platform::Auto,
         >(
             bun_core::working_directory_in_executable()
                 .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir()),
-            &mut buf[..buf_len - 1],
+            &mut buf[..],
             &[path],
         ) else {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
@@ -1259,16 +1239,9 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
-        let written = bun_standalone_graph::find_written_file(joined);
-        let path_len = joined.len();
-        buf[path_len] = 0;
-        let written = written.map(|path| bun_core::ZBox::from_vec(path.into_vec()));
-
-        // SAFETY: buf[path_len] == 0 written above
-        let buf_z = match &written {
-            Some(path) => &**path,
-            None => bun_core::ZStr::from_buf(&buf[..], path_len),
-        };
+        let written = bun_standalone_graph::find_written_file(joined)
+            .map(|path| bun_core::ZBox::from_vec(path.into_vec()));
+        let buf_z = written.as_deref().unwrap_or(joined);
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
         let flags = if options.shared {
@@ -1307,8 +1280,8 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             return jsc::ArrayBuffer::create_uint8_array(global_this, view);
         }
 
-        let (map, delta) = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
-            Ok(result) => result,
+        let map = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
+            Ok(map) => map.into_raw(),
             Err(err) => {
                 use bun_jsc::SysErrorJsc as _;
                 let err = node::fs::error_for_caller([None, None], err);
@@ -1316,32 +1289,15 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             }
         };
 
-        extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
-            // `ptr` is `map_base + delta` where `map_base` is page-aligned and
-            // `delta < page_size`, so rounding down recovers the mmap base.
-            let page = bun_sys::page_size();
-            let addr = ptr as usize;
-            let _ = sys::munmap((addr - addr % page) as *mut u8, size as usize);
-        }
-
-        let map_len = map.len();
-        // SAFETY: `mmap_file` guarantees `map_len == view_size + delta` with
-        // `view_size > 0`, so `delta < map_len` and the add stays in-bounds.
-        let view_ptr = unsafe { map.as_ptr().add(delta) };
-        let view_len = map_len - delta;
-
-        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
-        // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
-        // unmaps it exactly once via `munmap_dealloc` with the full mapping
-        // length stuffed into the ctx pointer.
+        // SAFETY: the pages move to JSC, and only the deallocator unmaps them.
         unsafe {
             jsc::array_buffer::make_typed_array_with_bytes_no_copy(
                 global_this,
                 jsc::TypedArrayType::TypeUint8,
-                view_ptr.cast_mut().cast::<c_void>(),
-                view_len,
-                Some(munmap_dealloc),
-                map_len as *mut c_void,
+                map.as_ptr().cast(),
+                map.len(),
+                Some(sys::Mmap::unmap_raw),
+                core::ptr::without_provenance_mut(map.len()),
             )
         }
     }
@@ -1420,15 +1376,11 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    let valkey = valkey.into_raw();
-    let as_js = js_RedisClient::to_js(valkey, global_this);
-
-    // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
-    // hold the only reference for field init below.
-    let valkey_ref = unsafe { &*valkey };
-    valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
-    match SubscriptionCtx::init(valkey_ref) {
-        Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
+    let valkey = js_RedisClient::wrap(valkey, global_this);
+    let as_js = valkey.to_js();
+    valkey.this_value.set(jsc::JsRef::init_weak(as_js));
+    match SubscriptionCtx::init(&valkey) {
+        Ok(ctx) => valkey._subscription_ctx.set(ctx),
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
             let _ =
@@ -1830,7 +1782,6 @@ pub(crate) mod JSZlib {
                         level,
                         mem_level: options.mem_level,
                         strategy: options.strategy,
-                        ..Default::default()
                     },
                 )
                 .map_err(|err| init_error(heap, err))?;
@@ -2080,18 +2031,10 @@ pub(crate) mod JSZstd {
 // Referenced: bun_jsc::btjs::dump_btjs_trace.
 
 // LazyProperty initializers for stdin/stderr/stdout
-//
-// NOTE (layering): `RareData.{stdin,stdout,stderr}_store` are typed as
-// `Option<Arc<high_tier::BlobStore>>` opaque stubs in `bun_jsc`. The real
-// `Blob::Store` (intrusively refcounted, with `File` payload) lives in this
-// crate and can't move down without dragging `node::PathLike`/S3/aio. The
-// stores exist purely for per-VM lazy init; that is per-thread
-// in practice (`VirtualMachine::get()` is thread-local), so cache the
-// `RefPtr<Store>`s here.
 mod stdio_stores {
     use super::*;
     use crate::node::types::PathOrFileDescriptor;
-    use crate::webcore::blob::store::{Data, File as FileStore, IsAllAscii};
+    use crate::webcore::blob::store::{Data, File as FileStore};
     use crate::webcore::blob::{Blob, BlobExt as _, Store};
     use bun_ptr::RefPtr;
 
@@ -2107,17 +2050,15 @@ mod stdio_stores {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
         };
-        RefPtr::new(Store {
-            data: Data::File(FileStore {
+        RefPtr::new(Store::new(
+            Data::File(FileStore {
                 pathlike: PathOrFileDescriptor::Fd(fd),
                 is_atty: Some(is_atty),
                 mode,
                 ..Default::default()
             }),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        })
+            bun_http_types::MimeType::NONE,
+        ))
     }
 
     fn make_blob(

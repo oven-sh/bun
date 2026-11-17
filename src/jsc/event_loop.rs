@@ -9,7 +9,7 @@
 //! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
 //! poll deadline). See PORTING.md §Dispatch.
 
-use core::cell::{Cell, UnsafeCell};
+use core::cell::{Cell, OnceCell, UnsafeCell};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
@@ -17,6 +17,7 @@ use bun_io as Async;
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
+use crate::spawn_sync_event_loop::SuppressMicrotaskDrain;
 use crate::virtual_machine::VirtualMachine;
 use crate::{self as jsc, JSGlobalObject, JSValue, JsResult};
 
@@ -31,7 +32,7 @@ pub use bun_event_loop::ConcurrentTask::{
 pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
 pub use bun_event_loop::MiniEventLoop;
 pub use bun_event_loop::Task;
-pub use bun_event_loop::any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask};
+pub use bun_event_loop::any_event_loop::{EventLoopHandle, EventLoopTask};
 pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
@@ -86,7 +87,7 @@ pub struct EventLoop {
     plugin_request_refills_left: Cell<u32>,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
     /// loop's queue (the VM's handle names only the VM's own two loops).
-    pub(crate) isolated_poster: Option<std::sync::Arc<crate::vm_handle::IsolatedPosterInner>>,
+    pub(crate) isolated_poster: OnceCell<std::sync::Arc<crate::vm_handle::IsolatedPoster>>,
     // BACKREF — `*JSGlobalObject` owned by the VM; outlives this EventLoop.
     pub(crate) global: Cell<Option<NonNull<JSGlobalObject>>>,
     // BACKREF — owning `*VirtualMachine` (EventLoop is a value field of it).
@@ -99,7 +100,7 @@ pub struct EventLoop {
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
     /// The uws loop this `EventLoop` runs on: the process loop for the VM's
     /// embedded loops, a private one for a spawnSync loop. Set by
-    /// `ensure_waker` / `__bun_spawn_sync_create_event_loop`.
+    /// `ensure_waker` / `with_uws_loop`.
     uws_loop: Cell<Option<&'static uws::Loop>>,
 
     entered_event_loop_count: Cell<isize>,
@@ -138,7 +139,7 @@ impl EventLoop {
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: UnsafeCell::new(Queue::init()),
             plugin_request_refills_left: Cell::new(Self::CONCURRENT_REFILLS_PER_TICK),
-            isolated_poster: None,
+            isolated_poster: OnceCell::new(),
             global: Cell::new(None),
             virtual_machine: vm,
             #[cfg(windows)]
@@ -154,6 +155,21 @@ impl EventLoop {
             #[cfg(unix)]
             signal_handler: Cell::new(None),
         }
+    }
+
+    /// A loop of `vm` that runs on `uws_loop`.
+    pub(crate) fn with_uws_loop(vm: &VirtualMachine, uws_loop: &'static uws::Loop) -> Self {
+        Self {
+            global: Cell::new(NonNull::new(vm.global.get())),
+            uws_loop: Cell::new(Some(uws_loop)),
+            ..Self::new(NonNull::from(vm))
+        }
+    }
+
+    /// For the crates that cannot name this type.
+    #[inline]
+    pub fn as_handle(&self) -> EventLoopHandle {
+        EventLoopHandle::init(core::ptr::from_ref(self).cast_mut().cast())
     }
 }
 
@@ -253,7 +269,7 @@ unsafe extern "Rust" {
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: &VirtualMachine);
     /// Free a queued task that will never run, through its type's
-    /// `Taskable::release_unrun` (one arm per tag in `bun_runtime::dispatch`).
+    /// `release_unrun` (one arm per tag in `bun_runtime::dispatch`).
     /// JS thread, JSC heap alive. Link-time resolved.
     fn __bun_release_task_unrun(task: bun_event_loop::Task);
 }
@@ -336,7 +352,7 @@ impl EventLoop {
     /// Balance an [`enter`](Self::enter) without the checkpoint [`exit`](Self::exit)
     /// runs at the outermost level. See [`Self::enter_scope_without_checkpoint`].
     #[inline]
-    pub fn exit_without_checkpoint(&self) {
+    fn exit_without_checkpoint(&self) {
         let count = self.entered_event_loop_count.get() - 1;
         bun_core::scoped_log!(EventLoop, "exit_without_checkpoint() = {}", count);
         self.entered_event_loop_count.set(count);
@@ -529,13 +545,12 @@ impl EventLoop {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return;
         };
-        self.enter();
+        let _entered = self.enter_scope();
         if let Err(err) = callback.call(global_object, this_value, arguments) {
             // A top-level call: reported (or, for the VM's termination, taken) here; the caller reads
             // the gate, not a pending exception, to know the VM has stopped.
             let _ = crate::task::report_error_or_terminate(global_object, err);
         }
-        self.exit();
     }
 
     /// `context`: as for [`run_callback`](Self::run_callback).
@@ -550,16 +565,14 @@ impl EventLoop {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return JSValue::ZERO;
         };
-        self.enter();
-        let result = match callback.call(global_object, this_value, arguments) {
+        let _entered = self.enter_scope();
+        match callback.call(global_object, this_value, arguments) {
             Ok(v) => v,
             Err(err) => {
                 let _ = crate::task::report_error_or_terminate(global_object, err);
                 JSValue::ZERO
             }
-        };
-        self.exit();
-        result
+        }
     }
 
     /// `None`: a task's fold or the checkpoint after it met the VM's termination and landed it; the
@@ -635,39 +648,8 @@ impl EventLoop {
             return tasks.readable_length() - start_count;
         }
 
-        let mut iter = concurrent.iterator();
         let _ = tasks.ensure_unused_capacity(count);
-
-        // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
-        let mut to_destroy: Option<*mut ConcurrentTaskItem> = None;
-
-        loop {
-            let task = iter.next();
-            if task.is_null() {
-                break;
-            }
-            if let Some(dest) = to_destroy.take() {
-                // SAFETY: dest was returned by iterator and marked auto_delete; uniquely owned here
-                let _ = unsafe { bun_core::heap::take(dest) };
-            }
-
-            // SAFETY: `task` is non-null (checked above) and owned by this
-            // batch; only shared reads follow (`auto_delete`, the `task` copy).
-            let task_ref = unsafe { &*task };
-            if task_ref.auto_delete() {
-                to_destroy = Some(task);
-            }
-
-            // LinearFifo's fields are private — `write_item` is the
-            // public path (single-slot copy, same complexity).
-            let _ = tasks.write_item(task_ref.task);
-        }
-
-        if let Some(dest) = to_destroy {
-            // SAFETY: see above
-            let _ = unsafe { bun_core::heap::take(dest) };
-        }
-
+        Self::take_concurrent_tasks(tasks, concurrent);
         tasks.readable_length() - start_count
     }
 
@@ -735,17 +717,10 @@ impl EventLoop {
             .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
     }
 
-    /// [`usockets_loop`](Self::usockets_loop) as the platform-native loop
-    /// (`us_loop_t*` on POSIX, its `uv_loop_t*` on Windows).
-    #[inline]
-    pub fn native_loop(&self) -> Async::LoopRef {
-        Async::uws_to_native(self.usockets_loop())
-    }
-
     #[cfg(windows)]
     #[inline]
     pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
-        self.native_loop()
+        self.usockets_loop().uv_loop()
     }
 
     #[inline]
@@ -778,7 +753,7 @@ impl EventLoop {
     /// Any thread.
     pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) {
         // SAFETY: the task is the caller's until it is pushed.
-        match unsafe { task.as_ref() }.task.tag.is_plugin_request() {
+        match unsafe { task.as_ref() }.task.tag().is_plugin_request() {
             true => self.concurrent_plugin_requests.push(task),
             false => self.concurrent_tasks.push(task),
         }
@@ -884,13 +859,11 @@ impl EventLoop {
         self.tick_concurrent();
 
         let vm = self.vm_ref();
-        let prev = vm.suppress_microtask_drain.replace(true);
+        let _suppress = SuppressMicrotaskDrain::new(vm);
 
         while let Ok(1..) = self.tick_with_count(vm) {
             self.tick_concurrent();
         }
-
-        vm.suppress_microtask_drain.set(prev);
     }
 
     /// Teardown has released the queue (after forbidding script); tasks arriving now are released on
@@ -948,12 +921,7 @@ impl EventLoop {
         }
     }
 
-    /// Move a batch other threads posted (`concurrent_tasks`) into
-    /// `tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
-    /// over `self.tasks` releases everything. Called by `release_queued_tasks`
-    /// in teardown, after `join_child_workers()` (every child has posted its
-    /// close task by then) and before the JSC VM is destroyed (so captured
-    /// `Ref<>`s in queued C++ lambdas drop against a live heap).
+    /// Move a batch that other threads posted into `tasks`, freeing the heap carriers.
     fn take_concurrent_tasks(
         tasks: &mut Queue,
         batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
@@ -974,21 +942,30 @@ impl EventLoop {
 
     /// Release, without running, every task still queued — what other
     /// threads posted and what this thread enqueued — through each type's
-    /// `Taskable::release_unrun`, and refuse (release on arrival) anything
+    /// `release_unrun`, and refuse (release on arrival) anything
     /// enqueued from here on. Teardown phase B (JS thread, script forbidden,
     /// JSC heap alive, children joined): called on every turn of the wait, and
     /// once more after `Closed`.
     pub fn release_queued_tasks(&self) {
         self.closed_for_tasks.set(true);
-        // SAFETY: both borrows end before `promote_yield_tasks` borrows `tasks` again.
-        let (tasks, plugin_requests) =
-            unsafe { (&mut *self.tasks.get(), &mut *self.plugin_requests.get()) };
-        Self::take_concurrent_tasks(tasks, self.concurrent_tasks.pop_batch());
-        Self::take_concurrent_tasks(plugin_requests, self.concurrent_plugin_requests.pop_batch());
-        let _ = self.promote_yield_tasks();
-        while let Some(task) = self.next_task() {
-            // SAFETY: JS thread, heap alive; `task` just left the queue.
-            unsafe { self.release_task_unrun(task) };
+        loop {
+            // SAFETY: both borrows end before `promote_yield_tasks` borrows `tasks` again.
+            let (tasks, plugin_requests) =
+                unsafe { (&mut *self.tasks.get(), &mut *self.plugin_requests.get()) };
+            Self::take_concurrent_tasks(tasks, self.concurrent_tasks.pop_batch());
+            Self::take_concurrent_tasks(
+                plugin_requests,
+                self.concurrent_plugin_requests.pop_batch(),
+            );
+            let _ = self.promote_yield_tasks();
+            while let Some(task) = self.next_task() {
+                // SAFETY: JS thread, heap alive; `task` just left the queue.
+                unsafe { self.release_task_unrun(task) };
+            }
+            // Releasing a task can post another.
+            if self.concurrent_tasks.is_empty() {
+                break;
+            }
         }
         // Pending immediates likewise: cancelling one drops its keep-alive on
         // this thread's loop, so it happens now, not after the loop is gone.
@@ -1005,29 +982,8 @@ impl EventLoop {
         }
     }
 
-    pub fn deinit(&mut self) {
-        // Everything queued was released by `release_queued_tasks` (which
-        // also made later enqueues release on arrival) and refused posts never
-        // reach `concurrent_tasks`; nothing can be left to leak with the VM box.
-        debug_assert!(
-            self.tasks.get_mut().readable_length() == 0
-                && self.concurrent_tasks.is_empty()
-                && self.plugin_requests.get_mut().readable_length() == 0
-                && self.concurrent_plugin_requests.is_empty(),
-            "queued tasks must be released (release_queued_tasks) before the loop is destroyed"
-        );
-        debug_assert!(
-            self.immediate_tasks.get_mut().is_empty(),
-            "pending immediates must be released (release_queued_tasks) while the loop is alive"
-        );
-        *self.tasks.get_mut() = Queue::init();
-        *self.plugin_requests.get_mut() = Queue::init();
-        // Free the deferred-task map's storage. The tasks must not be run, and an
-        // entry owns nothing but a `Copy` ctx pointer whose owner released it when
-        // the JSC teardown before this finalized it. A worker's VM box is
-        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing
-        // else frees it.
-        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
+    pub(crate) fn is_drained(&self) -> bool {
+        !self.has_pending_tasks() && self.immediate_task_count() == 0
     }
 
     /// Note (§Dispatch): `task` is an erased
@@ -1089,8 +1045,7 @@ impl EventLoop {
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
-            // SAFETY: ImmediateObject pointers are kept alive by the JS heap
-            // until `__bun_run_immediate_task` consumes them.
+            // SAFETY: the queue holds a ref on each, which `__bun_run_immediate_task` consumes.
             exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
 
@@ -1124,10 +1079,7 @@ impl EventLoop {
             vm.event_loop_handle.set(Some(Async::Loop::get()));
             vm.gc_controller.init(vm);
         }
-        // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
-        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`.
-        let self_ptr = core::ptr::from_ref(self).cast_mut().cast::<()>();
-        EventLoopHandle::init(self_ptr).set_as_parent_of(uws::Loop::get());
+        self.as_handle().set_as_parent_of(uws::Loop::get());
     }
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
@@ -1228,7 +1180,7 @@ impl EventLoop {
     /// a libuv handle knows its loop, and the counters stay on the thread's.
     pub fn event_loop_ctx(&self) -> Async::EventLoopCtx {
         #[cfg(unix)]
-        if self.isolated_poster.is_some() {
+        if self.isolated_poster.get().is_some() {
             // SAFETY: the VM owns the spawnSync loop, which outlives what the call makes on it.
             return unsafe {
                 Async::EventLoopCtx::new(
@@ -1244,13 +1196,13 @@ impl EventLoop {
     /// `EventLoop` is — the VM's handle for its embedded loops, or the isolated
     /// loop's own poster for a spawnSync loop.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
-        match &self.isolated_poster {
-            Some(p) => crate::vm_handle::IsolatedPosterInner::to_js_poster(p),
+        match self.isolated_poster.get() {
+            Some(p) => std::sync::Arc::<crate::vm_handle::IsolatedPoster>::clone(p),
             None => self.vm_ref().js_poster(),
         }
     }
 
-    /// JS thread: count one more thing keeping this loop alive (the same
+    /// JS thread (or with it stopped): count one more thing keeping this loop alive (the same
     /// counter a `VmHandle::ref_keep_alive` from another thread adjusts).
     pub fn ref_keep_alive(&self) {
         let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);
@@ -1276,10 +1228,10 @@ impl EventLoop {
     pub fn global_ref(&self) -> &'static JSGlobalObject {
         // `self.global` is always assigned `vm.global` at every write site
         // (`VirtualMachine::init`/`init_bake`, `enable_macro_mode`,
-        // `swap_global_for_test_isolation`, `__bun_spawn_sync_*`), so
+        // `swap_global_for_test_isolation`, `SpawnSyncEventLoop`), so
         // read it directly instead of the vm→global dependent-load chain.
         // SAFETY: set before the loop is handed out or given a task (`VirtualMachine::init`,
-        // `enable_macro_mode`, `__bun_spawn_sync_create_event_loop`); the JSGlobalObject is
+        // `enable_macro_mode`, `EventLoop::with_uws_loop`); the JSGlobalObject is
         // GC-rooted and outlives the EventLoop.
         unsafe { self.global.get().unwrap_unchecked().as_ref() }
     }
@@ -1318,9 +1270,10 @@ impl EventLoop {
             // An exception is already pending and `callback` never ran, so don't pretend it returned undefined.
             return Err(crate::JsError::Thrown);
         };
-        self.enter();
-        let result = callback.call(global_object, this_value, arguments);
-        self.exit_without_checkpoint();
+        let result = {
+            let _entered = self.enter_scope_without_checkpoint();
+            callback.call(global_object, this_value, arguments)
+        };
         after_call();
         let result = result?;
         result.ensure_still_alive();
@@ -1494,13 +1447,6 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 // to `*mut EventLoop` and forwards to the real method.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
-#[inline(always)]
-fn el_ref<'a>(owner: *mut ()) -> &'a EventLoop {
-    // SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
-    unsafe { &*owner.cast::<EventLoop>() }
-}
-
 // `this: *mut EventLoop` — owner was erased from a live `*mut EventLoop` in
 // `__bun_js_event_loop_current` / `EventLoopHandle::js`. All calls run on the
 // JS thread.
@@ -1508,15 +1454,6 @@ bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
         iteration_number() => (*this).usockets_loop().iteration_number()
             + (*this).task_drains.load(Ordering::Relaxed),
-        // Return raw to avoid asserting uniqueness — multiple handles may name the
-        // same VM.
-        file_polls() => (*this).vm_ref().rare_data().file_polls_ptr(),
-        put_file_poll(poll, was_ever_registered) => {
-            let store = (*this).vm_ref().rare_data().file_polls_ptr();
-            let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-            // `poll` is a live hive-slot pointer (vtable contract) — non-null.
-            (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
-        },
         uws_loop() => (*this).usockets_loop(),
         event_loop_ctx() => (*this).event_loop_ctx(),
         tick() => (*this).tick(),
@@ -1524,16 +1461,12 @@ bun_event_loop::link_impl_JsEventLoop! {
         auto_tick_active() => (*this).auto_tick_active(),
         global_object() => (*this).global.get().map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         bun_vm() => (*this).virtual_machine.as_ptr().cast(),
-        stdout() => (*this).vm_ref().rare_data().stdout().cast(),
-        stderr() => (*this).vm_ref().rare_data().stderr().cast(),
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
         enqueue_task_after_yield(task) => (*this).enqueue_task_after_yield(task),
         js_poster() => (*this).js_poster(),
         env() => (*this).vm_ref().transpiler.get().env,
-        create_null_delimited_env_map() =>
-            (*(*this).vm_ref().transpiler.get().env).map.create_null_delimited_env_map(),
     }
 }
 
@@ -1555,90 +1488,4 @@ bun_io::link_impl_EventLoopCtx! {
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_js_event_loop_current() -> *mut () {
     VirtualMachine::get().event_loop_ptr()
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_event_loop::SpawnSyncEventLoop` extern impls
-//
-// `SpawnSyncEventLoop` lives in the lower-tier `bun_event_loop` crate and
-// cannot name `jsc::EventLoop` / `jsc::VirtualMachine`. The bodies live here as
-// `#[no_mangle]` Rust-ABI fns, declared `extern "Rust"` on the low-tier side
-// and resolved at link time. Each erased `*mut ()` is a `*mut VirtualMachine`
-// or `*mut EventLoop`; cast back and forward to the real method/field.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Recover `&VirtualMachine` from the erased SpawnSync vtable `vm`.
-/// Private — every caller is a `#[no_mangle]` trampoline whose contract
-/// guarantees `vm` is the live per-thread `*mut VirtualMachine`.
-#[inline(always)]
-fn vm_from_ptr<'a>(vm: *mut ()) -> &'a VirtualMachine {
-    // SAFETY: SpawnSync vtable contract — `vm` is the live per-thread VM.
-    unsafe { &*vm.cast::<VirtualMachine>() }
-}
-
-/// Heap-allocate a fresh `EventLoop` bound to `vm`, running on `uws_loop`.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_create_event_loop(
-    vm: *mut (),
-    uws_loop: &'static uws::Loop,
-) -> *mut () {
-    let vm = vm_from_ptr(vm);
-    let global = vm.global.get();
-    let el = Box::new(EventLoop::new(NonNull::from(vm)));
-    el.global.set(NonNull::new(global));
-    el.uws_loop.set(Some(uws_loop));
-    let el = bun_core::heap::into_raw(el);
-    // SAFETY: `el` is the stable heap address the poster targets until destroy.
-    unsafe { (*el).isolated_poster = Some(crate::vm_handle::IsolatedPosterInner::new(el)) };
-    el.cast()
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
-    // Refuse (and wait out) posts from other threads before the loop goes.
-    if let Some(p) = &el_ref(el).isolated_poster {
-        p.close();
-    }
-    // SAFETY: paired with `heap::alloc` in `__bun_spawn_sync_create_event_loop`.
-    drop(unsafe { bun_core::heap::take(el.cast::<EventLoop>()) });
-}
-
-/// Re-bind `event_loop.global` to `vm`'s (prepare path).
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ()) {
-    let el = el_ref(el);
-    debug_assert!(core::ptr::eq(el.vm_ref(), vm.cast()));
-    el.global.set(NonNull::new(vm_from_ptr(vm).global.get()));
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
-    el_ref(el).tick_tasks_only();
-}
-
-#[cfg(windows)]
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_vm_get_event_loop_handle(
-    vm: *mut (),
-) -> bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle {
-    vm_from_ptr(vm)
-        .event_loop_handle
-        .get()
-        .and_then(NonNull::new)
-}
-
-#[cfg(windows)]
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
-    vm: *mut (),
-    h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
-) {
-    vm_from_ptr(vm)
-        .event_loop_handle
-        .set(h.map(NonNull::as_ptr));
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
-    vm_from_ptr(vm).suppress_microtask_drain.replace(v)
 }

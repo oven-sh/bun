@@ -16,16 +16,12 @@ import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
 import { libdeflate } from "./libdeflate.ts";
-import { libjpegTurbo } from "./libjpeg-turbo.ts";
 import { libuv } from "./libuv.ts";
-import { libwebp } from "./libwebp.ts";
 import { lolhtml } from "./lolhtml.ts";
-import { lshpack } from "./lshpack.ts";
 import { lsqpack } from "./lsqpack.ts";
 import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
-import { picohttpparser } from "./picohttpparser.ts";
 import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
@@ -41,23 +37,18 @@ import { zstd } from "./zstd.ts";
  * boringssl near the end — many things depend on crypto/ssl symbols.
  */
 export const allDeps: readonly Dependency[] = [
-  // Header-only / source-only first — no link order concerns.
-  picohttpparser,
+  // Header-only first — no link order concerns.
   nodejsHeaders,
 
   zlib,
   zstd,
   brotli,
   libdeflate,
-  // Image codecs.
-  libjpegTurbo,
-  libwebp,
   cares,
   highway,
   libuv,
   lolhtml,
   rustArgon2,
-  lshpack,
   lsqpack,
   mimalloc,
   sqlite,
@@ -79,16 +70,12 @@ export {
   cares,
   highway,
   libdeflate,
-  libjpegTurbo,
   libuv,
-  libwebp,
   lolhtml,
-  lshpack,
   lsqpack,
   lsquic,
   mimalloc,
   nodejsHeaders,
-  picohttpparser,
   rustArgon2,
   sqlite,
   tinycc,

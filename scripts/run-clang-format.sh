@@ -35,7 +35,6 @@ while IFS= read -r -d '' file; do
        [[ "$file" =~ src/runtime/napi/ ]] || \
        [[ "$file" =~ src/jsc/bindings/libuv/ ]] || \
        [[ "$file" =~ src/jsc/bindings/sqlite/ ]] || \
-       [[ "$file" =~ src/jsc/bindings/node/http/llhttp/ ]] || \
        [[ "$file" =~ packages/bun-usockets/.*libuv ]] || \
        [[ "$file" =~ vendor/ ]]; then
         continue

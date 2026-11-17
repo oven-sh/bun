@@ -56,7 +56,7 @@ impl ConnectionCtorArgs {
                 SSLConfig::default()
             } else if tls_object.is_object() {
                 match SSLConfig::from_js(global_object, tls_object) {
-                    Ok(opt) => opt.unwrap_or_default(),
+                    Ok(config) => config,
                     Err(_) => return Ok(None),
                 }
             } else {

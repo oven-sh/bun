@@ -204,7 +204,7 @@ export const pins = {
       "windows-x64": "88d8258dcf6ae4f7a80c7d1088e1f36fa7025a1cfd1343731b4ee6f385121fc0",
       "windows-aarch64": "de9f7d29ccd39efa59a3dda3ec363b396e09b92681229b9b8f6aaa4c84285e9c",
     },
-    channel: "nightly-2026-09-15",
+    channel: "nightly-2026-11-14",
     components: ["rust-src", "rustfmt", "clippy", "miri", "llvm-tools"],
     targets: [
       "aarch64-unknown-linux-gnu",
@@ -213,6 +213,7 @@ export const pins = {
       "x86_64-unknown-linux-musl",
       "aarch64-linux-android",
       "x86_64-linux-android",
+      "aarch64-unknown-freebsd",
       "x86_64-unknown-freebsd",
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",
@@ -302,11 +303,11 @@ export const pins = {
   },
   muslSysroot: { alpineRelease },
   windowsSysroot: {
-    xwin: "0.9.0",
+    xwin: "0.10.0",
     // The .sha256 beside each file of the release.
     xwinSha256: {
-      x64: "31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4cd",
-      aarch64: "41466ca41e16fe7fc1b82a67babc7c3811021bf32de354b90b34d8c4edb153e2",
+      x64: "d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88",
+      aarch64: "6d56d28537a86f37aa3d041318898f25ee3100c6b6ec332ad873c28faf37be23",
     },
     sdk: "10.0.26100",
     crt: "14.44.17.14",

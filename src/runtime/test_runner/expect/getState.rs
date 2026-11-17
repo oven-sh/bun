@@ -4,26 +4,21 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult};
 
-use super::super::bun_test::{self, ExecutionEntry, RefDataValue};
+use super::super::bun_test::{self, BunTest, ExecutionEntry, RefDataValue};
 use super::super::execution::{ExecutionSequence, ExpectAssertions};
-use super::super::jest::{FileColumns as _, Jest};
 use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils};
 
 /// `with_empty_names` keeps `describe("")` blocks in the name, which only Jest's snapshot format does.
 #[optimize(size)]
-pub(crate) fn full_test_name(entry: &ExecutionEntry, separator: &[u8], with_empty_names: bool) -> Vec<u8> {
+pub(crate) fn full_test_name(buntest: &BunTest, entry: &ExecutionEntry, separator: &[u8], with_empty_names: bool) -> Vec<u8> {
     let mut names: Vec<&[u8]> = vec![entry.base.name.as_deref().unwrap_or(b"(unnamed)")];
-    let mut parent = entry.base.parent;
-    while let Some(scope) = parent {
-        // SAFETY: the `BunTest` that owns `entry` owns its enclosing scopes.
-        let scope = unsafe { &*scope };
+    for scope in buntest.scopes_from(entry.base.parent) {
         if let Some(name) = scope.base.name.as_deref() {
             if with_empty_names || !name.is_empty() {
                 names.push(name);
             }
         }
-        parent = scope.base.parent;
     }
     names.reverse();
     names.join(separator)
@@ -33,20 +28,19 @@ pub(crate) fn full_test_name(entry: &ExecutionEntry, separator: &[u8], with_empt
 type Test = Option<RefDataValue>;
 
 /// Returns `None` outside a test, and in concurrent tests unless `test` names one.
-fn with_sequence<R>(test: Test, f: impl FnOnce(&mut ExecutionSequence) -> R) -> Option<R> {
-    let buntest_strong = bun_test::clone_active_strong()?;
-    let buntest = buntest_strong.get();
-    test.unwrap_or_else(|| buntest.get_current_state_data()).sequence(buntest).map(f)
+fn with_sequence<R>(test: Test, f: impl FnOnce(&BunTest, &ExecutionSequence) -> R) -> Option<R> {
+    let buntest = bun_test::clone_active_strong()?;
+    test.unwrap_or_else(|| buntest.get_current_state_data()).sequence(&buntest).map(|sequence| f(&buntest, sequence))
 }
 
 #[optimize(size)]
 fn assertion_calls(test: Test) -> u32 {
-    with_sequence(test, |sequence| sequence.expect_call_count).unwrap_or(0)
+    with_sequence(test, |_, sequence| sequence.expect_call_count.get()).unwrap_or(0)
 }
 
 #[optimize(size)]
 fn expected_assertions_number(test: Test) -> Option<u32> {
-    match with_sequence(test, |sequence| sequence.expect_assertions) {
+    match with_sequence(test, |_, sequence| sequence.expect_assertions.get()) {
         Some(ExpectAssertions::Exact(count)) => Some(count),
         _ => None,
     }
@@ -54,15 +48,14 @@ fn expected_assertions_number(test: Test) -> Option<u32> {
 
 #[optimize(size)]
 fn is_expecting_assertions(test: Test) -> bool {
-    with_sequence(test, |sequence| sequence.expect_assertions) == Some(ExpectAssertions::AtLeastOne)
+    with_sequence(test, |_, sequence| sequence.expect_assertions.get()) == Some(ExpectAssertions::AtLeastOne)
 }
 
 #[optimize(size)]
 fn current_test_name(global: &JSGlobalObject, test: Test) -> JsResult<JSValue> {
-    let name = with_sequence(test, |sequence| {
-        // SAFETY: the `BunTest` kept alive by `with_sequence` owns the entry.
-        sequence.test_entry.map(|entry| unsafe { entry.as_ref() }).map(|entry| {
-            full_test_name(entry, if entry.calling.is_vitest() { b" > " } else { b" " }, false)
+    let name = with_sequence(test, |buntest, sequence| {
+        sequence.test(buntest).map(|entry| {
+            full_test_name(buntest, entry, if entry.calling.is_vitest() { b" > " } else { b" " }, false)
         })
     });
     match name.flatten() {
@@ -73,10 +66,10 @@ fn current_test_name(global: &JSGlobalObject, test: Test) -> JsResult<JSValue> {
 
 #[optimize(size)]
 fn test_path(global: &JSGlobalObject) -> JsResult<JSValue> {
-    let (Some(buntest), Some(runner)) = (bun_test::clone_active_strong(), Jest::runner()) else {
+    let Some(buntest) = bun_test::clone_active_strong() else {
         return Ok(JSValue::UNDEFINED);
     };
-    bun_string_jsc::create_utf8_for_js(global, runner.files.items_source()[buntest.file_id as usize].path.text)
+    bun_string_jsc::create_utf8_for_js(global, buntest.file.path)
 }
 
 fn to_count(global: &JSGlobalObject, name: &'static str, value: JSValue) -> JsResult<u32> {
@@ -148,18 +141,18 @@ impl Expect {
         if assertion_calls.is_none() && expected_assertions_number.is_none() && is_expecting_assertions.is_none() {
             return Ok(());
         }
-        let applied = with_sequence(test, |sequence| {
+        let applied = with_sequence(test, |_, sequence| {
             if let Some(count) = assertion_calls {
-                sequence.expect_call_count = count;
+                sequence.expect_call_count.set(count);
             }
-            match (expected_assertions_number, sequence.expect_assertions) {
-                (Some(Some(count)), _) => sequence.expect_assertions = ExpectAssertions::Exact(count),
-                (Some(None), ExpectAssertions::Exact(_)) => sequence.expect_assertions = ExpectAssertions::NotSet,
+            match (expected_assertions_number, sequence.expect_assertions.get()) {
+                (Some(Some(count)), _) => sequence.expect_assertions.set(ExpectAssertions::Exact(count)),
+                (Some(None), ExpectAssertions::Exact(_)) => sequence.expect_assertions.set(ExpectAssertions::NotSet),
                 _ => {}
             }
-            match (is_expecting_assertions, sequence.expect_assertions) {
-                (Some(true), ExpectAssertions::NotSet) => sequence.expect_assertions = ExpectAssertions::AtLeastOne,
-                (Some(false), ExpectAssertions::AtLeastOne) => sequence.expect_assertions = ExpectAssertions::NotSet,
+            match (is_expecting_assertions, sequence.expect_assertions.get()) {
+                (Some(true), ExpectAssertions::NotSet) => sequence.expect_assertions.set(ExpectAssertions::AtLeastOne),
+                (Some(false), ExpectAssertions::AtLeastOne) => sequence.expect_assertions.set(ExpectAssertions::NotSet),
                 _ => {}
             }
         });

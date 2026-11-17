@@ -28,7 +28,7 @@ pub enum Charset {
 pub struct Options {
     pub dialect: Dialect,
     pub charset: Charset,
-    /// macOS: an entry named `._name` is the AppleDouble metadata of the entry behind it, and dropped.
+    /// macOS: an entry named `._name` is the AppleDouble metadata of the entry behind it, and dropped. Not for npm.
     pub mac_metadata: bool,
 }
 
@@ -51,6 +51,7 @@ impl Options {
 pub struct Entry {
     path: Vec<u8>,
     path_is_utf8: bool,
+    path_is_final: bool,
     link: Vec<u8>,
     is_symlink: bool,
     mode: u32,
@@ -63,9 +64,13 @@ impl Entry {
     pub fn path(&self) -> &[u8] {
         &self.path
     }
-    /// The path is a pax record that [`Charset`] could convert. Otherwise its encoding is unknown.
+    /// The path is a pax record that [`Charset`] could convert, or npm's. Otherwise its encoding is unknown.
     pub fn path_is_utf8(&self) -> bool {
         self.path_is_utf8
+    }
+    /// The path is npm's, in which nothing composes.
+    pub(crate) fn path_is_final(&self) -> bool {
+        self.path_is_final
     }
     pub fn symlink(&self) -> Option<&[u8]> {
         self.is_symlink.then_some(&self.link[..])
@@ -321,6 +326,10 @@ pub struct Reader {
     ignored_body_left: u64,
     /// An extension header outlasts its entry, and npm does not parse the fields that it replaces.
     fields_are_replaced: bool,
+    /// Until npm has an entry to apply it to.
+    link_may_point_outside: bool,
+    /// See [`npm::Header::PaxOfLink`]. `pax_body` then has the padding too.
+    pax_is_of_link: bool,
     seen: u32,
     pax_is_utf8: bool,
     sparse_attributes_seen: bool,
@@ -344,6 +353,9 @@ pub struct Reader {
     /// A copy of the body, for npm's reading of it, and how much of it is still to come.
     pax_body: Vec<u8>,
     pax_body_left: usize,
+    position: u64,
+    /// Of the last extension header. `u64::MAX` until all of the header is counted.
+    body_position: u64,
     /// Either npm or everyone else goes by the size in the header.
     pax_size_is_disputed: bool,
 
@@ -375,6 +387,10 @@ pub struct Reader {
     skipped: i64,
     padding: i64,
     null_blocks: u32,
+    /// Not every block that npm passes over starts its count of zero blocks again.
+    null_blocks_are_disputed: bool,
+    found_block: bool,
+    skipped_header: bool,
 }
 
 impl Reader {
@@ -390,6 +406,8 @@ impl Reader {
             eof_is_fatal: false,
             ignored_body_left: 0,
             fields_are_replaced: false,
+            link_may_point_outside: false,
+            pax_is_of_link: false,
             seen: 0,
             pax_is_utf8: true,
             sparse_attributes_seen: false,
@@ -409,6 +427,8 @@ impl Reader {
             pax_key_started: false,
             pax_body: Vec::new(),
             pax_body_left: 0,
+            position: 0,
+            body_position: 0,
             pax_size_is_disputed: false,
             entry: Entry::default(),
             size_fields: 0,
@@ -434,6 +454,9 @@ impl Reader {
             skipped: 0,
             padding: 0,
             null_blocks: 0,
+            null_blocks_are_disputed: false,
+            found_block: false,
+            skipped_header: false,
         }
     }
 
@@ -452,6 +475,23 @@ impl Reader {
         &self.entry
     }
 
+    /// An entry was passed over because npm does not take its header for valid.
+    pub fn skipped_header(&self) -> bool {
+        self.skipped_header
+    }
+
+    pub(crate) fn found_end_marker(&self) -> bool {
+        self.null_blocks == 2
+    }
+
+    fn end_archive(&mut self) -> Result<Step> {
+        if self.pax_is_of_link {
+            return Err(Error::Ambiguous);
+        }
+        self.state = State::Done;
+        Ok(Step::EndOfArchive)
+    }
+
     /// Refuses input that does not start like tar, given its first block if there is that much.
     pub(crate) fn detect(&mut self, start: &[u8]) -> Result<usize> {
         let mut used = 0usize;
@@ -462,6 +502,7 @@ impl Reader {
             return Err(Error::UnrecognizedFormat);
         }
         // `block` stays full, so `Header` takes it from here.
+        self.position = used as u64;
         Ok(used)
     }
 
@@ -488,6 +529,8 @@ impl Reader {
             };
             let start = pos;
             pos = pos.saturating_add(used);
+            self.position = self.position.saturating_add(used as u64);
+            self.body_position = self.body_position.min(self.position);
             let poll = match step {
                 Step::Continue => continue,
                 Step::NeedInput => Poll::NeedInput,
@@ -562,8 +605,7 @@ impl Reader {
                     if self.eof_is_fatal && !self.is_npm() {
                         return Err(Error::EndWithinHeaders);
                     }
-                    self.state = State::Done;
-                    return Ok(Step::EndOfArchive);
+                    return self.end_archive();
                 };
                 self.on_header(&block)?;
                 Ok(Step::Continue)
@@ -804,8 +846,7 @@ impl Reader {
                 if !eof {
                     return Ok(Step::NeedInput);
                 }
-                self.state = State::Done;
-                Ok(Step::EndOfArchive)
+                self.end_archive()
             }
         }
     }
@@ -868,10 +909,14 @@ impl Reader {
     }
 
     fn on_header(&mut self, block: &Block) -> Result<()> {
+        let npm = self.is_npm();
+        if npm && !core::mem::replace(&mut self.found_block, true) && npm::looks_compressed(block) {
+            return Err(Error::UnrecognizedFormat);
+        }
         let in_ignored_body = self.ignored_body_left > 0;
         self.ignored_body_left = self.ignored_body_left.saturating_sub(BLOCK_SIZE as u64);
         if header::is_null(block) {
-            if self.is_npm() {
+            if npm {
                 self.null_blocks = self.null_blocks.saturating_add(1);
                 if self.null_blocks == 2 {
                     if in_ignored_body {
@@ -882,38 +927,53 @@ impl Reader {
             }
             return Ok(());
         }
-        // Not every block that npm passes over starts its count of zero blocks again.
-        let can_skip = core::mem::take(&mut self.null_blocks) == 0 && !self.eof_is_fatal;
-        let npm = self.is_npm();
+        let follows_null_block = core::mem::take(&mut self.null_blocks) != 0;
 
         if !header::checksum_ok(block) {
-            if !can_skip || (npm && !npm::ignores_damaged(block)) {
+            if self.eof_is_fatal || (npm && !npm::ignores_damaged(block)) {
                 return Err(Error::BadChecksum);
             }
+            self.null_blocks_are_disputed |= follows_null_block;
             // Look for a header one block further on, with nothing carried over.
             self.state = State::NextEntry;
             return Ok(());
         }
 
         let size = header::size(block);
+        let typeflag = header::typeflag(block);
         if npm {
             let sized = self.size_fields & size_field::PAX_SIZE != 0;
+            if core::mem::take(&mut self.pax_is_of_link) {
+                let ignored = |h: &Block| !header::checksum_ok(h) && npm::ignores_damaged(h);
+                let body_is_ignored = self.pax_body.as_chunks().0.iter().all(ignored);
+                if sized || !matches!(typeflag, b'1' | b'2') || !body_is_ignored {
+                    return Err(Error::Ambiguous);
+                }
+            }
             match npm::classify(block, !self.entry.path.is_empty()) {
-                _ if in_ignored_body => return Err(Error::Ambiguous),
-                npm::Header::Plain if !sized || npm::takes_extensions(header::typeflag(block)) => {}
+                _ if in_ignored_body || self.null_blocks_are_disputed => {
+                    return Err(Error::Ambiguous);
+                }
+                npm::Header::Plain if !sized || npm::takes_extensions(typeflag) => {}
+                npm::Header::PaxOfLink if !sized && size <= npm::BODY_LIMIT => {
+                    self.pax_is_of_link = true;
+                }
                 // npm applies the extension headers to the next entry, where these only rename it.
                 npm::Header::LinkWithoutTarget
                     if !self.entry.link.is_empty()
                         && !sized
                         && size == 0
+                        && !self.link_may_point_outside
                         && self.entry.path.last() != Some(&b'/') =>
                 {
                     self.fields_are_replaced = true;
                 }
                 npm::Header::Ignored | npm::Header::LinkWithoutTarget
-                    if can_skip && !self.fields_are_replaced =>
+                    if !self.eof_is_fatal && !self.fields_are_replaced =>
                 {
+                    self.null_blocks_are_disputed = follows_null_block;
                     self.ignored_body_left = size.unsigned_abs();
+                    self.skipped_header = true;
                     self.state = State::NextEntry;
                     return Ok(());
                 }
@@ -921,7 +981,7 @@ impl Reader {
             }
         }
 
-        match header::typeflag(block) {
+        match typeflag {
             b'A' if !npm => {
                 if self.mark_seen(seen::SOLARIS_ACL) {
                     return Err(Error::RedundantHeader("A"));
@@ -1008,6 +1068,7 @@ impl Reader {
             return Ok(());
         };
         self.collected.clear();
+        self.body_position = u64::MAX;
         self.state = State::Collect(usize::try_from(size).unwrap_or(0), collect);
         Ok(())
     }
@@ -1027,8 +1088,14 @@ impl Reader {
         self.pax_left = size;
         self.pax_padding = padding_for(size);
         self.pax_body.clear();
+        self.body_position = u64::MAX;
         if self.is_npm() && size <= npm::BODY_LIMIT {
-            self.pax_body_left = usize::try_from(size).unwrap_or(0);
+            let padding = if self.pax_is_of_link {
+                self.pax_padding
+            } else {
+                0
+            };
+            self.pax_body_left = usize::try_from(size.saturating_add(padding)).unwrap_or(0);
         }
         self.begin_pax_line();
         Ok(())
@@ -1052,11 +1119,12 @@ impl Reader {
     }
 
     fn read_pax_like_npm(&mut self) -> Result<()> {
-        let npm::Pax { path, size, .. } = npm::read_pax(&self.pax_body).ok_or(Error::Ambiguous)?;
-        assign(&mut self.pax_path, path.unwrap_or_default())?;
+        let pax = npm::read_pax(&self.pax_body, self.body_position).ok_or(Error::Ambiguous)?;
+        assign(&mut self.pax_path, pax.path.unwrap_or_default())?;
+        self.link_may_point_outside |= pax.link_may_point_outside;
 
         let ours = (self.size_fields & size_field::PAX_SIZE != 0).then_some(self.pax_size);
-        match (size, ours) {
+        match (pax.size, ours) {
             (None, None) => {}
             // npm 10 and older ignore a zero.
             (Some(size), Some(ours)) if size == ours => self.pax_size_is_disputed = size == 0,
@@ -1291,15 +1359,23 @@ impl Reader {
                 match what {
                     Collect::LongName => {
                         let name = slice_to_nul(value);
-                        if self.is_npm() && (name.is_empty() || !npm::ends_at_nul(value)) {
+                        if self.is_npm()
+                            && (name.is_empty()
+                                || !npm::ends_at_nul(value)
+                                || npm::is_cut(value, self.body_position))
+                        {
                             return Err(Error::Ambiguous);
                         }
                         assign(&mut self.entry.path, name)?;
                         self.entry.path_is_utf8 = false;
                     }
-                    Collect::LongLink => assign(&mut self.entry.link, slice_to_nul(value))?,
+                    Collect::LongLink => {
+                        assign(&mut self.entry.link, slice_to_nul(value))?;
+                        self.link_may_point_outside |= npm::may_point_outside(value);
+                    }
                     _ => {
-                        let pax = npm::read_pax(value).filter(|pax| pax.size.is_none());
+                        let pax = npm::read_pax(value, self.body_position)
+                            .filter(|pax| pax.size.is_none() && !pax.link_may_point_outside);
                         self.fields_are_replaced |= pax.ok_or(Error::Ambiguous)?.replaces_numbers;
                     }
                 }
@@ -1478,7 +1554,7 @@ impl Reader {
                 self.entry.path_is_utf8 = false;
                 assign(&mut self.entry.path, slice_to_nul(header::name(h)))?;
             }
-            if !npm {
+            if !npm && header::typeflag(h) == b'S' {
                 if gnu::real_size(h).first() != Some(&0) {
                     self.gnu_sparse_real_size = parse_field(gnu::real_size(h));
                     self.size_fields |= size_field::GNU_SPARSE_REALSIZE;
@@ -1500,7 +1576,7 @@ impl Reader {
                 self.entry.path_is_utf8 = false;
                 let prefix = slice_to_nul(header::prefix(h));
                 assign(&mut self.entry.path, prefix)?;
-                if !prefix.is_empty() && prefix.last() != Some(&b'/') {
+                if !prefix.is_empty() && (npm || prefix.last() != Some(&b'/')) {
                     self.entry.path.write(b"/")?;
                 }
                 self.entry.path.write(slice_to_nul(header::name(h)))?;
@@ -1616,9 +1692,9 @@ impl Reader {
         }
 
         if self.options.mac_metadata
+            && !self.is_npm()
             && self.seen & seen::MAC_METADATA == 0
             && is_mac_metadata_name(&self.entry.path)
-            && !(self.is_npm() && self.entry.path.last() == Some(&b'/'))
         {
             let size = self.bytes_remaining;
             if size > XATTR_LIMIT {
@@ -1696,6 +1772,9 @@ impl Reader {
     }
 
     fn finish_header(&mut self, status: Status) -> Result<()> {
+        if self.bytes_remaining == 0 {
+            self.sparse.clear();
+        }
         let mut end = 0;
         for block in self.sparse.iter().filter(|block| block.remaining != 0) {
             if block.offset < end {
@@ -1703,11 +1782,13 @@ impl Reader {
             }
             end = block.offset.saturating_add(block.remaining);
         }
-        if end > self.disk_size {
-            return Err(Error::MalformedSparseMap);
-        }
         if self.sparse.is_empty() {
             self.add_sparse_block(0, self.bytes_remaining, false)?;
+        }
+        // A file can grow while it is archived.
+        for block in &mut self.sparse {
+            let room = self.disk_size.saturating_sub(block.offset).max(0);
+            block.remaining = block.remaining.min(room);
         }
 
         let plain_file = matches!(self.typeflag, b'0' | 0);
@@ -1728,11 +1809,23 @@ impl Reader {
             self.padding = 0;
         }
 
-        if self.is_npm()
-            && self.entry.filetype() == S::IFREG
-            && !(plain_file || self.typeflag == b'7')
-        {
-            self.entry.set_filetype(0);
+        if self.is_npm() {
+            if self.entry.filetype() == S::IFREG && !(plain_file || self.typeflag == b'7') {
+                self.entry.set_filetype(0);
+            }
+            if core::mem::take(&mut self.link_may_point_outside)
+                && self.entry.filetype() == S::IFREG
+            {
+                return Err(Error::Ambiguous);
+            }
+            if core::str::from_utf8(&self.entry.path).is_err() {
+                let raw = core::mem::take(&mut self.entry.path);
+                for piece in npm::decode(&raw) {
+                    self.entry.path.write(piece.as_bytes())?;
+                }
+            }
+            self.entry.path_is_utf8 = true;
+            self.entry.path_is_final = true;
         }
 
         self.state = State::Emit;

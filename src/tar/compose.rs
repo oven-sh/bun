@@ -3,6 +3,7 @@
 mod tables;
 
 use crate::error::Result;
+use crate::{Entry, npm};
 use tables::{COMBINING_CLASSES, COMPOSING_BLOCKS, COMPOSITIONS};
 
 /// More combining marks than this on one character make the name count as unconvertible.
@@ -256,10 +257,15 @@ pub(crate) fn windows_name(name: &[u8]) -> Result<Option<Vec<u8>>> {
     Ok(Some(out))
 }
 
-/// Appends `name` as Windows sees it. `is_utf8` is [`crate::Entry::path_is_utf8`].
-pub fn to_utf16(name: &[u8], is_utf8: bool, out: &mut Vec<u16>) -> Result<()> {
+/// Appends the path of `entry` as Windows sees it.
+pub fn to_utf16(entry: &Entry, out: &mut Vec<u16>) -> Result<()> {
+    let name = entry.path();
     out.try_reserve(name.len())?;
-    if is_utf8 && !name.is_ascii() {
+    if entry.path_is_final() {
+        out.extend(npm::decode(name).flat_map(str::encode_utf16));
+        return Ok(());
+    }
+    if entry.path_is_utf8() && !name.is_ascii() {
         if let Some(chars) = compose(name)? {
             for c in chars {
                 let c = char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER);

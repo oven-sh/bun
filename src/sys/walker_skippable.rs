@@ -85,6 +85,7 @@ impl Walker {
             // be invalidated by appending to `self.stack` below.
             let top_idx = self.stack.len() - 1;
             let mut dirname_len = self.stack[top_idx].dirname_len;
+            let dir_fd = self.stack[top_idx].iter.dir();
             match self.stack[top_idx].iter.next() {
                 Err(err) => return Err(err),
                 Ok(res) => {
@@ -99,7 +100,6 @@ impl Walker {
                                 base.kind,
                                 sys::EntryKind::Unknown | sys::EntryKind::SymLink
                             ) {
-                            let dir_fd = self.stack[top_idx].iter.dir();
                             match sys::lstatat(dir_fd, base.name.as_zstr()) {
                                 Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode),
                                 Err(_) => continue, // skip entries we can't stat
@@ -116,10 +116,7 @@ impl Walker {
                                 if skip.contains(
                                     // avoid hashing if there will be 0 results
                                     &(if !skip.is_empty() {
-                                        hash_with_seed(
-                                            self.seed,
-                                            slice_as_bytes(base.name.as_slice()),
-                                        )
+                                        hash_with_seed(self.seed, slice_as_bytes(base.name.slice()))
                                     } else {
                                         0
                                     }),
@@ -132,10 +129,7 @@ impl Walker {
                                 if skip.contains(
                                     // avoid hashing if there will be 0 results
                                     &(if !skip.is_empty() {
-                                        hash_with_seed(
-                                            self.seed,
-                                            slice_as_bytes(base.name.as_slice()),
-                                        )
+                                        hash_with_seed(self.seed, slice_as_bytes(base.name.slice()))
                                     } else {
                                         0
                                     }),
@@ -150,10 +144,7 @@ impl Walker {
                                 if skip.contains(
                                     // avoid hashing if there will be 0 results
                                     &(if !skip.is_empty() {
-                                        hash_with_seed(
-                                            self.seed,
-                                            slice_as_bytes(base.name.as_slice()),
-                                        )
+                                        hash_with_seed(self.seed, slice_as_bytes(base.name.slice()))
                                     } else {
                                         0
                                     }),
@@ -170,34 +161,23 @@ impl Walker {
                             self.name_buffer.push(SEP as OSPathChar);
                             dirname_len += 1;
                         }
-                        self.name_buffer.extend_from_slice(base.name.as_slice());
-                        let cur_len = self.name_buffer.len();
-                        self.name_buffer.push(0);
+                        self.name_buffer.extend_from_slice(base.name.slice());
 
-                        let mut top_idx = top_idx;
+                        let mut dir = dir_fd;
                         if kind == sys::EntryKind::Directory {
-                            let new_dir = sys::open_dir_for_iteration_os_path(
-                                self.stack[top_idx].iter.dir(),
-                                base.name.as_slice(),
-                            )?;
-                            {
-                                self.stack.push(StackItem {
-                                    iter: dir_iterator::iterate(new_dir),
-                                    dirname_len: cur_len,
-                                });
-                                top_idx = self.stack.len() - 1;
-                            }
+                            dir = sys::open_dir_for_iteration_os_path(dir_fd, base.name.slice())?;
+                            self.stack.push(StackItem {
+                                iter: dir_iterator::iterate(dir),
+                                dirname_len: self.name_buffer.len(),
+                            });
                         }
-                        // `name_buffer[cur_len] == 0` was written above; both views end at
-                        // `cur_len` and are NUL-terminated by that sentinel char. `from_buf`
-                        // ties the borrow to `&self.name_buffer` (no raw-pointer reslice).
+                        let path_len = self.name_buffer.len();
+                        self.name_buffer.push(0);
+                        let path = OSPathSliceZ::nul_terminate(&mut self.name_buffer, path_len);
                         return Ok(Some(WalkerEntry {
-                            dir: self.stack[top_idx].iter.dir(),
-                            basename: OSPathSliceZ::from_buf(
-                                &self.name_buffer[dirname_len..],
-                                cur_len - dirname_len,
-                            ),
-                            path: OSPathSliceZ::from_buf(&self.name_buffer, cur_len),
+                            dir,
+                            basename: path.substring(dirname_len),
+                            path,
                             kind,
                         }));
                     } else {

@@ -5,15 +5,17 @@
 //!
 //! `#[repr(C)]` so field order/padding match the C definition exactly — this is
 //! read/written directly by C (loop.c walks `head_sockets`/`iterator`,
-//! context.c flips `linked`).
+//! context.cpp flips `linked`).
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
+use bun_core::ZStr;
+
 use crate::{
-    ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, ListenSocket, Loop, SocketKind, SslCtx,
-    us_bun_verify_error_t, us_socket_t,
+    ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, ListenSocket, Loop, OwnedListenSocket, SocketKind,
+    SslCtx, us_bun_verify_error_t, us_socket_t,
 };
 
 #[repr(C)]
@@ -33,7 +35,7 @@ pub struct SocketGroup {
     pub global_tick: Cell<u32>,
     /// Sockets currently parked in `loop.data.low_prio_head` with
     /// `s->group == this`. They are NOT in `head_sockets` while queued, so
-    /// `close_all`/`destroy` must account for them separately.
+    /// `close_all`/`drop` must account for them separately.
     pub low_prio_count: Cell<u16>,
     pub timestamp: Cell<u8>,
     pub long_timestamp: Cell<u8>,
@@ -82,6 +84,13 @@ impl Default for SocketGroup {
     }
 }
 
+impl Drop for SocketGroup {
+    fn drop(&mut self) {
+        // SAFETY: C reads the loop only while the group is linked, which an empty one is not.
+        unsafe { us_socket_group_deinit(self) };
+    }
+}
+
 pub enum ConnectResult {
     Socket(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),
@@ -109,18 +118,11 @@ impl SocketGroup {
         }
     }
 
-    // Not `impl Drop`. SocketGroup is `#[repr(C)]`, embedded
-    // by-value in its owner, and its lifecycle is FFI-managed (C unlinks it
-    // from the loop). PORTING.md's #[repr(C)]-across-FFI exception applies:
-    // expose `unsafe fn destroy(*const Self)` and have the owner call it
-    // explicitly during its own teardown.
-    ///
-    /// # Safety
-    /// `this` must point to a group previously passed to `init`; not called
-    /// concurrently with the loop walking this group.
-    pub unsafe fn destroy(this: *const Self) {
-        // SAFETY: caller upholds the contract above.
-        unsafe { us_socket_group_deinit(this) }
+    /// SAFETY: `self` is empty, and its loop is not dispatching one of its sockets.
+    pub unsafe fn detach_from_loop(&self) {
+        // SAFETY: fn contract.
+        unsafe { us_socket_group_deinit(self) };
+        self.loop_.set(ptr::null_mut());
     }
 
     pub fn close_all(&self) {
@@ -145,12 +147,12 @@ impl SocketGroup {
         &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
-        host: Option<&core::ffi::CStr>,
+        host: Option<&ZStr>,
         port: c_int,
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
-    ) -> *mut ListenSocket {
+    ) -> Option<OwnedListenSocket> {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
             us_socket_group_listen(
@@ -174,7 +176,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
-    ) -> *mut ListenSocket {
+    ) -> Option<OwnedListenSocket> {
         // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
         unsafe {
             us_socket_group_listen_unix(
@@ -199,7 +201,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
-    ) -> *mut ListenSocket {
+    ) -> Option<OwnedListenSocket> {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
             us_socket_group_listen_fd(
@@ -219,13 +221,13 @@ impl SocketGroup {
         &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
-        host: &core::ffi::CStr,
+        host: &ZStr,
         port: c_int,
-        local_binding: Option<(&core::ffi::CStr, u16)>,
+        local_binding: Option<(&ZStr, u16)>,
         options: c_int,
         socket_ext_size: c_int,
     ) -> ConnectResult {
-        // context.c writes 1 here on the synchronous path (DNS already resolved
+        // context.cpp writes 1 here on the synchronous path (DNS already resolved
         // → real `us_socket_t*` returned), 0 when it hands back a
         // `us_connecting_socket_t*` placeholder. Named to match the C side so
         // the branches read the right way round — see PR review #3161005603.
@@ -319,7 +321,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
-    ) -> *mut ListenSocket;
+    ) -> Option<OwnedListenSocket>;
     fn us_socket_group_listen_unix(
         group: *const SocketGroup,
         kind: u8,
@@ -329,7 +331,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
-    ) -> *mut ListenSocket;
+    ) -> Option<OwnedListenSocket>;
     fn us_socket_group_listen_fd(
         group: *const SocketGroup,
         kind: u8,
@@ -339,7 +341,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
-    ) -> *mut ListenSocket;
+    ) -> Option<OwnedListenSocket>;
     /// Returns `us_socket_t*` (fast path) OR `us_connecting_socket_t*` (slow
     /// path), discriminated by `*is_connecting`. The public `connect()` method
     /// turns this into the typed `ConnectResult` enum — call that, not this.

@@ -1,12 +1,4 @@
 //! CSS font properties.
-//
-// The data types (FontWeight / AbsoluteFontWeight / FontSize /
-// AbsoluteFontSize / RelativeFontSize /
-// FontStretch / FontStretchKeyword / FontFamily / GenericFontFamily /
-// FontStyle / FontVariantCaps / LineHeight / Font /
-// FontProperty / FontHandler) are real and referenced
-// by `properties_generated.rs`, `declaration.rs`, and
-// `rules/{font_face,font_palette_values}.rs`.
 
 #![warn(unused_must_use)]
 
@@ -693,9 +685,7 @@ impl<'bump> Font<'bump> {
             None
         };
 
-        let family = input
-            .parse_comma_separated(FontFamily::parse)
-            .map(Vec::<FontFamily>::move_from_list)?;
+        let family = input.parse_comma_separated(FontFamily::parse)?;
 
         Ok(Font {
             family,

@@ -106,7 +106,16 @@ function lazyWebStreamFromOldStyleStream(source: $Node.Stream) {
 
 // `init` with one member replaced. A spread would drop its inherited and non-enumerable members.
 function withMember(init, name: string, value): any {
-  return { __proto__: init, [name]: value };
+  const result = { __proto__: init, [name]: value };
+  // The getters of a Request, or of a class with private fields, throw for any receiver but `init`.
+  for (let object = init; object && object !== Object.prototype; object = Object.getPrototypeOf(object)) {
+    for (const key of Object.getOwnPropertyNames(object)) {
+      if (!ObjectHasOwn(result, key) && Object.getOwnPropertyDescriptor(object, key)!.get) {
+        Object.defineProperty(result, key, { __proto__: null, get: () => init[key] } as PropertyDescriptor);
+      }
+    }
+  }
+  return result;
 }
 
 // An old-style Stream has no Symbol.asyncIterator, which is how native fetch() and Request read a node stream.

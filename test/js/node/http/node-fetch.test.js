@@ -470,6 +470,22 @@ describe("node-fetch keeps the members of an init whose body or tls it replaces"
         return init;
       },
     ],
+    [
+      "getters of private fields",
+      extra =>
+        Object.assign(
+          new (class {
+            #members = members;
+            get method() {
+              return this.#members.method;
+            }
+            get headers() {
+              return this.#members.headers;
+            }
+          })(),
+          extra,
+        ),
+    ],
   ];
   const echo = () =>
     Bun.serve({
@@ -492,6 +508,14 @@ describe("node-fetch keeps the members of an init whose body or tls it replaces"
     using server = echo();
     const agent = new https.Agent({ rejectUnauthorized: false });
     const init = shape({ agent, body: "hello" });
+    expect(await (await fetch2(server.url, init)).json()).toEqual(["PUT", "init", "hello"]);
+    agent.destroy();
+  });
+
+  test("a Request with an agent that has TLS options", async () => {
+    using server = echo();
+    const agent = new https.Agent({ rejectUnauthorized: false });
+    const init = Object.assign(new Request(server.url, { ...members, body: "hello" }), { agent });
     expect(await (await fetch2(server.url, init)).json()).toEqual(["PUT", "init", "hello"]);
     agent.destroy();
   });

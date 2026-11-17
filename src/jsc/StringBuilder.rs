@@ -76,7 +76,7 @@ impl Drop for StringBuilder {
 // inline `WTF::StringBuilder` storage. The shims that take only that handle
 // plus by-value scalars/`bun.String` are declared `safe fn` — the validity
 // proof is in the type signature. `__init` keeps a raw `*mut c_void` (writes
-// into a `MaybeUninit`); `__appendLatin1`/`__appendUtf16` keep `unsafe fn`
+// into a `MaybeUninit`); `__appendLatin1` keeps `unsafe fn`
 // because the C++ side dereferences the `(ptr, len)` slice.
 unsafe extern "C" {
     fn StringBuilder__init(this: *mut c_void);

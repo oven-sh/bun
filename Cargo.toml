@@ -84,7 +84,7 @@ members = [
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
-  "src/libdeflate_sys",
+  "src/deflate",
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
@@ -462,7 +462,7 @@ bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
-bun_libdeflate_sys = { path = "src/libdeflate_sys" }
+bun_deflate = { path = "src/deflate" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
@@ -532,6 +532,10 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.bun_webp]
+opt-level = 3
+
+# Loops over every byte that is compressed or decompressed.
+[profile.dev.package.bun_deflate]
 opt-level = 3
 
 # Runs for every line of a response head and every chunk of a body.

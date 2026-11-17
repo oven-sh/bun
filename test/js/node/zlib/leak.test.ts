@@ -28,28 +28,61 @@ const cases = [
 // codec state is 320 KB or more, and one input or output is 50,000 bytes. The
 // bound is a fifth of that buffer.
 const maxResidentBytesPerCall = 10_000;
-// A smaller leak is a leak of JS objects, and the JS heap is exact. A run with
-// no leak measures 2 bytes for each call at most. One retained closure
-// measures 25, and one retained stream 17,000.
+// A smaller leak is a leak of JS objects, and the JS heap counts them to the
+// byte. A run with no leak measures 0 bytes for each call at most. One retained
+// closure measures 32, and one retained stream 117,000 with its buffers.
 const maxHeapBytesPerCall = 256;
+// The level of the JS heap can still move, by what one call leaves behind:
+// 50,000 bytes of input, 66,400 of output chunks, and the stream. The GC scans
+// the stack conservatively, and the frame of VM::drainMicrotasks() can hold a
+// stale word that points into the `process.nextTick` args of a call that is
+// over. From then on it can stay that way for the rest of the run.
+const oneCallGarbage = 120_000;
 // ASAN builds are slower, so they make fewer calls. They can: mimalloc needs
 // about 400 zstd calls to settle, and an ASAN build does not use mimalloc.
 const callsPerRound = isASAN ? (isDebug ? 15 : 25) : 50;
 const rounds = 20;
 const warmupRounds = 2;
+const measuredCalls = (rounds - warmupRounds - 1) * callsPerRound;
 
 // `samples` has one value for each round, taken after the full GC that ends
-// it. The growth for each round is the median slope over every pair of samples
-// (Theil-Sen). A few stray samples cannot move it, and they do happen: with no
-// leak, a sample of the resident memory can sit 0.5 MB above the ones around it.
-function growthPerCall(samples: number[]): number {
+// it. Each estimate below is a median, in bytes for each call.
+function median(values: number[]): number {
+  return values.sort((a, b) => a - b)[values.length >> 1];
+}
+
+function measuredSamples(samples: number[]): number[] {
   expect(samples).toHaveLength(rounds);
-  const measured = samples.slice(warmupRounds);
+  return samples.slice(warmupRounds);
+}
+
+// The median slope over every pair of samples (Theil-Sen). A few stray samples
+// cannot move it, and they do happen: with no leak, a sample of the resident
+// memory can sit 0.5 MB above the ones around it. One step in the level does
+// move it: in 17 rounds of 25 calls, a step of 117 KB is up to 340 bytes for
+// each call.
+function medianSlopePerCall(samples: number[]): number {
+  const measured = measuredSamples(samples);
   const slopes: number[] = [];
   for (let i = 0; i < measured.length; i++) {
     for (let j = i + 1; j < measured.length; j++) slopes.push((measured[j] - measured[i]) / (j - i));
   }
-  return slopes.sort((a, b) => a - b)[slopes.length >> 1] / callsPerRound;
+  return median(slopes) / callsPerRound;
+}
+
+// The median of what one round adds, over the samples that are one and two
+// rounds apart. A call that leaks adds to every round, and a step in the level
+// adds to three of these 33 differences. A level that goes up and down cannot
+// move it either, even every round: of three samples in a row on two levels,
+// two are equal, so a third of the differences are 0. A leak that only a few
+// rounds show does not move it.
+function medianRoundPerCall(samples: number[]): number {
+  const measured = measuredSamples(samples);
+  const growth: number[] = [];
+  for (const apart of [1, 2]) {
+    for (let i = apart; i < measured.length; i++) growth.push((measured[i] - measured[i - apart]) / apart);
+  }
+  return median(growth) / callsPerRound;
 }
 
 describe("zlib compression does not leak memory", () => {
@@ -86,8 +119,14 @@ describe("zlib compression does not leak memory", () => {
         mismatches: 0,
         roundTrip: true,
       });
-      expect(growthPerCall(heap)).toBeLessThan(maxHeapBytesPerCall);
-      expect(growthPerCall(resident)).toBeLessThan(maxResidentBytesPerCall);
+      // The heap has two checks. Each round is exact for a leak on every call.
+      // The whole run also sees a leak that only a few rounds show, and it has
+      // one step of slack.
+      expect(medianRoundPerCall(heap), `heap samples: ${heap}`).toBeLessThan(maxHeapBytesPerCall);
+      expect(medianSlopePerCall(heap), `heap samples: ${heap}`).toBeLessThan(
+        maxHeapBytesPerCall + oneCallGarbage / measuredCalls,
+      );
+      expect(medianSlopePerCall(resident), `resident samples: ${resident}`).toBeLessThan(maxResidentBytesPerCall);
       expect(exitCode).toBe(0);
     },
     // Only a debug build needs more than the default: its slowest method takes

@@ -894,3 +894,63 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
     "/main.ts": [O_CLOEXEC],
   });
 });
+
+/** Linux only. The masks of the inotify watches that the process has on files, once it has one. */
+async function fileWatchMasks(pid: number): Promise<number[]> {
+  const IN_CREATE = 0x100;
+  for (;;) {
+    const masks = openFds(pid).flatMap(({ fd }) => {
+      try {
+        const fdinfo = readFileSync(`/proc/${pid}/fdinfo/${fd}`, "utf8");
+        return [...fdinfo.matchAll(/^inotify .*\bmask:([0-9a-f]+)/gm)].map(match => parseInt(match[1], 16));
+      } catch {
+        return [];
+      }
+    });
+    // A watch on a directory asks for the files that are created in it.
+    const onFiles = masks.filter(mask => (mask & IN_CREATE) === 0);
+    if (onFiles.length > 0) return onFiles;
+    await Bun.sleep(10);
+  }
+}
+
+// A restart takes longer than most saves, so only the modes that reload in the same process wait for a writer's close.
+it.skipIf(!isLinux).each([
+  ["bun --hot", true, ["--hot", "--no-clear-screen", "main.ts"]],
+  ["bun --watch", false, ["--watch", "--no-clear-screen", "main.ts"]],
+  ["bun test --watch", false, ["test", "--watch", "main.test.ts"]],
+  ["bun build --watch", false, ["build", "--watch", "main.ts", "--outdir", "out"]],
+  ["bun --aot --watch", false, ["--aot", "--watch", "--no-clear-screen", "main.ts"]],
+  ["the dev server", true, ["server.ts"]],
+])("%s asks inotify for the close of a written file: %p", async (_, asksForClose, args) => {
+  using dir = tempDir("watch-close-mask", {
+    ...watchCloexecFiles,
+    "main.test.ts": `import { test } from "bun:test";\nimport "./dep";\ntest("passes", () => {});\n`,
+    "index.html": `<script type="module" src="./dep.ts"></script>`,
+    "server.ts": `
+      import html from "./index.html";
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      console.log("started", server.url.href);
+    `,
+  });
+  watchee = spawn({
+    cwd: realpathSync(String(dir)),
+    cmd: [bunExe(), ...args],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  if (args[0] === "server.ts") {
+    const out = stdoutWaiter(watchee);
+    await out.waitFor("started http");
+    const url = /started (\S+)/.exec(out.output())![1];
+    out.release();
+    // The dev server watches a file when it bundles it.
+    const src = /src="([^"]+)"/.exec(await (await fetch(url)).text())![1];
+    await (await fetch(new URL(src, url))).text();
+  }
+  const IN_CLOSE_WRITE = 0x8;
+  const masks = await fileWatchMasks(watchee.pid);
+  expect(masks.map(mask => (mask & IN_CLOSE_WRITE) !== 0)).toEqual(masks.map(() => asksForClose));
+});

@@ -375,6 +375,12 @@ impl bun_watcher::WatcherContext for HotReloader {
         }
     }
 
+    // A restart takes about 20 ms, longer than most saves, and forgets which files report no close.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn waits_for_close(&self) -> bool {
+        !self.reload_immediately
+    }
+
     fn on_file_update(
         &mut self,
         events: &[bun_watcher::WatchEvent],

@@ -673,14 +673,20 @@ impl<'s> Server<'s> {
                 return worker.run(None, job);
             }
         };
-        session::with_session(&options, environment, &js_plugins, |session| {
-            if let Some(refusal) = session.refusal() {
-                self.show_error(Half::Lint, &refusal);
-                return worker.run(None, job);
-            }
-            let jobs = || worker.run(Some(session), job);
-            self.with_typed_thread(root, session, generation, hand_over, jobs)
-        })
+        session::with_session(
+            &options,
+            environment,
+            &js_plugins,
+            root.is_folder,
+            |session| {
+                if let Some(refusal) = session.refusal() {
+                    self.show_error(Half::Lint, &refusal);
+                    return worker.run(None, job);
+                }
+                let jobs = || worker.run(Some(session), job);
+                self.with_typed_thread(root, session, generation, hand_over, jobs)
+            },
+        )
     }
 
     /// Calls `then`, the work of the thread of `root` with `session`, while a second thread lints with types what it

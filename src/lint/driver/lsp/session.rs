@@ -48,14 +48,17 @@ pub(crate) struct Session<'s> {
     /// With `--infer-globals`, the globals of the programs of the texts linted so far. A program's libraries and types
     /// are loaded once per session, not once per lint.
     inferred: Option<&'s Inferred<'s>>,
+    /// Whether a rule can list the files below `environment.cwd`. Not where that is the root of the drive.
+    lists_files: bool,
 }
 
 /// Calls `then` with a session for `environment.cwd`. `js_plugins` is the host of `environment.js_engine`, which
-/// outlives the session: the realms keep what it has told them.
+/// outlives the session: the realms keep what it has told them. `lists_files`: see [`Session::lists_files`].
 pub(crate) fn with_session<R>(
     options: &Options,
     environment: &Environment,
     js_plugins: &Host,
+    lists_files: bool,
     then: impl FnOnce(&Session) -> R,
 ) -> R {
     // The thread of a root is a plain one: the stack bounds of the recursion guard are set here.
@@ -92,6 +95,7 @@ pub(crate) fn with_session<R>(
         sinks: &sinks,
         formatter: &formatter,
         inferred: inferred.as_ref(),
+        lists_files,
     })
 }
 
@@ -205,10 +209,12 @@ impl Session<'_> {
         // What the other files export is read anew: they change too.
         let store = store_for(&environment.cwd, is_native, options);
         let modules = bun_lint_graph::Graph::new(&store);
-        modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
-            let of_the_run = (linter, environment, js_plugins);
-            discover::list_as_eslint_8(of_the_run, pool, patterns, extensions)
-        }));
+        if self.lists_files {
+            modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
+                let of_the_run = (linter, environment, js_plugins);
+                discover::list_as_eslint_8(of_the_run, pool, patterns, extensions)
+            }));
+        }
         // Every name that is ever typed would stay in one that is kept.
         let names = [bun_sema::session::Session::new()];
         let atoms = bun_sema::atom::InternerPerThread::new_in(&names);

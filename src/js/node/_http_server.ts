@@ -654,6 +654,13 @@ Server.prototype.closeAllConnections = function () {
       destroyNow(socket);
     }
   }
+  const handedOff = this[kHandedOffSockets];
+  if (handedOff) {
+    for (const socket of handedOff) {
+      // ws.handleUpgrade() took it in a 'request' listener, so its request is still in flight.
+      if (socket[kHandle] === undefined && socket._httpMessage?.[kHandle]) socket.destroy();
+    }
+  }
 };
 
 // net.Socket's _destroy() calls this after it queued the socket's own 'close', so the immediate set here runs behind that. The one that stop()'s promise sets can run ahead: an idle connection that its peer or closeIdleConnections() closes emits 'close' after the server, as in Node.
@@ -1639,8 +1646,9 @@ Server.prototype[kLeaveHttp] = function (socket, req) {
   if (!http.leaveHttp(false)) return;
   leftHttp(socket);
   socket[kUpgradeStream] = undefined;
-  res?.detachSocket(socket);
-  if (socket[kConnectionState] !== undefined) socket.once("close", abortWaitingResponses.bind(undefined, socket));
+  // The response of a 'request' listener keeps the socket and closes with it, as in Node.
+  if (res != null) socket.prependListener("close", nativeSocketOnClose);
+  else if (socket[kConnectionState] !== undefined) socket.once("close", abortWaitingResponses.bind(undefined, socket));
   // A reader that waits for the rest of the body gets 'end', like in Node 25 and older.
   if (!req.complete) onDataIncomingMessage.$call(req, undefined, true, NodeHTTPResponseAbortEvent.none);
 };

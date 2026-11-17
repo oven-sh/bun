@@ -606,7 +606,7 @@ describe.each(["a stream slot", "the socket"])("a request that waits for %s", wa
     ["destroy()", req => req.destroy()],
     ["destroy(err)", req => req.destroy(new Error("mine"))],
     ["session.destroy()", (_, client) => client.destroy()],
-  ])("calls back its writes after %s", async (_, end) => {
+  ])("calls back its writes after %s", async (name, end) => {
     const full = http2.createServer({ settings: { maxConcurrentStreams: 0 } });
     await once(full.listen(0, "127.0.0.1"), "listening");
     const client = http2.connect(`http://127.0.0.1:${(full.address() as net.AddressInfo).port}`);
@@ -614,16 +614,18 @@ describe.each(["a stream slot", "the socket"])("a request that waits for %s", wa
       if (waitsFor === "a stream slot") await once(client, "remoteSettings");
       const req = client.request({ ":method": "POST" }).on("error", () => {});
       const called: string[] = [];
-      req.write("a", () => called.push("first"));
+      req.write("a", err => called.push("first " + !!err));
       // The request is corked until then.
       await new Promise(process.nextTick);
-      req.write("b", () => called.push("second"));
+      req.write("b", err => called.push("second " + !!err));
       req.end(() => called.push("end"));
       expect(req.pending).toBe(true);
       const closed = new Promise(resolve => req.on("close", resolve));
       end(req, client);
       await closed;
-      expect(called).toEqual(["first", "second", "end"]);
+      // That one is submitted and then reset.
+      const failed = !(waitsFor === "the socket" && name === "close(code)");
+      expect(called).toEqual(["first " + failed, "second " + failed, "end"]);
     } finally {
       client.destroy();
       full.close();
@@ -2352,6 +2354,26 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     );
     await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
     expect(ids).toEqual(expected);
+  });
+
+  test("a session doesn't keep pushes that ended unread for their 'close' listeners", async () => {
+    using ctx = await openRequest();
+    const { raw, client } = ctx;
+    const refs: WeakRef<object>[] = [];
+    client.on("stream", pushed => void refs.push(new WeakRef(pushed.on("close", () => {}))));
+    raw.socket!.write(
+      Buffer.concat([
+        ...Array.from({ length: 150 }, (_, i) => 2 * i + 2).flatMap(id => [
+          pushPromise(id),
+          encodeFrame(FrameType.HEADERS, 0x4, id, STATUS_200),
+          encodeFrame(FrameType.DATA, 0x1, id, Buffer.from("unread")),
+        ]),
+        encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+      ]),
+    );
+    await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+    expect(refs.length).toBe(150);
+    expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
   });
 
   test.each([

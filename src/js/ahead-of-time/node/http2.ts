@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 1ea07fe5cca5be4806c2a929bdd18888e60b3f100fb70206f8fc5b8ef31b900a.
+// Written against that file with the SHA-256 cd00d2bda6d97e7fcb94cfd38b6706ed1322b67c9f0c7a784c1028cfe129eba7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -3004,7 +3004,8 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
   }
 
   _writev(data, callback: $Node.ErrorCallback) {
-    if (this.pending && !this.destroyed) {
+    if (this.pending) {
+      if (this.destroyed) return callback($ERR_STREAM_DESTROYED("write"));
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
       this[kPendingWrite] = this._writev.bind(this, data, callback);
       this.once("ready", runPendingWrite);
@@ -3076,7 +3077,8 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
     }
   }
   _write(chunk, encoding, callback: $Node.ErrorCallback) {
-    if (this.pending && !this.destroyed) {
+    if (this.pending) {
+      if (this.destroyed) return callback($ERR_STREAM_DESTROYED("write"));
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
       this[kPendingWrite] = this._write.bind(this, chunk, encoding, callback);
       this.once("ready", runPendingWrite);
@@ -5157,8 +5159,8 @@ function destroyClosedStream(session: Http2Session, stream: Http2Stream) {
     if (!stream.readableFlowing || stream.readableLength > 0) {
       stream[bunHTTP2StreamStatus] |= StreamState.AwaitsReader;
       session[bunHTTP2Native]?.releaseStream(stream.id, true);
-      // Not on a server, where the peer could make a session keep any number of them.
-      if (stream instanceof ClientHttp2Stream) {
+      // Only for requests of this side's, or the peer could make a session keep any number of them.
+      if (stream instanceof ClientHttp2Stream && !stream[kPush]) {
         const own = (stream[bunHTTP2StreamStatus] & StreamState.HasSignal) !== 0 ? 1 : 0;
         if (stream.listenerCount("close") > own) keepUntilClose.$call(stream, "close");
         else stream.on("newListener", keepUntilClose);

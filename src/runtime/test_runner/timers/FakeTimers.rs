@@ -574,8 +574,9 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
 /// Called from a host function.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__FakeTimers__replacedPerformanceNow() -> f64 {
+    let scope = ();
     // SAFETY: fn contract.
-    let this = &timer_all(unsafe { Vm::assume(&()) }.bun_vm()).fake_timers;
+    let this = &timer_all(unsafe { Vm::assume(&scope) }.bun_vm()).fake_timers;
     if !this.faked.get().contains(Api::PerformanceObject) {
         return f64::NAN;
     }

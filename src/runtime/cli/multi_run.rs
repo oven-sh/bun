@@ -271,7 +271,7 @@ impl<'a> ProcessHandle<'a> {
         // Not a borrow of the slot, which the exit handler borrows again.
         let process = self.process.as_ref().unwrap().process.this_ptr();
         // SAFETY: a command gets here from `main`, on its thread.
-        let process = unsafe { Loop::assume(&()) }.on(process);
+        let process = unsafe { Loop::assume(&self_ptr) }.on(process);
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
         process.set_exit_handler(unsafe {

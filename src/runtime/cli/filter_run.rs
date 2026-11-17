@@ -225,7 +225,7 @@ impl<'a> ProcessHandle<'a> {
         // Not a borrow of the slot, which the exit handler borrows again.
         let process = handle.process.as_ref().unwrap().process.this_ptr();
         // SAFETY: a command gets here from `main`, on its thread.
-        let process = unsafe { Loop::assume(&()) }.on(process);
+        let process = unsafe { Loop::assume(&handle_ptr) }.on(process);
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {

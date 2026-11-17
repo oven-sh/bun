@@ -398,8 +398,9 @@ impl Timeout {
 
 impl Drop for Timeout {
     fn drop(&mut self) {
+        let scope = ();
         // SAFETY: its signal frees it on the JS thread, and teardown discards what is left in step B.
-        let vm = unsafe { Vm::assume(&()) }.bun_vm();
+        let vm = unsafe { Vm::assume(&scope) }.bun_vm();
         // Not through the signal: its context may be a dead global under --isolate.
         if let Some(context) = vm.timer_context(self.context) {
             context.untrack_timer(core::ptr::from_mut(self).cast());

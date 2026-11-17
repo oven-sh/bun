@@ -460,9 +460,10 @@ impl Drop for DevServer {
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
+        let scope = ();
         // SAFETY: only a `ServerHandler` uses it. That counts as a pending request, and the server is drained,
         // or has failed to listen, when it drops this.
-        let js = unsafe { Js::assume(&()) };
+        let js = unsafe { Js::assume(&scope) };
 
         if let Some(current_bundle) = &mut self.current_bundle {
             debug_assert!(false); // impossible to de-initialize this state correctly.

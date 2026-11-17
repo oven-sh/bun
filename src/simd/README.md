@@ -201,7 +201,7 @@ Before Ice Lake, a core can lower its clock for about 0.7 ms after any 512-bit i
 
 A Cascade Lake core does the same once 46 multiplications of 256 bits fall into about 64 cycles, and each change of the clock stalls it for about 10 µs. A tight loop does not show that, so also time a kernel with many multiplications after a pause of 1 ms.
 
-With AVX-512, a slice that is shorter than a vector takes one masked access. That can fetch a cache line that the slice does not reach, and waits for stores to its neighbors. A branch on the length costs more, because lengths are hard to predict.
+With AVX-512, a slice that is shorter than a vector takes one masked access. That can fetch a cache line that the slice does not reach, and waits for stores to its neighbors. A load right after a masked store to the same bytes takes about 5 ns longer. A branch on the length costs more, because lengths are hard to predict.
 
 ## Why it is safe
 

@@ -2267,8 +2267,7 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
     Err(ParseError::ShowUsage)
 }
 
-/// `flag` starts with `-`. An illegal `--long` flag is named by its word, and an illegal byte of a
-/// `-abc` cluster by that byte.
+/// `flag` starts with `-`.
 fn parse_one_flag<'a, O: FlagParser>(opts: &mut O, flag: &'a [u8]) -> Result<(), ParseError<'a>> {
     if flag.len() == 1 {
         return Err(ParseError::IllegalOption(b"-"));

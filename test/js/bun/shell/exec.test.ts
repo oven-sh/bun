@@ -42,8 +42,7 @@ describe("bun exec", () => {
     )
     .runAsTest("write a lot of data");
 
-  // A builtin names the option that it rejects. In a group of short options that is one byte, as in getopt(3). An
-  // unknown `--word` is named by its word in touch, mkdir, cat and cp, and by its second `-` in ls, mv and rm.
+  // Like getopt(3), a builtin names the one byte that it rejects. touch, mkdir, cat and cp name a whole `--word`.
   describe("an illegal option is named", () => {
     const illegal = (builtin: string, option: string) => `${builtin}: illegal option -- ${option}\n`;
     const unsupported = (builtin: string, option: string) =>

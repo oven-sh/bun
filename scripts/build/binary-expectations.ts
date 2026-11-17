@@ -23,7 +23,7 @@ import {
   replacedLibcAllocationSymbols,
   replacedOperatorNewSymbols,
 } from "./deps/mimalloc.ts";
-import { definesLibcFunctions, libcFunctionsScriptPath, versionScriptPath } from "./flags.ts";
+import { definesLibcFunctions, libcFunctionsScriptPath, rustLtoInLink, versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
 
@@ -411,7 +411,7 @@ function testOnlySymbols(cfg: Config): string[] | undefined {
  * let LTO inline it: rustCpuTargetFlags() in rust.ts.
  */
 function inlinedSymbols(cfg: Config): string[] {
-  return cfg.lto && linksWithLld(cfg) && !cfg.hardened ? ["*highway_brotli_short_codes"] : [];
+  return cfg.lto && rustLtoInLink(cfg) && linksWithLld(cfg) && !cfg.hardened ? ["*highway_brotli_short_codes"] : [];
 }
 
 /**

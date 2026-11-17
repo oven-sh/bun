@@ -2001,7 +2001,7 @@ export const fileOverrides: FileOverride[] = [
     // For -mcpu=apple-m1, clang lists `ccidx` on each function, and rustc does not. For all C++ at once, it would be
     // -Wl,-mllvm,-mattr=+ccidx in the link, which makes the executable 2 MB larger.
     extraFlags: ["-Xclang", "-target-feature", "-Xclang", "-ccidx"],
-    when: c => c.darwin && c.arm64 && c.lto,
+    when: c => c.darwin && c.arm64 && c.lto && rustLtoInLink(c),
     desc: "LTO inlines a function only into one that has all of its CPU features, and these are called from Rust loops.",
   },
   {

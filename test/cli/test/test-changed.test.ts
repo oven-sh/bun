@@ -796,7 +796,7 @@ describe.concurrent("bun test --changed, a component", () => {
     });
   });
 
-  // The scan has one row for each file. An import of a code file as text must not hide what that file imports.
+  // An import of a code file as text must not hide what that file imports.
   test("a script that imports a code file as text", async () => {
     const files = {
       "package.json": JSON.stringify({ name: "as-text", type: "module" }),

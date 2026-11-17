@@ -800,6 +800,16 @@ impl SourceHandle {
         }
     }
 
+    /// A rewrite whose input is over: it holds no upstream, and its end makes a used body readable again.
+    pub(crate) fn has_all_input(&self) -> bool {
+        match *self {
+            SourceHandle::HTMLRewriter(p) => {
+                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.has_all_input() })
+            }
+            _ => false,
+        }
+    }
+
     fn close_js_controller(global: &JSGlobalObject, cpp: JSValue, reason: JSValue) {
         crate::dispatch::fold(ReadableSinkController::on_close(cpp, global, reason));
     }

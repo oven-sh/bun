@@ -884,6 +884,10 @@ impl RewriterPipe {
         }
     }
 
+    pub(crate) fn has_all_input(&self) -> bool {
+        self.input_end.get() == InputEnd::Ended
+    }
+
     pub fn cancel_from_output(&self, _err: Option<SysError>) {
         let _pin = self.pin();
         self.stop();

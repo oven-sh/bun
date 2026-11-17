@@ -595,7 +595,9 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         }
         let mut body = core::mem::replace(response.get_body_value(), Body::Value::Used);
         // A pending body that was never read has no stream to cancel, only its producer.
-        if let Body::Value::Locked(locked) = &mut body {
+        if let Body::Value::Locked(locked) = &mut body
+            && !locked.producer.has_all_input()
+        {
             locked.producer.cancel(JSValue::UNDEFINED);
         }
     }

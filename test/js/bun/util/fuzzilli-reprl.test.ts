@@ -51,7 +51,7 @@ const errorLines = (stderr: string) =>
 
 async function runReprl(
   programs: string[],
-  options: { env?: Record<string, string>; files?: Record<string, string> } = {},
+  options: { env?: Record<string, string | undefined>; files?: Record<string, string> } = {},
 ) {
   const sources = programs.map(p => Buffer.from(p, "utf8"));
   const control = [Buffer.from("HELO")];
@@ -102,6 +102,13 @@ const next = (name: string) =>
   `setTimeout(() => console.log("the event loop was alive"), 1).unref(); console.log("${name}");`;
 
 const RECYCLED = "[REPRL] work of the program outlived the reset: this child ends";
+
+// Under the leak check of CI (scripts/runner.node.ts), a bun process destroys its VM when it exits,
+// and that waits for every job on the thread pool. This is for a child that leaves a job that never ends.
+const withoutLeakCheck = {
+  BUN_DESTRUCT_VM_ON_EXIT: undefined,
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+};
 
 describe.skipIf(!enabled)("bun fuzzilli", () => {
   test.concurrent("every program runs on a fresh global object", async () => {
@@ -382,10 +389,13 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
     test.concurrent("ends the child, whose exit code is the status", async () => {
       // The job stays on a thread of the pool until the process ends. libreprl takes the exit
       // code of a child that leaves in place of a status as that status, and starts a new child.
-      const result = await runReprl([
-        `require("crypto").pbkdf2("a", "b", 2e9, 64, "sha512", () => {}); console.log("the job runs");${suffix}`,
-        `console.log("next program");`,
-      ]);
+      const result = await runReprl(
+        [
+          `require("crypto").pbkdf2("a", "b", 2e9, 64, "sha512", () => {}); console.log("the job runs");${suffix}`,
+          `console.log("next program");`,
+        ],
+        { env: withoutLeakCheck },
+      );
 
       expect(result).toEqual({
         handshake: "HELO",

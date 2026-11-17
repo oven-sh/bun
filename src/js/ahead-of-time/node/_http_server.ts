@@ -4339,7 +4339,9 @@ const emitResponseFinish = function emitResponseFinish(this: $Node.ServerRespons
   }
   // The stream destroyer nulls req.socket (pipeline, compose). The response's own socket still is the connection then.
   const detachedFrom = this[kDetachedFrom] ?? null;
-  const socket: $Node.HttpServerSocket | null | undefined = (detachedFrom ?? this.req?.socket ?? this.socket) as any;
+  let socket: $Node.HttpServerSocket | null | undefined = (detachedFrom ?? this.req?.socket ?? this.socket) as any;
+  // So it is when middleware put a stand-in in req.socket.
+  if (socket != null && !Object.hasOwn(socket, kHandedOff)) socket = this[kSocket] as any;
   // Node's clearIncoming: a request that ended before its response did, or that gets no EOF. Any other one is cleared at its EOF.
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req && (req.readableEnded || req.destroyed)) parser.incoming = null;

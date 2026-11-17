@@ -3059,7 +3059,9 @@ function emitResponseFinish() {
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
   const detachedFrom = this[kDetachedFrom];
-  const socket = detachedFrom ?? this.req?.socket ?? this.socket;
+  let socket = detachedFrom ?? this.req?.socket ?? this.socket;
+  // So it does when middleware put a stand-in in req.socket.
+  if (socket != null && !Object.hasOwn(socket, kHandedOff)) socket = this[kSocket];
   // Node's clearIncoming: a request that ended before its response did, or that gets no EOF. Any other one is cleared at its EOF.
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req && (req.readableEnded || req.destroyed)) parser.incoming = null;

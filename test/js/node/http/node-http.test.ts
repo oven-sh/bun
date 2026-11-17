@@ -10017,6 +10017,36 @@ it.each([
   }
 });
 
+describe.each<[string, (req: any) => void]>([
+  ["req.socket with a plain object", req => (req.socket = { remoteAddress: "192.0.2.1" })],
+  ["req.socket with an object that inherits from it", req => (req.socket = Object.create(req.socket))],
+  ["req.connection with a plain object", req => (req.connection = { encrypted: true })],
+])("a listener replaces %s", (_, replace) => {
+  it.each([
+    ["ServerResponse", ServerResponse],
+    ["a subclass", class extends ServerResponse {}],
+  ])("the connection serves the next requests and closes behind the last one: %s", async (_, ServerResponse) => {
+    const finished: string[] = [];
+    const server = http.createServer({ ServerResponse }, (req, res) => {
+      replace(req);
+      res.on("finish", () => finished.push(req.url!));
+      setImmediate(() => res.end(`[${req.url}]`));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.write("GET /1 HTTP/1.1\r\nHost: x\r\n\r\n");
+      await once(client, "readable");
+      client.write("GET /2 HTTP/1.1\r\nHost: x\r\n\r\nGET /3 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      expect((await text(client)).match(/\[.*?\]/g)).toEqual(["[/1]", "[/2]", "[/3]"]);
+      expect(finished).toEqual(["/1", "/2", "/3"]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
 it("end() sends 200 after statusCode is deleted", async () => {
   const server = http.createServer((req, res) => {
     // @ts-expect-error

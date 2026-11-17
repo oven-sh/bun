@@ -1204,12 +1204,16 @@ impl Round<'_> {
     }
 }
 
-/// Runs the parts whose names start with `only`.
+/// Runs the parts whose names start with `only`, or are in the range if it is like `j..m`.
 #[optimize(size)]
 pub(crate) fn run(rounds: u64, only: &[u8], traced: Vec<u8>) -> bool {
     let (rooms, digests) = (&mut [(); 6].map(|()| Room::new()), &mut Digests::default());
     let scratch = &mut *Box::default();
     digests.traced = traced;
+    let is_chosen = |name: &[u8]| match strings::split_once(only, b"..") {
+        Some((from, to)) => (from..to).contains(&name),
+        None => name.starts_with(only),
+    };
     for number in 0..rounds {
         let mut random = Random(hash(&[number]) | 1);
         let (short, inside) = ((number / 3 % SHORT_LENGTHS) as usize, random.below(8192));
@@ -1274,10 +1278,7 @@ pub(crate) fn run(rounds: u64, only: &[u8], traced: Vec<u8>) -> bool {
             ("resize_rows", Round::resize_rows),
             ("jpeg_many_colors", Round::jpeg_many_colors),
         ];
-        for (name, part) in parts
-            .into_iter()
-            .filter(|it| it.0.as_bytes().starts_with(only))
-        {
+        for (name, part) in parts.into_iter().filter(|it| is_chosen(it.0.as_bytes())) {
             round.random = Random(hash(&[number, hash(name.as_bytes())]) | 1);
             round.digests.part = name;
             part(&mut round);
@@ -1308,7 +1309,7 @@ pub(crate) fn run(rounds: u64, only: &[u8], traced: Vec<u8>) -> bool {
             is_ok = false;
         }
     }
-    recorded.retain(|it| it[start.len()..].starts_with(only));
+    recorded.retain(|it| is_chosen(&it[start.len()..]));
     for ([part, kernel], digest) in &digests.all {
         let line = format!("{start}{part} {kernel} {digest:016x}");
         match recorded.iter().position(|&it| it == line.as_bytes()) {

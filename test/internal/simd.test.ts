@@ -6,10 +6,12 @@ import { join, resolve } from "node:path";
 // The runner is `src/simd/conformance`. It is only compiled into debug and canary builds.
 const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
-async function run(target: string | undefined, args: string[], build = bunExe(), cwd?: string) {
+async function run(target: string | undefined, args: string[], build = bunExe(), files = {}) {
+  // A build without the runner would run the tests in its working directory.
+  using dir = tempDir("simd", files);
   await using proc = Bun.spawn({
     cmd: [build, "test", "--run-simd-tests", ...args],
-    cwd,
+    cwd: String(dir),
     env: { ...bunEnv, BUN_SIMD_TARGET: target },
     stdout: "pipe",
     stderr: "inherit",
@@ -52,11 +54,13 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
   // It takes 1200 to put each short length at both ends of a page.
   const rounds = isDebug || isASAN ? "1200" : "10000";
 
-  test.concurrent.each(targets)("%s returns what has been recorded", async target => {
-    const { lines, exitCode } = await run(target, ["check", rounds]);
-    const byDefault = target === "avx512_skx" ? "avx2" : target;
-    expect(lines).toEqual([`chosen: ${byDefault} ${target}`, `rounds: ${rounds}`]);
-    expect(exitCode).toBe(0);
+  describe.each(targets)("%s returns what has been recorded", target => {
+    test.concurrent.each(["..j", "j..m", "m..p", "p..w", "w..~"])("in the parts %s", async parts => {
+      const { lines, exitCode } = await run(target, ["check-only", parts, rounds]);
+      const byDefault = target === "avx512_skx" ? "avx2" : target;
+      expect(lines).toEqual([`chosen: ${byDefault} ${target}`, `rounds: ${rounds}`]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   // Without the feature, it would run the copy that `targets` covers.
@@ -123,13 +127,12 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
       const json = join(import.meta.dir, "../cli/install/migration/contoso-test/package-lock.json");
       const entrypoint = join(import.meta.dir, "../../bench/react-hello-world/react-hello-world.workerd.js");
       const { outputs } = await Bun.build({ entrypoints: [entrypoint], sourcemap: "external", external: ["*"] });
-      using dir = tempDir("simd", { mappings: (await outputs[0].sourcemap!.json()).mappings });
+      const { mappings } = await outputs[0].sourcemap!.json();
       const only = filter || (further.includes(target) ? "32 " : "");
       const best = new Map<string, number[]>();
       for (let turn = 0; turn < turns; turn++) {
         const i = turn % builds.length;
-        // A build without the runner would run the tests in its working directory.
-        const rows = await times(target, ["bench", js, json, "mappings", only], builds[i], String(dir));
+        const rows = await times(target, ["bench", js, json, "mappings", only], builds[i], { mappings });
         expect(rows.size).toBeGreaterThan(0);
         for (const [name, time] of rows) {
           expect(time).toHaveLength(1);

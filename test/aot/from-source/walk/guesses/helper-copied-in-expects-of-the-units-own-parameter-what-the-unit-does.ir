@@ -1,0 +1,18 @@
+# `function finish(leaf: Leaf, pos) { setPos(leaf, pos); .. }`, with `function setPos<T extends Range>(range: T, pos) { (range as { pos: number }).pos = pos; .. }` copied in.
+# The helper's parameter is written as any Range, and a list is a Range too (`interface Leaves extends Array<number>, Range`): a store by name on that has no typed form. What this copy is handed is the unit's own parameter, of which `Leaf` is written:
+# what both say is tested, and the store is typed behind the test. The cast in the helper is looked through.
+# f1 = setPos, f2 = finish
+# -- source: helper-copied-in-expects-of-the-units-own-parameter-what-the-unit-does.ts
+# interface Range { pos: number; end: number }
+# interface Leaves extends Array<number>, Range {}
+# class Leaf implements Range { pos = 0; end = 0; kind = 1; }
+# function setPos<T extends Range>(range: T, pos: number): T { (range as { pos: number }).pos = pos; return range; }
+# function finish(leaf: Leaf, pos: number): Leaf { setPos(leaf, pos); return leaf; }
+# function finishAll(leaves: Leaves, pos: number): Leaves { return setPos(leaves, pos); }
+# sink(finish, finishAll, setPos, new Leaf());
+# declare function sink(...values: unknown[]): void;
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: PutSlot {{*}}key="pos" receivers=[L0] level=Proven

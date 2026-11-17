@@ -1,0 +1,32 @@
+# Uint8Array.from.$call(Map, <a list>), as only the text of the library can write it: the function called on `Map`
+# The rule on a receiver that is only constructed holds for a class that inherits the function that is called on it: the table then says what the construction is. `Map` does not inherit
+# %TypedArray%.from: it is let go, as any operand of which nothing better is known, with all that lies below it: the function behind Map.groupBy is in the program.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/TypedArrayConstructor.ts" displayPath="/$bun/js/engine/TypedArrayConstructor.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/engine/MapConstructor.ts" displayPath="/$bun/js/engine/MapConstructor.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=TypedArrayConstructorFrom function=f1
+runtimefunction id=MapConstructorGroupBy function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = Builtin builtin=Uint8Array
+    v2 = PropGet v1 key="from"
+    v3 = Convert v2 declared={type=builtin(TypedArrayFrom) flags=[IsExpected]}
+    v4 = Builtin builtin=Map
+    v5 = Call v3, v4, v0
+    Return v5
+}
+function f1 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=TypedArrayConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="groupBy" module=m2 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=MapConstructorGroupBy thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

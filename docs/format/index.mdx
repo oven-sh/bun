@@ -277,7 +277,7 @@ bun run generate-types | bun fmt --parser typescript > types.ts
 
 ## Editor integration
 
-`bun fmt --no-script --lsp` is a language server: your editor starts it once and asks it to format on save. It reads the `bunfig.toml`, `.prettierrc` and `.editorconfig` of each workspace folder, as `bun fmt` does there. `--no-script` keeps a `fmt` script in `package.json` from running instead. In a [canary build](/installation#canary-builds), the same server lints too: see [the linter's editor integration](/lint#editor-integration).
+`bun fmt --no-script --lsp` is a language server: your editor starts it once and asks it to format on save. It reads the `bunfig.toml`, `.prettierrc` and `.editorconfig` of each workspace folder, as `bun fmt` does there. `--no-script` keeps a `fmt` script in `package.json` from running instead. The same server lints too: see [the linter's editor integration](/lint#editor-integration).
 
 The Bun extension for VS Code starts it for you. In Neovim:
 

@@ -26,10 +26,9 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 
 // TextDecoder.rs
-extern "C" void* TextDecoder__createForStream(JSC::JSGlobalObject*, JSC::EncodedJSValue label, bool fatal, bool ignoreBOM, bool* outUtf8FastPath, uint8_t* outEncoding);
+extern "C" TextDecoderForStream* TextDecoder__createForStream(JSC::JSGlobalObject*, JSC::EncodedJSValue label, bool fatal, bool ignoreBOM, bool* outUtf8FastPath, uint8_t* outEncoding);
 extern "C" JSC::EncodedJSValue TextDecoder__encodingToJS(JSC::JSGlobalObject*, uint8_t encoding);
-extern "C" void TextDecoder__destroyForStream(void*);
-extern "C" JSC::EncodedJSValue TextDecoder__decodeForStream(void*, JSC::JSGlobalObject*, const uint8_t* input, size_t inputLen, bool stream);
+extern "C" JSC::EncodedJSValue TextDecoder__decodeForStream(TextDecoderForStream*, JSC::JSGlobalObject*, const uint8_t* input, size_t inputLen, bool stream);
 
 namespace WebCore {
 
@@ -148,26 +147,19 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
     // Rust decoder is allocated: the transform/flush arms use streamingUTF8Decode instead.
     bool utf8FastPath = false;
     uint8_t encoding = 0;
-    void* decoder = TextDecoder__createForStream(lexicalGlobalObject, JSValue::encode(label), fatal, ignoreBOM, &utf8FastPath, &encoding);
+    std::unique_ptr<TextDecoderForStream> decoder { TextDecoder__createForStream(lexicalGlobalObject, JSValue::encode(label), fatal, ignoreBOM, &utf8FastPath, &encoding) };
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(utf8FastPath == !decoder);
 
     auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
-    if (scope.exception()) [[unlikely]] {
-        TextDecoder__destroyForStream(decoder);
-        return {};
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSTextDecoderStream::create(vm, structure);
-    stream->m_decoder = decoder;
+    stream->m_decoder = WTF::move(decoder);
     stream->m_encoding = encoding;
     stream->m_fatal = fatal;
     stream->m_ignoreBOM = ignoreBOM;
     if (utf8FastPath)
         stream->m_utf8State.bomSeen = ignoreBOM;
-    else
-        vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
-            TextDecoder__destroyForStream(std::exchange(static_cast<JSTextDecoderStream*>(cell)->m_decoder, nullptr));
-        }));
 
     setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextDecoder);
     RETURN_IF_EXCEPTION(scope, {});
@@ -256,7 +248,7 @@ JSValue JSTextDecoderStream::getConstructor(VM& vm, const JSGlobalObject* global
 
 GCClient::IsoSubspace* JSTextDecoderStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextDecoderStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextDecoderStream, m_subspaceForTextDecoderStream));
+    return WebCore::subspaceForImpl<JSTextDecoderStream, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextDecoderStream, m_subspaceForTextDecoderStream));
 }
 
 // Prototype accessors
@@ -359,7 +351,7 @@ static void decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderStream* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue decoded;
     if (stream->m_decoder) {
-        decoded = JSValue::decode(TextDecoder__decodeForStream(stream->m_decoder, globalObject, input, inputLen, streaming));
+        decoded = JSValue::decode(TextDecoder__decodeForStream(stream->m_decoder.get(), globalObject, input, inputLen, streaming));
     } else {
         auto* s = streamingUTF8Decode(globalObject, std::span<const uint8_t> { input, inputLen }, stream->m_utf8State, /* flush */ !streaming);
         decoded = s ? JSValue(s) : jsUndefined();

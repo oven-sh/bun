@@ -9,9 +9,6 @@ afterAll(endChildren);
 
 const command = [bunExe(), "lint", "--no-script", "--lsp"];
 
-// `bun lint` is compiled into debug and canary builds only.
-const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
-
 // Each test spawns a debug build and waits for initialize, a lint or format and exit, which is seconds under ASAN; a
 // JavaScript plugin runs in a VM, which takes seconds more to start.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
@@ -27,7 +24,7 @@ const noDebugger = {
   message: "Unexpected 'debugger' statement.",
 };
 
-describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
+describe.concurrent("bun lint --lsp", () => {
   test(
     "answers initialize with the capabilities of a linter and a formatter",
     async () => {

@@ -430,20 +430,23 @@ pub(crate) struct FormatterBuffers {
 }
 
 /// Collects the elements of a document.
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub(crate) struct Formatter<'a> {
-    /// `storage.pool` is the document so far.
-    pub(crate) storage: Storage,
     /// Sees every element as it's written.
     tracker: Tracker,
+    /// `storage.pool` is the document so far.
+    pub(crate) storage: Storage,
     /// Scratch vectors. See [`Formatter::take_vec`].
     spare: Vec<Vec<FormatElement>>,
-    /// Maps interned content to its copy without soft line breaks.
-    cleaned: FxHashMap<Interned, Interned>,
-    next_group_id: Cell<u32>,
-    source: &'a [u8],
     /// Computed from `source`.
     odd_blocks: OddBlocks,
     context: JsFormatContext<'a>,
+    /// Maps interned content to its copy without soft line breaks.
+    cleaned: FxHashMap<Interned, Interned>,
+    source: &'a [u8],
+    next_group_id: Cell<u32>,
 }
 
 impl<'a> Formatter<'a> {

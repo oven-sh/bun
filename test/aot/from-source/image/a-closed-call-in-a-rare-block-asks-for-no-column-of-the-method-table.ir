@@ -1,0 +1,29 @@
+# -- source: a-closed-call-in-a-rare-block-asks-for-no-column-of-the-method-table.js
+# const replaceAll = (0, eval)('(Base) => { Base.prototype.m0 = () => 2; Base.prototype.m1 = () => 2; }');
+# class Base { m0() { return 1; } m1() { return 1; } }
+# class C0 extends Base { }
+# class C1 extends Base { }
+# function r0(o) { let t = 0; for (let i = 0; i < 2; i++) t += o.m0(); return t; }
+# function r1(o) { let t = 0; for (let i = 0; i < 2; i++) t += o.m1(); return t; }
+# const o0 = new C0(), o1 = new C1();
+# print(r0(o0) + r1(o1));
+# replaceAll(Base);
+# print(r0(o0) + r1(o1));
+# -- end of source
+# `o.m0()`: the receiver is proven to be a C0, the method lies on Base, and Base is handed to code that nobody sees: so the call is built behind the guard of the name `m0`, and its failing side
+# is a closed call in a rare block. The emitter sent every closed call on a proven receiver through the method table: a column for the name, and in it a row, a record and a guard for EVERY class
+# that finds the method: for n names and n classes below one class n x n of each, in the image and again at run time, where a store over a method ended n guards. But the row stands on the same
+# guard as the call: where the rare block is entered because the guard of the name has ended, the row has ended with it and leads to the lookup. So a closed call in a rare block goes by its site,
+# and a name that is asked for nowhere else has no column, no entry and no lookup.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = AreMembersUnchanged conditions=[{layout=L1 key="m0"}]
+# CHECK: frequency=Rare
+# CHECK: = Call {{*}}calleeKey="m0"
+# RUN(UNITS): units-with-code mechanisms=all
+# UNITS: unit f1:Body
+# UNITS-NOT: :TableEntry
+# UNITS-NOT: :TableLookup
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4
+# ANSWERS-NEXT: 8

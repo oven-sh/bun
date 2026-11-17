@@ -696,7 +696,7 @@ impl<'p, 'a> Walker<'p, 'a> {
             if string.is_utf8() {
                 self.bytes(string.slice8());
             } else {
-                self.bytes(bytemuck::cast_slice::<u16, u8>(string.slice16()));
+                self.bytes(bun_core::slice_as_bytes(string.slice16()));
             }
             part = string.next.as_deref();
         }
@@ -879,7 +879,7 @@ impl<'p, 'a> Walker<'p, 'a> {
                 if name.is_utf8() {
                     constructor.update(name.slice8());
                 } else {
-                    constructor.update(bytemuck::cast_slice::<u16, u8>(name.slice16()));
+                    constructor.update(bun_core::slice_as_bytes(name.slice16()));
                 }
             }
             if let Some(block) = block {
@@ -1225,7 +1225,7 @@ impl<'p, 'a> Walker<'p, 'a> {
     }
 
     #[allow(
-        clippy::large_stack_frames,
+        clippy::large_unopt_stack_frames,
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
     fn expr_at_depth(&mut self, expr: &'p Expr) {

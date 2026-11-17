@@ -1,0 +1,104 @@
+# The divisor is a `const` of the module, and every turn calls a function that nobody knows. The call cannot write a variable that stays as it was filled: it is asked once in front of the loop for an int32 of at least one,
+# and what was shown is noted as the value of a binding that stays, so that the state hands it out in every turn behind the call: the remainder of the typed build is made in integers.
+# const D = Number(process.argv[2] ?? "5"); let told = 0;
+# const tell = [(x: number) => { told += x; }][JSON.parse("0")];
+# function loud(n: number) { let s = 0; for (let i = 0; i < n; i++) { s = (s + i % D) | 0; tell(i % D); } return s; }
+# console.log(loud(12), told);
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = RemainderByReciprocal 
+
+module m0 path="divisor-in-a-variable-that-stays-as-it-was-filled-is-asked-in-front-of-a-loop-whose-turns-call.ts" displayPath="divisor-in-a-variable-that-stays-as-it-was-filled-is-asked-in-front-of-a-loop-whose-turns-call.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="D" module=m0 declared={type=number|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g1 name="told" module=m0 declared={type=number|absent}
+variable g2 name="tell" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=Number @10
+    v3 = Builtin builtin=Process @17
+    v4 = PropGet v3 key="argv" @17
+    v5 = Convert v4 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @17
+    v6 = Integer integer=2 @17
+    v7 = ElemGet v5, v6 @25
+    v8 = TypeTest v7 testedType=undefined|null @17
+    Branch v8 -> taken b1(| 0), notTaken b2(| 0) @17
+  b1(v9):
+    v10 = String string="5" @36
+    Jump -> next b3(v10) @36
+  b2(v11):
+    Jump -> next b3(v11) @17
+  b3(v12):
+    v13 = Call v2, -, v12 calleeName="Number" @10
+    v14 = Convert v13 declared={type=number} illTypedCause=DeclarationWithoutBody @10
+    PutModuleVariable v14 variable=g0 @6
+    v16 = Integer @53
+    v17 = Convert v16 declared={type=number} @53
+    PutModuleVariable v17 variable=g1 @46
+    v19 = NewClosure function=f2 @70
+    v20 = NewArray v19 contents=anything @69
+    v21 = Builtin builtin=JSON @101
+    v22 = PropGet v21 key="parse" @101
+    v23 = Convert v22 declared={type=builtin(JSONParse) flags=[IsExpected]} @101
+    v24 = String string="0" @112
+    v25 = Call v23, v21, v24 calleeKey="parse" calleeName="JSON.parse" @106
+    v26 = ElemGet v20, v25 @69
+    PutModuleVariable v26 variable=g2 @62
+    v28 = Builtin builtin=GlobalThis @235
+    v29 = PropGet v28 key="console" [isFreeName] @235
+    v30 = Convert v29 declared={type=builtin(Console) flags=[IsExpected]} @235
+    v31 = PropGet v30 key="log" @235
+    v32 = Convert v31 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @235
+    v33 = Integer integer=12 @252
+    v34 = Call v1, -, v33 calleeName="loud" @247
+    v35 = GetModuleVariable variable=g1 @257
+    v36 = CheckInitialized v35 name="told" @257
+    v37 = Call v32, v30, v34, v36 calleeKey="log" calleeName="console.log" @243
+    v38 = Undefined @235
+    Return v38 @235
+}
+function f1 name="loud" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @154
+    v2 = Convert v1 declared={type=number} @154
+    v3 = Integer @170
+    v4 = Convert v3 declared={type=number} @170
+    Jump -> next b1(v2, v4) @166
+  b1(v5: number, v6: number):
+    LoopHint @166
+    v8 = Less v6, v0 @177
+    Branch v8 -> taken b2(), notTaken b3() @177
+  b2():
+    v9 = GetModuleVariable variable=g0 @200
+    v10 = CheckInitialized v9 name="D" @200
+    v11 = Mod v6, v10 @200
+    v12 = Add v5, v11 @200
+    v13 = Integer @205
+    v14 = BitOr v12, v13 @205
+    v15 = Convert v14 declared={type=number} @187
+    v16 = GetModuleVariable variable=g2 @208
+    v17 = CheckInitialized v16 name="tell" @208
+    v18 = GetModuleVariable variable=g0 @217
+    v19 = CheckInitialized v18 name="D" @217
+    v20 = Mod v6, v19 @217
+    v21 = Call v17, -, v20 calleeName="tell" @208
+    v22 = Increment v6 @180
+    v23 = Convert v22 declared={type=number} @180
+    Jump -> next b1(v15, v23) @180
+  b3():
+    Return v5 @230
+}
+function f2 module=m0 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g1 @87
+    v2 = CheckInitialized v1 name="told" @87
+    v3 = Add v2, v0 @95
+    v4 = Convert v3 declared={type=number} @87
+    v5 = GetModuleVariable variable=g1 @87
+    v6 = CheckInitialized v5 name="told" @87
+    PutModuleVariable v4 variable=g1 @87
+    v8 = Undefined @87
+    Return v8 @87
+}

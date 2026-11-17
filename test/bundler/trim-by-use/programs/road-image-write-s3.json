@@ -1,0 +1,4 @@
+{
+  "features": ["S3Client"],
+  "env": { "AWS_ACCESS_KEY_ID": "a", "AWS_SECRET_ACCESS_KEY": "b", "AWS_ENDPOINT": "http://127.0.0.1:9" }
+}

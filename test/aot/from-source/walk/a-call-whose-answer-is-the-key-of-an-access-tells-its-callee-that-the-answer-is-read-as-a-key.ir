@@ -1,0 +1,22 @@
+# -- source: a-call-whose-answer-is-the-key-of-an-access.mjs
+# const rows = JSON.parse('[{"region": "n", "kind": "alpha"}, {"region": "s", "kind": "beta"}]');
+# const groupBy = (list, name) => list.reduce((groups, row) => { const key = name(row); (groups[key] = groups[key] || []).push(row); return groups; }, {});
+# const shownBy = (list, name) => list.map(row => name(row)).join(" ");
+# const named = row => row.region + ":" + row.kind;
+# const shown = row => row.region + "/" + row.kind;
+# console.log(JSON.stringify(groupBy(rows, named)), shownBy(rows, shown));
+# -- end of source
+# f1 = groupBy, f2 = shownBy, f3 = named, f4 = shown
+# The scan said "the answer is read as a key" only of a call that is the first argument of a method of Map or Set. A helper handed in as a callback, compiled alone, whose answer another function reads
+# as `groups[key]`, gave a rope, and each access under it turned the rope into a name (57% of the peer's 16-group-summary.mjs). The key of an access under a key says the same as the argument of Map.get.
+# RUN: walk f3:Body mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: Strcat {{*}} [isLikelyKey]
+# CHECK: Strcat {{*}} [isLikelyKey]
+# CHECK: frequency=Rare
+# CHECK: Add {{*}} form=Generic
+# RUN(SHOWN): walk f4:Body mechanisms=all
+# SHOWN-LABEL: code f4:Body
+# SHOWN-NOT: isLikelyKey
+# SHOWN: Add {{*}} form=Generic
+# SHOWN-NOT: isLikelyKey

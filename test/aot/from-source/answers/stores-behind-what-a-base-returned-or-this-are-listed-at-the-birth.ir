@@ -1,0 +1,61 @@
+# -- source: main.cjs
+# function fill(count) { var sum = 0; for (var i = 0; i < count; i++) { if (i === 5) change(Animal, Dog); var made = new Dog("rex", i); last = made; sum += made.age + made.legs + made.name.length; } return sum; }
+# function fillLowest(count) { var sum = 0; for (var i = 0; i < count; i++) { if (i === 5) change(Animal, Dog); var made = new Puppy("rex"); last = made; sum += made.age + made.legs + made.name.length + made.toy.length; } return sum; }
+# var Animal = (function () { function Animal(name) { this.name = name; this.legs = 4; } return Animal; }());
+# var Dog = (function (_super) { Object.setPrototypeOf(Dog.prototype, _super.prototype); function Dog(name, age) { var _this = _super.call(this, name) || this; _this.age = age; return _this; } return Dog; }(Animal));
+# var Puppy = (function (_super) { Object.setPrototypeOf(Puppy.prototype, _super.prototype); function Puppy(name) { var _this = _super.call(this, name, 1) || this; _this.toy = "ball"; return _this; } return Puppy; }(Dog));
+# var last;
+# print(fill(10));
+# print(Object.keys(last).join());
+# print(fillLowest(10));
+# print(Object.keys(last).join());
+# print(report());
+# -- end of source
+# f1 = fill, f2 = fillLowest
+# This is how a compiler of classes writes a constructor for engines without classes: the base is a captured variable, and what the base returned stands for `this` where it is an object.
+# The whole body of Animal is two stores and it returns undefined, so `_this` is `this`. The whole body of Dog returns `_this`, so the `_this` of Puppy is `this` too.
+# Behind the guards that say what a read of `call` off each base finds, every store is among the first things that happen to the new object, and the allocation lists them all.
+# RUN(LOOK): walk f1 mechanisms=all
+# LOOK: AreMembersUnchanged conditions=[{{*}}side=Static key="call"
+# LOOK: = NewObject -, {{*}}fields=[0, 1, 2]
+# RUN(LOWEST): walk f2 mechanisms=all
+# LOWEST: AreMembersUnchanged conditions=[{{*}}side=Static key="call"{{*}}side=Static key="call"
+# LOWEST: = NewObject -, {{*}}fields=[0, 1, 2, 3]
+# RUN: run-in-shell globalThis.hits = 0; globalThis.change = () => { }; globalThis.report = () => globalThis.hits;
+# CHECK: 115
+# CHECK-NEXT: name,legs,age
+# CHECK-NEXT: 120
+# CHECK-NEXT: name,legs,age,toy
+# CHECK-NEXT: 0
+# CHECK-NEXT: exited with 0
+# In the run OWNCALL a `call` of its own lies on Animal from turn five of the first loop on. It counts the keys that the object has when it arrives: none.
+# RUN(OWNCALL): run-in-shell globalThis.hits = 0; globalThis.change = (animal) => { animal.call = function (self) { globalThis.hits += Object.keys(self).length + 1; self.name = "other"; self.legs = 1; }; }; globalThis.report = () => globalThis.hits;
+# OWNCALL: 110
+# OWNCALL-NEXT: name,legs,age
+# OWNCALL-NEXT: 110
+# OWNCALL-NEXT: name,legs,age,toy
+# OWNCALL-NEXT: 15
+# OWNCALL-NEXT: exited with 0
+# In the run RETURNS the `call` of its own returns an object, which stands for `this` from there on: the construction gives it, and the object that was made is dropped.
+# RUN(RETURNS): run-in-shell globalThis.hits = 0; globalThis.change = (animal) => { animal.call = function (self) { globalThis.hits += Object.keys(self).length + 1; return { legs: 2, name: "made" }; }; }; globalThis.report = () => globalThis.hits;
+# RETURNS: 110
+# RETURNS-NEXT: legs,name,age
+# RETURNS-NEXT: 110
+# RETURNS-NEXT: legs,name,age,toy
+# RETURNS-NEXT: 15
+# RETURNS-NEXT: exited with 0
+# In the run SETTER an accessor lies under `age` above every Dog from turn five of the first loop on.
+# RUN(SETTER): run-in-shell globalThis.hits = 0; globalThis.change = (animal) => { Object.defineProperty(animal.prototype, "age", { get() { return 10; }, set(value) { globalThis.hits++; }, configurable: true }); }; globalThis.report = () => globalThis.hits;
+# SETTER: 130
+# SETTER-NEXT: name,legs
+# SETTER-NEXT: 210
+# SETTER-NEXT: name,legs,toy
+# SETTER-NEXT: 15
+# SETTER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.hits = 0; globalThis.change = (animal) => { animal.call = function (self) { globalThis.hits += Object.keys(self).length + 1; return { legs: 2, name: "made" }; }; }; globalThis.report = () => globalThis.hits;
+# CHECKED: 110
+# CHECKED-NEXT: legs,name,age
+# CHECKED-NEXT: 110
+# CHECKED-NEXT: legs,name,age,toy
+# CHECKED-NEXT: 15
+# CHECKED-NEXT: exited with 0

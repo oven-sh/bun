@@ -66,7 +66,8 @@ test("server.reload() with websocket config lacking open/message does not leak p
 
 // Every reload used to create a new uWS WebSocketContext for each upgradable route and for the fallback, and
 // contexts are only freed with the app. 400 reloads of 12 routes leaked 5 MiB (release) or 8 MiB (ASAN). The same
-// reloads without `websocket` grow by 0.5 and 1.5 MiB. The 7800 route registrations take 4 to 5 s on ASAN.
+// reloads without `websocket` grow by 0.5 and 1.5 MiB. The warmup is 1000 reloads: the first optimizing compilation, of
+// the fixture's `config`, comes between 200 and 600 and adds 2 to 3 MiB once. 7800 route registrations take 4 to 5 s on ASAN; these are 18200.
 test("server.reload() doesn't leak a WebSocketContext per route", async () => {
   await expectRssDeltaBelow([join(import.meta.dir, "websocket-server-reload-context-fixture.ts")], {
     release: 2.5,

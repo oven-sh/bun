@@ -14,13 +14,13 @@ use bun_lint::utils::ts_utils::{get_parent_function_node, get_this_expression};
 /// Disallow returning a value with type `any` from a function.
 pub struct NoUnsafeReturn;
 
-const UNSAFE_RETURN: Message =
-    Message::new("unsafeReturn", "Unsafe return of a value of type {{type}}.");
-const UNSAFE_RETURN_ASSIGNMENT: Message = Message::new(
+const UNSAFE_RETURN: &Message =
+    &Message::new("unsafeReturn", "Unsafe return of a value of type {{type}}.");
+const UNSAFE_RETURN_ASSIGNMENT: &Message = &Message::new(
     "unsafeReturnAssignment",
     "Unsafe return of type `{{sender}}` from function with return type `{{receiver}}`.",
 );
-const UNSAFE_RETURN_THIS: Message = Message::new(
+const UNSAFE_RETURN_THIS: &Message = &Message::new(
     "unsafeReturnThis",
     "Unsafe return of a value of type `{{type}}`. `this` is typed as `any`.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );

@@ -1,0 +1,20 @@
+# -- source: main.js
+# const bytes = new Uint8Array([1, 2, 3, 255]), shorts = new Int16Array([-1, -2, 7]), doubles = new Float64Array([1, 2.5, 3]);
+# function ofBytes() { var p = bytes.filter(function (x) { return x & 1; }); var s = 0; for (var r = 0; r < 2; r++) for (var i = 0; i < p.length; i++) s = (s + p[i]) | 0; return s + ":" + p.constructor.name; }
+# function ofShorts() { var p = shorts.filter(function (x) { return x & 1; }); var s = 0; for (var r = 0; r < 2; r++) for (var i = 0; i < p.length; i++) s = (s + p[i]) | 0; return s + ":" + p.constructor.name; }
+# function ofDoubles() { var p = doubles.filter(function (x) { return x > 1; }); var s = 0; for (var r = 0; r < 2; r++) for (var i = 0; i < p.length; i++) s = s + p[i]; return s + ":" + p.constructor.name; }
+# print(ofBytes(), ofShorts(), ofDoubles());
+# -- end of source
+# What `filter` of a view gives is made by whatever the species names: some object is all that is proven, and what is expected is the family of views, which no one test tells. So nothing was asked, and the loops over
+# the result ran closed: 421,453 instructions where plain Bun takes 145,643. The front of a loop tells the family apart as it does for a holder that nobody knows, without the lists: bytes, and the other views. 204,761.
+# f1 = ofBytes
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Buffer|Uint8Array
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# CHECK: = GetTypedArrayElement {{*}} typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 518:Uint8Array 12:Int16Array 11:Float64Array
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 518:Uint8Array 12:Int16Array 11:Float64Array
+# NONE-NEXT: exited with 0

@@ -1,0 +1,9 @@
+# whether a name is there is asked under a name that the compiler does not know: the global object hands out nothing
+# -- source: in-under-a-computed-name-is-a-test.ts
+# declare const input: string;
+# console.log(input in globalThis);
+# -- end of source
+# RUN: causes
+# CHECK: unseen-code cannot-run
+# RUN(NEVER): causes
+# NEVER-NOT: cause 

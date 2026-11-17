@@ -2,7 +2,7 @@ use bstr::BStr;
 use bun_semver::String;
 use bun_semver::string::Builder as StringBuilderNs;
 
-use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _};
+use crate::dependency::{self, Dependency, Tag as DependencyVersionTag, VersionExt as _};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::{CatalogMap, Lockfile, bun_lock, join_top_level_dir};
@@ -44,7 +44,7 @@ pub(crate) fn skips_link_to_pruned_workspace(
     if pruned.is_empty() || !bun_lock::may_stay_unresolved(dep) {
         return false;
     }
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let resolutions = pkgs.items_resolution();
     // A registry package can share the name of a pruned workspace.
     resolutions[target as usize].tag == ResolutionTag::Workspace
@@ -78,7 +78,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     keeps_missing_workspaces: bool,
     silent: bool,
 ) {
-    let pkgs = from_lockfile.packages.slice();
+    let pkgs = &from_lockfile.packages;
     let names = pkgs.items_name();
     let name_hashes = pkgs.items_name_hash();
     let pkg_res = pkgs.items_resolution();
@@ -87,7 +87,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     let to_deps = to_lockfile.buffers.dependencies.as_slice();
 
     let missing_target = |dep: &Dependency, recorded: DependencySlice| -> Option<PackageID> {
-        if dep.version.tag == DependencyVersionTag::Workspace {
+        if dep.version.tag() == DependencyVersionTag::Workspace {
             if let Some(&id) = missing
                 .iter()
                 .find(|&&id| name_hashes[id as usize] == dep.name_hash)
@@ -231,8 +231,10 @@ fn catalog_entry_is_referenced(
     let buf = lockfile.buffers.string_bytes.as_slice();
     let hits = |dep: &Dependency| {
         dep.name_hash == name_hash
-            && dep.version.tag == DependencyVersionTag::Catalog
-            && CatalogMap::same_name(dep.version.catalog().slice(buf), group)
+            && matches!(
+                &dep.version.value,
+                dependency::Value::Catalog(name) if CatalogMap::same_name(name.slice(buf), group)
+            )
     };
 
     if lockfile.overrides.map.values().iter().any(&hits)
@@ -241,7 +243,7 @@ fn catalog_entry_is_referenced(
         return true;
     }
 
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let name_hashes = pkgs.items_name_hash();
     let pkg_res = pkgs.items_resolution();
     let dep_slices = pkgs.items_dependencies();

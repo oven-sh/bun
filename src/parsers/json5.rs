@@ -10,7 +10,6 @@
 //! Reference: https://spec.json5.org/
 
 use bun_alloc::Arena as Bump;
-use bun_collections::VecExt;
 use bun_core::StackCheck;
 // `is_identifier_start/_part` landed in `bun_core::lexer`; route through there.
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -362,7 +361,11 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    pub fn parse(source: &'a Source, log: &mut Log, bump: &'a Bump) -> Result<Expr, ExternalError> {
+    pub fn parse(
+        source: &'a Source<'a>,
+        log: &mut Log,
+        bump: &'a Bump,
+    ) -> Result<Expr, ExternalError> {
         source.check_parseable_len(log, "JSON5 document")?;
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),
@@ -730,7 +733,7 @@ impl<'a> JSON5Parser<'a> {
         self.scan()?; // advance past '}'
         Ok(Expr::init(
             E::Object {
-                properties: G::PropertyList::move_from_list(properties),
+                properties: bun_alloc::AstAlloc::vec_from_iter(properties),
                 ..Default::default()
             },
             loc,
@@ -789,7 +792,7 @@ impl<'a> JSON5Parser<'a> {
         self.scan()?; // advance past ']'
         Ok(Expr::init(
             E::Array {
-                items: bun_ast::ExprNodeList::move_from_list(items),
+                items: bun_alloc::AstAlloc::vec_from_iter(items),
                 ..Default::default()
             },
             loc,

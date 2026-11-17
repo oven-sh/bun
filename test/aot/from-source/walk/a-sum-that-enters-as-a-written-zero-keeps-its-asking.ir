@@ -1,0 +1,14 @@
+# `let s = 0; for (..) s = s + list[i]`: the most ordinary spelling of a sum. The typed copy's walk begins at what enters, an integer; a PROVEN number comes round and misfits that narrower start once, and the walk climbs.
+# The mark "the sum comes round unproven" was raised at any misfit at the sum's place: the builds were undone and the loop walked again without the asking, though nothing was unproven.
+# It is raised by what is no number alone.
+# f1 = total
+# LIBRARY: own
+# -- source: main.js
+# function total(list) { let s = 0; for (let i = 0; i < list.length; i++) s = s + list[i]; return s; }
+# publish(total);
+# -- end of source
+# RUN: compile SumsGuardedAsNumbers LoopsRevisitedWithoutSumGuards mechanisms=all
+# CHECK: statistic SumsGuardedAsNumbers 3
+# CHECK: statistic LoopsRevisitedWithoutSumGuards 0
+# RUN(SHELL): run-in-shell globalThis.publish = (total) => { let asked = 0; const weighs = { valueOf() { asked++; return 5; } }; const holes = [1.5, 2.5, 3.5]; delete holes[1]; const lists = () => [[1.5, 2.5, 3.5], [1, 2, 3], ["a", 2, 3], [1, "b", 3], [1, 2, "c"], [1, weighs, 3], [1, null, 3], [1, undefined, 3], holes, [], [1, 2n, 3], new Float64Array([1.5, 2.5]), "xy"]; let told = ""; for (let turn = 0; turn < 2; turn++) for (const list of lists()) { try { const got = total(list); told += " " + typeof got + ":" + String(got); } catch (e) { told += " " + e.constructor.name; } } print(told + " | " + asked); };
+# SHELL: number:7.5 number:6 string:0a23 string:1b3 string:3c number:9 number:4 number:NaN number:NaN number:0 TypeError number:4 string:0xy number:7.5 number:6 string:0a23 string:1b3 string:3c number:9 number:4 number:NaN number:NaN number:0 TypeError number:4 string:0xy | 2

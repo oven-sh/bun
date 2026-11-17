@@ -1,0 +1,6 @@
+// An untyped package and a program of it (trees): schemas made by chained calls, compiled to closures; references, unions, transforms, paths of errors
+const lib = require("./index.js");
+function say() {
+  console.log(Array.prototype.join.call(arguments, " "));
+}
+const { s } = lib; let made = 0; const node = s.lazy(() => { made++; return s.obj({ v: s.num().or(s.text()), kids: s.list(node).default([]), meta: s.union(s.obj({ k: s.lit('a'), n: s.num() }), s.obj({ k: s.lit('b'), t: s.text().min(1) })).optional() }).strict(); }); const sum = t => (typeof t.v === 'number' ? t.v : t.v.length) + t.kids.reduce((a, k) => a + sum(k), 0); for (let i = 0; i < 18; i++) { let t = { v: i }; for (let k = 0; k < i % 5; k++) t = { v: k % 2 ? 'n' + k : k, kids: [t, { v: k / 2, meta: k === 2 ? { k: 'b', t: i % 2 ? 'x' : '' } : k === 3 ? { k: 'c' } : { k: 'a', n: k } }] }; if (i === 7) t.kids = [{ v: 1, other: 2 }, { v: true }]; if (i === 12) t.kids = { not: 'a list' }; const r = node.safe(t); say(i, r.ok ? sum(r.value) : r.issues.join(' | '), made); } const steps = s.coerce.num().transform(n => n + 1).transform(n => { if (n > 5) throw new RangeError('big ' + n); return 'v' + n; }); ['1', 2, '', '9', null, [3], true].forEach(v => { const r = steps.safe(v); say(JSON.stringify(v), r.ok ? r.value : r.issues.join()); });

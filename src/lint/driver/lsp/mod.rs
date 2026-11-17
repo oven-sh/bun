@@ -39,14 +39,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use text::{Encoding, Lines, Range};
 
-/// What the server does: `bun lint --no-script --lsp` does both, `bun fmt --no-script --lsp` formats, and lints where the
-/// build has `bun lint`.
-#[derive(Copy, Clone)]
-pub struct Features {
-    pub format: bool,
-    pub lint: bool,
-}
-
 /// What follows the command on the command line, `--lsp` included: the flags of the command that started the server.
 /// The other command runs with its defaults.
 #[derive(Copy, Clone)]
@@ -92,7 +84,6 @@ pub struct Process<'p> {
     pub engines: &'p (dyn Fn() -> Option<Box<dyn Realms + 'p>> + Sync),
     /// Ends the process at once, whatever its threads are doing.
     pub exit: &'p (dyn Fn(u8) -> ! + Sync),
-    pub features: Features,
     /// The flags of `bun lint` in a directory: those of its `bunfig.toml` and the ones above it, then the arguments.
     /// `Err`: what is wrong with one of them.
     pub lint_options: &'p (dyn Fn(&[u8], &[&[u8]]) -> Result<Options, Vec<u8>> + Sync),
@@ -275,22 +266,22 @@ struct Settings {
     lints_on_type: bool,
 }
 
-impl Settings {
-    /// All that `features` has.
-    fn new(features: Features) -> Settings {
+impl Default for Settings {
+    fn default() -> Settings {
         Settings {
-            lints: features.lint,
-            formats: features.format,
+            lints: true,
+            formats: true,
             lints_on_type: true,
         }
     }
+}
 
-    /// `{ lint: { enable, run }, format: { enable } }`. What is not there stays as it is. What `features` lacks stays
-    /// off.
-    fn read(&mut self, json: &Json, features: Features) {
+impl Settings {
+    /// `{ lint: { enable, run }, format: { enable } }`. What is not there stays as it is.
+    fn read(&mut self, json: &Json) {
         let flag = |path: &[&str]| dig(json, path).and_then(Json::as_bool);
-        self.lints = features.lint && flag(&["lint", "enable"]).unwrap_or(self.lints);
-        self.formats = features.format && flag(&["format", "enable"]).unwrap_or(self.formats);
+        self.lints = flag(&["lint", "enable"]).unwrap_or(self.lints);
+        self.formats = flag(&["format", "enable"]).unwrap_or(self.formats);
         match dig(json, &["lint", "run"]).and_then(Json::as_str) {
             Some(b"onType") => self.lints_on_type = true,
             Some(b"onSave") => self.lints_on_type = false,
@@ -432,10 +423,6 @@ impl<'s> Server<'s> {
             has_versioned_edits: false,
             watches_files: false,
         })
-    }
-
-    fn features(&self) -> Features {
-        self.process.features
     }
 
     /// `type`: 1 for an error, 2 for a warning, 3 for a note.
@@ -1264,20 +1251,12 @@ impl<'d> Desk<'d, '_, '_> {
             }
         }
         if let Some(settings) = params.get(b"initializationOptions") {
-            server.settings.lock().read(settings, server.features());
+            server.settings.lock().read(settings);
         }
-        // What the build has, not what the settings turn on now: a setting that comes on later can't add a capability.
-        // While a half is off, its requests are answered with nothing.
-        let Features {
-            lint: lints,
-            format: formats,
-        } = server.features();
-        let formats = Json::Bool(formats);
+        // Whatever the settings turn on now: a setting that comes on later can't add a capability. While a half is
+        // off, its requests are answered with nothing.
         let kinds = [QUICK_FIX, FIX_ALL].map(rpc::text).to_vec();
-        let actions = match lints {
-            true => object([("codeActionKinds", Json::Array(kinds))]),
-            false => Json::Bool(false),
-        };
+        let actions = object([("codeActionKinds", Json::Array(kinds))]);
         let capabilities = object([
             (
                 "positionEncoding",
@@ -1296,8 +1275,8 @@ impl<'d> Desk<'d, '_, '_> {
                 ]),
             ),
             ("codeActionProvider", actions),
-            ("documentFormattingProvider", formats.clone()),
-            ("documentRangeFormattingProvider", formats),
+            ("documentFormattingProvider", Json::Bool(true)),
+            ("documentRangeFormattingProvider", Json::Bool(true)),
             (
                 "workspace",
                 object([(
@@ -1519,7 +1498,7 @@ impl<'d> Desk<'d, '_, '_> {
                 };
                 let before = *server.settings.lock();
                 let mut after = before;
-                after.read(settings, server.features());
+                after.read(settings);
                 if after == before {
                     return;
                 }
@@ -1593,7 +1572,7 @@ pub fn serve<'a>(args: Args<'a>, environment: &'a Environment<'a>, process: &'a 
         process,
         out: Writer::new(process.write),
         client: OnceLock::new(),
-        settings: Guarded::new(Settings::new(process.features)),
+        settings: Guarded::new(Settings::default()),
         folders: Guarded::default(),
         latest: Guarded::default(),
         pending: Guarded::default(),

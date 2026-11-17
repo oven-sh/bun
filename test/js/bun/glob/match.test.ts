@@ -24,7 +24,7 @@
 
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isCanary, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
 
 describe("Glob.match", () => {
@@ -3031,8 +3031,8 @@ async function matchedLikeMinimatch(pattern: string, dot: boolean, paths: string
   return paths.filter((_, index) => indexes.includes(index));
 }
 
-// The expected paths are what minimatch 10.2.6 matches. A release build has no `bun lint`.
-test.concurrent.skipIf(!isCanary).each([
+// The expected paths are what minimatch 10.2.6 matches.
+test.concurrent.each([
   ["**/.", true, ["a/b/.", "a/.b//.", "/.//."], ["a/b/.", "a/.b//."]],
   ["**/.", false, ["a/b/.", "a/.b//.", "/.//."], ["a/b/."]],
   ["**/.ts", true, ["a/b/.ts", "a/.b/.ts", "a/./b/.ts", "a/../b/.ts"], ["a/b/.ts", "a/.b/.ts"]],

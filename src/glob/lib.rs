@@ -27,11 +27,6 @@ impl<P: AsRef<[u8]>> Prepared<P> {
         self.pattern.as_ref()
     }
 
-    /// What `new` was given.
-    pub fn source(&self) -> &P {
-        &self.pattern
-    }
-
     /// Answers like [`r#match`].
     pub fn r#match(&self, path: &[u8]) -> MatchResult {
         let pattern = self.pattern.as_ref();
@@ -43,6 +38,13 @@ impl<P: AsRef<[u8]>> Prepared<P> {
 // parameter (const-generic fn ptrs are unstable).
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
+
+/// `-Zshare-generics` reuses an instantiation only from an upstream crate. The users of `BunGlobWalker` do not depend on
+/// each other, so its methods are instantiated here and every user links to this copy.
+#[cfg_attr(mordant, allow(unused_pub))]
+pub fn walk_bun_glob(walker: &mut BunGlobWalker) -> Result<bun_sys::Result<()>, bun_core::Error> {
+    walker.walk()
+}
 
 /// Returns true if `text` has an unescaped `@(`, `+(` or `!(`.
 /// The other two extglob prefixes, `?` and `*`, are glob syntax on their own.

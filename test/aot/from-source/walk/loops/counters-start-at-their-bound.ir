@@ -1,0 +1,14 @@
+# A counter that enters a loop as a constant and steps up by one starts at the bound that the loop header compares it with. It used to start at 2^53, fit, and be visited again with the narrower type.
+# -- source: main.cjs
+# const seen = [], notes = { note(x) { seen.push(x); } }, note = notes[JSON.parse('"note"')];
+# function strict() { for (let i = 0; i < 40; i++) note(i); }
+# function inclusive() { for (let i = 1; i <= 40; i++) note(i); }
+# function reversed() { for (let i = 0; 40 > i; i++) note(i); }
+# function skips() { for (let i = 0; i < 40; i++) { if (seen.length === 1000) continue; note(i); } }
+# function given(count) { const bound = (count & 31) + 3; for (let i = 0; i < bound; i++) note(i); }
+# strict(); inclusive(); reversed(); skips(); given(seen.length);
+# print(seen.length, seen[79], seen[162]);
+# -- end of source
+# STATISTIC: LoopVisitsUndone <= 0
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 163 40 2

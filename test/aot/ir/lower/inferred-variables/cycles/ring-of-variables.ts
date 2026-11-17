@@ -1,0 +1,67 @@
+// RUN: lower
+
+// FILE: main.ts
+declare const console: { log(...values: unknown[]): void };
+function f(x: number) {
+  let v0 = 0;
+  let v1 = 0; v1 = v0 + x;
+  let v2 = 0; v2 = v1 + x;
+  let v3 = 0; v3 = v2 + x;
+  let v4 = 0; v4 = v3 + x;
+  let v5 = 0; v5 = v4 + x;
+  let v6 = 0; v6 = v5 + x;
+  let v7 = 0; v7 = v6 + x;
+  let v8 = 0; v8 = v7 + x;
+  let v9 = 0; v9 = v8 + x;
+  let v10 = 0; v10 = v9 + x;
+  let v11 = 0; v11 = v10 + x;
+  let v12 = 0; v12 = v11 + x;
+  let v13 = 0; v13 = v12 + x;
+  let v14 = 0; v14 = v13 + x;
+  let v15 = 0; v15 = v14 + x;
+  let v16 = 0; v16 = v15 + x;
+  let v17 = 0; v17 = v16 + x;
+  let v18 = 0; v18 = v17 + x;
+  let v19 = 0; v19 = v18 + x;
+  let v20 = 0; v20 = v19 + x;
+  let v21 = 0; v21 = v20 + x;
+  let v22 = 0; v22 = v21 + x;
+  let v23 = 0; v23 = v22 + x;
+  let v24 = 0; v24 = v23 + x;
+  let v25 = 0; v25 = v24 + x;
+  let v26 = 0; v26 = v25 + x;
+  let v27 = 0; v27 = v26 + x;
+  let v28 = 0; v28 = v27 + x;
+  let v29 = 0; v29 = v28 + x;
+  let v30 = 0; v30 = v29 + x;
+  let v31 = 0; v31 = v30 + x;
+  let v32 = 0; v32 = v31 + x;
+  let v33 = 0; v33 = v32 + x;
+  let v34 = 0; v34 = v33 + x;
+  let v35 = 0; v35 = v34 + x;
+  let v36 = 0; v36 = v35 + x;
+  let v37 = 0; v37 = v36 + x;
+  let v38 = 0; v38 = v37 + x;
+  let v39 = 0; v39 = v38 + x;
+  let v40 = 0; v40 = v39 + x;
+  let v41 = 0; v41 = v40 + x;
+  let v42 = 0; v42 = v41 + x;
+  let v43 = 0; v43 = v42 + x;
+  let v44 = 0; v44 = v43 + x;
+  let v45 = 0; v45 = v44 + x;
+  let v46 = 0; v46 = v45 + x;
+  let v47 = 0; v47 = v46 + x;
+  let v48 = 0; v48 = v47 + x;
+  let v49 = 0; v49 = v48 + x;
+  let v50 = 0; v50 = v49 + x;
+  let v51 = 0; v51 = v50 + x;
+  let v52 = 0; v52 = v51 + x;
+  let v53 = 0; v53 = v52 + x;
+  let v54 = 0; v54 = v53 + x;
+  let v55 = 0; v55 = v54 + x;
+  let v56 = 0; v56 = v55 + x;
+  let v57 = 0; v57 = v56 + x;
+  let v58 = 0; v58 = v57 + x;
+  let v59 = 0; v59 = v58 + x;
+  v0 = v59; return v0; }
+console.log(f(1));

@@ -1,0 +1,27 @@
+# -- source: main.mjs
+# import "./company.mjs";
+# const filters = { gray(p, i) { p[i] = (p[i] + p[i + 1]) >> 1; }, invert(p, i) { p[i] = 255 - p[i]; }, sepia(p, i) { p[i] = (p[i] * 3) >> 2; } };
+# const order = JSON.parse('["gray","invert","sepia"]');
+# function turn(t) { const data = new Uint8ClampedArray(8), apply = filters[order[t % 3]]; for (let i = 0; i + 1 < data.length; i++) apply(data, i); return data[0]; }
+# console.log(turn(0), turn(1), turn(2));
+# -- source: company.mjs
+# const table = { gray(hint) { return hint; }, invert: function (hint) { return hint; }, sepia: hint => hint };
+# globalThis.kept = [table.gray({ some: 1 }), table.invert(new Map()), table.sepia(function () {})];
+# -- end of source
+# f1, f2, f3 = company.mjs's gray, invert, sepia . f6 = turn . f7, f8, f9 = main.mjs's gray, invert, sepia . L0 = company.mjs's table . L2 = main.mjs's
+# A record was one layout for each set of names, for the whole program: the two tables shared three fields, each field held two functions, nothing was proven of it, and `turn` called by
+# value what it copies in line where company.mjs is not there (the peer's pixels: 140,833 against 162,436 instructions a turn). How a function is compiled hangs on its own file: a literal
+# whose own text writes a method or a function expression under each of its names, a table of functions, has a layout of its file.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "gray" proven=f1 writers-known written-at-construction-alone
+# CHECK: field L0.1 "invert" proven=f2 writers-known written-at-construction-alone
+# CHECK: field L0.2 "sepia" proven=f3 writers-known written-at-construction-alone
+# CHECK: field L2.0 "gray" proven=f7 writers-known written-at-construction-alone
+# CHECK: field L2.1 "invert" proven=f8 writers-known written-at-construction-alone
+# CHECK: field L2.2 "sepia" proven=f9 writers-known written-at-construction-alone
+# RUN(COPY): walk f6:Body mechanisms=all
+# COPY-LABEL: code f6:Body
+# COPY: frame {{*}} callee=f7
+# COPY: frame {{*}} callee=f8
+# COPY: frame {{*}} callee=f9
+# COPY-NOT: CallDirect

@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Prefer the `jest.mocked()` helper over type assertions for typing mocked functions.
 pub struct PreferJestMocked;
 
-const USE_JEST_MOCKED: Message = Message::new("", "Prefer `jest.mocked()` over `fn as jest.Mock`.");
+const USE_JEST_MOCKED: &Message = &Message::new("", "Prefer `jest.mocked()` over `fn as jest.Mock`.");
 
 const MOCK_TYPES: [&str; 4] = ["Mock", "MockedFunction", "MockedClass", "MockedObject"];
 

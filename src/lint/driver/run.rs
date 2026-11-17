@@ -368,7 +368,7 @@ pub(crate) struct Linted {
 #[derive(Default)]
 pub(crate) struct Sinks {
     pub(crate) skipped_in_comments: Guarded<Vec<Box<[u8]>>>,
-    pub(crate) out_of_stack: Guarded<Vec<Vec<u8>>>,
+    pub(crate) not_type_checked: Guarded<Vec<typed::NotTypeChecked>>,
     pub(crate) without_include: Guarded<Vec<bun_sema_driver::WithoutInclude>>,
     pub(crate) broken_fixes: Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
     pub(crate) handed_back: Guarded<Vec<(Reason, usize)>>,
@@ -379,13 +379,15 @@ pub(crate) struct Sinks {
 
 impl Sinks {
     /// Empties the sinks into `warn`, `loader.advise` and `loader.add_unsupported`. `cwd_flavor` is that of the
-    /// working directory's config. `not_built_in` gets the formatting rules that comments turn on.
+    /// working directory's config. `not_built_in` gets the formatting rules that comments turn on. `not_type_checked`
+    /// is what [`typed::warnings_about_not_type_checked`] made of its sink.
     pub(crate) fn report(
         &self,
         loader: &Loader,
         options: &Options,
         cwd: &[u8],
         cwd_flavor: Option<Flavor>,
+        not_type_checked: &[Vec<u8>],
         not_built_in: &mut NotBuiltIn,
         warn: &mut dyn FnMut(&[u8]),
     ) {
@@ -420,23 +422,8 @@ impl Sinks {
                 .concat(),
             );
         }
-        let mut incomplete: Vec<Vec<u8>> = std::mem::take(&mut *self.out_of_stack.lock());
-        if !incomplete.is_empty() {
-            bun_lint::utils::sort::sort_by(&mut incomplete, |a, b| a.cmp(b));
-            incomplete.dedup();
-            let examples: Vec<Vec<u8>> = (incomplete.iter().take(3))
-                .map(|it| paths::relative_escaped(cwd, &paths::from_native(it)))
-                .collect();
-            let more: &[u8] = if incomplete.len() > 3 { b", .." } else { b"" };
-            warn(
-                &[
-                    b"The type checker ran out of stack in ",
-                    &examples.join(&b", "[..])[..],
-                    more,
-                    b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
-                ]
-                .concat(),
-            );
+        for warning in not_type_checked {
+            warn(warning);
         }
         // With `--staged`, `--changed` or standard input, the user already knows that only a few files are linted.
         let mut without_include = std::mem::take(&mut *self.without_include.lock());
@@ -1245,7 +1232,7 @@ impl Run<'_> {
             .then(|| Inferred::new(environment, pool.threads(), by_options));
         let context = Context {
             skipped_in_comments: &sinks.skipped_in_comments,
-            out_of_stack: &sinks.out_of_stack,
+            not_type_checked: &sinks.not_type_checked,
             without_include: &sinks.without_include,
             broken_fixes: &sinks.broken_fixes,
             handed_back: &sinks.handed_back,
@@ -1362,11 +1349,14 @@ impl Run<'_> {
         }
         let mut not_built_in = NotBuiltIn::default();
         let cwd_flavor = cwd_config.as_ref().map(|it| it.flavor);
+        let results = linted.as_ref().map_or(&[][..], |it| &it.results);
+        let not_type_checked = typed::warnings_about_not_type_checked(&context, results);
         sinks.report(
             &loader,
             options,
             &environment.cwd,
             cwd_flavor,
+            &not_type_checked,
             &mut not_built_in,
             &mut |text| self.warn(text),
         );
@@ -1444,6 +1434,7 @@ impl Run<'_> {
             results.extend(picked.iter_mut().filter_map(|it| it.get_mut().take()));
         }
         phases.linting += started.elapsed().as_secs_f64();
+        typed::report_not_type_checked(&context, &mut results);
         // ESLint lints files one at a time, so it stops at the first path that throws. Threads race here, so pick the
         // first path to get the same error every time.
         let thrown = results.iter().filter(|it| it.thrown.is_some());

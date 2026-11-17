@@ -1,0 +1,27 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# function exportAll(target: any, all: any): void {
+#   for (var name in all) Object.defineProperty(target, name, { enumerable: true, get: all[name] });
+# }
+# const target: any = {};
+# exportAll(target, { one: function () { return 1; }, two: function () { return 2; } });
+# print(target.one + target.two);
+# function* count(): Generator<number> { yield 1; yield 2; }
+# async function* countLater(): AsyncGenerator<number> { yield 3; }
+# let sum = 0;
+# for (const each of count()) sum += each;
+# print(sum + typeof countLater().next);
+# function named(): number { return 4; }
+# const below: any = { __proto__: named, own: 5 };
+# print(below.own + below.name);
+# print("went on");
+# -- end of source
+# testing=CheckEffectsAtRunTime stopped at each of these on right programs (a sweep of the stored programs):
+# a read by key in a for-in loop over a literal whose closures are left unmade makes a closure and stores it (EnumeratorGetByVal: ObjectFields, as GetDeferredClosureSlot says) .
+# the `prototype` of a generator function is made at its first call (NewGenerator, NewAsyncGenerator: ShapeWords, NamedProperties of the callee) .
+# a function that becomes a prototype is given its properties (SetLiteralPrototype: NamedProperties).
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: 3
+# CHECK-NEXT: 3function
+# CHECK-NEXT: 5named
+# CHECK-NEXT: went on

@@ -1,0 +1,7 @@
+{
+  "name": "drawing",
+  "version": "1.0.0",
+  "dependencies": {
+    "shapes": "^1.0.0"
+  }
+}

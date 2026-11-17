@@ -74,6 +74,21 @@ const _: () = {
     assert!(core::mem::offset_of!(VersionType<u32>, tag) == 16);
 };
 
+bun_core::impl_pod!(Tag);
+// `impl_pod!` cannot see through the `T::TagPadding` projection.
+macro_rules! impl_pod_for_version {
+    ($($T:ty),+) => {$(
+        // SAFETY: every field is `Pod`.
+        unsafe impl bun_core::Zeroable for VersionType<$T> {}
+        // SAFETY: every field is `Pod`.
+        unsafe impl bun_core::AnyBitPattern for VersionType<$T> {}
+        // SAFETY: every field is `Pod`, and the asserts above put `tag` right
+        // after 3 x `T` + `TagPadding` and the end of the struct right after `tag`.
+        unsafe impl bun_core::NoUninit for VersionType<$T> {}
+    )+};
+}
+impl_pod_for_version!(u32, u64);
+
 impl<T: VersionInt> Default for VersionType<T> {
     fn default() -> Self {
         Self {

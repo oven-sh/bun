@@ -966,6 +966,53 @@ describe("bounded output per input chunk", () => {
     await expect(writer.closed).rejects.toMatchObject({ name: "AbortError" });
   });
 
+  // addAbortSignal() on the readable leaves the writable open: the chunk is abandoned and the next write still arrives.
+  test.concurrent.each([
+    ["on the thread pool", `new CompressionStream("gzip")`, `require("node:crypto").randomBytes(4 << 20)`, ""],
+    [
+      "waiting for the client",
+      `new DecompressionStream("gzip")`,
+      `Bun.gzipSync(new Uint8Array(64 << 20))`,
+      "await new Promise(setImmediate);",
+    ],
+  ])("addAbortSignal() on the readable while a chunk is %s fails the next write", async (_, stream, chunk, park) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { readable, writable } = ${stream};
+         const controller = new AbortController();
+         require("node:stream").addAbortSignal(controller.signal, readable);
+         const attached = Promise.withResolvers();
+         using server = Bun.serve({
+           port: 0,
+           fetch() { setImmediate(attached.resolve); return new Response(readable); },
+         });
+         const client = await Bun.connect({
+           hostname: server.hostname,
+           port: server.port,
+           socket: { open(socket) { socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"); socket.pause(); }, data() {} },
+         });
+         await attached.promise;
+         const chunk = ${chunk};
+         const writer = writable.getWriter();
+         const settled = Promise.allSettled([writer.write(chunk), writer.write(chunk.subarray(0, 1000)), writer.close()]);
+         ${park}
+         controller.abort();
+         console.log(JSON.stringify((await settled).map(result => result.reason?.message ?? "written")));
+         client.terminate();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const closed =
+      "Cannot enqueue a chunk into a TransformStream whose readable side is closed or has already requested close";
+    expect(stdout.trim()).toBe(JSON.stringify(["written", closed, closed]));
+    expect(exitCode).toBe(0);
+  });
+
   // An abort during close() is different: the close in progress wins, so a flush
   // being drained keeps going and the reader still gets all of it.
   test("writer.abort() during a multi-step flush does not truncate it", async () => {
@@ -1404,12 +1451,11 @@ describe("CompressionStream level option", () => {
 });
 
 // Chunks > 128 KiB run the codec on a WorkPool thread. VM teardown
-// (Heap::lastChanceToFinalize) runs the cell's CFinalizer even while that
-// transform is mid-flight — it must release the cell's reference, not free
-// the coder under the pool thread (heap-use-after-free in the brotli encoder,
-// caught by ASAN). BUN_DESTRUCT_VM_ON_EXIT=1 (which CI's test runner sets)
-// makes process.exit() take that teardown path on the main thread. ASAN-only:
-// without ASAN the stray write into freed pages is not reliably observable.
+// (Heap::lastChanceToFinalize) must not free the coder under the pool thread
+// (heap-use-after-free in the brotli encoder, caught by ASAN).
+// BUN_DESTRUCT_VM_ON_EXIT=1 (which CI's test runner sets) makes process.exit()
+// take that teardown path on the main thread. ASAN-only: without ASAN the
+// stray write into freed pages is not reliably observable.
 // The 30s timeout covers the debug/ASAN child's startup plus teardown.
 test.skipIf(!isASAN)(
   "process.exit during an in-flight off-thread transform does not free the coder under the pool thread",
@@ -1435,7 +1481,7 @@ test.skipIf(!isASAN)(
         ...bunEnv,
         BUN_DESTRUCT_VM_ON_EXIT: "1",
         // Exiting mid-transform deliberately abandons the in-flight task (and
-        // the coder reference it holds); LSAN would report that bounded leak.
+        // the coder it holds); LSAN would report that bounded leak.
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },
       stdout: "pipe",

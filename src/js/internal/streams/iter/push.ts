@@ -27,7 +27,7 @@ const { RingBuffer } = require("internal/streams/iter/ringbuffer");
 
 const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 const SymbolAsyncDispose = Symbol.asyncDispose;
-const SymbolAsyncIterator = Symbol.asyncIterator;
+const SymbolAsyncIterator: typeof Symbol.asyncIterator = Symbol.asyncIterator;
 const SymbolDispose = Symbol.dispose;
 
 function isError(e) {
@@ -58,13 +58,28 @@ interface PendingEnd {
   reject: (reason: unknown) => void;
 }
 
+interface PendingWrite {
+  __proto__?: null;
+  chunks: Uint8Array[];
+  resolve: () => void;
+  reject: (reason: unknown) => void;
+}
+
+type ReadResult = IteratorResult<Uint8Array[], undefined> & { __proto__?: null };
+
+interface PendingRead {
+  __proto__?: null;
+  resolve: (result: ReadResult) => void;
+  reject: (reason: unknown) => void;
+}
+
 class PushQueue {
   /** Buffered chunks (each slot is from one write/writev call) */
-  #slots = new RingBuffer();
+  #slots = new RingBuffer<Uint8Array[]>();
   /** Pending writes waiting for buffer space */
-  #pendingWrites = new RingBuffer();
+  #pendingWrites = new RingBuffer<PendingWrite>();
   /** Pending reads waiting for data */
-  #pendingReads = new RingBuffer();
+  #pendingReads = new RingBuffer<PendingRead>();
   /** Pending drains waiting for backpressure to clear */
   #pendingDrains: PendingDrain[] = [];
   /** Writer state: 'open' | 'closing' | 'closed' | 'errored' */
@@ -79,10 +94,10 @@ class PushQueue {
   #pendingEnd: PendingEnd | null = null;
 
   /** Configuration */
-  #highWaterMark;
-  #backpressure;
-  #signal;
-  #abortHandler;
+  #highWaterMark: number;
+  #backpressure: string;
+  #signal: AbortSignal | undefined;
+  #abortHandler: (() => void) | undefined;
 
   constructor(options: PushOptions = { __proto__: null }) {
     const { highWaterMark = kPushDefaultHWM, backpressure = "strict", signal } = options;
@@ -98,7 +113,7 @@ class PushQueue {
 
     if (this.#signal) {
       this.#abortHandler = () => {
-        this.fail(isError(this.#signal.reason) ? this.#signal.reason : $makeAbortError("Aborted"));
+        this.fail(isError(this.#signal!.reason) ? this.#signal!.reason : $makeAbortError("Aborted"));
       };
       onSignalAbort(this.#signal, this.#abortHandler);
     }
@@ -141,7 +156,7 @@ class PushQueue {
    * Returns true if write completed, false if buffer is full.
    * @returns {boolean}
    */
-  writeSync(chunks) {
+  writeSync(chunks: Uint8Array[]) {
     if (this.#writerState !== "open") return false;
     if (this.#consumerState !== "active") return false;
 
@@ -183,7 +198,7 @@ class PushQueue {
    * failure.
    * @returns {Promise<void>}
    */
-  async writeAsync(chunks, signal) {
+  async writeAsync(chunks: Uint8Array[], signal?: AbortSignal) {
     // Check writer state before signal (spec order: state, then signal)
     if (this.#writerState === "closed") {
       throw $ERR_INVALID_STATE_TypeError("Writer is closed");
@@ -230,9 +245,9 @@ class PushQueue {
    * promise rejects. Signal listeners are cleaned up on normal resolution.
    * @returns {Promise<void>}
    */
-  #createPendingWrite(chunks, signal) {
-    const { promise, resolve, reject } = PromiseWithResolvers();
-    const entry = { __proto__: null, chunks, resolve, reject };
+  #createPendingWrite(chunks: Uint8Array[], signal?: AbortSignal) {
+    const { promise, resolve, reject } = PromiseWithResolvers<void>();
+    const entry: PendingWrite = { __proto__: null, chunks, resolve, reject };
     this.#pendingWrites.push(entry);
 
     if (signal) {
@@ -361,7 +376,7 @@ class PushQueue {
    * Used by PushWriter.writeSync() for 'block' policy where the data is
    * accepted but false is returned as a backpressure signal.
    */
-  forceEnqueue(chunks) {
+  forceEnqueue(chunks: Uint8Array[]) {
     this.#slots.push(chunks);
     for (let i = 0; i < chunks.length; i++) {
       this.#bytesWritten += chunks[i].byteLength;
@@ -383,7 +398,7 @@ class PushQueue {
   // Consumer Methods
   // ===========================================================================
 
-  async read() {
+  async read(): Promise<ReadResult> {
     // If there's data in the buffer, return it immediately
     if (this.#slots.length > 0) {
       const result = this.#drain();
@@ -409,7 +424,7 @@ class PushQueue {
       throw this.#error;
     }
 
-    const { promise, resolve, reject } = PromiseWithResolvers();
+    const { promise, resolve, reject } = PromiseWithResolvers<IteratorResult<Uint8Array[], undefined>>();
     this.#pendingReads.push({ __proto__: null, resolve, reject });
     return promise;
   }
@@ -450,12 +465,12 @@ class PushQueue {
 
   #drain() {
     if (this.#slots.length === 1) {
-      return this.#slots.shift();
+      return this.#slots.shift()!;
     }
 
     const result: Uint8Array[] = [];
     for (let i = 0; i < this.#slots.length; i++) {
-      const slot = this.#slots.get(i);
+      const slot = this.#slots.get(i)!;
       for (let j = 0; j < slot.length; j++) {
         result.push(slot[j]);
       }
@@ -467,22 +482,22 @@ class PushQueue {
   #resolvePendingReads() {
     while (this.#pendingReads.length > 0) {
       if (this.#slots.length > 0) {
-        const pending = this.#pendingReads.shift();
+        const pending = this.#pendingReads.shift()!;
         const result = this.#drain();
         this.#resolvePendingWrites();
         pending.resolve({ __proto__: null, value: result, done: false });
       } else if (this.#writerState === "closing" && this.#slots.length === 0) {
         this.endDrained();
-        const pending = this.#pendingReads.shift();
+        const pending = this.#pendingReads.shift()!;
         pending.resolve({ __proto__: null, value: undefined, done: true });
       } else if (this.#writerState === "closed") {
-        const pending = this.#pendingReads.shift();
+        const pending = this.#pendingReads.shift()!;
         pending.resolve({ __proto__: null, value: undefined, done: true });
       } else if (this.#writerState === "errored" && this.#error) {
-        const pending = this.#pendingReads.shift();
+        const pending = this.#pendingReads.shift()!;
         pending.reject(this.#error);
       } else if (this.#consumerState === "returned") {
-        const pending = this.#pendingReads.shift();
+        const pending = this.#pendingReads.shift()!;
         pending.resolve({ __proto__: null, done: true, value: undefined });
       } else {
         break;
@@ -492,7 +507,7 @@ class PushQueue {
 
   #resolvePendingWrites() {
     while (this.#pendingWrites.length > 0 && this.#slots.length < this.#highWaterMark) {
-      const pending = this.#pendingWrites.shift();
+      const pending = this.#pendingWrites.shift()!;
       this.#slots.push(pending.chunks);
       for (let i = 0; i < pending.chunks.length; i++) {
         this.#bytesWritten += pending.chunks[i].byteLength;
@@ -523,13 +538,13 @@ class PushQueue {
 
   #rejectPendingReads(error) {
     while (this.#pendingReads.length > 0) {
-      this.#pendingReads.shift().reject(error);
+      this.#pendingReads.shift()!.reject(error);
     }
   }
 
   #rejectPendingWrites(error) {
     while (this.#pendingWrites.length > 0) {
-      this.#pendingWrites.shift().reject(error);
+      this.#pendingWrites.shift()!.reject(error);
     }
   }
 
@@ -546,10 +561,10 @@ class PushQueue {
 // =============================================================================
 
 class PushWriter {
-  #queue;
+  #queue: PushQueue;
   #syncWriteAccepted = false;
 
-  constructor(queue) {
+  constructor(queue: PushQueue) {
     this.#queue = queue;
   }
 
@@ -679,7 +694,7 @@ class PushWriter {
 // Readable Implementation
 // =============================================================================
 
-function createReadable(queue) {
+function createReadable(queue: PushQueue) {
   return {
     __proto__: null,
     [SymbolAsyncIterator]() {
@@ -688,11 +703,11 @@ function createReadable(queue) {
         async next() {
           return queue.read();
         },
-        async return() {
+        async return(): Promise<ReadResult> {
           queue.consumerReturn();
           return { __proto__: null, value: undefined, done: true };
         },
-        async throw(error) {
+        async throw(error: unknown): Promise<ReadResult> {
           queue.consumerThrow(error);
           return { __proto__: null, value: undefined, done: true };
         },
@@ -727,7 +742,7 @@ function push(...args) {
   const rawReadable = createReadable(queue);
 
   // Apply transforms lazily if provided
-  let readable;
+  let readable: AsyncIterable<Uint8Array[]>;
   if (transforms.length > 0) {
     const signal = options.signal;
     if (signal) {

@@ -11,10 +11,10 @@ use bun_lint::rule::Plugin;
 /// Disallow when a DOM element is using both children and dangerouslySetInnerHTML.
 pub struct NoDangerWithChildren;
 
-const DANGER_WITH_CHILDREN: Message =
-    Message::new("dangerWithChildren", "Only set one of `children` or `props.dangerouslySetInnerHTML`");
-const NO_DANGER_WITH_CHILDREN: Message =
-    Message::new("", "Only set one of `children` or `props.dangerouslySetInnerHTML`");
+const DANGER_WITH_CHILDREN: &Message =
+    &Message::new("dangerWithChildren", "Only set one of `children` or `props.dangerouslySetInnerHTML`");
+const NO_DANGER_WITH_CHILDREN: &Message =
+    &Message::new("", "Only set one of `children` or `props.dangerouslySetInnerHTML`");
 
 /// Flags for which of the two props something has.
 const CHILDREN: u8 = 1 << 0;
@@ -118,7 +118,7 @@ impl NoDangerWithChildren {
     }
 }
 
-fn message(is_oxlint: bool) -> Message {
+fn message(is_oxlint: bool) -> &'static Message {
     if is_oxlint { NO_DANGER_WITH_CHILDREN } else { DANGER_WITH_CHILDREN }
 }
 

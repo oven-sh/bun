@@ -12,7 +12,7 @@ pub struct FilenameCase {
     multiple_file_extensions: bool,
 }
 
-const FILENAME_CASE: Message = Message::new("", "Filename should be in {{cases}}");
+const FILENAME_CASE: &Message = &Message::new("", "Filename should be in {{cases}}");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Case {

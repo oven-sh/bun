@@ -20,9 +20,6 @@ afterAll(endChildren);
 
 const command = [bunExe(), "fmt", "--no-script", "--lsp"];
 
-// `bun lint` is compiled into debug and canary builds only: there the server lints too.
-const lints = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
-
 // Each test spawns a debug build and waits for initialize, a format and exit, which is seconds under ASAN; a Prettier
 // plugin runs in a VM, which takes seconds more to start.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
@@ -45,21 +42,17 @@ describe.concurrent("bun fmt --lsp", () => {
       expect(capabilities.documentFormattingProvider).toBe(true);
       expect(capabilities.documentRangeFormattingProvider).toBe(true);
       expect(capabilities.workspace.workspaceFolders).toEqual({ supported: true, changeNotifications: true });
-      expect(capabilities.codeActionProvider).toEqual(
-        lints ? { codeActionKinds: ["quickfix", "source.fixAll.bun"] } : false,
-      );
+      expect(capabilities.codeActionProvider).toEqual({ codeActionKinds: ["quickfix", "source.fixAll.bun"] });
       client.notify("initialized");
       open(client, join(String(dir), "a.js"), "debugger;\n");
       expect((await format(client, join(String(dir), "a.js"))).result).toEqual([]);
-      if (lints) {
-        const published = await client.notification(it => it.method === "textDocument/publishDiagnostics");
-        expect(published.params.diagnostics.map((it: any) => it.code)).toEqual(["no-debugger"]);
-      }
+      const published = await client.notification(it => it.method === "textDocument/publishDiagnostics");
+      expect(published.params.diagnostics.map((it: any) => it.code)).toEqual(["no-debugger"]);
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
       const diagnostics = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
-      expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toHaveLength(lints ? 1 : 0);
+      expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toHaveLength(1);
       expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
     },
@@ -135,9 +128,7 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
       const { result } = await initialize(client, [String(dir)], {
         initializationOptions: { lint: { enable: false } },
       });
-      expect(result.capabilities.codeActionProvider).toEqual(
-        lints ? { codeActionKinds: ["quickfix", "source.fixAll.bun"] } : false,
-      );
+      expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ["quickfix", "source.fixAll.bun"] });
       client.notify("initialized");
       const path = join(String(dir), "a.js");
       open(client, path, "debugger;\n");
@@ -165,10 +156,8 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
         expect(ids.length).toBeGreaterThan(0);
       }
       client.notify("workspace/didChangeConfiguration", { settings: { bun: { lint: { enable: true } } } });
-      if (lints) {
-        const published = await client.diagnostics(path);
-        expect(published.params.diagnostics.map((it: any) => it.code)).toEqual(["no-debugger"]);
-      }
+      const published = await client.diagnostics(path);
+      expect(published.params.diagnostics.map((it: any) => it.code)).toEqual(["no-debugger"]);
       if (isLinux) {
         const again = await format(client, astro);
         expect(again.error).toBeUndefined();
@@ -179,7 +168,7 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
       const diagnostics = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
-      expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toHaveLength(lints ? 1 : 0);
+      expect(diagnostics.filter(it => it.params.diagnostics.length > 0)).toHaveLength(1);
       expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
     },
@@ -187,16 +176,14 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
   );
 
   test(
-    "turns linting off with the initialization options, whatever the build has",
+    "turns linting off with the initialization options",
     async () => {
       using dir = tempDir("bun-fmt-lsp", { "a.js": "a;\n" });
       await using client = new Client(command, String(dir));
       const { result } = await initialize(client, [String(dir)], {
         initializationOptions: { lint: { enable: false } },
       });
-      expect(result.capabilities.codeActionProvider).toEqual(
-        lints ? { codeActionKinds: ["quickfix", "source.fixAll.bun"] } : false,
-      );
+      expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ["quickfix", "source.fixAll.bun"] });
       expect(result.capabilities.documentFormattingProvider).toBe(true);
       client.notify("initialized");
       const path = join(String(dir), "a.js");
@@ -548,9 +535,8 @@ exports.format = async (text, options) => {
     timeout,
   );
 
-  // The prefix names the half that failed, not the command that started the server: `bun fmt --lsp` lints too where
-  // the build has `bun lint`, and `bun lint` reads `[fmt]` as well. Each half reports the same `bunfig.toml` once,
-  // under its own name.
+  // The prefix names the half that failed, not the command that started the server: `bun fmt --lsp` lints too, and
+  // `bun lint` reads `[fmt]` as well. Each half reports the same `bunfig.toml` once, under its own name.
   test(
     "shows a bunfig.toml that bun fmt cannot use as an error of bun fmt, once",
     async () => {
@@ -575,9 +561,9 @@ exports.format = async (text, options) => {
       const { exitCode, garbage, rest } = await client.end();
       const messages = client.received.filter(it => it.method === "window/showMessage").map(it => it.params.message);
       expect(messages.filter(it => it.startsWith("bun fmt: "))).toHaveLength(1);
-      expect(messages.filter(it => it.startsWith("bun lint: "))).toEqual(
-        lints ? [expect.stringMatching(/^bun lint: Cannot use bunfig\.toml:2:1: Unknown key "sem" in \[fmt\]/)] : [],
-      );
+      expect(messages.filter(it => it.startsWith("bun lint: "))).toEqual([
+        expect.stringMatching(/^bun lint: Cannot use bunfig\.toml:2:1: Unknown key "sem" in \[fmt\]/),
+      ]);
       expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
     },
@@ -1043,15 +1029,14 @@ function applyByteEdits(text: string, edits: TextEdit[]) {
   return bytes.toString();
 }
 
-// How the command line gets to the server: `bun lint --no-script --lsp` is a server in a build that has `bun lint`,
-// `bun fmt --no-script --lsp` in every build, and without `--no-script` either goes to a script of the project.
+// How the command line gets to the server: `bun lint --no-script --lsp` and `bun fmt --no-script --lsp` are the server,
+// and without `--no-script` either goes to a script of the project that has its name.
 describe.concurrent("bun fmt --lsp dispatch", () => {
-  // Its stdin is closed here, which ends the server before `initialize` with nothing on stdout: as a release build's
-  // `bun lint` ends without a script.
+  // Its stdin is closed here, which ends the server before `initialize` with nothing on stdout.
   test(
-    "elsewhere bun lint --lsp is refused like bun lint",
+    "bun lint --lsp is the server where the project has no lint script",
     async () => {
-      using dir = tempDir("bun-lint-lsp-canary-only", { "package.json": "{}" });
+      using dir = tempDir("bun-lint-lsp-no-script", { "package.json": "{}" });
       await using proc = spawn({
         cmd: [bunExe(), "lint", "--lsp"],
         env: bunEnv,
@@ -1061,8 +1046,7 @@ describe.concurrent("bun fmt --lsp dispatch", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe("");
-      if (!lints) expect(stderr).toBe('error: Script not found "lint"\n');
+      expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -1073,7 +1057,7 @@ describe.concurrent("bun fmt --lsp dispatch", () => {
     ["lint", `{ "scripts": { "lint": "echo the script" } }`],
     ["fmt", `{ "scripts": { "fmt": "echo the script" } }`],
   ])(
-    "everywhere bun %s --lsp runs a script of the project",
+    "bun %s --lsp runs a script of the project",
     async (command, packageJson) => {
       using dir = tempDir("bun-lsp-of-the-project", { "package.json": packageJson });
       await using proc = spawn({
@@ -1092,7 +1076,7 @@ describe.concurrent("bun fmt --lsp dispatch", () => {
   );
 
   test(
-    "everywhere bun fmt --no-script --lsp formats, and lints where the build has bun lint",
+    "bun fmt --no-script --lsp formats and lints",
     async () => {
       using dir = tempDir("bun-fmt-lsp-everywhere", {
         "bunfig.toml": `[lint.rules]\n"no-var" = "error"\n`,
@@ -1107,11 +1091,10 @@ describe.concurrent("bun fmt --lsp dispatch", () => {
       });
       expect(initialized.error).toBeUndefined();
       expect(initialized.result.serverInfo.name).toBe("bun");
-      // Formatting is on in every build. `bun lint` is compiled into debug and canary builds only.
       expect(initialized.result.capabilities).toMatchObject({
         documentFormattingProvider: true,
         documentRangeFormattingProvider: true,
-        codeActionProvider: lints ? { codeActionKinds: ["quickfix", "source.fixAll.bun"] } : false,
+        codeActionProvider: { codeActionKinds: ["quickfix", "source.fixAll.bun"] },
       });
       client.notify("initialized");
       // One line of ASCII, so a character is a code unit in either encoding.
@@ -1120,29 +1103,24 @@ describe.concurrent("bun fmt --lsp dispatch", () => {
       const formatted = await format(client, join(String(dir), "a.js"));
       expect(formatted.error).toBeUndefined();
       expect(applyEdits(text, formatted.result)).toBe("var a = 1;\n");
-      // `bunfig.toml` turns `no-var` on: a fix to offer where the server lints, none where it does not.
+      // `bunfig.toml` turns `no-var` on: a fix to offer.
       const actions = await client.request("textDocument/codeAction", {
         textDocument: { uri: uriOf(String(dir), "a.js") },
         range: { start: { line: 0, character: 0 }, end: { line: 0, character: text.length } },
         context: { diagnostics: [] },
       });
       expect(actions.error).toBeUndefined();
-      if (lints)
-        expect(actions.result).toContainEqual(expect.objectContaining({ kind: "quickfix", title: "Fix no-var" }));
-      else expect(actions.result).toEqual([]);
+      expect(actions.result).toContainEqual(expect.objectContaining({ kind: "quickfix", title: "Fix no-var" }));
       // The lint of `didOpen` is queued behind the requests: under load its diagnostics come after the code actions,
       // and `exit` would end the process before they are published.
-      if (lints) {
-        const published = await client.diagnostics(join(String(dir), "a.js"));
-        expect(published.params.diagnostics.map((each: any) => each.code)).toContain("no-var");
-      }
+      const opened = await client.diagnostics(join(String(dir), "a.js"));
+      expect(opened.params.diagnostics.map((each: any) => each.code)).toContain("no-var");
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
       const published = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
       const codes = published.flatMap(it => it.params.diagnostics.map((each: any) => each.code));
-      if (lints) expect(codes).toContain("no-var");
-      else expect(codes).toEqual([]);
+      expect(codes).toContain("no-var");
       expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
     },

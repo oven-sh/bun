@@ -1,0 +1,17 @@
+# f1 = widthOf
+# -- source: destructure-nested-objects.ts
+# type Point = { x: number; y: number };
+# type Line = { start: Point; end: Point };
+# function widthOf(line: Line): number {
+#   const { start: { x: left }, end: { x: right } } = line;
+#   return right - left;
+# }
+# declare const input: any;
+# (globalThis as any).answer = widthOf({ start: { x: +input, y: +input }, end: { x: +input, y: +input } });
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:6 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 6

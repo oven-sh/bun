@@ -5,6 +5,7 @@
 
 use crate::program::FileId;
 use crate::session::Arena;
+use bun_sort_by_number::SortByNumber;
 
 pub struct Component<'s> {
     /// In program order.
@@ -69,7 +70,7 @@ impl<'s> Components<'s> {
             }
         }
         let mut in_program_order: Vec<usize> = (0..numbered.len()).collect();
-        in_program_order.sort_unstable_by_key(|&number| numbered[number][0]);
+        in_program_order.sort_by_u64(|&number| numbered[number][0] as u64);
         let mut index_of = vec![0u32; numbered.len()];
         for (index, &number) in in_program_order.iter().enumerate() {
             index_of[number] = index as u32;
@@ -92,7 +93,16 @@ impl<'s> Components<'s> {
 
 /// Tarjan's algorithm, without recursion. Returns each node's component number, and each component's nodes in ascending
 /// order. A component has a higher number than every component it has an edge to.
-fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize>>) {
+pub fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize>>) {
+    strongly_connected_components_of(edges.len(), |node| edges[node].as_slice(), None)
+}
+
+/// `strongly_connected_components` of `count` nodes whose edges lie where `edges_of` finds them. `no_edge`: an entry that stands for no edge.
+pub fn strongly_connected_components_of<'e>(
+    count: usize,
+    edges_of: impl Fn(usize) -> &'e [u32],
+    no_edge: Option<u32>,
+) -> (Vec<u32>, Vec<Vec<usize>>) {
     const NOT_VISITED: u32 = u32::MAX;
     #[derive(Clone)]
     struct Node {
@@ -105,13 +115,13 @@ fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize
         lowlink: 0,
         is_on_stack: false,
     };
-    let mut nodes = vec![not_visited; edges.len()];
-    let mut component_of = vec![0u32; edges.len()];
+    let mut nodes = vec![not_visited; count];
+    let mut component_of = vec![0u32; count];
     let mut components: Vec<Vec<usize>> = Vec::new();
     let (mut stack, mut visited) = (Vec::new(), 0u32);
     // A node in progress, and how many of its edges have been followed.
     let mut in_progress: Vec<(usize, usize)> = Vec::new();
-    for root in 0..edges.len() {
+    for root in 0..count {
         if nodes[root].index != NOT_VISITED {
             continue;
         }
@@ -123,8 +133,11 @@ fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize
                 visited += 1;
                 stack.push(node);
             }
-            if let Some(&next) = edges[node].get(followed) {
+            if let Some(&next) = edges_of(node).get(followed) {
                 in_progress.last_mut().unwrap().1 += 1;
+                if Some(next) == no_edge {
+                    continue;
+                }
                 let next = next as usize;
                 if nodes[next].index == NOT_VISITED {
                     in_progress.push((next, 0));

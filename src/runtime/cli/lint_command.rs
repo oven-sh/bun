@@ -6,9 +6,9 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
-use bun_lint_driver::lsp::{Args, Features, Process, Realms};
+use bun_lint_driver::lsp::{Args, Process, Realms};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
-use bun_sys::File;
+use bun_sys::{Fd, File};
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
@@ -18,9 +18,6 @@ use bun_bunfig::Above;
 pub(crate) struct LintCommand;
 
 pub(crate) use bun_lint_driver::cli::HELP;
-
-/// True if `bun lint` is a command. A release build doesn't have it: there `bun lint` runs the project's own `lint`.
-pub(crate) const IS_ENABLED: bool = bun_core::Environment::IS_CANARY;
 
 /// True if `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release build doesn't have
 /// it.
@@ -311,9 +308,12 @@ const PROGRAM_IS_ON_STDIN: &[u8] = b"\x1e--bun-lint-program--\x1e";
 pub(crate) fn read_program_from_stdin(ctx: &mut ContextData) {
     let mut program = Vec::new();
     if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
-        && File::stdin().read_to_end_into(&mut program).is_ok()
+        && File::borrow(&Fd::stdin())
+            .read_to_end_into(&mut program)
+            .is_ok()
     {
-        ctx.runtime_options.eval.script = program.into_boxed_slice();
+        ctx.runtime_options.eval.script = program.leak();
+        ctx.runtime_options.eval.reads_configuration = true;
     }
 }
 
@@ -404,12 +404,10 @@ fn run_to_end(
     use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
     let mut variables = bun_dotenv::Loader::init();
     let is_ready = variables.load_process().is_ok() && adapt(&mut variables.map);
-    let Some(envp) = is_ready
-        .then(|| variables.map.create_null_delimited_env_map().ok())
-        .flatten()
-    else {
+    if !is_ready {
         return Err(b"Could not start a process: out of memory".to_vec());
-    };
+    }
+    let envp = variables.map.to_envp();
     let [read_end, write_end] = match bun_sys::pipe() {
         Ok(ends) => ends.map(File::from_fd),
         Err(err) => return Err([&b"Could not start a process: "[..], err.name()].concat()),
@@ -425,11 +423,11 @@ fn run_to_end(
         stderr: SyncStdio::Buffer,
         stdin: SyncStdio::Pipe(read_end.handle()),
         cwd: Box::<[u8]>::from(cwd),
-        envp: Some(envp.as_ptr()),
+        envp: Some(envp.as_list()),
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },
@@ -465,8 +463,12 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 pub(crate) fn print(to_stdout: bun_core::Fd, stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
     let write_result = bun_sys::write_all_to_stdio(to_stdout, stdout);
     let _ = Output::error_writer().write_all(stderr);
+    let reader_is_gone = |error: &bun_sys::Error| {
+        use bun_sys::E;
+        matches!(error.get_errno(), E::EPIPE | E::ENOTCONN | E::ECONNRESET)
+    };
     let exit_code = match write_result {
-        Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
+        Err(error) if !reader_is_gone(&error) => {
             let why = error.msg().unwrap_or(b"unknown error");
             Output::err_generic(
                 "Cannot write standard output: {}: {}",
@@ -520,16 +522,16 @@ fn run_and_exit_with(
     // any VM starts. Windows keeps fd 1, so there a plugin's output still lands in the output.
     #[cfg(unix)]
     let to_stdout = if isolates_fd_1 {
-        (bun_sys::dup(bun_core::Fd::stdout()).map(File::from_fd).ok())
+        (bun_sys::dup(bun_core::Fd::stdout()).ok())
             .filter(|_| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).is_ok())
-            .unwrap_or_else(File::stdout)
+            .unwrap_or_else(bun_core::Fd::stdout)
     } else {
-        File::stdout()
+        bun_core::Fd::stdout()
     };
     #[cfg(not(unix))]
     let to_stdout = {
         let _ = isolates_fd_1;
-        File::stdout()
+        bun_core::Fd::stdout()
     };
     let js_engine = super::lint_js::Engines::default();
     // `path.win32.resolve` needs it when a path is on a different drive than its base.
@@ -544,7 +546,7 @@ fn run_and_exit_with(
             is_tty: Output::is_stderr_tty(),
             colors: Output::enable_ansi_colors_stderr(),
         },
-        to_stdout: to_stdout.fd(),
+        to_stdout,
         columns: columns_of,
         is_ai_agent: Output::is_ai_agent(),
         is_github_action: Output::is_github_action(),
@@ -591,25 +593,14 @@ impl Realms for super::lint_js::Engines {
 }
 
 /// `bun lint --lsp` and `bun fmt --lsp`: serves the editor on standard input and output until it says `exit`.
-/// `command` is `lint` or `fmt`, `args` what follows it. `bun fmt --lsp` lints too where the build has `bun lint`.
+/// `command` is `lint` or `fmt`, `args` what follows it. Either lints and formats.
 pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
-    let (args, features) = match command {
-        b"lint" => (
-            Args::Lint(args),
-            Features {
-                lint: true,
-                format: true,
-            },
-        ),
-        _ => (
-            Args::Format(args),
-            Features {
-                lint: IS_ENABLED,
-                format: true,
-            },
-        ),
+    let args = match command {
+        b"lint" => Args::Lint(args),
+        _ => Args::Format(args),
     };
-    let from_client = File::stdin();
+    let from_client = bun_core::Fd::stdin();
+    let from_client = File::borrow(&from_client);
     run_and_exit(command, None, |environment| {
         // Bun's own `--config=` precedes `command`, and is relative to where the process started, not to a folder;
         // neither half scans the other tool's flags for it.
@@ -632,7 +623,6 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
                         .then(|| Box::new(super::lint_js::Engines::for_editor()) as Box<dyn Realms>)
                 },
                 exit: &|code| Global::exit(u32::from(code)),
-                features,
                 lint_options: &|directory, args| lint_options_in(directory, args, config_path),
                 format_options: &|directory, args| format_options_in(directory, args, config_path),
             },

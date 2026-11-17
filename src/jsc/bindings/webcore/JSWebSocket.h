@@ -40,6 +40,7 @@ public:
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
     static WebSocket* toWrapped(JSC::VM&, JSC::JSValue);
+    static void destroy(JSC::JSCell* cell) { static_cast<JSWebSocket*>(cell)->JSWebSocket::~JSWebSocket(); }
 
     DECLARE_INFO;
 
@@ -78,7 +79,7 @@ protected:
 class JSWebSocketOwner final : public JSC::WeakHandleOwner {
 public:
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
 inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, WebSocket*)

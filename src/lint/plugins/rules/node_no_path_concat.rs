@@ -6,7 +6,7 @@ use smallvec::{SmallVec, smallvec};
 /// Disallows string concatenation with `__dirname` and `__filename`.
 pub struct NoPathConcat;
 
-const NO_PATH_CONCAT: Message = Message::new("", "Use `path.join()` or `path.resolve()` instead of string concatenation");
+const NO_PATH_CONCAT: &Message = &Message::new("", "Use `path.join()` or `path.resolve()` instead of string concatenation");
 
 impl Rule for NoPathConcat {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-path-concat", Kind::Suggestion);

@@ -1,0 +1,88 @@
+A file hands on a name that nobody exports and imports one that nobody exports: which of the two the error names, where a file may be mocked.
+#### loads.test.mjs
+import { mock, test } from "bun:test";
+const say = async (label, load) => {
+  let said;
+  try {
+    said = "loaded " + Object.entries(await load()).join(" ");
+  } catch (error) {
+    said = error.name + " " + String(error.message).replace(/'[^']*\/([^\/']+)'/g, "'$1'");
+  }
+  console.log("| CASE", label, "|", said);
+};
+if (process.env.NOBODY_SETS_THIS) mock.module("./file.cjs", () => ({ a: 2 }));
+await say("the import stands in front", () => import("./import-in-front.mjs"));
+await say("the same module once more", () => import("./import-in-front.mjs"));
+await say("the export stands in front", () => import("./export-in-front.mjs"));
+await say("each from a module of its own", () => import("./two-modules.mjs"));
+await say("exported under another name", () => import("./renamed.mjs"));
+await say("imported, then exported", () => import("./imported-then-exported.mjs"));
+await say("of the file itself", () => import("./without-a-star.mjs"));
+await say("the export alone", () => import("./export-alone.mjs"));
+await say("a module further down lacks it", () => import("./chain.mjs"));
+await say("the export is found", () => import("./export-found.mjs"));
+await say("both are found", () => import("./both-found.mjs"));
+mock.module("./mocked.cjs", () => ({ kept: "the mock's", added: 3 }));
+await say("a mock leaves the name out", () => import("./left-out.mjs"));
+await say("a mock leaves both out", () => import("./left-out-behind-an-import.mjs"));
+await say("a mock adds the name", () => import("./added.mjs"));
+test("ran", () => {});
+#### added.mjs
+export { added, kept } from "./mocked-star.mjs";
+#### both-found.mjs
+import { a } from "./star.mjs";
+export { a as b } from "./star.mjs";
+export const c = a + 1;
+#### chain.mjs
+import { imported } from "./star.mjs";
+export { exported } from "./export-alone.mjs";
+console.log("| CASE", imported);
+#### export-alone.mjs
+export { exported } from "./star.mjs";
+#### export-found.mjs
+import { imported } from "./star.mjs";
+export { a } from "./star.mjs";
+console.log("| CASE", imported);
+#### export-in-front.mjs
+export { exported } from "./star.mjs";
+import { imported } from "./star.mjs";
+console.log("| CASE", imported);
+#### file.cjs
+exports.a = 1;
+#### import-in-front.mjs
+import { imported } from "./star.mjs";
+export { exported } from "./star.mjs";
+console.log("| CASE", imported);
+#### imported-then-exported.mjs
+import { imported, handedOn } from "./star.mjs";
+export { handedOn as exported };
+console.log("| CASE", imported);
+#### left-out-behind-an-import.mjs
+import { alsoLeftOut } from "./mocked-star.mjs";
+export { a } from "./mocked-star.mjs";
+console.log("| CASE", alsoLeftOut);
+#### left-out.mjs
+export { a } from "./mocked-star.mjs";
+#### mocked-star.mjs
+export * from "./mocked.cjs";
+#### mocked.cjs
+exports.a = 1;
+exports.kept = 2;
+#### other-star.mjs
+export * from "./file.cjs";
+#### package.json
+{ "name": "missing-exports-and-imports" }
+#### renamed.mjs
+import { imported } from "./star.mjs";
+export { exported as renamed } from "./star.mjs";
+console.log("| CASE", imported);
+#### star.mjs
+export * from "./file.cjs";
+#### two-modules.mjs
+import { imported } from "./star.mjs";
+export { exported } from "./other-star.mjs";
+console.log("| CASE", imported);
+#### without-a-star.mjs
+import { imported } from "./file.cjs";
+export { exported } from "./file.cjs";
+console.log("| CASE", imported);

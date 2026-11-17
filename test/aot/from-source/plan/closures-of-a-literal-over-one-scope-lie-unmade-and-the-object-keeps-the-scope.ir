@@ -1,0 +1,22 @@
+# -- source: closures-of-a-literal-over-one-scope-lie-unmade-and-the-object-keeps-the-scope.ts
+# declare function print(...values: unknown[]): void;
+# type Counter = { add: (by: number) => number; get: () => number; reset: () => void };
+# function makeCounter(start: number): Counter { let n = start; return { add: (by: number) => (n += by), get: () => n, reset: () => { n = start; } }; }
+# const kept: Counter[] = [];
+# for (let i = 0; i < 5; i++) kept.push(makeCounter(i));
+# function sum(list: Counter[]): number { let total = 0; for (let i = 0; i < list.length; i++) { list[i].add(1); total += list[i].get(); } return total; }
+# print(sum(kept), sum(kept));
+# -- end of source
+# Link proves of `add`, of `get` and of `reset` that they hold the closures of one function each, laid there by the construction alone, and each such closure is one word over the scope of makeCounter().
+# Their slots hold a mark until the property is read as a value, four bytes wide, and the scope lies once in the object, four bytes behind them, under no name.
+# `reset` names `start` too: a closure of a literal reads every name in the one scope that it holds, so `start` lies there beside `n`.
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject
+# CHECK-NEXT: slot 0 "add" DeferredClosure Inline offset=16 {{*}}type=f3
+# CHECK-NEXT: slot 1 "get" DeferredClosure Inline offset=20 {{*}}type=f4
+# CHECK-NEXT: slot 2 "reset" DeferredClosure Inline offset=24 {{*}}type=f5
+# CHECK-NEXT: slot 3 appended Cell32 Inline offset=28
+# RUN(WITHHELD): plan layouts mechanisms=all-Deferral
+# WITHHELD-NOT: DeferredClosure
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 15 20

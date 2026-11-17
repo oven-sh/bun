@@ -44,13 +44,11 @@ namespace Bun {
 extern "C" void CrashHandler__setInsideNativePlugin(const char* plugin_name);
 extern "C" int OnBeforeParsePlugin__isDone(void* context);
 extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
-#define WRAP_BUNDLER_PLUGIN(argName) jsDoubleNumber(std::bit_cast<double>(reinterpret_cast<uintptr_t>(argName)))
-#define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(std::bit_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
 /// These are native callbacks to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, uint8_t);
-extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
-extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onLoadAsync(void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onResolveAsync(void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__onDefer(void*, JSC::JSGlobalObject*);
 
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter);
@@ -76,7 +74,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     nsGroup->append(WTF::move(filter_regexp));
 }
 
-static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, BunString* namespaceStr, BunString* path)
+static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, Bun::OwnedString* namespaceStr, Bun::OwnedString* path)
 {
     auto namespaceString = namespaceStr ? namespaceStr->transferToWTFString() : String();
     auto pathString = path->transferToWTFString();
@@ -100,7 +98,7 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
 
     return false;
 }
-bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, BunString* namespaceStr, BunString* path, bool isOnLoad)
+bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, Bun::OwnedString* namespaceStr, Bun::OwnedString* path, bool isOnLoad)
 {
     if (isOnLoad) {
         return anyMatchesForNamespace(vm, this->onLoad, namespaceStr, path);
@@ -124,13 +122,12 @@ public:
     static JSBundlerPlugin* create(JSC::VM& vm,
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
-        void* config,
         BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError = JSBundlerPlugin__addError,
         JSBundlerPluginOnLoadAsyncCallback onLoadAsync = JSBundlerPlugin__onLoadAsync,
         JSBundlerPluginOnResolveAsyncCallback onResolveAsync = JSBundlerPlugin__onResolveAsync)
     {
-        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, config, target,
+        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, target,
             addError,
             onLoadAsync,
             onResolveAsync);
@@ -171,10 +168,10 @@ public:
     }
 
 private:
-    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, void* config, BunPluginTarget target,
+    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : Base(vm, structure)
-        , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
+        , plugin(BundlerPlugin(target, addError, onLoadAsync, onResolveAsync))
         , m_globalObject(global)
     {
     }
@@ -222,6 +219,13 @@ static JSBundlerPlugin* pluginReceiver(JSC::JSGlobalObject* globalObject, JSC::C
     if (!thisObject) [[unlikely]]
         Bun::throwInvalidThisCallError(globalObject, callFrame, "BundlerPlugin"_s);
     return thisObject;
+}
+
+// 0, which no request has, if the first argument isn't an integer.
+static BundlerPlugin::RequestID pluginRequestID(JSC::CallFrame* callFrame)
+{
+    JSC::JSValue id = callFrame->argument(0);
+    return id.isAnyInt() ? id.asAnyInt() : 0;
 }
 
 /// `BundlerPlugin.prototype.addFilter(filter: RegExp, namespace: string, isOnLoad: 0 | 1): void`
@@ -411,8 +415,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to have a napiDlopenHandle property"_s);
         return {};
     }
-    Bun::NapiModuleMeta* meta = (Bun::NapiModuleMeta*)napi_external->value();
-    void* dlopen_handle = meta->dlopenHandle;
+    void* dlopen_handle = napi_external->value();
     UTF8CString utf8 = on_before_parse_symbol.utf8();
 
 #if OS(WINDOWS)
@@ -458,9 +461,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
     if (!thisObject) [[unlikely]]
         return {};
 
-    void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
-    if (auto kind = thisObject->plugin.takeRequest(context))
-        thisObject->plugin.addError(context, thisObject, JSValue::encode(callFrame->argument(1)), static_cast<uint8_t>(*kind));
+    if (auto request = thisObject->plugin.takeRequest(pluginRequestID(callFrame)))
+        thisObject->plugin.addError(request->context, thisObject, JSValue::encode(callFrame->argument(1)), static_cast<uint8_t>(request->kind));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -470,10 +472,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
     if (!thisObject) [[unlikely]]
         return {};
 
-    if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Load, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
+    if (void* context = thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Load, pluginRequestID(callFrame))) {
         thisObject->plugin.onLoadAsync(
-            UNWRAP_BUNDLER_PLUGIN(callFrame),
-            thisObject->plugin.config,
+            context,
             JSValue::encode(callFrame->argument(1)),
             JSValue::encode(callFrame->argument(2)));
     }
@@ -486,10 +487,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
     if (!thisObject) [[unlikely]]
         return {};
 
-    if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
+    if (void* context = thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, pluginRequestID(callFrame))) {
         thisObject->plugin.onResolveAsync(
-            UNWRAP_BUNDLER_PLUGIN(callFrame),
-            thisObject->plugin.config,
+            context,
             JSValue::encode(callFrame->argument(1)),
             JSValue::encode(callFrame->argument(2)),
             JSValue::encode(callFrame->argument(3)));
@@ -515,9 +515,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise, (JSC::JSG
     if (!thisObject) [[unlikely]]
         return {};
 
-    void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
+    void* context = thisObject->plugin.heldRequest(BundlerPlugin::RequestKind::Load, pluginRequestID(callFrame));
     // Only a request the plugins still hold can defer: once answered it is the bundle thread's again.
-    if (!thisObject->plugin.holdsRequest(BundlerPlugin::RequestKind::Load, context)) {
+    if (!context) {
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, ".defer() called after the onLoad callback settled"_s);
@@ -564,7 +564,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
     Bun::reifyStaticPropertyTable(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 
-extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, BunString* namespaceString, BunString* path, bool isOnLoad)
+extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, Bun::OwnedString* namespaceString, Bun::OwnedString* path, bool isOnLoad)
 {
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }
@@ -582,17 +582,17 @@ static void dispatchRequest(Bun::JSBundlerPlugin* plugin, BundlerPlugin::Request
         JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
         return;
     }
-    plugin->plugin.holdRequest(kind, context);
+    auto id = plugin->plugin.holdRequest(kind, context);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
     // The request could not be put to the plugin, or the plugin was terminated over it: it is answered as
     // cancelled (if the plugin has not answered already); the termination stays for the landing frame.
     auto cancel = [&] {
-        if (plugin->plugin.takeRequest(kind, context))
+        if (plugin->plugin.takeRequest(kind, id))
             JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
     };
     JSC::MarkedArgumentBuffer arguments;
-    buildArguments(globalObject, scope, arguments);
+    buildArguments(globalObject, scope, arguments, JSC::jsNumber(id));
     RETURN_IF_EXCEPTION(scope, cancel());
 
     call(globalObject, function, callData, plugin, arguments);
@@ -603,15 +603,15 @@ static void dispatchRequest(Bun::JSBundlerPlugin* plugin, BundlerPlugin::Request
             return;
         }
         // The plugin threw before answering: that is its answer.
-        if (plugin->plugin.takeRequest(kind, context))
+        if (plugin->plugin.takeRequest(kind, id))
             plugin->plugin.addError(context, plugin, JSC::JSValue::encode(exception), static_cast<uint8_t>(kind));
     }
 }
 
-extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
+extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, Bun::OwnedString* namespaceString, Bun::OwnedString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
 {
-    dispatchRequest(plugin, BundlerPlugin::RequestKind::Load, context, plugin->onLoadFunction.get(plugin), [&](auto* globalObject, auto& scope, auto& arguments) {
-        arguments.append(WRAP_BUNDLER_PLUGIN(context));
+    dispatchRequest(plugin, BundlerPlugin::RequestKind::Load, context, plugin->onLoadFunction.get(plugin), [&](auto* globalObject, auto& scope, auto& arguments, JSValue id) {
+        arguments.append(id);
         arguments.append(path->transferToJS(globalObject));
         RETURN_IF_EXCEPTION(scope, void());
         arguments.append(namespaceString->transferToJS(globalObject));
@@ -621,16 +621,16 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
     });
 }
 
-extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId)
+extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bun::OwnedString* namespaceString, Bun::OwnedString* path, Bun::OwnedString* importer, void* context, uint8_t kindId)
 {
-    dispatchRequest(plugin, BundlerPlugin::RequestKind::Resolve, context, plugin->onResolveFunction.get(plugin), [&](auto* globalObject, auto& scope, auto& arguments) {
+    dispatchRequest(plugin, BundlerPlugin::RequestKind::Resolve, context, plugin->onResolveFunction.get(plugin), [&](auto* globalObject, auto& scope, auto& arguments, JSValue id) {
         arguments.append(path->transferToJS(globalObject));
         RETURN_IF_EXCEPTION(scope, void());
         arguments.append(namespaceString->transferToJS(globalObject));
         RETURN_IF_EXCEPTION(scope, void());
         arguments.append(importer->transferToJS(globalObject));
         RETURN_IF_EXCEPTION(scope, void());
-        arguments.append(WRAP_BUNDLER_PLUGIN(context));
+        arguments.append(id);
         arguments.append(JSC::jsNumber(kindId));
     });
 }
@@ -646,7 +646,6 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
             globalObject,
             // Null prototype, so an accessor on Object.prototype can't get this object as its receiver.
             jsNull()),
-        nullptr,
         target);
 }
 
@@ -706,11 +705,6 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     return JSValue::encode(result);
 }
 
-extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
-{
-    plugin->plugin.config = config;
-}
-
 extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject, bool rejected)
 {
     auto* globalObject = pluginObject->globalObject();
@@ -735,8 +729,8 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 void BundlerPlugin::tombstone()
 {
     tombstoned = true;
-    for (auto& [context, kind] : std::exchange(held, {}))
-        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
+    for (auto& [id, request] : std::exchange(held, {}))
+        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(request.kind), request.context);
 }
 
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)

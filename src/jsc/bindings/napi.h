@@ -29,7 +29,7 @@
 #include <vector>
 
 extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
-extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
+extern "C" void Bun__napi_threadsafe_function_env_teardown(napi_env env, void* tsfn);
 extern "C" void Bun__napi_run_finalizers_after_teardown_wait(napi_env env);
 extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
@@ -179,7 +179,7 @@ public:
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
         , m_vm(JSC::getVM(globalObject))
-        , m_vmHandle(Bun__VmHandle__retainRef(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
+        , m_vmHandle(*WebCore::clientData(JSC::getVM(globalObject))->vmHandle)
     {
         Bun__napi_register_cleanup_zig(this);
     }
@@ -189,16 +189,10 @@ public:
         return adoptRef(*new NapiEnv(globalObject, napiModule));
     }
 
-    ~NapiEnv()
-    {
-        delete[] filename;
-        Bun__VmHandle__release(m_vmHandle);
-    }
-
     // This env's own clone of its VM's handle: how a thread holding an env ref
     // (a finalizer fired off the JS thread) posts work to the VM. Lives as long
     // as the env, which can outlive the JSC VM's client data.
-    const ::BunVmHandleRef* vmHandle() const { return m_vmHandle; }
+    const ::BunVmHandleRef* vmHandle() const { return m_vmHandle.ptr(); }
 
     void cleanup()
     {
@@ -219,9 +213,7 @@ public:
             drain();
         }
 
-        // Threadsafe functions hold a raw pointer to this env's event loop,
-        // which a worker's shutdown frees while addon threads keep running.
-        // Neutralize them all before that happens (Node: ThreadSafeFunction::Cleanup).
+        // Addon threads can outlive the worker and still hold threadsafe functions: close them (Node: ThreadSafeFunction::Cleanup).
         // Their finalizers are native callbacks like the ones below, so they
         // start from a clean exception state too: a cleanup hook may have left one.
         clearExceptionsBetweenFinalizers();
@@ -295,7 +287,7 @@ public:
     // Pool thread, once execute() has returned or the work was cancelled.
     void asyncWorkLeftThreadPool() { m_asyncWorkOnThreadPool--; }
 
-    // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
+    // Threadsafe-function registry. Each entry is a counted reference to an object allocated
     // by the Rust side, added and removed on the JS thread only: at creation,
     // by the destroy path (an event-loop task), and by teardown below. The
     // lock guards the torn-down flag so the "created after teardown" case is
@@ -325,7 +317,7 @@ public:
             tsfns = std::exchange(m_threadSafeFunctions, WTF::HashSet<void*> {});
         }
         for (void* tsfn : tsfns) {
-            Bun__napi_threadsafe_function_env_teardown(tsfn);
+            Bun__napi_threadsafe_function_env_teardown(this, tsfn);
         }
     }
 
@@ -583,7 +575,7 @@ public:
 
     void* instanceData = nullptr;
     Bun::NapiFinalizer instanceDataFinalizer;
-    char* filename = nullptr;
+    std::unique_ptr<char[]> filename;
     // Running total reported via napi_adjust_external_memory. JSC's
     // deprecatedReportExtraMemory has no decrement path, so we keep a signed
     // accumulator and only forward positive growth to the JSC heap. Tracked
@@ -667,7 +659,7 @@ public:
 
 private:
     JSC::VM& m_vm;
-    const ::BunVmHandleRef* m_vmHandle;
+    const Ref<const ::BunVmHandleRef> m_vmHandle;
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;
@@ -731,7 +723,7 @@ namespace Napi {
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
     // Equivalent to v8impl::Ownership::kUserland
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 
     static NapiRefWeakHandleOwner& weakValueHandleOwner()
     {
@@ -743,7 +735,7 @@ public:
 class NapiRefSelfDeletingWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
     // Equivalent to v8impl::Ownership::kRuntime
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 
     static NapiRefSelfDeletingWeakHandleOwner& weakValueHandleOwner()
     {
@@ -781,70 +773,12 @@ static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObjec
     return reinterpret_cast<napi_value>(JSC::JSValue::encode(val));
 }
 
-// This is essentially JSC::JSWeakValue, except with a JSCell* instead of a
-// JSObject*. Sometimes, a napi embedder might want to store a JSC::Exception, a
-// JSC::HeapBigInt, JSC::Symbol, etc inside of a NapiRef. So we can't limit it
-// to just JSObject*. It has to be JSCell*. It's not clear that we benefit from
-// not simply making this JSC::Unknown.
-class NapiWeakValue {
-public:
-    NapiWeakValue() = default;
-    ~NapiWeakValue();
-
-    void clear();
-    bool isClear() const;
-
-    void setPrimitive(JSValue);
-    void setCell(JSCell*, WeakHandleOwner&, void* context);
-    void setString(JSString*, WeakHandleOwner&, void* context);
-    void set(JSValue, WeakHandleOwner&, void* context);
-
-    JSValue get() const
-    {
-        switch (m_tag) {
-        case WeakTypeTag::Primitive:
-            return m_value.primitive;
-        case WeakTypeTag::Cell:
-            return m_value.cell.get();
-        case WeakTypeTag::String:
-            return m_value.string.get();
-        default:
-            return {};
-        }
-    }
-
-private:
-    enum class WeakTypeTag { NotSet,
-        Primitive,
-        Cell,
-        String };
-
-    WeakTypeTag m_tag { WeakTypeTag::NotSet };
-
-    union WeakValueUnion {
-        WeakValueUnion()
-            : primitive(JSValue())
-        {
-        }
-
-        ~WeakValueUnion()
-        {
-            ASSERT(!primitive);
-        }
-
-        JSValue primitive;
-        JSC::Weak<JSCell> cell;
-        JSC::Weak<JSString> string;
-    } m_value;
-};
-
 class NapiRef {
     WTF_MAKE_TZONE_ALLOCATED(NapiRef);
 
 public:
     void ref();
     void unref();
-    void clear();
 
     NapiRef(Ref<NapiEnv>&& env, uint32_t count, Bun::NapiFinalizer finalizer)
         : env(env)
@@ -871,7 +805,7 @@ public:
 
         // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
         if (can_be_weak) {
-            weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
+            weakValueRef = JSC::Weak<JSCell>(value.asCell(), &Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
         }
 
         if (value.isSymbol()) {
@@ -907,21 +841,12 @@ public:
         env->dequeueRefFinalizer(this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
-            boundCleanup = nullptr;
         }
-
-        if (!m_isEternal) {
-            strongRef.clear();
-        }
-
-        // The weak ref can lead to calling the destructor
-        // so we must first clear the weak ref before we call the finalizer
-        weakValueRef.clear();
     }
 
     WTF::Ref<NapiEnv> env;
     JSC::Weak<JSC::JSGlobalObject> globalObject;
-    NapiWeakValue weakValueRef;
+    JSC::Weak<JSCell> weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
     Bun::NapiFinalizer finalizer;
     const NapiEnv::BoundFinalizer* boundCleanup = nullptr;

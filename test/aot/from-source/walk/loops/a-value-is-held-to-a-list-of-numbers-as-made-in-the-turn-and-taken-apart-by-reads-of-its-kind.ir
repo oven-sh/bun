@@ -1,0 +1,27 @@
+# -- source: a-value-is-held-to-a-list-of-numbers-as-made-in-the-turn-and-taken-apart-by-reads-of-its-kind.cjs
+# "use strict";
+# const points = JSON.parse("[[0.5,2,1],[1.5,4,3],[2.5,6,1]]"), odd = JSON.parse('[[0.5,2,1],["7",4,3],[2.5],[1,2,3]]');
+# const own = [[0.5, 2, 1], Object.assign([1.5, 4, 3], { *[Symbol.iterator]() { yield 10; yield 20; yield 30; } })];
+# function total(list, t) { let s = t & 1; for (let i = 0; i < list.length; i++) { const [x, y, z] = list[i]; s += x * 2 + y - z; } return s; }
+# print(total(points, 3), total(odd, 3), total(own, 3));
+# -- end of source
+# f1 = total. What `list[i]` gives is anything; the three values that the pattern takes are only reckoned with, so its takers speak for a list of numbers. The stub that takes an iterable apart ran other code in the row: it
+# may be typed in a clean turn, so looks count on turns that begin again. In the typed copy the value is held to a list as made (asked once), its storage to numbers, or the turn begins again in the closed copy, which keeps
+# the stub; the three reads go by that kind under their written places, without a join, and what they give is typed. A row with a text, a short row and whole numbers answer as they must; a row with an iterator of its own is
+# no list as made and is taken apart by that iterator.
+# RUN: walk f1 mechanisms=all
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names]
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# CHECK: undefined|number @OptionalDouble = GetArrayElement {{*}}arrayStorage=Double level=Proven
+# CHECK: undefined|number @OptionalDouble = GetArrayElement {{*}}arrayStorage=Double level=Proven
+# CHECK: undefined|number @OptionalDouble = GetArrayElement {{*}}arrayStorage=Double level=Proven
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE-COUNT-2: = IsPristine
+# ONCE-NOT: = IsPristine
+# RUN(STUB): walk f1 mechanisms=all
+# STUB-COUNT-1: = DestructureIterable
+# STUB-NOT: = DestructureIterable
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 17 NaN 13
+# ANSWER-NEXT: exited with 0

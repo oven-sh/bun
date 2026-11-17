@@ -14,8 +14,8 @@ use std::ops::ControlFlow;
 /// Disallow direct mutation of this.state
 pub struct NoDirectMutationState;
 
-const NO_DIRECT_MUTATION: Message = Message::new("noDirectMutation", "Do not mutate state directly. Use setState().");
-const OXLINT: Message = Message::new("", "Never mutate `this.state` directly.");
+const NO_DIRECT_MUTATION: &Message = &Message::new("noDirectMutation", "Do not mutate state directly. Use setState().");
+const OXLINT: &Message = &Message::new("", "Never mutate `this.state` directly.");
 
 const UPDATES: [UnOp; 4] = [UnOp::PreInc, UnOp::PreDec, UnOp::PostInc, UnOp::PostDec];
 

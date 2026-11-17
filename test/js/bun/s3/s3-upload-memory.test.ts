@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// A multipart upload keeps a StreamBuffer of bytes that did not fit a part
-// yet. When every incoming chunk leaves a remainder below partSize, that
-// buffer is never empty, so nothing released the consumed prefix and the
-// whole payload stayed resident (#42722).
+// A multipart upload keeps the bytes that did not fit a part yet. When every
+// incoming chunk left a remainder below partSize, nothing released the bytes
+// already sent and the whole payload stayed resident (#42722).
 //
 // The fixture uploads `totalMiB` to a local sink and prints the peak RSS
 // delta. `upload` is an expression that starts one upload with `client`,

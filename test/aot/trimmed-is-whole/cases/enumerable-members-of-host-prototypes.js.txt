@@ -1,0 +1,78 @@
+const blob = new Blob(["x"]);
+const copied = {};
+function copy(from) {
+  try {
+    Object.assign(copied, from);
+  } catch {}
+}
+function callImage(members) {
+  const image = members.find(member => typeof member === "function" && member.name === "ima" + (process.argv[2] ?? "") + "ge");
+  try {
+    console.log(typeof image, typeof image.call(blob));
+  } catch (error) {
+    console.log("threw", String(error.name), String(error.code));
+  }
+}
+//// Object-assign-from-Object-getPrototypeOf
+try {
+  Object.assign(copied, Object.getPrototypeOf(blob));
+} catch {}
+callImage(Object.values(copied));
+//// the-replacer-of-JSON-stringify
+const seen = [];
+try {
+  JSON.stringify(Object.getPrototypeOf(blob), (key, value) => {
+    if (typeof value === "function") seen.push(value);
+    return value;
+  });
+} catch {}
+callImage(seen);
+//// the-prototype-of-a-file
+try {
+  Object.assign(copied, Object.getPrototypeOf(Bun.file("none.png")));
+} catch {}
+callImage(Object.values(copied));
+//// Blob-prototype
+copy(Blob.prototype);
+callImage(Object.values(copied));
+//// __proto__
+copy(blob.__proto__);
+callImage(Object.values(copied));
+//// __proto__-in-a-pattern
+const { __proto__: parent } = blob;
+copy(parent);
+callImage(Object.values(copied));
+//// Reflect-getPrototypeOf-held-by-a-constant
+const parent = Reflect.getPrototypeOf(blob);
+copy(parent);
+callImage(Object.values(copied));
+//// getPrototypeOf-taken-out-of-Object
+const [parent] = [blob].map(Object.getPrototypeOf);
+copy(parent);
+callImage(Object.values(copied));
+//// the-prototype-of-the-constructor
+copy(blob.constructor.prototype);
+callImage(Object.values(copied));
+//// above-a-class-of-the-program
+class Mine extends Blob {}
+copy(Object.getPrototypeOf(Mine.prototype));
+callImage(Object.values(copied));
+//// as-the-prototype-of-a-function-of-the-program
+function Mine() {}
+Mine.prototype = Object.getPrototypeOf(blob);
+copy(Mine.prototype);
+callImage(Object.values(copied));
+//// util-_extend
+import util from "node:util";
+try {
+  util._extend(copied, Object.getPrototypeOf(blob));
+} catch {}
+callImage(Object.values(copied));
+//// the-sixth-member-by-its-position
+copy(Object.getPrototypeOf(blob));
+const [, , , , , sixth] = Object.values(copied);
+try {
+  console.log(typeof sixth, typeof sixth.call(blob));
+} catch (error) {
+  console.log("threw", String(error.name), String(error.code));
+}

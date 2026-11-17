@@ -7,7 +7,7 @@ use bun_lint_oxlint::module_record::debug;
 /// This rule triggers a warning if `mock()` or `doMock()` is used without a generic type parameter or return type.
 pub struct NoUntypedMockFactory;
 
-const ADD_TYPE_PARAMETER_TO_MODULE_MOCK: Message = Message::new(
+const ADD_TYPE_PARAMETER_TO_MODULE_MOCK: &Message = &Message::new(
     "",
     "`jest.mock()` factories should not be used without an explicit type parameter.",
 );

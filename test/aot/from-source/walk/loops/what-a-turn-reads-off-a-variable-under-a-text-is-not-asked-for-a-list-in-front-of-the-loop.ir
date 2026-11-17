@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# const held = new Proxy({ a: 1, b: 2 }, { get(target, key) { return key in target ? target[key] : 0; } });
+# function sum(t) { let s = t & 1; for (let i = 0; i < 64; i++) s += held.a + held[i & 1 ? "b" : "c"]; return s; }
+# function sumByNumber(t) { let s = t & 1; for (let i = 0; i < 64; i++) s += held[i & 1] * 2; return s; }
+# sink(sum, sumByNumber);
+# -- end of source
+# A list or a view that a turn reads off a variable is told apart in front of the loop. That was asked of every read by key whose element the loop reckons with, under a text too, and on the strength of what
+# is held of the variable: here tests for two kinds of list stood in front, a proxy failed both, and the loop ran its closed copy: two and a half times as dear as without the front.
+# Now the key must be a number by the look at the loop, and what is held of the variable says nothing. Under a number the front stands, and what is neither list nor bytes runs the loop as it is walked without it.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = TypeTest {{*}}testedType=Array
+# RUN(NUMBER): walk f2:Body mechanisms=all
+# NUMBER-LABEL: code f2:Body
+# NUMBER: = TypeTest {{*}}testedType=Array

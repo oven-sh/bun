@@ -9,7 +9,7 @@ use crate::results::FileResult;
 use crate::run::{
     Environment, Fatal, Linted, NotBuiltIn, Pool, Run, Sinks, Timing, checks_types, store_for,
 };
-use crate::{Linter, discover, paths};
+use crate::{Linter, discover, paths, typed};
 use bun_lint::js_plugin::Host;
 use bun_lint::linter::{LintMessage, apply_fixes};
 use bun_threading::Guarded;
@@ -177,7 +177,7 @@ impl Session<'_> {
         let timing = Timing::default();
         let context = Context {
             skipped_in_comments: &sinks.skipped_in_comments,
-            out_of_stack: &sinks.out_of_stack,
+            not_type_checked: &sinks.not_type_checked,
             without_include: &sinks.without_include,
             broken_fixes: &sinks.broken_fixes,
             handed_back: &sinks.handed_back,
@@ -205,7 +205,7 @@ impl Session<'_> {
             timing: &timing,
         };
         let run = Run::new(options, environment);
-        let linted = (|| -> Result<Linted, Fatal> {
+        let mut linted = (|| -> Result<Linted, Fatal> {
             let editor_text = text.clone();
             let mut linted = run.lint_text(loader, &context, text, how.with_types)?;
             // Rules that look at several files now revisit the text, as `Run::execute` does with the files. It is the
@@ -222,12 +222,17 @@ impl Session<'_> {
                 None => Ok(linted),
             }
         })();
+        // A file that was not checked in full says so, as it does for `bun lint` with its files.
+        let results = linted.as_mut().map_or(&mut [][..], |it| &mut it.results[..]);
+        typed::report_not_type_checked(&context, results);
+        let not_type_checked = typed::warnings_about_not_type_checked(&context, results);
         // Told the way the one-shot tells them, through the loader, which `notes` reads.
         sinks.report(
             loader,
             options,
             &environment.cwd,
             of_cwd.as_ref().map(|it| it.flavor),
+            &not_type_checked,
             &mut NotBuiltIn::default(),
             &mut |text| loader.warn(&[text]),
         );

@@ -1,0 +1,24 @@
+# -- source: read-that-finds-no-closure-of-a-literal-proves-no-filled-slot.ts
+# declare function print(...values: unknown[]): void;
+# type Options = { name: string; isExpected?: (e: unknown) => boolean };
+# const kept: Options[] = [];
+# function one(k: number): Options { let n = k; const o: Options = { name: "a", isExpected: e => { n++; return n > 1; } }; kept.push(o); return o; }
+# function two(): Options { const o: Options = { name: "b" }; kept.push(o); return o; }
+# one(0); two(); one(1);
+# const a = kept[0], b = kept[1];
+# const readOffB = b.isExpected, isInB = "isExpected" in b;
+# const readOffA = a.isExpected, isInA = "isExpected" in a;
+# print(typeof readOffA, typeof readOffB, isInA, isInB);
+# -- end of source
+# The slot defers its closure, and the type lets the field be left out: the read takes an empty slot for undefined. What such a read has given is remembered of the slot, and proves nothing of whether the slot is filled:
+# the question that stands right behind the read, with nothing between that ends what is remembered, asks the slot. It was folded to true, off the record that was made without the function too
+# THE TWO RECORDS COME BACK OUT OF THE LIST: of a cell that the walk has made itself it knows the order word, which lists the keys, and answers both the read and the question without asking the slot
+# and then nothing here would be asked.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: = GetDeferredClosureSlotOrUndefined {{*}}key="isExpected"
+# CHECK: = IsSlotFilled {{*}}key="isExpected"
+# CHECK: = GetDeferredClosureSlotOrUndefined {{*}}key="isExpected"
+# CHECK: = IsSlotFilled {{*}}key="isExpected"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: function undefined true false

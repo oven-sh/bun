@@ -1,0 +1,15 @@
+# -- source: row-does-not-create-what-the-body-has-stored-on-every-way-to-it.ts
+# declare function report(value: unknown): void;
+# declare function register(value: unknown): void;
+# interface Response { sendDate: boolean; chunked: boolean; count: number; req: object; sent: boolean; state: number; }
+# function Response(this: Response, req: object) { this.sendDate = false; this.chunked = false; this.count = 0; register(this); this.sendDate = true; this.req = req; this.sent = false; this.state = 1; }
+# const made = new (Response as any)({});
+# report(made);
+# -- end of source
+# `this.sendDate = false; this.chunked = false; this.count = 0; register(this); this.sendDate = true; this.req = req; ..`: behind the call the state knows nothing of the object, and the row begins with a name that the body has stored further up.
+# That store creates nothing: the row creates `req`, `sent`, `state`, and the order word that is likely in front of it is that of the three keys, not the empty one.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: HasKeyOrder {{*}} layout=L0 fields=[0, 1, 2]
+# CHECK: PutSlotOrAdd {{*}}key="req" receivers=[L0] {{*}}orderWordAfter=
+# CHECK: PutSlotOrAdd {{*}}key="state" receivers=[L0] {{*}}orderWordAfter=

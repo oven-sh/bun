@@ -169,11 +169,13 @@ mod simd {
             let (mut odd, mut asked) = (matches.clone(), want());
             odd.retain(|at| asked.next() == Some(at) && at % 2 == 1);
             assert!(odd.start() == start && odd.eq(want().filter(|at| at % 2 == 1)));
-            for count in [0, 1, 2, 7, 64, usize::MAX] {
-                let [mut first, mut last] = [matches.clone(), matches.clone()];
-                first.truncate::<true>(count);
-                last.truncate::<false>(count);
-                assert!(first.eq(want().take(count)) && last.rev().eq(want().rev().take(count)));
+            let cuts = [0, 1, 2, 32, 64, 65, 66, usize::MAX / 2 + 2];
+            for cut in cuts.map(|it| (start + it).wrapping_sub(1)) {
+                let [mut above, mut below] = [matches.clone(), matches.clone()];
+                above.cut_at(cut, true);
+                below.cut_at(cut, false);
+                assert!(above.eq(want().filter(|&at| at >= cut)));
+                assert!(below.eq(want().filter(|&at| at <= cut)));
             }
             assert!(matches.clone().eq(want()) && matches.rev().eq(want().rev()));
             if FORWARD {

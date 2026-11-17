@@ -419,6 +419,17 @@ fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) 
         let side = [&needle[..len - 4], b"#"].concat().repeat(runs);
         check_both(&[&side, needle, b"#", &side].concat(), needle);
     }
+    for (at, copies) in [67, 135]
+        .map(|at| (10..60).step_by(3).map(move |it| (at, it)))
+        .into_iter()
+        .flatten()
+    {
+        let mut needle = [b'a'; 203];
+        needle[at] = b'b';
+        let mut side = needle.repeat(copies);
+        (0..copies).for_each(|i| side[204 * i + 67] ^= 3);
+        check_both(&[&side[..], &needle, &side].concat(), &needle);
+    }
     let runs = b"aaaaaaaaaaaaaaaaaaac".repeat(100);
     (600..2000).for_each(|len| check_both(&runs[7..len], &[b'a'; 20]));
     // The unit that is rare in the text is not rare in the needle.

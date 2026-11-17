@@ -36,16 +36,12 @@ impl Matches {
         }
     }
 
-    /// Keeps so many of the first or the last.
+    /// Keeps `index`, and what is above or else below it.
     #[inline(always)]
-    pub fn truncate<const FORWARD: bool>(&mut self, count: usize) {
-        let (all, mut last) = (self.bits.count_ones() as usize, self.bits);
-        let kept = count.min(all);
-        #[rustc_unroll(never)]
-        for _ in 0..if FORWARD { kept } else { all - kept } {
-            last &= last - 1;
-        }
-        self.bits = if FORWARD { self.bits ^ last } else { last };
+    pub fn cut_at(&mut self, index: usize, keeps_above: bool) {
+        let first_above = index.saturating_add(usize::from(!keeps_above));
+        let above = u64::MAX.unbounded_shl(first_above.saturating_sub(self.start).min(64) as u32);
+        self.bits &= if keeps_above { above } else { !above };
     }
 
     #[inline(always)]

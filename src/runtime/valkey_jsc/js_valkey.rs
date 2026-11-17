@@ -34,7 +34,10 @@ pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
 impl JSValkeyClient {
     /// For callers whose `this` is the wrapper, and for a connected client, which roots it.
     fn wrapper(&self) -> JSValue {
-        self.this_value.get().try_get().expect("unreachable")
+        self.this_value
+            .get()
+            .try_get()
+            .expect("an active client roots its wrapper")
     }
 
     fn subscription_callback_map(&self) -> &mut JSMap {
@@ -265,11 +268,6 @@ impl RefCountedTimer {
         self.held_ref.take()
     }
 }
-
-bun_event_loop::impl_timer_owner!(JSValkeyClient;
-    from_timer_ptr => timer,
-    from_reconnect_timer_ptr => reconnect_timer,
-);
 
 impl Drop for JSValkeyClient {
     fn drop(&mut self) {
@@ -680,11 +678,10 @@ impl JSValkeyClient {
         ))
     }
 
-    pub(crate) fn on_reconnect_timer(&self) -> JsResult<()> {
+    pub(crate) fn on_reconnect_timer(&self) {
         let _guard = self.ref_guard();
         let _timer_ref = self.reconnect_timer.take_fire_ref();
         self.reconnect();
-        Ok(())
     }
 
     /// The script that created the client is gone (its `Bun.ModuleGraph` was disposed).

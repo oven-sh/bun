@@ -14,7 +14,7 @@ use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{ErrorCodeAndMessage, S3Error, get_sign_error_code_and_message};
 use bun_s3_signing::storage_class::StorageClass;
-use bun_s3_signing::upload::Request;
+use bun_s3_signing::upload::{NO_UPLOAD_ID, Request};
 use bun_url::URL;
 
 use crate::webcore::s3::multipart::NetworkSink;
@@ -90,9 +90,7 @@ pub(crate) struct S3HttpSimpleTask {
     /// The resolved proxy, empty for none. Owned: an env-derived slice can be
     /// freed by a process.env.HTTP_PROXY write while the HTTP thread is in flight.
     pub(crate) proxy_url: Box<[u8]>,
-    /// Owned copy of the request body. The HTTP thread reads the body slice
-    /// concurrently for the lifetime of the request, so the task owns its own
-    /// copy instead of borrowing caller memory.
+    /// A copy for the HTTP thread to read. Empty for `Callback::Sink`, which has its own.
     pub(crate) body: Box<[u8]>,
     pub(crate) _keep_alive: JsKeepAlive,
     /// The HTTP client's abort flag: set when the request's context stops so a
@@ -365,7 +363,7 @@ impl S3HttpSimpleTask {
                 if xml_response::parse_error(&this.response_buffer.list)
                     .is_none_or(|error| error.code.is_none()) =>
             {
-                NetworkSink::on_reply(&sink, Request::Create, Ok(b""))
+                NetworkSink::on_reply(&sink, Request::Create, Err(NO_UPLOAD_ID))
             }
             (Callback::Sink(sink, request @ (Request::Part(..) | Request::Commit(..))), status) => {
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
@@ -381,14 +379,19 @@ impl S3HttpSimpleTask {
                     }
                 }
             }
+            (callback @ (Callback::Upload(_) | Callback::Sink(..)), _) => {
+                this.error_with_body(callback, ErrorType::Failure)
+            }
             (
                 callback @ (Callback::Stat(_)
                 | Callback::Download(_)
                 | Callback::Delete(_)
                 | Callback::ListObjects(_)),
-                404,
-            ) => this.error_with_body(callback, ErrorType::NotFound),
-            (callback, _) => this.error_with_body(callback, ErrorType::Failure),
+                status,
+            ) => match status {
+                404 => this.error_with_body(callback, ErrorType::NotFound),
+                _ => this.error_with_body(callback, ErrorType::Failure),
+            },
         }
     }
 
@@ -447,9 +450,7 @@ impl S3HttpSimpleTask {
     }
 }
 
-pub(crate) type Options<'a> = S3SimpleRequestOptions<'a>;
-
-pub(crate) struct S3SimpleRequestOptions<'a> {
+pub(crate) struct Options<'a> {
     // signing options
     pub path: &'a [u8],
     pub method: Method,
@@ -469,7 +470,7 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub(crate) request_payer: bool,
 }
 
-impl<'a> Default for S3SimpleRequestOptions<'a> {
+impl<'a> Default for Options<'a> {
     fn default() -> Self {
         Self {
             path: b"",
@@ -520,7 +521,7 @@ pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error {
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
-    options: S3SimpleRequestOptions<'_>,
+    options: Options<'_>,
     callback: Callback,
 ) -> bun_jsc::JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, execute_simple_s3_request);
@@ -581,7 +582,7 @@ pub(crate) fn execute_simple_s3_request(
     // `task_ptr` is dereferenced. `'static`: `url`, `headers_buf`, `body` and
     // `http_proxy` borrow heap buffers that `*task` owns and never writes again. They are stored in
     // an `AsyncHTTP<'static>` that the HTTP thread reads, and remain valid until
-    // `task` is dropped in `on_response`.
+    // `on_response` runs.
     let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
     let url = URL::parse(&task.sign_result.url);
     let headers_buf: &'static [u8] = task.headers.buf.as_slice();

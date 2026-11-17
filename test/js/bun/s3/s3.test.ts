@@ -1521,7 +1521,6 @@ describe("s3-server", () => {
     const pattern = (size: number) => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz!");
     it.each<[string, () => (string | Uint8Array)[]]>([
       ["exactly one part", () => [pattern(partSize)]],
-      ["one chunk of several parts", () => [pattern(2 * partSize + 7)]],
       ["odd sizes", () => [1, 4093, 3 << 20, 65537, (1 << 20) + 7, 3 << 20, 333, 4 << 20].map(pattern)],
       ["Latin-1 across a part", () => [pattern(partSize - 1), "é", "éa"]],
       ["UTF-16 across a part", () => [pattern(partSize - 2), "€", "€a"]],

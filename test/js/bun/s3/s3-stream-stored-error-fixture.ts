@@ -87,12 +87,11 @@ async function stored() {
     results[name] = [await attempt(), await attempt()];
   }
   // fetch() also leaves the failure as an unhandled rejection.
-  const ignore = () => {};
-  process.on("unhandledRejection", ignore);
+  const unhandled = once(process, "unhandledRejection");
   const put = fetch("s3://bucket/copy", { method: "PUT", body: failed(), s3: credentials });
-  await new Promise(resolve => setImmediate(resolve));
-  process.off("unhandledRejection", ignore);
-  results["fetch('s3://', { body: stream }) settled"] = Bun.peek.status(put) !== "pending";
+  results["fetch('s3://', { body: stream }) leaves unhandled"] = (await unhandled)[0].code;
+  results["fetch('s3://', { body: stream })"] =
+    Bun.peek.status(put) === "pending" ? "pending" : await outcome(put, response => `resolved ${response.status}`);
   // Waits for requests in flight, so a PUT that went out is counted.
   await bucket.stop();
   results["requests the bucket got"] = puts;

@@ -52,7 +52,7 @@ pub struct NetworkSink {
 pub(crate) struct Target {
     pub(crate) credentials: RefPtr<S3Credentials>,
     pub(crate) path: Box<[u8]>,
-    /// As `S3SimpleRequestOptions::proxy_url`.
+    /// As `Options::proxy_url`.
     pub(crate) proxy: Option<Box<[u8]>>,
     pub(crate) content_type: Option<Box<[u8]>>,
     pub(crate) content_disposition: Option<Box<[u8]>>,
@@ -76,14 +76,13 @@ pub(crate) enum Owed {
         /// Why the stream failed. It wins over the upload's own error.
         stream_error: bun_jsc::strong::Optional,
     },
-    /// A `writer()` failed with nothing pending. (Bytes: a JS error would root the realm.)
-    Error { code: Box<[u8]>, message: Box<[u8]> },
+    /// A `writer()` failed with nothing pending: it takes writes until `end()`.
+    Unreported,
 }
 
 bun_jsc::impl_abort_handle_owner!(NetworkSink, abort_handle, |this, _cause| {
     // SAFETY: trait contract.
-    let this = unsafe { RefPtr::init_ref(this) };
-    let _ = NetworkSink::fail(&this, b"AbortError", b"The operation was aborted");
+    NetworkSink::abort(&unsafe { RefPtr::init_ref(this) });
 });
 
 /// Fails the upload of a `writer()` that was collected before `end()`, outside the GC sweep.
@@ -148,11 +147,11 @@ impl NetworkSink {
     /// Runs no JS, and the reply never comes inside this call.
     fn send(this: &RefPtr<Self>, request: Request) {
         let target = &this.target;
-        let mut query = [0; 2048];
+        let query = request.query();
         let mut options = Options {
             path: &target.path,
             method: request.method(),
-            search_params: request.query(&mut query),
+            search_params: query.as_deref().map(str::as_bytes),
             proxy_url: target.proxy.as_deref(),
             request_payer: target.request_payer,
             ..Default::default()
@@ -179,8 +178,10 @@ impl NetworkSink {
         if self.abort_handle.context_stopped() {
             return;
         }
-        while let Some(request) = self.upload.with_mut(Upload::next_request) {
-            Self::send(self.self_ref.get().as_ref().expect("not finished"), request);
+        while let Some(this) = self.self_ref.get()
+            && let Some(request) = self.upload.with_mut(Upload::next_request)
+        {
+            Self::send(this, request);
         }
     }
 
@@ -201,6 +202,10 @@ impl NetworkSink {
     fn fail(this: &RefPtr<Self>, code: &[u8], message: &[u8]) -> JsResult<()> {
         let error = S3Error { code, message };
         Self::take_step(this, this.upload.with_mut(|upload| upload.fail(error)))
+    }
+
+    fn abort(this: &RefPtr<Self>) {
+        let _ = Self::fail(this, b"AbortError", b"The operation was aborted");
     }
 
     /// `this` is the caller's own ref, never the one in `self_ref`.
@@ -253,20 +258,19 @@ impl NetworkSink {
 
     /// After an `Err` nothing else is settled, and everything is still released.
     fn report(&self, result: S3UploadResult<'_>) -> JsResult<()> {
-        let global = &*self.global;
         let (flush, end) = (self.flush_promise.take(), self.end_promise.take());
         let mut owed = self.owed.take();
         let mut _drain = None;
         if let Owed::Nothing = owed {
             if !flush.has_value() && !end.has_value() {
-                if let S3UploadResult::Failure(error) = result {
-                    let (code, message) = (error.code.into(), error.message.into());
-                    self.owed.set(Owed::Error { code, message });
+                if let S3UploadResult::Failure(_) = result {
+                    self.owed.set(Owed::Unreported);
                 }
                 return Ok(());
             }
             _drain = Some(VirtualMachine::get().enter_event_loop_scope());
         }
+        let global = &*self.global;
         let error = match (&result, &mut owed) {
             (S3UploadResult::Success, _) => None,
             (_, Owed::Result { stream_error, .. }) if stream_error.has() => {
@@ -302,42 +306,36 @@ impl NetworkSink {
         settled
     }
 
-    /// The pump is over: from here the promise of `upload_stream` is the one that must be handled.
+    /// From here only the promise of `upload_stream` settles.
     pub(crate) fn on_pump_done(&self) {
+        drop((self.flush_promise.take(), self.end_promise.take()));
+        drop(self.pending.take());
         self.source.take().detach(&self.global);
-        for promise in [self.flush_promise.get(), self.end_promise.get()] {
-            if promise.has_value() {
-                promise.get().set_handled();
-            }
-        }
     }
 
     pub(crate) fn on_pump_rejected(this: &RefPtr<Self>, reason: JSValue) {
         bun_removable_features::removable_body_behind_value!(S3Client, {
             this.on_pump_done();
-            Self::fail_from_source(this, reason);
-            // Still owed: the commit is out and goes on, and the caller hears what its stream threw.
+            // Also when the commit is out and goes on.
             this.owed.with_mut(|owed| {
-                if let Owed::Result {
-                    promise,
-                    stream_error,
-                    ..
-                } = owed
-                    && stream_error.has()
+                if let Owed::Result { promise, .. } = owed
+                    && promise.has_value()
+                    && !reason.is_empty_or_undefined_or_null()
                 {
-                    let _ = promise.reject(&this.global, Ok(stream_error.swap()));
+                    let _ = promise.reject(&this.global, Ok(reason));
                 }
             });
+            Self::fail_from_source(this, JSValue::ZERO);
         })
     }
 
     /// Script was terminated inside `upload_stream`: nobody gets its promise, and no error can be made.
     pub(crate) fn on_pump_terminated(this: &RefPtr<Self>) {
+        this.end_pending_write();
         this.on_pump_done();
         if !this.is_ended() {
-            drop((this.owed.take(), this.flush_promise.take()));
-            this.end_pending_write();
-            let _ = Self::fail(this, b"", b"");
+            drop(this.owed.take());
+            Self::abort(this);
         }
     }
 
@@ -373,28 +371,13 @@ impl NetworkSink {
         }
     }
 
-    fn take_owed_error(&self, global: &JSGlobalObject) -> Option<JSValue> {
-        if !self.upload.get().is_finished() {
-            return None;
-        }
-        let Owed::Error { code, message } = self.owed.take() else {
-            return None;
-        };
-        // Leftover script would raise it in the host.
-        if self.abort_handle.context_stopped() || self.context().is_stopped() {
-            return None;
-        }
-        let (code, message) = (&*code, &*message);
-        let error = s3_error_to_js(&S3Error { code, message }, global, Some(&self.target.path));
-        Some(JSPromise::rejected_promise(global, error).to_js())
-    }
-
     #[inline]
     fn write_chunk(&self, chunk: EncodedChunk<'_>, len: usize) -> Writable {
-        if self.is_ended() {
-            return Writable::Owned(0);
-        }
         let len = len as BlobSizeType;
+        if self.is_ended() {
+            let unreported = matches!(self.owed.get(), Owed::Unreported);
+            return Writable::Owned(if unreported { len } else { 0 });
+        }
         // Nothing of a context that stopped is sent, so nothing is taken: the writer waits for the abort.
         if !self.abort_handle.context_stopped() {
             let filled_a_part = self.upload.with_mut(|upload| match chunk {
@@ -479,11 +462,11 @@ impl JsSinkType for NetworkSink {
         Ok(())
     }
 
-    fn end_from_js(this: &mut &Self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
+    fn end_from_js(this: &mut &Self, _: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
         this.finish_input();
         if this.upload.get().is_finished() {
-            let rejected = this.take_owed_error(cx.global());
-            return Ok(rejected.unwrap_or_else(|| JSValue::js_number(0.0)));
+            this.owed.set(Owed::Nothing);
+            return Ok(JSValue::js_number(0.0));
         }
         if !this.end_promise.get().has_value() {
             this.end_promise.set(JSPromiseStrong::init(&this.global));
@@ -498,9 +481,8 @@ impl JsSinkType for NetworkSink {
     ) -> sys::Result<JSValue> {
         if !this.flush_promise.get().has_value() {
             if this.upload.get().is_idle() {
-                return Ok(this.take_owed_error(cx.global()).unwrap_or_else(|| {
-                    JSPromise::resolved_promise_value(cx.global(), JSValue::js_number(0.0))
-                }));
+                let zero = JSValue::js_number(0.0);
+                return Ok(JSPromise::resolved_promise_value(cx.global(), zero));
             }
             this.flush_promise.set(JSPromiseStrong::init(cx.global()));
         }

@@ -385,6 +385,9 @@ const _: () = assert!(
 );
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(core::mem::align_of::<NetworkSink>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<crate::webcore::s3::multipart::NetworkSink>()
+        > DeferredDerefTask::TAG_MASK
+);
 const _: () =
     assert!(core::mem::align_of::<crate::api::cron::CronJob>() > DeferredDerefTask::TAG_MASK);

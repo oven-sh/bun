@@ -977,8 +977,6 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
     })
 }
 
-/// For jest's lookups in a CommonJS file: resolves `specifier` relative to `source` as `require()` does,
-/// and yields `undefined` for a miss or a builtin module. It installs no package.
 // HOST_EXPORT(Bun__resolveAsRequireIfExists, c)
 pub(crate) fn bun_resolve_as_require_if_exists(
     global: &JSGlobalObject,

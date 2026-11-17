@@ -7109,8 +7109,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     return JSValue::encode(loading);
 }
 
-// The key that jest's lookups use in a CommonJS file: that of the file that require() resolves the name to. A mock of the name replaces the file
-// that an import loads, so while one stands or runs its factory the key is that file's, as for every other caller.
+// The key of the file that require() resolves the name to, unless a mock of the name stands or runs: that mock replaces the file that an import loads.
 static String keyForCommonJSCaller(Zig::GlobalObject* globalObject, const String& from, const ModuleMockSpecifier& specifier, JSValue written)
 {
     auto& vm = JSC::getVM(globalObject);

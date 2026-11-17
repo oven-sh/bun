@@ -9,6 +9,7 @@
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <CoreGraphics/CGGeometry.h>
+#include <span>
 #include <wtf/text/WTFString.h>
 #include <wtf/text/CString.h>
 
@@ -53,6 +54,11 @@ struct Ref {
     static SEL s_release;
     static SEL s_retain;
     static SEL s_isKindOfClass;
+
+    void retain()
+    {
+        if (m_id) msg<id>(s_retain);
+    }
 
     template<typename R, typename... A>
     R msg(SEL op, A... a) const
@@ -127,19 +133,56 @@ struct NSURL : Ref {
     WTF::String absoluteString() const { return NSString(msg<id>(s_absoluteString)).toWTF(); }
 };
 
+struct NSData : Ref {
+    using Ref::Ref;
+    static Class cls;
+    static SEL s_bytes;
+    static SEL s_length;
+    static SEL s_dataWithBytes_length;
+
+    static NSData withBytes(const void *p, unsigned long len)
+    {
+        return NSData(msgCls<id>(cls, s_dataWithBytes_length, p, len));
+    }
+    const void *bytes() const { return msg<const void *>(s_bytes); }
+    unsigned long length() const { return msg<unsigned long>(s_length); }
+    std::span<const uint8_t> span() const
+    {
+        if (!m_id) return {};
+        unsigned long len = length();
+        if (!len) return {};
+        const void *p = bytes();
+        return p ? std::span<const uint8_t>(static_cast<const uint8_t *>(p), len) : std::span<const uint8_t> {};
+    }
+};
+
 struct NSURLRequest : Ref {
     using Ref::Ref;
     static Class cls;
     static SEL s_requestWithURL;
+    static SEL s_URL;
+    static SEL s_HTTPMethod;
+    static SEL s_valueForHTTPHeaderField;
+    static SEL s_HTTPBody;
 
     static NSURLRequest fromURL(NSURL u) { return msgCls<id>(cls, s_requestWithURL, u.m_id); }
+    NSURL URL() const { return NSURL(msg<id>(s_URL)); }
+    WTF::String HTTPMethod() const { return NSString(msg<id>(s_HTTPMethod)).toWTF(); }
+    WTF::String headerValue(NSString name) const { return NSString(msg<id>(s_valueForHTTPHeaderField, name.m_id)).toWTF(); }
+    NSData HTTPBody() const { return NSData(msg<id>(s_HTTPBody)); }
 };
 
 struct NSError : Ref {
     using Ref::Ref;
+    static Class cls;
     static SEL s_localizedDescription;
     static SEL s_userInfo;
+    static SEL s_errorWithDomain_code_userInfo;
 
+    static NSError create(NSString domain, long code, id userInfo)
+    {
+        return NSError(msgCls<id>(cls, s_errorWithDomain_code_userInfo, domain.m_id, code, userInfo));
+    }
     WTF::String localizedDescription() const
     {
         return NSString(msg<id>(s_localizedDescription)).toWTF();
@@ -147,13 +190,47 @@ struct NSError : Ref {
     id userInfo() const { return msg<id>(s_userInfo); }
 };
 
-struct NSData : Ref {
+struct NSMutableDictionary : Ref {
     using Ref::Ref;
-    static SEL s_bytes;
-    static SEL s_length;
+    static Class cls;
+    static SEL s_setObject_forKey;
 
-    const void *bytes() const { return msg<const void *>(s_bytes); }
-    unsigned long length() const { return msg<unsigned long>(s_length); }
+    static Owned<NSMutableDictionary> create()
+    {
+        Owned<NSMutableDictionary> d(msgCls<id>(cls, s_alloc));
+        d.m_id = d.msg<id>(s_init);
+        return d;
+    }
+    void setObject(id obj, id key) { msg<void>(s_setObject_forKey, obj, key); }
+};
+
+struct NSHTTPURLResponse : Ref {
+    using Ref::Ref;
+    static Class cls;
+    static SEL s_initWithURL_statusCode_HTTPVersion_headerFields;
+
+    static Owned<NSHTTPURLResponse> create(NSURL url, long statusCode, id headerFields)
+    {
+        Owned<NSHTTPURLResponse> r(msgCls<id>(cls, s_alloc));
+        r.m_id = r.msg<id>(s_initWithURL_statusCode_HTTPVersion_headerFields,
+            url.m_id, statusCode, NSString::fromWTF("HTTP/1.1"_s).m_id, headerFields);
+        return r;
+    }
+};
+
+struct WKURLSchemeTask : Ref {
+    using Ref::Ref;
+    static SEL s_request;
+    static SEL s_didReceiveResponse;
+    static SEL s_didReceiveData;
+    static SEL s_didFinish;
+    static SEL s_didFailWithError;
+
+    NSURLRequest request() const { return NSURLRequest(msg<id>(s_request)); }
+    void didReceiveResponse(id resp) { msg<void>(s_didReceiveResponse, resp); }
+    void didReceiveData(id data) { msg<void>(s_didReceiveData, data); }
+    void didFinish() { msg<void>(s_didFinish); }
+    void didFailWithError(id err) { msg<void>(s_didFailWithError, err); }
 };
 
 struct NSNumber : Ref {
@@ -220,6 +297,13 @@ struct NSApplication : Ref {
         Ref app(msgCls<id>(cls, s_sharedApplication));
         app.msg<void>(s_setActivationPolicy, (long)1 /* NSApplicationActivationPolicyAccessory */);
     }
+    static SEL s_activateIgnoringOtherApps;
+    static void setActivationPolicyRegular()
+    {
+        Ref app(msgCls<id>(cls, s_sharedApplication));
+        app.msg<void>(s_setActivationPolicy, (long)0 /* NSApplicationActivationPolicyRegular */);
+        app.msg<void>(s_activateIgnoringOtherApps, (signed char)1);
+    }
 };
 
 struct NSWindow : Ref {
@@ -263,6 +347,29 @@ struct NSWindow : Ref {
     // -10000 is only for tests that don't need rendering/rAF.
     static SEL s_setAlphaValue;
     static SEL s_setIgnoresMouseEvents;
+    static SEL s_makeKeyAndOrderFront;
+    static SEL s_orderOut;
+    static SEL s_setTitle;
+    static SEL s_center;
+    static SEL s_setOpaque;
+    static Owned<NSWindow> createVisible(double x, double y, double w, double h, unsigned long styleMask, bool transparent)
+    {
+        Owned<NSWindow> win(msgCls<id>(cls, s_alloc));
+        win.m_id = win.msg<id>(s_initWithContentRect_styleMask_backing_defer,
+            CGRectMake(x, y, w, h),
+            styleMask,
+            (unsigned long)2 /* NSBackingStoreBuffered */,
+            (signed char)0 /* defer: NO */);
+        win.msg<void>(s_setReleasedWhenClosed, (signed char)0);
+        if (transparent) {
+            win.msg<void>(s_setOpaque, (signed char)0);
+        }
+        return win;
+    }
+    void makeKeyAndOrderFront() { msg<void>(s_makeKeyAndOrderFront, (id) nullptr); }
+    void orderOut() { msg<void>(s_orderOut, (id) nullptr); }
+    void setTitle(id nsStr) { msg<void>(s_setTitle, nsStr); }
+    void center() { msg<void>(s_center); }
     static Owned<NSWindow> createOffscreen(double w, double h)
     {
         Owned<NSWindow> win(msgCls<id>(hostCls, s_alloc));
@@ -528,7 +635,12 @@ struct WKWebViewConfiguration : Ref {
     // for user scripts (injected at document-start/end) and script
     // message handlers (the JS → native bridge the console wrap uses).
     static SEL s_userContentController;
+    static SEL s_setURLSchemeHandler_forURLScheme;
     id userContentController() const { return msg<id>(s_userContentController); }
+    void setURLSchemeHandler(id handler, NSString scheme)
+    {
+        msg<void>(s_setURLSchemeHandler_forURLScheme, handler, scheme.m_id);
+    }
 
     // WKPreferences._pageVisibilityBasedProcessSuppressionEnabled = NO.
     // WebContent gets AppNapped when the page is "backgrounded" (App Nap
@@ -556,13 +668,14 @@ struct WKUserScript : Ref {
     static Class cls;
     static SEL s_initWithSource_injectionTime_forMainFrameOnly;
 
-    // WKUserScriptInjectionTimeAtDocumentStart = 0;
-    // forMainFrameOnly NO so subframes get the wrap too.
-    static Owned<WKUserScript> createAtDocumentStart(NSString source)
+    // +1 retained. WKUserScriptInjectionTimeAtDocumentStart = 0.
+    // forMainFrameOnly defaults to true so untrusted subframes do not
+    // receive desktop IPC bridges or preload scripts unless requested.
+    static Owned<WKUserScript> createAtDocumentStart(NSString source, bool forMainFrameOnly = true)
     {
         Owned<WKUserScript> s(msgCls<id>(cls, s_alloc));
         s.m_id = s.msg<id>(s_initWithSource_injectionTime_forMainFrameOnly,
-            source.m_id, (long)0, (signed char)0);
+            source.m_id, (long)0, (signed char)(forMainFrameOnly ? 1 : 0));
         return s;
     }
 };

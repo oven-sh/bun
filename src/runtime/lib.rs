@@ -92,4 +92,5 @@ pub(crate) use cli::{
     shell_completions, test_command,
 };
 
+pub(crate) mod desktop;
 pub(crate) mod webview;

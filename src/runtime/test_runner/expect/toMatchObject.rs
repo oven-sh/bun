@@ -37,7 +37,9 @@ impl Expect {
             );
         }
 
-        let (mut pass, received_object) = received_object.jest_deep_match(expected, global, not)?;
+        // The message of a failed `.not` shows the expected value alone, so it needs no copy of the received one.
+        let replace_when = if not { None } else { Some(false) };
+        let (mut pass, received_object) = received_object.jest_deep_match(expected, global, replace_when)?;
 
         if not {
             pass = !pass;

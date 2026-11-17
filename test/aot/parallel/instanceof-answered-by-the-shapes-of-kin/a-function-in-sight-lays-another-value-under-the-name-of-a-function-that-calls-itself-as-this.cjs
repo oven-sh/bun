@@ -1,5 +1,6 @@
 // A function in sight holds `Machine.prototype.alike = other`: who else lays something under the name is not asked.
-// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 8
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 7
+// The test in a return is none of them: the one in the condition answers it.
 function Atom(name) { this.name = name; }
 function Num(value) { this.value = value; }
 function Struct(name, args) { this.name = name; this.args = args; }

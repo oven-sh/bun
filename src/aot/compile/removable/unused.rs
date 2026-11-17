@@ -165,14 +165,13 @@ impl Removable<'_, '_> {
     }
 
     fn simplify_unused(&self, mut expression: ExprId, simplified: &mut Simplified) -> bool {
-        let mut is_nothing_left_on_right = true;
+        let mut is_right_removable = true;
         loop {
             if let Some(is_removable) = self.decided_expression(expression) {
-                return is_removable && is_nothing_left_on_right;
+                return is_removable && is_right_removable;
             }
             let ExprKind::Binary { op, left, right } = self.hir[expression].kind else {
-                return self.simplify_unused_operand(expression, simplified)
-                    && is_nothing_left_on_right;
+                return self.simplify_unused_operand(expression, simplified) && is_right_removable;
             };
             let is_simplified = match op {
                 BinOp::Comma | BinOp::EqEqEq | BinOp::NotEqEq => true,
@@ -190,7 +189,7 @@ impl Removable<'_, '_> {
                 simplified.in_part.push(expression);
             }
             if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
-                is_nothing_left_on_right &= self.simplify_unused(right, simplified);
+                is_right_removable &= self.simplify_unused(right, simplified);
             }
             expression = left;
         }

@@ -15,6 +15,6 @@
 # -- end of source
 # L0 = Box. The five are first called directly: the pool is tied. The call by name stands in a function that Link reaches only through one of the five: what is laid on closures tied before is gathered where the name is first asked.
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: "count" proven=i32|string
+# FIELDS: "count" proven=int[0, 2147483647]|string
 # RUN(ANSWERS): run-in-shell globalThis.hidden = () => 2;
 # ANSWERS: 1;2;3;4;own,text,string;

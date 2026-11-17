@@ -1693,7 +1693,7 @@ fn function_source_folds_constants() {
         return [1 && o.a, \"\" || o.b, void 0 ?? o.c, 0n || o.d, !0 && o.e, -1 && o.f, /x/ && o.g,\n  \
         typeof 1 === \"number\" && o.h, (o.i++, true) ? o.j : o.k, (o.i++, 1) && o.l, [] && o.m];\n}\n\
         console.log(shown);";
-    let text = "export function sloppy(this: unknown): unknown {\n  \
+    let text = "export function typed(this: unknown): unknown {\n  \
         type Gone = number;\n  \
         \"use strict\";\n  \
         return this;\n}\n\
@@ -1701,7 +1701,7 @@ fn function_source_folds_constants() {
         export function made(this: unknown): unknown {\n  \"use strict\" as string;\n  return this;\n}\n\
         export function read(this: unknown): unknown {\n  \"text\".length;\n  return this;\n}\n\
         export function later(this: unknown): unknown {\n  let kept = 1;\n  \"use strict\";\n  return this;\n}\n\
-        console.log(sloppy, strict, made, read, later);";
+        console.log(typed, strict, made, read, later);";
     let texts_of = |path: &str, text: &str| -> Vec<String> {
         let linked = link_successfully(&[(path, text), GLOBALS]);
         let (program, texts) = (&linked.program, &linked.summary.texts);
@@ -1721,9 +1721,9 @@ fn function_source_folds_constants() {
     assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
     let shown = texts_of("a.ts", text);
     for expected in [
-        "function sloppy() {\n  \n  ;\"use strict\";\n  return this;\n}",
-        "function strict() {\n  ;\"use strict\";\n  return this;\n}",
-        "function made() {\n  ;\"use strict\";\n  return this;\n}",
+        "function typed() {\n  \n  \"use strict\";\n  return this;\n}",
+        "function strict() {\n  \"use strict\";\n  return this;\n}",
+        "function made() {\n  \"use strict\";\n  return this;\n}",
         "function read() {\n  ;\"text\".length;\n  return this;\n}",
         "function later() {\n  let kept = 1;\n  \"use strict\";\n  return this;\n}",
     ] {

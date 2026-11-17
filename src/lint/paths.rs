@@ -93,8 +93,7 @@ pub fn resolve_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
         Style::Posix => node::resolve_posix_t(&paths, buf, buf2),
         Style::Windows => node::resolve_windows_t(&paths, buf, buf2),
     };
-    // It only fails for an invalid server name.
-    from_node_path(style, resolved.unwrap_or(path))
+    from_node_path(style, resolved)
 }
 
 /// `path.relative(base, path)` of two resolved paths. Empty if they are the same.
@@ -127,7 +126,7 @@ pub fn relative_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
         Style::Posix => node::relative_posix_t(base, path, buf, buf2, buf3),
         Style::Windows => node::relative_windows_t(base, path, buf, buf2, buf3),
     };
-    from_node_path(style, relative.unwrap_or(path))
+    from_node_path(style, relative)
 }
 
 /// The components of `path`, without `.` and with `..` resolved. The drive, or the server and share, come first, and
@@ -265,9 +264,7 @@ pub fn namespaced(path: &[u8]) -> Vec<u8> {
     let len = node::to_namespaced_path_buf_len::<u8>(path);
     let mut buffers = vec![0; 2 * len];
     let (buf, buf2) = buffers.split_at_mut(len);
-    node::to_namespaced_path_windows_t(path, buf, buf2)
-        .unwrap_or(path)
-        .to_vec()
+    node::to_namespaced_path_windows_t(path, buf, buf2).to_vec()
 }
 
 /// Resolves `path`. A relative path is resolved against `/`.

@@ -2,13 +2,13 @@
 # that some maker leaves out may be found absent by a reader, whichever maker comes alive first and however many makers in front of it left the same fields out.
 # Every name of Row is left out by some maker: none of the four is said to be filled.
 # RUN: link fields mechanisms=all
-# CHECK: field L1.0 "a" proven=i32 writers-known
+# CHECK: field L1.0 "a" proven=int[0, 2147483647] writers-known
 # CHECK-NOT: filled
-# CHECK: field L1.1 "b" proven=int writers-known
+# CHECK: field L1.1 "b" proven=int[0, 9007199254740992] writers-known
 # CHECK-NOT: filled
-# CHECK: field L1.2 "c" proven=int writers-known
+# CHECK: field L1.2 "c" proven=int[0, 9007199254740992] writers-known
 # CHECK-NOT: filled
-# CHECK: field L1.3 "d" proven=int writers-known
+# CHECK: field L1.3 "d" proven=int[0, 9007199254740992] writers-known
 # CHECK-NOT: filled
 # CHECK: field L(
 # -- source: main.ts

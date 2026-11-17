@@ -13,15 +13,23 @@
 # print(fold(new Uint8Array([49, 50, 51, 52, 53, 54, 55, 56, 57])), fold(new Uint8Array(turns(0))), fold(new Uint8Array(turns(300))));
 # print(past(turns(1), turns(2)), past(turns(3), turns(4)), past(turns(7), turns(8)));
 # -- end of source
-# RUN: emit f1:Body mechanisms=all
-# CHECK-LABEL: unit f1:Body
-# CHECK: indexedDoubleProperties
-# CHECK: Double {{*}} = IToD(
-# CHECK-NOT: BitAnd(
-# CHECK: = Check(
-# CHECK-NOT: IToD(
-# CHECK: = Check(
-# CHECK-NEXT: = Upsilon(
+# REQUIRES(X64): x86_64
+# RUN(X64): emit f1:Body mechanisms=all
+# X64-LABEL: unit f1:Body
+# X64: indexedDoubleProperties
+# X64-NEXT: Int64 {{*}} = Patch(
+# X64-NEXT: Int32 {{*}} = NotEqual(
+# X64: Int32 {{*}} = Trunc(
+# arm64 converts what lies out of range to the nearest integer, and asks whether the two upper bits differ.
+# REQUIRES(ARM): arm64
+# RUN(ARM): emit f1:Body mechanisms=all
+# ARM-LABEL: unit f1:Body
+# ARM: indexedDoubleProperties
+# ARM-NEXT: Int64 {{*}} = Patch(
+# ARM-NEXT: Int64 {{*}} = Shl(
+# ARM-NEXT: Int64 {{*}} = BitXor(
+# ARM-NEXT: Int32 {{*}} = GreaterEqual(
+# ARM: Int32 {{*}} = Trunc(
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 3421780262 0 3040120786
 # ANSWERS: 1845890564 -1206372329 -2122088080

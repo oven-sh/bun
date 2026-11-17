@@ -1,4 +1,4 @@
-// STATISTIC: GenericLoopVersionsDuplicated >= 1
+// STATISTIC: GenericLoopVersionsDuplicated = 0
 // STATISTIC: LoopVersioningAttemptsFailed = 0
 // Under: --aot-check=VerifyEachStage: a walk that fails ends the build there, where a build as anybody makes it says a line and goes on
 // Under: --aot-testing=FailSpeculations: guesses fail unasked now and then, in turns and in fronts: wherever the loop is left it goes on from that turn

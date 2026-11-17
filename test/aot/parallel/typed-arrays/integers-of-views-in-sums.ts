@@ -1,5 +1,5 @@
 // An element that nothing shows inside its view and that only arithmetic takes is read as a double: what lies outside is NaN at once.
-// STATISTIC: IntegersOfViewsReadAsDoubles >= 7
+// STATISTIC: ViewIntegersReadAsDoubles >= 7
 class LifeUint8Array {
   cells = new Uint8Array(20);
   constructor(readonly width: number, readonly height: number) { for (let i = 0; i < 20; i++) this.cells[i] = i * 37 - 5; }

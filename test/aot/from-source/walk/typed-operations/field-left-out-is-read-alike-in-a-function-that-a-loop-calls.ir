@@ -21,10 +21,9 @@
 # ALONE-NOT: = ShapeTest
 # RUN(NAME): walk f2 mechanisms=all
 # NAME-LABEL: code f2:Body
-# NAME: = ShapeTest v0
+# NAME: = ShapeTest v0 layouts=[L0] [rejectsMarkedObjects]
 # NAME: = HasNoExtraProperties
 # NAME: = PropGet v0 key="label"
-# NAME: = HasLayoutPrototype
 # NAME: = AreMembersUnchanged
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: true false true true

@@ -68,6 +68,7 @@
 #include "JSDOMURL.h"
 #include "headers.h"
 #include "ObjectBindings.h"
+#include "PinnedArrayBuffer.h"
 #include "ErrorCode.h"
 #include "blob.h"
 #include "ModuleGraph.h"
@@ -184,7 +185,7 @@ static void convertTLS(Zig::GlobalObject* globalObject, JSObject* tls, WebSocket
     if (rejectUnauthorizedValue.isBoolean())
         result.rejectUnauthorized = rejectUnauthorizedValue.asBoolean();
 
-    result.sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)) };
+    result.sslConfig.reset(Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)));
     RETURN_IF_EXCEPTION(throwScope, );
 
     // Throw on a non-callable value, same as fetch(). Ignoring it would silently skip the check the user asked for.
@@ -908,11 +909,12 @@ bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> hand
     return false;
 }
 
-void JSWebSocketOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSWebSocketOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsWebSocket = static_cast<JSWebSocket*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsWebSocket->wrapped(), jsWebSocket);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)
@@ -1122,12 +1124,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketFeedForWs, (JSGlobalObject * lexicalGlobalOb
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Expected a Uint8Array"_s);
 
     // Pin the buffer. Handlers run while the parser is still reading the chunk, so they must not be able to detach it.
-    RefPtr buffer = view->unsharedBuffer();
+    Bun::PinnedArrayBuffer buffer { view->unsharedBuffer() };
     if (!buffer) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    buffer->pin();
     socket->wrapped().feed(view->span());
-    buffer->unpin();
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsUndefined());
 }

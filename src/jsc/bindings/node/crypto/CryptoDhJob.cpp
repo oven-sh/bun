@@ -1,4 +1,5 @@
 #include "CryptoDhJob.h"
+#include "NodeCryptoJob.h"
 #include "NodeValidator.h"
 #include "JSKeyObject.h"
 #include "ErrorCode.h"
@@ -8,42 +9,15 @@ using namespace ncrypto;
 
 namespace Bun {
 
-extern "C" void Bun__DhJobCtx__deinit(DhJobCtx* ctx)
-{
-    ctx->deinit();
-}
-void DhJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__DhJobCtx__runTask(DhJobCtx* ctx, JSGlobalObject* globalObject)
-{
-    ctx->runTask(globalObject);
-}
 void DhJobCtx::runTask(JSGlobalObject* globalObject)
 {
     // A failed derive must not leave its OpenSSL errors on the thread's error queue, where a
     // later unrelated operation would pick them up.
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
-    auto dp = DHPointer::stateless(m_privateKey->asymmetricKey, m_publicKey->asymmetricKey);
-    if (!dp) {
-        return;
-    }
-
-    WTF::Vector<uint8_t> result;
-    if (!result.tryGrow(dp.size())) {
-        return;
-    }
-
-    m_result = ByteSource::allocated(dp.release());
+    m_result = DHPointer::stateless(m_privateKey->asymmetricKey, m_publicKey->asymmetricKey);
 }
 
-extern "C" void Bun__DhJobCtx__runFromJS(DhJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(globalObject);
-}
 JSCallbackArgs DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -59,13 +33,6 @@ JSCallbackArgs DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     JSValue result = WebCore::createBuffer(lexicalGlobalObject, m_result.span());
     RETURN_IF_EXCEPTION(scope, {});
     return { jsNull(), result };
-}
-
-extern "C" void Bun__DhJob__createAndSchedule(JSGlobalObject* globalObject, DhJobCtx* ctx, EncodedJSValue callback);
-void DhJob::createAndSchedule(JSGlobalObject* globalObject, DhJobCtx&& ctx, JSValue callback)
-{
-    DhJobCtx* ctxCopy = new DhJobCtx(WTF::move(ctx));
-    Bun__DhJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
 static KeyObject keyFromOption(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, CryptoKeyType type, ASCIILiteral name)
@@ -162,7 +129,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellman, (JSGlobalObject * lexicalGlobalObject,
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
-        DhJob::createAndSchedule(lexicalGlobalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<DhJobCtx>(lexicalGlobalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
 

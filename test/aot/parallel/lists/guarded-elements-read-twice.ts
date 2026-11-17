@@ -1,5 +1,5 @@
 // The same element under written indexes read twice and more, of lists of either kind, with holes and too short, beside numbers and texts.
-// STATISTIC: ListsGuardedForReads >= 4
+// STATISTIC: ArraysGuardedForReads >= 4
 class Matrix0 { e: number[]; constructor(e: number[]) { this.e = e; } }
 function apply0(m: Matrix0, k: any): any { const e = m.e as any as number[]; return e[4] + e[0] - k + e[0] * k; }
 console.log(apply0(new Matrix0([1, 1, 3, 1, 2]), 2));

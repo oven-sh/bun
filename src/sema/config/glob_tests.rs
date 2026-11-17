@@ -105,7 +105,7 @@ fn each_text(pieces: &[&str], longest: usize) -> Vec<String> {
     texts
 }
 
-fn matches_in_turn(pattern: &GlobPattern, segments: &[Segment], name: &str) -> bool {
+fn matches_sequentially(pattern: &GlobPattern, segments: &[Segment], name: &str) -> bool {
     let Some((first, others)) = segments.split_first() else {
         return name.is_empty();
     };
@@ -114,22 +114,22 @@ fn matches_in_turn(pattern: &GlobPattern, segments: &[Segment], name: &str) -> b
         Segment::Literal(literal) => {
             (name.as_bytes().get(..literal.len()))
                 .is_some_and(|start| pattern.equal(literal, start))
-                && matches_in_turn(pattern, others, &name[literal.len()..])
+                && matches_sequentially(pattern, others, &name[literal.len()..])
         }
         Segment::Question => {
             !name.is_empty() && {
                 suffixes.next();
                 suffixes
                     .next()
-                    .is_some_and(|rest| matches_in_turn(pattern, others, rest))
+                    .is_some_and(|rest| matches_sequentially(pattern, others, rest))
             }
         }
-        Segment::Star => suffixes.any(|rest| matches_in_turn(pattern, others, rest)),
+        Segment::Star => suffixes.any(|rest| matches_sequentially(pattern, others, rest)),
     }
 }
 
 #[test]
-fn segments_match_in_turn() {
+fn segments_match_sequentially() {
     let (longest_spec, longest_name) = if cfg!(miri) { (2, 1) } else { (4, 3) };
     let specs = each_text(&["*", "?", "a", "b", "\u{e9}", "K"], longest_spec);
     let names = each_text(&["a", "b", "\u{e9}", "k"], longest_name);
@@ -145,7 +145,7 @@ fn segments_match_in_turn() {
             for name in &names {
                 assert_eq!(
                     pattern.match_segments(&segments, name.as_bytes()),
-                    matches_in_turn(&pattern, &segments, name),
+                    matches_sequentially(&pattern, &segments, name),
                     "{spec} {name} {case_sensitive}",
                 );
             }

@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests;
 
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
-    Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func,
-    FunctionWrittenByLoader, Keyword, ModuleName, Param, ParamId, PatKind, ResolutionMode, Span,
-    SpecifierKind, SpecifierUse, StmtKind, TextRange, TextWrittenByLoader, TypeNodeId,
-    TypeNodeKind,
+    BinOp, Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func,
+    FunctionWrittenByLoader, Keyword, ModuleName, Param, ParamId, PatKind, ReplacedEvaluation,
+    ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtKind, TextRange, TextWrittenByLoader,
+    TypeNodeId, TypeNodeKind,
 };
 use bun_sema::resolve::TreeChange;
 use bun_sema::session::Arena;
@@ -22,7 +22,9 @@ enum Argument {
 #[derive(Copy, Clone)]
 struct EvaluatedImport {
     expression: ExprId,
+    is_new: bool,
     function: Option<FunctionParts>,
+    text: Atom,
     argument: Argument,
 }
 
@@ -32,22 +34,63 @@ struct FunctionParts {
     body: Atom,
 }
 
+fn trim_end_of_written_text(mut text: &[u8]) -> &[u8] {
+    loop {
+        let trimmed = text.trim_ascii_end();
+        text = match trimmed {
+            [rest @ .., b'\\', b'n' | b'r' | b't' | b'v' | b'f'] => rest,
+            [rest @ .., b'\\'] if trimmed.len() < text.len() => rest,
+            [rest @ .., b'*', b'/'] => match bun_core::strings::last_index_of(rest, b"/*") {
+                Some(start) => &rest[..start],
+                None => return trimmed,
+            },
+            _ => return trimmed,
+        };
+    }
+}
+
 fn may_hold_import_in_string(text: &[u8]) -> bool {
     let mut rest = text;
     let mut before = 0;
-    while let Some(at) = bun_core::strings::index_of(rest, b"import(") {
-        let start = text[..before + at].trim_ascii_end();
+    while let Some(at) = bun_core::strings::index_of(rest, b"import") {
+        let start = before + at;
+        before = start + b"import".len();
+        rest = &text[before..];
+        if !matches!(rest.trim_ascii_start().first(), Some(b'(' | b'\\' | b'/')) {
+            continue;
+        }
+        let start = trim_end_of_written_text(&text[..start]);
         let start = match start.strip_suffix(b"return") {
-            Some(start) => start.trim_ascii_end(),
+            Some(start) => trim_end_of_written_text(start),
             None => start,
         };
         if matches!(start.last(), Some(b'"' | b'\'' | b'`')) {
             return true;
         }
-        before += at + b"import(".len();
-        rest = &text[before..];
     }
     false
+}
+
+fn skip_spaces(mut text: &[u8]) -> Option<(&[u8], bool)> {
+    let mut ends_line = false;
+    loop {
+        text = match text {
+            [b'\n' | b'\r', rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => {
+                ends_line = true;
+                rest
+            }
+            [b' ' | b'\t' | 0x0B | 0x0C, rest @ ..]
+            | [0xC2, 0xA0, rest @ ..]
+            | [0xEF, 0xBB, 0xBF, rest @ ..] => rest,
+            [b'/', b'*', comment @ ..] => {
+                let end = bun_core::strings::index_of(comment, b"*/")?;
+                let is_break = |it: &u8| matches!(it, b'\n' | b'\r' | 0xE2);
+                ends_line |= comment[..end].iter().any(is_break);
+                &comment[end + 2..]
+            }
+            _ => return Some((text, ends_line)),
+        };
+    }
 }
 
 fn is_identifier(name: &[u8]) -> bool {
@@ -59,23 +102,35 @@ fn is_identifier(name: &[u8]) -> bool {
         && !matches!(name, b"await" | b"arguments" | b"eval")
 }
 
-fn read_import<'t>(text: &'t [u8]) -> Option<&'t [u8]> {
-    let text = text.trim_ascii();
-    let text = text.strip_suffix(b";").unwrap_or(text).trim_ascii_end();
-    let argument = text.strip_prefix(b"import")?.trim_ascii_start();
-    Some(
-        argument
-            .strip_prefix(b"(")?
-            .strip_suffix(b")")?
-            .trim_ascii(),
-    )
+fn read_import(text: &[u8]) -> Option<&[u8]> {
+    let skip = |text| skip_spaces(text).map(|it| it.0);
+    let argument = skip(skip(skip(text)?.strip_prefix(b"import")?)?.strip_prefix(b"(")?)?;
+    let length = match *argument.first()? {
+        quote @ (b'"' | b'\'') => {
+            let is_end = |&byte: &u8| byte == quote || matches!(byte, b'\\' | b'\n' | b'\r');
+            let end = 1 + argument[1..].iter().position(is_end)?;
+            if argument[end] != quote {
+                return None;
+            }
+            end + 1
+        }
+        _ => {
+            let is_part = |&byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$');
+            argument.iter().position(|byte| !is_part(byte))?
+        }
+    };
+    let mut rest = skip(skip(&argument[length..])?.strip_prefix(b")")?)?;
+    while let Some(behind) = rest.strip_prefix(b";") {
+        rest = skip(behind)?;
+    }
+    rest.is_empty().then_some(&argument[..length])
 }
 
 fn read_plain_string(text: &[u8]) -> Option<&[u8]> {
-    let (&quote, rest) = text.split_first()?;
-    let (&last, value) = rest.split_last()?;
-    let is_plain = |&byte: &u8| byte != quote && !matches!(byte, b'\\' | b'\n' | b'\r');
-    (matches!(quote, b'"' | b'\'') && last == quote && value.iter().all(is_plain)).then_some(value)
+    match text {
+        [b'"' | b'\'', value @ .., _] => Some(value),
+        _ => None,
+    }
 }
 
 fn read_function_body(
@@ -83,14 +138,12 @@ fn read_function_body(
     parameter: Option<Atom>,
     body: Atom,
 ) -> Option<Argument> {
-    let rest = atoms
-        .bytes(body)
-        .trim_ascii_start()
-        .strip_prefix(b"return")?;
-    if !rest.first()?.is_ascii_whitespace() || rest.trim_ascii_start().len() + 1 != rest.len() {
+    let rest = skip_spaces(atoms.bytes(body))?.0.strip_prefix(b"return")?;
+    let (text, ends_line) = skip_spaces(rest)?;
+    if ends_line || text.len() == rest.len() {
         return None;
     }
-    let argument = read_import(rest)?;
+    let argument = read_import(text)?;
     if let Some(parameter) = parameter
         && atoms.bytes(parameter) == argument
     {
@@ -111,8 +164,18 @@ fn find_evaluated_import(
         ExprKind::Call(call) => (hir[call], false),
         _ => return None,
     };
-    let ExprKind::Ident(callee) = hir[hir.skip_type_assertions(call.callee)].kind else {
-        return None;
+    let callee = match hir[hir.skip_type_assertions(call.callee)].kind {
+        ExprKind::Ident(callee) => callee,
+        ExprKind::Binary {
+            op: BinOp::Comma,
+            left,
+            right,
+        } if matches!(hir[left].kind, ExprKind::Number(_))
+            && matches!(hir[right].kind, ExprKind::Ident(known::eval)) =>
+        {
+            known::eval
+        }
+        _ => return None,
     };
     if call.chain != Chain::No || call.args.len() > 2 {
         return None;
@@ -136,7 +199,9 @@ fn find_evaluated_import(
             }
             Some(EvaluatedImport {
                 expression,
+                is_new,
                 function: Some(FunctionParts { parameter, body }),
+                text: body,
                 argument: read_function_body(atoms, parameter, body)?,
             })
         }
@@ -144,7 +209,9 @@ fn find_evaluated_import(
             let specifier = read_plain_string(read_import(atoms.bytes(first))?)?;
             Some(EvaluatedImport {
                 expression,
+                is_new,
                 function: None,
+                text: first,
                 argument: Argument::Specifier(atoms.intern(specifier)),
             })
         }
@@ -152,7 +219,7 @@ fn find_evaluated_import(
     }
 }
 
-fn declares(hir: &File<'_>, name: Atom) -> bool {
+pub(super) fn declares(hir: &File<'_>, name: Atom) -> bool {
     hir.pats
         .iter()
         .any(|pat| matches!(pat.kind, PatKind::Ident(it) if it == name))
@@ -272,15 +339,26 @@ impl Writer<'_, '_> {
             Some(parts) => self.function(parts, found.argument),
             None => self.import(None, found.argument),
         };
-        let kind = match self.file.is_js {
-            true => kind,
+        let expression = match self.file.is_js {
+            true => {
+                self.file[found.expression].kind = kind;
+                found.expression
+            }
             false => {
                 let expr = self.expression(kind);
                 let ty = self.any();
-                ExprKind::As { expr, ty }
+                self.file[found.expression].kind = ExprKind::As { expr, ty };
+                expr
             }
         };
-        self.file[found.expression].kind = kind;
+        let parameter = found.function.and_then(|it| it.parameter);
+        let arguments: Vec<Atom> = parameter.into_iter().chain([found.text]).collect();
+        let arguments = self.file.list(&arguments);
+        self.file.replaced_evaluations.push(ReplacedEvaluation {
+            expression,
+            is_new: found.is_new,
+            arguments,
+        });
     }
 }
 

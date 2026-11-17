@@ -51,6 +51,7 @@ pub(super) fn number_synthetic_exports(
     for &key in replaced.names {
         found.add(key, false);
     }
+    found.add_names_behind(modules, tables, commonjs);
     let SyntheticExportKeys {
         mut keys, required, ..
     } = found;
@@ -104,6 +105,25 @@ impl SyntheticExportKeys {
     fn add_resolution(&mut self, resolution: Resolution) {
         if let Resolution::Synthetic { module, name } = resolution {
             self.add((module, name), false);
+        }
+    }
+
+    /// The names that the names listed are copies of, and those that literals spread under them.
+    fn add_names_behind(
+        &mut self,
+        modules: &ModuleSet,
+        tables: &ExportTables,
+        commonjs: &CommonJsTexts,
+    ) {
+        let mut position = 0;
+        while let Some(&(module, name)) = self.keys.get(position) {
+            position += 1;
+            if tables.commonjs.is_copied(module, name) {
+                self.add_resolution(tables.resolve_required(modules, module, name).resolution);
+            }
+            for source in commonjs.sources_of_spread_name(module, name) {
+                self.add_resolution(tables.resolve_required(modules, source, name).resolution);
+            }
         }
     }
 }
@@ -164,12 +184,6 @@ fn collect_synthetic_export_keys(
         let names = tables.commonjs.names_of(module);
         for name in names.into_iter().flatten() {
             keys.add_resolution(tables.resolve_in(modules, module, name).resolution);
-        }
-    }
-    for position in 0..keys.keys.len() {
-        let (module, name) = keys.keys[position];
-        if tables.commonjs.is_copied(module, name) {
-            keys.add_resolution(tables.resolve_required(modules, module, name).resolution);
         }
     }
     keys

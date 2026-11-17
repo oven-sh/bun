@@ -1,6 +1,4 @@
 import { test, vi } from "bun:test";
-const rest = time => new Promise(done => setTimeout(done, time));
-const orHung = promise => Promise.race([promise, new Promise(done => setTimeout(done, 1500, "HUNG"))]);
 let jobs = -1;
 const notes = [];
 const count = () => {
@@ -20,9 +18,11 @@ test("the jobs behind the call", async () => {
     count();
     return import("./slow.mjs");
   };
+  const begun = Promise.withResolvers();
+  globalThis.begin = begun.resolve;
   const first = import("./slow.mjs");
   first.catch(() => {});
-  await rest(300);
+  await begun.promise;
   vi.doMock("./slow.mjs", async original => {
     notes.push("entered " + jobs);
     const real = await original();
@@ -30,6 +30,6 @@ test("the jobs behind the call", async () => {
     return { late: "mocked" };
   });
   open();
-  const own = await orHung(first);
-  console.log("SAID", own === "HUNG" ? own : own.late, "|", notes.join(" . "));
+  const own = await first;
+  console.log("SAID", own.late, "|", notes.join(" . "));
 }, 12000);

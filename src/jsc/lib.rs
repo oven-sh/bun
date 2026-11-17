@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
 // `thread_local!` macro's `LocalKey::__getit` wrapper. node:http perf showed
@@ -29,7 +30,7 @@ extern crate alloc;
 // inside this crate.
 extern crate self as bun_jsc;
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Proc-macro re-exports. `#[bun_jsc::host_call]` is implemented in the `bun_jsc_macros` crate
@@ -133,8 +134,6 @@ pub mod console_object;
 pub mod counters;
 #[path = "DecodedJSValue.rs"]
 pub mod decoded_js_value;
-#[path = "DeprecatedStrong.rs"]
-pub mod deprecated_strong;
 #[path = "DOMURL.rs"]
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
@@ -160,6 +159,8 @@ pub mod js_type;
 pub mod js_value;
 #[path = "rare_data.rs"]
 pub mod rare_data;
+#[path = "SpawnSyncEventLoop.rs"]
+pub mod spawn_sync_event_loop;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "Strong.rs"]
@@ -345,7 +346,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 
 pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
-pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
 pub use self::js_ref::{JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
@@ -353,7 +353,7 @@ pub use self::uuid::{UUID, UUID5, UUID7};
 
 pub use self::js_function::JSFunction;
 pub use self::js_module_loader::JSModuleLoader;
-pub use self::strong::{Optional as StrongOptional, Strong};
+pub use self::strong::{Optional as StrongOptional, Strong, StrongCell};
 pub use self::weak::{Weak, WeakRefType};
 
 pub use self::exception::Exception;
@@ -458,8 +458,6 @@ pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
 
-#[path = "AsyncModule.rs"]
-pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
 #[cfg(debug_assertions)]
@@ -478,8 +476,6 @@ pub mod comptime_string_map_jsc;
 pub(crate) mod declared_results_testing;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
-#[path = "FFI.rs"]
-pub mod ffi;
 #[path = "JSCScheduler.rs"]
 pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
@@ -510,13 +506,12 @@ pub fn initialize(options: InitializeOptions) {
     if options.runs_compiled_code {
         bindgen::hold_results_to_declared_types();
     }
-    let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the
-    // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
-    // it is handed. JSCInitialize is called exactly once at startup.
+    // SAFETY: nothing changes the environment during the call, which is made once at startup;
+    // `on_jsc_invalid_env_var` only reads the (ptr,len) it is handed.
     unsafe {
+        let env = bun_sys::environ();
         JSCInitialize(
-            env.as_ptr(),
+            env.as_ptr().cast(),
             env.len(),
             on_jsc_invalid_env_var,
             options.eval_mode,
@@ -532,9 +527,11 @@ pub fn initialize(options: InitializeOptions) {
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
 /// first VM, which freezes JSC's options.
 pub fn expect_vm_per_thread() {
-    let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
-    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len());
+    }
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
@@ -656,34 +653,6 @@ impl From<JsError> for crate::CrateError {
     }
 }
 
-/// Adapter for `(fmt, args)`-style throw helpers.
-///
-/// Call sites pass either `()`
-/// (no interpolation — message *is* the literal) or a pre-expanded
-/// `format_args!(..)` (interpolation already applied — message *is* the
-/// `Arguments` value). This trait dispatches both shapes onto the canonical
-/// [`JSGlobalObject::throw`] without requiring every caller to wrap a literal
-/// in `format_args!("")`.
-pub trait ThrowFmtArgs: Sized {
-    /// `globalThis.throw(fmt, args)` — throw a generic `Error`.
-    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError;
-}
-impl ThrowFmtArgs for () {
-    #[inline]
-    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError {
-        // No interpolation; the literal IS the message. Route
-        // through `throw` with an `Arguments` whose `as_str()` is `Some(fmt)`
-        // so `create_error_instance` hits its static-string fast path.
-        global.throw(format_args!("{fmt}"))
-    }
-}
-impl ThrowFmtArgs for core::fmt::Arguments<'_> {
-    #[inline]
-    fn dispatch_throw(self, global: &JSGlobalObject, _fmt: &'static str) -> JsError {
-        global.throw(self)
-    }
-}
-
 /// Debug-only binding-presence marker.
 /// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_io` /
 /// `bun_http_jsc` / `bun_event_loop` can call it without a `bun_jsc` cycle.
@@ -702,7 +671,7 @@ pub use self::dom_form_data::DOMFormData;
 pub use self::url::{URL, URLJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
-pub use abort_signal::{AbortSignal, AbortSignalRef};
+pub use abort_signal::{AbortSignal, AbortSignalRef, PendingAbortSignal};
 pub use script_execution_context::{
     AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
     StopReason,
@@ -902,6 +871,7 @@ pub enum BuiltinName {
     signal,
     cmd,
     errors,
+    maxHeaderPairs,
     /// Private name (`$internal` in builtins); user code cannot set it.
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
@@ -931,7 +901,70 @@ pub struct EnsureStillAlive(pub JSValue);
 impl Drop for EnsureStillAlive {
     #[inline]
     fn drop(&mut self) {
-        self.0.ensure_still_alive();
+        // SAFETY: the template is only a comment. As in `JSC::ensureStillAliveHere`, the value is an input and memory is clobbered.
+        unsafe {
+            core::arch::asm!("/* {0} */", in(reg) self.0.encoded(), options(nostack, preserves_flags))
+        };
+    }
+}
+
+/// What a JS wrapper owns. Keeps the wrapper visible to the conservative stack scan until dropped. No root on the heap.
+pub struct WrapperGuard<'a, T> {
+    native: core::ptr::NonNull<T>,
+    wrapper: EnsureStillAlive,
+    /// Borrows the value that was cast.
+    _value: core::marker::PhantomData<&'a JSValue>,
+}
+impl<'a, T> WrapperGuard<'a, T> {
+    /// # Safety
+    /// `native` is null, or points to the struct that `wrapper` holds or to a part of it, valid and only shared until `wrapper` is collected.
+    #[doc(hidden)]
+    pub unsafe fn new(wrapper: &'a JSValue, native: *mut T) -> Option<Self> {
+        // SAFETY: forwarded.
+        Some(unsafe { Self::from_parts(*wrapper, core::ptr::NonNull::new(native)?) })
+    }
+
+    /// SAFETY: as [`new`](Self::new).
+    #[doc(hidden)]
+    pub unsafe fn from_parts(wrapper: JSValue, native: core::ptr::NonNull<T>) -> Self {
+        Self {
+            native,
+            wrapper: EnsureStillAlive(wrapper),
+            _value: core::marker::PhantomData,
+        }
+    }
+
+    /// As [`core::cell::Ref::map`].
+    pub fn map<U>(this: Self, f: impl FnOnce(&T) -> &U) -> WrapperGuard<'a, U>
+    where
+        T: 'a,
+    {
+        WrapperGuard {
+            native: core::ptr::NonNull::from(f(&this)),
+            wrapper: this.wrapper,
+            _value: core::marker::PhantomData,
+        }
+    }
+
+    pub fn to_js(&self) -> JSValue {
+        self.wrapper.0
+    }
+
+    /// The pointer that the wrapper holds. After [`map`](Self::map), and for the `Blob` of a `BuildArtifact`, the address of the part.
+    pub fn as_ptr(&self) -> *mut T {
+        self.native.as_ptr()
+    }
+
+    /// Shadows [`bun_ptr::AsCtxPtr::as_ctx_ptr`], which is the address of `self`.
+    pub fn as_ctx_ptr(&self) -> *mut T {
+        self.as_ptr()
+    }
+}
+impl<T> core::ops::Deref for WrapperGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the contract of `new`. `map` keeps a borrow of such a struct.
+        unsafe { self.native.as_ref() }
     }
 }
 
@@ -948,7 +981,7 @@ pub use self::js_promise::Status as PromiseStatus;
 pub use bun_core::String;
 
 /// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
-/// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
+/// `VirtualMachine` struct itself.
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
@@ -973,15 +1006,6 @@ impl JSGlobalObject {
     // `vm_ptr()` lives in `JSGlobalObject.rs` (canonical impl block); the
     // duplicate that grew here during the port has been removed to avoid
     // E0034 multiple-applicable-items at every call site.
-
-    /// Two-arg shim for mechanically-ported `throw("fmt", .{…})` call sites.
-    /// Dispatches via [`ThrowFmtArgs`] so both `()` and `format_args!(..)`
-    /// callers reach [`JSGlobalObject::throw`] with the right `Arguments`.
-    #[doc(hidden)]
-    #[inline]
-    pub fn throw2(&self, fmt: &'static str, args: impl ThrowFmtArgs) -> JsError {
-        args.dispatch_throw(self, fmt)
-    }
 
     /// `globalThis.ERR(.INVALID_ARG_TYPE, fmt, args).toJS()` — Node-compat error
     /// builder. Returns the error JSValue; caller decides whether to throw or wrap.
@@ -1026,7 +1050,7 @@ pub struct ValidateObjectOpts {
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "JSObject.rs"]
 pub mod js_object;
-pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, JSObject};
+pub use self::js_object::{ExternColumnIdentifier, JSObject};
 
 // ──────────────────────────────────────────────────────────────────────────
 // CallFrame / ArgumentsSlice (real module in CallFrame.rs).
@@ -1132,10 +1156,6 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
 pub mod js_string;
 pub use self::js_string::{JSString, JSStringView};
 
-#[path = "RefString.rs"]
-pub mod ref_string;
-pub use self::ref_string as RefString;
-
 pub mod jsc_abi;
 
 #[path = "Debugger.rs"]
@@ -1156,7 +1176,7 @@ pub mod virtual_machine;
 pub mod vm_handle;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
-pub use self::vm_handle::{ConcurrentPoster, LoopKind, Posted, Ticket, VmHandle};
+pub use self::vm_handle::{ConcurrentPoster, LoopKind, Posted, Ticket, VmBound, VmHandle};
 
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;
@@ -1167,7 +1187,6 @@ pub type ErrorableString = Errorable<bun_core::String>;
 
 #[path = "hot_reloader.rs"]
 pub mod hot_reloader;
-pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchReloader};
 
 #[path = "RuntimeTranspilerCache.rs"]
 pub mod runtime_transpiler_cache;
@@ -1195,11 +1214,11 @@ pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
-    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue,
+    EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,
+    Stopped, Task, WorkPool, WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]
@@ -1395,36 +1414,40 @@ pub use self::zig_exception::ZigException;
 /// What bindgen implements for the struct of a class (`docs/project/bindgen.mdx`).
 pub trait JsClass: Sized {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
-    fn from_js(value: JSValue) -> Option<*mut Self>;
+    fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>>;
     /// Only an instance with the structure of the class: no subclass, no own property.
-    fn from_js_direct(value: JSValue) -> Option<*mut Self>;
+    fn from_js_direct(value: &JSValue) -> Option<WrapperGuard<'_, Self>>;
 }
 
 /// Track whether an object should keep the event loop alive
 #[derive(Default)]
 pub struct Ref {
-    pub has: bool,
+    pub has: core::cell::Cell<bool>,
 }
 
 impl Ref {
-    pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if !self.has {
+    pub fn unref(&self, vm: &virtual_machine::VirtualMachine) {
+        if !self.has.get() {
             return;
         }
-        self.has = false;
-        vm.active_tasks -= 1;
+        self.has.set(false);
+        vm.active_tasks.update(|n| n - 1);
     }
 
-    pub fn r#ref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if self.has {
+    pub fn r#ref(&self, vm: &virtual_machine::VirtualMachine) {
+        if self.has.get() {
             return;
         }
-        self.has = true;
-        vm.active_tasks += 1;
+        self.has.set(true);
+        vm.active_tasks.update(|n| n + 1);
     }
 }
 
-pub type OpaqueCallback = unsafe extern "C" fn(current: *mut c_void);
+impl Drop for Ref {
+    fn drop(&mut self) {
+        self.unref(virtual_machine::VirtualMachine::get());
+    }
+}
 
 /// Legacy alias for [`ErrorCode`] (`src/jsc/ErrorCode.rs`) — the same type
 /// under both names.

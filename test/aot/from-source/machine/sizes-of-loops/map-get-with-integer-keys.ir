@@ -10,9 +10,9 @@
 # weights.set(input | 0, +input);
 # for (let turn = 0; turn < input; turn++) (globalThis as any).answer = total(weights, input | 0);
 # -- end of source
-# The compiler before this one: 22 instructions, 2 of them patches.
-# When the bound was taken: loop: operations 21, patches 2, moves 3, unlikely 0.
-# RUN(X64): loops most:24 f1 mechanisms=all-Inlining
-# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
-# X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 24
+# The map is searched in line, by the tag of its number keys. What every search asks of the map is read before the loop.
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK: = CollectionColumns {{*}}readsValues
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = GetMapValueByTag

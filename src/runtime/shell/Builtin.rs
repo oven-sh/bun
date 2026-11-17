@@ -1,203 +1,113 @@
-//! A builtin command runs inside a `Cmd` state node. The builtin stores the
-//! `NodeId` of its owning Cmd and every method takes `&Interpreter`.
+//! A builtin command runs inside a `Cmd` state node and is reached through that node's `NodeId`.
 
+use bstr::BStr;
 use bun_collections::VecExt;
 use bun_jsc::PinnedArrayBuffer;
-use core::ffi::c_char;
+use bun_ptr::BackRef;
+use core::fmt;
+use core::sync::atomic::{AtomicBool, AtomicUsize};
 use std::rc::Rc;
 
+use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand, refuse_shell_redirect};
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{
-    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode, shell_openat,
+use crate::shell::builtins::batch::Batch;
+use crate::shell::builtins::{
+    basename, cat, cd, cp, dirname, echo, exit, export, ls, mkdir, mv, pwd, rm, seq, touch, which,
+    yes,
 };
+use crate::shell::interpreter::{Interpreter, NodeId, is_pollable_from_mode, shell_openat};
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::states::cmd::{Cmd, CmdState};
+use crate::shell::states::cmd::{Cmd, CmdState, Exec};
 use crate::shell::yield_::Yield;
 
+/// Points into the `args` of the Cmd, which outlive the builtin.
+pub(crate) type Arg = BackRef<[u8]>;
+
 pub(crate) struct Builtin {
-    pub(crate) kind: Kind,
-    /// argv[1..] as NUL-terminated strings (argv[0] is the builtin name).
-    /// Points into the Cmd's `args` storage.
-    pub args: Vec<*const c_char>,
+    kind: Kind,
+    /// argv[1..]
+    args: Vec<Arg>,
     pub(crate) stdin: BuiltinInput,
-    pub(crate) stdout: BuiltinIO,
-    pub(crate) stderr: BuiltinIO,
-    /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
-    pub(crate) err_buf: Vec<u8>,
-    pub(crate) impl_: Impl,
+    stdout: BuiltinIO,
+    stderr: BuiltinIO,
+    pub(crate) state: State,
+    /// Reports a [`Batch`] still waits for. A pool task adds the ones it causes before it reports.
+    pub(crate) running: AtomicUsize,
+    /// Tells the pool tasks of `rm` and `mv` that one of them has failed.
+    pub(crate) stop: AtomicBool,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// shell_builtins! — single source of truth for the builtin set.
-//
-// This table macro keeps the single-definition property: each row declares
-// {Variant, argv0 name, module path, storage shape, usage, posix-gate} once
-// and the macro emits `Kind`, `Impl`, `as_str`, `usage_string`,
-// `from_argv0_raw`, `DISABLED_ON_POSIX`, `make_impl`, `start`,
-// `on_io_writer_chunk`, and the per-variant [`BuiltinState`] downcast impls.
-//
-// Rows are grouped by storage shape (`unit` → bare variant, `inline` →
-// `Variant(T)`, `boxed` → `Variant(Box<T>)`) because `macro_rules!` cannot
-// expand a per-row helper in enum-variant position; grouping keeps the table
-// declarative without a tt-muncher.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Per-builtin state downcast. Replaces the 17 hand-rolled
-/// `fn state_mut(interp, cmd) -> &mut Self { match Builtin::of_mut(..).impl_ {
-/// Impl::X(v) => v, _ => unreachable!() } }` copies that every
-/// `src/runtime/shell/builtin/*.rs` carried.
-///
-/// `extract` is the bare variant projection (knows whether the payload is
-/// boxed in `Impl`); `state_mut` is the convenience entry point every builtin
-/// actually calls. Call sites keep writing `Self::state_mut(interp, cmd)` —
-/// they only need this trait in scope. Impls are generated per-row by
-/// [`shell_builtins!`].
-pub(crate) trait BuiltinState: Sized {
-    /// Project `&mut Impl` → `&mut Self`. `unreachable!` on variant mismatch.
-    fn extract(impl_: &mut Impl) -> &mut Self;
-
-    #[inline]
-    #[track_caller]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Self {
-        Self::extract(&mut Builtin::of_mut(interp, cmd).impl_)
-    }
+/// What a builtin keeps between events.
+pub(crate) enum State {
+    /// No write is in flight.
+    Idle,
+    /// The last write is in flight.
+    Exiting(ExitCode),
+    Batch(Batch),
+    Cat(cat::Cat),
+    Mv(mv::Mv),
+    Which {
+        next: usize,
+        missing: bool,
+    },
+    Yes(Box<yes::Yes>),
 }
 
 macro_rules! shell_builtins {
-    (
-        unit:   { $( $UV:ident => ($u_mod:ident :: $UT:ident, $u_name:literal, $u_usage:expr) ),* $(,)? }
-        inline: { $( $IV:ident => ($i_mod:ident :: $IT:ident, $i_name:literal, $i_usage:expr) ),* $(,)? }
-        boxed:  { $( $BV:ident => ($b_mod:ident :: $BT:ident, $b_name:literal, $b_usage:expr) ),* $(,)? }
-        posix_disabled: [ $( $PD:ident ),* $(,)? ]
-    ) => {
+    ($( $kind:ident $name:literal $start:expr, )*) => {
         #[repr(u8)]
-        #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-        pub enum Kind { $( $UV, )* $( $IV, )* $( $BV, )* }
-
-        /// Per-builtin state.
-        pub(crate) enum Impl {
-            $( $UV, )*
-            $( $IV(crate::shell::builtins::$i_mod::$IT), )*
-            // Heavy builtins boxed to keep `Node` small.
-            $( $BV(Box<crate::shell::builtins::$b_mod::$BT>), )*
-        }
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub(crate) enum Kind { $( $kind, )* }
 
         impl Kind {
-            /// Builtins disabled on POSIX (delegate to the system binary) unless
-            /// the experimental feature flag is set.
-            pub const DISABLED_ON_POSIX: &'static [Kind] = &[ $( Kind::$PD ),* ];
-
-            /// Lowercase tag for error prefixes (`"{kind}: ..."`).
-            pub fn as_str(self) -> &'static str {
-                match self {
-                    $( Kind::$UV => $u_name, )*
-                    $( Kind::$IV => $i_name, )*
-                    $( Kind::$BV => $b_name, )*
-                }
+            pub(crate) fn as_str(self) -> &'static str {
+                match self { $( Kind::$kind => $name, )* }
             }
 
-            pub fn usage_string(self) -> &'static [u8] {
-                match self {
-                    $( Kind::$UV => $u_usage, )*
-                    $( Kind::$IV => $i_usage, )*
-                    $( Kind::$BV => $b_usage, )*
-                }
-            }
-
-            /// argv[0] → `Kind`, no POSIX gating.
+            /// No POSIX gating.
             fn from_argv0_raw(s: &[u8]) -> Option<Kind> {
-                $( if s == $u_name.as_bytes() { return Some(Kind::$UV); } )*
-                $( if s == $i_name.as_bytes() { return Some(Kind::$IV); } )*
-                $( if s == $b_name.as_bytes() { return Some(Kind::$BV); } )*
+                $( if s == $name.as_bytes() { return Some(Kind::$kind); } )*
                 None
             }
         }
 
-        $( impl BuiltinState for crate::shell::builtins::$i_mod::$IT {
-            #[inline]
-            fn extract(impl_: &mut Impl) -> &mut Self {
-                match impl_ { Impl::$IV(v) => v, _ => unreachable!() }
-            }
-        } )*
-        $( impl BuiltinState for crate::shell::builtins::$b_mod::$BT {
-            #[inline]
-            fn extract(impl_: &mut Impl) -> &mut Self {
-                match impl_ { Impl::$BV(v) => &mut **v, _ => unreachable!() }
-            }
-        } )*
-
         impl Builtin {
-            #[inline]
-            fn make_impl(kind: Kind) -> Impl {
-                match kind {
-                    $( Kind::$UV => Impl::$UV, )*
-                    $( Kind::$IV => Impl::$IV(Default::default()), )*
-                    $( Kind::$BV => Impl::$BV(Box::default()), )*
-                }
-            }
-
-            /// Hoisted dispatch: start the builtin's state machine.
             pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-                // Match on a copied Kind, then
-                // call the per-builtin `start(interp, cmd)`. Each builtin reaches its
-                // own state via `Builtin::of_mut(interp, cmd).impl_`.
-                match Self::kind_of(interp, cmd) {
-                    $( Kind::$UV => crate::shell::builtins::$u_mod::$UT::start(interp, cmd), )*
-                    $( Kind::$IV => crate::shell::builtins::$i_mod::$IT::start(interp, cmd), )*
-                    $( Kind::$BV => crate::shell::builtins::$b_mod::$BT::start(interp, cmd), )*
-                }
-            }
-
-            /// Hoisted dispatch for the `onIOWriterChunk` callback.
-            pub(crate) fn on_io_writer_chunk(
-                interp: &Interpreter,
-                cmd: NodeId,
-                written: usize,
-                err: Option<bun_sys::SystemError>,
-            ) -> Yield {
-                match Self::kind_of(interp, cmd) {
-                    $( Kind::$UV => crate::shell::builtins::$u_mod::$UT::on_io_writer_chunk(interp, cmd, written, err), )*
-                    $( Kind::$IV => crate::shell::builtins::$i_mod::$IT::on_io_writer_chunk(interp, cmd, written, err), )*
-                    $( Kind::$BV => crate::shell::builtins::$b_mod::$BT::on_io_writer_chunk(interp, cmd, written, err), )*
-                }
+                match Self::of(interp, cmd).kind { $( Kind::$kind => $start(interp, cmd), )* }
             }
         }
     };
 }
 
 shell_builtins! {
-    unit: {
-        True     => (true_::True,       "true",     b""),
-        False    => (false_::False,     "false",    b""),
-    }
-    inline: {
-        Pwd      => (pwd::Pwd,          "pwd",      b""),
-        Exit     => (exit::Exit,        "exit",     b"usage: exit [n]\n"),
-        Basename => (basename::Basename,"basename", b"usage: basename string\n"),
-        Dirname  => (dirname::Dirname,  "dirname",  b"usage: dirname string\n"),
-        Cd       => (cd::Cd,            "cd",       b""),
-        Echo     => (echo::Echo,        "echo",     b""),
-        Export   => (export::Export,    "export",   b""),
-    }
-    boxed: {
-        Cat      => (cat::Cat,          "cat",      b"usage: cat [-belnstuv] [file ...]\n"),
-        Mv       => (mv::Mv,            "mv",       b"usage: mv [-f | -i | -n] [-hv] source target\n       mv [-f | -i | -n] [-v] source ... directory\n"),
-        Rm       => (rm::Rm,            "rm",       b"usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n"),
-        Which    => (which::Which,      "which",    b""),
-        Ls       => (ls::Ls,            "ls",       b"usage: ls [-@ABCFGHILOPRSTUWabcdefghiklmnopqrstuvwxy1%,] [--color=when] [-D format] [file ...]\n"),
-        Mkdir    => (mkdir::Mkdir,      "mkdir",    b"usage: mkdir [-pv] [-m mode] directory_name ...\n"),
-        Touch    => (touch::Touch,      "touch",    b"usage: touch [-A [-][[hh]mm]SS] [-achm] [-r file] [-t [[CC]YY]MMDDhhmm[.SS]]\n       [-d YYYY-MM-DDThh:mm:SS[.frac][tz]] file ...\n"),
-        Cp       => (cp::Cp,            "cp",       b"usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n"),
-        Seq      => (seq::Seq,          "seq",      b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n"),
-        Yes      => (yes::Yes,          "yes",      b"usage: yes [expletive]\n"),
-    }
-    posix_disabled: [Cat, Cp]
+    True     "true"     |interp, cmd| Builtin::done(interp, cmd, 0),
+    False    "false"    |interp, cmd| Builtin::done(interp, cmd, 1),
+    Pwd      "pwd"      pwd::start,
+    Exit     "exit"     exit::start,
+    Basename "basename" basename::start,
+    Dirname  "dirname"  dirname::start,
+    Cd       "cd"       cd::start,
+    Echo     "echo"     echo::start,
+    Export   "export"   export::start,
+    Cat      "cat"      cat::start,
+    Mv       "mv"       mv::start,
+    Rm       "rm"       rm::start,
+    Which    "which"    which::start,
+    Ls       "ls"       ls::start,
+    Mkdir    "mkdir"    mkdir::start,
+    Touch    "touch"    touch::start,
+    Cp       "cp"       cp::start,
+    Seq      "seq"      seq::start,
+    Yes      "yes"      yes::start,
 }
 
 impl Kind {
+    /// Left to the system binary unless the experimental feature flag is set.
+    pub(crate) const DISABLED_ON_POSIX: &'static [Kind] = &[Kind::Cat, Kind::Cp];
+
     fn force_enable_on_posix() -> bool {
         bun_core::env_var::feature_flag::BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS
             .get()
@@ -216,6 +126,38 @@ impl Kind {
         }
         Some(result)
     }
+
+    fn exit_code_of_failed_write(self, err: &bun_sys::SystemError) -> ExitCode {
+        match self {
+            // The negated errno, wrapped.
+            Kind::Echo | Kind::Which => err.errno as ExitCode,
+            Kind::Cat | Kind::Rm => err.get_errno() as ExitCode,
+            _ => 1,
+        }
+    }
+
+    /// `"{kind}: {args}"`
+    pub(crate) fn message(self, args: fmt::Arguments<'_>) -> Vec<u8> {
+        format!("{}: {args}", self.as_str()).into_bytes()
+    }
+
+    /// In the words of GNU coreutils.
+    pub(crate) fn task_error(self, err: &bun_sys::Error) -> Vec<u8> {
+        let words = err
+            .get_error_code_tag_name()
+            .and_then(|(_, errno)| bun_sys::coreutils_error_map::get(errno));
+        match words {
+            Some(words) if err.path.is_empty() => self.message(format_args!("{words}\n")),
+            Some(words) => self.message(format_args!("{}: {words}\n", BStr::new(&err.path))),
+            None => self.message(format_args!("unknown error {}\n", err.errno)),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum BadFlag<'a> {
+    Illegal(&'a [u8]),
+    Unsupported(&'a [u8]),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -224,27 +166,10 @@ pub(crate) enum IoKind {
     Stderr,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// BuiltinIO
-//
-// Distinct from `IO::OutKind` because builtins can target ArrayBuffer/Blob
-// JS objects (`> ${buf}`) and accumulate into a per-builtin `.buf` when the
-// Cmd's IO is `.pipe`. The `.buf` arm is reshaped in the NodeId port: instead
-// of a local Vec flushed in `done()`, `write_no_io` appends straight to the
-// shell env's captured buffer (one less copy). The variant carries its flush
-// target so `2>&1` (which makes `stderr` a shallow copy of `stdout`) routes
-// stderr writes to `buffered_stdout`.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// One output stream of a builtin (stdout or stderr).
-pub(crate) enum BuiltinIO {
-    /// Async writer (real fd). `needs_io()` returns Some.
+enum BuiltinIO {
     Fd(OutFd),
-    /// Captured pipe — writes go to the shell env's `_buffered_{stdout,stderr}`.
-    /// Writes go through immediately (see module doc).
-    /// The payload names which shell-env bytelist to append to — set at
-    /// `from_out_kind` and copied verbatim by `dup_ref` so `2>&1` keeps
-    /// stderr aimed at stdout's buffer.
+    /// Which buffer of the shell env it appends to: `2>&1` aims stderr at stdout's.
     Buf(IoKind),
     ArrayBuf {
         buf: PinnedArrayBuffer,
@@ -262,8 +187,7 @@ pub(crate) enum BuiltinInput {
     Ignore,
 }
 
-/// Refcounted wrapper around a `webcore.Blob`. `Rc` provides the refcount;
-/// `Drop` runs `Blob::deinit`.
+/// Refcounted wrapper around a `webcore.Blob`. `Rc` provides the refcount.
 pub(crate) struct BuiltinBlob {
     pub(crate) blob: crate::webcore::Blob,
 }
@@ -296,99 +220,62 @@ impl BuiltinIO {
             }
         }
     }
+}
 
-    #[inline]
-    pub(crate) fn needs_io(&self) -> Option<OutputNeedsIOSafeGuard> {
-        match self {
-            BuiltinIO::Fd(_) => Some(OutputNeedsIOSafeGuard::OutputNeedsIo),
-            _ => None,
-        }
+/// Where a write goes.
+pub(crate) enum Sink<'a> {
+    Fd(FdSink<'a>),
+    Memory(MemorySink<'a>),
+}
+
+/// A write can complete, and free the builtin, before it returns: set the state first.
+pub(crate) struct FdSink<'a> {
+    writer: &'a IOWriter,
+    captured: Option<*mut Vec<u8>>,
+    child: io_writer::ChildPtr,
+}
+
+impl FdSink<'_> {
+    pub(crate) fn enqueue(self, buf: &[u8]) -> Yield {
+        self.writer.enqueue(self.child, self.captured, buf)
     }
 
-    /// Body of [`Builtin::write_no_io`] with the Cmd split-borrow already
-    /// performed by the caller. Exists so builtins whose payload lives in
-    /// `Builtin.impl_` (disjoint from `stdout`/`stderr`) can write a borrowed
-    /// slice without an intermediate heap clone.
-    ///
-    /// `shell` is the `ShellExecEnv` owning this builtin (i.e. `cmd.base.shell`);
-    /// only used for the [`BuiltinIO::Buf`] arm.
-    pub(crate) fn write_no_io_to(
-        &mut self,
-        shell: &mut crate::shell::interpreter::ShellExecEnv,
-        buf: &[u8],
-    ) -> bun_sys::Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-        match self {
-            BuiltinIO::Fd(_) => {
-                panic!("write_no_io called on fd output; caller must check needs_io()")
-            }
-            BuiltinIO::Buf(target) => {
-                // Writes go straight through to `buffered_{stdout,stderr}`;
-                // `target` is the destination identity, fixed at construction
-                // and preserved across `dup_ref` so `2>&1` lands in stdout's
-                // bytelist.
-                let captured = match *target {
-                    IoKind::Stdout => shell.buffered_stdout(),
-                    IoKind::Stderr => shell.buffered_stderr(),
-                };
-                // SAFETY: `captured` points into a live `ShellExecEnv` Bufio: `shell`'s
-                // own, or an ancestor env's, which outlives `shell`. Single-threaded.
-                unsafe { (*captured).append_slice(buf) };
-                Ok(buf.len())
-            }
-            BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
+    pub(crate) fn cancel_queued(self) {
+        self.writer.cancel_chunks(self.child);
+    }
+}
+
+pub(crate) struct MemorySink<'a>(Memory<'a>);
+
+enum Memory<'a> {
+    Captured(*mut Vec<u8>),
+    ArrayBuf {
+        buf: &'a mut PinnedArrayBuffer,
+        i: &'a mut u32,
+    },
+    Discard,
+}
+
+impl MemorySink<'_> {
+    /// `ENOSPC` once an ArrayBuffer is full.
+    pub(crate) fn write(self, bytes: &[u8]) -> bun_sys::Result<()> {
+        match self.0 {
+            // SAFETY: a buffer of the Cmd's env or of an ancestor, which outlive the builtin. Single-threaded.
+            Memory::Captured(captured) => unsafe { (*captured).append_slice(bytes) },
+            Memory::ArrayBuf { buf, i } => {
                 // JS can resize the buffer between chunks.
-                let dst_all = arraybuf.live_slice_mut();
-                let idx = *i as usize;
-                let total = dst_all.len();
-                if idx >= total {
-                    return Err(bun_sys::Error::from_code(
-                        bun_sys::E::ENOSPC,
-                        bun_sys::Tag::write,
-                    ));
-                }
-                let write_len = (total - idx).min(buf.len());
-                let dst = &mut dst_all[idx..idx + write_len];
-                dst.copy_from_slice(&buf[..write_len]);
-                *i = i.saturating_add(write_len as u32);
-                Ok(write_len)
+                let dst = buf.live_slice_mut().get_mut(*i as usize..);
+                let Some(dst) = dst.filter(|dst| !dst.is_empty()) else {
+                    use bun_sys::{E, Error, Tag};
+                    return Err(Error::from_code(E::ENOSPC, Tag::write));
+                };
+                let len = dst.len().min(bytes.len());
+                dst[..len].copy_from_slice(&bytes[..len]);
+                *i = i.saturating_add(len as u32);
             }
-            BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
+            Memory::Discard => {}
         }
-    }
-
-    /// Queue `buf` on this stream's IOWriter and arrange for `child`'s
-    /// `on_io_writer_chunk` to fire when the chunk completes. Delegates to
-    /// `fd.writer.enqueue` passing `fd.captured` as the tee bytelist.
-    ///
-    /// `_safeguard` proves the caller checked `needs_io()`.
-    pub(crate) fn enqueue(
-        &mut self,
-        child: io_writer::ChildPtr,
-        buf: &[u8],
-        _safeguard: OutputNeedsIOSafeGuard,
-    ) -> Yield {
-        match self {
-            BuiltinIO::Fd(fd) => fd.writer.enqueue(child, fd.captured, buf),
-            _ => unreachable!("enqueue() on non-fd output; caller must check needs_io()"),
-        }
-    }
-
-    /// Format with the optional `"{kind}: "` prefix and enqueue on the
-    /// underlying IOWriter.
-    pub(crate) fn enqueue_fmt(
-        &mut self,
-        child: io_writer::ChildPtr,
-        kind: Option<Kind>,
-        args: core::fmt::Arguments<'_>,
-        _safeguard: OutputNeedsIOSafeGuard,
-    ) -> Yield {
-        match self {
-            BuiltinIO::Fd(fd) => fd.writer.enqueue_fmt_bltn(child, fd.captured, kind, args),
-            _ => unreachable!("enqueue_fmt() on non-fd output; caller must check needs_io()"),
-        }
+        Ok(())
     }
 }
 
@@ -400,17 +287,17 @@ impl BuiltinInput {
             InKind::Ignore => BuiltinInput::Ignore,
         }
     }
-
-    #[inline]
-    pub(crate) fn needs_io(&self) -> bool {
-        matches!(self, BuiltinInput::Fd(_))
-    }
 }
 
 impl Builtin {
-    #[inline]
-    pub(crate) fn args_slice(&self) -> &[*const c_char] {
+    pub(crate) fn args(&self) -> &[Arg] {
         &self.args
+    }
+
+    /// The leading arguments that start with `-`, and the operands.
+    pub(crate) fn split_flags(&self) -> (&[Arg], &[Arg]) {
+        let flags = self.args.iter().take_while(|arg| arg.starts_with(b"-"));
+        self.args.split_at(flags.count())
     }
 
     /// `PinnedArrayBuffer::drop`'s unpin would write to a `JSC::ArrayBuffer`
@@ -430,79 +317,26 @@ impl Builtin {
         }
     }
 
-    /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
-    ///
-    /// Every entry in `self.args` borrows into the owning `Cmd`'s
-    /// `args: Vec<Vec<u8>>`, NUL-terminated by `Cmd::transition_to_exec` and
-    /// outliving this `Builtin` (the `Cmd` slot is freed only after
-    /// `Builtin::done`). Localises the per-callsite
-    /// `unsafe { CStr::from_ptr(...) }` that previously appeared at every
-    /// builtin's flag/operand parser.
-    ///
-    /// The returned slice's lifetime is intentionally **decoupled from
-    /// `&self`**: the raw `*const c_char` is copied out of `self.args` first,
-    /// so the borrow of `self` ends before `CStr::from_ptr`. This lets callers
-    /// hold the result across an `interp.as_cmd_mut(...)` reborrow (cat/ls/mv
-    /// flag loops). Soundness rests on the architectural invariant above —
-    /// argv storage is a separate heap allocation that is not freed or
-    /// reallocated while the `Builtin` is live — not on `'a`.
-    #[inline]
-    pub(crate) fn arg_bytes<'a>(&self, idx: usize) -> &'a [u8] {
-        let p: *const c_char = self.args[idx];
-        // SAFETY: see doc comment — `p` is a valid NUL-terminated pointer
-        // into the Cmd's argv storage, live for the Builtin's lifetime.
-        unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes()
-    }
-
-    /// Borrow `argv[1..][idx]` as `&ZStr` (NUL-terminated view).
-    ///
-    /// Same invariant and lifetime decoupling as [`arg_bytes`]; for callers
-    /// that need to pass the argument to a `&ZStr`-taking syscall wrapper
-    /// without re-copying.
-    #[inline]
-    pub(crate) fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
-        let p: *const c_char = self.args[idx];
-        // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
-        bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
-    }
-
     /// Construct a `Builtin` for `kind`, install it into the owning Cmd's
     /// `exec` slot, then wire up file/jsbuf/`2>&1` redirections. Returns
     /// `None` (meaning: caller should now call `Builtin::start`). A
     /// `Some(yield)` return means setup wrote a failing error (or threw) and
     /// the caller should propagate that yield instead.
     pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
-        use crate::shell::states::cmd::Exec;
-
-        // Borrow argv[1..] as `*const c_char` into the Cmd's `args` storage.
-        // The Cmd's `args: Vec<Vec<u8>>` are NUL-terminated by
-        // `Cmd::transition_to_exec` before this is called.
-        let (args, stdin, stdout, stderr) = {
-            let me = interp.as_cmd(cmd);
-            let mut argv: Vec<*const c_char> = Vec::with_capacity(me.args.len().saturating_sub(1));
-            for a in me.args.iter().skip(1) {
-                argv.push(a.as_ptr().cast::<c_char>());
-            }
-            // `Rc::clone` (inside `OutFd: Clone` / `InKind: Clone`) bumps
-            // the `IOWriter`/`IOReader` refcount; the builtin's `Drop`
-            // decrements it symmetrically. No double-deref.
-            (
-                argv,
-                BuiltinInput::from_in_kind(&me.io.stdin),
-                BuiltinIO::from_out_kind(&me.io.stdout, IoKind::Stdout),
-                BuiltinIO::from_out_kind(&me.io.stderr, IoKind::Stderr),
-            )
-        };
-
-        interp.as_cmd_mut(cmd).exec = Exec::Builtin(Box::new(Builtin {
+        let me = interp.as_cmd(cmd);
+        let args = me.args.iter().skip(1);
+        let args = args.map(|arg| BackRef::new(bun_core::ffi::slice_to_nul(arg)));
+        let builtin = Box::new(Builtin {
             kind,
-            args,
-            stdin,
-            stdout,
-            stderr,
-            err_buf: Vec::new(),
-            impl_: Self::make_impl(kind),
-        }));
+            args: args.collect(),
+            stdin: BuiltinInput::from_in_kind(&me.io.stdin),
+            stdout: BuiltinIO::from_out_kind(&me.io.stdout, IoKind::Stdout),
+            stderr: BuiltinIO::from_out_kind(&me.io.stderr, IoKind::Stderr),
+            state: State::Idle,
+            running: AtomicUsize::new(0),
+            stop: AtomicBool::new(false),
+        });
+        interp.as_cmd_mut(cmd).exec = Exec::Builtin(builtin);
 
         Self::init_redirections(interp, cmd, kind)
     }
@@ -530,15 +364,8 @@ impl Builtin {
                 // Clone the path bytes so the
                 // `&mut interp` open call below doesn't overlap a borrow into
                 // the Cmd node.
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(cmd).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
-                // SAFETY: `path_buf` ends in NUL by construction.
-                let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
+                let raw = &interp.as_cmd(cmd).redirection_file;
+                let path: &bun_core::ZStr = &bun_core::ZBox::from_bytes(&raw[..raw.len() - 1]);
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
                 let evtloop = interp.event_loop;
@@ -548,7 +375,12 @@ impl Builtin {
                 let mut is_nonblocking = false;
 
                 let redirfd: bun_sys::Fd = if redirect.stdin() {
-                    match shell_openat(cwd_fd, path, redirect.to_flags(), perm) {
+                    let flags = redirect.to_flags();
+                    let opened = shell_openat(cwd_fd, path, flags, perm).or_else(|error| {
+                        let cwd = Self::shell(interp, cmd).cwd();
+                        open_embedded_shell_operand(cwd, path.as_bytes(), flags, error)
+                    });
+                    match opened {
                         Err(e) => {
                             let sys = e.to_shell_system_error();
                             return Some(Self::cmd_write_failing_error(
@@ -564,20 +396,24 @@ impl Builtin {
                         Ok(f) => f,
                     }
                 } else {
-                    let result = bun_io::open_for_writing_impl(
-                        cwd_fd,
-                        &path,
-                        redirect.to_flags(),
-                        perm,
-                        &mut pollable,
-                        &mut is_socket,
-                        false,
-                        &mut is_nonblocking,
-                        (),
-                        |_| {},
-                        is_pollable_from_mode,
-                        shell_openat,
-                    );
+                    let cwd = Self::shell(interp, cmd).cwd();
+                    let refused = refuse_shell_redirect(cwd, path.as_bytes(), redirect.to_flags());
+                    let result = refused.and_then(|()| {
+                        bun_io::open_for_writing_impl(
+                            cwd_fd,
+                            &path,
+                            redirect.to_flags(),
+                            perm,
+                            &mut pollable,
+                            &mut is_socket,
+                            false,
+                            &mut is_nonblocking,
+                            (),
+                            |_| {},
+                            is_pollable_from_mode,
+                            shell_openat,
+                        )
+                    });
                     match result {
                         Err(e) => {
                             let sys = e.to_shell_system_error();
@@ -591,7 +427,10 @@ impl Builtin {
                                 ),
                             ));
                         }
-                        Ok(f) => f,
+                        Ok(f) => {
+                            note_shell_redirect(cwd, path.as_bytes(), redirect.to_flags());
+                            f.into_raw()
+                        }
                     }
                 };
 
@@ -768,38 +607,25 @@ impl Builtin {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
-            // Only the `Fd` arm transitions state.
-            interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
+        let me = interp.as_cmd_mut(cmd);
+        if let OutKind::Fd(fd) = &me.io.stderr {
+            me.state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
-            // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
-            if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
+            return fd.writer.enqueue(child, fd.captured, &buf);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_cmd_mut(cmd)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
+            let stderr = unsafe { interp.as_cmd_mut(cmd).shell.buffered_stderr_mut() };
             stderr.append_slice(&buf);
         }
         let parent = interp.as_cmd(cmd).base.parent;
         interp.child_done(parent, cmd, 1)
     }
 
-    /// Finish the builtin with `exit_code` and signal the owning Cmd.
     pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
-        // Output is written through immediately in `write_no_io`, so there
-        // is nothing to flush here.
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
@@ -808,7 +634,7 @@ impl Builtin {
     #[track_caller]
     pub(crate) fn of<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Builtin {
         match &interp.as_cmd(cmd).exec {
-            crate::shell::states::cmd::Exec::Builtin(b) => b,
+            Exec::Builtin(b) => b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
         }
     }
@@ -817,52 +643,9 @@ impl Builtin {
     #[track_caller]
     pub(crate) fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
         match &mut interp.as_cmd_mut(cmd).exec {
-            crate::shell::states::cmd::Exec::Builtin(b) => b,
+            Exec::Builtin(b) => b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
         }
-    }
-
-    #[inline]
-    fn kind_of(interp: &Interpreter, cmd: NodeId) -> Kind {
-        Self::of(interp, cmd).kind
-    }
-
-    /// Returns the bytes available on stdin when it is *not* an async fd
-    /// (arraybuf / piped buf / blob).
-    pub(crate) fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
-        match &Self::of(interp, cmd).stdin {
-            BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
-            BuiltinInput::Blob(b) => b.blob.shared_view(),
-            BuiltinInput::Fd(_) | BuiltinInput::Ignore => b"",
-        }
-    }
-
-    /// Write `buf` to stdout/stderr without going through IOWriter (the
-    /// stream is a captured buffer / arraybuffer / blob / /dev/null).
-    ///
-    /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
-    /// **WARNING**: caller must have checked `needs_io() == None` first.
-    pub(crate) fn write_no_io(
-        interp: &Interpreter,
-        cmd: NodeId,
-        io_kind: IoKind,
-        buf: &[u8],
-    ) -> bun_sys::Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-        // Split-borrow the Cmd so `shell`
-        // and the builtin's stdout/stderr are accessible simultaneously.
-        let cmd_node = interp.as_cmd_mut(cmd);
-        let shell = cmd_node.base.shell_mut();
-        let crate::shell::states::cmd::Exec::Builtin(me) = &mut cmd_node.exec else {
-            panic!("Cmd {} is not running a builtin", cmd);
-        };
-        let out: &mut BuiltinIO = match io_kind {
-            IoKind::Stdout => &mut me.stdout,
-            IoKind::Stderr => &mut me.stderr,
-        };
-        out.write_no_io_to(shell, buf)
     }
 
     /// Shell exec env of the owning Cmd.
@@ -871,183 +654,93 @@ impl Builtin {
         interp: &'a Interpreter,
         cmd: NodeId,
     ) -> &'a crate::shell::interpreter::ShellExecEnv {
-        interp.as_cmd(cmd).base.shell()
-    }
-
-    /// Event loop handle (forwarded from the interpreter).
-    #[inline]
-    pub(crate) fn event_loop(
-        interp: &Interpreter,
-        _cmd: NodeId,
-    ) -> crate::shell::interpreter::EventLoopHandle {
-        interp.event_loop
+        &interp.as_cmd(cmd).shell
     }
 
     /// Cwd fd of the owning Cmd's shell env.
     #[inline]
     pub(crate) fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
-        Self::shell(interp, cmd).cwd_fd
+        Self::shell(interp, cmd).cwd_fd.fd()
     }
 
-    /// Format `"{kind}: {fmt}"` into a fresh heap buffer.
-    ///
-    /// Stored on the `Builtin` so the returned `&[u8]` borrow stays valid
-    /// across the immediate `write_no_io` / `enqueue` call.
-    pub(crate) fn fmt_error_arena<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-        kind: Option<Kind>,
-        args: core::fmt::Arguments<'_>,
-    ) -> &'a [u8] {
-        use std::io::Write as _;
-        let mut buf = Vec::new();
-        if let Some(k) = kind {
-            let _ = write!(&mut buf, "{}: ", k.as_str());
-        }
-        let _ = buf.write_fmt(args);
+    pub(crate) fn sink(interp: &Interpreter, cmd: NodeId, to: IoKind) -> Sink<'_> {
         let me = Self::of_mut(interp, cmd);
-        me.err_buf = buf;
-        &me.err_buf
-    }
-
-    /// Error messages formatted to match bash. Dispatches on the variant;
-    /// `Sys` recurses into the system-error formatter.
-    pub(crate) fn shell_err_to_string<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-        kind: Kind,
-        err: &crate::shell::ShellErr,
-    ) -> &'a [u8] {
-        use crate::shell::ShellErr;
-        match err {
-            ShellErr::Sys(sys) => {
-                // `"{message}\n"` or `"{message}: {path}\n"`.
-                if sys.path.is_empty() {
-                    Self::fmt_error_arena(
-                        interp,
-                        cmd,
-                        Some(kind),
-                        format_args!("{}\n", bstr::BStr::new(sys.message.byte_slice())),
-                    )
-                } else {
-                    Self::fmt_error_arena(
-                        interp,
-                        cmd,
-                        Some(kind),
-                        format_args!(
-                            "{}: {}\n",
-                            bstr::BStr::new(sys.message.byte_slice()),
-                            sys.path,
-                        ),
-                    )
-                }
-            }
-            ShellErr::Custom(s) => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("{}\n", bstr::BStr::new(s)),
-            ),
-        }
-    }
-
-    /// Error messages formatted to match bash. Maps the errno through
-    /// `bun_sys::coreutils_error_map` so output matches GNU coreutils
-    /// (e.g. `ENOENT` → "No such file or directory"); falls back to
-    /// `"unknown error {errno}"` when unmapped.
-    pub(crate) fn task_error_to_string<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-        kind: Kind,
-        err: &bun_sys::Error,
-    ) -> &'a [u8] {
-        if let Some((_code, sys_errno)) = err.get_error_code_tag_name() {
-            if let Some(message) = bun_sys::coreutils_error_map::get(sys_errno) {
-                if !err.path.is_empty() {
-                    return Self::fmt_error_arena(
-                        interp,
-                        cmd,
-                        Some(kind),
-                        format_args!("{}: {}\n", bstr::BStr::new(&err.path[..]), message),
-                    );
-                }
-                return Self::fmt_error_arena(
-                    interp,
-                    cmd,
-                    Some(kind),
-                    format_args!("{}\n", message),
-                );
-            }
-        }
-        Self::fmt_error_arena(
-            interp,
-            cmd,
-            Some(kind),
-            format_args!("unknown error {}\n", err.errno),
-        )
-    }
-
-    /// Shared failure path for builtins whose option parser returns
-    /// [`ParseError`]. Formats the canonical three-arm message
-    /// (`illegal option` / usage / `unsupported option`), runs `set_wait_err`
-    /// so the per-builtin state machine can move to its `WaitingWriteErr`
-    /// variant, then writes the message to stderr and finishes with exit 1.
-    pub(crate) fn fail_parse(
-        interp: &Interpreter,
-        cmd: NodeId,
-        kind: Kind,
-        e: &ParseError<'_>,
-        set_wait_err: impl FnOnce(),
-    ) -> Yield {
-        let buf: Vec<u8> = match e {
-            ParseError::IllegalOption(_) => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
-            )
-            .to_vec(),
-            ParseError::ShowUsage => kind.usage_string().to_vec(),
-            ParseError::Unsupported(_) => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!(
-                    "unsupported option, please open a GitHub issue -- {}\n",
-                    bstr::BStr::new(e.opt())
-                ),
-            )
-            .to_vec(),
+        let out = match to {
+            IoKind::Stdout => &mut me.stdout,
+            IoKind::Stderr => &mut me.stderr,
         };
-        set_wait_err();
-        Self::write_failing_error(interp, cmd, &buf, 1)
+        Sink::Memory(MemorySink(match out {
+            BuiltinIO::Fd(fd) => {
+                return Sink::Fd(FdSink {
+                    writer: &fd.writer,
+                    captured: fd.captured,
+                    child: io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin),
+                });
+            }
+            &mut BuiltinIO::Buf(target) => {
+                let shell = &mut interp.as_cmd_mut(cmd).shell;
+                Memory::Captured(match target {
+                    IoKind::Stdout => shell.buffered_stdout(),
+                    IoKind::Stderr => shell.buffered_stderr(),
+                })
+            }
+            BuiltinIO::ArrayBuf { buf, i } => Memory::ArrayBuf { buf, i },
+            BuiltinIO::Blob(_) | BuiltinIO::Ignore => Memory::Discard,
+        }))
     }
 
-    /// Write `buf` to stderr (async if needed) then finish with `exit_code`.
-    /// Shared helper for builtins whose only failure path is "print error and
-    /// exit", so each builtin doesn't repeat the needs_io branch.
-    pub(crate) fn write_failing_error(
+    /// The last write. It drops the state, which must not own `buf` or what a task still uses.
+    pub(crate) fn finish(
         interp: &Interpreter,
         cmd: NodeId,
+        to: IoKind,
         buf: &[u8],
-        exit_code: crate::shell::ExitCode,
+        exit_code: ExitCode,
     ) -> Yield {
-        if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
-            let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
-            // Clone buf so the &mut on
-            // `stderr` doesn't overlap a borrow into `err_buf`.
-            let owned = buf.to_vec();
-            return Self::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, &owned, safeguard);
+        Self::of_mut(interp, cmd).state = State::Exiting(exit_code);
+        match Self::sink(interp, cmd, to) {
+            Sink::Fd(fd) => fd.enqueue(buf),
+            Sink::Memory(memory) => {
+                let _ = memory.write(buf);
+                Self::done(interp, cmd, exit_code)
+            }
         }
-        let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, buf);
-        Self::done(interp, cmd, exit_code)
+    }
+
+    /// [`Self::finish`] with `"{kind}: {args}"` on stderr and exit code 1.
+    pub(crate) fn fail(interp: &Interpreter, cmd: NodeId, args: fmt::Arguments<'_>) -> Yield {
+        let message = Self::of(interp, cmd).kind.message(args);
+        Self::finish(interp, cmd, IoKind::Stderr, &message, 1)
+    }
+
+    pub(crate) fn fail_usage(interp: &Interpreter, cmd: NodeId, usage: &[u8]) -> Yield {
+        Self::finish(interp, cmd, IoKind::Stderr, usage, 1)
+    }
+
+    pub(crate) fn fail_flag(interp: &Interpreter, cmd: NodeId, flag: BadFlag<'_>) -> Yield {
+        let (problem, flag) = match flag {
+            BadFlag::Illegal(flag) => ("illegal option", flag),
+            BadFlag::Unsupported(flag) => ("unsupported option, please open a GitHub issue", flag),
+        };
+        let flag = BStr::new(flag);
+        Self::fail(interp, cmd, format_args!("{problem} -- {flag}\n"))
+    }
+
+    pub(crate) fn on_io_writer_chunk(
+        interp: &Interpreter,
+        cmd: NodeId,
+        err: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        let me = Self::of(interp, cmd);
+        let failed = err.map(|err| me.kind.exit_code_of_failed_write(&err));
+        match (&me.state, failed) {
+            (State::Batch(_), _) => Batch::on_write(interp, cmd),
+            (State::Cat(_), _) => cat::Cat::on_write(interp, cmd, failed),
+            (State::Exiting(_) | State::Which { .. } | State::Yes(_), Some(code))
+            | (&State::Exiting(code), None) => Self::done(interp, cmd, code),
+            (&State::Which { next, missing }, None) => which::print(interp, cmd, next, missing),
+            (State::Yes(_), None) => yes::Yes::write(interp, cmd),
+            (State::Idle | State::Mv(_), _) => Yield::suspended(),
+        }
     }
 }
-
-// Cleanup: every `Impl` variant owns its state via `Box`/`Vec`/`Rc`, and
-// `BuiltinIO`/`BuiltinInput` hold `Rc<IOWriter>` / `Rc<IOReader>` /
-// `PinnedArrayBuffer` / `Rc<BuiltinBlob>` whose `Drop` already decrements
-// the refcount. So cleanup is fully covered by `Drop` on `Box<Builtin>`
-// (called from `Cmd::deinit`). No explicit deinit needed.

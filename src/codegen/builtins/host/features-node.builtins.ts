@@ -94,7 +94,11 @@ export default b.declarations(
       "Bindgen",
       "node_fs_binding.bind.ts",
       "binding",
+      "appendFileSync",
+      "chmodSync",
+      "closeSync",
       "existsSync",
+      "fstatSync",
       "lstatSync",
       "readFileSync",
       "readdirSync",
@@ -106,6 +110,7 @@ export default b.declarations(
 
   extendAll(
     ["HttpParser"],
+    "%HTTPParser%",
     "node:_http_common",
     "node:_http_client",
     "node:_http_server",

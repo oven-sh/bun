@@ -8,6 +8,6 @@
 # The twin: the one place that may reach the constructor, through the table, is seen to hand it a Vec or nothing: what the names say is seen to arrive, and the word stands at the entry as it stood.
 # f1 = Vec
 # RUN: walk f1:ParameterGuard mechanisms=all
-# CHECK: = TypeTest {{*}} testedType=undefined|null|L0
+# CHECK: = TypeTest {{*}} testedType=L0
 # RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
 # ANSWERS: 1 2

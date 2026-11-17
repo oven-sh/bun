@@ -73,6 +73,7 @@ fn lower_files(files: &[(&str, &str)]) -> LoweredFiles {
         obfuscates: false,
         counts_executions: false,
         runs_tests: false,
+        divides_small_files: false,
     };
     let files = lower_program(files, options);
     let mut tables: Vec<(Arc<SharedTables>, UnitTables)> = Vec::new();

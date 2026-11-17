@@ -10,9 +10,6 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsDiffieHellman);
 
 struct DhJobCtx {
-    WTF_MAKE_TZONE_ALLOCATED(DhJobCtx);
-
-public:
     DhJobCtx(RefPtr<KeyObjectData>&& privateKey, RefPtr<KeyObjectData>&& publicKey)
         : m_privateKey(WTF::move(privateKey))
         , m_publicKey(WTF::move(publicKey))
@@ -32,16 +29,11 @@ public:
 
     void runTask(JSC::JSGlobalObject*);
     JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
-    void deinit();
 
     RefPtr<KeyObjectData> m_privateKey;
     RefPtr<KeyObjectData> m_publicKey;
 
-    ByteSource m_result;
-};
-
-struct DhJob {
-    static void createAndSchedule(JSC::JSGlobalObject*, DhJobCtx&&, JSC::JSValue callback);
+    ncrypto::DataPointer m_result;
 };
 
 } // namespace Bun

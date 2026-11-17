@@ -123,7 +123,19 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    fn is_literal_of_copied_factory(&self, key: ExprId) -> bool {
+        let first = self.text.get(self.exprs[key.idx()].pos as usize);
+        !self.copied_factories.is_empty()
+            && matches!(self.exprs[key.idx()].kind, ExprKind::String(_))
+            && !first.is_some_and(|first| matches!(first, b'"' | b'\'' | b'`'))
+    }
+
     pub fn is_name_resolved_by_transpiler(&self, access: ExprId, name: &[u8]) -> bool {
+        if let ExprKind::Index { index, .. } = self.exprs[access.idx()].kind
+            && self.is_literal_of_copied_factory(index)
+        {
+            return false;
+        }
         !self.is_written_in_brackets(access) || name.is_ascii()
     }
 

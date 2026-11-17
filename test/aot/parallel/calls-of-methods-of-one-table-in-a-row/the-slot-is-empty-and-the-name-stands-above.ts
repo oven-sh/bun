@@ -10,7 +10,7 @@ function add(table: Map<unknown, Sym>, bases: Sym[]): void {
     }
   }
 }
-(globalThis as any).handed = add;
+(globalThis as any).handed = new Function("x", "return x")(add);
 function show(table: Map<unknown, Sym>): string { let s = table.size + ":"; for (const [k, v] of table) s += (Object.is(k, -0) ? "-0" : typeof k === "object" ? "obj" : String(k)) + "=" + v.flags + ","; return s; }
 let reads = 0;
 const bare = new Sym("gone", 1); delete (bare as any).name;

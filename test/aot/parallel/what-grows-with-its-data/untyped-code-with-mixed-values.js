@@ -1,6 +1,6 @@
 // The same names hold numbers, texts and nothing.
-// Sizes: 1000 4000 16000
-// Passes: 200
+// Sizes: 16000 64000 256000
+// Passes: 8
 // Grows: linear
 const size = Number(process.env.SIZE ?? 500),
   passes = Number(process.env.PASSES ?? 1);

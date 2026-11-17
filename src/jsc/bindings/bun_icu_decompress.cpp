@@ -75,20 +75,18 @@ public:
         // tryAlignedMalloc asserts size is a multiple of alignment in debug
         // builds; ICU item sizes are only 4-aligned, so round up.
         size_t alloc = WTF::roundUpToMultipleOf<16>(static_cast<size_t>(dlen));
-        void* buf = MimallocMalloc::tryAlignedMalloc(alloc, 16);
+        std::unique_ptr<void, decltype([](void* block) { MimallocMalloc::free(block); })> buf { MimallocMalloc::tryAlignedMalloc(alloc, 16) };
         if (!buf)
             return p;
         size_t r = m_ddict
-            ? ZSTD_decompress_usingDDict(m_dctx, buf, static_cast<size_t>(dlen), p, clen, m_ddict)
-            : ZSTD_decompressDCtx(m_dctx, buf, static_cast<size_t>(dlen), p, clen);
-        if (ZSTD_isError(r)) {
-            MimallocMalloc::free(buf);
+            ? ZSTD_decompress_usingDDict(m_dctx, buf.get(), static_cast<size_t>(dlen), p, clen, m_ddict)
+            : ZSTD_decompressDCtx(m_dctx, buf.get(), static_cast<size_t>(dlen), p, clen);
+        if (ZSTD_isError(r))
             return p;
-        }
 
-        m_cache.add(p, buf);
+        m_cache.add(p, buf.get());
         *length = static_cast<int32_t>(dlen);
-        return buf;
+        return buf.release();
     }
 
 private:

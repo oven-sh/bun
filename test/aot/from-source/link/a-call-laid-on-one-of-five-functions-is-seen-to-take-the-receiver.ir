@@ -14,7 +14,7 @@
 # -- end of source
 # L0 = Box. One of the five lost functions answers `call` by a function of its own, laid by name on that one closure behind the first round: it takes the box and stores a text into a field of whole numbers.
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: "count" proven=i32|string
+# FIELDS: "count" proven=int[0, 2147483647]|string
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 11,12,13,14,15,10,0,number
 # ANSWERS-NEXT: 21,22,own,text4,text5,text,[object Object],string

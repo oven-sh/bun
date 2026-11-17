@@ -10,9 +10,9 @@
 # marked.add(input | 0);
 # for (let turn = 0; turn < input; turn++) (globalThis as any).answer = hits(marked, input | 0);
 # -- end of source
-# The compiler before this one: 8 instructions, 2 of them patches.
-# When the bound was taken: loop: operations 13, patches 2, moves 1, unlikely 0.
-# RUN(X64): loops most:14 f1 mechanisms=all-Inlining
-# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
-# X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 14
+# The set is searched in line, by the tag of its number keys. What every search asks of the set is read before the loop.
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK: = CollectionColumns
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = HasKeyByTag {{*}}searchesSet

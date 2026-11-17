@@ -43,6 +43,8 @@ pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 4] 
 }
 
 impl Checker<'_, '_> {
+    /// True if the member is there by the brought declarations alone, whoever has declared what it is a member of:
+    /// `fetch.preconnect`. What several files declare is one symbol that lies in the file of its first declaration.
     pub(in crate::check) fn is_prop_brought(&self, prop: &Prop<'_>) -> bool {
         let PropSource::Symbol(symbol) = prop.source else {
             return false;

@@ -2,7 +2,7 @@ use bun_sema::check::aot::{Blocks, ClassRef, FunctionRef, RowsCarriedOver, Shape
 
 use super::shape_edges::collect_edges;
 use super::{ExploredType, MappedType};
-use crate::ir::{FunctionId, Id, LayoutId, Mapped, TypeId, TypeTable};
+use crate::ir::{FunctionId, Id, LayoutId, Mapped, Primitives, TypeId, TypeTable};
 use crate::lower::{CheckerTypeId, FileLowering};
 
 const NO_WEIGHT: u32 = u32::MAX;
@@ -32,6 +32,9 @@ pub(super) struct MemoEntry {
     object_type_found_in: u32,
     said_by: [u32; 2],
     said_in: u32,
+    listed_nullish: Option<Primitives>,
+    object_layout: Option<LayoutId>,
+    object_layout_found_in: u32,
 }
 
 impl MemoEntry {
@@ -50,6 +53,9 @@ impl MemoEntry {
         object_type_found_in: 0,
         said_by: [0; 2],
         said_in: 0,
+        listed_nullish: None,
+        object_layout: None,
+        object_layout_found_in: 0,
     };
 
     fn names_type_from(&self, first: u32) -> bool {
@@ -61,6 +67,7 @@ impl MemoEntry {
             || self.shallow_seen_in == visit
             || self.object_type_found_in == visit
             || self.said_in == visit
+            || self.object_layout_found_in == visit
     }
 
     fn last_stamp(&self) -> u32 {
@@ -68,6 +75,7 @@ impl MemoEntry {
             .max(self.shallow_seen_in)
             .max(self.object_type_found_in)
             .max(self.said_in)
+            .max(self.object_layout_found_in)
     }
 }
 
@@ -82,6 +90,8 @@ pub(in crate::lower) struct TypeMemo {
     rows: Blocks<MemoEntry>,
     is_plain: Vec<bool>,
     function_types: Vec<FunctionId>,
+    /// The first ones of `function_types`: those of rows that earlier tasks handed on.
+    carried_function_types: usize,
 }
 
 impl TypeMemo {
@@ -91,6 +101,35 @@ impl TypeMemo {
             self.rows.grow_to(row + 1);
         }
         &mut self.rows[row]
+    }
+
+    /// The layout of an object type in the file of `visit`, or that it has none.
+    pub(in crate::lower) fn find_object_layout(
+        &self,
+        row: usize,
+        visit: u32,
+    ) -> Option<Option<LayoutId>> {
+        let entry = self.rows.get(row)?;
+        (entry.object_layout_found_in == visit).then_some(entry.object_layout)
+    }
+
+    pub(in crate::lower) fn keep_object_layout(
+        &mut self,
+        row: usize,
+        visit: u32,
+        layout: Option<LayoutId>,
+    ) {
+        let kept = self.entry_at(row);
+        kept.object_layout = layout;
+        kept.object_layout_found_in = visit;
+    }
+
+    pub(in crate::lower) fn find_listed_nullish(&self, row: usize) -> Option<Primitives> {
+        self.rows.get(row)?.listed_nullish
+    }
+
+    pub(in crate::lower) fn keep_listed_nullish(&mut self, row: usize, listed: Primitives) {
+        self.entry_at(row).listed_nullish = Some(listed);
     }
 
     fn is_alike_in_every_file(&self, row: usize) -> bool {
@@ -117,41 +156,43 @@ impl TypeMemo {
     }
 
     pub(in crate::lower) fn hand_on(self, carried: Option<&RowsCarriedOver<'_>>) -> TypeMemo {
-        let TypeMemo {
-            rows,
-            is_plain,
-            function_types,
-        } = self;
-        let mut next = TypeMemo {
-            rows,
-            is_plain,
-            function_types: Vec::new(),
-        };
+        let mut next = self;
         let Some(carried) = carried else {
             next.rows.truncate(0);
+            next.function_types.clear();
+            next.carried_function_types = 0;
             return next;
         };
-        let mut carried_count = 0;
-        for old_row in 0..next.rows.len() {
+        let carried_function_types = next.carried_function_types;
+        let mut function_types: Vec<FunctionId> = Vec::new();
+        let mut move_function_types = |entry: &mut MemoEntry, known: &[FunctionId]| {
+            let first = entry.first_function_type as usize;
+            if entry.function_type_count == 0 || first < carried_function_types {
+                return;
+            }
+            entry.first_function_type = (carried_function_types + function_types.len()) as u32;
+            let count = entry.function_type_count as usize;
+            function_types.extend_from_slice(&known[first..][..count]);
+        };
+        let carried_before = carried.count_before().min(next.rows.len());
+        for row in 0..carried_before {
+            move_function_types(&mut next.rows[row], &next.function_types);
+        }
+        let mut carried_count = carried_before;
+        for old_row in carried_before..next.rows.len() {
             let Some(new_row) = carried.new_row(old_row as u32) else {
                 continue;
             };
             debug_assert_eq!(new_row as usize, carried_count);
-            let entry = *next.entry_at(old_row);
-            let first = entry.first_function_type as usize;
-            let first_function_type = next.function_types.len() as u32;
-            if entry.function_type_count != 0 {
-                let count = entry.function_type_count as usize;
-                next.function_types
-                    .extend_from_slice(&function_types[first..][..count]);
-            }
-            *next.entry_at(new_row as usize) = MemoEntry {
-                first_function_type,
-                ..entry
-            };
+            let mut entry = next.rows[old_row];
+            move_function_types(&mut entry, &next.function_types);
+            next.rows[new_row as usize] = entry;
             carried_count = new_row as usize + 1;
         }
         next.rows.truncate(carried_count);
+        next.function_types.truncate(carried_function_types);
+        next.function_types.extend(function_types);
+        next.carried_function_types = next.function_types.len();
         next
     }
 

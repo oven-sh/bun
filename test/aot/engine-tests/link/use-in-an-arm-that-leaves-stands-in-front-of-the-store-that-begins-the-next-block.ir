@@ -9,7 +9,7 @@
 # CHECK: uses-first f1 at the end in front of v7, f2 at the end in front of v7
 # RUN(LINK): link variables mechanisms=all
 # LINK: variable g0 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
-# LINK-NEXT: variable g1 proven=int[0, 2147483647] writers-known written-at-construction-alone filled
+# LINK-NEXT: variable g1 proven=1 writers-known written-at-construction-alone filled
 
 variable g0 name="held" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
 variable g1 name="early" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]

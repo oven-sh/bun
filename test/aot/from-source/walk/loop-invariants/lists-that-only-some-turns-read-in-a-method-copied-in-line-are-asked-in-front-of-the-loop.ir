@@ -17,7 +17,7 @@
 # f3 = weigh
 # RUN: walk f3 mechanisms=all
 # CHECK-LABEL: code f3:Body
-# CHECK-COUNT-2: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isPresent]
+# CHECK-COUNT-2: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
 # CHECK: undefined|i32 @OptionalInt64 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
 # RUN(SHELL): run-in-shell globalThis.sink = answers => print(answers.join(" "));
 # SHELL: 90111 90111 90260

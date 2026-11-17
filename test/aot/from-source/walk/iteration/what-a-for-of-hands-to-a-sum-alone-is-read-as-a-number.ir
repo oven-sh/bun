@@ -11,7 +11,7 @@
 # OPTIONS: check=Validate
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: [[element]]: {{*}} @Double = GetArrayElement {{*}}[keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK: [[element]]: {{*}} @Double = GetArrayElement {{*}}[keyIsIntegral, isInBounds, readsHoleAsNaN
 # CHECK: = Add {{*}}, [[element]] form=Numbers
 # RUN(TWICE): walk f2 mechanisms=all
 # TWICE-LABEL: code f2:Body

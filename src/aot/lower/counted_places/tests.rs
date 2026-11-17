@@ -13,6 +13,7 @@ fn lower(source: &str) -> Fragment {
         obfuscates: false,
         counts_executions: true,
         runs_tests: false,
+        divides_small_files: false,
     };
     let mut lowered = lower_program(&[("main.ts", source)], options);
     assert_eq!(lowered.len(), 1);

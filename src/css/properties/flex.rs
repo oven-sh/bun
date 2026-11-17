@@ -62,7 +62,7 @@ pub struct FlexFlow {
 //   VendorPrefixMap  = { direction: true, wrap: true }
 
 impl FlexFlow {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut direction: Option<FlexDirection> = None;
         let mut wrap: Option<FlexWrap> = None;
 
@@ -123,7 +123,7 @@ pub struct Flex {
 //   VendorPrefixMap  = { grow: true, shrink: true, basis: true }
 
 impl Flex {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -528,10 +528,10 @@ pub struct FlexHandler {
 }
 
 impl FlexHandler {
-    pub(crate) fn handle_property(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
-        property: &Property,
-        dest: &mut css::DeclarationList,
+        property: &Property<'bump>,
+        dest: &mut css::DeclarationList<'bump>,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
         macro_rules! maybe_flush {

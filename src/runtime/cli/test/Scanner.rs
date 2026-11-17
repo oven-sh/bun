@@ -61,7 +61,7 @@ pub(crate) enum ScanError {
 bun_core::oom_from_alloc!(ScanError);
 
 impl DirEntryIterator for Scanner<'_> {
-    fn next<R: EntryKindResolver>(&mut self, rfs: &R, entry: &fs::Entry, _fd: Fd) {
+    fn next<R: EntryKindResolver>(&mut self, rfs: &R, entry: &fs::Entry) {
         Scanner::next(self, rfs, entry)
     }
 }

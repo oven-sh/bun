@@ -47,11 +47,9 @@ const server = http.createServer((req, res) => {
 
 function ask(port) {
   return new Promise(resolve => {
-    const limit = setTimeout(() => (client.destroy(), resolve("no answer")), 500);
     const client = net.connect(port, "127.0.0.1", () => client.write("GET /asked HTTP/1.1\r\nHost: a\r\n\r\n"));
     client.on("error", () => {});
     client.on("data", chunk => {
-      clearTimeout(limit);
       client.destroy();
       resolve(String(chunk).split("\r\n\r\n")[1]);
     });

@@ -143,7 +143,7 @@ impl Session {
         let are_tasks = self.are_readers_tasks.load(Ordering::Relaxed);
         if are_tasks {
             // SAFETY: caller contract. `forget_blocks_of` is called when the session ends.
-            unsafe { crate::program::free_behind_tasks(self.number, block) };
+            unsafe { crate::program::free_after_tasks(self.number, block) };
         }
         are_tasks
     }

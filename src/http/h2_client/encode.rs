@@ -5,12 +5,12 @@
 use super::client_session::ClientSession;
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
-use crate::HTTPClient;
 use crate::h2_frame_parser as wire;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
+use crate::{HTTPClient, Request};
 use bun_core::strings;
-use bun_picohttp as picohttp;
+use bun_hpack::{Block, Indexing};
 
 pub(crate) fn write_preface(session: &mut ClientSession) {
     session.queue(wire::CLIENT_PREFACE);
@@ -89,19 +89,12 @@ pub(crate) fn write_request(
     session: &mut ClientSession,
     client: &mut HTTPClient,
     stream: &mut Stream,
-    request: &picohttp::Request<'_>,
+    request: &Request<'_>,
 ) -> crate::Result<()> {
     // `encode_scratch` would be borrowed mutably
     // alongside `&mut *session` below; pull the Vec out, push it back at the end.
     let mut encoded = core::mem::take(&mut session.encode_scratch);
     encoded.clear();
-
-    if let Some(cap) = session.pending_hpack_enc_capacity {
-        session.pending_hpack_enc_capacity = None;
-        session.hpack.set_encoder_max_capacity(cap);
-        encoded.reserve(8);
-        encode_hpack_table_size_update(&mut encoded, cap);
-    }
 
     let mut authority: &[u8] = client.url.host;
     let mut has_expect_continue = false;
@@ -126,27 +119,25 @@ pub(crate) fn write_request(
         }
     }
 
-    encode_header(session, &mut encoded, b":method", request.method, false)?;
-    encode_header(session, &mut encoded, b":scheme", b"https", false)?;
-    encode_header(session, &mut encoded, b":authority", authority, false)?;
+    let mut block = session.encoder.block(&mut encoded);
+    encode_header(&mut block, b":method", request.method, Indexing::Allowed)?;
+    encode_header(&mut block, b":scheme", b"https", Indexing::Allowed)?;
+    encode_header(&mut block, b":authority", authority, Indexing::Allowed)?;
     encode_header(
-        session,
-        &mut encoded,
+        &mut block,
         b":path",
         if !request.path.is_empty() {
             request.path
         } else {
             b"/"
         },
-        false,
+        Indexing::Allowed,
     )?;
 
     for h in request.headers {
         // §8.2.1: field names MUST be lowercase on the wire. copy_lowercase_if_needed
         // returns the input slice unchanged when it's already lowercase, so
-        // the common (Fetch-normalised) case is zero-copy. lshpack rejects
-        // names+values >64KiB anyway, so the heap fallback only ever holds a
-        // few hundred bytes.
+        // the common (Fetch-normalised) case is zero-copy.
         let mut heap: Vec<u8>;
         let name: &[u8] = if h.name().len() <= lower_buf.len() {
             strings::copy_lowercase_if_needed(h.name(), &mut lower_buf)
@@ -154,7 +145,7 @@ pub(crate) fn write_request(
             heap = vec![0u8; h.name().len()];
             strings::copy_lowercase_if_needed(h.name(), &mut heap)
         };
-        let mut never_index = false;
+        let mut indexing = Indexing::Allowed;
         if let Some(kind) = classify_request_header(name) {
             match kind {
                 RequestHeader::Drop | RequestHeader::Host => continue,
@@ -171,11 +162,11 @@ pub(crate) fn write_request(
                         continue;
                     }
                 }
-                RequestHeader::Sensitive => never_index = true,
+                RequestHeader::Sensitive => indexing = Indexing::Never,
                 RequestHeader::Expect => {}
             }
         }
-        encode_header(session, &mut encoded, name, h.value(), never_index)?;
+        encode_header(&mut block, name, h.value(), indexing)?;
     }
 
     // request_body points into original_request_body.bytes (lives in client.state).
@@ -205,7 +196,7 @@ pub(crate) fn write_request(
     session.encode_scratch = encoded;
     if has_inline_body {
         stream.pending_body = body;
-        drain_send_body(session, stream, usize::MAX);
+        write_body(session, client, stream, usize::MAX);
     } else if !is_streaming {
         stream.sent_end_stream();
     }
@@ -306,13 +297,21 @@ pub(crate) fn write_data_windowed(
 /// Push as much of `stream`'s request body as the send windows allow.
 /// Buffers into `write_buffer`; caller flushes.
 pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
+    if let Some(mut client) = stream.client.take() {
+        write_body(session, &mut client, stream, cap);
+        stream.client = Some(client);
+    }
+}
+
+fn write_body(
+    session: &mut ClientSession,
+    client: &mut HTTPClient,
+    stream: &mut Stream,
+    cap: usize,
+) {
     if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
         return;
     }
-    let Some(client_ptr) = stream.client else {
-        return;
-    };
-    let client = super::client_session::stream_client_mut(client_ptr);
     match &mut client.state.original_request_body {
         HTTPRequestBody::Bytes(_) => {
             let pending = stream.pending_body;
@@ -326,7 +325,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
         }
         HTTPRequestBody::Stream(body) => {
             let ended = body.ended;
-            let Some(sb) = body.buffer_ref() else {
+            let Some(sb) = body.buffer.as_deref() else {
                 return;
             };
             let mut locked = sb.lock();
@@ -354,7 +353,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             }
             drop(locked);
             if stream.local_closed() {
-                body.detach();
+                body.buffer = None;
             }
         }
         HTTPRequestBody::Sendfile(_) => unreachable!(),
@@ -380,7 +379,7 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
         // and re-borrow each pass.
         let mut i = 0usize;
         while i < session.streams.count() {
-            let stream = session.streams.values()[i];
+            let stream = session.streams.values()[i].as_ptr();
             let s = super::client_session::stream_mut(stream);
             i += 1;
             if s.local_closed() || s.send_window <= 0 {
@@ -399,41 +398,14 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
 }
 
 fn encode_header(
-    session: &mut ClientSession,
-    encoded: &mut Vec<u8>,
+    block: &mut Block<'_>,
     name: &[u8],
     value: &[u8],
-    never_index: bool,
+    indexing: Indexing,
 ) -> crate::Result<()> {
-    let required = encoded.len() + name.len() + value.len() + 32;
-    encoded.reserve(required.saturating_sub(encoded.len()));
-    let len = encoded.len();
-    // Write through the raw buffer and set_len after.
-    // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
-    // within the just-reserved capacity; bytes in `[0..len]` are initialized.
-    let buf = unsafe { bun_core::vec::allocated_bytes_mut(encoded) };
-    let written = session
-        .hpack
-        .encode(name, value, never_index, buf, len)
-        .map_err(crate::Error::from)?;
-    // SAFETY: hpack wrote `written` bytes at offset `len`; new_len <= capacity.
-    unsafe { bun_core::vec::commit_spare(encoded, written) };
+    if name.len() + value.len() > bun_hpack::MAX_FIELD_LEN {
+        return Err(crate::Error::UnableToEncode);
+    }
+    block.field(name, value, indexing);
     Ok(())
-}
-
-/// RFC 7541 §6.3 Dynamic Table Size Update: `001` prefix, 5-bit-prefix
-/// integer. Must be the first opcode in a header block. Caller guarantees
-/// at least 6 bytes of capacity (max for a u32).
-fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
-    if value < 31 {
-        encoded.push(0x20 | u8::try_from(value).expect("int cast"));
-        return;
-    }
-    encoded.push(0x20 | 31);
-    let mut rest = value - 31;
-    while rest >= 128 {
-        encoded.push((rest as u8) | 0x80);
-        rest >>= 7;
-    }
-    encoded.push(rest as u8);
 }

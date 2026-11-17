@@ -57,6 +57,7 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/JSBuffer.cpp",
   "src/jsc/bindings/napi.cpp",
   "src/jsc/bindings/webcore/SerializedScriptValue.cpp",
+  "packages/bun-usockets/src/crypto/openssl.cpp",
 
   // Defines malloc and operator new; nothing else belongs in that translation unit.
   "src/jsc/bindings/MimallocOverrideDarwin.cpp",
@@ -155,6 +156,15 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/highway_xml.cpp",
   // Seventh highway TU (PNG scanline filters) — same reason.
   "src/jsc/bindings/highway_png.cpp",
+  // Eighth highway TU (byte sets) — same reason.
+  "src/jsc/bindings/highway_byte_set.cpp",
+  // Ninth highway TU (JPEG transforms and color conversion) — same reason.
+  "src/jsc/bindings/highway_jpeg.cpp",
+  // The highway TUs of the WebP codec — same reason.
+  "src/jsc/bindings/highway_webp_decoder.cpp",
+  "src/jsc/bindings/highway_webp_encoder.cpp",
+  // The highway TU for the checksums of gzip and zlib — same reason.
+  "src/jsc/bindings/highway_checksums.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.
@@ -175,6 +185,8 @@ const noUnifyDirs: readonly string[] = [
   // One WHATWG spec algorithm group per TU, each with file-local static
   // helpers written assuming TU isolation; a unified bundle collides them.
   "src/jsc/bindings/webcore/streams",
+  // Compiled without the PCH.
+  "packages/bun-usockets/src",
 ];
 
 /**

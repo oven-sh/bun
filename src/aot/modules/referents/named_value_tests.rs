@@ -247,7 +247,7 @@ fn node_without_import_site_has_no_answer() {
 }
 
 #[test]
-fn member_stored_on_exported_function_of_library_is_found() {
+fn exported_function_member_is_found() {
     let path = "
         const { Base } = require('node:os');
         use(Base, require('node:os').Base, require('node:os').Missing);

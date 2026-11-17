@@ -48,8 +48,8 @@ impl FieldMessage {
         }
     }
 
-    pub(crate) fn decode_list<Context: super::new_reader::ReaderContext>(
-        mut reader: NewReader<Context>,
+    pub(crate) fn decode_list(
+        reader: &NewReader<'_>,
         mut remaining: usize,
     ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
         let mut messages: Vec<FieldMessage> = Vec::new();
@@ -64,7 +64,7 @@ impl FieldMessage {
             let (message, consumed) = reader.string_within(remaining)?;
             remaining -= consumed;
 
-            let Ok(field_msg) = FieldMessage::init(field, message.slice()) else {
+            let Ok(field_msg) = FieldMessage::init(field, message) else {
                 continue;
             };
             messages.push(field_msg);

@@ -154,12 +154,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: v8 = Call v5, v4, v7 calleeName="Object.create"
 // CHECK-NEXT: PropSet v3, v8 key="answers"
 // CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: v11 = TypeTest v10 testedType=object
-// CHECK-NEXT: Branch v11 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v12):
-// CHECK-NEXT: Jump -> next b2(v12)
-// CHECK-NEXT: b2(v13):
-// CHECK-NEXT: Return v13
+// CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="create"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {

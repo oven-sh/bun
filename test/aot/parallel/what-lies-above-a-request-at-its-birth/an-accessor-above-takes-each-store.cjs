@@ -35,13 +35,11 @@ let look = () => "";
 
 function ask(port) {
   return new Promise(resolve => {
-    const limit = setTimeout(() => resolve("no answer"), 500);
     const client = net.connect(port, "127.0.0.1", () => client.write("GET /path HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n"));
     let text = "";
     client.on("data", chunk => (text += chunk));
     client.on("error", () => {});
     client.on("close", () => {
-      clearTimeout(limit);
       resolve(text.slice(0, 12));
     });
   });
@@ -49,11 +47,9 @@ function ask(port) {
 
 function askKeptAlive(port) {
   return new Promise(resolve => {
-    const limit = setTimeout(() => (client.destroy(), resolve("no answer")), 500);
     const client = net.connect(port, "127.0.0.1", () => client.write("GET /path HTTP/1.1\r\nHost: a\r\n\r\n"));
     client.on("error", () => {});
     client.on("data", chunk => {
-      clearTimeout(limit);
       client.destroy();
       resolve(String(chunk).slice(0, 12));
     });

@@ -1,7 +1,6 @@
 //! This namespace is used to test binding generator
 
 use core::cell::{Cell, RefCell};
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
@@ -16,7 +15,7 @@ use crate::generated_bindgen::bindgen_test::{
     js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
     js_TestSquare,
 };
-use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
+use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult, WrapperGuard};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
@@ -561,13 +560,13 @@ impl TestRefCounted {
         self.finalized.set(true);
     }
 
-    pub(crate) fn constructor(value: i32) -> *mut Self {
+    pub(crate) fn constructor(value: i32) -> RefPtr<Self> {
         REF_COUNTED_ALIVE.fetch_add(1, Ordering::SeqCst);
-        bun_core::heap::into_raw(Box::new(TestRefCounted {
+        RefPtr::new(TestRefCounted {
             ref_count: Cell::new(1),
             value: Cell::new(value),
             finalized: Cell::new(false),
-        }))
+        })
     }
 
     pub(crate) fn get_value(&self) -> i32 {
@@ -640,7 +639,7 @@ impl TestRefCounted {
     }
 
     pub(crate) fn value_from_js(object: JsLocal<'_>) -> Option<i32> {
-        Some(object.to_js().as_class_ref::<Self>()?.value.get())
+        Some(object.as_class_ref::<Self>()?.value.get())
     }
 }
 
@@ -828,15 +827,15 @@ pub(crate) struct TestNonFinal {
 }
 
 pub(crate) trait TestNonFinalExt {
-    fn constructor(value: i32) -> *mut Self;
+    fn constructor(value: i32) -> RefPtr<TestNonFinal>;
     fn get_value(&self) -> i32;
     fn doubled<'a>(heap: &JsHeap<'a>, value: i32) -> JsLocal<'a>;
 }
 
 impl TestNonFinalExt for TestNonFinal {
-    fn constructor(value: i32) -> *mut Self {
+    fn constructor(value: i32) -> RefPtr<Self> {
         let ref_count = Cell::new(1);
-        RefPtr::new(Self { ref_count, value }).into_raw()
+        RefPtr::new(Self { ref_count, value })
     }
 
     fn get_value(&self) -> i32 {
@@ -856,15 +855,15 @@ impl TestNonFinalExt for TestNonFinal {
 impl JsClass for TestNonFinal {
     fn to_js(mut self, global: &JSGlobalObject) -> JSValue {
         self.value = self.value.wrapping_mul(2);
-        js_TestNonFinal::to_js(RefPtr::new(self).into_raw(), global)
+        js_TestNonFinal::to_js(RefPtr::new(self), global)
     }
 
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js_TestNonFinal::from_js(value).map(NonNull::as_ptr)
+    fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+        js_TestNonFinal::from_js(value)
     }
 
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js_TestNonFinal::from_js_direct(value).map(NonNull::as_ptr)
+    fn from_js_direct(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+        js_TestNonFinal::from_js_direct(value)
     }
 }
 
@@ -927,9 +926,9 @@ pub(crate) fn make_square_wrapper<'a>(cx: &mut JsScope<'a>, side: u32) -> JSValu
 pub(crate) fn shape_from_js(shape: JsLocal<'_>) -> [bool; 3] {
     let shape = shape.to_js();
     [
-        js_TestShape::from_js(shape).is_some(),
-        js_TestSquare::from_js(shape).is_some(),
-        shape.is_cell() && js_TestShape::from_js_direct(shape).is_some(),
+        js_TestShape::from_js(&shape).is_some(),
+        js_TestSquare::from_js(&shape).is_some(),
+        js_TestShape::from_js_direct(&shape).is_some(),
     ]
 }
 
@@ -938,14 +937,12 @@ pub(crate) fn dropped_shapes() -> usize {
 }
 
 pub(crate) fn token_id_from_js(token: JsLocal<'_>) -> Option<u32> {
-    Some(token.to_js().as_class_ref::<TestToken>()?.id)
+    Some(token.as_class_ref::<TestToken>()?.id)
 }
 
 pub(crate) fn is_note_from_js_direct(note: JsLocal<'_>) -> bool {
     let note = note.to_js();
-    note.is_cell()
-        && (note.as_direct::<TestNote>().is_some()
-            || note.as_direct::<TestRefCountedNote>().is_some())
+    note.is_direct::<TestNote>() || note.is_direct::<TestRefCountedNote>()
 }
 
 pub(crate) fn error_constructor<'a>(cx: &mut JsScope<'a>) -> JsLocal<'a> {
@@ -1007,15 +1004,14 @@ pub(crate) fn make_native_promise_context(cx: &mut JsScope<'_>) -> JSValue {
     // Only the destructor of a cell that still has its pointer reads the tag, and the test takes the pointer.
     Bun__NativePromiseContext__create(
         cx.global(),
-        PROMISE_CONTEXT.as_ptr().cast(),
+        TestRefCounted::constructor(42).into_raw().cast(),
         0,
         JSValue::ZERO,
     )
 }
 
-pub(crate) fn read_native_promise_context(context: Option<NonNull<AtomicI32>>) -> Option<i32> {
-    // SAFETY: `make_native_promise_context` made the cell of a static.
-    context.map(|context| unsafe { context.as_ref() }.load(Ordering::Relaxed))
+pub(crate) fn read_native_promise_context(context: Option<RefPtr<TestRefCounted>>) -> Option<i32> {
+    context.map(|context| context.get_value())
 }
 
 pub(crate) fn primes() -> [u32; 3] {

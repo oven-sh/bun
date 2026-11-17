@@ -79,6 +79,7 @@ fn find_folder(path: &[u8]) -> Option<&[u8]> {
 }
 
 impl ContentsScan<'_, '_> {
+    /// Returns true if every value that the Worker can start from is code that the build knows.
     pub(super) fn add_code_given_to_worker(
         &mut self,
         argument: ExprId,

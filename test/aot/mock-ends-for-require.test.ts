@@ -1,6 +1,7 @@
 // An ES module is loaded, a test mocks it, and require() asks for it for the first time while the mock stands. When the mock has ended, at the end of the
 // test file, by mock.restore() or by vi.doUnmock(), require() answers the module again, as import() does. A compiled run kept the factory's object as
 // the answer of require() for good: in every later test file and in the program's own CommonJS files.
+// The entry of require.cache that is made meanwhile ends with the mock too, and a mock that a hook lays again takes nothing for the module's own answer.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { waysFor } from "./harness/ways";
@@ -25,6 +26,19 @@ import * as ns from "./lib.mjs";
 test("a", () => {
   mock.module("./lib.mjs", () => ({ v: "mock v" }));
   log("a", ns.v, import.meta.require("./lib.mjs").v);${rest}
+});
+`;
+const headOfHooks = `import { beforeAll, beforeEach, jest, mock, test, vi } from "bun:test";
+import "./lib.mjs";
+const log = (...all) => console.log("OUT " + all.join(" "));
+`;
+const asksCacheUnderMock = (name: string, call: string) => `${headOfHooks}
+const fake = { v: "mock v of ${name}" };
+beforeAll(() => void ${call}("./lib.mjs", () => fake));
+test("${name}", () => {
+  const required = import.meta.require("./lib.mjs");
+  const entry = require.cache[require.resolve("./lib.mjs")];
+  log("${name}", required === fake, entry.exports === fake, entry.exports.v);
 });
 `;
 
@@ -55,6 +69,40 @@ test("a", () => {
 });
 `,
     "z.test.mjs": laterFile,
+  },
+  "each test file asks require.cache under a mock of its own": {
+    "a.test.mjs": asksCacheUnderMock("a", "jest.mock"),
+    "b.test.mjs": asksCacheUnderMock("b", "mock.module"),
+    "c.test.mjs": asksCacheUnderMock("c", "jest.doMock"),
+    "d.test.mjs": asksCacheUnderMock("d", "vi.mock"),
+    "z.test.mjs": `${head}
+test("z", () => {
+  const entry = require.cache[require.resolve("./lib.mjs")];
+  const required = import.meta.require("./lib.mjs");
+  log("z cache", entry.exports.v, required.v, entry.exports === required);
+});
+`,
+  },
+  "a hook lays the mock again behind a require()": {
+    "a.test.mjs": `${headOfHooks}
+let laid = 0;
+beforeEach(() => {
+  const v = "mock v " + ++laid;
+  mock.module("./lib.mjs", () => ({ v }));
+});
+test("a1", () => log("a1", import.meta.require("./lib.mjs").v));
+test("a2", () => log("a2", import.meta.require("./lib.mjs").v));
+`,
+    "user.cjs": `const lib = require("./lib.mjs");
+exports.read = () => lib.v;`,
+    "z.test.mjs": `${head}
+import user from "./user.cjs";
+test("z", () => {
+  const required = import.meta.require("./lib.mjs");
+  log("z require", required.v, required.kept, Object.keys(required).join());
+  log("z user", user.read());
+});
+`,
   },
 };
 

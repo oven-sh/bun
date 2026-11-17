@@ -1,7 +1,9 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="C"{{*}}kind=BaseConstructor
 // CHECK: = CallDirect [[this]] function=
-// CHECK: [[extra]] = ElemGet
+// CHECK: [[found]] = ElemGet
+// CHECK: = TypeTest [[found]] testedType=undefined
+// CHECK: b{{*}}([[extra]]):
 // CHECK: [[run]] = Builtin builtin=CompilerHelpersRunInitializers
 // CHECK: = Call [[run]], -, [[extra]], [[this]]
 // CHECK: PropSet [[this]], {{*}}key="n"

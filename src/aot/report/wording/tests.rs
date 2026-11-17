@@ -36,6 +36,7 @@ fn codes_of_one_table_differ() {
     assert_all_differ(&TypeTestFailure::ALL.map(failure_code));
     assert_all_differ(&TypeTestFailure::ALL.map(failure_sentence));
     assert_all_differ(&CodeForm::ALL.map(form_label));
+    assert_all_differ(&TypeOriginReason::ALL.map(origin_code));
 }
 
 #[test]

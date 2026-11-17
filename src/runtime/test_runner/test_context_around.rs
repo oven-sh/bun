@@ -4,21 +4,20 @@
 
 use core::cell::Cell;
 use core::fmt;
-use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::{
-    JSFunction, JSGlobalObject, JSPromise, JSValue, JsClass as _, JsResult, StringJsc as _, Strong,
+    JSFunction, JSGlobalObject, JSPromise, JSValue, JsClass as _, JsResult, StringJsc as _,
+    WrapperGuard,
 };
 
 use super::bun_test::{
-    Around, AroundPhase, BunTestPtr, BunTestPtrWeak, DescribeScope, RefDataValue,
+    Around, AroundPhase, BunTestPtr, BunTestPtrWeak, RefDataValue, ScopeChain,
 };
-use super::execution::ExecutionSequence;
-use super::test_context::{self, Deferred, TestContext, bound};
+use super::test_context::{self, Deferred, bound};
 use crate::generated_bindgen::test_context as generated;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -122,29 +121,25 @@ impl AroundHook {
         )
     }
 
-    fn of<'a>(value: JSValue) -> Option<&'a AroundHook> {
-        // SAFETY: the wrapper owns the payload, and every caller keeps `value` alive while it uses the borrow.
-        AroundHook::from_js(value).map(|this| unsafe { &*this })
-    }
-
-    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<&'a AroundHook> {
-        Self::of(this_value.to_js()).ok_or_else(|| {
+    fn of_call<'a>(
+        global: &JSGlobalObject,
+        this_value: JsLocal<'a>,
+    ) -> JsResult<WrapperGuard<'a, AroundHook>> {
+        this_value.as_class_ref().ok_or_else(|| {
             global.throw_type_error(format_args!("Expected this to be an around hook"))
         })
     }
 
-    /// The setup entry's sequence, while that entry waits for `runTest()`.
-    fn setting_up(&self) -> Option<(BunTestPtr, NonNull<ExecutionSequence>)> {
+    /// The setup entry's file, while that entry waits for `runTest()`.
+    fn setting_up(&self) -> Option<BunTestPtr> {
         if self.state.get() != State::SettingUp {
             return None;
         }
-        let waiting = self.buntest.upgrade().and_then(|buntest| {
-            let (sequence, _) = buntest
-                .get()
+        let waiting = self.buntest.upgrade().filter(|buntest| {
+            buntest
                 .execution
-                .get_current_and_valid_execution_sequence(&self.set_up_entry)?;
-            let sequence = NonNull::from(sequence);
-            Some((buntest, sequence))
+                .get_current_and_valid_execution_sequence(&self.set_up_entry)
+                .is_some()
         });
         // The entry timed out, or its file is over.
         if waiting.is_none() {
@@ -262,7 +257,7 @@ pub(crate) fn set_up(
         context.to_js(),
         suite.to_js(),
     );
-    let Some(this) = AroundHook::of(this_value) else {
+    let Some(this) = AroundHook::from_js(&this_value) else {
         return Err(global.throw_type_error(format_args!(
             "Expected the first argument to be an around hook"
         )));
@@ -300,7 +295,11 @@ pub(crate) fn run(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSV
     let this = AroundHook::of_call(global, this_value)?;
     let this_value = this_value.to_js();
     let (hook_name, callback_name) = (this.around.hook_name(), this.around.callback_name());
-    let Some((buntest, sequence)) = this.setting_up() else {
+    let buntest = this.setting_up();
+    let Some((buntest, sequence)) = buntest
+        .as_ref()
+        .and_then(|buntest| Some((buntest, this.set_up_entry.sequence(buntest)?)))
+    else {
         let error = if this.state.get() == State::Abandoned {
             global.create_error_instance(format_args!(
                 "Cannot call {callback_name}() after the setup phase of the {hook_name} hook has ended"
@@ -324,38 +323,19 @@ pub(crate) fn run(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSV
         generated::Bun__AroundHook__tearDown,
     )?;
     let async_context = capture_async_context(global);
-    // SAFETY: points into `buntest.execution.sequences`, which `buntest` keeps alive.
-    let (context, entry) = unsafe {
-        (
-            sequence.as_ref().context.as_ref().map(Strong::get),
-            sequence.as_ref().active_entry,
-        )
-    };
     match this.around {
         Around::Each => {
-            if let Some(context) = context
-                && let Some(payload) = TestContext::from_js(context)
-            {
+            if let Some(context) = sequence.context.get() {
                 let outer = test_context::js::async_context_get_cached(context).unwrap_or_default();
                 js::context_set_cached(this_value, global, context);
                 js::outer_async_context_set_cached(this_value, global, outer);
                 test_context::js::async_context_set_cached(context, global, async_context);
-                // SAFETY: the wrapper owns the payload, and the sequence keeps the wrapper alive.
-                unsafe { &*payload }.defer(
-                    buntest.get(),
-                    Deferred::Around,
-                    tear_down,
-                    this.timeout,
-                );
+                sequence.defer(buntest, Deferred::Around, tear_down, this.timeout);
             }
         }
         Around::All => {
-            if let Some(entry) = entry
-                // SAFETY: the running file keeps the active entry and its scope alive.
-                && let Some(scope) = unsafe { entry.as_ref() }.base.parent
-            {
-                // SAFETY: as above.
-                unsafe { &mut *scope }.enter_around_all(entry.as_ptr(), tear_down, async_context);
+            if let Some(entry) = sequence.active_entry.get() {
+                buntest.enter_around_all(buntest.entry_of(entry), tear_down, async_context);
             }
         }
     }
@@ -417,18 +397,9 @@ pub(crate) fn in_async_context(
 /// The async context of the innermost `runTest()` or `runSuite()` call that a callback runs inside of.
 pub(crate) fn captured_async_context(
     context: Option<JSValue>,
-    mut scope: Option<*mut DescribeScope>,
+    mut scopes: ScopeChain<'_>,
 ) -> Option<JSValue> {
-    if let Some(captured) = context.and_then(test_context::js::async_context_get_cached) {
-        return Some(captured);
-    }
-    while let Some(current) = scope {
-        // SAFETY: a scope outlives the callbacks that run in it, and its parents outlive it.
-        let current = unsafe { &*current };
-        if let Some(captured) = &current.async_context {
-            return Some(captured.get());
-        }
-        scope = current.base.parent;
-    }
-    None
+    context
+        .and_then(test_context::js::async_context_get_cached)
+        .or_else(|| scopes.find_map(|scope| scope.async_context.get()))
 }

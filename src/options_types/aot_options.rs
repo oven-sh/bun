@@ -83,12 +83,18 @@ pub struct AotOptions {
     /// `bun test --aot` without `--aot-allow-code-from-disk`: `loads_code_from_disk` holds for the files of the tests. A file that an executable would hold too finds what it finds there.
     pub only_tests_load_code_from_disk: bool,
     pub ir_output_path: Option<Box<[u8]>>,
+    pub order_files: Vec<u8>,
+    pub records_order: bool,
     /// The absolute paths of what the build writes besides the executable: the metafiles, the map of `--sourcemap=external`. What an earlier build left there is not what a computed path means.
     pub other_products: Vec<Vec<u8>>,
     /// `--aot-testing=NoExecutable`: the build runs as always and writes no executable.
     pub writes_no_executable: bool,
     /// `--aot-testing=DiscardsFirstVisits`: the first visit of every file is thrown away, as one is that ends with an invalid commit, and the file is visited again. The program is the same.
     pub discards_first_visits: bool,
+    /// `--aot-testing=LowersInParts`: a JavaScript file that nobody checks is lowered in parts, however small it is, as a large one always is.
+    pub lowers_small_files_in_parts: bool,
+    /// `--aot-testing=CheckOrder=<odd number>`: the order in which the checker's threads take the files. 1: as always. 4294967295: the last file first. Any other number: a fixed permutation. The program and its type errors are the same.
+    pub check_order: u32,
     /// `--aot-testing=TypeErrorsWarn`: a type error is printed as `bun test --aot` prints it, and the executable is built. What is compiled is the same.
     pub type_errors_warn: bool,
     pub runs_in_place: bool,
@@ -183,9 +189,13 @@ impl Default for AotOptions {
             isolates_code_from_disk: false,
             only_tests_load_code_from_disk: false,
             ir_output_path: None,
+            order_files: Vec::new(),
+            records_order: false,
             other_products: Vec::new(),
             writes_no_executable: false,
             discards_first_visits: false,
+            lowers_small_files_in_parts: false,
+            check_order: 1,
             type_errors_warn: false,
             runs_in_place: false,
             missing_tsconfig_override: None,
@@ -248,9 +258,13 @@ mod tests {
             isolates_code_from_disk,
             only_tests_load_code_from_disk,
             ir_output_path,
+            order_files,
+            records_order,
             other_products,
             writes_no_executable,
             discards_first_visits,
+            lowers_small_files_in_parts,
+            check_order,
             type_errors_warn,
             runs_in_place,
             missing_tsconfig_override,
@@ -304,9 +318,13 @@ mod tests {
         assert!(!isolates_code_from_disk);
         assert!(!only_tests_load_code_from_disk);
         assert!(ir_output_path.is_none());
+        assert!(order_files.is_empty());
+        assert!(!records_order);
         assert!(other_products.is_empty());
         assert!(!writes_no_executable);
         assert!(!discards_first_visits);
+        assert!(!lowers_small_files_in_parts);
+        assert_eq!(check_order, 1);
         assert!(!type_errors_warn);
         assert!(!runs_in_place);
         assert!(missing_tsconfig_override.is_none());

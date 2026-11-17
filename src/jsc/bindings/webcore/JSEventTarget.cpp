@@ -346,11 +346,12 @@ bool JSEventTargetOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
     return false;
 }
 
-void JSEventTargetOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSEventTargetOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsEventTarget = static_cast<JSEventTarget*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsEventTarget->wrapped(), jsEventTarget);
+    return FinalizeResult::KeepImpl;
 }
 
 }

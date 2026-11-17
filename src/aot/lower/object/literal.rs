@@ -160,10 +160,13 @@ impl FileLowering<'_, '_, '_, '_> {
         if !matches!(hir[literal].kind, ExprKind::Object(_)) {
             return false;
         }
-        let named = &self.literals_named_as_prototype_objects;
+        let named = &self.lists.literals_named_as_prototype_objects;
         if (named.get_or_init(|| self.find_literals_named_as_prototype_objects()))
             .contains(&literal)
         {
+            return true;
+        }
+        if self.variable_of_prototype_literal(literal).is_some() {
             return true;
         }
         let mut child = literal;
@@ -661,6 +664,9 @@ pub(crate) fn lower_object_literal(
         let null = lowering.builder.null();
         return lowering.emit_builtin_call(BuiltinId::ObjectCreate, &[null]);
     }
+    if let Some(made) = lowering.try_lower_literal_with_prototype(literal) {
+        return made;
+    }
     if lowering.file.decisions().is_data_literal(literal)
         && !is_born_level_by_level(lowering, literal)
         && !lowering.file.is_built_by_code(literal)
@@ -716,7 +722,11 @@ pub(crate) fn lower_object_literal(
         lowering.lower_property_definition(&mut object, dictionary, prop);
     }
     lowering.set_position(hir[literal].pos);
-    super::finish_object(lowering, object)
+    let made = super::finish_object(lowering, object);
+    match lowering.file.variable_of_prototype_literal(literal) {
+        Some(variable) => lowering.emit_prototype_of_maker(variable, made),
+        None => made,
+    }
 }
 
 fn ends_in_literal_of_plain_members(file: &FileLowering<'_, '_, '_, '_>, source: ExprId) -> bool {

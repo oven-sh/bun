@@ -62,7 +62,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 Some(UseOfPath::Compared(comparison)) => comparisons.push(comparison),
                 Some(UseOfPath::Part(whole)) if seen.insert(whole) => paths.push(whole),
                 Some(UseOfPath::Kept(symbol)) if kept.insert(symbol) => {
-                    let uses = uses.get_or_insert_with(|| self.find_uses_like_those_of_paths());
+                    let uses = uses.get_or_insert_with(|| self.find_path_like_uses());
                     let start = uses.partition_point(|it| it.0 < symbol);
                     let end = uses.partition_point(|it| it.0 <= symbol);
                     paths.extend(uses[start..end].iter().map(|it| it.1));
@@ -75,7 +75,7 @@ impl FileLowering<'_, '_, '_, '_> {
         comparisons
     }
 
-    fn find_uses_like_those_of_paths(&self) -> Vec<(SymbolId, ExprId)> {
+    fn find_path_like_uses(&self) -> Vec<(SymbolId, ExprId)> {
         let (hir, bound) = (self.hir, self.bound);
         let expressions = (0..hir.exprs.len() as u32).map(ExprId);
         let names = expressions.filter(|&it| {
@@ -195,7 +195,7 @@ impl FileLowering<'_, '_, '_, '_> {
         index.ok().map(|index| comparisons[index])
     }
 
-    fn find_spellings_of_files(&self) -> Vec<[Vec<u8>; 2]> {
+    fn find_file_spellings(&self) -> Vec<[Vec<u8>; 2]> {
         let sources = self.inputs.sources;
         let is_windows = self.inputs.options.platform.contains(Platforms::WINDOWS);
         let entry_points = sources.entry_points().iter().map(|it| it.file);
@@ -249,7 +249,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         } else {
             [values[1], values[0]]
         };
-        for texts in self.file.find_spellings_of_files() {
+        for texts in self.file.find_file_spellings() {
             let [in_executable, at_build] = texts.map(|text| self.emit_text(&text));
             let is_path = self.builder.strict_eq(path, at_build);
             let is_other = self.builder.strict_eq(other, in_executable);

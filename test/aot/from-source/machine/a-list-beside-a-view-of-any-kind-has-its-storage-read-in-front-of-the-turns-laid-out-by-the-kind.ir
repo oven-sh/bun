@@ -9,7 +9,7 @@
 # storages. So the table was read by the chain of kinds in every turn: a thousand elements 39,124 instructions, plain Bun 13,592. The turns are laid out by the view's kind alone; whether the list holds doubles or
 # int32s is read once in front as a value, and each read branches on it. 20,154.
 # RUN: compile UnrolledLoopsForTypedArrays UnrolledLoopStorageChecksHoisted mechanisms=all
-# CHECK: statistic UnrolledLoopsForTypedArrays 4
+# CHECK: statistic UnrolledLoopsForTypedArrays 5
 # CHECK-NOT: statistic UnrolledLoopStorageChecksHoisted 0
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 1579192720 756501683 19652 1579192720 109 1579192720 0 0

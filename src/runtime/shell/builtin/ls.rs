@@ -1,338 +1,38 @@
-use core::ops::ControlFlow;
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_core::ZBox;
-use bun_sys::{E, FdExt, O, S, dir_iterator};
+use bun_ptr::BackRef;
+use bun_sys::{E, O, S, dir_iterator};
 
-use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{BadFlag, Builtin, Kind};
+use crate::shell::builtins::batch::Batch;
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellTask,
-    shell_lstatat, shell_openat, shell_statat,
+    Interpreter, NodeId, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat, shell_statat,
 };
-use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
-pub(crate) struct Ls {
-    pub(crate) opts: Opts,
-    pub(crate) state: State,
-}
-
-#[derive(Default)]
-pub(crate) enum State {
-    #[default]
-    Idle,
-    Exec(ExecState),
-    WaitingWriteErr,
-    Done,
-}
-
-pub(crate) struct ExecState {
-    pub(crate) err: Option<bun_sys::Error>,
-    pub(crate) task_count: AtomicUsize,
-    pub(crate) tasks_done: usize,
-    pub(crate) output_waiting: usize,
-    pub(crate) output_done: usize,
-    /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
-    /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Ls>>>,
-}
-
-enum ParseFlag {
-    ContinueParsing,
-    Done,
-    IllegalOption(Box<[u8]>),
-}
-
-impl Ls {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        Self::next(interp, cmd)
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    let (flags, paths) = Builtin::of(interp, cmd).split_flags();
+    let mut opts = Opts::default();
+    if let Err(flag) = flags.iter().try_for_each(|flag| opts.parse(flag)) {
+        return Builtin::fail_flag(interp, cmd, flag);
     }
-
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // Match on a tag, drop the borrow, then act.
-        enum Tag {
-            Idle,
-            Exec,
-            WaitingWriteErr,
-            Done,
-        }
-        let tag = match Self::state_mut(interp, cmd).state {
-            State::Idle => Tag::Idle,
-            State::Exec(_) => Tag::Exec,
-            State::WaitingWriteErr => Tag::WaitingWriteErr,
-            State::Done => Tag::Done,
-        };
-        match tag {
-            Tag::Idle => {
-                // Parse opts; will be None if called with no args, in
-                // which case we run once with ".".
-                let paths_start = match Self::parse_opts(interp, cmd) {
-                    Ok(p) => p,
-                    Err(opt) => {
-                        let buf: Vec<u8> = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
-                            Some(Kind::Ls),
-                            format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
-                        )
-                        .to_vec();
-                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
-                        return Builtin::write_failing_error(interp, cmd, &buf, 1);
-                    }
-                };
-
-                let argc = Builtin::of(interp, cmd).args_slice().len();
-                let task_count = match paths_start {
-                    Some(start) => argc - start,
-                    None => 1,
-                };
-                Self::state_mut(interp, cmd).state = State::Exec(ExecState {
-                    err: None,
-                    task_count: AtomicUsize::new(task_count),
-                    tasks_done: 0,
-                    output_waiting: 0,
-                    output_done: 0,
-                    output_queue: std::collections::VecDeque::new(),
-                });
-
-                // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
-                // and the `Exec` variant is held until all tasks finish.
-                let task_count_ptr: *const AtomicUsize = {
-                    let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
-                        unreachable!()
-                    };
-                    &raw const exec.task_count
-                };
-
-                let cwd = Builtin::cwd(interp, cmd);
-                let opts = Self::state_mut(interp, cmd).opts;
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr = interp.as_ctx_ptr();
-                if let Some(start) = paths_start {
-                    let print_directory = task_count > 1;
-                    for i in start..argc {
-                        let path = Builtin::of(interp, cmd).arg_bytes(i);
-                        let task = ShellLsTask::create(
-                            cmd,
-                            opts,
-                            task_count_ptr,
-                            cwd,
-                            ZBox::from_bytes(path),
-                            evtloop,
-                            interp_ptr,
-                        );
-                        // SAFETY: freshly heap-allocated.
-                        unsafe {
-                            (*task).print_directory = print_directory;
-                            ShellTask::schedule_no_ref::<ShellLsTask>(task);
-                        }
-                    }
-                } else {
-                    let task = ShellLsTask::create(
-                        cmd,
-                        opts,
-                        task_count_ptr,
-                        cwd,
-                        ZBox::from_bytes(b"."),
-                        evtloop,
-                        interp_ptr,
-                    );
-                    // SAFETY: freshly heap-allocated.
-                    unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
-                }
-                Yield::suspended()
-            }
-            Tag::Exec => {
-                let done = {
-                    let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
-                        unreachable!()
-                    };
-                    exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
-                        && exec.output_done >= exec.output_waiting
-                };
-                if done {
-                    let exit_code: ExitCode = {
-                        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                            unreachable!()
-                        };
-                        let code = if exec.err.is_some() { 1 } else { 0 };
-                        exec.err = None;
-                        code
-                    };
-                    Self::state_mut(interp, cmd).state = State::Done;
-                    return Builtin::done(interp, cmd, exit_code);
-                }
-                Yield::suspended()
-            }
-            Tag::WaitingWriteErr => Yield::suspended(),
-            Tag::Done => Builtin::done(interp, cmd, 0),
-        }
+    Batch::start(interp, cmd, paths.len().max(1));
+    let running = BackRef::new(&Builtin::of(interp, cmd).running);
+    let cwd = Builtin::cwd(interp, cmd);
+    let schedule = |path: &[u8]| {
+        let path = ZBox::from_bytes(path);
+        let task = ShellLsTask::new(cmd, opts, paths.len() > 1, running, cwd, path);
+        PoolTask::schedule_no_ref(interp, task);
+    };
+    if paths.is_empty() {
+        schedule(b".");
     }
-
-    pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
-        cmd: NodeId,
-        written: usize,
-        e: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
-            return Builtin::done(interp, cmd, 1);
-        }
-        let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_queue.pop_front()
-        } else {
-            None
-        };
-        if let Some(task) = pending {
-            return OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e);
-        }
-        Self::next(interp, cmd)
+    for path in paths {
+        schedule(path);
     }
-
-    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellLsTask) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.tasks_done += 1;
-        }
-        let output = core::mem::take(&mut task.output);
-        let output_task = OutputTask::<Ls>::new(cmd, OutputSrc::Arrlist(output));
-
-        let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
-            let s = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                if exec.err.is_none() {
-                    exec.err = Some(e);
-                }
-            }
-            s
-        });
-        OutputTask::<Ls>::start(output_task, interp, errstr.as_deref()).run(interp);
-    }
-
-    /// Returns the index of the first non-flag arg, or `None` if there are no
-    /// positional args. `Err` carries the offending flag byte.
-    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, Box<[u8]>> {
-        let argc = Builtin::of(interp, cmd).args_slice().len();
-        if argc == 0 {
-            return Ok(None);
-        }
-        let mut idx = 0usize;
-        while idx < argc {
-            let flag = Builtin::of(interp, cmd).arg_bytes(idx);
-            match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
-                ParseFlag::Done => return Ok(Some(idx)),
-                ParseFlag::ContinueParsing => {}
-                ParseFlag::IllegalOption(s) => return Err(s),
-            }
-            idx += 1;
-        }
-        Ok(None)
-    }
-
-    fn parse_flag(opts: &mut Opts, flag: &[u8]) -> ParseFlag {
-        if flag.is_empty() || flag[0] != b'-' {
-            return ParseFlag::Done;
-        }
-        // FIXME windows
-        if flag.len() == 1 {
-            return ParseFlag::IllegalOption(Box::from(&b"-"[..]));
-        }
-        for &ch in &flag[1..] {
-            match ch {
-                b'a' => opts.dotfiles = DotfileMode::All,
-                b'A' => opts.dotfiles = DotfileMode::AlmostAll,
-                b'd' => opts.list_directories = true,
-                b'l' => opts.long_listing = true,
-                b'R' => opts.recursive = true,
-                // The remaining short flags are recognised but currently no-op.
-                b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G'
-                | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
-                | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
-                | b'X' | b'Z' => {}
-                _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
-            }
-        }
-        ParseFlag::ContinueParsing
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Ls {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Ls(l) => &mut **l,
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl OutputTaskVTable for Ls {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-        errbuf: &[u8],
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // Stash so on_io_writer_chunk can route to the OutputTask state
-            // machine and reclaim the box (stopgap for missing WriterTag).
-            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                unreachable!()
-            };
-            exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        ControlFlow::Continue(child)
-    }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let buf = child.output.slice().to_vec();
-            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                unreachable!()
-            };
-            exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
-        }
-        let buf = child.output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        ControlFlow::Continue(child)
-    }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
-        Self::next(interp, cmd)
-    }
+    Yield::suspended()
 }
 
 /// Opens the path, iterates its entries (or
@@ -341,130 +41,74 @@ pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
     pub print_directory: bool,
-    /// Shared atomic counter (lives in `ExecState` inside `Box<Ls>`; address
-    /// is stable for the lifetime of the Exec state).
-    pub task_count: *const AtomicUsize,
+    /// [`Builtin::running`]
+    pub running: BackRef<AtomicUsize>,
     pub cwd: bun_sys::Fd,
     pub path: ZBox,
     pub output: Vec<u8>,
-    pub is_absolute: bool,
     pub err: Option<bun_sys::Error>,
     /// Cached current time (seconds since epoch) for formatting timestamps.
     /// Cached once per task to avoid repeated syscalls.
     now_secs: u64,
-    pub event_loop: EventLoopHandle,
-    /// Back-ref so recursive `enqueue` can populate the subtask's
-    /// `task.interp` (needed by [`ShellTask::run_from_main_thread`]).
-    pub interp: *mut Interpreter,
-    pub task: ShellTask,
 }
 
 impl ShellLsTask {
-    fn create(
+    fn new(
         cmd: NodeId,
         opts: Opts,
-        task_count: *const AtomicUsize,
+        print_directory: bool,
+        running: BackRef<AtomicUsize>,
         cwd: bun_sys::Fd,
         path: ZBox,
-        event_loop: EventLoopHandle,
-        interp: *mut Interpreter,
-    ) -> *mut ShellLsTask {
-        let mut task = Box::new(ShellLsTask {
+    ) -> Self {
+        Self {
             cmd,
             opts,
-            print_directory: false,
-            task_count,
+            print_directory,
+            running,
             cwd,
             path,
             output: Vec::new(),
-            is_absolute: false,
             err: None,
             now_secs: 0,
-            event_loop,
-            interp,
-            task: ShellTask::new(event_loop),
-        });
-        task.task.interp = interp;
-        bun_core::heap::into_raw(task)
+        }
     }
 
     /// Spawns a subtask for a recursively
     /// discovered subdirectory.
-    fn enqueue(&mut self, name: &[u8]) {
-        let new_path = self.join(name);
-        // Pool thread: the subtask inherits our poster rather than deriving
-        // one from the VM (`ShellTask::new` is JS-thread only).
-        let mut subtask = Box::new(ShellLsTask {
-            cmd: self.cmd,
-            opts: self.opts,
-            print_directory: true,
-            task_count: self.task_count,
-            cwd: self.cwd,
-            path: new_path,
-            output: Vec::new(),
-            is_absolute: false,
-            err: None,
-            now_secs: 0,
-            event_loop: self.event_loop,
-            interp: self.interp,
-            task: ShellTask::new_child(&self.task),
-        });
-        subtask.task.interp = self.interp;
-        // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
-        // outlives every in-flight task (see `next`). `subtask` is freshly
-        // heap-allocated and scheduled via raw `WorkPool::schedule` (no
-        // keep-alive ref) — it runs on a worker thread with no JS-VM
-        // thread-local.
-        unsafe {
-            (*self.task_count).fetch_add(1, Ordering::Relaxed);
-            ShellTask::schedule_no_ref::<ShellLsTask>(bun_core::heap::into_raw(subtask));
-        }
+    fn enqueue(&self, task: &ShellTask, name: &[u8]) {
+        let path = self.join(name);
+        let subtask = Self::new(self.cmd, self.opts, true, self.running, self.cwd, path);
+        self.running.fetch_add(1, Ordering::Relaxed);
+        PoolTask::schedule_child(task, subtask);
     }
 
+    /// Does not normalize the path.
     fn join(&self, child: &[u8]) -> ZBox {
-        if !self.is_absolute {
-            // If relative paths enabled, stdlib join is preferred over
-            // ResolvePath.joinBuf because it doesn't try to normalize the path.
-            // On Windows both '/' and '\' count as separators here, so
-            // `["foo/", "bar"]` → `foo/bar` (no extra sep).
-            let parent = self.path.as_bytes();
-            let mut v = Vec::with_capacity(parent.len() + 1 + child.len());
-            v.extend_from_slice(parent);
-            if parent.last().is_some_and(|&c| !bun_paths::is_sep_native(c)) {
-                v.push(bun_paths::SEP);
-            }
-            v.extend_from_slice(child);
-            return ZBox::from_vec(v);
+        let parent = self.path.as_bytes();
+        let mut v = Vec::with_capacity(parent.len() + 1 + child.len());
+        v.extend_from_slice(parent);
+        if parent.last().is_some_and(|&c| !bun_paths::is_sep_native(c)) {
+            v.push(bun_paths::SEP);
         }
-        let out = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&[
-            self.path.as_bytes(),
-            child,
-        ]);
-        ZBox::from_bytes(out)
+        v.extend_from_slice(child);
+        ZBox::from_vec(v)
     }
 
-    fn run_from_thread_pool(this: &mut ShellLsTask) {
+    fn list(this: &mut ShellLsTask, task: &ShellTask) {
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
-        let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
+        let dir = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
             Err(open_err) => {
                 this.list_non_directory_operand(&open_err);
                 return;
             }
-            Ok(fd) => fd,
+            Ok(fd) => bun_sys::File::from_fd(fd),
         };
-
-        // `defer fd.close()` — emulate with a scope guard.
-        struct CloseOnDrop(bun_sys::Fd);
-        impl Drop for CloseOnDrop {
-            fn drop(&mut self) {
-                self.0.close();
-            }
-        }
-        let _guard = CloseOnDrop(fd);
+        let fd = dir.fd();
 
         if !this.opts.list_directories {
             if this.print_directory {
@@ -491,7 +135,7 @@ impl ShellLsTask {
                         if matches!(current.kind, bun_sys::EntryKind::Directory)
                             && this.opts.recursive
                         {
-                            this.enqueue(name);
+                            this.enqueue(task, name);
                         }
                     }
                 }
@@ -615,16 +259,6 @@ impl ShellLsTask {
     fn error_with_path(&self, err: &bun_sys::Error) -> bun_sys::Error {
         err.with_path(self.path.as_bytes())
     }
-
-    /// # Safety
-    /// `this` must be a live heap allocation produced by
-    /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
-        // SAFETY: precondition.
-        let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
-        let cmd = task.cmd;
-        Ls::on_shell_ls_task_done(interp, cmd, &mut task);
-    }
 }
 
 fn get_file_type_char(mode: u32) -> u8 {
@@ -641,74 +275,23 @@ fn get_file_type_char(mode: u32) -> u8 {
 }
 
 fn format_permissions(mode: u32) -> [u8; 9] {
-    let mut perms = [b'-'; 9];
-    // Owner permissions.
-    perms[0] = if mode & (S::IRUSR as u32) != 0 {
-        b'r'
-    } else {
-        b'-'
+    let has = |bit| mode & (bit as u32) != 0;
+    let triple = |read, write, exec, special, letter: u8| {
+        [
+            if has(read) { b'r' } else { b'-' },
+            if has(write) { b'w' } else { b'-' },
+            match (has(special), has(exec)) {
+                (true, true) => letter,
+                (true, false) => letter.to_ascii_uppercase(),
+                (false, true) => b'x',
+                (false, false) => b'-',
+            },
+        ]
     };
-    perms[1] = if mode & (S::IWUSR as u32) != 0 {
-        b'w'
-    } else {
-        b'-'
-    };
-    // Owner execute with setuid handling.
-    let owner_exec = mode & (S::IXUSR as u32) != 0;
-    let setuid = mode & (S::ISUID as u32) != 0;
-    perms[2] = if setuid {
-        if owner_exec { b's' } else { b'S' }
-    } else if owner_exec {
-        b'x'
-    } else {
-        b'-'
-    };
-
-    // Group permissions.
-    perms[3] = if mode & (S::IRGRP as u32) != 0 {
-        b'r'
-    } else {
-        b'-'
-    };
-    perms[4] = if mode & (S::IWGRP as u32) != 0 {
-        b'w'
-    } else {
-        b'-'
-    };
-    // Group execute with setgid handling.
-    let group_exec = mode & (S::IXGRP as u32) != 0;
-    let setgid = mode & (S::ISGID as u32) != 0;
-    perms[5] = if setgid {
-        if group_exec { b's' } else { b'S' }
-    } else if group_exec {
-        b'x'
-    } else {
-        b'-'
-    };
-
-    // Other permissions.
-    perms[6] = if mode & (S::IROTH as u32) != 0 {
-        b'r'
-    } else {
-        b'-'
-    };
-    perms[7] = if mode & (S::IWOTH as u32) != 0 {
-        b'w'
-    } else {
-        b'-'
-    };
-    // Other execute with sticky bit handling.
-    let other_exec = mode & (S::IXOTH as u32) != 0;
-    let sticky = mode & (S::ISVTX as u32) != 0;
-    perms[8] = if sticky {
-        if other_exec { b't' } else { b'T' }
-    } else if other_exec {
-        b'x'
-    } else {
-        b'-'
-    };
-
-    perms
+    let [a, b, c] = triple(S::IRUSR, S::IWUSR, S::IXUSR, S::ISUID, b's');
+    let [d, e, f] = triple(S::IRGRP, S::IWGRP, S::IXGRP, S::ISGID, b's');
+    let [g, h, i] = triple(S::IROTH, S::IWOTH, S::IXOTH, S::ISVTX, b't');
+    [a, b, c, d, e, f, g, h, i]
 }
 
 /// Format as `"Mon DD HH:MM"` for recent files
@@ -762,32 +345,14 @@ fn civil_from_days(z: i64) -> (i32, u8, u8) {
     ((y + (m <= 2) as i64) as i32, m, d)
 }
 
-impl bun_event_loop::Taskable for ShellLsTask {
+impl ShellWork for ShellLsTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellLsTask;
-    /// A pool completion that will not run: drop the keep-alive and the box
-    /// (nothing else frees an unrun one).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the builtin scheduled.
-        unsafe {
-            (*this).task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
+    fn run_from_thread_pool(&mut self, task: &ShellTask) {
+        Self::list(self, task)
     }
-    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
-}
-
-impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        Self::run_from_thread_pool(this)
-    }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // The `ShellTask` trampoline hands back the live, non-null heap
-        // allocation produced by `ShellLsTask::create`.
-        Self::run_from_main_thread(NonNull::new(this).unwrap(), interp)
+    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+        let err = self.err.as_ref().map(|e| Kind::Ls.task_error(e));
+        Batch::report(interp, self.cmd, err, core::mem::take(&mut self.output))
     }
 }
 
@@ -803,7 +368,7 @@ pub(crate) enum DotfileMode {
 }
 
 /// Only the fields actually consulted are kept; the rest are recognised by
-/// `parse_flag` but not stored.
+/// `parse` but not stored.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Opts {
     pub(crate) dotfiles: DotfileMode,
@@ -813,4 +378,28 @@ pub(crate) struct Opts {
     pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
     pub(crate) recursive: bool,
+}
+
+impl Opts {
+    fn parse<'a>(&mut self, flag: &'a [u8]) -> Result<(), BadFlag<'a>> {
+        let [_, first, ..] = flag else {
+            return Err(BadFlag::Illegal(flag));
+        };
+        for &ch in flag.iter().skip(1) {
+            match ch {
+                b'a' => self.dotfiles = DotfileMode::All,
+                b'A' => self.dotfiles = DotfileMode::AlmostAll,
+                b'd' => self.list_directories = true,
+                b'l' => self.long_listing = true,
+                b'R' => self.recursive = true,
+                // The remaining short flags are recognised but currently no-op.
+                b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G'
+                | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
+                | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
+                | b'X' | b'Z' => {}
+                _ => return Err(BadFlag::Illegal(core::slice::from_ref(first))),
+            }
+        }
+        Ok(())
+    }
 }

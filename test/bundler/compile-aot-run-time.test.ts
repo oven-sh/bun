@@ -219,7 +219,7 @@ test("a large embedded file is read into buffers of their own", async () => {
       const hash = (bytes: Uint8Array) => Bun.hash(bytes).toString(16);
       const first = readFileSync(path), second = readFileSync(path);
       const unchanged = hash(second);
-      console.log(first.length, first.byteOffset === 0 || first.buffer.byteLength >= first.length, hash(first) === unchanged);
+      console.log(first.length, first.byteOffset === 0 && first.buffer.byteLength === first.length, hash(first) === unchanged);
       for (let i = 0; i < first.length; i += 1009) first[i] = 255 - first[i]!;
       const third = await promises.readFile(path);
       console.log(hash(first) === unchanged, hash(second) === unchanged, hash(third) === unchanged);

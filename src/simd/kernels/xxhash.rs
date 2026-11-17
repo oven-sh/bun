@@ -1,4 +1,4 @@
-//! Port of xxhash3.cpp. The constants are those of xxHash.
+//! XXH32, XXH64 and XXH3 of xxHash.
 use crate::Byte;
 use bun_simd::{Isa, SharedU8, opaque};
 use core::slice;

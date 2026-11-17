@@ -73,7 +73,6 @@ members = [
   "src/sort_by_number",
   "src/trim",
   "src/trim/removable_features",
-  "src/highway",
   "src/histogram",
   "src/hpack",
   "src/http1",
@@ -453,7 +452,6 @@ bun_exe_format = { path = "src/exe_format" }
 bun_sort_by_number = { path = "src/sort_by_number" }
 bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
-bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
 bun_hpack = { path = "src/hpack" }
 bun_http1 = { path = "src/http1" }
@@ -529,7 +527,7 @@ bun_webp = { path = "src/webp" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on. scripts/build/flags.ts does the same for highway_webp_*.cpp.
+# checks stay on.
 [profile.dev.package.bun_png]
 opt-level = 3
 [profile.dev.package.bun_jpeg]
@@ -562,6 +560,10 @@ opt-level = 3
 [profile.dev.package.bun_simd_kernels]
 opt-level = 3
 codegen-units = 1
+
+# Its checks of the kernels run in debug builds too.
+[profile.dev.package.bun_simd_conformance]
+opt-level = 3
 
 # scripts/build/rust.ts raises the number for this profile in ASan builds.
 [profile.release.package.bun_simd_kernels]

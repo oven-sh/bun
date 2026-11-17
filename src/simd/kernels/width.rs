@@ -1,4 +1,4 @@
-//! Ports of highway_strings.cpp, for `Bun.stringWidth`.
+//! For `Bun.stringWidth`.
 use bun_simd::Isa;
 use core::array::from_fn;
 

@@ -454,7 +454,6 @@ export type DepName =
   | "boringssl"
   | "brotli"
   | "cares"
-  | "highway"
   | "libuv"
   | "lolhtml"
   | "lsqpack"

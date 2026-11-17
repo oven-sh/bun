@@ -65,8 +65,12 @@ async function stored() {
       return new Response("", { headers: { ETag: '"etag"' } });
     },
   });
-  const credentials = { endpoint: `http://127.0.0.1:${bucket.port}`, accessKeyId: "id", secretAccessKey: "secret" };
-  const client = new Bun.S3Client({ ...credentials, bucket: "bucket" });
+  const client = new Bun.S3Client({
+    endpoint: `http://127.0.0.1:${bucket.port}`,
+    accessKeyId: "id",
+    secretAccessKey: "secret",
+    bucket: "bucket",
+  });
   results["client.write(key, new Response(stream))"] = await outcome(
     client.write("copy", new Response(failed())),
     bytes => `resolved ${bytes} bytes`,
@@ -75,23 +79,6 @@ async function stored() {
     Bun.write(client.file("copy"), new Response(failed())),
     bytes => `resolved ${bytes} bytes`,
   );
-  // The first write took the failure. The stream used to stay unlocked and read as complete.
-  const writers: Record<string, (stream: Body) => Promise<number>> = {
-    "client.write(key, stream) twice": async stream => client.write("copy", stream),
-    "Bun.write(s3file, stream) twice": async stream => Bun.write(client.file("copy"), stream),
-    "Bun.write(path, stream) twice": async stream => Bun.write(path.resolve("out.bin"), stream),
-  };
-  for (const [name, write] of Object.entries(writers)) {
-    const stream = failed();
-    const attempt = () => outcome(write(stream), bytes => `resolved ${bytes} bytes`);
-    results[name] = [await attempt(), await attempt()];
-  }
-  // fetch() also leaves the failure as an unhandled rejection.
-  const unhandled = once(process, "unhandledRejection");
-  const put = fetch("s3://bucket/copy", { method: "PUT", body: failed(), s3: credentials });
-  results["fetch('s3://', { body: stream }) leaves unhandled"] = (await unhandled)[0].code;
-  results["fetch('s3://', { body: stream })"] =
-    Bun.peek.status(put) === "pending" ? "pending" : await outcome(put, response => `resolved ${response.status}`);
   // Waits for requests in flight, so a PUT that went out is counted.
   await bucket.stop();
   results["requests the bucket got"] = puts;

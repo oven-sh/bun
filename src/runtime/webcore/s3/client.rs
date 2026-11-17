@@ -469,6 +469,12 @@ pub(crate) fn upload_stream(
         )
         .to_js());
     }
+    if let Some(stream) = readable_stream.ptr.bytes()
+        && let Some(err) = stream.take_pending_error()
+    {
+        let js_err = err.to_js(cx.global());
+        return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
+    }
 
     let target = Target {
         credentials,

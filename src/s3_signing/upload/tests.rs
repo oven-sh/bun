@@ -23,6 +23,22 @@ fn with_retries(retry: u8) -> Upload {
     Upload::new(Options { retry, ..OPTIONS })
 }
 
+fn with_part_size(part_size: u64) -> Upload {
+    Upload::new(Options {
+        part_size,
+        ..OPTIONS
+    })
+}
+
+fn write_in_chunks(upload: &mut Upload, bytes: &[u8], chunk: usize, encoded: bool) {
+    for chunk in bytes.chunks(chunk) {
+        match encoded {
+            true => upload.write_encoded(chunk.len(), |out| out.extend_from_slice(chunk)),
+            false => upload.write(chunk),
+        };
+    }
+}
+
 fn id() -> UploadId {
     UploadId::parse(b"id").unwrap()
 }
@@ -106,12 +122,7 @@ fn parts_are_cut_at_the_part_size_however_the_bytes_come() {
     for chunk in 1..=bytes.len() {
         for encoded in [false, true] {
             let mut upload = with_queue(64);
-            for chunk in bytes.chunks(chunk) {
-                match encoded {
-                    true => upload.write_encoded(chunk.len(), |out| out.extend_from_slice(chunk)),
-                    false => upload.write(chunk),
-                };
-            }
+            write_in_chunks(&mut upload, bytes, chunk, encoded);
             upload.end();
             assert_eq!(ready(&mut upload), [Request::Create]);
             let _ = upload.on_success(Request::Create, b"id");
@@ -132,14 +143,33 @@ fn text_that_fills_the_part_exactly_starts_the_upload() {
 }
 
 #[test]
-fn a_part_after_the_first_is_allocated_once() {
-    let mut upload = Upload::new(OPTIONS);
+fn a_byte_after_a_part_does_not_allocate_a_part() {
+    let mut upload = with_part_size(500);
+    let _part = sending(&mut upload, &[0; 500]);
     assert_eq!(upload.memory_cost(), 0);
-    upload.write(b"aaaab");
-    let tail = upload.tail.as_ptr();
-    upload.write(b"bbb");
-    assert_eq!(upload.waiting[1].as_ptr(), tail);
-    assert_eq!(upload.tail.capacity(), 0);
+    upload.write(b"a");
+    assert!(upload.memory_cost() < 100);
+}
+
+#[test]
+fn a_part_allocates_no_more_than_the_part_size() {
+    for chunk in [1, 64, 99, 300, 500, 501, 1500] {
+        for encoded in [false, true] {
+            let mut upload = with_part_size(500);
+            write_in_chunks(&mut upload, &[0; 1500], chunk, encoded);
+            let capacities: Vec<_> = upload.waiting.iter().map(Vec::capacity).collect();
+            assert_eq!(capacities, [500; 3]);
+        }
+    }
+}
+
+#[test]
+fn text_that_fits_the_allocation_does_not_grow_it() {
+    let mut upload = with_part_size(500);
+    write_in_chunks(&mut upload, &[0; 201], 200, false);
+    assert_eq!(upload.memory_cost(), 400);
+    upload.write_encoded(250, |out| out.extend_from_slice(&[0; 100]));
+    assert_eq!(upload.memory_cost(), 400);
 }
 
 #[test]

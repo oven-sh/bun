@@ -162,13 +162,19 @@ impl Upload {
         matches!(self.phase, Phase::Buffering) && self.waiting.is_empty()
     }
 
-    /// An upload that filled a part is likely to fill more: those get their whole allocation at once.
+    /// `tail` has to grow, and twice its capacity is more than a part.
     #[inline]
-    fn tail(&mut self) -> &mut Vec<u8> {
-        if self.tail.capacity() == 0 && !self.fits_one_put() {
-            let _ = self.tail.try_reserve_exact(self.part_size);
+    fn would_outgrow_a_part(&self, additional: usize) -> bool {
+        let capacity = self.tail.capacity();
+        additional > capacity - self.tail.len() && capacity > self.part_size / 2
+    }
+
+    #[inline]
+    fn extend_tail(&mut self, bytes: &[u8]) {
+        if self.would_outgrow_a_part(bytes.len()) {
+            self.tail.reserve_exact(self.part_size - self.tail.len());
         }
-        &mut self.tail
+        self.tail.extend_from_slice(bytes);
     }
 
     /// `true`: it filled a part.
@@ -178,13 +184,11 @@ impl Upload {
         self.accepted += bytes.len() as u64;
         let mut filled = false;
         while let Some((last, rest)) = bytes.split_at_checked(self.part_size - self.tail.len()) {
-            self.tail().extend_from_slice(last);
+            self.extend_tail(last);
             self.waiting.push_back(take(&mut self.tail));
             (bytes, filled) = (rest, true);
         }
-        if !bytes.is_empty() {
-            self.tail().extend_from_slice(bytes);
-        }
+        self.extend_tail(bytes);
         filled
     }
 
@@ -220,12 +224,12 @@ impl Upload {
     fn write_encoded(&mut self, max_len: usize, append: impl FnOnce(&mut Vec<u8>)) -> bool {
         debug_assert!(!self.ended);
         let before = self.tail.len();
-        if max_len >= self.part_size - before {
+        if max_len >= self.part_size - before || self.would_outgrow_a_part(max_len) {
             let mut bytes = Vec::new();
             append(&mut bytes);
             return self.write(&bytes);
         }
-        append(self.tail());
+        append(&mut self.tail);
         self.accepted += (self.tail.len() - before) as u64;
         false
     }

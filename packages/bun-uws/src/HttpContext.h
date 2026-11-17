@@ -431,7 +431,7 @@ private:
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) {
                 /* Like llhttp, a failed parser reports its error again for every read a 'clientError' listener lets through. */
                 HttpParserError parseError = ((HttpResponseData<SSL, true> *) httpResponseData)->parseError;
-                if (parseError != HTTP_PARSER_ERROR_NONE && httpContextData->onClientError) {
+                if (parseError != HTTP_PARSER_ERROR_NONE && httpContextData->onClientError && !httpResponseData->isParserDetached()) {
                     httpContextData->onClientError(SSL, s, parseError, data, length);
                     if (us_socket_is_closed(s)) {
                         return s;
@@ -742,6 +742,9 @@ private:
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
                 ((HttpResponseData<SSL, true> *) httpResponseData)->parseError = result.parserError;
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
+                if (!us_socket_is_closed(s) && httpResponseData->socketData) {
+                    httpContextData->nodeHttpHooks->onParseFailed(httpResponseData->socketData);
+                }
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
                      * success path does this through returnedData). */

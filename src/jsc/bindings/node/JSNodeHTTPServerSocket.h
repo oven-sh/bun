@@ -86,6 +86,7 @@ public:
     void detachParser(bool restOfReadTaken);
     /* The program took the reads from the parser, which finishes the read it is in, like llhttp. */
     void detachParserAfterRead();
+    void detachParserIfDue();
 
     /* socket.end(): true when uWS will shut down later, after the buffered response. */
     bool shutdownAfterResponseDrains();

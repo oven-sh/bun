@@ -10524,6 +10524,24 @@ describe("raw request bytes on a server's connection socket", () => {
       },
     );
 
+    it("stops the parser when the rest of that read is not HTTP", async () => {
+      let errors = 0;
+      const server = create(req => {
+        req.socket.removeAllListeners("data");
+        req.socket.on("data", chunk => req.socket.write(`<${chunk}>`));
+      });
+      server.on("clientError", (_, socket) => socket.write(`<error ${++errors}>`));
+      await withClient(server, async (client, until) => {
+        client.write(get("/") + "\x01custom");
+        await until("<error 1>");
+        for (const read of ["a", "b"]) {
+          client.write("\x01" + read);
+          await until(`<\x01${read}>`);
+        }
+      });
+      expect(errors).toBe(1);
+    });
+
     it("leaves the end of the connection to the server's 'end' listener", async () => {
       const { promise: closed, resolve } = Promise.withResolvers<void>();
       const server = create((req, res) => {

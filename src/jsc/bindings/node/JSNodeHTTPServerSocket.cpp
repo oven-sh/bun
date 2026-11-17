@@ -489,6 +489,13 @@ extern "C" bool Bun__NodeHTTP__notifyWhenReadParsed(int ssl, us_socket_t* socket
     return ssl ? notifyWhenNodeHttpReadParsed<true>(socket) : notifyWhenNodeHttpReadParsed<false>(socket);
 }
 
+void JSNodeHTTPServerSocket::detachParserIfDue()
+{
+    if (detachesParserAfterRead) {
+        detachParser(false);
+    }
+}
+
 void JSNodeHTTPServerSocket::detachParserAfterRead()
 {
     if (!ended && Bun__NodeHTTP__notifyWhenReadParsed(is_ssl, socket)) {
@@ -832,9 +839,7 @@ extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__shutdown(us_socket_t* so
     }
     serverSocket->ended = true;
     // The parse stops at the FIN and reports no end of the read.
-    if (serverSocket->detachesParserAfterRead) {
-        serverSocket->detachParser(false);
-    }
+    serverSocket->detachParserIfDue();
     if (!serverSocket->shutdownAfterResponseDrains()) {
         serverSocket->halfClose();
     }
@@ -911,9 +916,7 @@ void JSNodeHTTPServerSocket::onReadParsed()
     if (isClosed()) {
         return;
     }
-    if (detachesParserAfterRead) {
-        detachParser(false);
-    }
+    detachParserIfDue();
     if (auto* res = currentResponse()) {
         Bun__NodeHTTPResponse_onReadParsed(res->wrapped());
     }

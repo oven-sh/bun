@@ -32,8 +32,8 @@ pub(crate) mod bun_object;
 pub(crate) mod crash_handler_jsc;
 #[path = "api/cron.rs"]
 pub(crate) mod cron;
-#[path = "api/cron_parser.rs"]
-pub(crate) mod cron_parser;
+#[path = "api/cron_os.rs"]
+pub(crate) mod cron_os;
 #[path = "api/csrf_jsc.rs"]
 pub(crate) mod csrf_jsc;
 #[path = "api/filesystem_router.rs"]

@@ -246,13 +246,6 @@ pub enum StateKind {
     Subshell,
 }
 
-/// Zero-sized witness that an output stream needs IO (see `OutKind::needs_io`).
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub(crate) enum OutputNeedsIOSafeGuard {
-    OutputNeedsIo,
-}
-
 /// The shell promise's `reject` function and the error to call it with. Kept on the stack, where the GC sees it.
 pub(crate) type Rejection = (crate::jsc::JSValue, crate::jsc::JSValue);
 

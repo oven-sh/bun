@@ -36,25 +36,15 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
 }
 
 impl Yes {
-    fn of(interp: &Interpreter, cmd: NodeId) -> &mut Yes {
-        match &mut Builtin::of_mut(interp, cmd).state {
-            State::Yes(yes) => yes,
-            _ => unreachable!(),
-        }
-    }
-
-    /// Four chunks, then the event loop gets a turn.
+    /// Four chunks to memory, then the event loop gets a turn.
     pub(crate) fn write(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let chunk = &Self::of(interp, cmd).chunk[..];
-        // The mini loop runs no script, and `YesTask::enqueue` can block in it.
-        let shares_loop = matches!(interp.event_loop, EventLoopHandle::Js { .. });
+        let State::Yes(yes) = &mut Builtin::of_mut(interp, cmd).state else {
+            return Yield::suspended();
+        };
+        let (chunk, task) = (yes.chunk.as_slice(), &raw mut yes.task);
         for _ in 0..4 {
             match Builtin::sink(interp, cmd, IoKind::Stdout) {
-                Sink::Fd(fd) => match fd.enqueue(chunk) {
-                    // A file is written on the spot.
-                    Yield::OnIoWriterChunk { err: None, .. } if shares_loop => {}
-                    next => return next,
-                },
+                Sink::Fd(fd) => return fd.enqueue(chunk),
                 Sink::Memory(memory) => {
                     if let Err(e) = memory.write(chunk) {
                         let name = bstr::BStr::new(e.name());
@@ -64,26 +54,24 @@ impl Yes {
             }
         }
         // SAFETY: boxed, and only the callback can finish the command. No `&mut` spans the call, which can re-enter.
-        unsafe { YesTask::enqueue(&raw mut Self::of(interp, cmd).task) };
+        unsafe { YesTask::enqueue(task) };
         Yield::suspended()
     }
 }
 
-/// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
-/// don't block the main thread forever.
+/// Re-queues `yes` onto the event loop after a burst of writes to memory.
 #[repr(C)]
 pub(crate) struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
-    pub(crate) interp: *mut Interpreter,
-    pub(crate) cmd: NodeId,
-    pub(crate) evtloop: EventLoopHandle,
-    pub(crate) concurrent_task: EventLoopTask,
+    interp: *mut Interpreter,
+    cmd: NodeId,
+    evtloop: EventLoopHandle,
+    concurrent_task: EventLoopTask,
 }
 
 impl Taskable for YesTask {
     const TAG: TaskTag = task_tag::ShellYesTask;
-    /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
-    /// took nothing for the bounce; nothing to do.
+    /// Lives inside the builtin's `Box<Yes>` and took nothing for the bounce.
     unsafe fn release_unrun(_: *mut Self) {}
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -122,22 +110,16 @@ impl YesTask {
         }
     }
 
-    /// `this` must be a live `YesTask` whose storage is stable inside
-    /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
-    /// [`start`]. Reached only via the concurrent-task dispatch installed
-    /// in [`enqueue`](Self::enqueue).
-    pub(crate) fn run_from_main_thread(this: &Self) {
-        // SAFETY: `interp` was set in `start` and outlives the task.
-        let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
+    /// # Safety
+    /// `this` was passed to [`enqueue`](Self::enqueue). The call can free it.
+    pub(crate) unsafe fn run_from_main_thread(this: *mut Self) {
+        // SAFETY: caller contract; `interp` was set in `start` and outlives the task.
+        let (interp, cmd) = unsafe { (&*(*this).interp, (*this).cmd) };
         Yes::write(interp, cmd).run(interp);
     }
 
-    /// Signature matches
-    /// [`AnyTaskWithExtraContext::from`](bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from)'s
-    /// callback shape (`fn(*mut T, *mut ())`).
     fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
-        // SAFETY: dispatch contract — `this` is the live task previously passed
-        // to `enqueue`; see `run_from_main_thread`.
-        Self::run_from_main_thread(unsafe { &*this })
+        // SAFETY: the callback `enqueue` installed.
+        unsafe { Self::run_from_main_thread(this) }
     }
 }

@@ -28,11 +28,11 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
 
 fn reject(flag: &[u8]) -> BadFlag<'_> {
     match flag {
-        b"-" => BadFlag::Illegal(flag),
+        [] | [_] => BadFlag::Illegal(flag),
         b"--no-create" | b"--date" => BadFlag::Unsupported(flag),
         b"--reference" | b"--time" => BadFlag::Unsupported(b"--reference=FILE"),
         [_, b'a' | b'c' | b'd' | b'h' | b'm' | b'r' | b't', ..] => BadFlag::Unsupported(&flag[..2]),
-        _ => BadFlag::Illegal(&flag[2..]),
+        [_, _, rest @ ..] => BadFlag::Illegal(rest),
     }
 }
 

@@ -15,7 +15,6 @@ use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
-use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
 use bun_ptr::RefPtr;
 use bun_sys::{self as syscall, Fd, Mode, Stdio};
@@ -226,8 +225,6 @@ pub struct RareData {
     compression_scratch: JsCell<Option<Vec<u8>>>,
     /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
     websocket_inflate_scratch: JsCell<Option<Vec<u8>>>,
-    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
-    libdeflate_decompressor: OnceCell<libdeflate::OwnedDecompressor>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -272,7 +269,6 @@ impl Default for RareData {
             h2_padded_frame_buffer: JsCell::new(None),
             compression_scratch: JsCell::new(None),
             websocket_inflate_scratch: JsCell::new(None),
-            libdeflate_decompressor: OnceCell::new(),
             s3_default_client: JsCell::new(Strong::empty()),
             node_quic_callbacks: JsCell::new(Strong::empty()),
             default_csrf_secret: OnceCell::new(),
@@ -685,16 +681,6 @@ impl RareData {
             buffer.clear();
             self.websocket_inflate_scratch.set(Some(buffer));
         }
-    }
-
-    /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
-    /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
-    pub fn libdeflate_decompressor(&self) -> Option<&libdeflate::OwnedDecompressor> {
-        let cell = &self.libdeflate_decompressor;
-        if cell.get().is_none() {
-            let _ = cell.set(libdeflate::OwnedDecompressor::new()?);
-        }
-        cell.get()
     }
 
     pub fn default_csrf_secret(&self) -> &[u8] {

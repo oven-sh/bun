@@ -18,7 +18,8 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     if let Err(flag) = flags.iter().try_for_each(|flag| opts.parse(flag)) {
         return Builtin::fail_flag(interp, cmd, flag);
     }
-    let running = BackRef::new(&Batch::start(interp, cmd, paths.len().max(1)).running);
+    Batch::start(interp, cmd, paths.len().max(1));
+    let running = BackRef::new(&Builtin::of(interp, cmd).running);
     let cwd = Builtin::cwd(interp, cmd);
     let schedule = |path: &[u8]| {
         let path = ZBox::from_bytes(path);
@@ -40,7 +41,7 @@ pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
     pub print_directory: bool,
-    /// [`Batch::running`]
+    /// [`Builtin::running`]
     pub running: BackRef<AtomicUsize>,
     pub cwd: bun_sys::Fd,
     pub path: ZBox,
@@ -381,10 +382,10 @@ pub(crate) struct Opts {
 
 impl Opts {
     fn parse<'a>(&mut self, flag: &'a [u8]) -> Result<(), BadFlag<'a>> {
-        if flag == b"-" {
+        let [_, first, ..] = flag else {
             return Err(BadFlag::Illegal(flag));
-        }
-        for &ch in &flag[1..] {
+        };
+        for &ch in flag.iter().skip(1) {
             match ch {
                 b'a' => self.dotfiles = DotfileMode::All,
                 b'A' => self.dotfiles = DotfileMode::AlmostAll,
@@ -396,7 +397,7 @@ impl Opts {
                 | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
                 | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
                 | b'X' | b'Z' => {}
-                _ => return Err(BadFlag::Illegal(&flag[1..2])),
+                _ => return Err(BadFlag::Illegal(core::slice::from_ref(first))),
             }
         }
         Ok(())

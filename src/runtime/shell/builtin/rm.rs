@@ -41,15 +41,16 @@ impl Opts {
             b"--interactive=never" => self.interactive = false,
             b"--interactive=once" | b"--interactive=always" => self.interactive = true,
             [_, b'-', ..] => return Err(BadFlag::Illegal(b"-")),
-            _ => {
-                for ch in &flag[1..] {
+            [] => {}
+            [_, letters @ ..] => {
+                for ch in letters {
                     match ch {
                         b'f' => (self.force, self.interactive) = (true, false),
                         b'r' | b'R' => self.recursive = true,
                         b'v' => self.verbose = true,
                         b'd' => self.remove_empty_dirs = true,
                         b'i' | b'I' => self.interactive = true,
-                        _ => return Err(BadFlag::Illegal(&flag[1..])),
+                        _ => return Err(BadFlag::Illegal(letters)),
                     }
                 }
             }
@@ -101,8 +102,9 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         }
     }
 
-    let batch = Batch::start(interp, cmd, paths.len());
-    let (stop, running) = (BackRef::new(&batch.stop), BackRef::new(&batch.running));
+    Batch::start(interp, cmd, paths.len());
+    let bltn = Builtin::of(interp, cmd);
+    let (stop, running) = (BackRef::new(&bltn.stop), BackRef::new(&bltn.running));
     let cwd = Builtin::cwd(interp, cmd);
     for path in paths {
         ShellRmTask::schedule(interp, cmd, opts, path, cwd, stop, running);
@@ -164,7 +166,7 @@ enum Unlinked {
     NotEmpty,
 }
 
-/// Who finishes a [`DirTask`].
+/// Who finishes a [`DirTask`], but for the TODO in `remove_entry_dir_after_children`.
 enum Owner {
     ThisThread,
     /// It, and the [`ShellRmTask`], may be freed already.
@@ -185,9 +187,9 @@ pub(crate) struct ShellRmTask {
     /// would make every `verbose_deleted` call on the root UB under Stacked
     /// Borrows.
     pub(crate) root_task: AliasableBox<DirTask>,
-    /// [`Batch::stop`]
+    /// [`Builtin::stop`]
     pub(crate) error_signal: BackRef<AtomicBool>,
-    /// [`Batch::running`]: a [`DirTask`] with something to print reports too.
+    /// [`Builtin::running`]: a [`DirTask`] with something to print reports too.
     running: BackRef<AtomicUsize>,
     /// One per main-thread callback to come: its own, and each queued verbose write's.
     ref_count: bun_ptr::ThreadSafeRefCount<Self>,
@@ -206,7 +208,7 @@ pub(crate) struct DirTask {
     pub(crate) task_manager: *mut ShellRmTask,
     pub(crate) parent_task: *mut DirTask,
     pub path: ZBox,
-    /// One for itself and one per child. Whoever takes it to 0 owns the task.
+    /// One for itself and one per child. Whoever takes it to 0 is the [`Owner`].
     pub(crate) subtask_count: AtomicUsize,
     pub(crate) deleted_entries: Vec<u8>,
     /// Held while `concurrent_task` is queued.
@@ -496,6 +498,7 @@ impl ShellRmTask {
             match self.remove_entry_file(dir_task, path)? {
                 Unlinked::Done => return Ok(Owner::ThisThread),
                 Unlinked::IsDir => {}
+                // TODO: this task's own count is never released: no child is the last, and `rm` hangs.
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 Unlinked::NotEmpty => {
                     self.enqueue(dir_task, ZBox::from_bytes(path.as_bytes()));
@@ -646,9 +649,10 @@ impl DirTask {
             // The caller took it to 0. Restore the count that `post_run` releases.
             (*this).subtask_count.store(1, Ordering::SeqCst);
             let tm = &*(*this).task_manager;
-            let result = match tm.is_stopped() {
-                true => Ok(Owner::ThisThread),
-                false => tm.remove_entry_dir_after_children(this),
+            let result = if tm.is_stopped() {
+                Ok(Owner::ThisThread)
+            } else {
+                tm.remove_entry_dir_after_children(this)
             };
             Self::post_run(this, result);
         }

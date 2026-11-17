@@ -2,10 +2,10 @@
 
 use bstr::BStr;
 use bun_collections::VecExt;
-use bun_core::ZStr;
 use bun_jsc::PinnedArrayBuffer;
 use bun_ptr::BackRef;
 use core::fmt;
+use core::sync::atomic::{AtomicBool, AtomicUsize};
 use std::rc::Rc;
 
 use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand, refuse_shell_redirect};
@@ -24,7 +24,7 @@ use crate::shell::states::cmd::{Cmd, CmdState, Exec};
 use crate::shell::yield_::Yield;
 
 /// Points into the `args` of the Cmd, which outlive the builtin.
-pub(crate) type Arg = BackRef<ZStr>;
+pub(crate) type Arg = BackRef<[u8]>;
 
 pub(crate) struct Builtin {
     kind: Kind,
@@ -34,6 +34,10 @@ pub(crate) struct Builtin {
     stdout: BuiltinIO,
     stderr: BuiltinIO,
     pub(crate) state: State,
+    /// Reports a [`Batch`] still waits for. A pool task adds the ones it causes before it reports.
+    pub(crate) running: AtomicUsize,
+    /// Tells the pool tasks of `rm` and `mv` that one of them has failed.
+    pub(crate) stop: AtomicBool,
 }
 
 /// What a builtin keeps between events.
@@ -150,6 +154,7 @@ impl Kind {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum BadFlag<'a> {
     Illegal(&'a [u8]),
     Unsupported(&'a [u8]),
@@ -235,18 +240,15 @@ impl FdSink<'_> {
         self.writer.enqueue(self.child, self.captured, buf)
     }
 
-    pub(crate) fn enqueue_fmt(self, prefix: Option<Kind>, args: fmt::Arguments<'_>) -> Yield {
-        self.writer
-            .enqueue_fmt_bltn(self.child, self.captured, prefix, args)
-    }
-
     pub(crate) fn cancel_queued(self) {
         self.writer.cancel_chunks(self.child);
     }
 }
 
-pub(crate) enum MemorySink<'a> {
-    Captured(&'a mut Vec<u8>),
+pub(crate) struct MemorySink<'a>(Memory<'a>);
+
+enum Memory<'a> {
+    Captured(*mut Vec<u8>),
     ArrayBuf {
         buf: &'a mut PinnedArrayBuffer,
         i: &'a mut u32,
@@ -257,9 +259,10 @@ pub(crate) enum MemorySink<'a> {
 impl MemorySink<'_> {
     /// `ENOSPC` once an ArrayBuffer is full.
     pub(crate) fn write(self, bytes: &[u8]) -> bun_sys::Result<()> {
-        match self {
-            MemorySink::Captured(captured) => captured.append_slice(bytes),
-            MemorySink::ArrayBuf { buf, i } => {
+        match self.0 {
+            // SAFETY: a buffer of the Cmd's env or of an ancestor, which outlive the builtin. Single-threaded.
+            Memory::Captured(captured) => unsafe { (*captured).append_slice(bytes) },
+            Memory::ArrayBuf { buf, i } => {
                 // JS can resize the buffer between chunks.
                 let dst = buf.live_slice_mut().get_mut(*i as usize..);
                 let Some(dst) = dst.filter(|dst| !dst.is_empty()) else {
@@ -270,7 +273,7 @@ impl MemorySink<'_> {
                 dst[..len].copy_from_slice(&bytes[..len]);
                 *i = i.saturating_add(len as u32);
             }
-            MemorySink::Discard => {}
+            Memory::Discard => {}
         }
         Ok(())
     }
@@ -321,10 +324,8 @@ impl Builtin {
     /// the caller should propagate that yield instead.
     pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         let me = interp.as_cmd(cmd);
-        let args = me.args[1..].iter().map(|arg| {
-            let arg = ZStr::from_slice_until_nul(arg);
-            BackRef::new(arg.expect("terminated by Cmd::transition_to_exec"))
-        });
+        let args = me.args.iter().skip(1);
+        let args = args.map(|arg| BackRef::new(bun_core::ffi::slice_to_nul(arg)));
         let builtin = Box::new(Builtin {
             kind,
             args: args.collect(),
@@ -332,6 +333,8 @@ impl Builtin {
             stdout: BuiltinIO::from_out_kind(&me.io.stdout, IoKind::Stdout),
             stderr: BuiltinIO::from_out_kind(&me.io.stderr, IoKind::Stderr),
             state: State::Idle,
+            running: AtomicUsize::new(0),
+            stop: AtomicBool::new(false),
         });
         interp.as_cmd_mut(cmd).exec = Exec::Builtin(builtin);
 
@@ -604,15 +607,11 @@ impl Builtin {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
-            // Only the `Fd` arm transitions state.
-            interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
+        let me = interp.as_cmd_mut(cmd);
+        if let OutKind::Fd(fd) = &me.io.stderr {
+            me.state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
-            // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
-            if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
+            return fd.writer.enqueue(child, fd.captured, &buf);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
@@ -670,7 +669,7 @@ impl Builtin {
             IoKind::Stdout => &mut me.stdout,
             IoKind::Stderr => &mut me.stderr,
         };
-        Sink::Memory(match out {
+        Sink::Memory(MemorySink(match out {
             BuiltinIO::Fd(fd) => {
                 return Sink::Fd(FdSink {
                     writer: &fd.writer,
@@ -680,19 +679,17 @@ impl Builtin {
             }
             &mut BuiltinIO::Buf(target) => {
                 let shell = &mut interp.as_cmd_mut(cmd).shell;
-                let captured = match target {
+                Memory::Captured(match target {
                     IoKind::Stdout => shell.buffered_stdout(),
                     IoKind::Stderr => shell.buffered_stderr(),
-                };
-                // SAFETY: owned by this env or an ancestor, and nothing runs until `write` has used it up.
-                MemorySink::Captured(unsafe { &mut *captured })
+                })
             }
-            BuiltinIO::ArrayBuf { buf, i } => MemorySink::ArrayBuf { buf, i },
-            BuiltinIO::Blob(_) | BuiltinIO::Ignore => MemorySink::Discard,
-        })
+            BuiltinIO::ArrayBuf { buf, i } => Memory::ArrayBuf { buf, i },
+            BuiltinIO::Blob(_) | BuiltinIO::Ignore => Memory::Discard,
+        }))
     }
 
-    /// The last write. It drops the state, which must not own `buf` or have tasks pointing at it.
+    /// The last write. It drops the state, which must not own `buf` or what a task still uses.
     pub(crate) fn finish(
         interp: &Interpreter,
         cmd: NodeId,
@@ -712,15 +709,8 @@ impl Builtin {
 
     /// [`Self::finish`] with `"{kind}: {args}"` on stderr and exit code 1.
     pub(crate) fn fail(interp: &Interpreter, cmd: NodeId, args: fmt::Arguments<'_>) -> Yield {
-        let kind = Self::of(interp, cmd).kind;
-        Self::of_mut(interp, cmd).state = State::Exiting(1);
-        match Self::sink(interp, cmd, IoKind::Stderr) {
-            Sink::Fd(fd) => fd.enqueue_fmt(Some(kind), args),
-            Sink::Memory(memory) => {
-                let _ = memory.write(&kind.message(args));
-                Self::done(interp, cmd, 1)
-            }
-        }
+        let message = Self::of(interp, cmd).kind.message(args);
+        Self::finish(interp, cmd, IoKind::Stderr, &message, 1)
     }
 
     pub(crate) fn fail_usage(interp: &Interpreter, cmd: NodeId, usage: &[u8]) -> Yield {
@@ -739,7 +729,6 @@ impl Builtin {
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
-        _written: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         let me = Self::of(interp, cmd);
@@ -751,7 +740,7 @@ impl Builtin {
             | (&State::Exiting(code), None) => Self::done(interp, cmd, code),
             (&State::Which { next, missing }, None) => which::print(interp, cmd, next, missing),
             (State::Yes(_), None) => yes::Yes::write(interp, cmd),
-            (State::Idle | State::Mv(_), _) => unreachable!("no write is in flight"),
+            (State::Idle | State::Mv(_), _) => Yield::suspended(),
         }
     }
 }

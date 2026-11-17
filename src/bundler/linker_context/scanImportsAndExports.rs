@@ -1630,6 +1630,7 @@ mod __css_validation {
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_ast::Log;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
+    use strum::VariantArray as _;
 
     pub(super) fn validate_css_import_composes<'bump>(
         symbols: &symbol::Map,
@@ -1929,18 +1930,7 @@ mod __css_validation {
                 // Warn about cross-file composition with the same CSS properties
                 let mut iter = property_usage.bitset.iter_set();
                 while let Some(property_tag) = iter.next() {
-                    let property_id_tag: PropertyIdTag =
-                        // SAFETY: `PropertyBitset` is only ever populated via
-                        // `bitset.set(tag as u16 as usize)` where `tag: PropertyIdTag`
-                        // (see `bun_css::fill_property_bit_set`), so every set index is a
-                        // valid `#[repr(u16)]` discriminant. `PropertyIdTag` lives in
-                        // `bun_css` (generated) and exposes no `from_repr`; once it does,
-                        // replace this transmute with that accessor.
-                        unsafe {
-                            core::mem::transmute::<u16, PropertyIdTag>(
-                                u16::try_from(property_tag).expect("int cast"),
-                            )
-                        };
+                    let property_id_tag = PropertyIdTag::VARIANTS[property_tag];
                     debug_assert!(property_id_tag != PropertyIdTag::Custom);
                     debug_assert!(property_id_tag != PropertyIdTag::Unparsed);
                     self.add_property_or_warn(

@@ -84,6 +84,8 @@ function withTranslatedError(error: any) {
   const code: string | undefined = error?.code;
   if (code?.startsWith?.("DNS_")) {
     error.code = code.slice(4);
+    // `Bun.dns` names it "DNSException". Node's inherits "Error".
+    delete error.name;
   }
   return error;
 }
@@ -414,7 +416,7 @@ function lookup(
       }
     })
     .catch((err: DNSException) => {
-      if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
+      withTranslatedError(err);
       // Node.js getaddrinfo errors (DNSException) carry the looked-up
       // hostname both as a property and at the end of the message.
       const syscall = err.syscall;
@@ -606,7 +608,6 @@ const mapLookupAll = (res: LookupAddress) => {
 function throwIfEmpty(res: unknown[]) {
   if (res.length === 0) {
     const err: DNSException = new Error("No records found");
-    err.name = "DNSException";
     err.code = "ENODATA";
     // Hardcoded errno
     err.errno = 1;

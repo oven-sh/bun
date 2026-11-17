@@ -1397,6 +1397,41 @@ describe("resolve record types", () => {
   });
 });
 
+describe('errors inherit the name "Error", like Node', () => {
+  const resolver = new dns.Resolver();
+  const promisesResolver = new dns_promises.Resolver();
+  const viaCallback = (fn, argument) => new Promise(resolve => fn(argument, resolve));
+  const shape = err => ({ code: err.code, name: err.name, own: Object.hasOwn(err, "name"), string: String(err) });
+
+  test.each([
+    ["lookup", () => viaCallback(dns.lookup, "a b"), "getaddrinfo ENOTFOUND a b"],
+    ["promises.lookup", () => dns_promises.lookup("a b"), "getaddrinfo ENOTFOUND a b"],
+    ["resolve4", () => viaCallback(dns.resolve4, "a\0"), "queryA ENOTFOUND a\0"],
+    ["promises.resolve4", () => dns_promises.resolve4("a\0"), "queryA ENOTFOUND a\0"],
+    ["Resolver#resolveMx", () => viaCallback(resolver.resolveMx.bind(resolver), "a\0"), "queryMx ENOTFOUND a\0"],
+    ["promises.Resolver#resolveMx", () => promisesResolver.resolveMx("a\0"), "queryMx ENOTFOUND a\0"],
+    ["reverse", () => viaCallback(dns.reverse, "nope"), "getHostByAddr ENOTIMP nope"],
+    ["promises.reverse", () => dns_promises.reverse("nope"), "getHostByAddr ENOTIMP nope"],
+  ])("%s", async (_, fail, message) => {
+    expect(shape(await fail().catch(err => err))).toEqual({
+      code: message.split(" ")[1],
+      name: "Error",
+      own: false,
+      string: `Error: ${message}`,
+    });
+  });
+
+  test("lookup finds no address", async () => {
+    const script = `
+      Bun.dns.lookup = async () => [];
+      const dns = require("node:dns");
+      console.log(String(await dns.promises.lookup("a.test").catch(e => e)));
+      dns.lookup("a.test", e => console.log(String(e)));
+    `;
+    expect(await bunRun(["-e", script])).toSpawn("Error: No records found\nError: getaddrinfo ENODATA a.test");
+  });
+});
+
 // The socket never answers. The QTYPE that reaches it and the syscall the
 // cancelled query reports pin resolve()'s rrtype dispatch to the query that
 // resolveNaptr() issues; decoding is covered by the resolveNaptr() tests.

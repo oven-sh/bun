@@ -217,14 +217,6 @@ const promise = b.any.returning("Promise");
 
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 
-export const callOnconnect = b.fn({
-  export: "Bun__Valkey__callOnconnect",
-  rustPath: "crate::valkey_jsc::js_valkey::call_onconnect",
-  args: { handler: b.any, client: b.any },
-  capability: "js",
-  throws: true,
-});
-
 export const RedisClient = b.class({
   rustPath: "crate::valkey_jsc::JSValkeyClient",
   refCounted: true,

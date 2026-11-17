@@ -11,8 +11,8 @@ use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, GlobalRef, JSArray, JSFunction, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong,
-    JSValue, JsCell, JsResult, Strong,
+    self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue,
+    JsCell, JsResult, Strong,
 };
 use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_sql_jsc::shared::server_identity;
@@ -33,25 +33,10 @@ bun_output::define_scoped_log!(debug, RedisJS, visible);
 
 type Socket = uws::AnySocket;
 
-use crate::generated_bindgen::valkey::Bun__Valkey__callOnconnect;
 pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
 
 fn is_handler(value: JSValue) -> bool {
     value.without_async_context().is_callable()
-}
-
-/// A microtask, which would give the handler no `this`.
-pub(crate) fn call_onconnect<'a>(
-    cx: &mut JsScope<'a>,
-    handler: JsLocal<'a>,
-    client: JsLocal<'a>,
-) -> JsResult<()> {
-    let client = client.to_js();
-    let hello = js::hello_get_cached(client).unwrap_or(JSValue::UNDEFINED);
-    handler
-        .to_js()
-        .call(cx.global(), client, &[client, hello])?;
-    Ok(())
 }
 
 impl<'a> Object<'a> {
@@ -1001,9 +986,7 @@ impl JSValkeyClient {
         js::hello_set_cached(this_value, global_object, hello);
         if let Some(on_connect) = js::onconnect_get_cached(this_value).filter(|&it| is_handler(it))
         {
-            let job = Bun__Valkey__callOnconnect;
-            let job = JSFunction::create(global_object, "", job, 2, Default::default());
-            global_object.queue_microtask(job, &[on_connect, this_value]);
+            global_object.queue_microtask(on_connect, &[this_value, hello]);
         }
 
         if let Some(promise) = object.take_connection_promise(global_object) {

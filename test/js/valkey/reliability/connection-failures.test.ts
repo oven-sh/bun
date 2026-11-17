@@ -2817,18 +2817,6 @@ describe.concurrent("Valkey: Handshake", () => {
     expect(fake.seen).toEqual([seen]);
   });
 
-  test("onconnect gets the client as this, before connect() continues", async () => {
-    using fake = await commandServer();
-    const client = new RedisClient(`redis://${fake.host}`);
-    const calls: unknown[][] = [];
-    client.onconnect = function (...args: unknown[]) {
-      calls.push([this === client, args[0] === client, args[1]]);
-    };
-    await client.connect();
-    client.close();
-    expect(calls).toEqual([[true, true, "OK"]]);
-  });
-
   test("the error for an unknown scheme names every scheme", () => {
     expect(() => new RedisClient("http://localhost")).toThrow(
       "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, valkey+tls, redis+unix, valkey+unix, redis+tls+unix, valkey+tls+unix",

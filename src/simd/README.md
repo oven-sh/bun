@@ -94,6 +94,8 @@ Call ops in `for` loops and in the closures that you pass to `algo.rs`. LLVM may
 
 Make a table with `const`. At run time, `from_fn` can stay a loop.
 
+Hardened, debug and ASan builds check preconditions. There, `copy_from_slice` and the conversions of `Simd` from and to memory keep a vector on the stack. Assign arrays, and convert with `Vector`.
+
 How LLVM unrolls a loop depends on the CPU that the build is tuned for. `#[rustc_unroll(never)]` and `#[rustc_unroll(4)]` settle it. If each turn of a loop waits for the one before, `opaque` keeps LLVM from reordering the sum or from moving it to vectors.
 
 ## Ops of your own
@@ -193,6 +195,7 @@ What you have to trust:
 - **Detection.** A feature counts only if the CPU reports it and the system saves its registers. The same has to hold for every feature that it implies. SVE does not count on Linux before 6.2 but for 5.14.0, as [for glibc](https://sourceware.org/pipermail/glibc-cvs/2024q2/084813.html): it traps after each system call. Arm requires and LLVM assumes that the length of its vectors is a power of two. `trusted/os.rs` makes the queries. The decoders are pure functions of the answers.
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
 - **`opaque` and `keep16`**, which are `asm!` without an instruction.
+- **`from_array` and `load_or_default`.** The first takes the lanes of an array as a vector of the same size. The second enables only the lanes that the slice has. Miri runs both.
 - **`Out`, `Writer` and `spare_capacity`.** They write only initialized values, and count them. Miri runs their tests, but for `fill_from_last`, which needs AVX-512.
 - **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[SharedOutU8]` for output, which may be uninitialized too. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. A masked access that skips what is before a slice is `asm!` for plain memory too, since LLVM takes its own to start in the object. `copy_from_shared` and `copy_to_shared` jump to `memmove` where LLVM does not see it, and rely on it to stay in bounds and to store each byte, whatever it reads. Miri runs loops over bytes in place of all this. The loops do not depend on two reads giving the same value.
 

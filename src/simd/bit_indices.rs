@@ -1,4 +1,5 @@
 use crate::Writer;
+use bun_simd_trusted::{from_array, to_array};
 use core::simd::prelude::{Simd, SimdUint};
 
 static IN_BYTE: [[u8; 8]; 256] = core::array::from_fn(const |mut bits| {
@@ -27,8 +28,8 @@ impl BitIndices {
         let (mut bits, mut count) = (self.bits, self.bits.count_ones() as usize);
         if let Some(indices) = self.compressed {
             for &quarter in indices.as_chunks::<16>().0 {
-                let quarter = Simd::from_array(quarter).cast() + Simd::splat(base);
-                out.push_first(quarter.to_array(), count);
+                let quarter = from_array(quarter).cast() + Simd::splat(base);
+                out.push_first(to_array(quarter), count);
                 if count <= 16 {
                     break;
                 }
@@ -47,9 +48,9 @@ impl BitIndices {
                 |window| {
                     let mut window = window.take(64).into_writer();
                     for (i, byte) in bits.to_le_bytes().into_iter().enumerate() {
-                        let indices = Simd::from_array(IN_BYTE[usize::from(byte)]).cast();
+                        let indices = from_array(IN_BYTE[usize::from(byte)]).cast();
                         let indices = indices + (Simd::splat(base) + Simd::splat(8 * i as u32));
-                        window.push_first(indices.to_array(), byte.count_ones() as usize);
+                        window.push_first(to_array(indices), byte.count_ones() as usize);
                     }
                     window.finish()
                 },

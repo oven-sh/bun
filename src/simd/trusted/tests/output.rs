@@ -2,8 +2,8 @@
 #![feature(portable_simd)]
 #![forbid(unsafe_code)]
 use bun_simd_trusted::{Out, SharedOutU8, SharedU8, extend_vec, quarters, spare_capacity};
-use bun_simd_trusted::{copy_from_shared, copy_to_shared};
-use core::simd::Simd;
+use bun_simd_trusted::{copy_from_shared, copy_to_shared, from_slice, load_or_default};
+use core::simd::{Simd, num::SimdUint};
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering::Relaxed};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
@@ -77,6 +77,19 @@ fn fill_masked() {
         assert_eq!(got, lanes[..len.min(64)]);
         let got = filled(len, |out| out.fill_masked(Simd::from_array([5u64, 6])));
         assert_eq!(got, [5, 6][..len.min(2)]);
+        let got = filled(len, |out| out.fill_masked(Simd::from_array([0u16, 1, 2])));
+        assert_eq!(got, counting(len.min(3)));
+    }
+}
+
+#[test]
+fn loads() {
+    assert_eq!(from_slice(&[1u16, 2, 3, 4]), Simd::from_array([1, 2, 3]));
+    for len in [0, 1, 2, 3, 63, 64, 65, 256, 257, 1 << 16] {
+        let (bytes, words) = (vec![5u8; len], [5u16; 1 << 16][..len].to_vec());
+        let want = Simd::<_, 64>::load_or_default(&bytes);
+        assert_eq!(load_or_default(&bytes), want);
+        assert_eq!(load_or_default(&words), want.cast());
     }
 }
 

@@ -2,10 +2,10 @@
 use crate::source::Memory;
 use crate::swizzle::Repeat;
 use crate::{Int, Isa, Lane, Mask, Out, SharedOutU8, Source, Vector};
-use bun_simd_trusted::quarters;
+use bun_simd_trusted::{from_array, load_or_default, quarters, to_array};
 use core::array::{from_fn, from_ref};
 use core::hint::cold_path;
-use core::simd::{Simd, Swizzle, ToBytes, u8x32, u8x64, u32x4};
+use core::simd::{Simd, Swizzle, ToBytes, u8x32, u8x64};
 
 /// A slice shorter than a vector.
 #[derive(Clone, Copy)]
@@ -248,8 +248,8 @@ mod simd {
             if size_of::<T>() <= 4
                 && let Some([a, b, c, d]) = quarters_of::<S, IN_4>(from)
             {
-                let word = |piece| u32::from_ne_bytes(Self::load_bytes(piece).to_array());
-                let words = u32x4::from_array([word(a), word(b), word(c), word(d)]);
+                let word = |piece| u32::from_ne_bytes(to_array(Self::load_bytes(piece)));
+                let words = from_array([word(a), word(b), word(c), word(d)]);
                 return Some(Self::from_first_bytes(words.to_ne_bytes()));
             }
             let mut lanes = Self::from_first(from.first()?.get());
@@ -358,7 +358,7 @@ mod simd {
                     let last = shared::load_to_last::<T, N>(from);
                     Self::from_first_bytes(rotate_bytes(last, size_of_val(from)))
                 }
-                Memory::Plain(from) => Self::new(Simd::load_or_default(from)),
+                Memory::Plain(from) => Self::new(load_or_default(from)),
                 Memory::Shared(from) if Self::is_slow_with_mask(64, from.as_ptr()) => {
                     cold_path();
                     let last = shared::load_shared_masked::<true>(from);
@@ -390,11 +390,11 @@ mod simd {
         pub fn pad_block(from: &[u8]) -> [u8; 64] {
             if Self::LEN == 64 {
                 let padded = Self::load_padded_inline(from).map(|it| it.lanes.0);
-                return padded.unwrap_or_default().resize(0).to_array();
+                return to_array(padded.unwrap_or_default().resize(0));
             }
             let Some(last) = from.len().checked_sub(16) else {
                 let padded = x128::U8::load_padded_inline(from).map(|it| it.lanes.0);
-                return padded.unwrap_or_default().resize(0).to_array();
+                return to_array(padded.unwrap_or_default().resize(0));
             };
             let quarter = |i: usize| {
                 let at = last.min(16 * i);
@@ -403,7 +403,7 @@ mod simd {
             };
             let low: u8x32 = Repeat::<32>::concat_swizzle(quarter(0), quarter(1));
             let high: u8x32 = Repeat::<32>::concat_swizzle(quarter(2), quarter(3));
-            Repeat::<64>::concat_swizzle(low, high).to_array()
+            to_array(Repeat::<64>::concat_swizzle(low, high))
         }
     }
 
@@ -436,8 +436,8 @@ mod simd {
             else {
                 return false;
             };
-            shared::store_shared::<HALF, 1, 0>(Simd::from_array(*first), start);
-            shared::store_shared::<HALF, 1, 0>(Simd::from_array(*last), end);
+            shared::store_shared::<HALF, 1, 0>(from_array(*first), start);
+            shared::store_shared::<HALF, 1, 0>(from_array(*last), end);
             true
         }
 

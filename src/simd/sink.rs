@@ -100,8 +100,10 @@ mod simd {
                 );
             } else if len >= N / 2 {
                 let mut halves = [from[0]; N];
-                halves[..N / 2].copy_from_slice(&from[..N / 2]);
-                halves[N / 2..].copy_from_slice(&from[len - N / 2..len]);
+                let (first, last) = halves.split_at_mut(N / 2);
+                for (to, from) in [(first, from), (last, &from[len - N / 2..])] {
+                    to.iter_mut().zip(from).for_each(|(to, from)| *to = *from);
+                }
                 if let Some(halves) = f(&halves) {
                     to.append_either(
                         |to| halves.store_halves(to.take(len)),

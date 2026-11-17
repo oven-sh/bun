@@ -1,5 +1,6 @@
 //! The definition of the ops that have intrinsics. Debug builds panic on input for which targets differ.
 use crate::{BitIndices, Int, Out, SharedOutU8, SharedU8};
+use bun_simd_trusted::{from_array, load_or_default};
 use core::array;
 use core::simd::{ToBytes, prelude::*};
 pub(crate) use masked::*;
@@ -191,7 +192,7 @@ pub(crate) mod masked {
         for (to, from) in bytes[skipped..].iter_mut().zip(from) {
             *to = from.get();
         }
-        Simd::from_array(bytes)
+        from_array(bytes)
     }
 
     /// As many of the first or the last lanes as fit.
@@ -205,7 +206,7 @@ pub(crate) mod masked {
 
     #[inline(always)]
     pub(crate) fn load_to_last<T: Int<N>, const N: usize>(from: &[T]) -> u8x64 {
-        let first = Lanes::<T, N, 64>::new(Simd::load_or_default(from)).to_64_bytes();
+        let first = Lanes::<T, N, 64>::new(load_or_default(from)).to_64_bytes();
         rotate_bytes(first, size_of_val(from).wrapping_neg())
     }
 
@@ -218,7 +219,7 @@ pub(crate) mod masked {
     /// Lane `i` goes to lane `(i + by) % 64`.
     #[inline(always)]
     pub(crate) fn rotate_bytes(v: u8x64, by: usize) -> u8x64 {
-        Simd::from_array(array::from_fn(|i| v[i.wrapping_sub(by) % 64]))
+        from_array(array::from_fn(|i| v[i.wrapping_sub(by) % 64]))
     }
 }
 

@@ -67,6 +67,34 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
   });
 });
 
+test("Bun.Transpiler reports the limit for a buffer that the loader argument detaches", async () => {
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    "-e",
+    `
+      const results = {};
+      for (const method of ["transformSync", "scan", "scanImports"]) {
+        const input = new Uint8Array(new ArrayBuffer(${SIZE}));
+        input.set(Buffer.from(${JSON.stringify(FIRST_LINE)}));
+        const loader = Object.assign(new String("js"), { toString: () => (input.buffer.transfer(0), "js") });
+        try {
+          new Bun.Transpiler()[method](input, loader);
+          results[method] = "no error";
+        } catch (e) {
+          results[method] = input.length + " " + e.message;
+        }
+      }
+      console.log(JSON.stringify(results));
+    `,
+  ]);
+  const result = "0 File is too large to parse (2 GiB maximum)";
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ transformSync: result, scan: result, scanImports: result }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // Each file is sparse: everything past the first line is a hole, so it takes no
 // disk space and reads back as NUL bytes. Reading it costs the child process
 // 2 GiB of memory (and, in debug builds, tens of seconds of allocator

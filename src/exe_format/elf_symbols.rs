@@ -116,6 +116,7 @@ const DW_CIE_ID: u32 = u32::MAX;
 const DW_CIE_VERSION: u8 = 1;
 const DW_CFA_NOP: u8 = 0;
 const DW_CFA_DEF_CFA: u8 = 0x0c;
+const DW_CFA_AARCH64_NEGATE_RA_STATE: u8 = 0x2d;
 const DW_CFA_OFFSET: u8 = 0x80;
 const EMPTY_AUGMENTATION: u8 = 0;
 const CODE_ALIGNMENT_FACTOR: u8 = 1;
@@ -128,6 +129,7 @@ const DEBUG_FRAME_SIZE: u64 = 2 * (size_of::<u32>() as u64 + FRAME_ENTRY_LENGTH 
 struct FrameRegisters {
     frame_pointer: u8,
     return_address: u8,
+    return_address_is_signed: bool,
 }
 
 struct SectionTable {
@@ -393,6 +395,7 @@ fn append_debug_frame(
     let FrameRegisters {
         frame_pointer,
         return_address,
+        return_address_is_signed,
     } = registers;
     let frame_offset = tail.next_aligned_offset();
     let bytes = &mut tail.bytes;
@@ -411,7 +414,11 @@ fn append_debug_frame(
         1,
         DW_CFA_OFFSET | frame_pointer,
         2,
-        DW_CFA_NOP,
+        if return_address_is_signed {
+            DW_CFA_AARCH64_NEGATE_RA_STATE
+        } else {
+            DW_CFA_NOP
+        },
         DW_CFA_NOP,
         DW_CFA_NOP,
         DW_CFA_NOP,
@@ -439,6 +446,7 @@ pub fn symbols_tail(
     mut read: impl FnMut(u64, &mut [u8]) -> bool,
     table: &[u8],
     image_offset: u64,
+    signs_return_addresses: bool,
 ) -> Option<SymbolsTail> {
     let mut header = [0u8; size_of::<Elf64_Ehdr>()];
     if !read(0, &mut header) || validate_elf64_le(&header).is_err() {
@@ -449,10 +457,12 @@ pub fn symbols_tail(
         EM_X86_64 => FrameRegisters {
             frame_pointer: 6,
             return_address: 16,
+            return_address_is_signed: false,
         },
         EM_AARCH64 => FrameRegisters {
             frame_pointer: 29,
             return_address: 30,
+            return_address_is_signed: signs_return_addresses,
         },
         _ => return None,
     };
@@ -668,7 +678,7 @@ pub(crate) mod tests {
 
     fn create_tail(elf: &[u8], table: &[u8]) -> Option<SymbolsTail> {
         let read = |offset: u64, out: &mut [u8]| read_at(elf, offset, out);
-        symbols_tail(elf.len() as u64, read, table, IMAGE_OFFSET)
+        symbols_tail(elf.len() as u64, read, table, IMAGE_OFFSET, false)
     }
 
     fn append_symbols(elf: &[u8], table: &[u8]) -> Option<Vec<u8>> {
@@ -970,6 +980,28 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn debug_frame_says_that_return_addresses_are_signed() {
+        for (architecture, differences) in [
+            (Architecture::X86_64, vec![]),
+            (Architecture::Aarch64, vec![(0, 0x2d)]),
+        ] {
+            let elf = executable_with_payload(architecture);
+            let [unsigned, signed] = [false, true].map(|signs| {
+                let read = |offset: u64, out: &mut [u8]| read_at(&elf, offset, out);
+                symbols_tail(elf.len() as u64, read, &toy_table(), IMAGE_OFFSET, signs)
+                    .unwrap()
+                    .bytes
+            });
+            let found: Vec<(u8, u8)> = unsigned
+                .into_iter()
+                .zip(signed)
+                .filter(|(unsigned, signed)| unsigned != signed)
+                .collect();
+            assert_eq!(found, differences);
+        }
+    }
+
+    #[test]
     fn aligns_tail_offset() {
         let mut old = executable_with_payload(Architecture::X86_64);
         old.resize(align_up(old.len() as u64, 8) as usize + 3, 0xaa);
@@ -1048,7 +1080,7 @@ pub(crate) mod tests {
                 read_count += 1;
                 read_count - 1 != failing_read && read_at(&elf, offset, out)
             };
-            symbols_tail(elf.len() as u64, read, &table, IMAGE_OFFSET)
+            symbols_tail(elf.len() as u64, read, &table, IMAGE_OFFSET, false)
         };
         for failing_read in 0..3 {
             assert!(create_tail_with_failing_read(failing_read).is_none());

@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "ae8978d0331bfce97259b446378265eb327c407a";
+export const WEBKIT_VERSION = "autobuild-preview-pr-1068-5b6c7a9a";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -2248,6 +2248,7 @@ export const webkit: Dependency = {
       const symbols = [
         ...(cfg.aot && cfg.guardedPages ? ["JSC__AOT__mapsGuardedPages"] : []),
         ...(cfg.aot && !cfg.executeOnlyStart ? ["JSC__AOT__startsOnlyWhereItsFileCanBeRead"] : []),
+        ...(cfg.aot && cfg.signReturnAddresses ? ["JSC__AOT__savesSignedReturnAddresses"] : []),
       ];
       const requireDefined = symbols.length > 0 ? { lib: wkLib(cfg, "JavaScriptCore"), symbols } : undefined;
       return { libs, includes, files, contentsDecideGraph: true, ...(requireDefined && { requireDefined }) };

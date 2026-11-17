@@ -19,7 +19,8 @@ const libc = dlopen(isDarwin ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
   ...(isDarwin && { _dyld_get_image_vmaddr_slide: { args: ["u32"], returns: "i64" } }),
 });
 const slideOfLinux = () => {
-  const ofThisFile = readFileSync("/proc/self/maps", "latin1").split("\\n").find(line => line.endsWith("/main"));
+  // The compiled code is mapped from this file too, below a position-independent executable.
+  const ofThisFile = readFileSync("/proc/self/maps", "latin1").split("\\n").find(line => / 0+ .*[/]main$/.test(line));
   return parseInt(ofThisFile ?? "", 16) - Number(startOfFile);
 }; // @ts-expect-error
 const address = Number(hole) + Number(isDarwin ? libc.symbols._dyld_get_image_vmaddr_slide(0) : slideOfLinux()); // @ts-expect-error

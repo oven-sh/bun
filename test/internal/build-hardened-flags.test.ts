@@ -288,6 +288,24 @@ test("a hardened build for arm64 names no processor to tune for", () => {
   expect(tunes(linuxConfig({ arch: "aarch64" }, String(dir)))).toContain("-mtune=ampere1");
 });
 
+test("a hardened build for arm64 signs its return addresses", () => {
+  using dir = tempDir("build-hardened-flags-signed", {});
+  const signing = ["-mbranch-protection=pac-ret", "-DENABLE_RETURN_ADDRESS_SIGNING=1"];
+  const rustSigning = ["-Zbranch-protection=pac-ret", "--cfg=bun_signs_return_addresses"];
+  const flags = everyFlagOf(linuxConfig({ hardened: true, arch: "aarch64" }, String(dir)));
+  for (const list of [flags.c, flags.cxx, flags.dependencyC, flags.dependencyCxx])
+    expect(list).toEqual(expect.arrayContaining(signing));
+  expect(flags.rust).toEqual(expect.arrayContaining(rustSigning));
+  const unsigned = { hardened: true, arch: "aarch64", signReturnAddresses: false };
+  for (const partial of [{ hardened: true }, { arch: "aarch64" }, unsigned] as PartialConfig[]) {
+    const all = Object.values(everyFlagOf(linuxConfig(partial, String(dir)))).flat();
+    for (const flag of [...signing, ...rustSigning]) expect(all).not.toContain(flag);
+    expect(all.includes("-DENABLE_RETURN_ADDRESS_SIGNING=0")).toBe(partial === unsigned);
+  }
+  const prebuilt = linuxConfig({ hardened: true, arch: "aarch64", webkit: "prebuilt", lto: true }, String(dir));
+  expect(webkit.provides(prebuilt).requireDefined?.symbols).toContain("JSC__AOT__savesSignedReturnAddresses");
+});
+
 test("--hardened=on is refused where nothing can be hardened", () => {
   using dir = tempDir("build-hardened-flags-refused", {});
   for (const partial of [

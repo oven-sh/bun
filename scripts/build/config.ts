@@ -210,6 +210,8 @@ export interface Config {
    * Defines BUN_REFUSES_EXECUTE_ONLY_START for C and C++, JSC included, and `bun_refuses_execute_only_start` for Rust.
    */
   executeOnlyStart: boolean;
+  /** On with `hardened` on arm64. Off: a hardened build to compare with, which takes a WebKit that does not sign either. */
+  signReturnAddresses: boolean;
   /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
@@ -478,6 +480,7 @@ export interface PartialConfig {
   lockEnvironment?: boolean;
   guardedPages?: boolean;
   executeOnlyStart?: boolean;
+  signReturnAddresses?: boolean;
   socketFaultInjection?: boolean;
   codeGenerationFromStrings?: boolean;
   webAssembly?: boolean;
@@ -1197,6 +1200,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const lockEnvironment = partial.lockEnvironment ?? hardened;
   const guardedPages = partial.guardedPages ?? hardened;
   const executeOnlyStart = partial.executeOnlyStart ?? !hardened;
+  const signReturnAddresses = partial.signReturnAddresses ?? (hardened && arm64);
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1223,6 +1227,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!hardened || (linux && abi !== "android"), "hardened=true requires os=linux and abi=gnu or musl");
   assert(!requireMdwe || hardened, "requireMdwe=true requires hardened=true");
   assert(!lockEnvironment || hardened, "lockEnvironment=true requires hardened=true");
+  assert(
+    !signReturnAddresses || (hardened && arm64),
+    "signReturnAddresses=true requires hardened=true and arch=aarch64",
+  );
   assert(!guardedPages || linux, "guardedPages=true requires os=linux");
   assert(
     guardedPages === hardened || webkit === "local",
@@ -1247,8 +1255,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(jit || (linux && x64), "jit=false requires os=linux and arch=x64");
   assert(jit || !(partial.trimmable ?? false), "jit=false can't be combined with trimmable=true");
   assert(
-    !hardened || webkit === "local" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
-    "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli, or webkit=local",
+    !hardened || webkit === "local" || ((x64 || lto) && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
+    "hardened=true requires a Linux glibc release build without asan, assertions or fuzzilli, on arm64 with lto, or webkit=local",
     { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
   );
   assert(
@@ -1525,6 +1533,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lockEnvironment,
     guardedPages,
     executeOnlyStart,
+    signReturnAddresses,
     socketFaultInjection,
     codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
     webAssembly: partial.webAssembly ?? true,
@@ -1937,6 +1946,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.executeOnlyStart === cfg.hardened) {
     features.push(cfg.executeOnlyStart ? "execute-only-start" : "execute-only-start:off");
   }
+  if (cfg.signReturnAddresses !== (cfg.hardened && cfg.arm64)) features.push("sign-return-addresses:off");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }

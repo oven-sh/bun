@@ -830,7 +830,7 @@ template<bool SSL>
 static bool closeBehindPendingShutdown(us_socket_t* socket)
 {
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    if (!(httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)) {
+    if (!(httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) || !reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained()) {
         return false;
     }
     httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
@@ -849,7 +849,7 @@ extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__close(us_socket_t* socke
         us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
         return;
     }
-    // destroySoon(): the FIN still waits for queued bytes, so the close goes behind them too.
+    // destroySoon(), in the writable event that sent the bytes the FIN waited for. The response hears of it first.
     if (ssl ? closeBehindPendingShutdown<true>(socket) : closeBehindPendingShutdown<false>(socket)) {
         return;
     }

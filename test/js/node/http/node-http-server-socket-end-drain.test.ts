@@ -231,6 +231,19 @@ describe.skipIf(isWindows).each(["http", "https"] as const)(
         late: ["res finish", "socket finish"],
       });
     });
+
+    test.concurrent.each([
+      ["end()", (socket: net.Socket) => void socket.end()],
+      ["destroySoon()", (socket: net.Socket) => socket.destroySoon()],
+    ])("destroy() after %s closes the connection", async (_name, end) => {
+      using exchange = await respond(async req => {
+        end(req.socket);
+        await turn();
+        req.socket.destroy();
+      });
+      await exchange.socketClosed;
+      expect(await exchange.read()).toBeLessThan(size);
+    });
   },
 );
 

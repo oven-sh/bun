@@ -2,7 +2,7 @@
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Phase {
     Open,
-    /// `disconnect()` waits for the ack of a handle and for what is queued behind it, as in Node.js.
+    /// `disconnect()` waits for the ack of a handle and for what is queued behind it.
     Draining,
     /// The task closes the transport.
     Closing,

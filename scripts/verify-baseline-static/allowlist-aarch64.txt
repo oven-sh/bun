@@ -4,13 +4,6 @@
 
 
 # ----------------------------------------------------------------------------
-# Highway SVE detector.
-# (1 symbols)
-# ----------------------------------------------------------------------------
-_ZN3hwy3armL26DetectAdditionalSveTargetsEl  [SVE]
-
-
-# ----------------------------------------------------------------------------
 # compiler-rt outline atomics. Each helper has both LSE and LDXR/STXR paths;
 # __aarch64_have_lse_atomics (= AT_HWCAP & HWCAP_ATOMICS) picks at runtime.
 # The whole family is here: {cas,ldadd,ldclr,ldeor,ldset,swp} x {1,2,4,8} and

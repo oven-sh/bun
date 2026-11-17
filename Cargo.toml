@@ -73,7 +73,6 @@ members = [
   "src/sort_by_number",
   "src/trim",
   "src/trim/removable_features",
-  "src/highway",
   "src/histogram",
   "src/hpack",
   "src/http1",
@@ -453,7 +452,6 @@ bun_exe_format = { path = "src/exe_format" }
 bun_sort_by_number = { path = "src/sort_by_number" }
 bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
-bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
 bun_hpack = { path = "src/hpack" }
 bun_http1 = { path = "src/http1" }

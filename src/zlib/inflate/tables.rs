@@ -201,10 +201,13 @@ pub(super) struct Table<T, const ROOT: usize, const SUBTABLES: usize> {
 pub(super) struct Tables {
     /// Or for the code lengths, until all have been read.
     pub(super) literal_length: Table<Entry, { 1 << LITERAL_LENGTH_BITS }, 512>,
-    pub(super) distance: Table<DistanceEntry, { 1 << DISTANCE_BITS }, 256>,
+    pub(super) distance: Table<DistanceEntry, { 1 << DISTANCE_BITS }, 192>,
     /// The bits that index the root of `literal_length`.
     pub(super) literal_length_mask: u64,
 }
+
+// mimalloc's next size is that of node:zlib's chunks, which are freed late, so that each stream would get cold memory.
+const _: () = assert!(size_of::<Tables>() <= 14 * 1024);
 
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
 pub(super) static FIXED: Tables = {

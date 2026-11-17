@@ -676,6 +676,29 @@ devTest("the build error of a plugin module is not an error of the file that has
     expect(await statuses()).toEqual({ healthy: 200, broken: 500 });
   },
 });
+devTest("a stylesheet of a plugin is not a script of the page when a script has the same path", {
+  files: {
+    ...wrappedFiles(`async () => ({
+      contents: await Bun.file(path.join(import.meta.dir, "stylesheet.txt")).text(),
+      loader: "css",
+    })`),
+    "linked.html": emptyHtmlFile({ styles: ["wrapped:real.ts"], scripts: ["./real.ts"] }),
+    "other.html": emptyHtmlFile({ scripts: ["./other.ts"] }),
+    "other.ts": `import "wrapped:real.ts";`,
+    "real.ts": `console.log("real");`,
+    "stylesheet.txt": `body { color: red; }}`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/linked")).status).toBe(500);
+    // The dev server does not know that the plugin reads this file. The other page bundles the stylesheet again.
+    await Bun.write(dev.join("stylesheet.txt"), `body { color: red; }`);
+    expect((await dev.fetch("/other")).status).toBe(200);
+    // This page still has the html that was bundled with the error.
+    await using c = await dev.client("/linked");
+    await c.expectMessage("real");
+    await c.style("body").color.expect.toBe("red");
+  },
+});
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

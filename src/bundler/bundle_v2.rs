@@ -5091,10 +5091,13 @@ pub mod bv2_impl {
                                 if !record.source_index.is_valid() {
                                     continue;
                                 }
-                                if loaders[record.source_index.get() as usize] != Loader::Css {
+                                let imported = record.source_index.get() as usize;
+                                if loaders[imported] != Loader::Css {
                                     continue;
                                 }
-                                if ast.parts[record.source_index.get() as usize].len() == 0 {
+                                if ast.parts[imported].len() == 0 {
+                                    // From here on the path is the only name of the stylesheet, and an html file can hold the specifier.
+                                    record.path = sources[imported].path;
                                     record.source_index = Index::INVALID;
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.

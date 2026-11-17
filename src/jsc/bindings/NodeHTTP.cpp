@@ -356,6 +356,7 @@ static constexpr uWS::NodeHttpSocketHooks nodeHttpSocketHooks = {
     .onDrain = [](void* socketData) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onDrain(); },
     .onRawRead = [](void* socketData, const char* data, int length) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onRawRead(data, length); },
     .onReadParsed = [](void* socketData) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onReadParsed(); },
+    .onPartialHead = [](void* socketData) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onPartialHead(); },
     .onUpgradeBodyEnded = [](void* socketData) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onUpgradeBodyEnded(); },
     .onHandshake = [](void* socketData, int success, us_bun_verify_error_t verifyError) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onHandshake(success, verifyError); },
     .onPeerEnded = [](void* socketData) { return reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onPeerEnded(); },

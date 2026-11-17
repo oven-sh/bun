@@ -751,6 +751,23 @@ describe("node:http server timeout enforcement", () => {
       expect(cut).toEqual({ early: false, onTime: true });
     });
 
+    test("keepAliveTimeout counts from the last read of a request head that trickles in", async () => {
+      let cut;
+      await exchange("", getKeepAlive, async (req, res, client) => {
+        const { socket } = req;
+        res.end("END");
+        await next(client, "data", client);
+        for (const piece of ["GET", " / "]) {
+          jest.advanceTimersByTime(4_000);
+          const read = socket.bytesRead + piece.length;
+          client.write(piece);
+          while (socket.bytesRead < read && !socket.destroyed) await turnOfTheLoop();
+        }
+        cut = cutAfter(6_000, socket);
+      });
+      expect(cut).toEqual({ early: false, onTime: true });
+    });
+
     test("keepAliveTimeout counts from the last response of the connection", async () => {
       let cut;
       await exchange("", getKeepAlive, async (req, res, client) => {

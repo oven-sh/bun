@@ -48,6 +48,8 @@ struct NodeHttpSocketHooks {
     void (*onDrain)(void *socketData);
     void (*onRawRead)(void *socketData, const char *data, int length);
     void (*onReadParsed)(void *socketData);
+    /* A read ended inside a request head. The socket can be closed when this returns. */
+    void (*onPartialHead)(void *socketData);
     /* The body of an accepted Upgrade request has ended. The socket can have left this context when this returns. */
     void (*onUpgradeBodyEnded)(void *socketData);
     /* A TLS handshake ended, or an established session failed. The socket can be closed when this returns. */

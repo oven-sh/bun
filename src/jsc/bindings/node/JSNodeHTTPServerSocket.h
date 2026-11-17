@@ -104,6 +104,7 @@ public:
     void setRawReads(bool enabled);
     void onRawRead(const char* data, int length);
     void onReadParsed();
+    void onPartialHead();
     bool onPeerEnded();
     /* Node's parser.finish(), for the socket's 'end' listener. Returns whether the stream ended inside a message. */
     bool finishParsing();

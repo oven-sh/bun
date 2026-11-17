@@ -919,6 +919,27 @@ void JSNodeHTTPServerSocket::onReadParsed()
     }
 }
 
+// Every read restarts the socket's inactivity timer, and no listener hears of this one.
+void JSNodeHTTPServerSocket::onPartialHead()
+{
+    auto* globalObject = defaultGlobalObject(this->globalObject());
+    auto* duplex = m_duplex.get();
+    if (!duplex || globalObject->scriptExecutionStatus(globalObject, this) != ScriptExecutionStatus::Running) {
+        return;
+    }
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Bun__EventLoop__enter(globalObject);
+    JSValue unrefTimer = duplex->get(globalObject, Identifier::fromString(vm, "_unrefTimer"_s));
+    if (!scope.exception()) {
+        JSC::call(globalObject, unrefTimer, duplex, ArgList(), "socket._unrefTimer is not a function"_s);
+    }
+    if (auto* exception = scope.exception(); exception && scope.tryClearException()) {
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    }
+    Bun__EventLoop__exit(globalObject);
+}
+
 template<bool SSL>
 static bool markHalfClosed(us_socket_t* socket)
 {

@@ -822,6 +822,13 @@ private:
                     nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                     nodeHttpResponseData->headersCompleted = false;
                 }
+                if (httpResponseData->hasBufferedPartialRequestHeaders() && httpResponseData->socketData) [[unlikely]] {
+                    httpContextData->nodeHttpHooks->onPartialHead(httpResponseData->socketData);
+                    if (us_socket_is_closed((us_socket_t *) returnedData) || us_socket_kind((us_socket_t *) returnedData) != socketKind()) {
+                        ((AsyncSocket<SSL> *) returnedData)->uncork();
+                        return (us_socket_t *) returnedData;
+                    }
+                }
             }
 
             /* A read that started no message (empty lines, RFC 9112 2.2) leaves an idle connection idle. */

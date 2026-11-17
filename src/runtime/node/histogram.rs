@@ -217,15 +217,18 @@ impl Histogram {
     ) -> bindgen::Result<'a, JSValue> {
         let percentiles = self.read(|histogram| histogram.percentiles());
         let global = cx.global();
-        let map = JSMap::create(global);
-        for (percentile, at) in percentiles {
-            map.set(
-                global,
-                JSValue::js_number(percentile),
-                value_to_js(global, at)?,
-            )?;
+        let value = JSMap::create(global);
+        if let Some(map) = JSMap::from_js(value) {
+            let map = JSMap::opaque_mut(map.as_ptr());
+            for (percentile, at) in percentiles {
+                map.set(
+                    global,
+                    JSValue::js_number(percentile),
+                    value_to_js(global, at)?,
+                )?;
+            }
         }
-        Ok(map.to_js())
+        Ok(value)
     }
 
     pub(crate) fn get_percentiles<'a>(&self, cx: &mut JsScope<'a>) -> bindgen::Result<'a, JSValue> {

@@ -15,12 +15,9 @@ unsafe extern "C" {
 }
 
 impl JSMap {
-    pub fn create(global: &JSGlobalObject) -> &mut JSMap {
-        JSMap::opaque_mut(JSC__JSMap__create(global).encoded() as *mut JSMap)
-    }
-
-    pub fn to_js(&self) -> JSValue {
-        JSValue::from_cell(self)
+    pub fn create(global: &JSGlobalObject) -> JSValue {
+        // `create` is `nothrow` in the codegen (raw `extern fn`, no error wrapper).
+        JSC__JSMap__create(global)
     }
 
     #[track_caller]

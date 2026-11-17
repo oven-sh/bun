@@ -138,7 +138,7 @@ pub enum Acked<P> {
     Raw(P, RESPValue),
 }
 
-/// What [`Client::lost`] takes: a dial ends once, and the next one cannot start before it has.
+/// Permission to call [`Client::lost`] once. The next dial cannot start before it is used.
 #[must_use]
 pub struct Attempt(());
 

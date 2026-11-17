@@ -7,7 +7,8 @@ use bun_jsc::{
 
 use bun_valkey::command::Reply;
 
-use super::js_valkey::{JSValkeyClient, Object, js};
+use super::hold::Object;
+use super::js_valkey::{JSValkeyClient, js};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -1362,6 +1363,7 @@ impl JSValkeyClient {
 
         // Check if we're in subscription mode
         require_subscriber(self, "unsubscribe")?;
+        let object = Object::from(this);
 
         let args_view = JsLocal::to_js_slice(args);
 
@@ -1370,7 +1372,7 @@ impl JSValkeyClient {
         // The first argument can be a channel or an array of channels
         let Some(&channel_or_many) = args_view.first() else {
             // If no arguments, unsubscribe from all channels
-            Object::from(this).clear_all_receive_handlers(global)?;
+            object.clear_all_receive_handlers(global)?;
             return Ok(self.send(this, global, b"UNSUBSCRIBE", &redis_channels, Reply::Value));
         };
 
@@ -1402,7 +1404,7 @@ impl JSValkeyClient {
             redis_channels.push(ch);
 
             let remaining_listeners =
-                match Object::from(this).remove_receive_handler(global, channel, listener_cb) {
+                match object.remove_receive_handler(global, channel, listener_cb) {
                     Ok(Some(n)) => n,
                     Ok(None) => {
                         // Listeners weren't present in the first place, so we can return a
@@ -1450,7 +1452,7 @@ impl JSValkeyClient {
                 };
                 redis_channels.push(channel);
                 // Clear the handlers for this channel
-                Object::from(this).clear_receive_handlers(global, channel_arg)?;
+                object.clear_receive_handlers(global, channel_arg)?;
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
@@ -1459,7 +1461,7 @@ impl JSValkeyClient {
             };
             redis_channels.push(channel);
             // Clear the handlers for this channel
-            Object::from(this).clear_receive_handlers(global, channel_or_many)?;
+            object.clear_receive_handlers(global, channel_or_many)?;
         } else {
             return Err(global.throw_invalid_argument_type(
                 "unsubscribe",

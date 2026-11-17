@@ -979,9 +979,42 @@ test.concurrent(
   async () => {
     const result = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
     expect(result).toSpawn();
-    expect(result.stdout).toMatch(/^[1-9]\d* collected after the read$/m);
+    // Of ten. A stale slot in a live native frame can hold one or two.
+    expect(result.stdout).toMatch(/^[0-2] left$/m);
   },
 );
+
+test.concurrent.each([
+  ["an open socket", { peer: "silent", options: { connectionTimeout: 100 } }],
+  ["the retry timer", { peer: "drops", options: { maxRetries: 2 } }],
+  ["a dial that gave no socket", { peer: "none", options: { tls: { cert: "x", key: "y" } } }],
+])("%s keeps an unreferenced client alive until onclose, and no longer", async (_, { peer, options }) => {
+  const code = /* js */ `
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: socket => ${peer === "drops"} && socket.end(), data() {}, error() {} },
+    });
+    let closed = 0;
+    (() => {
+      for (let i = 0; i < 20; i++) {
+        const client = new Bun.RedisClient("redis://127.0.0.1:" + server.port, ${JSON.stringify(options)});
+        client.onclose = () => closed++;
+        client.get("k").catch(() => {});
+      }
+    })();
+    while (closed < 20) {
+      Bun.gc(true);
+      await new Promise(setImmediate);
+    }
+    Bun.gc(true);
+    console.log((require("bun:jsc").heapStats().objectTypeCounts.RedisClient ?? 0) <= 2);
+    server.stop(true);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "true", exitCode: 0 });
+});
 
 test.concurrent("new RedisClient(url) does not leak the URL and its components", async () => {
   const code = /* js */ `

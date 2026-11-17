@@ -10,6 +10,7 @@
 // stack below the calling frame right after each of those calls.
 import { RedisClient } from "bun";
 import { jscInternals } from "bun:internal-for-testing";
+import { heapStats } from "bun:jsc";
 
 const CRLF = "\r\n";
 const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
@@ -84,7 +85,6 @@ async function hop() {
   await null;
 }
 
-let collected = 0;
 for (let round = 0; round < 10; round++) {
   const done = useAndCloseClient();
   scrub(256);
@@ -101,14 +101,8 @@ for (let round = 0; round < 10; round++) {
     throw new Error(`round ${round}: the wrapper died under the socket read`);
   }
   await nextTick;
-  scrub(256);
-  jscInternals.collectSyncWithoutSweep();
-  if (!jscInternals.isLiveCellAtRawAddress(address!)) collected++;
 }
-// Not all ten: a stale slot in a live native frame can hold one by chance.
-if (collected === 0) {
-  throw new Error("no wrapper was collected after the read");
-}
-console.log(`${collected} collected after the read`);
+Bun.gc(true);
+console.log(`${heapStats().objectTypeCounts.RedisClient - lowerTier.length} left`);
 
 for (const client of lowerTier) client.close();

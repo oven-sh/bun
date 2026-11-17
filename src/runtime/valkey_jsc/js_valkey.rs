@@ -1,6 +1,5 @@
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::marker::PhantomData;
 use std::rc::Rc;
 
 use crate::socket::{SSLConfig, SSLConfigFromJs};
@@ -13,11 +12,12 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue,
-    JsCell, JsResult, Strong,
+    JsCell, JsResult,
 };
 use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_uws as uws;
 
+use super::hold::{Dial, Hold, Object, SocketDial};
 use super::protocol_jsc::{
     ToJSOptions, resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js,
 };
@@ -33,46 +33,10 @@ type Socket = uws::AnySocket;
 
 pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
 
-/// The client's JS object, which something keeps alive for `'a`: the frame of a method call, or a [`Hold`].
-#[derive(Copy, Clone)]
-pub(crate) struct Object<'a>(JSValue, PhantomData<&'a ()>);
-
-impl<'a> From<JsWrapper<'a, JSValkeyClient>> for Object<'a> {
-    fn from(this: JsWrapper<'a, JSValkeyClient>) -> Self {
-        Self(this.to_js(), PhantomData)
-    }
-}
-
-impl<'a> From<&'a jsc::WrapperGuard<'_, JSValkeyClient>> for Object<'a> {
-    fn from(this: &'a jsc::WrapperGuard<'_, JSValkeyClient>) -> Self {
-        Self(this.to_js(), PhantomData)
-    }
-}
-
-/// Keeps the client and its object alive. Whatever will call back owns one.
-pub(crate) struct Hold {
-    /// The VM's teardown finalizes rooted objects too.
-    client: RefPtr<JSValkeyClient>,
-    object: Strong,
-}
-
-impl Hold {
-    fn object(&self) -> Object<'_> {
-        Object(self.object.get(), PhantomData)
-    }
-}
-
-/// From a dial until its close event.
-struct Dial {
-    /// Each socket event takes a clone, because script can close the socket under it.
-    hold: Rc<Hold>,
-    attempt: Attempt,
-}
-
 impl<'a> Object<'a> {
     /// `None` until the first `subscribe()`.
     fn subscription_callback_map(self) -> Option<&'a mut JSMap> {
-        let map = JSMap::from_js(js::subscription_callback_map_get_cached(self.0)?)?;
+        let map = JSMap::from_js(js::subscription_callback_map_get_cached(self.to_js())?)?;
         Some(JSMap::opaque_mut(map.as_ptr()))
     }
 
@@ -81,7 +45,7 @@ impl<'a> Object<'a> {
     }
 
     fn take_connection_promise(self, global: &JSGlobalObject) -> Option<&'a mut JSPromise> {
-        let promise = js::connection_promise_take_cached(self.0, global)?;
+        let promise = js::connection_promise_take_cached(self.to_js(), global)?;
         promise.as_promise().map(JSPromise::opaque_mut)
     }
 
@@ -166,11 +130,13 @@ impl JSValkeyClient {
             this.send_next_command();
             this.update_poll_ref(object);
         });
-        let map = object.subscription_callback_map().unwrap_or_else(|| {
+        if object.subscription_callback_map().is_none() {
             let map = JSMap::create(global_object);
-            js::subscription_callback_map_set_cached(object.0, global_object, map.to_js());
-            map
-        });
+            js::subscription_callback_map_set_cached(object.to_js(), global_object, map);
+        }
+        let Some(map) = object.subscription_callback_map() else {
+            return Ok(());
+        };
         let mut handlers = map.get(global_object, channel_name)?;
         if handlers.is_undefined() {
             handlers = JSArray::create_empty(global_object, 0)?;
@@ -220,7 +186,7 @@ pub(crate) struct JSValkeyClient {
     client: JsCell<Client<JSPromiseStrong>>,
     socket: Cell<Socket>,
     // TODO(markovejnovic): a connected client that nothing refers to stays alive until it is closed.
-    dial: JsCell<Option<Dial>>,
+    dial: SocketDial,
     address: valkey::Address,
     tls: valkey::TLS,
     auto_flusher: AutoFlusher,
@@ -235,7 +201,7 @@ pub(crate) struct JSValkeyClient {
     _secure: JsCell<Option<boringssl::c::OwnedSslCtx>>,
 
     pub(crate) timer: RefCountedTimer<RefPtr<JSValkeyClient>>,
-    pub(crate) reconnect_timer: RefCountedTimer<Rc<Hold>>,
+    pub(crate) reconnect_timer: RefCountedTimer<Hold>,
     pub(crate) ref_count: bun_ptr::RefCount<JSValkeyClient>,
     /// The context whose script created the client: every dial, the retries
     /// its own timer starts included, joins that context's sockets.
@@ -358,7 +324,7 @@ impl JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             client: JsCell::new(Client::new(config)),
             socket: Cell::new(Socket::SocketTcp(uws::SocketTCP::detached())),
-            dial: JsCell::new(None),
+            dial: SocketDial::default(),
             address,
             tls,
             auto_flusher: AutoFlusher::default(),
@@ -371,18 +337,6 @@ impl JSValkeyClient {
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
             context: cx.context().id(),
         })
-    }
-
-    fn hold(&self, object: Object<'_>) -> Rc<Hold> {
-        Rc::new(Hold {
-            client: self.ref_guard(),
-            object: Strong::create(object.0, &self.global_object),
-        })
-    }
-
-    /// For a socket event.
-    fn socket_hold(&self) -> Option<Rc<Hold>> {
-        Some(Rc::clone(&self.dial.get().as_ref()?.hold))
     }
 
     pub(crate) fn constructor(
@@ -608,7 +562,7 @@ impl JSValkeyClient {
 
     pub(crate) fn do_connect(&self, global_object: &JSGlobalObject, object: Object<'_>) -> JSValue {
         let _guard = self.ref_guard();
-        let this_value = object.0;
+        let this_value = object.to_js();
 
         if self.get_connected() {
             return JSPromise::resolved_promise_value(
@@ -728,6 +682,7 @@ impl JSValkeyClient {
     }
 
     fn reconnect(&self, object: Object<'_>) {
+        // `connect()` does not wait for the retry.
         self.reconnect_timer.disarm();
         // The stop phase of a VM that is exiting would only have to close the socket again.
         if !self.vm.is_shutting_down()
@@ -747,11 +702,11 @@ impl JSValkeyClient {
 
     fn dial(&self, object: Object<'_>, attempt: Attempt) {
         self.update_poll_ref(object);
-        let hold = self.hold(object);
+        let hold = Rc::new(Hold::new(self, object));
         let dial = Dial { hold, attempt };
         if let Some(socket) = self.open_socket() {
             self.socket.set(socket);
-            self.dial.set(Some(dial));
+            self.dial.set(dial);
             self.reset_connection_timeout();
             return;
         }
@@ -870,7 +825,8 @@ impl JSValkeyClient {
         reply: Reply,
     ) -> JSValue {
         let _guard = self.ref_guard();
-        self.ensure_dialing(this.into());
+        let object = Object::from(this);
+        self.ensure_dialing(object);
 
         let mut promise = JSPromiseStrong::init(global);
         let js_promise = promise.value();
@@ -886,7 +842,7 @@ impl JSValkeyClient {
                 Sent::Queued => {}
             }
         }
-        self.update_poll_ref(this.into());
+        self.update_poll_ref(object);
         js_promise
     }
 
@@ -968,7 +924,7 @@ impl JSValkeyClient {
         self.reset_connection_timeout();
 
         let global_object = &self.global_object;
-        let this_value = object.0;
+        let this_value = object.to_js();
         let hello = match resp_value_to_js(hello, global_object) {
             Ok(hello) => hello,
             Err(err) if global_object.has_pending_termination_exception() => return Err(err),
@@ -1059,7 +1015,7 @@ impl JSValkeyClient {
                 self.reject_all_as_closed(in_flight, "Connection closed")?;
                 debug!("reconnect in {}ms", delay_ms);
                 self.reconnect_timer
-                    .arm(self, delay_ms, || self.hold(object));
+                    .arm(self, delay_ms, || Hold::new(self, object));
                 Ok(())
             }
         }
@@ -1067,7 +1023,7 @@ impl JSValkeyClient {
 
     fn on_closed(&self, object: Object<'_>) -> JsResult<()> {
         let global_object = &self.global_object;
-        let this_value = object.0;
+        let this_value = object.to_js();
         if global_object.has_exception() {
             // `onclose` cannot be entered on top of what is already unwinding.
             return Err(bun_jsc::JsError::Thrown);
@@ -1091,8 +1047,9 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    /// For the VM's teardown: a collection finds neither armed.
+    /// For the VM's teardown, which closes sockets first. A collection finds neither timer armed.
     pub(crate) fn finalize(&self) {
+        debug_assert!(self.dial.hold().is_none());
         self.timer.disarm();
         self.reconnect_timer.disarm();
     }
@@ -1227,7 +1184,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             return Ok(());
         }
         let handshake_success = success == 1;
-        let Some(hold) = this.socket_hold() else {
+        let Some(hold) = this.dial.hold() else {
             return Ok(());
         };
         let _update = UpdatePollRefOnDrop(this, hold.object());
@@ -1319,7 +1276,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub(crate) fn on_data(this: &JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) {
         debug_assert!(*this.socket.get().socket() == socket.socket);
-        let Some(hold) = this.socket_hold() else {
+        let Some(hold) = this.dial.hold() else {
             return;
         };
         this.read(hold.object(), data);
@@ -1331,7 +1288,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub(crate) fn on_writable(this: &JSValkeyClient, socket: SocketType<SSL>) {
         debug_assert!(*this.socket.get().socket() == socket.socket);
-        let Some(hold) = this.socket_hold() else {
+        let Some(hold) = this.dial.hold() else {
             return;
         };
         this.send_next_command();

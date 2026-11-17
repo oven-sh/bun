@@ -750,6 +750,32 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
     write(${JSON.stringify(line + "\n")});
   `;
 
+  it("is closed once if dgram.Native cannot adopt it", async () => {
+    const result = await runPair(
+      `
+        const { closeSync } = fs;
+        let next;
+        // What is opened after a close gets the number that was freed.
+        fs.closeSync = fd => {
+          closeSync(fd);
+          next = fs.openSync("/dev/null");
+        };
+        process.on("uncaughtException", error => console.log(error.message));
+        const before = openFds();
+        await spawnChild().exited;
+        await turn();
+        if (next !== undefined) closeSync(next);
+        console.log("leaked", openFds() - before);
+      `,
+      sendDescriptorWith(JSON.stringify({ cmd: "NODE_HANDLE", type: "dgram.Native" })),
+    );
+    expect(result).toEqual({
+      stdout: ["failed to open received dgram handle: -22", "leaked 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("is closed by a parent, which has no use for one in a cluster message", async () => {
     const result = await runPair(
       `

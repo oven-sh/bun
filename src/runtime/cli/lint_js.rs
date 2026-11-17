@@ -25,8 +25,8 @@ use bun_collections::HashMap;
 use bun_core::strings;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
 use bun_lint_driver::js_plugin::{
-    Demand, Engine, HEAVY, Serve, Vm, Work, can_be_answered_ahead, has_long_answer, is_last_call,
-    program, rules_in_message,
+    Demand, Engine, HEAVY, Serve, Vm, Work, can_be_answered_ahead, drop_spare_lists,
+    has_long_answer, is_last_call, is_same_for_all_files, program, rules_in_message,
 };
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
@@ -71,6 +71,9 @@ thread_local! {
 }
 
 fn keep_spare(mut buffer: Vec<u8>) {
+    if buffer.capacity() > 8 << 20 {
+        return;
+    }
     buffer.clear();
     let kept = SPARE.take();
     SPARE.set(core::cmp::max_by_key(kept, buffer, Vec::capacity));
@@ -81,6 +84,20 @@ fn buffer_for(request: u32) -> Vec<u8> {
         true => SPARE.take(),
         false => Vec::new(),
     }
+}
+
+fn collect_between_files() {
+    if !VirtualMachine::is_loaded() {
+        return;
+    }
+    let Some(state) = crate::jsc_hooks::lint_vm().get() else {
+        return;
+    };
+    let vm = VirtualMachine::get();
+    vm.run_with_api_lock(|| {
+        let allocated = &state.allocated;
+        allocated.set(Bun__Lint__collectBetweenFiles(vm.global(), allocated.get()));
+    });
 }
 
 /// Clears `LintVm::call` when the call is over.
@@ -94,8 +111,6 @@ impl Drop for CallGuard<'_> {
         if answers.has_lent_span {
             Bun__Lint__endFile(self.1);
         }
-        let allocated = &self.0.allocated;
-        allocated.set(Bun__Lint__collectBetweenFiles(self.1, allocated.get()));
         let largest = answers.all.into_iter().max_by_key(Vec::capacity);
         keep_spare(largest.unwrap_or_default());
     }
@@ -674,7 +689,8 @@ unsafe impl Send for RemoteCall {}
 #[derive(Default)]
 struct Line {
     said: Guarded<Option<Said>>,
-    changed: Condition,
+    /// For the helper, and for the member
+    changed: [Condition; 2],
 }
 
 enum Said {
@@ -686,8 +702,9 @@ enum Said {
 
 impl Line {
     fn say(&self, what: Said) {
+        let is_answer = matches!(what, Said::Answer(_));
         *self.said.lock() = Some(what);
-        self.changed.notify_one();
+        self.changed[usize::from(is_answer)].notify_one();
     }
 
     /// Waits for an answer, or for something else.
@@ -696,7 +713,7 @@ impl Line {
         loop {
             match said.take_if(|it| matches!(it, Said::Answer(_)) == an_answer) {
                 Some(heard) => return heard,
-                None => self.changed.wait_guarded(&mut said),
+                None => self.changed[usize::from(an_answer)].wait_guarded(&mut said),
             }
         }
     }
@@ -828,6 +845,8 @@ struct CrewState {
     pending: usize,
     /// The first member has no heavy file left in `shared`.
     is_done_with_heavy: bool,
+    /// How many of its helpers have one.
+    helpers_with_heavy: usize,
     /// The member that should run its `exit` handlers now.
     ends: Option<usize>,
     memory: Memory,
@@ -843,7 +862,8 @@ impl CrewState {
 
     /// How many VMs are busy with heavy files. They don't count towards how many VMs the other files are worth.
     fn heavy_vms(&self) -> usize {
-        usize::from(self.shared.is_some() && !self.is_done_with_heavy)
+        let has_heavy = !self.is_done_with_heavy || self.helpers_with_heavy > 0;
+        usize::from(self.shared.is_some() && has_heavy)
     }
 }
 
@@ -865,6 +885,8 @@ struct Crew {
     state: Guarded<CrewState>,
     /// A copy of `CrewState::pending` that can be read without the lock.
     busy: AtomicUsize,
+    /// How many helpers are at work.
+    helping: AtomicUsize,
     /// There may be something to do for a member.
     is_posted: Condition,
     /// `pending` is 0, or a member is gone.
@@ -985,7 +1007,7 @@ impl Crew {
                 return Next::Remote(call);
             }
             // SAFETY: read from `shared` under the lock.
-            let can_have_helpers = |it: Shared| unsafe { it.work() }.can_have_helpers();
+            let can_have_helpers = |it: Shared| unsafe { it.work() }.can_have_helpers(at);
             match state
                 .shared
                 .filter(|it| state.all[at].done_with != it.number)
@@ -1020,6 +1042,7 @@ impl Crew {
             state.all[at].thread = Some(std::thread::current().id());
             state.all[at].failure = failure;
         }
+        let mut remembered = HashMap::default();
         loop {
             match crew.next(at) {
                 Next::Posted(mut posted) => {
@@ -1028,7 +1051,7 @@ impl Crew {
                     Crew::with_vm_of(crew, at, posted.size, &mut *job.0);
                     posted.ticket.finish();
                 }
-                Next::Remote(call) => Crew::answer(crew, call),
+                Next::Remote(call) => Crew::answer(crew, call, &mut remembered),
                 Next::StartHelpers(shared) => {
                     for number in 0..HELPERS {
                         let (me, for_thread) = (Helper { member: at, number }, Arc::clone(crew));
@@ -1075,6 +1098,7 @@ impl Crew {
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun Lint Help"));
         bun_sema_driver::run_regions_inline_on_this_thread();
         HELPER.set(Some(me));
+        crew.helping.fetch_add(1, Ordering::Relaxed);
         // SAFETY: the member is counted in `pending` as long as it has helpers.
         let work = unsafe { shared.work() };
         let mut state = crew.state.lock();
@@ -1084,8 +1108,11 @@ impl Crew {
                 crew.may_prepare.wait_guarded(&mut state);
                 continue;
             }
-            state.all[me.member].prepares = Some(me);
             let is_heavy = me.member == 0 && !state.is_done_with_heavy;
+            if is_heavy || work.needs_realms() {
+                state.all[me.member].prepares = Some(me);
+            }
+            state.helpers_with_heavy += usize::from(is_heavy);
             drop(state);
             let has_found = if is_heavy {
                 work.heavy()
@@ -1095,6 +1122,7 @@ impl Crew {
             has_more = has_found || is_heavy;
             state = crew.state.lock();
             state.is_done_with_heavy |= is_heavy && !has_found;
+            state.helpers_with_heavy -= usize::from(is_heavy);
             if state.all[me.member]
                 .prepares
                 .take_if(|it| *it == me)
@@ -1105,20 +1133,30 @@ impl Crew {
         }
         state.all[me.member].helpers -= 1;
         drop(state);
+        crew.helping.fetch_sub(1, Ordering::Relaxed);
         crew.is_posted.notify_all();
+        drop(SPARE.take());
+        drop_spare_lists();
+        bun_sema_driver::drop_caches_of_this_thread();
         bun_sema::session::give_back_free_memory();
         wait_for_exit()
     }
 
-    /// Makes the call of a helper, on the thread of its member.
-    fn answer(crew: &Arc<Crew>, mut call: RemoteCall) {
+    /// Makes the call of a helper, on the thread of its member. `remembered`: see [`is_same_for_all_files`].
+    fn answer(crew: &Arc<Crew>, mut call: RemoteCall, remembered: &mut HashMap<Vec<u8>, Vec<u8>>) {
         let at = call.by.member;
         // SAFETY: the helper keeps it until it hears that the call has returned.
         let content = unsafe { call.content.as_ref() };
+        let rules = rules_in_message(call.kind, content).map(|it| it.concat());
         let mut requests = Vec::<Request>::new();
         let mut serve = |request: u32, details: &[u8], out: &mut Vec<u8>| {
             if can_be_answered_ahead(request) {
                 requests.push((request, details.to_vec()));
+            }
+            let for_all = (rules.as_ref().filter(|_| is_same_for_all_files(request)))
+                .map(|rules| [&request.to_le_bytes(), &rules[..], details].concat());
+            if let Some(known) = for_all.as_ref().and_then(|it| remembered.get(it)) {
+                return out.extend_from_slice(known);
             }
             let is_same = |(it, _): &(Request, _)| it.0 == request && it.1 == details;
             let known = call.answers.iter().position(is_same);
@@ -1132,6 +1170,9 @@ impl Crew {
                     }
                 }
             };
+            if let Some(for_all) = for_all {
+                remembered.insert(for_all, answer.clone());
+            }
             match out.is_empty() {
                 true => *out = answer,
                 false => out.append(&mut answer),
@@ -1145,11 +1186,12 @@ impl Crew {
         {
             let member = &mut crew.state.lock().all[at];
             member.lent_to = None;
-            if let Some(rules) = rules_in_message(call.kind, content) {
-                member.requests.insert(rules.concat(), requests);
+            if let Some(rules) = rules {
+                member.requests.insert(rules, requests);
             }
         }
         call.line.say(Said::Returned(returned, SPARE.take()));
+        collect_between_files();
     }
 
     /// [`Engine::with_vm_here`] on the thread of a helper.
@@ -1200,6 +1242,7 @@ impl Crew {
         if !is_outermost {
             return;
         }
+        collect_between_files();
         let mut state = crew.state.lock();
         state.all[at].is_in_use = false;
         Crew::note_file(crew, &mut state, at, size);
@@ -1349,7 +1392,11 @@ impl Engine for Engines {
     }
 
     fn busy(&self) -> usize {
-        self.0.busy.load(Ordering::Relaxed)
+        self.0.busy.load(Ordering::Relaxed) + self.0.helping.load(Ordering::Relaxed)
+    }
+
+    fn realms_that_fit(&self) -> usize {
+        self.0.start.memory() / NOT_LOADED_YET
     }
 
     fn sizes(&self) -> (usize, usize) {

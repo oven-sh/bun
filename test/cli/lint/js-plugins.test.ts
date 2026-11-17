@@ -6419,6 +6419,29 @@ test(
   timeout,
 );
 
+test(
+  "with little memory, large files stay with one engine",
+  async () => {
+    const files: Record<string, string> = {
+      "plugin.mjs": `const realm = String(Math.random());
+        export default { rules: { realm: { create: context => ({ Program(node) {
+          if (context.filename.includes("heavy")) context.report({ node, message: realm });
+        } }) } } };`,
+      "eslint.config.mjs": `import own from "./plugin.mjs";
+        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/realm": "error" } }];`,
+    };
+    const text = (size: number) => `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
+    for (let i = 0; i < 40; i++) files[`src/heavy${i}.js`] = text(270_000);
+    for (let i = 0; i < 80; i++) files[`src/light${i}.js`] = text(250_000);
+    const variables = { BUN_LINT_MEMORY: String(4 * 2 ** 30) };
+    const { raw, exitCode } = await lint(files, ["-f", "unix", "--threads", "8", "src"], [], variables);
+    const realms = Array.from(raw.matchAll(/:1:1: (\S+) \[Error\/own\/realm\]/g), it => it[1]);
+    expect([realms.length, new Set(realms).size]).toEqual([40, 1]);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
 describe.concurrent("with threads that parse for the engine", () => {
   // From 1 MB on.
   function project(rule: string, rules = `"own/it": "error"`) {
@@ -6477,11 +6500,11 @@ describe.concurrent("with threads that parse for the engine", () => {
   );
 
   test(
-    "the first rule that throws is reported",
+    "the same exception is reported",
     async () => {
       const rule = `context => ({ Program() { if (seen.push(0) > 3) throw new Error("in " + seen.length); } })`;
       const { stderr, exitCode } = await withAndWithout(project(rule));
-      expect(stderr).toContain("in 4");
+      expect(stderr).toContain("in 40");
       expect(exitCode).toBe(2);
     },
     timeout,

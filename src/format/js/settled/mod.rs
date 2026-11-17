@@ -105,23 +105,19 @@ fn is_text_supported(text: &[u8], is_ascii: bool) -> bool {
                 && !strings::contains(text, "\u{2029}".as_bytes())))
 }
 
-/// False if the first block is indented in another style, so that next to nothing is formatted.
+/// False if the first block of a statement is indented in another style, so that next to nothing is formatted.
 fn is_indented_alike(text: &[u8], options: &FormatOptions) -> bool {
     let Some(at) = strings::index_of(text, b"{\n") else {
         return true;
     };
-    let indentation = |it: &[u8]| {
-        it.iter()
-            .take_while(|it| matches!(it, b' ' | b'\t'))
-            .count()
-    };
     let line = strings::last_index_of_char(&text[..at], b'\n').map_or(0, |it| it + 1);
     let inside = &text[at + 2..];
-    let added = &inside[indentation(&text[line..]).min(inside.len())..];
-    match (options.indent_style.is_tab(), indentation(added)) {
-        (_, 0) => true,
-        (true, count) => added[..count] == *b"\t",
-        (false, count) => count == options.indent_width.value() as usize && added[0] == b' ',
+    let is_blank = |it: &&u8| matches!(it, b' ' | b'\t');
+    match inside.iter().take_while(is_blank).count() {
+        0 => true,
+        _ if !text[line].is_ascii_alphabetic() => true,
+        count if options.indent_style.is_tab() => inside[..count] == *b"\t",
+        count => count == options.indent_width.value() as usize && inside[0] == b' ',
     }
 }
 

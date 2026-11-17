@@ -34,9 +34,10 @@ mod scopes;
 mod tokens;
 pub(crate) mod wire;
 
+pub use ast::drop_spare_lists;
 pub use engine::{
     Demand, Engine, HEAVY, Serve, Vm, Work, can_be_answered_ahead, has_long_answer, is_last_call,
-    realms_for, rules_in_message,
+    is_same_for_all_files, realms_for, rules_in_message,
 };
 pub use eslint::{Configuration, EslintFailure, Linted, Text};
 pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};

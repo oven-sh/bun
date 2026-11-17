@@ -596,6 +596,11 @@ impl ThreadPool {
         );
     }
 
+    /// See `limit_threads`
+    pub fn allowed_threads(&self) -> usize {
+        self.allowed_threads.load(Ordering::Relaxed) as usize
+    }
+
     /// The most threads that this pool starts.
     pub fn max_threads(&self) -> usize {
         self.max_threads as usize

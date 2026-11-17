@@ -175,8 +175,15 @@ thread_local! {
 }
 
 fn give_back<T>(mut list: Vec<T>, spare: &mut Vec<T>) {
-    list.clear();
-    *spare = list;
+    if list.capacity() * size_of::<T>() <= 4 << 20 {
+        list.clear();
+        *spare = list;
+    }
+}
+
+/// For a thread that is done with linting
+pub fn drop_spare_lists() {
+    drop(SPARE.take());
 }
 
 /// The same memory, for the nodes of another file.
@@ -188,7 +195,7 @@ fn emptied<'a>(mut nodes: Vec<VNode<'_>>) -> Vec<VNode<'a>> {
 impl Drop for Numbered<'_> {
     fn drop(&mut self) {
         SPARE.with_borrow_mut(|(nodes, tree)| {
-            *nodes = emptied(take(&mut self.nodes));
+            give_back(emptied(take(&mut self.nodes)), nodes);
             give_back(take(&mut self.types), &mut tree.types);
             give_back(take(&mut self.parents), &mut tree.parents);
         });

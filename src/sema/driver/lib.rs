@@ -146,6 +146,12 @@ fn release_free_pages_of(pool: &bun_threading::ThreadPool) {
     });
 }
 
+/// The buffers of the parser and the binder
+pub fn drop_caches_of_this_thread() {
+    drop(bun_sema_parser::ThreadCaches::take());
+    drop(bun_sema::bind::ThreadCaches::take());
+}
+
 /// Each thread returns to the system what it has allocated: its `caches`, its `values` and its free pages. When the
 /// process exits, a single thread unmaps what is left.
 pub fn free_before_exit<T: Send>(
@@ -159,8 +165,7 @@ pub fn free_before_exit<T: Send>(
         let thread = std::thread::current().id();
         let own: Vec<_> = (values.lock().extract_if(.., |it| it.0 == thread)).collect();
         drop(own);
-        drop(bun_sema_parser::ThreadCaches::take());
-        drop(bun_sema::bind::ThreadCaches::take());
+        drop_caches_of_this_thread();
         bun_core::Global::mimalloc_cleanup(true);
     });
 }
@@ -454,7 +459,7 @@ pub fn use_pool_for_lowering(name: &'static str) {
 pub fn start_threads_gradually(now: bool) {
     const AT_FIRST: usize = 10;
     let pool = region_pool();
-    let mut allowed = AT_FIRST.min(pool.max_threads());
+    let allowed = AT_FIRST.min(pool.max_threads());
     if !now && allowed == pool.max_threads() {
         return;
     }
@@ -466,11 +471,10 @@ pub fn start_threads_gradually(now: bool) {
             if now {
                 pool.warm(allowed as u16);
             }
-            while allowed < pool.max_threads() {
+            while pool.allowed_threads() < pool.max_threads() {
                 std::thread::sleep(Duration::from_millis(5));
                 if pool.available_threads() == 0 {
-                    allowed += 1;
-                    pool.allow_threads(allowed);
+                    pool.allow_threads(pool.allowed_threads() + 1);
                 }
             }
         });

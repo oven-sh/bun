@@ -31,9 +31,12 @@ pub fn can_be_answered_ahead(request: u32) -> bool {
             | ask::CONFIG_COMMENTS
             | ask::SCOPES
             | ask::CODE_PATHS
-            | ask::LIB_VARIABLES
-            | ask::LIB_VARIABLE
     )
+}
+
+/// True if the answer is the same for all files with the same [`rules_in_message`].
+pub fn is_same_for_all_files(request: u32) -> bool {
+    matches!(request, ask::LIB_VARIABLES | ask::LIB_VARIABLE)
 }
 
 /// True if the answer can have the tree in it.
@@ -63,8 +66,9 @@ pub trait Work: Sync {
     /// True if one of the other files that needs a realm hasn't been taken yet.
     fn needs_realms(&self) -> bool;
 
-    /// True if the calls for one file may alternate with those for the next, so other threads can do what isn't JavaScript.
-    fn can_have_helpers(&self) -> bool {
+    /// True if the calls for one file may alternate with those for the next, so two other threads can do
+    /// what isn't JavaScript for `realm`.
+    fn can_have_helpers(&self, _realm: usize) -> bool {
         false
     }
 
@@ -97,6 +101,9 @@ pub trait Engine: Sync {
     /// justify. Calls `meanwhile` on the calling thread and returns when both are done. `Err` means no such thread
     /// could be started, so only `meanwhile` ran.
     fn work_off(&self, work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>>;
+
+    /// How many realms there's memory for, whatever they load.
+    fn realms_that_fit(&self) -> usize;
 
     /// How many threads are busy with [`Engine::work_off`].
     fn busy(&self) -> usize;
@@ -132,7 +139,7 @@ pub trait Engine: Sync {
 }
 
 /// A file of at least this size is heavy. Its tree, tokens and lines take about 150 bytes in a realm per byte of
-/// source, and a realm never shrinks. So all heavy files go to one realm, one at a time. 0.24 % of the files in 391
+/// source, and a realm never shrinks. So heavy files go to one realm, unless there are many. 0.24 % of the files in 391
 /// repositories are heavy.
 pub const HEAVY: usize = 256 << 10;
 

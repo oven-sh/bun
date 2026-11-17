@@ -484,7 +484,11 @@ impl ReadAhead {
                 let has_waited = self.has_jobs.timed_wait_guarded(&mut state, 3_000_000);
                 if has_waited.is_err() {
                     drop(state);
-                    self.with_tools(|it| it.printer = BufferPrinter::init(BufferWriter::init()));
+                    TOOLS.with_borrow_mut(|tools| {
+                        if let Some(tools) = tools {
+                            tools.printer = BufferPrinter::init(BufferWriter::init());
+                        }
+                    });
                     bun_jsc::cached_bytecode::destroy_bytecode_cache_vm();
                     bun_core::Global::mimalloc_cleanup(true);
                     state = self.state.lock();

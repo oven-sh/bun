@@ -336,6 +336,11 @@ impl<'e> Host<'e> {
         self.engine.work_off(work, meanwhile)
     }
 
+    /// [`Engine::realms_that_fit`]
+    pub fn realms_that_fit(&self) -> usize {
+        self.engine.realms_that_fit()
+    }
+
     /// [`Engine::busy`]
     pub fn busy(&self) -> usize {
         self.engine.busy()

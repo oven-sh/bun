@@ -225,7 +225,7 @@ struct Files<'f> {
     handed_out: AtomicUsize,
     ends: [AtomicUsize; 2],
     next_plain: AtomicUsize,
-    can_have_helpers: bool,
+    realms_with_helpers: std::ops::Range<usize>,
     lint: &'f (dyn Fn(&Target) + Sync),
 }
 
@@ -267,8 +267,8 @@ impl Work for Files<'_> {
         self.handed_out.load(Ordering::Relaxed) < self.with_engine.len()
     }
 
-    fn can_have_helpers(&self) -> bool {
-        self.can_have_helpers
+    fn can_have_helpers(&self, realm: usize) -> bool {
+        self.realms_with_helpers.contains(&realm)
     }
 }
 
@@ -1014,7 +1014,7 @@ impl Run<'_> {
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
         let (programs, heavy) = (count(Needs::Program), count(Needs::Heavy));
         let realms = realms_for(size, pool.threads());
-        let heavy = programs + count_for_one_realm(&with_engine[programs..heavy], size, realms);
+        let sharing = realms.min(context.js_plugins.realms_that_fit());
         let is_linted_once = |it: &&Target| it.route() == Route::Native && it.framework().is_none();
         let with_extra = realms + usize::from(heavy > 0) + usize::from(has_memory_to_spare);
         // They take a few megabytes.
@@ -1023,17 +1023,21 @@ impl Run<'_> {
             && 3 * with_extra <= pool.threads()
             && !(self.options.fix || self.options.fix_dry_run)
             && with_engine.iter().all(is_linted_once);
+        // Two such files at once would take more.
+        let has_huge = with_engine.first().is_some_and(|it| it.size >= 1 << 20);
+        let realms_with_helpers = match can_have_helpers {
+            true => usize::from(has_huge)..with_extra,
+            false => 0..0,
+        };
+        let heavy = programs + count_for_one_realm(&with_engine[programs..heavy], size, sharing);
         let (heavy, with_engine) = with_engine.split_at(heavy);
+        pool.expect_files(without_types.iter().map(|it| it.size).sum());
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),
             Ok(None) => {}
             Err(error) => {
-                let at = (without_types.iter()).position(|it| std::ptr::eq(*it, target));
-                let mut first = failure.lock();
-                if first.as_ref().is_none_or(|(before, _)| at < *before) {
-                    *first = Some((at, error));
-                }
+                failure.lock().get_or_insert(error);
             }
         };
         let files = Files {
@@ -1044,7 +1048,7 @@ impl Run<'_> {
             handed_out: AtomicUsize::new(0),
             ends: Default::default(),
             next_plain: AtomicUsize::new(0),
-            can_have_helpers,
+            realms_with_helpers,
             lint: &lint,
         };
         let workers = match heavy.is_empty() && with_engine.is_empty() {
@@ -1053,7 +1057,8 @@ impl Run<'_> {
         };
         let mut lint_plain = || {
             pool.for_each(workers, 1, &|worker| {
-                if worker + 1 == workers
+                // Not on a thread that starts late
+                if worker + 1 == workers.min(8)
                     && let Some(inferred) = context.inferred
                 {
                     inferred.begin();
@@ -1076,7 +1081,7 @@ impl Run<'_> {
             false => {}
         }
         phases.linting = started.elapsed().as_secs_f64();
-        if let Some((_, error)) = failure.get_mut().take() {
+        if let Some(error) = failure.get_mut().take() {
             return Err(error);
         }
         // A comment in a file can turn on a rule that needs `eslint`, which is only discovered when the file is read.

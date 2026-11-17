@@ -483,6 +483,39 @@ process.send('ready');
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "http 0\nnet 0\nclose\n", stderr: "", exitCode: 0 });
   });
 
+  test.concurrent("a socket is closed when the message sent with it can't be serialized", async () => {
+    using dir = tempDir("ipc-handle-cyclic-message", {
+      "parent.js": `
+const net = require('node:net');
+const child = require('node:child_process').fork('child.js');
+const server = net.createServer(socket => {
+  try {
+    child.send({ toJSON() { throw 'refused'; } }, socket);
+  } catch (error) {
+    console.log(error);
+  }
+  server.close();
+});
+server.listen(0, '127.0.0.1', () => {
+  net.connect(server.address().port, '127.0.0.1').resume().on('close', () => {
+    console.log('close');
+    child.disconnect();
+  });
+});
+`,
+      "child.js": `process.on('message', () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "refused\nclose\n", stderr: "", exitCode: 0 });
+  });
+
   test.concurrent("net.Socket handle sent with {keepOpen: true} stays open in the sender", async () => {
     using dir = tempDir("ipc-handle-keepopen", {
       "parent.js": `

@@ -1715,6 +1715,7 @@ impl QuicEndpoint {
         let resume_blob: Vec<u8> = if config.enable_early_data {
             session_ticket
                 .as_array_buffer(global)
+                .filter(|buf| tls.can_resume(buf.byte_slice()))
                 .map_or(Vec::new(), |buf| buf.byte_slice().to_vec())
         } else {
             Vec::new()

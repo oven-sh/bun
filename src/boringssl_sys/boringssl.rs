@@ -394,6 +394,16 @@ impl OwnedSslSession {
     pub fn as_ptr(&self) -> *mut SSL_SESSION {
         self.0.as_ptr()
     }
+
+    /// The session id context of the `SSL` that made the session.
+    pub fn id_context(&self) -> &[u8] {
+        let mut len: c_uint = 0;
+        // SAFETY: the session is live and owns the `len` bytes behind the pointer, which is never null.
+        unsafe {
+            let bytes = SSL_SESSION_get0_id_context(self.as_ptr(), &mut len);
+            core::slice::from_raw_parts(bytes, len as usize)
+        }
+    }
 }
 
 impl OwnedX509 {
@@ -1378,6 +1388,7 @@ unsafe extern "C" {
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
     safe fn SSL_SESSION_up_ref(session: &SSL_SESSION) -> c_int;
     fn SSL_SESSION_free(session: *mut SSL_SESSION);
+    fn SSL_SESSION_get0_id_context(session: *const SSL_SESSION, out_len: &mut c_uint) -> *const u8;
     fn d2i_SSL_SESSION(
         out: *mut *mut SSL_SESSION,
         inp: &mut *const u8,

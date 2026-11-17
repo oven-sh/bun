@@ -641,3 +641,58 @@ test.each([
     session.destroy();
   }
 });
+
+const trusted = { servername: "localhost", ca: [Buffer.from(tls.cert)] };
+
+test.each([
+  ["the same options", trusted, trusted, "resumed"],
+  ["another servername", trusted, { ...trusted, servername: "example.com" }, "ERR_QUIC_TRANSPORT_ERROR"],
+  ["another ca", trusted, { ...trusted, ca: [cert2] }, "ERR_QUIC_TRANSPORT_ERROR"],
+  ["no ca", trusted, { servername: "localhost" }, "ERR_QUIC_TRANSPORT_ERROR"],
+  ...["auto", "strict"].map(verifyPeer => [
+    `verifyPeer '${verifyPeer}' after 'manual'`,
+    { ...trusted, servername: "example.com", verifyPeer: "manual" },
+    { ...trusted, servername: "example.com", verifyPeer },
+    "ERR_QUIC_TRANSPORT_ERROR",
+  ]),
+  ["verifyPeer 'strict' after 'auto'", trusted, { ...trusted, verifyPeer: "strict" }, "full handshake"],
+] as [string, object, object, string][])("a sessionTicket offered with %s", async (_, first, second, expected) => {
+  let streams = 0;
+  const server = await listen(
+    session => {
+      ignoreErrors(session);
+      session.closed.catch(() => {});
+      session.onstream = stream => {
+        streams++;
+        stream.closed.catch(() => {});
+      };
+    },
+    { sni: { "*": ipSanIdentity }, alpn: ["quic-test"] },
+  );
+  const ticket = Promise.withResolvers<ArrayBufferView>();
+  const issuer = await connect(server.address!, {
+    alpn: "quic-test",
+    onsessionticket: ticket.resolve,
+    ...first,
+  } as SessionOptions);
+  const sessionTicket = await ticket.promise;
+  await issuer.close();
+
+  const session = await connect(server.address!, { alpn: "quic-test", sessionTicket, ...second } as SessionOptions);
+  ignoreErrors(session);
+  session.closed.catch(() => {});
+  try {
+    const stream = await session.createUnidirectionalStream({ body: Buffer.from("early") });
+    stream.closed.catch(() => {});
+    const outcome = await session.opened.then(
+      (info: any) => (info.earlyDataAccepted ? "resumed" : "full handshake"),
+      err => err.code,
+    );
+    expect(outcome).toBe(expected);
+    // What left with the first flight reached the server ahead of its answer.
+    if (expected !== "full handshake") expect(streams).toBe(expected === "resumed" ? 1 : 0);
+  } finally {
+    session.destroy();
+    server.destroy();
+  }
+});

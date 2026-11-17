@@ -244,6 +244,28 @@ pub(super) struct TlsContext {
         reason = "BoringSSL keeps the `arg` pointer (this Vec's header address) across ClientHellos, so the Vec must not move; the Box pins it"
     )]
     _alpn: Option<Box<Vec<u8>>>,
+    /// A client's. Its tickets carry it.
+    session_id_context: Option<[u8; 32]>,
+}
+
+/// A resumed handshake checks no certificate, so this covers all that decides which server is accepted.
+fn client_session_id_context(
+    options: &uws::SocketContext::BunSocketContextOptions,
+    config: &TlsConfig,
+) -> [u8; 32] {
+    let mut id = options.digest();
+    let mut hasher = bun_sha_hmac::SHA256::init();
+    hasher.update(&id);
+    if config.ca_pem.is_none() {
+        hasher.update(bun_uws_sys::socket_context::c::us_get_default_ca_store_digest());
+    }
+    hasher.update(&[
+        u8::from(config.verify_peer_strict),
+        u8::from(config.verify_hostname),
+    ]);
+    hasher.update(&config.servername);
+    hasher.r#final(&mut id);
+    id
 }
 
 /// Returns the session of the lsquic conn that owns `ssl`, which must be live.
@@ -329,7 +351,7 @@ impl TlsContext {
             [&config.certs_pem, &config.keys_pem, &config.crl_pem].map(|pems| pem_list(pems));
         let ca = config.ca_pem.as_deref().map(pem_list);
         let mut err = uws::create_bun_socket_error_t::none;
-        let Some(owned) = (uws::SocketContext::BunSocketContextOptions {
+        let options = uws::SocketContext::BunSocketContextOptions {
             cert: cert.as_ptr(),
             cert_count: cert.len() as u32,
             key: key.as_ptr(),
@@ -342,8 +364,14 @@ impl TlsContext {
             ssl_min_version: ssl::TLS1_3_VERSION.into(),
             ssl_max_version: ssl::TLS1_3_VERSION.into(),
             ..Default::default()
-        })
-        .create_ssl_context(&mut err) else {
+        };
+        let session_id_context =
+            (!config.is_server).then(|| client_session_id_context(&options, config));
+        let built = match &session_id_context {
+            Some(id) => options.create_ssl_context_with_digest(id, &mut err),
+            None => options.create_ssl_context(&mut err),
+        };
+        let Some(owned) = built else {
             // Without a message of its own, the reason is BoringSSL's.
             let reason = ssl::ERR_reason_error_string(ssl::ERR_get_error());
             ssl::ERR_clear_error();
@@ -359,6 +387,7 @@ impl TlsContext {
         let mut this = TlsContext {
             ctx: owned,
             _alpn: None,
+            session_id_context,
         };
         // SAFETY: `ctx` is live and nothing else has it yet. The pointers it's given are NUL-terminated or come with a length.
         unsafe {
@@ -445,6 +474,21 @@ impl TlsContext {
 
     pub(super) fn raw(&self) -> *mut ssl::SSL_CTX {
         self.ctx.as_ptr()
+    }
+
+    /// Whether a client with the same options got `ticket`: lsquic's version tag, format version and length, then the session.
+    pub(super) fn can_resume(&self, ticket: &[u8]) -> bool {
+        let Some((head, rest)) = ticket.split_first_chunk::<12>() else {
+            return false;
+        };
+        let len = u32::from_be_bytes([head[8], head[9], head[10], head[11]]);
+        let session = rest
+            .get(..len as usize)
+            .and_then(ssl::OwnedSslSession::from_der);
+        ssl::ERR_clear_error();
+        session
+            .zip(self.session_id_context)
+            .is_some_and(|(session, id)| session.id_context() == id)
     }
 }
 

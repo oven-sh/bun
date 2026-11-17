@@ -53,6 +53,7 @@ const crates = [
   "bun_removable_features",
   "bun_resolve_builtins",
   "bun_resolver",
+  "bun_s3_signing",
   "bun_sema",
   "bun_sema_driver",
   "bun_sema_parser",

@@ -390,141 +390,52 @@ fn a_read_inside_an_event() {
     }
 }
 
-/// The read inside the event ends in the middle of a frame, and the outer read has frames left.
-#[test]
-fn an_unfinished_frame_waits_for_the_rest_of_the_outer_read() {
-    let long = &*"i".repeat(130);
-    for options in [CLIENT, SERVER] {
-        let left = frames(options, &[(FIN | PONG, "pong"), (FIN | TEXT, "second")]);
-        for (first, _) in first_events(options) {
-            let outer = [&*first, &left].concat();
-            for (first_byte, third) in [
-                (FIN | TEXT, (Text, "inner")),
-                (FIN | RSV1 | BINARY, (Compressed(Opcode::Binary), long)),
-                (FIN | PING, (Ping, "inner")),
-            ] {
-                let inner = frame(options, first_byte, third.1.as_bytes());
-                for cut in (1..inner.len()).step_by(if cfg!(miri) { 7 } else { 1 }) {
-                    let mut reader = Reader::new(options);
-                    let mut input = Input::new(&outer);
-                    let event = reader.next(&mut input).unwrap();
-                    assert_eq!(read(&mut reader, &inner[..cut]), NOTHING);
-                    recycle(&mut reader, event);
-
-                    let event = reader.next(&mut input).unwrap();
-                    assert_eq!(seen(&event), (Pong, "pong"));
-                    let event = reader.next(&mut input).unwrap();
-                    assert_eq!(seen(&event), (Text, "second"));
-                    assert_eq!(read(&mut reader, &inner[cut..]), [third]);
-                    recycle(&mut reader, event);
-                    assert_eq!(drain(&mut reader, input), NOTHING);
-                }
-            }
-        }
-    }
-}
-
-/// Every event makes the next read, as a listener that runs the event loop does.
-fn read_inside_events(reader: &mut Reader, reads: &mut &[&[u8]], events: &mut Vec<Seen>) {
-    let Some(bytes) = reads.split_off_first() else {
-        return;
-    };
-    let mut input = Input::new(bytes);
-    while let Some(event) = reader.next(&mut input) {
-        events.push(seen(&event));
-        read_inside_events(reader, reads, events);
-        recycle(reader, event);
-    }
-}
-
-fn events_of_nested_reads(options: ReaderOptions, mut reads: &[&[u8]]) -> Vec<Seen> {
-    let (mut reader, mut events) = (Reader::new(options), Vec::new());
-    while !reads.is_empty() {
-        read_inside_events(&mut reader, &mut reads, &mut events);
-    }
-    events
-}
-
-/// The first read is `outer`. `later` comes in two reads, cut at every byte.
+/// `outer` is one read. `nested` comes after it in the stream, and is read inside its first event.
 #[test]
 #[rustfmt::skip]
-fn nested_reads_keep_the_order_of_the_stream() {
-    type Frames = &'static [(u8, &'static str)];
-    struct Case { outer: Frames, later: Frames, events: &'static [(Kind, &'static str)] }
-    for Case { outer, later, events } in [
-        Case {
-            outer: &[(FIN | TEXT, "one"), (TEXT, ""), (FIN | PING, ""), (FIN | CONTINUE, "two")],
-            later: &[(FIN | TEXT, "three")],
-            events: &[(Text, "one"), (Ping, ""), (Text, "two"), (Text, "three")],
-        },
-        Case {
-            outer: &[(FIN | TEXT, "one"), (FIN | TEXT, "two")],
-            later: &[(RSV1 | BINARY, "th"), (CONTINUE, "r"), (FIN | CONTINUE, "ee")],
-            events: &[(Text, "one"), (Text, "two"), (Compressed(Opcode::Binary), "three")],
-        },
-        Case {
-            outer: &[(TEXT, "a"), (FIN | PING, "1"), (CONTINUE, "b"), (FIN | PING, "2")],
-            later: &[(CONTINUE, "ccc"), (FIN | CONTINUE, "d")],
-            events: &[(Ping, "1"), (Ping, "2"), (Text, "abcccd")],
-        },
-        Case {
-            outer: &[(TEXT, "a"), (FIN | PING, ""), (CONTINUE, "b")],
-            later: &[(FIN | CONTINUE, "c"), (TEXT, "d"), (FIN | CONTINUE, "e")],
-            events: &[(Ping, ""), (Text, "abc"), (Text, "de")],
-        },
-        Case {
-            outer: &[(BINARY, "a"), (FIN | PING, ""), (CONTINUE, "b")],
-            later: &[(CONTINUE, "\0\0"), (FIN | CONTINUE, "d")],
-            events: &[(Ping, ""), (Binary, "ab\\x00\\x00d")],
-        },
-        Case {
-            outer: &[(TEXT, "a"), (FIN | PING, ""), (FIN | CONTINUE, "b")],
-            later: &[(FIN | CONTINUE, "c")],
-            events: &[(Ping, ""), (Text, "ab"), (Error(UnexpectedOpcode(CONTINUE)), "")],
-        },
-        Case {
-            outer: &[(FIN | TEXT, "one"), (FIN | CLOSE, "")],
-            later: &[(FIN | TEXT, "ignored")],
-            events: &[(Text, "one"), (Close(1005), "")],
-        },
+fn a_nested_read_is_not_mixed_with_the_rest_of_the_outer_read() {
+    #[derive(Copy, Clone)]
+    enum Part { All, AllInTwoReads, FirstByte, AllButThePayload, AllButTheLastByte }
+    use Part::*;
+    let one_two = &[(FIN | TEXT, "one"), (FIN | TEXT, "two")][..];
+    let ping_in_ab = &[(TEXT, "a"), (FIN | PING, "p"), (FIN | CONTINUE, "b")][..];
+    let unexpected = |opcode| (Error(UnexpectedOpcode(opcode)), "");
+    for (outer, (part, nested), expected) in [
+        (one_two,          (All,               &[(FIN | TEXT, "six")][..]),            &[(Text, "one"), (Text, "six"), (Text, "two")][..]),
+        (one_two,          (All,               &[(TEXT, "s"), (FIN | CONTINUE, "ix")]), &[(Text, "one"), (Text, "six"), (Text, "two")]),
+        (one_two,          (AllInTwoReads,     &[(FIN | TEXT, "six")]),                &[(Text, "one"), (Text, "six"), (Text, "two")]),
+        (one_two,          (All,               &[(FIN | CLOSE, "")]),                  &[(Text, "one"), (Close(1005), "")]),
+        (one_two,          (FirstByte,         &[(FIN | BINARY, "six")]),              &[(Text, "one"), unexpected(TEXT)]),
+        (one_two,          (AllButThePayload,  &[(FIN | BINARY, "six")]),              &[(Text, "one"), unexpected(TEXT)]),
+        (one_two,          (AllButTheLastByte, &[(FIN | BINARY, "six")]),              &[(Text, "one"), unexpected(TEXT)]),
+        (one_two,          (AllButTheLastByte, &[(FIN | PING, "six")]),                &[(Text, "one"), unexpected(TEXT)]),
+        (one_two,          (All,               &[(BINARY, "s")]),                      &[(Text, "one"), unexpected(TEXT)]),
+        (&ping_in_ab[1..], (All,               &[(TEXT, "s")]),                        &[(Ping, "p"), unexpected(CONTINUE)]),
+        (ping_in_ab,       (All,               &[]),                                   &[(Ping, "p"), (Text, "ab")]),
+        (ping_in_ab,       (All,               &[(FIN | CONTINUE, "c")]),              &[(Ping, "p"), unexpected(CONTINUE)]),
+        (ping_in_ab,       (All,               &[(FIN | PONG, "six")]),                &[(Ping, "p"), unexpected(PONG)]),
+        (ping_in_ab,       (FirstByte,         &[(FIN | TEXT, "six")]),                &[(Ping, "p"), unexpected(TEXT)]),
+        (&ping_in_ab[..2], (All,               &[(FIN | CONTINUE, "c")]),              &[(Ping, "p"), (Text, "ac")]),
     ] {
         for options in [CLIENT, SERVER] {
-            let (outer, later) = (frames(options, outer), frames(options, later));
-            for cut in 1..later.len() {
-                let reads = [&*outer, &later[..cut], &later[cut..]];
-                assert_eq!(events_of_nested_reads(options, &reads), events, "{cut}");
-            }
+            let (outer, nested) = (frames(options, outer), frames(options, nested));
+            let reads = match part {
+                All => [&*nested, &[]],
+                AllInTwoReads => nested.split_at(nested.len() - 1).into(),
+                FirstByte => [&nested[..1], &[]],
+                AllButThePayload => [&nested[..nested.len() - "six".len()], &[]],
+                AllButTheLastByte => [&nested[..nested.len() - 1], &[]],
+            };
+            let mut reader = Reader::new(options);
+            let mut input = Input::new(&outer);
+            let mut events = vec![seen(&reader.next(&mut input).unwrap())];
+            events.extend(reads.iter().flat_map(|bytes| read(&mut reader, bytes)));
+            events.extend(drain(&mut reader, input));
+            assert_eq!(events, expected);
+
+            let has_ended = matches!(expected.last(), Some((Error(_) | Close(_), _)));
+            let later = read(&mut reader, &frame(options, FIN | TEXT, b"later"));
+            assert_eq!(later, if has_ended { &[][..] } else { &[(Text, "later")] });
         }
     }
-}
-
-#[test]
-fn a_nested_read_continues_a_frame_that_the_outer_read_started() {
-    let messages = [(Text, "aaaa"), (Text, "bbbb"), (Text, "cccc")];
-    for options in [CLIENT, SERVER] {
-        let stream = frames(options, &messages.map(|(_, text)| (FIN | TEXT, text)));
-        let size = stream.len() / messages.len();
-        for offset in 1..size {
-            let (first, rest) = stream.split_at(offset);
-            let one_frame_apart: Vec<_> = [first].into_iter().chain(rest.chunks(size)).collect();
-            assert_eq!(events_of_nested_reads(options, &one_frame_apart), messages);
-        }
-        for offset in 1..=size - "aaaa".len() {
-            let (first, rest) = stream.split_at(offset);
-            let (second, third) = rest.split_at(2 * size);
-            let two_frames_apart = [first, second, third];
-            assert_eq!(events_of_nested_reads(options, &two_frames_apart), messages);
-        }
-    }
-}
-
-#[test]
-fn a_payload_that_a_nested_read_took_for_fragments_is_an_error() {
-    let looks_like_fragments = [TEXT, 0, CONTINUE, 0];
-    let whole = frames(CLIENT, &[(FIN | TEXT, "one"), (FIN | TEXT, "two")]);
-    let outer = [&*whole, &[FIN | BINARY, 4]].concat();
-    assert_eq!(
-        events_of_nested_reads(CLIENT, &[&outer, &looks_like_fragments]),
-        [(Text, "one"), (Error(UnexpectedOpcode(TEXT)), "")]
-    );
 }

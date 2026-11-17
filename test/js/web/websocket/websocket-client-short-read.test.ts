@@ -690,11 +690,12 @@ describe("data received while a frame's listener spins the event loop", () => {
       const seen: string[] = [];
       const opened = Promise.withResolvers<unknown>();
       const returned = Promise.withResolvers<void>();
+      const failed = Promise.withResolvers<never>();
       const fail = (error: unknown) => {
         opened.reject(error);
-        returned.reject(error);
+        failed.reject(error);
       };
-      returned.promise.catch(() => {});
+      failed.promise.catch(() => {});
       const record = (type: string, data: string | Buffer) => {
         if (type === "ping" && String(data).startsWith(syncPrefix)) return;
         seen.push(`${type} ${showBytes(Buffer.from(data))}`);
@@ -705,7 +706,7 @@ describe("data received while a frame's listener spins the event loop", () => {
           seen.push(spinThroughBarrier(peer.url));
           if (during.length === 0) returned.resolve();
         } catch (error) {
-          fail(error);
+          returned.reject(error);
         }
       };
 
@@ -721,7 +722,7 @@ describe("data received while a frame's listener spins the event loop", () => {
       }
       ws.onopen = opened.resolve;
       ws.onerror = (event: any) => {
-        seen.push(`error ${event.message}`);
+        seen.push(`error ${event.message.replace(/^.* failed: /, "")}`);
         fail(new Error(seen.join(", ")));
       };
       ws.onclose = (event: any) => fail(new Error(`${seen.join(", ")}, close ${event.code}`));
@@ -730,19 +731,26 @@ describe("data received while a frame's listener spins the event loop", () => {
         return peer[Symbol.asyncDispose]();
       };
       await opened.promise.catch(error => dispose().then(() => Promise.reject(error)));
-      return { url: peer.url, connection, seen, returned: returned.promise, [Symbol.asyncDispose]: dispose };
+      return {
+        url: peer.url,
+        connection,
+        seen,
+        returned: returned.promise,
+        failed: failed.promise,
+        [Symbol.asyncDispose]: dispose,
+      };
     }
 
     const cases = allCases.filter(({ onEveryClient }) => everyCase || onEveryClient);
     test.each(cases)("$name", async ({ before, during, after, events, frames = [] }) => {
       await using client = await connect([during]);
-      const { url, connection, seen, returned } = client;
+      const { url, connection, seen, returned, failed } = client;
       for (const bytes of before.slice(0, -1)) {
         connection.write(bytes);
         await barrier(url);
       }
       connection.write(before.at(-1)!);
-      await returned;
+      await Promise.race([returned, failed]);
       if (after) connection.write(after);
       await barrier(url);
       expect(seen).toEqual(events);
@@ -752,70 +760,30 @@ describe("data received while a frame's listener spins the event loop", () => {
     if (!everyCase) return;
 
     // With the 101, because no other read overwrites those bytes.
-    describe.each([
-      { name: "a header", reads: split(text("third"), 2), third: 'text "third"' },
-      { name: "part of a 16-bit length", reads: split(text(Buffer.alloc(200, "a")), 3), third: "text 200 bytes" },
-      { name: "part of a payload", reads: split(text("third"), 4), third: 'text "third"' },
-      { name: "part of a Ping", reads: split(ping("third"), 4), third: 'ping "third"' },
-    ])("$name while a frame is left of the first read", ({ reads: [start, rest], third }) => {
-      const with101 = Buffer.concat([text("first"), text("second")]);
-
-      test("the rest comes after both listeners", async () => {
-        await using client = await connect([start], with101);
-        await client.returned;
-        client.connection.write(rest);
-        await barrier(client.url);
-        expect(client.seen).toEqual(['text "first"', "returns", 'text "second"', third]);
-      });
-
-      test("the rest comes in the second listener", async () => {
-        await using client = await connect([start, rest], with101);
-        await client.returned;
-        expect(client.seen).toEqual(['text "first"', "returns", 'text "second"', third, "returns"]);
-      });
-    });
-
-    const [header, payload] = split(text("third"), 2);
     test.each([
-      {
-        name: "a header, and its payload two listeners later",
-        with101: [text("first"), text("", false), ping("p"), lastFragment("second")],
-        during: [header, undefined, payload],
-        after: text("fourth"),
-        events: ['text "first"', "returns", 'ping "p"', 'text "second"', 'text "third"', "returns", 'text "fourth"'],
-      },
-      {
-        name: "a header, and its payload after the listeners",
-        with101: [text("first"), text("sec", false), ping("p"), lastFragment("ond")],
-        during: [header],
-        after: payload,
-        events: ['text "first"', "returns", 'ping "p"', 'text "second"', 'text "third"'],
-      },
-      {
-        name: "the last fragment and the first of another message",
-        with101: [text("a", false), ping("p"), fragment("b")],
-        during: [Buffer.concat([lastFragment("c"), text("d", false)])],
-        after: lastFragment("e"),
-        events: ['ping "p"', 'text "abc"', "returns", 'text "de"'],
-      },
-    ])("$name while the first read has a Ping inside a message", async ({ with101, during, after, events }) => {
-      await using client = await connect(during, Buffer.concat(with101));
+      { name: "a header", during: text("third").subarray(0, 2) },
+      { name: "part of a payload", during: text("third").subarray(0, 4) },
+      { name: "part of a Ping", during: ping("third").subarray(0, 4) },
+    ])("fails on $name while a frame is left of the first read", async ({ during }) => {
+      await using client = await connect([during], Buffer.concat([text("first"), text("second")]));
       await client.returned;
-      client.connection.write(after);
       await barrier(client.url);
-      expect(client.seen).toEqual(events);
+      expect(client.seen).toEqual(['text "first"', "returns", "error Protocol error - unexpected opcode: 1"]);
+      expect(await client.connection.remainingFrames()).toEqual(["close 1002"]);
     });
 
-    test("every read ends after the header of the next message", async () => {
-      const [[header1, first], [header2, second], [header3, third]] = ["one", "two", "six"].map(t => split(text(t), 2));
-      await using client = await connect([Buffer.concat([second, header3])]);
-      client.connection.write(header1);
+    test("fails on a last fragment while an earlier fragment is left of the read", async () => {
+      await using client = await connect([undefined, lastFragment("c")], text("first"));
       await barrier(client.url);
-      client.connection.write(Buffer.concat([first, header2]));
+      client.connection.write(Buffer.concat([text("a", false), ping("p"), fragment("b")]));
       await client.returned;
-      client.connection.write(third);
-      await barrier(client.url);
-      expect(client.seen).toEqual(['text "one"', 'text "two"', "returns", 'text "six"']);
+      expect(client.seen).toEqual([
+        'text "first"',
+        'ping "p"',
+        "error Protocol error - unexpected opcode: 0",
+        "returns",
+      ]);
+      expect(await client.connection.remainingFrames()).toEqual(['pong "p"', "close 1002"]);
     });
   });
 

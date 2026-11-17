@@ -1,4 +1,4 @@
-use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Sent};
+use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Reason, Sent};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::RESPValue;
 
@@ -187,7 +187,7 @@ impl Driver {
     fn lost(&mut self) {
         self.batch_is_due = false;
         let line = match self.lose(false) {
-            Lost::ForGood { reason, pending } => format!("closed {pending:?} {reason}"),
+            Lost::ForGood { reason, pending } => format!("closed {pending:?} {reason:?}"),
             Lost::Retry {
                 delay_ms,
                 in_flight,
@@ -216,6 +216,7 @@ mod lifecycle {
         Select,
         Ready,
         EndingPolicy,
+        EndingRequested,
         EndingFinal,
         EndingFailed,
         Backoff,
@@ -223,13 +224,14 @@ mod lifecycle {
     }
     use State::*;
 
-    const STATES: [State; 10] = [
+    const STATES: [State; 11] = [
         Idle,
         Dialing,
         Hello,
         Select,
         Ready,
         EndingPolicy,
+        EndingRequested,
         EndingFinal,
         EndingFailed,
         Backoff,
@@ -257,7 +259,8 @@ mod lifecycle {
                 it.read("+OK\r\n");
             }
             EndingPolicy => it.client.dial_failed(),
-            EndingFinal => drop(it.client.close()),
+            EndingRequested => drop(it.client.close()),
+            EndingFinal => it.client.dial_failed_for_good(),
             EndingFailed => it.fail(),
             Backoff => it.lost(),
             Closed => {
@@ -289,6 +292,10 @@ mod lifecycle {
             EndingFailed
         } else if it.client.is_ending() {
             match it.lose(false) {
+                Lost::ForGood {
+                    reason: Reason::Requested,
+                    ..
+                } => EndingRequested,
                 Lost::ForGood { .. } => EndingFinal,
                 Lost::Retry { .. } => EndingPolicy,
             }
@@ -328,6 +335,10 @@ mod lifecycle {
             |it| it.attempt = it.client.redial().or(it.attempt.take()),
             &[(Backoff, "", Dialing)],
         );
+        check(
+            |it| it.client.dial_failed_for_good(),
+            &[(Dialing, "", EndingFinal)],
+        );
     }
 
     #[test]
@@ -335,7 +346,7 @@ mod lifecycle {
         check(
             |it| it.client.connect(),
             &[
-                (EndingFinal, "", EndingPolicy),
+                (EndingRequested, "", EndingPolicy),
                 (EndingFailed, "", EndingFinal),
                 (Closed, "", Backoff),
             ],
@@ -355,12 +366,12 @@ mod lifecycle {
         check(
             close,
             &[
-                (Dialing, "close the socket", EndingFinal),
-                (Hello, "close the socket", EndingFinal),
-                (Select, "close the socket", EndingFinal),
-                (Ready, "close the socket", EndingFinal),
-                (EndingPolicy, "", EndingFinal),
-                (Backoff, "disarm the retry", EndingFinal),
+                (Dialing, "close the socket", EndingRequested),
+                (Hello, "close the socket", EndingRequested),
+                (Select, "close the socket", EndingRequested),
+                (Ready, "close the socket", EndingRequested),
+                (EndingPolicy, "", EndingRequested),
+                (Backoff, "disarm the retry", EndingRequested),
             ],
         );
     }
@@ -376,6 +387,7 @@ mod lifecycle {
                 (Select, "fail Some([1, 2])", EndingFailed),
                 (Ready, "fail Some([1, 2])", EndingFailed),
                 (EndingPolicy, "fail Some([1, 2])", EndingFailed),
+                (EndingRequested, "fail Some([1, 2])", EndingFailed),
                 (EndingFinal, "fail Some([1, 2])", EndingFailed),
                 (EndingFailed, "fail None", EndingFailed),
                 (Backoff, "fail None", Backoff),
@@ -399,8 +411,9 @@ mod lifecycle {
                 (Select, "retry in 50 []", Backoff),
                 (Ready, "retry in 50 [1]", Backoff),
                 (EndingPolicy, "retry in 50 []", Backoff),
-                (EndingFinal, "closed [1, 2] Connection closed", Closed),
-                (EndingFailed, "closed [] Connection closed", Closed),
+                (EndingRequested, "closed [1, 2] Requested", Closed),
+                (EndingFinal, "closed [1, 2] Final", Closed),
+                (EndingFailed, "closed [] Final", Closed),
             ],
         );
     }
@@ -461,6 +474,7 @@ mod lifecycle {
                 (Select, 7),
                 (Ready, 7),
                 (EndingPolicy, 10000),
+                (EndingRequested, 10000),
                 (EndingFinal, 10000),
                 (EndingFailed, 0),
                 (Backoff, 10000),
@@ -482,7 +496,7 @@ mod lifecycle {
         let mut expected = [50, 100, 200, 400, 800, 1600, 2000, 2000]
             .map(|ms| format!("retry in {ms} []"))
             .to_vec();
-        expected.push("closed [] Max reconnection attempts reached".into());
+        expected.push("closed [] RetriesUsedUp".into());
         assert_eq!(it.take(), expected);
 
         it.client.connect();
@@ -928,7 +942,7 @@ mod subscriptions {
                 "write A B",
                 "broken ServerError NO",
                 "fail Some([2, 3])",
-                "closed [] Connection closed",
+                "closed [] Final",
             ]
         );
     }

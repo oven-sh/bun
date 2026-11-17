@@ -61,6 +61,8 @@ enum State {
 enum End {
     /// The retry policy decides.
     Policy,
+    /// By [`Client::close`]; as [`End::Final`], until [`Client::connect`] takes it back.
+    Requested,
     /// No retry; what is queued until then is rejected.
     Final,
     /// No retry; everything is rejected already, and new commands are refused.
@@ -163,14 +165,17 @@ pub enum Close {
 
 #[must_use]
 pub enum Lost<P> {
-    ForGood {
-        reason: &'static str,
-        pending: Vec<P>,
-    },
-    Retry {
-        delay_ms: u32,
-        in_flight: Vec<P>,
-    },
+    ForGood { reason: Reason, pending: Vec<P> },
+    Retry { delay_ms: u32, in_flight: Vec<P> },
+}
+
+/// Why no retry follows.
+#[derive(Debug)]
+pub enum Reason {
+    Requested,
+    /// The attempt could not be, or was not to be, repeated.
+    Final,
+    RetriesUsedUp,
 }
 
 fn broken<P>(message: &[u8], error: RedisError) -> Event<P> {
@@ -262,26 +267,27 @@ impl<P> Client<P> {
                 self.retries = 0;
                 self.state = State::Backoff;
             }
-            // The close of a dial without a TLS context is still due, and no retry can build one.
             State::Ending(End::Failed) => self.state = State::Ending(End::Final),
-            State::Ending(End::Final) => self.state = State::Ending(End::Policy),
+            State::Ending(End::Requested) => self.state = State::Ending(End::Policy),
             State::Idle
             | State::Dialing
             | State::Hello
             | State::Select
             | State::Ready
-            | State::Ending(End::Policy) => {}
+            | State::Ending(End::Policy | End::Final) => {}
         }
     }
 
     pub fn close(&mut self) -> Close {
         let close = match self.state {
-            State::Idle | State::Closed | State::Ending(End::Failed) => return Close::Nothing,
-            State::Ending(End::Policy | End::Final) => Close::Nothing,
+            State::Idle | State::Closed | State::Ending(End::Final | End::Failed) => {
+                return Close::Nothing;
+            }
+            State::Ending(End::Policy | End::Requested) => Close::Nothing,
             State::Dialing | State::Hello | State::Select | State::Ready => Close::Socket,
             State::Backoff => Close::Retry(Attempt(())),
         };
-        self.state = State::Ending(End::Final);
+        self.state = State::Ending(End::Requested);
         close
     }
 
@@ -302,6 +308,13 @@ impl<P> Client<P> {
     pub fn dial_failed(&mut self) {
         if let State::Dialing = self.state {
             self.state = State::Ending(End::Policy);
+        }
+    }
+
+    /// The dial gave no socket, and neither would a retry.
+    pub fn dial_failed_for_good(&mut self) {
+        if let State::Dialing = self.state {
+            self.state = State::Ending(End::Final);
         }
     }
 
@@ -340,7 +353,7 @@ impl<P> Client<P> {
             | State::Hello
             | State::Select
             | State::Ready
-            | State::Ending(End::Policy | End::Final) => {
+            | State::Ending(End::Policy | End::Requested | End::Final) => {
                 self.state = State::Ending(End::Failed);
                 Some(self.take_pending())
             }
@@ -360,8 +373,10 @@ impl<P> Client<P> {
         self.scanner.reset();
 
         let is_final = matches!(self.state, State::Ending(End::Final | End::Failed));
-        let reason = if is_final || owner_is_gone || !self.config.enable_auto_reconnect {
-            "Connection closed"
+        let reason = if let State::Ending(End::Requested) = self.state {
+            Reason::Requested
+        } else if is_final || owner_is_gone || !self.config.enable_auto_reconnect {
+            Reason::Final
         } else {
             self.retries += 1;
             if self.retries <= self.config.max_retries {
@@ -371,7 +386,7 @@ impl<P> Client<P> {
                     in_flight: self.take_in_flight(),
                 };
             }
-            "Max reconnection attempts reached"
+            Reason::RetriesUsedUp
         };
         self.state = State::Closed;
         Lost::ForGood {

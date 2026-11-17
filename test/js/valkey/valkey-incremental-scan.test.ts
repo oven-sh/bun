@@ -192,8 +192,7 @@ describe.concurrent("Valkey reply decoding", () => {
     const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
     client.onconnect = client.onclose = () => {};
     try {
-      // Queued before the handshake finishes, so the rejection carries the
-      // HELLO error. connect() itself rejects with a generic "Connection closed".
+      // Queued before the handshake finishes, so the rejection carries the HELLO error.
       const queued = client.get("k").then(
         () => null,
         e => e,

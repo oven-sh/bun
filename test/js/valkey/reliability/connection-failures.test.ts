@@ -3,7 +3,7 @@ import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
 import { once } from "events";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isIPv6, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import net from "net";
 import path from "path";
 import tls from "tls";
@@ -34,7 +34,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error: any) {
         // Expect an error with connection closed message
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
+        expect(error.message).toBe("connect ECONNREFUSED localhost:12345");
       } finally {
         // Cleanup
         await client.close();
@@ -140,7 +140,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error: any) {
         // Should fail with a connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
+        expect(error.message).toBe("connect ECONNREFUSED localhost:12345");
       }
 
       await client.close();
@@ -328,7 +328,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       const promises = clients.map(client =>
         client.get("key").catch(err => {
           // We expect errors, but want to make sure they're the right kind
-          expect(err.message).toMatch(/connection closed|socket closed|failed to connect/i);
+          expect(err.message).toBe("connect ECONNREFUSED localhost:12345");
         }),
       );
 
@@ -762,7 +762,7 @@ describe("Valkey: Recovering After fail()", () => {
         inFlight: await inFlight,
         connections: fake.connections,
       }).toEqual({
-        onclose: "ERR_REDIS_CONNECTION_CLOSED",
+        onclose: "ERR_REDIS_IDLE_TIMEOUT",
         connectedInsideOnclose: false,
         connectedAfter: false,
         inFlight: "ERR_REDIS_IDLE_TIMEOUT",
@@ -796,7 +796,7 @@ describe("Valkey: Recovering After fail()", () => {
         client.onclose = err => closed.resolve(err);
         await client.connect();
         expect(client.connected).toBe(true);
-        expect(await closed.promise).toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+        expect(await closed.promise).toMatchObject({ code: "ERR_REDIS_IDLE_TIMEOUT" });
         expect(client.connected).toBe(false);
         expect(fake.connections).toBe(connection);
       }
@@ -931,7 +931,7 @@ describe("Valkey: Recovering After fail()", () => {
     try {
       const secondConnect = connectFromOnclose(client);
       await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
-      expect(await secondConnect).toBe("rejected: Connection closed");
+      expect(await secondConnect).toBe(`rejected: connect ECONNREFUSED 127.0.0.1:${port}`);
     } finally {
       client.close();
     }
@@ -989,7 +989,7 @@ describe("Valkey: Recovering After fail()", () => {
     const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { autoReconnect: false });
     try {
       const secondConnect = connectFromOnclose(client);
-      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_AUTHENTICATION_FAILED" });
       expect(await secondConnect).toBe("connected");
       expect(await client.ping()).toBe("PONG");
       expect(fake.connections).toBe(2);
@@ -1029,7 +1029,7 @@ describe("Valkey: Recovering After fail()", () => {
       // The rejection is a failure the client detected, so there is no retry
       // even with autoReconnect on: onclose fires once and the only second
       // connection is the one dialed from it.
-      expect(closes).toEqual([{ message: "Connection closed", connected: false, connections: 1 }]);
+      expect(closes).toEqual([{ message: "ERR DB index is out of range", connected: false, connections: 1 }]);
       expect(await secondConnect).toBe("connected");
       expect(await client.ping()).toBe("PONG");
       expect(fake.connections).toBe(2);
@@ -1181,9 +1181,9 @@ describe("Valkey: Recovering After fail()", () => {
     const client = new RedisClient(`rediss://127.0.0.1:${port}`, { autoReconnect: false });
     try {
       const secondConnect = connectFromOnclose(client);
-      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      await expect(client.connect()).rejects.toMatchObject({ code: "ECONNRESET" });
       expect({ secondConnect: await secondConnect, handshakes }).toEqual({
-        secondConnect: "rejected: Connection closed",
+        secondConnect: "rejected: Client network socket disconnected before secure TLS connection was established",
         handshakes: 2,
       });
     } finally {
@@ -1215,7 +1215,7 @@ describe("Valkey: Recovering After fail()", () => {
           "onclose",
           "get ERR_REDIS_CONNECTION_TIMEOUT",
           "onclose",
-          "connect ERR_REDIS_CONNECTION_CLOSED",
+          "connect ERR_REDIS_CONNECTION_TIMEOUT",
         ]);
         while (fake.connections < 2) await once(fake.server, "connection");
       } finally {
@@ -2342,6 +2342,163 @@ describe("Valkey: Recovering After fail()", () => {
     } finally {
       client.close();
     }
+  });
+
+  describe("the reason reaches a queued command, connect() and onclose as one error", () => {
+    const CLOSED = "ERR_REDIS_CONNECTION_CLOSED: Connection closed";
+    const GAVE_UP = "ERR_REDIS_CONNECTION_CLOSED: Max reconnection attempts reached";
+    const show = (err: any): string =>
+      `${err.code ?? err.name}: ${err.message}` + ("cause" in err ? `, caused by ${show(err.cause)}` : "");
+
+    // Lists each distinct error object once. `close` calls close() in the tick of the dial.
+    async function reasonOf(url: string, options: Bun.RedisOptions, close?: "before connect()" | "after connect()") {
+      const client = new RedisClient(url, options);
+      try {
+        const closes: unknown[] = [];
+        client.onclose = err => void closes.push(err);
+        const get = client.get("key").catch(err => err);
+        if (close === "before connect()") client.close();
+        const connect = client.connect().catch(err => err);
+        if (close === "after connect()") client.close();
+        // Until it is reported, only the client refers to the error.
+        Bun.gc(true);
+        const errors = new Set([await get, await connect, ...closes]);
+        expect(closes).toHaveLength(1);
+        for (const error of errors) expect(Object.keys(error)).not.toContain("cause");
+        return [...errors].map(show).join(" | ");
+      } finally {
+        client.close();
+      }
+    }
+
+    const silence = () => null;
+    const hangUp = (_: number, socket: net.Socket) => (socket.end(), null);
+
+    test.each([
+      {
+        name: "a wrong password",
+        HELLO: () => "-WRONGPASS invalid password\r\n",
+        reason: "ERR_REDIS_AUTHENTICATION_FAILED: WRONGPASS invalid password",
+      },
+      {
+        name: "an unsupported protocol",
+        HELLO: () => "%1\r\n+proto\r\n:2\r\n",
+        reason: "ERR_REDIS_INVALID_RESPONSE: Server does not support RESP3",
+      },
+      {
+        name: "a reply that is not RESP",
+        HELLO: () => "\x01\r\n",
+        reason: "ERR_REDIS_INVALID_RESPONSE_TYPE: Failed to read data (stack path)",
+      },
+      {
+        name: "a reply whose key is a map, which cannot become a property name",
+        HELLO: () => "%1\r\n%0\r\n:1\r\n",
+        reason: "TypeError: No default value",
+      },
+      {
+        name: "the connection timeout",
+        HELLO: silence,
+        options: { connectionTimeout: 50 },
+        reason: "ERR_REDIS_CONNECTION_TIMEOUT: Connection timeout reached after 50ms",
+      },
+      {
+        name: "a certificate that is not trusted",
+        secure: true,
+        options: { tls: { rejectUnauthorized: true } },
+        reason: "DEPTH_ZERO_SELF_SIGNED_CERT: self signed certificate",
+      },
+      {
+        name: "a certificate for another name",
+        secure: true,
+        options: { tls: { ca: tlsCert.cert, serverName: "other.example" } },
+        reason: "ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: Host: other.example",
+      },
+      {
+        name: "a TLS context that cannot be built",
+        secure: true,
+        options: { tls: { key: "not a key", cert: "not a cert" } },
+        reason: "ERR_REDIS_CONNECTION_CLOSED: Failed to create TLS context",
+      },
+      { name: "a peer that closes", HELLO: hangUp, options: { autoReconnect: false }, reason: CLOSED },
+      {
+        name: "a peer that closes on every retry",
+        HELLO: hangUp,
+        options: { maxRetries: 1 },
+        reason: `${GAVE_UP}, caused by ${CLOSED}`,
+      },
+      { name: "close() during the dial", close: "after connect()" as const, reason: CLOSED },
+    ])("$name", async ({ HELLO, secure, options = {}, close, reason }) => {
+      const fake = helloServer({ HELLO }, { secure });
+      const port = await fake.listen();
+      try {
+        expect(await reasonOf(`${secure ? "rediss" : "redis"}://127.0.0.1:${port}`, options, close)).toBe(reason);
+      } finally {
+        fake.server.close();
+      }
+    });
+
+    test.each([
+      { host: "127.0.0.1", shown: "127.0.0.1" },
+      { host: "localhost", shown: "localhost" },
+      ...(isIPv6() ? [{ host: "[::1]", shown: "::1" }] : []),
+    ])("a refused port on $host", async ({ host, shown }) => {
+      const fake = helloServer();
+      const port = await fake.listen();
+      await fake.close();
+      const refused = `ERR_REDIS_CONNECTION_CLOSED: connect ECONNREFUSED ${shown}:${port}`;
+      expect({
+        "without retries": await reasonOf(`redis://${host}:${port}`, { autoReconnect: false }),
+        "retries used up": await reasonOf(`redis://${host}:${port}`, { maxRetries: 1 }),
+      }).toEqual({
+        "without retries": refused,
+        "retries used up": `${GAVE_UP}, caused by ${refused}`,
+      });
+    });
+
+    test.skipIf(isWindows)("a unix socket that does not exist", async () => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      const url = `redis+unix://${socketPath}`;
+      const missing = `ERR_REDIS_CONNECTION_CLOSED: connect ENOENT ${socketPath}`;
+      expect({
+        "without retries": await reasonOf(url, { autoReconnect: false }),
+        "retries used up": await reasonOf(url, { maxRetries: 1 }),
+        "close() after the dial": await reasonOf(url, { autoReconnect: false }, "after connect()"),
+        "close() taken back by connect()": await reasonOf(url, { autoReconnect: false }, "before connect()"),
+      }).toEqual({
+        "without retries": missing,
+        "retries used up": `${GAVE_UP}, caused by ${missing}`,
+        "close() after the dial": CLOSED,
+        "close() taken back by connect()": missing,
+      });
+    });
+
+    test("a name that does not resolve", async () => {
+      // A label over 63 bytes is refused without asking the network.
+      const host = Buffer.alloc(64, "a").toString() + ".com";
+      expect(await reasonOf(`redis://${host}`, { autoReconnect: false })).toBe(
+        `ERR_REDIS_CONNECTION_CLOSED: getaddrinfo ENOTFOUND ${host}`,
+      );
+    });
+
+    test("the reason does not outlive its dial", async () => {
+      const fake = helloServer({ HELLO: connection => (connection === 1 ? "-WRONGPASS no\r\n" : "+OK\r\n") });
+      const port = await fake.listen();
+      const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+      try {
+        const closes: string[] = [];
+        const done = Promise.withResolvers<void>();
+        client.onclose = err => void (closes.push(show(err)) === 2 && done.resolve());
+        await client.connect().catch(() => {});
+        await client.connect();
+        fake.sockets[1].end();
+        await done.promise;
+        expect(closes).toEqual(["ERR_REDIS_AUTHENTICATION_FAILED: WRONGPASS no", CLOSED]);
+      } finally {
+        client.close();
+        fake.server.close();
+      }
+    });
   });
 });
 

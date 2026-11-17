@@ -969,7 +969,7 @@ describe.concurrent.each(
           installed: undefined,
           exitCode: 1,
         });
-      }, 30_000);
+      });
 
       it("and fails the integrity check of an optional pkg, like bun install", async () => {
         const result = await add("optional", async box => {
@@ -987,7 +987,7 @@ describe.concurrent.each(
           installed: undefined,
           exitCode: 1,
         });
-      }, 30_000);
+      });
 
       it("and installs it if bun.lock records no integrity", async () => {
         const result = await add("unpinned", box => edit(join(box.root, "app", "bun.lock"), /, "sha512-[^"]+"/, ""));
@@ -998,30 +998,26 @@ describe.concurrent.each(
           installed: 'module.exports = "v2";\n',
           exitCode: 0,
         });
-      }, 30_000);
+      });
 
-      it.if(kind === "URL")(
-        "and reports a 404",
-        async () => {
-          const result = await add("gone", box => {
-            const get = box.served.get.bind(box.served);
-            // Only the first request is served.
-            box.served.get = path => {
-              const body = get(path);
-              box.served.clear();
-              return body;
-            };
-          });
-          expect(result).toEqual({
-            messages: ["error: failed to download pkg@pkg.tgz: 404 Not Found"],
-            requests,
-            keepsIntegrity: true,
-            installed: undefined,
-            exitCode: 1,
-          });
-        },
-        30_000,
-      );
+      it.if(kind === "URL")("and reports a 404", async () => {
+        const result = await add("gone", box => {
+          const get = box.served.get.bind(box.served);
+          // Only the first request is served.
+          box.served.get = path => {
+            const body = get(path);
+            box.served.clear();
+            return body;
+          };
+        });
+        expect(result).toEqual({
+          messages: ["error: failed to download pkg@pkg.tgz: 404 Not Found"],
+          requests,
+          keepsIntegrity: true,
+          installed: undefined,
+          exitCode: 1,
+        });
+      });
     });
   });
 

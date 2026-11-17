@@ -1079,7 +1079,6 @@ describe.concurrent("backoff", () => {
       }).toEqual({ requests: 1, ...expected });
       expect(exitCode).toBe(1);
     },
-    30_000,
   );
 
   it("a peer that is bound to a tarball URL does not hold the next peers back", async () => {
@@ -1118,7 +1117,7 @@ describe.concurrent("backoff", () => {
       "url",
     ]);
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 
   it("reports the last attempt when the abbreviated manifest gets no answer", async () => {
     const accepts: string[] = [];

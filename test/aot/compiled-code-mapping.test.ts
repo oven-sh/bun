@@ -69,23 +69,18 @@ function loadSegments(path: string) {
     .map(header => ({ flags: header.flags, start: Number(header.offset), end: Number(header.offset + header.filesz) }));
 }
 
-async function run(cmd: string[]) {
-  await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+async function run(cmd: string[], env: Record<string, string | undefined> = {}) {
+  await using proc = Bun.spawn({ cmd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
-async function build(directory: string) {
+async function build(directory: string, env?: Record<string, string>) {
   const executable = join(directory, "program");
-  const built = await run([
-    bunExe(),
-    "build",
-    "--compile",
-    "--aot",
-    join(directory, "program.ts"),
-    "--outfile",
-    executable,
-  ]);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", join(directory, "program.ts"), "--outfile", executable],
+    env,
+  );
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   return executable;
 }
@@ -767,13 +762,18 @@ const canUnmountProc =
   isLinux && Bun.spawnSync({ cmd: [...withoutProc, "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 
 // AddressSanitizer warns on stderr where it cannot read /proc.
-test.skipIf(!canUnmountProc || isASAN)(
-  "runs without /proc",
-  async () => {
+// The engine finds the stack through `environ`, so Bun must not move the block in these cases.
+test.skipIf(!canUnmountProc || isASAN).each([
+  ["as it is", {}, { BUN_FEATURE_FLAG_NO_ORPHANS: undefined }],
+  ["with no orphans", {}, { BUN_FEATURE_FLAG_NO_ORPHANS: "1" }],
+  ["behind a launcher", { BUN_AOT_WRITES_PROGRAM_ALONE: "1" }, { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: undefined }],
+])(
+  "runs without /proc %s",
+  async (_, envOfBuild, envOfRun) => {
     using dir = tempDir("aot-code-mapping-no-proc", {
       "program.ts": `console.log(require("node:fs").existsSync("/proc/self/exe"), [3, 4].map(x => x * x).join());`,
     });
-    expect(await run([...withoutProc, await build(String(dir))])).toEqual({
+    expect(await run([...withoutProc, await build(String(dir), envOfBuild)], envOfRun)).toEqual({
       stdout: "false 9,16\n",
       stderr: "",
       exitCode: 0,

@@ -1181,9 +1181,8 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
     // The program finds the environment that the launcher found.
     #[cfg(unix)]
     if has_launcher {
-        let mut entries = bun_sys::environ().to_vec();
-        entries.retain(|it| it.to_cstr() != c"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=launcher");
-        bun_sys::set_environ(&entries);
+        // SAFETY: no other thread has started, and nothing holds the block.
+        unsafe { bun_sys::remove_from_environ(c"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=launcher") };
     }
     let _ = FILE_IN_PLACE_OF_EXECUTABLE.set(FileInPlaceOfExecutable {
         path: file.into_boxed_slice(),

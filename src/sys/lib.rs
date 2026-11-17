@@ -7438,7 +7438,7 @@ pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
 pub fn environ() -> &'static [bun_core::CStrRef<'static>] {
     #[cfg(unix)]
     {
-        // SAFETY: a NULL-terminated array of C strings. Bun only replaces it by `set_environ`, which neither changes nor frees it.
+        // SAFETY: a NULL-terminated array of C strings. `set_environ` neither changes nor frees it, and `remove_from_environ` is unsafe.
         unsafe {
             let mut n = 0usize;
             let base: *const *const c_char = bun_core::c_environ();
@@ -7459,7 +7459,7 @@ pub fn environ() -> &'static [bun_core::CStrRef<'static>] {
     }
 }
 
-/// A thread that reads the environment at this moment goes on with the block that it has.
+/// Other threads go on with the block that they have. WebKit needs `/proc` to find the stack if it starts after this.
 #[cfg(unix)]
 pub fn set_environ(entries: &[bun_core::CStrRef<'static>]) {
     use core::sync::atomic::{AtomicPtr, Ordering};
@@ -7470,7 +7470,27 @@ pub fn set_environ(entries: &[bun_core::CStrRef<'static>]) {
     let block: Vec<_> = entries.iter().copied().map(Some).chain([None]).collect();
     let block = block.leak().as_mut_ptr();
     bun_core::asan::ignore_object(block.cast());
+    // `bun_core::c_environ` acquires the entries.
     BLOCK.store(block, Ordering::Release);
+}
+
+/// The block stays where it is.
+///
+/// SAFETY: no other thread has started, and nothing that [`environ`] returned is still in use.
+#[cfg(all(unix, not(bun_locked_environment)))]
+pub unsafe fn remove_from_environ(unwanted: &core::ffi::CStr) {
+    let len = environ().len();
+    let block: *mut Option<bun_core::CStrRef<'static>> = bun_core::c_environ().cast_mut().cast();
+    // SAFETY: `len` writable slots, and the caller rules out readers.
+    let block = unsafe { bun_core::ffi::slice_mut(block, len) };
+    let mut kept = 0;
+    for index in 0..len {
+        if block[index].is_some_and(|entry| entry.to_cstr() != unwanted) {
+            block[kept] = block[index];
+            kept += 1;
+        }
+    }
+    block[kept..].fill(None);
 }
 
 /// Unlike `setenv(3)`, it frees nothing that another thread may be reading.

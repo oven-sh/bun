@@ -194,7 +194,9 @@ pub fn enable() {
     }
     bun_spawn_sys::pdeathsig::set_default(true);
     // For each Bun among the descendants.
-    bun_sys::setenv(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
+    if !env_var::BUN_FEATURE_FLAG_NO_ORPHANS.get().unwrap_or(false) {
+        bun_sys::setenv(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
+    }
 
     // No PR_SET_CHILD_SUBREAPER yet: only the wait loop of spawnSync reaps what it adopts, so `spawnPosix` arms it for each script.
     bun_core::add_exit_callback(on_process_exit);

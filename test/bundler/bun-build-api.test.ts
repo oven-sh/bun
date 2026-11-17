@@ -2806,8 +2806,6 @@ test.concurrent("sloppy-only syntax in a strict output file is an error that say
     "strict.js": `"use strict";\nconsole.log(require("./dep.cjs"));\n`,
     "sloppy.js": `console.log(require("./dep.cjs"));\n`,
     "dep.cjs": `var scope = { value: 1 };\nwith (scope) module.exports = value;\n`,
-    "repeated.js": `console.log(require("./repeated.cjs"));\n`,
-    "repeated.cjs": `function f(a, a) { return a; }\nmodule.exports = f(1, 2);\n`,
     "module-tag.html": `<!doctype html><script type="module" src="./page.js"></script>`,
     // Bun prints one module script for the scripts of a page, also for a tag that has no type.
     "classic-tag.html": `<!doctype html><script src="./dep.cjs"></script>`,
@@ -2827,15 +2825,16 @@ test.concurrent("sloppy-only syntax in a strict output file is an error that say
     { message: "With statements cannot be used in strict mode", at: "dep.cjs:2:1", notes: [{ message, at }] },
   ];
 
-  expect(await logs("repeated.js", { format: "esm" })).toEqual([
+  // The ESM output of a CommonJS entry point ends with `export default`, so only a module loader takes it.
+  expect(await logs("sloppy.js", { format: "esm" })).toEqual([
     {
-      message: 'Duplicate parameter "a" cannot be used with the ESM output format due to strict mode',
-      at: "repeated.cjs:1:15",
+      message: "With statements cannot be used with the ESM output format due to strict mode",
+      at: "dep.cjs:2:1",
       notes: [],
     },
   ]);
-  // ESM output that nothing loads as a module runs as a script, and a `with` statement still goes into it.
-  expect(await logs("sloppy.js", { format: "esm" })).toEqual([]);
+  // This output has no `import` and no `export` statement. It also loads as a script, where a `with` statement runs.
+  expect(await logs("page.js", { format: "esm" })).toEqual([]);
   const entryDirective = 'The "use strict" directive of the entry point makes the whole bundle strict mode code:';
   expect(await logs("strict.js", { format: "cjs" })).toEqual(inStrictMode(entryDirective, "strict.js:1:1"));
   const bannerDirective = 'The "use strict" directive of the banner makes the whole bundle strict mode code.';

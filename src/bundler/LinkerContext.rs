@@ -60,8 +60,10 @@ pub(crate) struct HashbangAndBanner<'a> {
 enum StrictChunk {
     /// Bun loads the scripts of an HTML file with one `<script type="module">`.
     ModuleScript,
-    /// The output format is ESM, and the target is not Bun.
+    /// ESM output in which the linker prints an `import` or `export` statement, so only a module loader takes it.
     EsModule,
+    /// ESM output in which the linker prints neither. Unless a file prints one, a script loader takes it too.
+    EsModuleOrScript,
     /// Bun runs a file that starts with `// @bun` as a module, unless it is `// @bun @bun-cjs`.
     BunModule,
     /// A "use strict" directive of the banner leads the chunk.
@@ -71,11 +73,11 @@ enum StrictChunk {
 }
 
 impl StrictChunk {
-    /// ESM output that nothing loads as a module runs as a script, so it still builds with what it held before this check. To refuse that too is a changed default.
+    /// A chunk that a script loader takes runs there as sloppy mode code, so it still builds with what it held before this check. To refuse that too is a changed default.
     fn refuses(self, kind: bun_ast::SloppyOnlyKind) -> bool {
         use bun_ast::SloppyOnlyKind as Kind;
         match self {
-            StrictChunk::EsModule => {
+            StrictChunk::EsModuleOrScript => {
                 matches!(kind, Kind::RepeatedParameter | Kind::EvalOrArguments)
             }
             _ => true,
@@ -715,7 +717,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             return Some(StrictChunk::BunModule);
         }
         if self.options.output_format.is_always_strict_mode() {
-            return Some(StrictChunk::EsModule);
+            return Some(match self.prints_import_or_export(chunk) {
+                true => StrictChunk::EsModule,
+                false => StrictChunk::EsModuleOrScript,
+            });
         }
         let use_strict = self
             .directives_of_chunk(chunk)
@@ -733,6 +738,26 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         let use_strict = use_strict?;
         self.is_chunk_strict_with(chunk, b"\"use strict\";")
             .then_some(StrictChunk::EntryDirective(use_strict))
+    }
+
+    /// Does the linker print an `import` or `export` statement in the ESM output of `chunk`: one between chunks, or the exports of the entry point? The `import` of an external module, which a file prints, is not asked.
+    fn prints_import_or_export(&self, chunk: &Chunk) -> bool {
+        let js = chunk.content.javascript();
+        if !js.cross_chunk_prefix_stmts.is_empty() || !js.cross_chunk_suffix_stmts.is_empty() {
+            return true;
+        }
+        if !chunk.is_entry_point() {
+            return false;
+        }
+        // As in `generate_entry_point_tail_js`.
+        let entry_point = chunk.entry_point.source_index() as usize;
+        let flags = self.graph.meta.items_flags()[entry_point];
+        flags.wrap == WrapKind::Cjs
+            || !self.graph.meta.items_sorted_and_filtered_export_aliases()[entry_point].is_empty()
+            || Self::chunk_default_export_is_namespace(
+                flags,
+                self.graph.ast.items_flags()[entry_point],
+            )
     }
 
     /// Parses what `post_process_js_chunk` prints around the files of `chunk`, with `directives` for those of the entry point: is a file strict mode code there?
@@ -794,7 +819,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 let text = bstr::BStr::new(syntax.text.slice());
                 let in_strict_mode = format!("{text} cannot be used in strict mode");
                 let (message, note) = match why {
-                    StrictChunk::EsModule => (
+                    StrictChunk::EsModule | StrictChunk::EsModuleOrScript => (
                         format!("{text} cannot be used with the ESM output format due to strict mode"),
                         None,
                     ),

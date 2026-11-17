@@ -774,7 +774,6 @@ it("process.versions", async () => {
     tinycc: "tinycc",
     lolhtml: "lolhtml",
     ares: "cares",
-    zstd: "zstd",
   };
 
   const expectedVersions = {};
@@ -790,6 +789,9 @@ it("process.versions", async () => {
     expect(process.versions).toHaveProperty(name);
     expect(process.versions[name]).toBe(expectedHash);
   }
+
+  // Not linked. It is the version whose output src/zstd reproduces.
+  expect(process.versions.zstd).toBe("1.5.7");
 
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");

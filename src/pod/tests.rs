@@ -188,4 +188,6 @@ fn restricted_bytes_are_still_initialized() {
     assert!(!zeroed::<bool>());
     assert!(zeroed::<*const u8>().is_null());
     assert_eq!(zeroed::<Unaligned<u64>>().get(), 0);
+    assert_eq!(try_zeroed_vec::<u32>(3).unwrap(), [0; 3]);
+    assert_eq!(try_zeroed_vec::<u32>(usize::MAX), None);
 }

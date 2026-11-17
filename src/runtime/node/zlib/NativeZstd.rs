@@ -7,7 +7,7 @@ mod _impl {
     use bun_core::vec::BorrowedCursor;
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
     use bun_jsc::{self as jsc, JsResult};
-    use bun_zstd::{OwnedCCtx, OwnedDCtx, c};
+    use bun_zstd::{Decoder, Encoder, EndDirective, Output, Status};
 
     use crate::node::node_zlib_binding::{
         CompressionContext, CompressionStreamImpl as _, Error, Stream,
@@ -37,11 +37,11 @@ mod _impl {
             }
         }
 
-        /// Per-mode external-allocation footprint, fixed at construction.
+        /// `ZSTD_sizeof_CCtx()` and `ZSTD_sizeof_DCtx()` of a new context of libzstd, which the GC is used to.
         fn external_size_for(mode: NodeMode) -> usize {
             match mode {
-                NodeMode::ZSTD_COMPRESS => 5272,    // estimate of ZSTD_sizeof_CCtx
-                NodeMode::ZSTD_DECOMPRESS => 95968, // estimate of ZSTD_sizeof_DCtx
+                NodeMode::ZSTD_COMPRESS => 5272,
+                NodeMode::ZSTD_DECOMPRESS => 95968,
                 _ => 0,
             }
         }
@@ -106,14 +106,14 @@ mod _impl {
                 write_js_callback.with_async_context_if_needed(global),
             );
 
-            let mut pledged_src_size: u64 = u64::MAX;
+            let mut pledged_src_size = None;
             if pledged_src_size_value.is_number() {
-                pledged_src_size = u64::from(validators::validate_uint32(
+                pledged_src_size = Some(u64::from(validators::validate_uint32(
                     global,
                     pledged_src_size_value,
                     format_args!("pledgedSrcSize"),
                     false,
-                )?);
+                )?));
             }
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
@@ -188,18 +188,18 @@ mod _impl {
     }
 
     enum State {
-        Compress(OwnedCCtx),
-        Decompress(OwnedDCtx),
+        Compress(Box<Encoder>),
+        Decompress(Box<Decoder>),
     }
 
     pub(crate) struct Context {
         mode: NodeMode,
         state: Option<State>,
-        flush: c_int,
+        flush: EndDirective,
         avail_in: usize,
         avail_out: usize,
-        pledged_src_size: u64,
-        error: Option<bun_zstd::ErrorCode>,
+        pledged_src_size: Option<u64>,
+        error: Option<bun_zstd::Error>,
     }
 
     impl Context {
@@ -208,37 +208,32 @@ mod _impl {
             -1,
             c"ERR_ZLIB_DICTIONARY_LOAD_FAILED",
         );
-        const CREATE_FAILED: Error = Error::init(
-            c"Could not initialize zstd instance",
-            -1,
-            c"ERR_ZLIB_INITIALIZATION_FAILED",
-        );
 
         fn new(mode: NodeMode) -> Self {
             Self {
                 mode,
                 state: None,
-                flush: c::ZSTD_e_continue as c_int,
+                flush: EndDirective::Continue,
                 avail_in: 0,
                 avail_out: 0,
-                pledged_src_size: u64::MAX,
+                pledged_src_size: None,
                 error: None,
             }
         }
 
-        fn init(&mut self, pledged_src_size: u64, dictionary: &[u8]) -> Result<(), Error> {
+        fn init(&mut self, pledged_src_size: Option<u64>, dictionary: &[u8]) -> Result<(), Error> {
             // Mirrors node's `state_.reset(ZSTD_createCCtx())`: free the previous
             // context first. `init` is JS-reachable twice on one handle.
             self.state = None;
             self.state = Some(match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;
-                    let mut state = OwnedCCtx::new().ok_or(Self::CREATE_FAILED)?;
+                    let mut state = Box::new(Encoder::new(bun_zstd::DEFAULT_LEVEL));
                     // Node loads the dictionary before setting the pledged size.
                     if !dictionary.is_empty() && state.load_dictionary(dictionary).is_err() {
                         return Err(Self::DICTIONARY_LOAD_FAILED);
                     }
-                    if state.set_pledged_src_size(pledged_src_size).is_err() {
+                    if state.set_pledged_len(pledged_src_size).is_err() {
                         return Err(Error::init(
                             c"Could not set pledged src size",
                             -1,
@@ -248,7 +243,7 @@ mod _impl {
                     State::Compress(state)
                 }
                 NodeMode::ZSTD_DECOMPRESS => {
-                    let mut state = OwnedDCtx::new().ok_or(Self::CREATE_FAILED)?;
+                    let mut state = Box::new(Decoder::new());
                     if !dictionary.is_empty() && state.load_dictionary(dictionary).is_err() {
                         return Err(Self::DICTIONARY_LOAD_FAILED);
                     }
@@ -267,20 +262,6 @@ mod _impl {
             }
             .is_ok()
         }
-
-        const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
-        const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
-
-        /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
-        fn next_input_is_frame(input: &[u8]) -> bool {
-            let n = input.len().min(4);
-            if n == 0 {
-                return false;
-            }
-            input[..n] == Self::ZSTD_MAGICNUMBER[..n]
-                || (input[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
-                    && input[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
-        }
     }
 
     impl CompressionContext for Context {
@@ -296,30 +277,47 @@ mod _impl {
         }
 
         fn set_flush(&mut self, flush: c_int) {
-            self.flush = flush;
+            self.flush = match flush {
+                0 => EndDirective::Continue,
+                1 => EndDirective::Flush,
+                _ => EndDirective::End,
+            };
         }
 
-        fn do_work(&mut self, mut input: &[u8], mut out: BorrowedCursor<'_, u8>) {
+        fn do_work(&mut self, mut input: &[u8], mut cursor: BorrowedCursor<'_, u8>) {
+            /// `ZSTD_NO_FORWARD_PROGRESS_MAX`
+            const IDLE_STEPS_MAX: u32 = 16;
+            // An `ArrayBuffer`, so there is nothing to initialize.
+            let mut out = Output::slice(cursor.ensure_init());
             match &mut self.state {
                 // Driven before `init()`.
                 None => self.error = None,
-                Some(State::Compress(cctx)) => {
-                    let (consumed, result) = cctx.step(input, out.reborrow(), self.flush as c_uint);
+                Some(State::Compress(encoder)) => {
+                    let (consumed, result) = encoder.step(input, &mut out, self.flush);
                     input = &input[consumed..];
                     self.error = result.err();
                 }
-                Some(State::Decompress(dctx)) => loop {
-                    let (consumed, result) = dctx.step(input, out.reborrow());
+                Some(State::Decompress(decoder)) => loop {
+                    let (consumed, result) = decoder.step(input, &mut out);
                     input = &input[consumed..];
-                    // 0 is frame-complete; mirrors the GUNZIP loop in NativeZlib.
-                    if result != Ok(0) || out.capacity() == 0 || !Self::next_input_is_frame(input) {
+                    // Mirrors the GUNZIP loop in NativeZlib.
+                    if result != Ok(Status::Complete)
+                        || out.room() == 0
+                        || !bun_zstd::may_start_frame(input)
+                    {
                         self.error = result.err();
+                        if self.error.is_none() && decoder.idle_steps() >= IDLE_STEPS_MAX {
+                            self.error = Some(match out.room() {
+                                0 => bun_zstd::Error::NoForwardProgressDestFull,
+                                _ => bun_zstd::Error::NoForwardProgressInputEmpty,
+                            });
+                        }
                         break;
                     }
                 },
             }
             self.avail_in = input.len();
-            self.avail_out = out.capacity();
+            self.avail_out = out.room();
         }
 
         fn write_result(&self) -> Result<[u32; 2], Error> {
@@ -327,59 +325,7 @@ mod _impl {
                 None => Ok(
                     [self.avail_out, self.avail_in].map(|n| u32::try_from(n).expect("int cast"))
                 ),
-                Some(err) => Err(Error {
-                    err: err.0 as c_int,
-                    msg: err.message(),
-                    code: match err.0 {
-                        c::ZSTD_error_no_error => c"ZSTD_error_no_error",
-                        c::ZSTD_error_GENERIC => c"ZSTD_error_GENERIC",
-                        c::ZSTD_error_prefix_unknown => c"ZSTD_error_prefix_unknown",
-                        c::ZSTD_error_version_unsupported => c"ZSTD_error_version_unsupported",
-                        c::ZSTD_error_frameParameter_unsupported => {
-                            c"ZSTD_error_frameParameter_unsupported"
-                        }
-                        c::ZSTD_error_frameParameter_windowTooLarge => {
-                            c"ZSTD_error_frameParameter_windowTooLarge"
-                        }
-                        c::ZSTD_error_corruption_detected => c"ZSTD_error_corruption_detected",
-                        c::ZSTD_error_checksum_wrong => c"ZSTD_error_checksum_wrong",
-                        c::ZSTD_error_literals_headerWrong => c"ZSTD_error_literals_headerWrong",
-                        c::ZSTD_error_dictionary_corrupted => c"ZSTD_error_dictionary_corrupted",
-                        c::ZSTD_error_dictionary_wrong => c"ZSTD_error_dictionary_wrong",
-                        c::ZSTD_error_dictionaryCreation_failed => {
-                            c"ZSTD_error_dictionaryCreation_failed"
-                        }
-                        c::ZSTD_error_parameter_unsupported => c"ZSTD_error_parameter_unsupported",
-                        c::ZSTD_error_parameter_combination_unsupported => {
-                            c"ZSTD_error_parameter_combination_unsupported"
-                        }
-                        c::ZSTD_error_parameter_outOfBound => c"ZSTD_error_parameter_outOfBound",
-                        c::ZSTD_error_tableLog_tooLarge => c"ZSTD_error_tableLog_tooLarge",
-                        c::ZSTD_error_maxSymbolValue_tooLarge => {
-                            c"ZSTD_error_maxSymbolValue_tooLarge"
-                        }
-                        c::ZSTD_error_maxSymbolValue_tooSmall => {
-                            c"ZSTD_error_maxSymbolValue_tooSmall"
-                        }
-                        c::ZSTD_error_stabilityCondition_notRespected => {
-                            c"ZSTD_error_stabilityCondition_notRespected"
-                        }
-                        c::ZSTD_error_stage_wrong => c"ZSTD_error_stage_wrong",
-                        c::ZSTD_error_init_missing => c"ZSTD_error_init_missing",
-                        c::ZSTD_error_memory_allocation => c"ZSTD_error_memory_allocation",
-                        c::ZSTD_error_workSpace_tooSmall => c"ZSTD_error_workSpace_tooSmall",
-                        c::ZSTD_error_dstSize_tooSmall => c"ZSTD_error_dstSize_tooSmall",
-                        c::ZSTD_error_srcSize_wrong => c"ZSTD_error_srcSize_wrong",
-                        c::ZSTD_error_dstBuffer_null => c"ZSTD_error_dstBuffer_null",
-                        c::ZSTD_error_noForwardProgress_destFull => {
-                            c"ZSTD_error_noForwardProgress_destFull"
-                        }
-                        c::ZSTD_error_noForwardProgress_inputEmpty => {
-                            c"ZSTD_error_noForwardProgress_inputEmpty"
-                        }
-                        _ => c"ZSTD_error_GENERIC",
-                    },
-                }),
+                Some(err) => Err(Error::init(err.message(), err as c_int, err.name())),
             }
         }
     }

@@ -464,8 +464,7 @@ export type DepName =
   | "rust-argon2"
   | "sqlite"
   | "tinycc"
-  | "zlib"
-  | "zstd";
+  | "zlib";
 
 /**
  * A vendored dependency definition. Lives in scripts/build/deps/<name>.ts.

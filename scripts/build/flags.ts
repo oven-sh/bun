@@ -19,7 +19,7 @@ import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = ["brotli", "zlib", "zstd"];
+export const safeStackDependencies: readonly DepName[] = ["brotli", "zlib"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -298,7 +298,7 @@ export const globalFlags: Flag[] = [
   {
     // cmake's Release/RelWithDebInfo build types append this to
     // CMAKE_<LANG>_FLAGS_<TYPE> automatically. Deps only see globalFlags, so
-    // it must be here — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // it must be here — otherwise every assert() in boringssl/mimalloc/etc.
     // stays live in release. (bun's own NDEBUG in `defines` below is
     // redundant after this, but harmless.)
     flag: "-DNDEBUG",

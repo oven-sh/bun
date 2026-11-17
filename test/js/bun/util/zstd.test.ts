@@ -15,8 +15,8 @@ import zlib from "node:zlib";
 import path from "path";
 
 // A hand-written empty frame: magic, a descriptor without a content size (so it goes through the
-// streaming decoder), the window descriptor (the decoder allocates a window of 2^windowLog bytes before
-// it can produce anything) and one empty raw last block.
+// streaming decoder), the window descriptor (unless all of the frame is there and can go straight to the
+// output, the decoder allocates a window of 2^windowLog bytes) and one empty raw last block.
 const emptyFrameWithWindowLog = (windowLog: number) =>
   new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x00, (windowLog - 10) << 3, 0x01, 0x00, 0x00]);
 const emptyFrameWith16MiBWindow = emptyFrameWithWindowLog(24);
@@ -91,11 +91,11 @@ describe("Zstandard compression", async () => {
       return rss();
     }
 
-    // Warm up until RSS stabilizes (allocator / ASAN quarantine reach steady state).
+    // Warm up until RSS stabilizes (allocator / ASAN's 256 MiB quarantine reach steady state).
     // A leak of the ~4 KiB output buffer per call never converges: every batch adds 40+ MiB.
     let prev = batch();
     let growthMiB = Infinity;
-    for (let round = 0; round < 5; round++) {
+    for (let round = 0; round < 10; round++) {
       const cur = batch();
       growthMiB = (cur - prev) / 1024 / 1024;
       prev = cur;
@@ -413,6 +413,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
         new Response(Buffer.alloc(12 * MiB)).body!.pipeThrough(new CompressionStream("zstd")),
       ).bytes(),
       largeWindow: emptyFrameWith16MiBWindow,
+      largeWindowTruncated: emptyFrameWith16MiBWindow.subarray(0, -1),
     };
     expect(frames.noHeaderSize[4] & 0xe0).toBe(0);
     expect(zstdDecompressSync(frames.largeWindow)).toHaveLength(0);
@@ -441,8 +442,10 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       "decompress headerSizeAboveLimit": outOfMemory,
       "decompressSync noHeaderSize": outOfMemory,
       "decompress noHeaderSize": outOfMemory,
-      "decompressSync largeWindow": outOfMemory,
-      "decompress largeWindow": outOfMemory,
+      "decompressSync largeWindow": 0,
+      "decompress largeWindow": 0,
+      "decompressSync largeWindowTruncated": outOfMemory,
+      "decompress largeWindowTruncated": outOfMemory,
       afterwards: "still works",
       afterwardsAsync: "still works",
     });
@@ -486,8 +489,8 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
 
   it.concurrent("fetch() decompressing a response body", async () => {
     // The first four bodies decompress to 12 MiB: the gzip trailer's size cannot be reserved up front
-    // and every streaming decoder (zlib, brotli, zstd) fails while growing its output. The two
-    // large-window bodies fail inside the codec instead.
+    // and every streaming decoder (zlib, brotli, zstd) fails while growing its output. The
+    // large-window bodies fail inside the codec instead, if it needs the window.
     const zeros = Buffer.alloc(12 * MiB);
     const bodies = {
       gzip: gzipSync(zeros),
@@ -497,11 +500,13 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       zstd: zstdCompressSync(zeros),
       "br-large-window": brotliWith16MiBWindow(zeros),
       "zstd-large-window": emptyFrameWith16MiBWindow,
+      "zstd-large-window-truncated": emptyFrameWith16MiBWindow.subarray(0, -1),
       afterwards: gzipSync(Buffer.from("still works")),
     };
     const encodings: Record<string, string> = {
       "br-large-window": "br",
       "zstd-large-window": "zstd",
+      "zstd-large-window-truncated": "zstd",
       afterwards: "gzip",
     };
 
@@ -530,7 +535,8 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       br: fetchOutOfMemory,
       zstd: fetchOutOfMemory,
       "br-large-window": fetchOutOfMemory,
-      "zstd-large-window": fetchOutOfMemory,
+      "zstd-large-window": "",
+      "zstd-large-window-truncated": fetchOutOfMemory,
       afterwards: "still works",
     });
   });

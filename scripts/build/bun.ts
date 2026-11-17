@@ -36,7 +36,7 @@ import {
 } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
-import { emitRust, windowsShimPath } from "./rust.ts";
+import { emitRust, windowsShimPath, type RustOutputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
@@ -179,7 +179,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, depsByName);
   assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
   depsByName.set(rustArgon2.name, rustArgon2Dep);
-  const rustObjects = emitRust(n, cfg, {
+  const rust = emitRust(n, cfg, {
     codegenOrderOnly: codegen.rustInputs,
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
@@ -432,7 +432,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // export the C++ side touches is reached from those roots.
   const shimInputs = emitShims(n, cfg);
   const depLink = lazyDepObjects(cfg, depObjects);
-  const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
+  const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rust.rlibs, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
@@ -448,7 +448,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
-  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects, aotNativeTestObjects);
+  emitJscPrograms(n, cfg, depsByName, rust, codegenReady, builtinTableObjects, aotNativeTestObjects);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
@@ -475,6 +475,7 @@ function emitJscPrograms(
   n: Ninja,
   cfg: Config,
   deps: ReadonlyMap<DepName, ResolvedDep>,
+  rust: RustOutputs,
   headersReady: string,
   builtinTableObjects: readonly string[],
   aotNativeTestObjects: readonly string[],
@@ -482,7 +483,7 @@ function emitJscPrograms(
   const testPrograms: string[] = [];
   for (const program of jscPrograms(cfg)) {
     n.comment(`─── ${program.name} (JSC standalone program) ───`);
-    const orderOnlyInputs = [headersReady, ...(program.sourcesFrom ?? []).flatMap(name => deps.get(name)!.outputs)];
+    const orderOnlyInputs = [headersReady];
     const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
     for (const { header, files } of program.pch ?? []) {
       const base = prefixes[0]?.prefix;
@@ -501,9 +502,6 @@ function emitJscPrograms(
         ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
       });
     });
-    objects.push(
-      ...(program.cSources ?? []).map(src => cc(n, cfg, src, { flags: program.cflags ?? [], orderOnlyInputs })),
-    );
     const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
     const depLink = lazyDepObjects(
       cfg,
@@ -512,7 +510,7 @@ function emitJscPrograms(
     if (program.name === "testaot") objects.push(...aotNativeTestObjects);
     const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
-      libs: [...(program.libs ?? []), ...from.flatMap(d => d.libs)],
+      libs: [...(program.libs ?? []), ...rust.rlibsFor(program.rustCrates ?? []), ...from.flatMap(d => d.libs)],
       flags: [...computeTargetLinkFlags(cfg), ...program.ldflags, ...systemLibs(cfg)],
     });
     // The file is `<name>[.exe]` at the build root, so `ninja <name>` already

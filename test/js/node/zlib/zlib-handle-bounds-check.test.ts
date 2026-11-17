@@ -402,7 +402,7 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
   test.concurrent.each([
     ["ZSTD_c_stableInBuffer", "createZstdCompress", 1006],
     ["ZSTD_d_stableOutBuffer", "createZstdDecompress", 1001],
-  ])("zstd: init() refuses %s, which makes zstd keep a buffer of the last write", async (_, create, key) => {
+  ])("zstd: init() refuses the experimental %s", async (_, create, key) => {
     expect(
       await run(
         `for (const value of [0, 1]) {
@@ -412,7 +412,10 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
            catch (e) { console.log("threw " + e.code + ": " + e.message); }
          }`,
       ),
-    ).toEqual({ stdout: "true\nthrew ERR_ZLIB_INITIALIZATION_FAILED: Setting parameter failed", exitCode: 0 });
+    ).toEqual({
+      stdout: Array(2).fill("threw ERR_ZLIB_INITIALIZATION_FAILED: Setting parameter failed").join("\n"),
+      exitCode: 0,
+    });
   });
 
   test.concurrent("zstd: a compressor that failed does not read the input of the write that failed", async () => {

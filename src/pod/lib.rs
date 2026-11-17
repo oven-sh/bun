@@ -1,6 +1,7 @@
 #![doc = include_str!("README.md")]
 #![no_std]
 #![feature(transmutability)]
+#![cfg_attr(any(test, feature = "alloc"), feature(allocator_ext))]
 
 #[cfg(any(test, feature = "alloc"))]
 extern crate alloc;
@@ -325,6 +326,14 @@ pub fn cast_slice_mut<A: Pod, B: Pod>(a: &mut [A]) -> &mut [B] {
 pub fn vec_from_bytes<T: AnyBitPattern>(bytes: &[u8]) -> Option<alloc::vec::Vec<T>> {
     let elements: &[Unaligned<T>] = try_cast_slice(bytes)?;
     Some(elements.iter().map(|element| element.get()).collect())
+}
+
+/// `len` zeros, whose pages need not be touched until they are used. `None` if the memory is refused.
+#[cfg(any(test, feature = "alloc"))]
+pub fn try_zeroed_vec<T: Zeroable>(len: usize) -> Option<alloc::vec::Vec<T>> {
+    let zeroed = alloc::boxed::Box::<[T]>::try_new_zeroed_slice(len).ok()?;
+    // SAFETY: `T: Zeroable`.
+    Some(unsafe { zeroed.assume_init() }.into_vec())
 }
 
 #[cfg(test)]

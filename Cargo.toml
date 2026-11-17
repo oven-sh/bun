@@ -10,6 +10,7 @@ members = [
   "src/css",
   "src/errno",
   "src/glob",
+  "src/global_allocator",
   "src/http",
   "src/install",
   "src/install/windows-shim",
@@ -74,6 +75,7 @@ members = [
   "src/http1",
   "src/http_jsc",
   "src/http_types",
+  "src/icu_data",
   "src/ini",
   "src/install_jsc",
   "src/install_types",
@@ -130,6 +132,8 @@ members = [
   "src/uws_sys",
   "src/lsquic_sys",
   "src/zstd",
+  "src/zstd/decoder",
+  "src/zstd/encoder",
   "src/options_types",
   "src/output",
   "src/runtime",
@@ -510,7 +514,11 @@ bun_spawn_sys = { path = "src/spawn_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
 bun_lsquic_sys = { path = "src/lsquic_sys" }
+bun_global_allocator = { path = "src/global_allocator" }
+bun_icu_data = { path = "src/icu_data" }
 bun_zstd = { path = "src/zstd" }
+bun_zstd_decoder = { path = "src/zstd/decoder" }
+bun_zstd_encoder = { path = "src/zstd/encoder" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
@@ -530,6 +538,10 @@ opt-level = 3
 
 # Loops over every byte that is compressed or decompressed.
 [profile.dev.package.bun_deflate]
+opt-level = 3
+[profile.dev.package.bun_zstd_decoder]
+opt-level = 3
+[profile.dev.package.bun_zstd_encoder]
 opt-level = 3
 
 # Runs for every line of a response head and every chunk of a body.

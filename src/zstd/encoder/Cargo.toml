@@ -1,0 +1,25 @@
+[package]
+name = "bun_zstd_encoder"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_highway.workspace = true
+bun_pod = { workspace = true, features = ["alloc"] }
+bun_removable_features.workspace = true
+bun_threading.workspace = true
+bun_zstd_decoder.workspace = true
+
+[[test]]
+name = "encode"
+path = "tests/encode.rs"
+
+[[test]]
+name = "workers"
+path = "tests/workers.rs"

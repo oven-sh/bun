@@ -646,6 +646,20 @@ fn symbol_for(syms: &[Sym], ip: u64) -> Option<&Sym> {
 /// checkpoint where someone asks "did the gate also get updated?"
 type Allowlist = HashMap<String, Option<HashSet<String>>>;
 
+/// The name of the entry for a symbol: its canonical form or, for an instance of a generic function, what precedes
+/// the arguments followed by `<generic-args>`.
+fn allowlist_key(symbol: &str, allowlist: &Allowlist) -> String {
+    let canon = canonicalize_symbol(symbol);
+    if allowlist.contains_key(&canon) {
+        return canon;
+    }
+    let generic = allowlist.keys().find(|key| {
+        key.strip_suffix("<generic-args>")
+            .is_some_and(|function| canon.starts_with(function))
+    });
+    generic.cloned().unwrap_or(canon)
+}
+
 fn load_allowlist_into(path: &Path, out: &mut Allowlist) -> Result<(), String> {
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
@@ -746,7 +760,7 @@ fn record(
         .unwrap_or_else(|| format!("<no-symbol@{ip:#x}>"));
     // Compare canonical forms (Rust hash stripped) but report the raw name —
     // devs grepping objdump need the real mangled string.
-    let canon = canonicalize_symbol(&raw_sym);
+    let canon = allowlist_key(&raw_sym, allowlist);
 
     // Three-way outcome:
     //   not in allowlist                           → violation
@@ -1194,7 +1208,7 @@ fn run() -> Result<bool, String> {
     let hit_canon: HashSet<_> = allowlisted
         .keys()
         .chain(violations.keys())
-        .map(|s| canonicalize_symbol(s))
+        .map(|s| allowlist_key(s, &allowlist))
         .collect();
     let mut stale: Vec<_> = allowlist
         .keys()
@@ -1242,5 +1256,26 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_args_stand_for_the_instances_of_one_function() {
+        let generic = "_RINvNv<rust-hash>3foo4gate4fast<generic-args>";
+        let allowlist = Allowlist::from([(generic.into(), None), ("plain".into(), None)]);
+        let is_listed = |symbol| allowlist.contains_key(&allowlist_key(symbol, &allowlist));
+        assert!(is_listed(
+            "_RINvNvCs1a_3foo4gate4fastmNCNvCs2b_3bar3run0EB4_"
+        ));
+        assert!(is_listed("plain"));
+        assert!(!is_listed(
+            "_RINvNvCs1a_3foo4gate8baselinemNCNvCs2b_3bar3run0EB4_"
+        ));
+        assert!(!is_listed("_RNvCs2b_3bar3run"));
+        assert!(!is_listed("plain_too"));
     }
 }

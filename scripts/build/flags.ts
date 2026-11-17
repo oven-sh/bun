@@ -1996,6 +1996,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the kernel runs over every line of an HTTP response head.",
   },
   {
+    file: "src/jsc/bindings/highway_checksums.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte of what is in a gzip or zlib stream.",
+  },
+  {
     file: "src/jsc/bindings/highway_jpeg.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
@@ -2023,7 +2029,7 @@ export const fileOverrides: FileOverride[] = [
     file: "src/jsc/bindings/highway_zlib.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run over every byte of a zlib or gzip stream.",
+    desc: "Same as highway_json.cpp below: the kernels run in the loops of a DEFLATE stream.",
   },
   {
     file: "src/jsc/bindings/highway_xml.cpp",

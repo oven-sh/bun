@@ -609,7 +609,8 @@ impl Deflater {
 
     fn read_into_window(&mut self, io: &mut Io<'_, '_>) {
         let input = io.take_input(self.window.room());
-        self.checksum.update(self.window.append(input));
+        self.window
+            .append_with(input.len(), |room| self.checksum.copy(input, room));
     }
 
     /// There is `MIN_LOOKAHEAD` afterwards, or no more input.

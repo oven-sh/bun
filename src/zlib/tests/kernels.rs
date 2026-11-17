@@ -6,7 +6,7 @@ use crate::plain;
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_crc32(state: u32, bytes: *const u8, len: usize) -> u64 {
-    assert!(len >= 16 || !cfg!(target_arch = "x86_64"));
+    assert!(len >= 4 || !cfg!(target_arch = "x86_64"));
     if cfg!(target_arch = "x86_64") && len % 2 == 0 {
         // As on a CPU that has no instruction for it.
         return u64::MAX;

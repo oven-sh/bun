@@ -1355,6 +1355,34 @@ unsafe extern "C" fn highway_adler32(adler: u32, p: *const u8, len: usize) -> u3
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_copy_and_crc32(
+    state: u32,
+    p: *const u8,
+    copy: *mut u8,
+    len: usize,
+) -> u64 {
+    // SAFETY: the caller passes a slice, and room for it.
+    unsafe {
+        copy.copy_from_nonoverlapping(p, len);
+        highway_crc32(state, copy, len)
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_copy_and_adler32(
+    adler: u32,
+    p: *const u8,
+    copy: *mut u8,
+    len: usize,
+) -> u32 {
+    // SAFETY: the caller passes a slice, and room for it.
+    unsafe {
+        copy.copy_from_nonoverlapping(p, len);
+        highway_adler32(adler, copy, len)
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize {
     // SAFETY: the caller passes two slices of that length.
     let (a, b) = unsafe { (bytes(a, len), bytes(b, len)) };

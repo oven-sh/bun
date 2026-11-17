@@ -7,6 +7,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { crc32, deflateSync, gunzipSync, gzipSync, inflateSync } from "node:zlib";
+import * as zlibGolden from "../../../node/zlib/zlib-golden/observe";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "../../image/webp-golden/observe";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
@@ -484,42 +485,44 @@ describe("WebP codec: Highway runtime dispatch", () => {
   });
 });
 
-describe("zlib: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_zlib.cpp is compiled five times over on x64 and up to three times on arm64. An emulated
-  // Nehalem cannot multiply polynomials, and gets its CRC-32 from src/highway/zlib.rs.
-  const crcTable = new Uint32Array(256);
-  for (let byte = 0; byte < 256; byte++) {
-    let state = byte;
-    for (let bit = 0; bit < 8; bit++) state = (state >>> 1) ^ (state & 1 ? 0xedb88320 : 0);
-    crcTable[byte] = state;
-  }
+const crcTable = new Uint32Array(256);
+for (let byte = 0; byte < 256; byte++) {
+  let state = byte;
+  for (let bit = 0; bit < 8; bit++) state = (state >>> 1) ^ (state & 1 ? 0xedb88320 : 0);
+  crcTable[byte] = state;
+}
 
-  /** The checksums of the first `length` bytes, for each of `lengths`, which ascend. */
-  function expectedChecksums(bytes: Uint8Array, lengths: number[], seed = 0) {
-    const crcs: number[] = [];
-    const adlers: number[] = [];
-    let state = ~seed;
-    let a = 1;
-    let b = 0;
-    let at = 0;
-    for (const length of lengths) {
-      for (; at < length; at++) {
-        state = crcTable[(state ^ bytes[at]) & 255] ^ (state >>> 8);
-        a = (a + bytes[at]) % 65521;
-        b = (b + a) % 65521;
-      }
-      crcs.push(~state >>> 0);
-      adlers.push(((b << 16) | a) >>> 0);
+/** The checksums of the first `length` bytes, for each of `lengths`, which ascend. */
+function expectedChecksums(bytes: Uint8Array, lengths: number[], seed = 0) {
+  const crcs: number[] = [];
+  const adlers: number[] = [];
+  let state = ~seed;
+  let a = 1;
+  let b = 0;
+  let at = 0;
+  for (const length of lengths) {
+    for (; at < length; at++) {
+      state = crcTable[(state ^ bytes[at]) & 255] ^ (state >>> 8);
+      a = (a + bytes[at]) % 65521;
+      b = (b + a) % 65521;
     }
-    return { crcs, adlers };
+    crcs.push(~state >>> 0);
+    adlers.push(((b << 16) | a) >>> 0);
   }
+  return { crcs, adlers };
+}
 
-  function noise(length: number, mask = 255) {
+const zlibCases = await zlibGolden.loadCases();
+
+describe("zlib: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_checksums.cpp is compiled five times over on x64 and up to three times on arm64. An
+  // emulated Nehalem cannot multiply polynomials, and gets its CRC-32 from src/highway/checksums.rs.
+  function noise(length: number) {
     const bytes = Buffer.alloc(length);
     let state = 1;
     for (let i = 0; i < length; i++) {
       state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-      bytes[i] = (state >>> 24) & mask;
+      bytes[i] = state >>> 24;
     }
     return bytes;
   }
@@ -528,7 +531,7 @@ describe("zlib: Highway runtime dispatch", () => {
   const around = (...lengths: number[]) => lengths.flatMap(length => range(length - 17, length + 18));
   // Every way through the kernels begins or ends at one of these.
   const short = range(0, 700);
-  const medium = around(896, 1248, 1344, 2400, 4096);
+  const medium = around(896, 1152, 1248, 2048, 2208, 2400, 4096, 5552);
   const long = [16383, 16384, 16385, 16399, 16400, 65535, 65536, 65537, 65551, 65552, 131072, 140001];
 
   describe.each([
@@ -575,20 +578,21 @@ describe("zlib: Highway runtime dispatch", () => {
     }
   });
 
-  test.each([
-    { windowBits: 9, expected: [810, 1753982364] },
-    { windowBits: 15, expected: [48000, 1076502908] },
-  ])("matches are found after a window of $windowBits bits has slid", ({ windowBits, expected }) => {
-    const input = noise(5 << windowBits, 0x03);
-    const deflated = deflateSync(input, { windowBits });
-    expect([deflated.length, crc32(deflated)]).toEqual(expected);
-    expect(inflateSync(deflated).equals(input)).toBe(true);
+  const { inParts, fewerIfSlow, sample } = zlibGolden;
+
+  // Parts of src/zlib are compiled with BMI2 and without. Each case is inflated again, and many have windows that slide.
+  test.each(inParts(fewerIfSlow(sample(zlibCases.whole, 8), 5), 10))("deflate and inflate, part %#", some => {
+    expect(zlibGolden.deflateDifferences(some)).toBe("");
+  });
+
+  test.each(inParts(fewerIfSlow(sample(zlibCases.damaged, 20), 3), 2))("inflate what is damaged, part %#", some => {
+    expect(zlibGolden.damagedDifferences(some)).toBe("");
   });
 });
 
 describe("DEFLATE: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_zlib.cpp has code for each width of vector, for what is left after it, and for the
-  // start of a long input. Parts of src/deflate/{decompressor,block}.rs are compiled with BMI2 and without.
+  // src/jsc/bindings/highway_checksums.cpp has code for each width of vector, and for what does not fill one. Parts of
+  // src/deflate/{decompressor,block}.rs are compiled with BMI2 and without.
   const library = "libdeflate";
   const bytes = Buffer.alloc(140_000);
   for (let i = 0, state = 1; i < bytes.length; i++) {
@@ -601,22 +605,33 @@ describe("DEFLATE: Highway runtime dispatch", () => {
     for (const more of [-1, 0, 1, 15, 16, 17, 48, 100, 127]) lengths.push(power + more, 3 * power + more);
   }
   lengths.push(65_536, 65_537, 139_000);
+  function checksumsOf(input: Uint8Array) {
+    const { crcs, adlers } = expectedChecksums(input, [input.length]);
+    return { crc: crcs[0], adler: adlers[0] };
+  }
   const parts = (bytes: Buffer) => lengths.map((length, i) => bytes.subarray(i % 67, (i % 67) + length));
 
   test("CRC-32", () => {
     const inputs = parts(bytes);
     const trailers = inputs.map(input => Buffer.from(Bun.gzipSync(input, { library, level: 0 })).subarray(-8));
-    expect(trailers.map(trailer => trailer.readUInt32LE())).toEqual(inputs.map(input => crc32(input)));
+    expect(trailers.map(trailer => trailer.readUInt32LE())).toEqual(inputs.map(input => checksumsOf(input).crc));
   });
 
   test("Adler-32", () => {
+    const inputs = [...parts(bytes), ...parts(Buffer.alloc(bytes.length, 255))];
+    expect(inputs.map(input => Bun.hash.adler32(input))).toEqual(inputs.map(input => checksumsOf(input).adler));
+  });
+
+  test.each([0, 384, 1120, 1216, 5504])("up to the last readable byte, from %i bytes on", least => {
     // What a buffer can still grow into is not readable.
     const last = new Uint8Array(new ArrayBuffer(65_536, { maxByteLength: 131_072 }));
     last.set(bytes.subarray(0, last.length));
-    const ends = [0, 5376, 5504].flatMap(chunk => Array.from({ length: 70 }, (_, i) => last.subarray(-chunk - i - 1)));
-    const inputs = [...parts(bytes), ...parts(Buffer.alloc(bytes.length, 255)), ...ends];
-    const trailers = inputs.map(input => deflateSync(input, { level: 0 }).subarray(-4));
-    expect(inputs.map(input => Bun.hash.adler32(input))).toEqual(trailers.map(trailer => trailer.readUInt32BE()));
+    const ends = Array.from({ length: 70 }, (_, i) => last.subarray(-least - i - 1));
+    const expected = ends.map(checksumsOf);
+    expect(ends.map(end => ({ crc: Bun.hash.crc32(end), adler: Bun.hash.adler32(end) }))).toEqual(expected);
+    const crcs = ends.map(end => gzipSync(end, { level: 0 }).subarray(-8).readUInt32LE());
+    const adlers = ends.map(end => deflateSync(end, { level: 0 }).subarray(-4).readUInt32BE());
+    expect(crcs.map((crc, i) => ({ crc, adler: adlers[i] }))).toEqual(expected);
   });
 
   test.each([0, 4])("round trip with strategy %i of zlib", strategy => {

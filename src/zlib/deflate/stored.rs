@@ -33,7 +33,7 @@ impl Deflater {
             io.out.append(from_window);
             let from_input = io.take_input(len - from_window.len());
             self.window.block_start += from_window.len() as i64;
-            self.checksum.copy(from_input, &mut io.out);
+            self.checksum.copy(from_input, io.out.reborrow());
         }
 
         let copied = input.split_at(input.len() - io.input.len()).0;

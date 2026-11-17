@@ -1,5 +1,5 @@
 use bun_core::vec::BorrowedBuf;
-use bun_highway::zlib::{adler32, copy_and_adler32, copy_and_crc32, crc32};
+use bun_highway::checksums::{adler32, copy_and_adler32, copy_and_crc32, crc32};
 
 use crate::plain;
 use crate::samples::Random;

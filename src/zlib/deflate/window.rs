@@ -1,5 +1,6 @@
 //! The input that is being compressed, behind what matches are looked for in.
 
+use bun_core::vec::BorrowedCursor;
 use bun_deflate::format::{MAX_MATCH_LEN, MIN_MATCH_LEN};
 use bun_highway::common_prefix_length;
 
@@ -73,16 +74,21 @@ impl Window {
         (2 * self.size - self.end) as usize
     }
 
-    /// Returns the copy. There is `room()` for it.
-    pub(super) fn append(&mut self, input: &[u8]) -> &[u8] {
-        debug_assert!(input.len() <= self.room());
-        let range = self.end as usize..self.end as usize + input.len();
-        self.end = range.end as u32;
-        vec::write_at(&mut self.bytes, range.start, input);
-        if self.bytes.len() < range.end + PADDING {
-            self.bytes.resize(range.end + PADDING, 0);
+    /// There is `room()` for it.
+    pub(super) fn append(&mut self, input: &[u8]) {
+        self.append_with(input.len(), |mut room| room.append(input));
+    }
+
+    /// The `len` bytes that `write` fills its argument with.
+    #[inline]
+    pub(super) fn append_with(&mut self, len: usize, write: impl FnOnce(BorrowedCursor<'_, u8>)) {
+        debug_assert!(len <= self.room());
+        let start = self.end as usize;
+        self.end += len as u32;
+        vec::write_with(&mut self.bytes, start, len, write);
+        if self.bytes.len() < start + len + PADDING {
+            self.bytes.resize(start + len + PADDING, 0);
         }
-        self.bytes.get(range).unwrap_or_default()
     }
 
     /// Moves the first `len` bytes of the upper half down.

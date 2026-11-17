@@ -817,6 +817,29 @@ _ZN3bun6N_AVX2L10UnfilterUpEPhPKhm                                             [
 
 
 # ----------------------------------------------------------------------------
+# Bun CRC-32 and Adler-32 (src/jsc/bindings/highway_checksums.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets,
+# and CPUID in OrWider() for *Vpclmulqdq. (16 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_SSE4L5Crc32EjPKhm                      [PCLMULQDQ]
+_ZN3bun6N_SSE4L12CopyAndCrc32EjPKhPhm            [PCLMULQDQ]
+_ZN3bun6N_AVX2L5Crc32EjPKhm                      [AVX, PCLMULQDQ]
+_ZN3bun6N_AVX2L12CopyAndCrc32EjPKhPhm            [AVX, PCLMULQDQ]
+_ZN3bun6N_AVX2L15Crc32VpclmulqdqEjPKhm           [AVX, AVX2, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun6N_AVX2L22CopyAndCrc32VpclmulqdqEjPKhPhm  [AVX, AVX2, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun6N_AVX3L5Crc32EjPKhm                      [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ]
+_ZN3bun6N_AVX3L12CopyAndCrc32EjPKhPhm            [AVX, AVX2, AVX512F, AVX512VL, PCLMULQDQ]
+_ZN3bun9N_AVX3_DLL5Crc32EjPKhm                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun9N_AVX3_DLL12CopyAndCrc32EjPKhPhm         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun6N_AVX2L7Adler32EjPKhm                    [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX2L14CopyAndAdler32EjPKhPhm          [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX3L7Adler32EjPKhm                    [AVX, AVX2, AVX512BW, AVX512F, BMI2]
+_ZN3bun6N_AVX3L14CopyAndAdler32EjPKhPhm          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
+_ZN3bun9N_AVX3_DLL7Adler32EjPKhm                 [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI, BMI2]
+_ZN3bun9N_AVX3_DLL14CopyAndAdler32EjPKhPhm       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun DEFLATE (src/deflate, src/zlib).
 # Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (7 symbols)
 # ----------------------------------------------------------------------------
@@ -857,26 +880,10 @@ _ZN3bun6N_AVX224WebpReconstructSubblocksEPKhS2_S2_S2_PKsPh                     [
 
 
 # ----------------------------------------------------------------------------
-# Bun zlib kernels (src/jsc/bindings/highway_zlib.cpp).
-# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (17 symbols)
+# Bun zlib (src/jsc/bindings/highway_zlib.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
 # ----------------------------------------------------------------------------
-_ZN3bun6N_AVX212CopyAndCrc32EjPKhPhm                                           [AVX, AVX2, BMI2, PCLMULQDQ]
-_ZN3bun6N_AVX214CopyAndAdler32EjPKhPhm                                         [AVX, AVX2, BMI2]
-_ZN3bun6N_AVX218SubtractSaturatingEPtmt                                        [AVX, AVX2]
-_ZN3bun6N_AVX25Crc32EjPKhm                                                     [AVX, AVX2, BMI2, PCLMULQDQ]
-_ZN3bun6N_AVX27Adler32EjPKhm                                                   [AVX, AVX2, BMI2]
-_ZN3bun6N_AVX312CopyAndCrc32EjPKhPhm                                           [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ]
-_ZN3bun6N_AVX314CopyAndAdler32EjPKhPhm                                         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
-_ZN3bun6N_AVX318SubtractSaturatingEPtmt                                        [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX35Crc32EjPKhm                                                     [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ]
-_ZN3bun6N_AVX37Adler32EjPKhm                                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
-_ZN3bun6N_SSE412CopyAndCrc32EjPKhPhm                                           [PCLMULQDQ]
-_ZN3bun6N_SSE45Crc32EjPKhm                                                     [PCLMULQDQ]
-_ZN3bun9N_AVX3_DL12CopyAndCrc32EjPKhPhm                                        [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
-_ZN3bun9N_AVX3_DL14CopyAndAdler32EjPKhPhm                                      [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
-_ZN3bun9N_AVX3_DL18SubtractSaturatingEPtmt                                     [AVX, AVX512BW, AVX512F]
-_ZN3bun9N_AVX3_DL5Crc32EjPKhm                                                  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
-_ZN3bun9N_AVX3_DL7Adler32EjPKhm                                                [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+_ZN3bun6N_AVX218SubtractSaturatingEPtmt  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------

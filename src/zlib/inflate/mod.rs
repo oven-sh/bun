@@ -305,8 +305,7 @@ impl Inflater {
 
     fn hand_out_pending(&mut self, out: &mut Output<'_, '_>) {
         let bytes = self.window.hand_out(out.room());
-        self.checksum.update(bytes);
-        out.buf.unfilled().append(bytes);
+        self.checksum.copy(bytes, out.buf.unfilled());
     }
 
     #[inline]
@@ -452,7 +451,7 @@ impl Inflater {
                 State::Stored(left) => {
                     self.hand_out(out);
                     let bytes = bits.take_bytes(out.room().min(left.into()));
-                    self.checksum.copy(bytes, &mut out.buf.unfilled());
+                    self.checksum.copy(bytes, out.buf.unfilled());
                     out.unrecorded += bytes.len();
                     let left = left - bytes.len() as u16;
                     if left != 0 {
@@ -602,8 +601,7 @@ impl Inflater {
         while let len @ 1.. = run.left.min(out.room()) {
             let piece = periods.get(run.phase..).unwrap_or_default();
             let piece = piece.get(..len).unwrap_or(piece);
-            self.checksum.update(piece);
-            out.buf.unfilled().append(piece);
+            self.checksum.copy(piece, out.buf.unfilled());
             run.left -= piece.len();
             run.phase = (run.phase + piece.len()) % run.repeated.distance;
         }

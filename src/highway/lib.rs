@@ -2,6 +2,7 @@
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 #![feature(core_io_borrowed_buf)]
 
+pub mod checksums;
 pub mod webp;
 pub mod zlib;
 
@@ -1723,12 +1724,12 @@ pub unsafe fn parse_mappings(
     }
 }
 
-pub use zlib::crc32;
+pub use checksums::crc32;
 
 /// zlib's Adler-32 of `bytes`.
 #[inline(always)]
 pub fn adler32(bytes: &[u8]) -> u32 {
-    zlib::adler32(1, bytes)
+    checksums::adler32(1, bytes)
 }
 
 /// Compiles a function, and what is inlined into it, a second time for CPUs that have BMI2.

@@ -209,7 +209,12 @@ void CryptoAlgorithmRSA_OAEP::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&&
     KeyData result;
     switch (format) {
     case CryptoKeyFormat::Jwk: {
-        JsonWebKey jwk = rsaKey.exportJwk();
+        auto exported = rsaKey.exportJwk();
+        if (!exported) {
+            exceptionCallback(OperationError, ""_s);
+            return;
+        }
+        auto& jwk = *exported;
         switch (rsaKey.hashAlgorithmIdentifier()) {
         case CryptoAlgorithmIdentifier::SHA_1:
             jwk.alg = String(ALG1);

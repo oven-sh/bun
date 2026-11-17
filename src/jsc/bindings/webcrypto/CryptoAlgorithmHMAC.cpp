@@ -227,9 +227,15 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
     KeyData result;
     switch (format) {
     case CryptoKeyFormat::RawSecret:
-    case CryptoKeyFormat::Raw:
-        result = Vector<uint8_t>(hmacKey.key());
+    case CryptoKeyFormat::Raw: {
+        Vector<uint8_t> bytes;
+        if (!bytes.tryAppend(hmacKey.key().span())) {
+            exceptionCallback(OperationError, ""_s);
+            return;
+        }
+        result = WTF::move(bytes);
         break;
+    }
     case CryptoKeyFormat::Jwk: {
         JsonWebKey jwk = hmacKey.exportJwk();
         if (jwk.k.isNull()) {

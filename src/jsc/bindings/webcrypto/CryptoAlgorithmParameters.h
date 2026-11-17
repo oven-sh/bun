@@ -107,7 +107,7 @@ struct CryptoAlgorithmRsaPssParams {
     size_t saltLength;
 };
 
-// A normalized algorithm. It owns its bytes and refers to nothing in the JS heap.
+// A normalized algorithm. It owns its buffers and holds no JS object.
 struct CryptoAlgorithmParameters {
     using Dictionary = std::variant<std::monostate,
         CryptoAlgorithmAeadParams,

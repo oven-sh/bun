@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 import { createCipheriv, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
@@ -347,75 +347,158 @@ describe("oversized inputs", () => {
   });
 
   // A copy that is not made cannot run out of memory. VmHWM: on Linux, a child inherits maxRSS from its parent.
-  it.skipIf(!isLinux)("does not copy namedCurve, or an iv next to an oversized additionalData", async () => {
-    const expected = {
-      'subtle.generateKey({ name: "ECDSA", namedCurve }, true, ["sign"])': "NotSupportedError",
-      'subtle.importKey("raw", small, { name: "ECDH", namedCurve }, true, [])': "DataError",
-      'subtle.deriveKey(pbkdf2, key, { name: "ECDH", namedCurve }, true, [])': "NotSupportedError",
-      'SubtleCrypto.supports("importKey", { name: "ECDH", namedCurve })': true,
-      'subtle.encrypt({ name: "AES-GCM", iv, additionalData }, key, small)': "OperationError",
-      'subtle.encrypt({ name: "ChaCha20-Poly1305", iv, additionalData }, key, small)': "OperationError",
-    };
-    const script = `
-      let additionalData;
-      try {
-        additionalData = new Uint8Array(2 ** 31);
-      } catch {
-        console.log("SKIP");
-        process.exit(0);
-      }
-      const { subtle } = crypto;
-      const iv = Buffer.alloc(32 * 1024 * 1024, "a");
-      const namedCurve = iv.toString("latin1");
-      const small = new Uint8Array(8);
-      const key = await subtle.importKey("raw", small, "PBKDF2", false, ["deriveKey"]);
-      const pbkdf2 = { name: "PBKDF2", hash: "SHA-256", salt: small, iterations: 1 };
-      const peakKiB = () => Number(/VmHWM:\\s+(\\d+)/.exec(require("fs").readFileSync("/proc/self/status", "utf8"))[1]);
-      const before = peakKiB();
-      const results = {};
-      for (const call of ${JSON.stringify(Object.keys(expected))}) {
-        const result = await Promise.resolve(eval(call)).catch(e => e.name);
-        const copied = peakKiB() - before > iv.length / 1024 / 2;
-        results[call] = copied ? "copied" : result;
-      }
-      console.log(JSON.stringify(results));
-    `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    if (stdout.trim() !== "SKIP") expect(JSON.parse(stdout)).toEqual(expected);
-    expect(exitCode).toBe(0);
+  describe.skipIf(!isLinux)("peak memory", () => {
+    async function copiesOfBig(setUp: string, calls: string[]) {
+      const script = `
+        const { subtle } = crypto;
+        const big = Buffer.alloc(32 * 1024 * 1024, "a");
+        const small = new Uint8Array(8);
+        const key = await subtle.importKey("raw", small, "PBKDF2", false, ["deriveKey"]);
+        ${setUp}
+        const peak = () => 1024 * /VmHWM:\\s+(\\d+)/.exec(require("fs").readFileSync("/proc/self/status", "utf8"))[1];
+        const results = {};
+        for (const call of ${JSON.stringify(calls)}) {
+          const before = peak();
+          const result = await Promise.resolve(eval(call)).catch(e => e.name);
+          results[call] = { result, copies: Math.round((peak() - before) / big.length) };
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    }
+
+    it.concurrent("namedCurve is not copied by a call that starts no job", async () => {
+      const expected = {
+        'subtle.generateKey({ name: "ECDSA", namedCurve }, true, ["sign"])': { result: "NotSupportedError", copies: 0 },
+        'subtle.importKey("raw", small, { name: "ECDH", namedCurve }, true, [])': { result: "DataError", copies: 0 },
+        'subtle.deriveKey(pbkdf2, key, { name: "ECDH", namedCurve }, true, [])': {
+          result: "NotSupportedError",
+          copies: 0,
+        },
+        'SubtleCrypto.supports("importKey", { name: "ECDH", namedCurve })': { result: true, copies: 0 },
+      };
+      const setUp = `
+        const namedCurve = big.toString("latin1");
+        const pbkdf2 = { name: "PBKDF2", hash: "SHA-256", salt: small, iterations: 1 };
+      `;
+      expect(await copiesOfBig(setUp, Object.keys(expected))).toEqual(expected);
+    });
+
+    it.concurrent("supports copies no member", async () => {
+      const algorithms = {
+        '"encrypt", { name: "AES-GCM", iv: big, additionalData: big }': true,
+        '"decrypt", { name: "ChaCha20-Poly1305", iv: big, additionalData: big }': true,
+        '"encrypt", { name: "AES-CBC", iv: big }': true,
+        '"encrypt", { name: "AES-CTR", counter: big, length: 64 }': true,
+        '"encrypt", { name: "RSA-OAEP", label: big }': true,
+        '"sign", { name: "ML-DSA-44", context: big }': true,
+        '"deriveBits", { name: "HKDF", hash: "SHA-256", salt: big, info: big }, 8': true,
+        '"deriveKey", { name: "PBKDF2", hash: "SHA-256", salt: big, iterations: 1 }, "ChaCha20-Poly1305"': true,
+        '"generateKey", { name: "RSA-PSS", hash: "SHA-256", modulusLength: 1024, publicExponent: big }': true,
+        '"wrapKey", { name: "AES-GCM", iv: big }, "AES-GCM"': true,
+      };
+      const expected = Object.fromEntries(
+        Object.entries(algorithms).map(([args, result]) => [`SubtleCrypto.supports(${args})`, { result, copies: 0 }]),
+      );
+      expect(await copiesOfBig("", Object.keys(expected))).toEqual(expected);
+    });
+
+    it.concurrent("iv is not copied next to an oversized additionalData", async () => {
+      const expected = {
+        'subtle.encrypt({ name: "AES-GCM", iv: big, additionalData }, key, small)': {
+          result: "OperationError",
+          copies: 0,
+        },
+        'subtle.encrypt({ name: "ChaCha20-Poly1305", iv: big, additionalData }, key, small)': {
+          result: "OperationError",
+          copies: 0,
+        },
+        'SubtleCrypto.supports("encrypt", { name: "AES-CBC", iv: additionalData })': { result: false, copies: 0 },
+      };
+      const setUp = `
+        let additionalData;
+        try {
+          additionalData = new Uint8Array(2 ** 31);
+        } catch {
+          console.log('"SKIP"');
+          process.exit(0);
+        }
+      `;
+      const results = await copiesOfBig(setUp, Object.keys(expected));
+      if (results !== "SKIP") expect(results).toEqual(expected);
+    });
+
+    it.concurrent("wrapKey copies a raw key once", async () => {
+      const expected = {
+        'subtle.wrapKey("raw", bigKey, wrapper, { name: "AES-CBC", iv: small })': {
+          result: "OperationError",
+          copies: 1,
+        },
+      };
+      const setUp = `
+        const bigKey = await subtle.generateKey({ name: "HMAC", hash: "SHA-256", length: big.length * 8 }, true, ["sign"]);
+        const wrapper = await subtle.importKey("raw", new Uint8Array(16), "AES-CBC", false, ["wrapKey"]);
+      `;
+      expect(await copiesOfBig(setUp, Object.keys(expected))).toEqual(expected);
+    });
   });
 
-  // Only debug builds have the option. It does not cap a WebAssembly.Memory or a base64 string.
-  it.skipIf(!isDebug)("rejects when the copy of an input cannot be allocated", async () => {
+  it.skipIf(!isDebug && (isASAN || !isLinux))("rejects when a copy cannot be allocated", async () => {
     const tooLarge = "OperationError: Input data is too large";
+    const failed = "OperationError: The operation failed for an operation-specific reason";
     const expected = {
       'subtle.encrypt({ name: "AES-GCM", iv: small }, key, big)': tooLarge,
       'subtle.encrypt({ name: "AES-GCM", iv: small, additionalData: big }, key, small)': tooLarge,
       'subtle.digest("SHA-256", big)': tooLarge,
-      'subtle.unwrapKey("raw", small, key, { name: "AES-GCM", iv: small }, { name: "ECDH", namedCurve }, true, [])':
-        tooLarge,
-      'SubtleCrypto.supports("encrypt", { name: "AES-GCM", iv: big })': false,
+      "subtle.digest(bigString, small)": "NotSupportedError: Unrecognized algorithm name",
+      'subtle.unwrapKey("raw", small, key, gcm, { name: "ECDH", namedCurve: bigString }, true, [])': tooLarge,
+      'subtle.wrapKey("jwk", hmacKey, key, gcm)': failed,
+      'subtle.wrapKey("jwk", rsaKey, key, gcm)': failed,
+      // The keys fit under the cap of a debug build. A string of their base64 (the cap, plus a header) does not.
+      ...(!isDebug && {
+        'subtle.wrapKey("raw", hmacKey, key, gcm)': failed,
+        'subtle.wrapKey("spki", rsaKey, key, gcm)': failed,
+      }),
+      'SubtleCrypto.supports("encrypt", { name: "AES-GCM", iv: big })': true,
     };
+    // Debug builds have a cap, which leaves out WebAssembly.Memory and base64 strings. Others use up the address space.
+    const MiB = 1024 * 1024;
+    const limit = (isDebug ? 4 : 16) * MiB;
+    const keySize = (isDebug ? 3 : 24) * MiB;
     const script = `
       const { subtle } = crypto;
-      const big = new Uint8Array(new WebAssembly.Memory({ initial: 128 }).buffer);
-      const namedCurve = Buffer.from(big.buffer).toString("base64");
+      const big = new Uint8Array(new WebAssembly.Memory({ initial: ${(2 * limit) / 65536} }).buffer).fill(0xff);
+      const bigString = Buffer.from(big.buffer).toString("base64");
       const small = new Uint8Array(16);
-      const key = await subtle.importKey("raw", small, "AES-GCM", false, ["encrypt", "unwrapKey"]);
+      const gcm = { name: "AES-GCM", iv: small };
+      const key = await subtle.importKey("raw", small, "AES-GCM", false, ["encrypt", "wrapKey", "unwrapKey"]);
+      const keyBytes = Buffer.from(big.buffer, 0, ${keySize});
+      const hmacKey = await subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+      const rsaJwk = { kty: "RSA", n: keyBytes.toString("base64url"), e: "AQAB" };
+      const rsaKey = await subtle.importKey("jwk", rsaJwk, { name: "RSA-PSS", hash: "SHA-256" }, true, ["verify"]);
+      const held = [];
+      Bun.gc(true);
+      try {
+        while (${!isDebug}) held.push(new ArrayBuffer(${limit}));
+      } catch {}
       const results = {};
       for (const call of ${JSON.stringify(Object.keys(expected))})
         results[call] = await Promise.resolve(eval(call)).catch(e => e.name + ": " + e.message);
       console.log(JSON.stringify(results));
     `;
+    const launcher = isDebug ? [] : ["sh", "-c", 'ulimit -c 0 && ulimit -v 4194304 && exec "$0" "$@"'];
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * 1024 * 1024) },
+      cmd: [...launcher, bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: isDebug ? String(limit) : undefined },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+    expect(stdout.trim() || stderr).toStartWith("{");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -100,7 +100,7 @@ Bun.cron.parse("0 9 * * Monday-Friday");
 Bun.cron.parse("0 0 1 January *");
 ```
 
-Both `0` and `7` mean Sunday in the weekday field.
+Both `0` and `7` mean Sunday in the weekday field. A range can end in `SUN`: `FRI-SUN` is `5-7`.
 
 ### Predefined nicknames
 

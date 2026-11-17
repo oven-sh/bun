@@ -311,7 +311,11 @@ fn parse_field(
         } else if let Some((low @ [_, ..], high)) = strings::split_once_char(base, b'-')
             && !strings::contains_char(high, b'-')
         {
-            (value(low)?, value(high)?)
+            match (value(low)?, value(high)?) {
+                // `FRI-SUN` is `5-7`. `5-0` descends.
+                (low @ 1.., 0) if named(high).is_some() => (low, 7),
+                range => range,
+            }
         } else {
             let low = value(base)?;
             (low, if step.is_some() { max } else { low })

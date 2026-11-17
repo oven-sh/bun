@@ -1805,6 +1805,11 @@ describe("Bun.cron.parse", () => {
     expect(results.map(t => new Date(t).getUTCDay())).toEqual([1, 3, 5, 1, 3, 5]);
   });
 
+  test("FRI-SUN is 5-7", () => {
+    const from = Date.UTC(2025, 0, 13, 0, 0, 0); // Monday
+    expect(nextN("0 0 * * FRI-SUN", from, 6)).toEqual(nextN("0 0 * * 5-7", from, 6));
+  });
+
   test("day 7 and SUN both schedule on Sundays", () => {
     const from = Date.UTC(2025, 0, 13, 0, 0, 0); // Monday
     expect(nextN("0 0 * * 7", from, 3)).toEqual(nextN("0 0 * * SUN", from, 3));

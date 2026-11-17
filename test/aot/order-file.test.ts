@@ -203,8 +203,14 @@ if (process.argv[2] === "stay") setInterval(() => {}, 1000);
     for (const end = Date.now() + 120_000; !listsFirst() && stays.exitCode === null && Date.now() < end;)
       await Bun.sleep(10);
     expect({ listsFirst: listsFirst(), exitCode: stays.exitCode }).toEqual({ listsFirst: true, exitCode: null });
+    // The file lists `first` before the process prints what it returns.
+    let printed = "";
+    for await (const chunk of stays.stdout) {
+      printed += Buffer.from(chunk).toString();
+      if (printed.endsWith("\n")) break;
+    }
+    expect(printed).toBe("8\n");
     stays.kill("SIGKILL");
-    expect(await stays.stdout.text()).toBe("8\n");
     await stays.exited;
     expect(readFileSync(written, "utf8")).toContain(" first\n");
     const missing = await run([executable], { BUN_AOT_ORDER_OUT: join(String(dir), "missing", "file") });

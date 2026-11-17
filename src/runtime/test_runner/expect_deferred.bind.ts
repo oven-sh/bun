@@ -1,12 +1,12 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-export default b.module({ rustPath: "crate::test_runner::expect_core::expect_deferred" });
+export default b.module({ rustPath: "crate::test_runner::expect::expect_deferred" });
 
 const js = { capability: "js", throws: true } as const;
 
 /** A matcher call waiting on a promise. */
 export const ExpectDeferred = b.class({
-  rustPath: "crate::test_runner::expect_core::expect_deferred::ExpectDeferred",
+  rustPath: "crate::test_runner::expect::expect_deferred::ExpectDeferred",
   internalFields: ["expect", "call", "promise", "callSite", "awaited", "journal"],
 });
 

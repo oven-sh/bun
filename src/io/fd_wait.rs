@@ -5,6 +5,7 @@ use core::marker::PhantomPinned;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+use bun_collections::ArrayHashMap;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::linux::EPOLL;
 use bun_sys::{self as sys, E, Fd, FdExt as _};
@@ -126,6 +127,8 @@ pub struct FdWait {
     interest: Interest,
     /// From `park` to `unpark`. Otherwise `Fd::INVALID`, which the kernel refuses.
     parked: JobFd,
+    /// Of the last time it was armed.
+    ticket: Ticket,
     /// Why the wait ended without `parked` being ready.
     failed: Option<sys::Error>,
     /// Other threads use the job, and free it, while the frames that parked it return.
@@ -155,12 +158,13 @@ impl FdWait {
             owner: Owner::new(),
             interest,
             parked: JobFd::borrowed(Fd::INVALID),
+            ticket: NO_JOB,
             failed: None,
             _pin: PhantomPinned,
         }
     }
 
-    /// SAFETY: the caller has the job. After `Ok` nothing uses or moves it until `resume`, or closes `fd` while another descriptor shares its description: epoll could not remove the entry.
+    /// SAFETY: the caller has the job. After `Ok` nothing uses or moves it until `resume`.
     pub unsafe fn park(this: *mut Self, fd: JobFd) -> sys::Result<()> {
         let watcher = Watcher::start()?;
         // SAFETY: fn contract. The IO thread gets the job from the queue, `cancel` keeps to `owner` until it is armed.
@@ -213,6 +217,27 @@ impl FdWait {
                 (*this).failed = failed;
                 WorkPool::schedule(&raw mut (*this).task);
             }
+        }
+    }
+}
+
+/// What the kernel has in place of an address. An epoll entry outlives its job if script closes the
+/// descriptor while a duplicate is open: it can no longer be removed.
+type Ticket = u64;
+const NO_JOB: Ticket = 0;
+
+/// The jobs that the IO thread has armed and not given back.
+struct Armed(ArrayHashMap<Ticket, *mut FdWait>);
+
+impl Armed {
+    fn wake(
+        &mut self,
+        ticket: Ticket,
+        failed: impl FnOnce(&JobFd, Interest) -> Option<sys::Error>,
+    ) {
+        if let Some((_, wait)) = self.0.fetch_swap_remove(&ticket) {
+            // SAFETY: `tick` removes a job before it gives it back.
+            unsafe { FdWait::wake(wait, failed(&(*wait).parked, (*wait).interest)) };
         }
     }
 }
@@ -286,20 +311,28 @@ impl Watcher {
     fn tick(&self) {
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("IO Watcher"));
 
+        let mut armed = Armed(ArrayHashMap::new());
+        let mut ticket = NO_JOB;
         loop {
             let mut changes = Changes::new();
             let mut pending = self.pending.pop_batch().iterator();
             while let Some(wait) = NonNull::new(pending.next()).map(NonNull::as_ptr) {
-                // SAFETY: only this thread gives a parked job to the pool, and `park` requires what `remove` needs.
+                // SAFETY: only this thread gives a parked job to the pool.
                 unsafe {
                     let interest = (*wait).interest;
                     let fd = &mut (*wait).parked;
                     if (*wait).owner.pass(State::Queued, State::Armed) {
-                        match changes.add(self, fd, interest, wait) {
-                            Ok(()) => fd.registered = true,
+                        ticket += 1;
+                        match changes.add(self, fd, interest, ticket) {
+                            Ok(()) => {
+                                fd.registered = true;
+                                (*wait).ticket = ticket;
+                                armed.0.insert(ticket, wait);
+                            }
                             Err(err) => FdWait::wake(wait, Some(err)),
                         }
                     } else {
+                        armed.0.swap_remove(&(*wait).ticket);
                         if core::mem::take(&mut fd.registered) {
                             changes.remove(self, fd.fd, interest);
                         }
@@ -308,7 +341,7 @@ impl Watcher {
                     }
                 }
             }
-            changes.wait(self);
+            changes.wait(self, &mut armed);
         }
     }
 }
@@ -331,8 +364,7 @@ impl Watcher {
         }
         let poller = sys::File::from_fd(Fd::from_native(raw));
         let events = EPOLL::IN | EPOLL::ET | EPOLL::ERR | EPOLL::HUP;
-        let no_job = core::ptr::null_mut();
-        epoll_ctl(&poller, EPOLL::CTL_ADD, waker.get_fd(), events, no_job)?;
+        epoll_ctl(&poller, EPOLL::CTL_ADD, waker.get_fd(), events, NO_JOB)?;
         Ok(poller)
     }
 
@@ -347,13 +379,13 @@ fn epoll_ctl(
     op: c_int,
     fd: Fd,
     events: u32,
-    wait: *mut FdWait,
+    ticket: Ticket,
 ) -> sys::Result<()> {
     let mut event = libc::epoll_event {
         events,
-        u64: wait as u64,
+        u64: ticket,
     };
-    // SAFETY: the kernel copies `event` and does not follow `wait`.
+    // SAFETY: the kernel copies `event`.
     let rc = unsafe { libc::epoll_ctl(poller.fd().native(), op, fd.native(), &raw mut event) };
     match sys::get_errno(rc) {
         E::SUCCESS => Ok(()),
@@ -367,13 +399,12 @@ impl Changes {
         Self
     }
 
-    /// SAFETY: `wait` is live until it is reported or removed.
-    unsafe fn add(
+    fn add(
         &mut self,
         watcher: &Watcher,
         fd: &JobFd,
         interest: Interest,
-        wait: *mut FdWait,
+        ticket: Ticket,
     ) -> sys::Result<()> {
         log!("register({})", fd.fd);
         let interest = match interest {
@@ -386,14 +417,14 @@ impl Changes {
         } else {
             EPOLL::CTL_ADD
         };
-        epoll_ctl(&watcher.poller, op, fd.fd, events, wait)
+        epoll_ctl(&watcher.poller, op, fd.fd, events, ticket)
     }
 
     fn remove(&mut self, watcher: &Watcher, fd: Fd, _: Interest) {
         watcher.remove(fd);
     }
 
-    fn wait(self, watcher: &Watcher) {
+    fn wait(self, watcher: &Watcher, armed: &mut Armed) {
         let mut events: [libc::epoll_event; 256] = [bun_core::ffi::zeroed(); 256];
         // SAFETY: `events` is writable for its length.
         let rc = unsafe {
@@ -411,14 +442,10 @@ impl Changes {
         }
 
         // The waker is edge-triggered: no need to read its counter.
-        for event in events[..rc as usize].iter().filter(|it| it.u64 != 0) {
-            let wait = event.u64 as *mut FdWait;
-            // SAFETY: one-shot, and `park` requires what it takes to remove the entry of a job that left.
-            unsafe {
-                let failed = (event.events & EPOLL::ERR != 0)
-                    .then(|| pending_error((*wait).parked.fd, (*wait).interest));
-                FdWait::wake(wait, failed);
-            }
+        for event in &events[..rc as usize] {
+            armed.wake(event.u64, |fd, interest| {
+                (event.events & EPOLL::ERR != 0).then(|| pending_error(fd.fd, interest))
+            });
         }
     }
 }
@@ -484,7 +511,7 @@ impl Changes {
         Self(Vec::with_capacity(256))
     }
 
-    fn push(&mut self, fd: Fd, interest: Interest, flags: u16, wait: *mut FdWait) {
+    fn push(&mut self, fd: Fd, interest: Interest, flags: u16, ticket: Ticket) {
         let mut change: KEvent = bun_core::ffi::zeroed();
         change.ident = fd.native() as _;
         change.filter = match interest {
@@ -492,30 +519,28 @@ impl Changes {
             Interest::Writable => libc::EVFILT_WRITE,
         };
         change.flags = flags;
-        change.udata = wait as usize as _;
+        change.udata = ticket as usize as _;
         self.0.push(change);
     }
 
-    /// SAFETY: `wait` is live until it is reported or removed.
-    unsafe fn add(
+    fn add(
         &mut self,
         _: &Watcher,
         fd: &JobFd,
         interest: Interest,
-        wait: *mut FdWait,
+        ticket: Ticket,
     ) -> sys::Result<()> {
         log!("register({})", fd.fd);
         let flags = libc::EV_ADD | libc::EV_ONESHOT;
-        self.push(fd.fd, interest, flags, wait);
+        self.push(fd.fd, interest, flags, ticket);
         Ok(())
     }
 
-    /// No data: the job may be gone when the kernel answers with ENOENT or EBADF.
     fn remove(&mut self, _: &Watcher, fd: Fd, interest: Interest) {
-        self.push(fd, interest, libc::EV_DELETE, core::ptr::null_mut());
+        self.push(fd, interest, libc::EV_DELETE, NO_JOB);
     }
 
-    fn wait(self, watcher: &Watcher) {
+    fn wait(self, watcher: &Watcher, armed: &mut Armed) {
         let mut events = self.0;
         let changes = c_int::try_from(events.len()).expect("int cast");
         let capacity = c_int::try_from(events.capacity()).expect("int cast");
@@ -548,15 +573,11 @@ impl Changes {
             if event.filter == libc::EVFILT_MACHPORT {
                 continue;
             }
-            let wait = event.udata as usize as *mut FdWait;
-            if wait.is_null() {
-                continue;
-            }
-            // A change that failed: xnu adds EV_ERROR to its flags, FreeBSD replaces them.
-            let failed = (event.flags & libc::EV_ERROR != 0)
-                .then(|| sys::Error::from_code_int(event.data as c_int, sys::Tag::kevent));
-            // SAFETY: one-shot, and EV_DELETE or close() removed the entry of a job that left.
-            unsafe { FdWait::wake(wait, failed) };
+            armed.wake(event.udata as usize as Ticket, |_, _| {
+                // A change that failed: xnu adds EV_ERROR to its flags, FreeBSD replaces them.
+                (event.flags & libc::EV_ERROR != 0)
+                    .then(|| sys::Error::from_code_int(event.data as c_int, sys::Tag::kevent))
+            });
         }
     }
 }

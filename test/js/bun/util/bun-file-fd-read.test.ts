@@ -105,6 +105,36 @@ describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket
   });
 });
 
+// epoll keeps the entry while the pipe is open elsewhere, and only the closed number could remove it.
+test.skipIf(!isLinux)(
+  "a pipe gets ready after the read that waited for it was cancelled and its fd closed",
+  async () => {
+    using dir = tempDir("bun-file-fd-read", { stale: {}, fence: {} });
+    const script = `
+    import { openFifo, untilWatched } from ${JSON.stringify(join(import.meta.dir, "..", "io", "fifo-helpers.ts"))};
+    import { writeSync } from "node:fs";
+    using stale = openFifo("stale");
+    await using holder = Bun.spawn({ cmd: ["cat"], stdio: ["pipe", "ignore", "ignore", stale.reader] });
+    const worker = new Worker("data:text/javascript,Bun.file(" + stale.reader + ").text()");
+    await untilWatched(stale.reader);
+    stale.close(stale.reader);
+    worker.terminate();
+    await new Promise(resolve => worker.addEventListener("close", resolve));
+    writeSync(stale.writer, "x");
+
+    // The same thread reports both, in order.
+    using fence = openFifo("fence");
+    const text = Bun.file(fence.reader).slice(0, 1).text();
+    await untilWatched(fence.reader);
+    writeSync(fence.writer, "y");
+    console.log(await text);
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "y\n", stderr: "", exitCode: 0 });
+  },
+);
+
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 // FUSE, /proc/kmsg and trace_pipe do this, and need root.

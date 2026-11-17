@@ -109,7 +109,7 @@ JSWebView* JSWebView::create(Structure* structure, WebCore::JSDOMGlobalObject* g
     // moved the impl into m_wrapped; read it back via wrapped(). The Weak's
     // owner is our existing activity-count predicate — same one the backend
     // routing tables use.
-    instance->wrapped().setWrapper(instance, &webViewWeakOwner(), nullptr);
+    instance->wrapped().setWrapper(instance, &webViewWeakOwner());
     return instance;
 }
 

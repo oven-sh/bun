@@ -3593,7 +3593,7 @@ private:
         if (!readStringData(name))
             return JSValue();
         auto exception = DOMException::create(message->string(), name->string());
-        JSValue wrapper = getJSValue(exception);
+        JSValue wrapper = getJSValue(exception.get());
         addTerminalToObjectPool(wrapper);
         return wrapper;
     }

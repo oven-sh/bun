@@ -31,25 +31,12 @@ template<> URLPatternOptions convertDictionary<URLPatternOptions>(JSGlobalObject
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     URLPatternOptions result;
-    JSValue ignoreCaseValue;
-    if (isNullOrUndefined)
-        ignoreCaseValue = jsUndefined();
-    else {
-        ignoreCaseValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "ignoreCase"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!ignoreCaseValue.isUndefined()) {
-        result.ignoreCase = convert<IDLBoolean>(lexicalGlobalObject, ignoreCaseValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.ignoreCase = false;
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
+        return result;
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "ignoreCase"_s), result.ignoreCase);
+    RETURN_IF_EXCEPTION(throwScope, {});
     return result;
 }
 

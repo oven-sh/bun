@@ -2021,6 +2021,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
   },
   {
+    file: "src/jsc/bindings/highway_zlib.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte of a zlib or gzip stream.",
+  },
+  {
     file: "src/jsc/bindings/highway_xml.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,

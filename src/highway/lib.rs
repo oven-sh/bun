@@ -2,6 +2,7 @@
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
 pub mod webp;
+pub mod zlib;
 
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;

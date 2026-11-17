@@ -1476,10 +1476,17 @@ it.skipIf(!isLinux)("--hot leaves the dev server of an HTML route its directory 
   const writes = watchesOf(runner.pid, root).map(line => (parseInt(/ mask:(\S+)/.exec(line)![1], 16) & 2) !== 0);
   expect(writes.sort()).toEqual([false, true]);
 
+  // The bundle once it has `text`, or the last bundle before the deadline.
+  const bundleWith = async (text: string) => {
+    const deadline = Date.now() + 30_000;
+    let last = await bundle();
+    while (!last.includes(text) && Date.now() < deadline) last = await bundle();
+    return last;
+  };
   replaceFile["a rename"](join(root, "c.ts"), `export const c = "client 2";`);
-  while (!(await bundle()).includes("client 2"));
+  expect(await bundleWith("client 2")).toContain("client 2");
   writeFileSync(join(root, "c.ts"), `export const c = "client 3";`);
-  while (!(await bundle()).includes("client 3"));
+  expect(await bundleWith("client 3")).toContain("client 3");
 });
 
 // Only inotify reports the changed entry's name, and PATH_MAX is 1024 on macOS.

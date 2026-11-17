@@ -5,27 +5,12 @@ import { mkdirSync, readdirSync, readlinkSync, realpathSync, renameSync, writeFi
 import { join } from "node:path";
 
 describe("--hot with many directories", () => {
-  const saves: [string, (path: string, text: string) => Promise<number>][] = [
-    ["updated", (path, text) => Bun.write(path, text)],
-  ];
-  // On Linux only a save by rename takes a file off the watchlist, and the reload puts it back.
-  if (isLinux) {
-    saves.push([
-      "replaced",
-      async (path, text) => {
-        writeFileSync(path + ".tmp", text);
-        renameSync(path + ".tmp", path);
-        return text.length;
-      },
-    ]);
-  }
-
   // TODO: fix watcher thread exit handling so the main thread waits for the
   // watcher thread to exit. This causes a crash inside the libc exit() function
   // that triggers in ASAN.
-  test.skipIf(isCI && isASAN).each(saves)(
-    "handles 129 directories being %s simultaneously",
-    async (_, save) => {
+  test.skipIf(isCI && isASAN)(
+    "handles 129 directories being updated simultaneously",
+    async () => {
       // Create initial test structure
       await using tmpdir = tempDir("hot-many-dirs", {
         "entry.js": `console.log('Initial load');`,
@@ -89,7 +74,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
           const filePath = join(tmpdir, dirName, "index.js");
 
           updatePromises.push(
-            save(filePath, `export const value${i} = ${i};\nexport const timestamp${i} = ${timestamp};`),
+            Bun.write(filePath, `export const value${i} = ${i};\nexport const timestamp${i} = ${timestamp};`),
           );
         }
 
@@ -113,6 +98,54 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     },
     30000,
   ); // 30 second timeout
+
+  // On Linux only a save by rename takes a file off the watchlist, and the reload puts it back.
+  // A run prints the lowest version among the modules, so a run for an earlier round does not count.
+  test.skipIf(!isLinux || (isCI && isASAN))("reloads 129 modules that are replaced by rename at once", async () => {
+    await using tmpdir = tempDir("hot-many-dirs-rename", {});
+    const rounds = 3;
+    const modules = Array.from({ length: 129 }, (_, i) => `dir-${i.toString().padStart(4, "0")}`);
+    for (const name of modules) {
+      mkdirSync(join(tmpdir, name));
+      writeFileSync(join(tmpdir, name, "index.js"), `export const version = 0;`);
+    }
+    writeFileSync(
+      join(tmpdir, "entry.js"),
+      `
+${modules.map((name, i) => `import * as dir${i} from './${name}/index.js';`).join("\n")}
+const version = Math.min(${modules.map((_, i) => `dir${i}.version`).join(", ")});
+console.log("Loaded at version " + version);
+if (version === ${rounds}) process.exit(0);
+`,
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      cwd: tmpdir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const iter = forEachLine(proc.stdout);
+    const loadedAt = async (version: number) => {
+      while (true) {
+        const { value: line, done } = await iter.next();
+        if (done) throw new Error(`--hot exited before version ${version} (exit ${proc.exitCode})`);
+        if (line === `Loaded at version ${version}`) return;
+      }
+    };
+
+    await loadedAt(0);
+    for (let round = 1; round <= rounds; round++) {
+      for (const name of modules) {
+        const file = join(tmpdir, name, "index.js");
+        writeFileSync(file + ".tmp", `export const version = ${round};`);
+        renameSync(file + ".tmp", file);
+      }
+      await loadedAt(round);
+    }
+    expect(await proc.exited).toBe(0);
+  });
 
   // The watchlist owns one descriptor per watched file, closed only when the
   // entry is evicted or the watcher shuts down. Re-transpiles during a reload

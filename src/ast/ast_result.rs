@@ -113,9 +113,21 @@ pub struct Ast<'a> {
 /// Syntax that strict code cannot hold (a `with` statement, a repeated parameter), found in sloppy code.
 #[derive(Clone, Copy)]
 pub struct SloppyOnlySyntax {
+    pub kind: SloppyOnlyKind,
     pub range: Range,
     /// What the syntax is, as the start of a message: "With statements", before "cannot be used in strict mode".
     pub text: StoreStr,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SloppyOnlyKind {
+    WithStatement,
+    DeleteOfName,
+    /// A label, a name that nothing declares, or a name that a direct `eval` pins: no renamer moves it.
+    ReservedWord,
+    RepeatedParameter,
+    /// A declaration of `eval` or `arguments`, or an assignment to one of them.
+    EvalOrArguments,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,

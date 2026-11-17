@@ -3482,6 +3482,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     pub(crate) fn report_legacy_html_comment(&mut self) {
+        if self.options.module_graph_scan {
+            return;
+        }
         let notes = self.why_es_module();
         self.log().add_range_error_fmt_with_notes(
             Some(self.source),
@@ -3493,6 +3496,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Runs after hoisting: only then is the strict mode of every scope final.
     fn report_duplicate_function_declarations(&mut self) {
+        if self.options.module_graph_scan {
+            return;
+        }
         let mut why_module: Option<bun_ast::Data> = None;
         for (enclosing, replaced, replacing) in core::mem::take(&mut self.replaced_functions) {
             let scope = enclosing.scope;
@@ -4941,42 +4947,53 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         let is_strict = enclosing.scope.strict_mode.has_early_errors();
         // Sloppy code matters to a bundle only: see `record_sloppy_only_syntax`.
-        if !is_strict && !self.options.bundle {
+        if self.options.module_graph_scan || (!is_strict && !self.options.bundle) {
             return;
         }
-        let mut can_be_transformed = false;
-        let text: &'a [u8] = match feature {
-            StrictModeFeature::DeleteBareName => b"Delete of a bare identifier",
-            StrictModeFeature::WithStatement => b"With statements",
-            StrictModeFeature::ForInVarInit => {
-                can_be_transformed = true;
-                b"Variable initializers inside for-in loops"
+        use js_ast::SloppyOnlyKind as Kind;
+        // `None`: sloppy code has it only where the output holds it in another form, or not at all.
+        let (kind, text): (Option<Kind>, &'a [u8]) = match feature {
+            StrictModeFeature::DeleteBareName => {
+                (Some(Kind::DeleteOfName), b"Delete of a bare identifier")
             }
-            StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
-                in self.arena,
-                "Declarations with the name \"{}\"",
-                bstr::BStr::new(detail)
-            )
-            .into_bump_str()
-            .as_bytes(),
-            StrictModeFeature::AssignToEvalOrArguments => bun_alloc::arena_format!(
-                in self.arena,
-                "Assignments to \"{}\"",
-                bstr::BStr::new(detail)
-            )
-            .into_bump_str()
-            .as_bytes(),
-            StrictModeFeature::ReservedWord => bun_alloc::arena_format!(
-                in self.arena,
-                "\"{}\" is a reserved word and",
-                bstr::BStr::new(detail)
-            )
-            .into_bump_str()
-            .as_bytes(),
-            StrictModeFeature::LegacyOctalLiteral => b"Legacy octal literals",
-            StrictModeFeature::LegacyOctalEscape => b"Legacy octal escape sequences",
-            StrictModeFeature::IfElseFunctionStmt => b"Function declarations inside if statements",
-            StrictModeFeature::LabelFunctionStmt => b"Function declarations inside labels",
+            StrictModeFeature::WithStatement => (Some(Kind::WithStatement), b"With statements"),
+            StrictModeFeature::ForInVarInit => (None, b"Variable initializers inside for-in loops"),
+            StrictModeFeature::EvalOrArguments => (
+                Some(Kind::EvalOrArguments),
+                bun_alloc::arena_format!(
+                    in self.arena,
+                    "Declarations with the name \"{}\"",
+                    bstr::BStr::new(detail)
+                )
+                .into_bump_str()
+                .as_bytes(),
+            ),
+            StrictModeFeature::AssignToEvalOrArguments => (
+                Some(Kind::EvalOrArguments),
+                bun_alloc::arena_format!(
+                    in self.arena,
+                    "Assignments to \"{}\"",
+                    bstr::BStr::new(detail)
+                )
+                .into_bump_str()
+                .as_bytes(),
+            ),
+            StrictModeFeature::ReservedWord => (
+                Some(Kind::ReservedWord),
+                bun_alloc::arena_format!(
+                    in self.arena,
+                    "\"{}\" is a reserved word and",
+                    bstr::BStr::new(detail)
+                )
+                .into_bump_str()
+                .as_bytes(),
+            ),
+            StrictModeFeature::LegacyOctalLiteral => (None, b"Legacy octal literals"),
+            StrictModeFeature::LegacyOctalEscape => (None, b"Legacy octal escape sequences"),
+            StrictModeFeature::IfElseFunctionStmt => {
+                (None, b"Function declarations inside if statements")
+            }
+            StrictModeFeature::LabelFunctionStmt => (None, b"Function declarations inside labels"),
         };
 
         if is_strict {
@@ -4991,13 +5008,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     bstr::BStr::new(where_)
                 ),
             );
-        } else if !can_be_transformed {
-            self.record_sloppy_only_syntax(r, text);
+        } else if let Some(kind) = kind {
+            self.record_sloppy_only_syntax(kind, r, text);
         }
     }
 
     /// `text` names syntax at `r` of sloppy code that strict code cannot hold: an error if the output is strict, which for a bundle the linker knows.
-    pub(crate) fn record_sloppy_only_syntax(&mut self, r: bun_ast::Range, text: &'a [u8]) {
+    pub(crate) fn record_sloppy_only_syntax(
+        &mut self,
+        kind: js_ast::SloppyOnlyKind,
+        r: bun_ast::Range,
+        text: &'a [u8],
+    ) {
         if self.options.strict_output {
             let why: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
                 Some(self.source),
@@ -5013,6 +5035,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         } else if self.options.bundle {
             self.sloppy_only_syntax.push(js_ast::SloppyOnlySyntax {
+                kind,
                 range: r,
                 text: js_ast::StoreStr::new(text),
             });
@@ -5074,14 +5097,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         why_es_module(self.source, self.es_module_keyword, what)
     }
 
-    /// `options.module_type`, but from the path for an extension that decides: one caller takes the option from "package.json" alone.
     pub(crate) fn module_type_by_extension_or_package(&self) -> options::ModuleType {
-        match self.source.path.name().ext {
-            b".mjs" | b".mts" => options::ModuleType::Esm,
-            b".cjs" | b".cts" => options::ModuleType::Cjs,
-            b".js" | b".ts" => self.options.module_type,
-            _ => options::ModuleType::Unknown,
-        }
+        crate::parse::parse_entry::module_type_by_extension_or_package(
+            self.source.path.name().ext,
+            self.options.module_type,
+        )
     }
 
     /// Strict code whose early errors the parser reports: see `StrictModeKind::has_early_errors`.

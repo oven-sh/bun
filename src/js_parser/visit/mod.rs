@@ -792,7 +792,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 "Duplicate parameter \"{}\"",
                 bstr::BStr::new(name)
             );
-            self.record_sloppy_only_syntax(range, text.into_bump_str().as_bytes());
+            self.record_sloppy_only_syntax(
+                js_ast::SloppyOnlyKind::RepeatedParameter,
+                range,
+                text.into_bump_str().as_bytes(),
+            );
             return;
         }
         self.log().add_range_error_fmt(

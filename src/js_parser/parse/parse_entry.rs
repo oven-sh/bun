@@ -85,6 +85,19 @@ impl<'a> ParsedOnly<'_, 'a> {
     }
 }
 
+/// `module_type`, but from the extension where it decides: one caller of the parser takes the option from "package.json" alone.
+pub fn module_type_by_extension_or_package(
+    extension: &[u8],
+    module_type: options::ModuleType,
+) -> options::ModuleType {
+    match extension {
+        b".mjs" | b".mts" => options::ModuleType::Esm,
+        b".cjs" | b".cts" => options::ModuleType::Cjs,
+        b".js" | b".ts" => module_type,
+        _ => options::ModuleType::Unknown,
+    }
+}
+
 /// Module record flags found while parsing.
 #[derive(Clone, Copy, Default)]
 pub struct ModuleSyntax {
@@ -163,6 +176,8 @@ pub struct Options<'a> {
     pub output_format: options::Format,
     /// The output always loads as strict code, so the parser reports `Ast::sloppy_only_syntax` itself. For a bundle that is linked, the linker does.
     pub strict_output: bool,
+    /// The caller reads only which files import which, and runs or prints none of them. A strict mode early error is for the parse that does.
+    pub module_graph_scan: bool,
 
     pub transform_only: bool,
 
@@ -275,6 +290,7 @@ impl<'a> Options<'a> {
             jsc_builtin_syntax: self.jsc_builtin_syntax,
             output_format: self.output_format,
             strict_output: self.strict_output,
+            module_graph_scan: self.module_graph_scan,
             transform_only: self.transform_only,
             import_meta_glob: self.import_meta_glob,
             import_meta_main_value: self.import_meta_main_value,
@@ -356,6 +372,7 @@ impl<'a> Options<'a> {
             jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             strict_output: false,
+            module_graph_scan: false,
             transform_only: false,
             import_meta_glob: None,
             import_meta_main_value: None,
@@ -2594,10 +2611,7 @@ impl<'a> Parser<'a> {
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(parsed) = parsed_for_cache {
-                // The path and the package decide if a legacy HTML comment is an error, and the key of the cache has neither.
-                let is_decided_by_source =
-                    !p.depends_on_more_than_source() && p.lexer.legacy_html_comment_range.len == 0;
-                *parsed = is_decided_by_source.then_some(ParsedForCache {
+                *parsed = (!p.depends_on_more_than_source()).then_some(ParsedForCache {
                     exports_kind,
                     uses_test_api,
                     imports_vitest,

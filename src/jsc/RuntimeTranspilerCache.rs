@@ -7,6 +7,7 @@ use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
+use bun_js_parser::parse::parse_entry::module_type_by_extension_or_package;
 use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
 use bun_js_printer::analyze_transpiled_module::ModuleInfo;
 use bun_paths::resolve_path::{self as path_handler, platform};
@@ -921,6 +922,10 @@ impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
 
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
+        // The module type decides how a file runs, and with the extension if its legacy HTML comment is an error.
+        let module_type = parser_options.module_type;
+        let by_extension = module_type_by_extension_or_package(source.path.name().ext, module_type);
+        features_hasher.update(&[module_type as u8, by_extension as u8]);
         let features_hash = features_hasher.final_();
         parser_options.hash_test_features_for_runtime_transpiler(&mut features_hasher);
         let test_features_hash = features_hasher.final_();

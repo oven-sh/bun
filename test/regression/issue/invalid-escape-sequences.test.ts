@@ -300,13 +300,14 @@ describe("invalid-escape caret points at the backslash (#31134)", () => {
       expectCol: 7,
     },
     // Legacy-octal `\08`/`\09`. Sloppy mode allows them, so the error needs
-    // strict mode:
+    // strict mode. There the file still runs, and `bun build` reports them:
     {
       name: "\\08 double-quote with prefix",
       source: '"use strict"; var a = "aaaaa\\08";',
       msg: "Legacy octal escape sequences cannot be used in strict mode",
       pattern: "\\08",
       expectCol: 29,
+      args: ["build", "--no-bundle"],
     },
     {
       name: "\\08 double-quote without prefix",
@@ -314,6 +315,7 @@ describe("invalid-escape caret points at the backslash (#31134)", () => {
       msg: "Legacy octal escape sequences cannot be used in strict mode",
       pattern: "\\08",
       expectCol: 24,
+      args: ["build", "--no-bundle"],
     },
     {
       name: "\\09 single-quote with prefix",
@@ -321,13 +323,14 @@ describe("invalid-escape caret points at the backslash (#31134)", () => {
       msg: "Legacy octal escape sequences cannot be used in strict mode",
       pattern: "\\09",
       expectCol: 29,
+      args: ["build", "--no-bundle"],
     },
   ];
 
-  test.each(cases)("$name → column $expectCol", ({ source, msg, pattern, expectCol }) => {
+  test.each(cases)("$name → column $expectCol", ({ source, msg, pattern, expectCol, args = [] }) => {
     using dir = tempDir("caret-pos", { "test.js": source });
     const { stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), join(dir, "test.js")],
+      cmd: [bunExe(), ...args, join(dir, "test.js")],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",

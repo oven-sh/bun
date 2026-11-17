@@ -489,16 +489,17 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
-  // A production build prints ES modules for the server and for the browser. An ES module cannot hold what
-  // only sloppy mode code can hold, such as a `with` statement.
-  test.concurrent.each(["server.ts", "client.ts"])(
-    "sloppy-only syntax in a file that %s imports is a build error",
-    async importer => {
-      const imports = (file: string) => (file === importer ? `import value from "./sloppy.cjs";` : `const value = 1;`);
-      using dir = tempDir("bake-production-sloppy-only-syntax", {
-        "sloppy.cjs": `var scope = { value: 1 };\nwith (scope) module.exports = value;\n`,
-        "client.ts": `${imports("client.ts")}\nconsole.log("client loaded", value);`,
-        "server.ts": `
+  // A production build prints ES modules for the server and for the browser. An ES module cannot hold a
+  // repeated parameter, which only sloppy mode code can have. Bun runs the module for the server.
+  test.concurrent.each([
+    ["server.ts", "cannot be used in strict mode"],
+    ["client.ts", "cannot be used with the ESM output format due to strict mode"],
+  ])("sloppy-only syntax in a file that %s imports is a build error", async (importer, why) => {
+    const imports = (file: string) => (file === importer ? `import value from "./sloppy.cjs";` : `const value = 1;`);
+    using dir = tempDir("bake-production-sloppy-only-syntax", {
+      "sloppy.cjs": `function f(a, a) { return a; }\nmodule.exports = f(1, 2);\n`,
+      "client.ts": `${imports("client.ts")}\nconsole.log("client loaded", value);`,
+      "server.ts": `
         ${imports("server.ts")}
         export function render(req, meta) {
           return new Response(String(meta.pageModule.default()) + value);
@@ -507,26 +508,25 @@ export default function () {
           return { files: { "index.html": "<body>" + meta.pageModule.default() + value + "</body>" } };
         }
       `,
-        "routes/index.ts": `export default () => "homepage";`,
-        "app.ts": `
+      "routes/index.ts": `export default () => "homepage";`,
+      "app.ts": `
         const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
         export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
       `,
-      });
+    });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "--app", "./app.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain("error: With statements cannot be used with the ESM output format due to strict mode");
-      expect(normalizePath(stderr)).toContain("/sloppy.cjs:2:1");
-      expect(exitCode).toBe(1);
-    },
-  );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: Duplicate parameter "a" ${why}\n`);
+    expect(normalizePath(stderr)).toContain("/sloppy.cjs:1:15");
+    expect(exitCode).toBe(1);
+  });
 
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {

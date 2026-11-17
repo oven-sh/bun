@@ -2301,6 +2301,9 @@ pub mod parse_worker {
         // The development server sends its browser bundle as a module script and has no link step to check it.
         opts.strict_output =
             output_format == options::Format::InternalBakeDev && !target.is_server_side();
+        // `bun test --changed` and `--analyze` set this: they read the imports of each file and print nothing.
+        opts.module_graph_scan = topts.ignore_module_resolution_errors;
+        opts.features.allow_legacy_octals = opts.module_graph_scan;
         opts.features.minify_syntax = topts.minify_syntax;
         opts.features.is_library = topts.is_library;
         opts.features.minify_identifiers = topts.minify_identifiers;

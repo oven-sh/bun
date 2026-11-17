@@ -416,25 +416,23 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
-  // A file that does not parse is not in the module graph, so a test that reaches a changed file only
-  // through it is not run, and the exit code is 0. The test has to run and fail: #46695 has that change.
-  test.failing(
-    "a dependency with a syntax error does not hide the tests that reach a changed file through it",
-    async () => {
-      using dir = tempDir("test-changed-syntax-error", {
-        "package.json": JSON.stringify({ name: "octal" }),
-        "value.mjs": `export default 1;\n`,
-        "helper.mjs": `import value from "./value.mjs";\nexport default value + 010;\n`,
-        "helper.test.js": `import { test, expect } from "bun:test";\nimport value from "./helper.mjs";\ntest("helper", () => expect(value).toBe(9));\n`,
-      });
-      initRepo(String(dir));
-      appendFileSync(join(String(dir), "value.mjs"), "// touched\n");
+  // The scan reads which files import which. An early error of strict mode code is for the run: the
+  // file stays in the module graph, and the test that reaches a changed file through it runs and fails.
+  test("a dependency with a strict mode early error does not hide the tests behind it", async () => {
+    using dir = tempDir("test-changed-early-error", {
+      "package.json": JSON.stringify({ name: "early-error" }),
+      "value.mjs": `export default 1;\n`,
+      "helper.mjs": `import value from "./value.mjs";\nif (value) function f() {}\nexport default value;\n`,
+      "helper.test.js": `import { test, expect } from "bun:test";\nimport value from "./helper.mjs";\ntest("helper", () => expect(value).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "value.mjs"), "// touched\n");
 
-      const { stderr, exitCode } = await runTestChanged(String(dir));
-      expect(stderr).toContain("Legacy octal literals cannot be used in an ECMAScript module");
-      expect(exitCode).toBe(1);
-    },
-  );
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain("Function declarations inside if statements cannot be used in an ECMAScript module");
+    expect(stderr).toContain("helper.test.js");
+    expect(exitCode).toBe(1);
+  });
 
   // https://github.com/oven-sh/bun/issues/29590: a tsconfig `paths` alias
   // like "@/*" must be followed when building the module graph.

@@ -2594,7 +2594,7 @@ pub mod target;
 
 pub use ast_result::{
     Ast, CommonJSNamedExport, CommonJSNamedExports, ConstValuesMap, NamedExports, NamedImports,
-    SloppyOnlySyntax, TopLevelSymbolToParts, TsEnumsMap,
+    SloppyOnlyKind, SloppyOnlySyntax, TopLevelSymbolToParts, TsEnumsMap,
 };
 pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportRecordTag};
 pub use loader::{Loader, LoaderHashTable, SideEffects};

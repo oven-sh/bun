@@ -1312,6 +1312,7 @@ impl<'a> Transpiler<'a> {
                     jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     strict_output: false,
+                    module_graph_scan: false,
                     transform_only: self.options.transform_only,
                     import_meta_glob: None,
                     import_meta_main_value: None,
@@ -1343,6 +1344,8 @@ impl<'a> Transpiler<'a> {
                 opts.features.code_coverage = self.options.code_coverage;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                // The module loader runs a legacy octal in strict code, as before: the printer writes its value.
+                opts.features.allow_legacy_octals = this_parse.allow_commonjs;
 
                 opts.features.inlining = self.options.inlining;
                 opts.features.auto_import_jsx = self.options.auto_import_jsx;

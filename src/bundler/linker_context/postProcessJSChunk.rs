@@ -1,7 +1,7 @@
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
+use crate::linker_context_mod::{GenerateChunkCtx, HashbangAndBanner, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
 use crate::options_impl::TargetExt as _;
@@ -376,7 +376,7 @@ pub(crate) fn post_process_js_chunk(
     let mut newline_before_comment = false;
     let mut is_executable = false;
 
-    let (hashbang, banner) = c.hashbang_and_banner_of_chunk(chunk);
+    let HashbangAndBanner { hashbang, banner } = c.hashbang_and_banner_of_chunk(chunk);
 
     // Start with the hashbang if there is one. This must be done before the
     // banner because it only works if it's literally the first character.

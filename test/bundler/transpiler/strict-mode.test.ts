@@ -638,6 +638,16 @@ describe("strict mode early errors", () => {
         ['"package" is a reserved word and cannot be used in an ECMAScript module'],
       );
     });
+    // Its `import` keyword still makes the file a module for the early errors, as in Node. Bun then runs
+    // a file that uses `module` as CommonJS.
+    test("an import that only types use still makes the file strict mode code", () => {
+      const trimming = new Bun.Transpiler({ loader: "ts", logLevel: "error", trimUnusedImports: true });
+      const code = "import { T } from './schema';\nfunction f(a: T, a: T) {}\nmodule.exports = f;";
+      expect(parseErrors(code, trimming).map(e => e.message)).toEqual([
+        '"a" cannot be bound multiple times in the same parameter list',
+      ]);
+      expect(parseErrors(code.replace("import {", "import type {"), trimming)).toEqual([]);
+    });
   });
 
   // An exported member of a namespace is a property of the namespace object,
@@ -1102,20 +1112,64 @@ describe("sloppy CommonJS runs as written", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The key of the transpiler cache is the text of the file. The type of the package is not in it.
-  test.concurrent("a legacy HTML comment is judged again when the type of the package changes", async () => {
+  // How a file runs depends on the type of its package and on what loads it. The transpiler cache
+  // has to keep the answers for one text apart.
+  test.concurrent("the transpiler cache keeps the module types of a file apart", async () => {
     const padding = `// ${Buffer.alloc(8 * 1024, "-").toString()}\n`;
-    using dir = tempDir("strict-mode-module-by-type-cache", {
+    using dir = tempDir("strict-mode-module-type-cache", {
       "package.json": JSON.stringify({ name: "cache" }),
-      "cached.js": `${padding}var a = 1;\n--> a comment\nconsole.log("ran", a);\n`,
+      "comment.js": `${padding}var a = 1;\n--> a comment\nconsole.log("ran", a);\n`,
+      "repeated.js": `${padding}function f(a, a) { return a; }\nconsole.log("ran", f(1, 2));\n`,
+      "repeated.cjs": `${padding}function f(a, a) { return a; }\nglobalThis.answer = f(1, 2);\n`,
+      "import.mjs": `await import("./repeated.cjs").catch(() => {});\nconsole.log("imported");\n`,
+      "require.cjs": `require("./repeated.cjs");\nconsole.log("ran", globalThis.answer);\n`,
     });
-    const env = { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache") };
-    expect(await run(String(dir), "cached.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
-    expect(await run(String(dir), "cached.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
-    writeFileSync(join(String(dir), "package.json"), JSON.stringify({ name: "cache", type: "module" }));
-    const asModule = await run(String(dir), "cached.js", env);
-    expect(asModule.stderr).toContain(`error: ${htmlCommentError}`);
+    const cwd = String(dir);
+    const env = { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(cwd, "cache") };
+    const setType = (type: string) => writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "cache", type }));
+
+    expect(await run(cwd, "comment.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
+    expect(await run(cwd, "comment.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
+    // With no type in the package the file runs as a module, where the engine rejects a repeated parameter.
+    const asModule = await run(cwd, "repeated.js", env);
     expect({ stdout: asModule.stdout, exitCode: asModule.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    expect(asModule.stderr).toContain("SyntaxError");
+
+    setType("module");
+    const comment = await run(cwd, "comment.js", env);
+    expect(comment.stderr).toContain(`error: ${htmlCommentError}`);
+    expect({ stdout: comment.stdout, exitCode: comment.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+
+    setType("commonjs");
+    expect(await run(cwd, "repeated.js", env)).toEqual({ stdout: "ran 2\n", stderr: "", exitCode: 0 });
+    expect(await run(cwd, "comment.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
+
+    // `import()` and `require()` do not give a `.cjs` file the same module type.
+    expect(await run(cwd, "import.mjs", env)).toEqual({ stdout: "imported\n", stderr: "", exitCode: 0 });
+    expect(await run(cwd, "require.cjs", env)).toEqual({ stdout: "ran 2\n", stderr: "", exitCode: 0 });
+  });
+
+  // The printer writes a legacy octal number or escape as its value, so strict mode code with one has
+  // always run under `bun run`, and it still does. `bun build` reports it.
+  test.concurrent("a legacy octal in strict mode code runs, and bun build reports it", async () => {
+    using dir = tempDir("strict-mode-legacy-octal-at-run-time", {
+      "octal.mjs": `export const n = 010;\nconsole.log(n, "\\033[1m".length, \`\\033[1m\`.length);\n`,
+    });
+    expect(await run(String(dir), "octal.mjs")).toEqual({ stdout: "8 4 4\n", stderr: "", exitCode: 0 });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "octal.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(stderr.match(/^error: .*$/gm)).toEqual([
+      "error: Legacy octal literals cannot be used in an ECMAScript module",
+      "error: Legacy octal escape sequences cannot be used in an ECMAScript module",
+      "error: Legacy octal escape sequences cannot be used in template literals",
+    ]);
+    expect(exitCode).toBe(1);
   });
 
   // What happens to valid sloppy mode code in a file that has no `import`, `export`, `require` or `module`.
@@ -1124,6 +1178,8 @@ describe("sloppy CommonJS runs as written", () => {
   // Bun runs each of these files as a module, except a `.cjs` file that `require()` loads, and its parser
   // has no early error for a module that has no `import` and no `export`. So the file runs if the
   // transpiler prints the syntax in another form or leaves it out, and the engine rejects it if not.
+  // Four inputs declare a function in a block, as the body of `if` or behind a label. They run, but
+  // the function stays inside its block, which is not what Node does: #23633, #25737.
   test.concurrent("sloppy mode code in a file with no module syntax and no CommonJS syntax", async () => {
     const theEngineRejects = new Set([
       "delete x",

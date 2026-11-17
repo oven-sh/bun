@@ -49,12 +49,18 @@ use crate::{
 /// runtime.
 pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop>>;
 
+/// The hashbang that `post_process_js_chunk` prints first, and the banner without it.
+pub(crate) struct HashbangAndBanner<'a> {
+    pub(crate) hashbang: &'a [u8],
+    pub(crate) banner: &'a [u8],
+}
+
 /// What makes a chunk strict code as a whole.
 #[derive(Clone, Copy)]
 enum StrictChunk {
     /// Bun loads the scripts of an HTML file with one `<script type="module">`.
     ModuleScript,
-    /// The output format is ESM.
+    /// The output format is ESM, and the target is not Bun.
     EsModule,
     /// Bun runs a file that starts with `// @bun` as a module, unless it is `// @bun @bun-cjs`.
     BunModule,
@@ -62,6 +68,19 @@ enum StrictChunk {
     BannerDirective,
     /// The "use strict" directive of the entry point, at this position, leads the chunk.
     EntryDirective(Loc),
+}
+
+impl StrictChunk {
+    /// ESM output that nothing loads as a module runs as a script, so it still builds with what it held before this check. To refuse that too is a changed default.
+    fn refuses(self, kind: bun_ast::SloppyOnlyKind) -> bool {
+        use bun_ast::SloppyOnlyKind as Kind;
+        match self {
+            StrictChunk::EsModule => {
+                matches!(kind, Kind::RepeatedParameter | Kind::EvalOrArguments)
+            }
+            _ => true,
+        }
+    }
 }
 
 bun_core::declare_scope!(LinkerCtx, visible);
@@ -635,29 +654,35 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         }
     }
 
-    /// The hashbang that `post_process_js_chunk` prints first, and the banner without it.
-    pub(crate) fn hashbang_and_banner_of_chunk(&self, chunk: &Chunk) -> (&[u8], &[u8]) {
+    pub(crate) fn hashbang_and_banner_of_chunk(&self, chunk: &Chunk) -> HashbangAndBanner<'_> {
         let banner = self.options.banner;
+        let no_hashbang = HashbangAndBanner {
+            hashbang: b"",
+            banner,
+        };
         if !chunk.is_entry_point() {
-            return (b"", banner);
+            return no_hashbang;
         }
         let source_hashbang =
             self.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize];
         // If source file has a hashbang, use it
         if !source_hashbang.is_empty() {
-            return (source_hashbang.slice(), banner);
+            return HashbangAndBanner {
+                hashbang: source_hashbang.slice(),
+                banner,
+            };
         }
         // Otherwise check if banner starts with hashbang
         if banner.starts_with(b"#!") {
             let newline_pos = strings::index_of_char(banner, b'\n')
                 .map(|n| n as usize)
                 .unwrap_or(banner.len());
-            return (
-                &banner[..newline_pos],
-                strings::trim_left(&banner[newline_pos..], b"\r\n"),
-            );
+            return HashbangAndBanner {
+                hashbang: &banner[..newline_pos],
+                banner: strings::trim_left(&banner[newline_pos..], b"\r\n"),
+            };
         }
-        (b"", banner)
+        no_hashbang
     }
 
     /// What `post_process_js_chunk` prints for the Bun target ahead of the banner: the pragma, and for CommonJS the start of the function that wraps the chunk.
@@ -685,12 +710,12 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         if chunk.flags.contains(crate::chunk::Flags::HAS_HTML_CHUNK) {
             return Some(StrictChunk::ModuleScript);
         }
-        if self.options.output_format.is_always_strict_mode() {
-            return Some(StrictChunk::EsModule);
-        }
         let target = self.graph.ast.items_target()[chunk.entry_point.source_index() as usize];
         if target.is_bun() && self.options.output_format != Format::Cjs {
             return Some(StrictChunk::BunModule);
+        }
+        if self.options.output_format.is_always_strict_mode() {
+            return Some(StrictChunk::EsModule);
         }
         let use_strict = self
             .directives_of_chunk(chunk)
@@ -712,7 +737,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
     /// Parses what `post_process_js_chunk` prints around the files of `chunk`, with `directives` for those of the entry point: is a file strict mode code there?
     fn is_chunk_strict_with(&self, chunk: &Chunk, directives: &[u8]) -> bool {
-        let (hashbang, banner) = self.hashbang_and_banner_of_chunk(chunk);
+        let HashbangAndBanner { hashbang, banner } = self.hashbang_and_banner_of_chunk(chunk);
         let bun_header = self.bun_header_of_chunk(chunk);
         let (open, close): (&[u8], &[u8]) = match self.options.output_format {
             Format::Iife => (b"(() => {", b"})();"),
@@ -751,18 +776,21 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         files.sort_unstable_by_key(|(source_index, _)| *source_index);
 
         for (source_index, found) in files {
-            let Some((chunk, why)) = chunks.iter().zip(&strict).find_map(|(chunk, why)| {
+            let holders = chunks.iter().zip(&strict).filter_map(|(chunk, why)| {
                 let why = (*why)?;
                 chunk
                     .files_with_parts_in_chunk
                     .contains(source_index)
                     .then_some((chunk, why))
-            }) else {
-                continue;
-            };
+            });
+            let holders: Vec<(&Chunk<'a>, StrictChunk)> = holders.collect();
             let source = &sources[*source_index as usize];
-            let entry_point = &sources[chunk.entry_point.source_index() as usize];
             for syntax in found.iter() {
+                let Some(&(chunk, why)) = holders.iter().find(|(_, why)| why.refuses(syntax.kind))
+                else {
+                    continue;
+                };
+                let entry_point = &sources[chunk.entry_point.source_index() as usize];
                 let text = bstr::BStr::new(syntax.text.slice());
                 let in_strict_mode = format!("{text} cannot be used in strict mode");
                 let (message, note) = match why {

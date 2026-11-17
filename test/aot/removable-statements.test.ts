@@ -5,8 +5,8 @@
 // or it is not.
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 type Row = { line: number; plain: string; minified: string; path: string; mark: string; source: string };
 
@@ -41,33 +41,14 @@ function sources(): Record<string, string> {
 
 async function answers(syntax: boolean): Promise<string[]> {
   using directory = tempDir("removable-statements", sources());
-  const build = (entry: string, format: "esm" | "cjs") =>
-    Bun.build({
-      entrypoints: [join(String(directory), entry)],
-      target: "bun",
-      format,
-      minify: { syntax },
-      throw: false,
-    });
-  const errors = (result: Bun.BuildOutput) => result.logs.filter(log => log.level === "error");
-
-  // An ES module cannot hold what only sloppy mode code can hold, such as a `with` statement, and `bun build` rejects
-  // the file that has it. The row of such a file is asked with CommonJS output.
-  const rejected = errors(await build("entry.ts", "esm"));
-  expect(
-    rejected.filter(log => !log.message.endsWith("cannot be used with the ESM output format due to strict mode")),
-  ).toEqual([]);
-  const sloppy = new Set(rejected.map(log => basename(log.position!.file)));
-  const output = new Map<Row, string>();
-  for (const format of ["esm", "cjs"] as const) {
-    const asked = rows.filter(row => sloppy.has(basename(row.path)) === (format === "cjs"));
-    writeFileSync(join(String(directory), `${format}.ts`), asked.map(row => `import "./${row.path}";`).join("\n"));
-    const result = await build(`${format}.ts`, format);
-    expect(errors(result)).toEqual([]);
-    const text = await result.outputs[0].text();
-    for (const row of asked) output.set(row, text);
-  }
-  return rows.map(row => `${row.line} ${output.get(row)!.includes(row.mark) ? "-" : "+"} ${row.source}`);
+  const result = await Bun.build({
+    entrypoints: [join(String(directory), "entry.ts")],
+    target: "bun",
+    minify: { syntax },
+  });
+  expect(result.logs.filter(log => log.level === "error")).toEqual([]);
+  const output = await result.outputs[0].text();
+  return rows.map(row => `${row.line} ${output.includes(row.mark) ? "-" : "+"} ${row.source}`);
 }
 
 test("the table has rows", () => {

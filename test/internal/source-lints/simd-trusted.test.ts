@@ -6,15 +6,15 @@ import path from "node:path";
 // src/simd/README.md lists what has to be trusted, and all of it is in `trusted/`. The other crates say
 // `#![forbid(unsafe_code)]`. This is the same rule for their text, as it is before a macro has expanded it.
 const simd = path.resolve(import.meta.dir, "..", "..", "..", "src", "simd");
-const sources = [...new Glob("**/*.rs").scanSync({ cwd: simd })]
+const all = [...new Glob("**/*.rs").scanSync({ cwd: simd })]
   .map(file => file.replaceAll("\\", "/"))
-  // `conformance/` calls C++ and tries out instructions, for `bun test --run-simd-tests`.
-  .filter(file => !/^(?:trusted|conformance)\//.test(file))
   .sort()
   .map(file => [file, readFileSync(path.join(simd, file), "utf8")]);
+// `conformance/` calls C++ and tries out instructions, for `bun test --run-simd-tests`.
+const sources = all.filter(([file]) => !/^(?:trusted|conformance)\//.test(file));
 
-const find = (pattern: RegExp) =>
-  sources.flatMap(([file, text]) => [...text.matchAll(pattern)].map(match => `${file}: ${match[0]}`));
+const find = (pattern: RegExp, texts = sources) =>
+  texts.flatMap(([file, text]) => [...text.matchAll(pattern)].map(match => `${file}: ${match[0]}`));
 
 test("only trusted/ has the words for what rustc does not check", () => {
   expect(sources.length).toBeGreaterThan(40);
@@ -43,4 +43,17 @@ test("the unstable features outside of trusted/ are known", () => {
     "lib.rs: feature(const_array, const_closures, const_trait_impl)",
     "macros/lib.rs: feature(allow_internal_unstable)",
   ]);
+});
+
+// A macro of the caller would get tokens for which `unsafe_code` is not reported.
+test("what the macros add calls known macros only", () => {
+  const rules = all.flatMap(([file, text]) => [...text.matchAll(/macro_export([^]*)/g)].map(it => [file, it[1]]));
+  expect(find(/\S*\s*!|macro_export/g, rules)).toEqual([
+    "dispatch.rs: macro_rules!",
+    "dispatch.rs: $crate::if_supported!",
+    "dispatch.rs: $crate::export!",
+    "trusted/gate.rs: macro_rules!",
+  ]);
+  const strings = find(/'"'|"(?:[^"\\]|\\[^])*"/g).filter(it => it.startsWith("macros/"));
+  expect(strings.filter(it => /(?<!#)!/.test(it))).toEqual(['macros/lib.rs: "::bun_simd::export!"']);
 });

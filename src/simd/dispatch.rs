@@ -1,7 +1,7 @@
 //! Chooses among the copies that the CPU can run. Safety does not depend on it.
 use crate::Target;
 
-pub const IS_FOR_TESTS: bool = cfg!(feature = "test_support");
+const IS_FOR_TESTS: bool = cfg!(feature = "test_support");
 
 cfg_select! {
     feature = "test_support" => {
@@ -61,6 +61,15 @@ pub const fn is_any(list: &[bool]) -> bool {
     matches!(list, [first, rest @ ..] if *first || is_any(rest))
 }
 
+/// There is no choice, or each thread has its own.
+pub const fn remembers_nothing(are_floors: &[bool]) -> bool {
+    IS_FOR_TESTS || matches!(are_floors, [] | [true, ..])
+}
+
+pub fn unreachable() -> ! {
+    unreachable!()
+}
+
 pub fn is_allowed(target: Target, features: u64) -> bool {
     let (best, lacking) = limit();
     target as u8 >= best && features & lacking == 0
@@ -70,7 +79,7 @@ pub fn is_asked_for(target: Target, features: u64) -> bool {
     target as u8 == limit().0 && is_allowed(target, features)
 }
 
-/// The function that `#[export]` adds.
+/// The function that `#[export]` adds. A macro without `$crate` could be the caller's, and get these tokens.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! export {
@@ -93,17 +102,16 @@ macro_rules! export {
             // rustc generates no code for a branch that a constant rules out.
             #[inline(always)]
             fn __choose() -> __Kernel {
-                use $crate::{Target, dispatch::*};
                 $(
-                    if is_asked_for(Target::$Portable, 0) {
+                    if $crate::dispatch::is_asked_for($crate::Target::$Portable, 0) {
                         return $portable::$name;
                     }
                 )*
                 $(
                     #[cfg($cfg)]
-                    if (const { is_floor(&$features) }
-                        || $is_wanted(
-                            Target::$Target,
+                    if (const { $crate::dispatch::is_floor(&$features) }
+                        || $crate::dispatch::$is_wanted(
+                            $crate::Target::$Target,
                             const { $crate::Features::named(&$features).bits() },
                         ))
                         && let Some(kernel) =
@@ -112,14 +120,14 @@ macro_rules! export {
                         return kernel;
                     }
                 )*
-                if const { is_any(__ARE_FLOORS) } {
-                    unreachable!()
+                if const { $crate::dispatch::is_any(__ARE_FLOORS) } {
+                    $crate::dispatch::unreachable()
                 } else {
                     $crate::export!(@first $($otherwise,)? portable::$name)
                 }
             }
 
-            if const { $crate::dispatch::IS_FOR_TESTS || matches!(__ARE_FLOORS, [] | [true, ..]) } {
+            if const { $crate::dispatch::remembers_nothing(__ARE_FLOORS) } {
                 // Outside of tests, this is a direct call.
                 __choose()($($arg),*)
             } else {

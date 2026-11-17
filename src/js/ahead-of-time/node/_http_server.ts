@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 95796de59cb81f32c163261014c840cf112ea523c371331b20a09a0f5289009f.
+// Written against that file with the SHA-256 ed7433a15c62b7a063e34f14b088f623fd8b87ff20fe58d9e1a61b3253c41f5a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -2344,7 +2344,7 @@ function leaveHttp(socket: $Node.HttpServerSocket) {
 }
 function leftHttp(socket: $Node.HttpServerSocket) {
   socket[kHandle] = undefined;
-  socket[kSharesWrites] = false;
+  if (socket[kSharesWrites]) socket[kSharesWrites] = false;
   delete (socket as any)._final;
 }
 // ws.handleUpgrade() while uWS still owns the connection: from a 'request' listener, or before the body of the Upgrade request has ended.
@@ -2884,7 +2884,7 @@ function closeWithoutReset(socket: $Node.HttpServerSocket, lastResponse: $Node.S
   socket[kHandle]!.detachParser(false);
   socket._paused = false;
   socket.resume();
-  socket.setTimeout(keepAliveIdleTimeout(socket.server), destroyNow.bind(undefined, socket));
+  socket.setTimeout(keepAliveIdleTimeout(socket.server as $Node.HttpServer), destroyNow.bind(undefined, socket));
 }
 
 function startNextResponse(socket: $Node.HttpServerSocket | null | undefined) {

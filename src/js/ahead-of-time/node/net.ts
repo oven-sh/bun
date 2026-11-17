@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 868b187eaff993c4de9844416ec0e13b0bd7f2f1c73d67e4439cea289669658d.
+// Written against that file with the SHA-256 52199adfd5599ac7324bd06a9f1755b868f85c939bccb1b84234b4df78b768af.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -294,7 +294,7 @@ declare global {
 
       [kTimeout]: Timer | null;
       [kDestroyOnRead]: boolean;
-      [kSharesWrites]: boolean;
+      [kSharesWrites]?: boolean;
       [kupgraded]: Socket | null;
       [kOnUpgradedClose]: (() => void) | undefined;
       [kOwesRawClose]: boolean;
@@ -2032,7 +2032,6 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
 
   this[khandlers] = SocketHandlers;
   this[kDestroyOnRead] = false;
-  this[kSharesWrites] = false;
   this[kBytesRead] = 0;
   this[kBytesWritten] = undefined;
   this[kLastBytesSent] = 0;

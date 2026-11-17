@@ -1630,7 +1630,7 @@ function leaveHttp(socket) {
 }
 function leftHttp(socket) {
   socket[kHandle] = undefined;
-  socket[kSharesWrites] = false;
+  if (socket[kSharesWrites]) socket[kSharesWrites] = false;
   delete socket._final;
 }
 // ws.handleUpgrade() while uWS still owns the connection: from a 'request' listener, or before the body of the Upgrade request has ended.

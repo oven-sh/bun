@@ -1654,7 +1654,6 @@ function Socket(options?): void {
 
   this[khandlers] = SocketHandlers;
   this[kDestroyOnRead] = false;
-  this[kSharesWrites] = false;
   this[kBytesRead] = 0;
   this[kBytesWritten] = undefined;
   this[kLastBytesSent] = 0;

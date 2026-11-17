@@ -26,7 +26,8 @@ test.concurrent.each([true, { hmr: false }])(
     using dir = tempDir("html-jsx-development", {
       "index.html": '<script type="module" src="./in.jsx"></script>',
       "in.jsx": "document.body.innerText = <div/>;",
-      "node_modules/react/jsx-dev-runtime.js": 'export function jsxDEV() { return "DEV_SENTINEL"; }',
+      "node_modules/react/jsx-dev-runtime.js":
+        'export const jsxDEV = process.env.NODE_ENV === "production" ? undefined : () => "DEV_SENTINEL";',
       "node_modules/react/jsx-runtime.js": 'export function jsx() { return "PROD_SENTINEL"; }',
       "main.ts": `
       import page from "./index.html";

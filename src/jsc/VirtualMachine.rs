@@ -6812,9 +6812,10 @@ impl VirtualMachine {
                     break 'brk;
                 }
 
+                let vm: &Self = self;
                 let frames = exception.stack.frames();
                 let mut top_frame: Option<&crate::ZigStackFrame<'_>> = frames.first();
-                if self.hide_bun_stackframes.get() {
+                if vm.hide_bun_stackframes.get() {
                     for frame in frames {
                         if frame.position.is_invalid()
                             || frame.source_url.starts_with_ascii(b"bun:")

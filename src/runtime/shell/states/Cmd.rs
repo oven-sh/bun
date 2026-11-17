@@ -303,6 +303,7 @@ impl Cmd {
         // Collect output from Expansion children before freeing them; then
         // advance the state machine.
         if matches!(child_kind, StateKind::Expansion) {
+            let interp: &Interpreter = interp;
             let out = Expansion::take_out(interp, child);
             match interp.as_cmd_mut(this).state {
                 CmdState::ExpandingArgs { ref mut idx } => {

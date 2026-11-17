@@ -687,9 +687,9 @@ macro_rules! from_field_ptr {
 /// Zig's `@fieldParentPtr`).
 ///
 /// ```ignore
-/// bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client;
-///     fn parent;             // (&mut self) -> &JSValkeyClient
-///     fn mut parent_ptr;     // (&mut self) -> *mut JSValkeyClient
+/// bun_core::impl_field_parent! { CapturedWriter => PipeReader.captured_writer;
+///     fn parent;             // (&mut self) -> &PipeReader
+///     fn mut parent_mut;     // (&mut self) -> *mut PipeReader
 /// }
 /// bun_core::impl_field_parent! { FileReader => Source.context;
 ///     pub fn shared parent_const; // (&self) -> &Source     — only compiles while FileReader: !Freeze

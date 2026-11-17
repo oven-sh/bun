@@ -1313,7 +1313,7 @@ pub mod parse_worker {
                 // not dropped on the error path.
                 let lazy = js_parser::new_lazy_export_ast_impl(
                     bump,
-                    &mut topts.define,
+                    &topts.define,
                     opts,
                     &mut temp_log,
                     root,
@@ -1338,14 +1338,7 @@ pub mod parse_worker {
                     && topts.target.is_server_side()
                     && crate::component_scripts::has_scripts(source.path.text, source.contents())
                 {
-                    return get_component_ast(
-                        log,
-                        &mut topts.define,
-                        &topts.loaders,
-                        opts,
-                        bump,
-                        source,
-                    );
+                    return get_component_ast(log, &topts.define, opts, bump, source);
                 }
 
                 // Put a unique key in the AST to implement the URL loader. At the end
@@ -1422,19 +1415,19 @@ pub mod parse_worker {
     #[cold]
     fn get_component_ast(
         log: &mut Log,
-        define: &'static mut js_parser::Define,
-        loaders: &bun_ast::LoaderHashTable,
+        define: &'static js_parser::Define,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
-        source: &'static Source,
+        source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
-        let mut scan_pass = js_parser::ScanPassResult::init();
         // A script that does not parse keeps the imports before the error: the test run reports the error.
-        let mut scan = |is_jsx: bool, script: &Source| -> (Vec<ImportRecord>, bool) {
+        let scan = |is_jsx: bool,
+                    script: &'static Source<'static>|
+         -> (Vec<ImportRecord<'static>>, bool) {
             let mut script_opts = opts.clone_for_lazy_export();
             script_opts.ts = true;
             script_opts.jsx.parse = is_jsx;
-            scan_pass.reset();
+            let mut scan_pass = js_parser::ScanPassResult::init();
             let mut errors = Log::init();
             let scanned = (crate::cache::JavaScript {}).scan(
                 bump,
@@ -1445,32 +1438,24 @@ pub mod parse_worker {
                 script,
             );
             let is_parsed = scanned.is_ok() && errors.errors == 0;
-            (core::mem::take(&mut scan_pass.import_records), is_parsed)
+            (scan_pass.import_records, is_parsed)
         };
         let mut import_records = Vec::new();
         crate::component_scripts::for_each(source.path.text, source.contents(), |code| {
-            let script = Source {
+            let script: &'static Source<'static> = bump.alloc(Source {
                 path: source.path,
                 contents: std::borrow::Cow::Borrowed(code),
                 index: source.index,
                 ..Default::default()
-            };
+            });
             // The language of a script is not read: TypeScript has JavaScript, and TSX has JSX.
-            let (mut records, is_parsed) = scan(false, &script);
+            let (mut records, is_parsed) = scan(false, script);
             if !is_parsed {
-                records.append(&mut scan(true, &script).0);
+                records.append(&mut scan(true, script).0);
             }
             for mut record in records {
                 // The markup uses the imports that the script does not.
                 record.flags.remove(bun_ast::ImportRecordFlags::IS_UNUSED);
-                // The scan has one row for each path: `with { type: "text" }` must not make a code file an asset for its other importers.
-                let names_no_imports = record
-                    .path
-                    .loader(loaders)
-                    .is_some_and(|by_name| !by_name.is_javascript_like() && by_name != Loader::Css);
-                if !names_no_imports {
-                    record.loader = None;
-                }
                 import_records.push(record);
             }
         });

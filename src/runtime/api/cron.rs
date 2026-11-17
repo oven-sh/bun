@@ -6,19 +6,20 @@ use bstr::BStr;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_cron::{CronExpression, TimeZone, WallClock};
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::{Callable, JsLocal, JsPayload as _, JsScope, JsWrapper, StrongWrapper};
+use bun_jsc::bindgen::{Callable, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, AbortHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject, JSValue, JsError,
     JsResult, ScriptExecutionStatus, Strong, StrongCell,
 };
+use bun_removable_features::removable_body_behind_value;
 
 use crate::generated_bindgen::cron::{
     Bun__Cron__cron, Bun__Cron__parse, Bun__Cron__remove, Bun__CronJob__onPromiseReject,
     Bun__CronJob__onPromiseResolve, CronOptions, js_CronJob as js,
 };
-use crate::jsc_hooks::{runtime_state, timer_all};
+use crate::jsc_hooks::{timer_all, try_runtime_state};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 #[derive(Clone, Copy)]
@@ -138,17 +139,21 @@ impl CronJob {
             )));
         };
 
-        let wrapper = job.into_js_wrapper(global);
-        let js_value = wrapper.to_js();
-        let job = js::from_js(&js_value).expect("just made");
+        let js_value = job.into_js_wrapper(global).to_js();
+        let Some(job) = js::from_js(&js_value) else {
+            return Err(global.throw(format_args!("Failed to create cron job")));
+        };
         job.root.set(Strong::create(js_value, global));
         js::cron_set_cached(js_value, global, schedule_value.to_js());
         let handler = handler.to_js().with_async_context_if_needed(global);
         js::callback_set_cached(js_value, global, handler);
         let vm = global.bun_vm();
-        if vm.hot_reload.get() == HotReload::Hot && vm.worker.get().is_none() {
-            let entry = StrongWrapper::new(wrapper, global);
-            runtime_state().cron_jobs.with_mut(|jobs| jobs.push(entry));
+        if vm.hot_reload.get() == HotReload::Hot
+            && vm.worker.get().is_none()
+            && let Some(state) = try_runtime_state()
+        {
+            let entry = Strong::create(js_value, global);
+            state.cron_jobs.with_mut(|jobs| jobs.push(entry));
         }
         job.poll_ref.ref_(bun_io::js_vm_ctx());
         // SAFETY: `stop_now` leaves the context before `root` lets go of the wrapper.
@@ -166,11 +171,26 @@ impl CronJob {
         self.poll_ref.disable();
         self.abort_handle.leave();
         js::callback_set_cached(js_this, &self.global, JSValue::ZERO);
-        drop(runtime_state().cron_jobs.with_mut(|jobs| {
-            let i = jobs.iter().position(|job| job.to_js() == js_this)?;
-            Some(jobs.swap_remove(i))
-        }));
+        if let Some(state) = try_runtime_state() {
+            drop(state.cron_jobs.with_mut(|jobs| {
+                let i = jobs.iter().position(|job| job.get() == js_this)?;
+                Some(jobs.swap_remove(i))
+            }));
+        }
         self.root.clear();
+    }
+
+    pub(crate) fn stop_all_for_reload() {
+        let Some(state) = try_runtime_state() else {
+            return;
+        };
+        for job in state.cron_jobs.take() {
+            removable_body_behind_value!(Cron, {
+                if let Some(job) = js::from_js(&job.get()) {
+                    job.stop_now();
+                }
+            });
+        }
     }
 
     pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {

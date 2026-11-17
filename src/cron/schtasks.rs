@@ -105,9 +105,10 @@ fn repetition(minutes: u64, hours: u64) -> Option<String> {
 
 /// The distance between the values of `set`, if it is always the same, across the end of `period` too.
 fn even_step(set: u64, period: u32) -> Option<u32> {
-    let step = period / set.count_ones();
-    let steps = (set.trailing_zeros()..period).step_by(step as usize);
-    (step * set.count_ones() == period && values(set).eq(steps)).then_some(step)
+    let (first, count) = (set.trailing_zeros(), set.count_ones());
+    let step = period.checked_div(count)?;
+    let steps = (0..count).map(|i| first + i * step);
+    (step * count == period && values(set).eq(steps)).then_some(step)
 }
 
 /// The days part of each trigger that a time of day needs: cron fires when the day or the weekday matches.
@@ -144,8 +145,10 @@ fn days(schedule: &CronExpression) -> Vec<String> {
 
 fn named(tag: &str, set: u64, names: &[&str]) -> String {
     let mut xml = format!("        <{tag}>\n");
-    for value in values(set) {
-        _ = writeln!(xml, "          <{}/>", names[value as usize]);
+    for (value, name) in names.iter().enumerate() {
+        if set >> value & 1 != 0 {
+            _ = writeln!(xml, "          <{name}/>");
+        }
     }
     xml + &format!("        </{tag}>\n")
 }

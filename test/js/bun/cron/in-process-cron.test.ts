@@ -508,12 +508,12 @@ describe.concurrent("Bun.cron (in-process): a job that stops while its tick is p
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
-  const rooted = `"CronJob" in require("bun:jsc").heapStats().protectedObjectTypeCounts`;
+  const rooted = `require("bun:jsc").heapStats().protectedObjectTypeCounts.CronJob ? "rooted" : "released"`;
 
   test.each([
-    ["stop()", "", "job.stop();"],
-    ["stop() in the tick", "this.stop();", ""],
-  ])("%s lets go of it", async (_, inTick, afterTick) => {
+    { inTick: "", afterTick: "job.stop();", when: "after the tick" },
+    { inTick: "this.stop();", afterTick: "", when: "in the tick" },
+  ])("stop() $when lets go of it", async ({ inTick, afterTick }) => {
     const { stdout, exitCode } = await run(["main.js"], {
       "main.js": `
         const { jest } = Bun.jest();
@@ -528,7 +528,7 @@ describe.concurrent("Bun.cron (in-process): a job that stops while its tick is p
         console.log(${rooted});
       `,
     });
-    expect({ stdout, exitCode }).toEqual({ stdout: "true\nfalse\n", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "rooted\nreleased\n", exitCode: 0 });
   });
 
   test("a --hot reload lets go of it", async () => {
@@ -549,14 +549,43 @@ describe.concurrent("Bun.cron (in-process): a job that stops while its tick is p
       cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
       env: bunEnv,
       cwd: String(dir),
-      stderr: "inherit",
+      stderr: "pipe",
     });
+    const stderr = proc.stderr.text();
     let stdout = "";
     for await (const chunk of proc.stdout) {
       stdout += Buffer.from(chunk).toString();
       if (stdout.split("\n").length > 2) break;
     }
-    expect(stdout.split("\n").slice(0, 2)).toEqual(["true", "false"]);
+    proc.kill();
+    const errors = (await stderr).split("\n").filter(line => line && !line.startsWith("DEBUG: "));
+    expect({ lines: stdout.split("\n").slice(0, 2), errors }).toEqual({ lines: ["rooted", "released"], errors: [] });
+  });
+
+  test.each([
+    { ms: 0, when: "before its first tick" },
+    { ms: 60_000, when: "after the tick" },
+  ])("a job that is still held lets go of its handler when stopped $when", async ({ ms }) => {
+    const { stdout, exitCode } = await run(["main.js"], {
+      "main.js": `
+        const { jest } = Bun.jest();
+        jest.useFakeTimers();
+        const handlers = [];
+        globalThis.jobs = Array.from({ length: 100 }, () => {
+          const handler = () => new Promise(() => {});
+          handlers.push(new WeakRef(handler));
+          return Bun.cron("* * * * *", handler);
+        });
+        jest.advanceTimersByTime(${ms});
+        for (const job of jobs) job.stop();
+        jest.useRealTimers();
+        setImmediate(() => {
+          Bun.gc(true);
+          console.log(handlers.filter(handler => handler.deref()).length < 10);
+        });
+      `,
+    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
   });
 
   test("bun test does not wait for it", async () => {
@@ -599,9 +628,9 @@ describe.concurrent("Bun.cron (in-process): a job that stops while its tick is p
   });
 
   test.skipIf(!isASAN).each([
-    ["after the tick", "", "graph.dispose();"],
-    ["in the tick", "graph.dispose();", ""],
-  ])("is freed with the VM when its graph was disposed %s", async (_, inTick, afterTick) => {
+    { inTick: "", afterTick: "graph.dispose();", when: "after the tick" },
+    { inTick: "graph.dispose();", afterTick: "", when: "in the tick" },
+  ])("is freed with the VM when its graph was disposed $when", async ({ inTick, afterTick }) => {
     const result = await run(
       ["main.js"],
       {

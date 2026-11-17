@@ -2302,7 +2302,8 @@ impl VirtualMachine {
     ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
     ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
     ///     channel closed.
-    ///  B. release — OS-level cron calls, memory pressure watch, user and GC-controller timers cancelled; child
+    ///  B. release — OS-level cron calls, memory pressure watch,
+    ///     user and GC-controller timers cancelled; child
     ///     workers joined; this VM's sqlite connections closed; **the wait**:
     ///     every ticket held off-thread comes back while queued work is
     ///     released without running; the handle closes; main: HTTP thread
@@ -2795,7 +2796,7 @@ pub struct RuntimeHooks {
     /// OS-level cron calls and the memory pressure watcher, while the loop and `RareData` are alive.
     pub stop_watches_for_vm_teardown: fn(),
     /// Stops the in-process cron jobs. The reloaded script registers them again.
-    pub cron_clear_all_reload: fn(vm: &VirtualMachine),
+    pub cron_clear_all_reload: fn(),
     /// Standalone-graph sourcemap load.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
     /// live above `bun_jsc`; the high tier reaches them via the graph's own
@@ -4375,7 +4376,7 @@ impl VirtualMachine {
         if let Some(hooks) = runtime_hooks() {
             // The hook walks the VM's cron-job list and detaches each job from
             // the old global so the new global can re-register them post-reload.
-            (hooks.cron_clear_all_reload)(self);
+            (hooks.cron_clear_all_reload)();
         }
         // `JSGlobalObject::reload` drains microtasks + collects async + clears
         // the JSC module loader registry.

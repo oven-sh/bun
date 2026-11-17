@@ -9,6 +9,8 @@ use crate::webcore::blob::MAX_SIZE;
 #[cfg(not(windows))]
 use crate::webcore::blob::creating_parents;
 #[cfg(not(windows))]
+use crate::webcore::blob::fd_job::Target;
+#[cfg(not(windows))]
 use crate::webcore::blob::write_file::{note_written, settle};
 use crate::webcore::blob::{SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
@@ -44,6 +46,8 @@ use bun_sys_jsc::ErrorJsc as _;
 pub(crate) struct CopyFile {
     destination: RefPtr<Store>,
     source: RefPtr<Store>,
+    destination_file: Target,
+    source_file: Target,
     /// What the store knew when the copy was asked for.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     destination_cached_mode: Mode,
@@ -99,6 +103,8 @@ impl CopyFile {
         new_mode: Option<Mode>,
     ) -> JSValue {
         let copy = CopyFile {
+            destination_file: Target::of(&destination),
+            source_file: Target::of(&source),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             destination_cached_mode: destination.data.as_file().mode,
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -118,12 +124,12 @@ impl CopyFile {
     }
 
     fn opens_destination(&self) -> bool {
-        self.destination.data.as_file().pathlike.is_path()
+        !matches!(self.destination_file, Target::Fd(_))
     }
 
     fn copy(&mut self) -> Result<SizeType, Box<SystemError>> {
-        let source_file = &self.source.data.as_file().pathlike;
-        let destination_file = &self.destination.data.as_file().pathlike;
+        let source_file = &self.source_file.get();
+        let destination_file = &self.destination_file.get();
 
         #[cfg(not(target_os = "macos"))]
         let known_stat: Option<Stat> = None;
@@ -194,8 +200,7 @@ impl CopyFile {
     fn finish_clone(&self, to: &bun_core::ZStr, stat: &Stat) -> bun_sys::Result<SizeType> {
         let size = stat.st_size.max(0) as SizeType;
         let copied = if self.max_length < size {
-            // SAFETY: `to` is NUL-terminated.
-            let _ = unsafe { bun_sys::c::truncate(to.as_ptr(), self.max_length as i64) };
+            let _ = bun_sys::truncate(to, self.max_length as i64);
             self.max_length
         } else {
             size
@@ -311,11 +316,7 @@ impl CopyFile {
             let written: isize = match syscall {
                 TryWith::CopyFileRange => linux::copy_file_range(from, None, to, None, remain, 0),
                 TryWith::Sendfile => linux::sendfile(to, from, None, remain),
-                // SAFETY: null offsets are allowed.
-                TryWith::Splice => unsafe {
-                    let cursor = core::ptr::null_mut();
-                    libc::splice(from, cursor, to, cursor, remain, 0)
-                },
+                TryWith::Splice => linux::splice(from, to, remain),
             };
 
             match bun_sys::get_errno(written) {
@@ -619,7 +620,8 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
             return;
         }
 
-        let prev = this.read_write_loop.uv_buf.slice();
+        let prev_start = buf_len - this.read_write_loop.uv_buf.len as usize;
+        let prev = &this.read_write_loop.read_buf[prev_start..];
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
         this.read_write_loop_write();
         return;

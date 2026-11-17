@@ -2,13 +2,14 @@
 
 use bun_io::fd_wait::{FdWait, Interest, JobFd};
 use bun_jsc::job::JsAffine;
+use bun_jsc::node_path::{JoinedPath, PathLike};
 use bun_jsc::{Completion, Job, JobContext, JsResult, JsThread, SystemError};
 use bun_sys::{E, Fd, File, O};
 use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask};
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::{creating_parents, sys_error_with_path_like};
+use crate::webcore::blob::{Store, creating_parents, sys_error_with_path_like};
 use crate::webcore::node_types::PathOrFileDescriptor;
 
 pub(crate) enum Step {
@@ -105,6 +106,31 @@ impl<Op: FdOp> FdJob<Op> {
                     return Ok(true);
                 }
             }
+        }
+    }
+}
+
+/// What a job opens. A copy: the JS thread writes to the store while the job runs.
+pub(super) enum Target {
+    Fd(Fd),
+    Path(Box<[u8]>),
+    Joined(Box<JoinedPath>),
+}
+
+impl Target {
+    pub(super) fn of(store: &Store) -> Self {
+        match &store.data.as_file().pathlike {
+            PathOrFileDescriptor::Fd(fd) => Self::Fd(*fd),
+            PathOrFileDescriptor::Path(PathLike::Joined(path)) => Self::Joined(path.clone()),
+            PathOrFileDescriptor::Path(path) => Self::Path(path.slice().into()),
+        }
+    }
+
+    pub(super) fn get(&self) -> PathOrFileDescriptor<'_> {
+        match self {
+            Self::Fd(fd) => PathOrFileDescriptor::Fd(*fd),
+            Self::Path(path) => PathOrFileDescriptor::Path(PathLike::borrowed(path)),
+            Self::Joined(path) => PathOrFileDescriptor::Path(PathLike::Joined(path.clone())),
         }
     }
 }

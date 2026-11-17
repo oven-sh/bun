@@ -337,7 +337,7 @@ impl Watcher {
     }
 
     fn remove(&self, fd: Fd) {
-        let _ = epoll_ctl(&self.poller, EPOLL::CTL_DEL, fd, 0, core::ptr::null_mut());
+        let _ = sys::linux::epoll_ctl_del(self.poller.fd().native(), fd.native());
     }
 }
 

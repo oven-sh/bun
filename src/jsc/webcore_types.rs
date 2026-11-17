@@ -639,20 +639,7 @@ pub mod store {
         Heap(Vec<u8>),
         Static(&'static [u8]),
         #[cfg(unix)]
-        Mapped(Mapping),
-    }
-
-    /// An `mmap` region.
-    #[cfg(unix)]
-    struct Mapping(*mut [u8]);
-
-    #[cfg(unix)]
-    impl Drop for Mapping {
-        fn drop(&mut self) {
-            if let Err(err) = bun_sys::munmap(self.0.cast(), self.0.len()) {
-                bun_core::debug_warn!("Blob store munmap failed: {:?}", err);
-            }
-        }
+        Mapped(bun_sys::Mmap),
     }
 
     impl Bytes {
@@ -674,19 +661,19 @@ pub mod store {
         }
 
         /// # Safety
-        /// `mapping` is a whole read-write `mmap` region, and nothing else unmaps it.
+        /// As [`bun_sys::Mmap::as_mut_slice`], until `mapping` is dropped.
         #[cfg(unix)]
-        pub unsafe fn from_mapping(mapping: *mut [u8]) -> Bytes {
-            Self::new(Storage::Mapped(Mapping(mapping)))
+        pub unsafe fn from_mapping(mapping: bun_sys::Mmap) -> Bytes {
+            Self::new(Storage::Mapped(mapping))
         }
 
         /// # Safety
         /// As [`Self::from_mapping`], and `mapping` maps `memfd` from its start.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub unsafe fn from_memfd_mapping(mapping: *mut [u8], memfd: bun_sys::File) -> Bytes {
+        pub unsafe fn from_memfd_mapping(mapping: bun_sys::Mmap, memfd: bun_sys::File) -> Bytes {
             Bytes {
                 memfd: Some(memfd),
-                ..Self::new(Storage::Mapped(Mapping(mapping)))
+                ..Self::new(Storage::Mapped(mapping))
             }
         }
 
@@ -704,9 +691,9 @@ pub mod store {
             match &self.storage {
                 Storage::Heap(bytes) => bytes,
                 Storage::Static(bytes) => bytes,
-                // SAFETY: mapped until it is dropped.
+                // SAFETY: the contract of `from_mapping`.
                 #[cfg(unix)]
-                Storage::Mapped(mapping) => unsafe { &*mapping.0 },
+                Storage::Mapped(mapping) => unsafe { mapping.as_slice() },
             }
         }
 
@@ -718,7 +705,9 @@ pub mod store {
                 }
                 Storage::Static(bytes) => core::ptr::from_ref(*bytes).cast_mut(),
                 #[cfg(unix)]
-                Storage::Mapped(mapping) => mapping.0,
+                Storage::Mapped(mapping) => {
+                    core::ptr::slice_from_raw_parts_mut(mapping.as_ptr(), mapping.size())
+                }
             }
         }
 

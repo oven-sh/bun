@@ -41,7 +41,6 @@ impl Expect {
             let (text, substring) = (received.to_utf8(m.global)?, expected.to_utf8(m.global)?);
             substring.is_empty() || has(&text, &substring)
         };
-        let m = m.reread();
         if m.passes(matched) { m.pass() } else { m.fail_expected_to(verb, expected, received) }
     }
 

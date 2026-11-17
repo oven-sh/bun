@@ -97,7 +97,6 @@ impl Expect {
         if !path.is_string() && !path.is_iterable(global)? {
             return Err(global.throw(format_args!("Expected path must be a string or an array")));
         }
-        let m = m.reread();
 
         let mut found: Option<JSValue> = None;
         if !received.is_undefined_or_null() {

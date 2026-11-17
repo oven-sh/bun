@@ -127,7 +127,6 @@ impl Expect {
         while !matched && let Some(call) = items.next()? {
             matched = has_arguments(global, Some(call), expected, &|| throw_not_a_call(global))?;
         }
-        let m = m.reread();
         if m.passes(matched) {
             return m.pass();
         }
@@ -164,7 +163,6 @@ impl Expect {
         let (calls, count) = calls(&m, mock)?;
         let call = if count == 1 { Some(calls.get_index(global, 0)?) } else { None };
         let matched = has_arguments(global, call, expected, &|| throw_not_a_call(global))?;
-        let m = m.reread();
         if m.passes(matched) {
             return m.pass();
         }
@@ -204,7 +202,6 @@ impl Expect {
         let (calls, count) = calls(&m, mock)?;
         let call = if count > 0 { Some(calls.get_index(global, count - 1)?) } else { None };
         let matched = has_arguments(global, call, expected, &|| mock::throw_not_a_mock(global, " with calls", mock))?;
-        let m = m.reread();
         if m.passes(matched) {
             return m.pass();
         }
@@ -238,7 +235,6 @@ impl Expect {
         )?;
         let call = if nth <= count { Some(calls.get_index(global, nth - 1)?) } else { None };
         let matched = has_arguments(global, call, expected, &|| throw_not_a_call(global))?;
-        let m = m.reread();
         if m.passes(matched) {
             return m.pass();
         }

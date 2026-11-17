@@ -1337,18 +1337,19 @@ impl Expect {
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let _gc = cx.global().bun_vm().auto_gc_on_drop();
-        let call = MatcherCall { this: this_value.to_js(), callee: callee.to_js(), arguments: JsLocal::to_js_slice(args) };
+        let (this, callee, arguments) = (this_value.to_js(), callee.to_js(), JsLocal::to_js_slice(args));
 
         // try to retrieve the Expect instance
-        let Some(expect) = call.this.as_class_ref::<Expect>() else {
+        let Some(expect) = this.as_class_ref::<Expect>() else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
             let global_this = cx.global();
-            let matcher_fn = Self::custom_matcher_fn(global_this, call.callee)?;
-            return ExpectCustomAsymmetricMatcher::create(global_this, call.this, call.arguments, matcher_fn);
+            let matcher_fn = Self::custom_matcher_fn(global_this, callee)?;
+            return ExpectCustomAsymmetricMatcher::create(global_this, this, arguments, matcher_fn);
         };
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
+        let call = MatcherCall { expect: &expect, this, callee, arguments, flags: expect.flags.get() };
         expect.run_matcher(cx, &call, |cx| expect.custom_matcher(cx.global(), &call))
     }
 
@@ -1375,12 +1376,12 @@ impl Expect {
             matcher_fn,
         };
 
-        let value = expect.received(global_this, this_value, expect.flags.get(), &matcher_name, &matcher_params)?;
+        let value = expect.received(global_this, this_value, call.flags, &matcher_name, &matcher_params)?;
         expect.increment_expect_call_counter();
 
         let args = call.arguments;
         Self::with_matcher_args(value, args.len(), |index| Ok(args[index]), |matcher_args| {
-            Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, matcher_args, expect.flags.get(), expect.parent.as_ref(), false)
+            Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, matcher_args, call.flags, expect.parent.as_ref(), false)
         })?;
 
         Ok(this_value)

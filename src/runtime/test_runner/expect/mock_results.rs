@@ -138,7 +138,6 @@ fn has_values(m: &Matcher<'_>, mock: JSValue, kind: Kind, times: Times, argument
         (Times::Exactly, Kind::Resolved) => mock::times_argument(m, argument.to_js())?,
     };
     let values = results.count_values()?;
-    let m = &m.reread();
     let (matched, relation) = match times {
         Times::AtLeastOnce => (values >= expected, if m.not() { "< " } else { ">= " }),
         Times::Exactly => (values == expected, if m.not() { "!= " } else { "== " }),
@@ -210,7 +209,6 @@ fn call_has_value(m: &Matcher<'_>, results: &Results<'_>, call: Call, expected: 
         Some(Outcome::Value(value)) => value.jest_deep_equals(expected, m.global)?,
         _ => false,
     };
-    let m = &m.reread();
     if m.passes(matched) {
         return m.pass();
     }
@@ -281,7 +279,6 @@ fn returned_with(m: &Matcher<'_>, mock: JSValue, expected: JSValue, roots: &mut 
             Some(ResultType::Incomplete) | None => {}
         }
     }
-    let m = &m.reread();
     if m.passes(matched) {
         return m.pass();
     }
@@ -420,7 +417,6 @@ impl Expect {
                 matched = matched || value.jest_deep_equals(expected, m.global)?;
             }
         }
-        let m = m.reread();
         if m.passes(matched) {
             return m.pass();
         }

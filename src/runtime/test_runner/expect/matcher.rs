@@ -3,14 +3,15 @@
 use core::fmt::{self, Write as _};
 
 use bun_core::{Output, write_pretty};
-use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::js_promise::Status;
 use bun_jsc::{AnyPromise, JSGlobalObject, JSValue, JsError, JsResult};
 
+use super::expect_deferred::MatcherCall;
 use super::{Expect, Flags, Promise, js, show};
 use crate::test_runner::diff_format::DiffFormatter;
 
-pub(crate) type This<'a> = JsWrapper<'a, Expect>;
+pub(crate) type This<'a> = &'a MatcherCall<'a>;
 pub(crate) type Verdict = JsResult<Passed>;
 
 /// What a matcher returns to script. Only a [`Matcher`] makes one, so no matcher passes without being counted.
@@ -66,7 +67,6 @@ pub(super) struct Matcher<'a> {
     pub(super) this: JSValue,
     pub(super) name: &'static str,
     params: Params,
-    /// As they were when the call began: script that the matcher runs can read `.not` on the same `expect()`.
     flags: Flags,
 }
 
@@ -82,14 +82,7 @@ impl Expect {
         name: &'static str,
         params: Params,
     ) -> Uncounted<'a> {
-        Uncounted(Matcher {
-            expect: self,
-            global: cx.global(),
-            this: this.to_js(),
-            name,
-            params,
-            flags: self.flags.get(),
-        })
+        Uncounted(Matcher { expect: self, global: cx.global(), this: this.this, name, params, flags: this.flags })
     }
 
     /// Reads the received value, then counts the call.
@@ -229,18 +222,12 @@ impl<'a> Uncounted<'a> {
 impl<'a> Matcher<'a> {
     #[inline]
     pub(super) fn received(&self) -> JsResult<JSValue> {
-        self.expect.received(self.global, self.this, self.expect.flags.get(), &self.name, &self.params)
-    }
-
-    /// With the modifiers that script has read since the call began.
-    #[inline]
-    pub(super) fn reread(self) -> Self {
-        Self { flags: self.expect.flags.get(), ..self }
+        self.expect.received(self.global, self.this, self.flags, &self.name, &self.params)
     }
 
     #[inline]
     pub(super) fn promise(&self) -> Promise {
-        self.expect.flags.get().promise()
+        self.flags.promise()
     }
 
     #[inline]

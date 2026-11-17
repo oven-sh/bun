@@ -161,7 +161,6 @@ impl Expect {
         }
         let received = m.received()?;
         let matched = predicate.call(m.global, JSValue::UNDEFINED, &[received])? == JSValue::TRUE;
-        let m = m.reread();
         if m.passes(matched) {
             return m.pass();
         }
@@ -201,6 +200,6 @@ impl Expect {
         } else {
             return Err(call.global().throw_invalid_argument_type(name, "message", "string"));
         };
-        Ok((call.count().reread(), message))
+        Ok((call.count(), message))
     }
 }

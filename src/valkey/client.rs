@@ -300,11 +300,8 @@ impl<P> Client<P> {
 
     /// The transport is up. A TLS renegotiation says so again.
     pub fn start(&mut self) {
-        match self.state {
-            State::Dialing => self.state = State::Hello,
-            State::Ready if self.config.database > 0 => self.state = State::Select,
-            _ => {}
-        }
+        let State::Dialing = self.state else { return };
+        self.state = State::Hello;
         let Config {
             username,
             password,

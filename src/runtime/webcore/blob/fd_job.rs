@@ -2,13 +2,14 @@
 
 use bun_io::fd_wait::{FdWait, Interest, JobFd};
 use bun_jsc::job::JsAffine;
+use bun_jsc::node_path::{JoinedPath, PathLike};
 use bun_jsc::{Completion, Job, JobContext, JsResult, JsThread, SystemError};
 use bun_sys::{E, Fd, File, O};
 use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask};
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::creating_parents;
+use crate::webcore::blob::{Store, creating_parents, sys_error_with_path_like};
 use crate::webcore::node_types::PathOrFileDescriptor;
 
 pub(crate) enum Step {
@@ -25,9 +26,9 @@ pub(crate) trait FdOp: Send + Sized + 'static {
 
     /// Pool thread, once.
     fn open(&mut self) -> Result<JobFd, Box<SystemError>>;
-    /// Pool thread.
-    fn step(&mut self, fd: Fd) -> Result<Step, Box<SystemError>>;
-    /// JS thread. The descriptor is closed.
+    /// Pool thread. `ready`: the wait has just ended.
+    fn step(&mut self, fd: Fd, ready: bool) -> Result<Step, Box<SystemError>>;
+    /// JS thread.
     fn then(self, result: Result<(), Box<SystemError>>, js: Self::Js) -> JsResult<()>;
 }
 
@@ -46,7 +47,7 @@ impl<Op: FdOp> JobContext for FdJob<Op> {
     fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
         this.done = Some(done);
         let fd = this.op.open();
-        this.advance(fd);
+        this.advance(fd, false);
         None
     }
 
@@ -77,32 +78,59 @@ impl<Op: FdOp> FdJob<Op> {
         unsafe {
             let this = bun_core::from_field_ptr!(Self, wait, FdWait::from_task_ptr(task));
             let fd = (*this).wait.unpark().map_err(Into::into);
-            (*this).advance(fd);
+            (*this).advance(fd, true);
         }
     }
 
     /// The job is another thread's when this returns.
-    fn advance(&mut self, fd: Result<JobFd, Box<SystemError>>) {
-        self.result = match fd.and_then(|fd| self.step_until_parked(fd)) {
+    fn advance(&mut self, fd: Result<JobFd, Box<SystemError>>, ready: bool) {
+        self.result = match fd.and_then(|fd| self.step_until_parked(fd, ready)) {
             Ok(true) => return,
             Ok(false) => Ok(()),
             Err(err) => Err(err),
         };
-        self.done.take().expect("finished once").finish();
+        if let Some(done) = self.done.take() {
+            done.finish();
+        }
     }
 
-    /// `false`: done, and `fd` is closed.
-    fn step_until_parked(&mut self, mut fd: JobFd) -> Result<bool, Box<SystemError>> {
+    /// `false`: done.
+    fn step_until_parked(&mut self, fd: JobFd, mut ready: bool) -> Result<bool, Box<SystemError>> {
         loop {
-            match self.op.step(fd.get())? {
+            match self.op.step(fd.get(), core::mem::take(&mut ready))? {
                 Step::Done => return Ok(false),
                 Step::Again => self.wait.check_cancelled()?,
-                // SAFETY: this thread has the job, which is freed after `done.finish()`.
-                Step::Wait => match unsafe { FdWait::park(&raw mut self.wait, fd)? } {
-                    None => return Ok(true),
-                    Some(not_parked) => fd = not_parked,
-                },
+                Step::Wait => {
+                    // SAFETY: this thread has the boxed job, and every frame returns without touching it. Not upheld if the script closes a borrowed `fd` that has a duplicate.
+                    unsafe { FdWait::park(&raw mut self.wait, fd)? };
+                    return Ok(true);
+                }
             }
+        }
+    }
+}
+
+/// What a job opens. A copy: the JS thread writes to the store while the job runs.
+pub(super) enum Target {
+    Fd(Fd),
+    Path(Box<[u8]>),
+    Joined(Box<JoinedPath>),
+}
+
+impl Target {
+    pub(super) fn of(store: &Store) -> Self {
+        match &store.data.as_file().pathlike {
+            PathOrFileDescriptor::Fd(fd) => Self::Fd(*fd),
+            PathOrFileDescriptor::Path(PathLike::Joined(path)) => Self::Joined(path.clone()),
+            PathOrFileDescriptor::Path(path) => Self::Path(path.slice().into()),
+        }
+    }
+
+    pub(super) fn get(&self) -> PathOrFileDescriptor<'_> {
+        match self {
+            Self::Fd(fd) => PathOrFileDescriptor::Fd(*fd),
+            Self::Path(path) => PathOrFileDescriptor::Path(PathLike::borrowed(path)),
+            Self::Joined(path) => PathOrFileDescriptor::Path(PathLike::Joined(path.clone())),
         }
     }
 }
@@ -113,7 +141,7 @@ pub(super) fn open(
     mut mkdirp: bool,
 ) -> Result<JobFd, Box<SystemError>> {
     let path = match file {
-        PathOrFileDescriptor::Fd(fd) => return Ok(JobFd::Borrowed(*fd)),
+        PathOrFileDescriptor::Fd(fd) => return Ok(JobFd::borrowed(*fd)),
         PathOrFileDescriptor::Path(path) => path,
     };
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -122,12 +150,11 @@ pub(super) fn open(
     let opened = creating_parents(&mut mkdirp, path_z.as_bytes(), || {
         File::open(path_z, flags, node_fs::DEFAULT_PERMISSION)
     });
-    opened.map(JobFd::from).map_err(|err| {
-        let err = err.with_path(path.slice());
-        let mkdir_failed = mkdirp && err.get_errno() == E::ENOENT;
-        if mkdir_failed {
-            return err.into();
+    opened.map(JobFd::opened).map_err(|err| {
+        // mkdir failed: a compiled program reports the resolved path, not the one in the script.
+        if mkdirp && err.get_errno() == E::ENOENT {
+            return err.with_path(path.slice()).into();
         }
-        node_fs::error_for_caller([Some(path), None], err).into()
+        sys_error_with_path_like(&err, file).into()
     })
 }

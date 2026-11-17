@@ -6,7 +6,7 @@ use scopeguard::ScopeGuard;
 #[cfg(windows)]
 use crate::node::types::PathLikeExt as _;
 #[cfg(not(windows))]
-use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Step};
+use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Step, Target};
 use crate::webcore::blob::store::Data;
 #[cfg(windows)]
 use crate::webcore::blob::store::File as FileStore;
@@ -142,6 +142,7 @@ pub(crate) type ReadFileResult = Result<Box<[u8]>, Box<SystemError>>;
 #[cfg(not(windows))]
 pub(crate) struct ReadFile {
     store: RefPtr<Store>,
+    file: Target,
     /// What the store knew when the read was asked for.
     cached_mode: bun_sys::Mode,
     offset: SizeType,
@@ -159,6 +160,7 @@ impl ReadFile {
     ) {
         let store = blob.store().expect("infallible: store present").clone();
         let read = ReadFile {
+            file: Target::of(&store),
             cached_mode: store.data.as_file().mode,
             store,
             offset: blob.offset.get(),
@@ -170,7 +172,7 @@ impl ReadFile {
     }
 
     fn path_for_error(&self) -> BunString {
-        match &self.store.data.as_file().pathlike {
+        match self.file.get() {
             PathOrFileDescriptor::Path(path) => BunString::clone_utf8(path.slice()),
             PathOrFileDescriptor::Fd(_) => BunString::EMPTY,
         }
@@ -214,8 +216,7 @@ impl FdOp for ReadFile {
     type Js = PendingReadFileCompletion;
 
     fn open(&mut self) -> Result<JobFd, Box<SystemError>> {
-        let pathlike = &self.store.data.as_file().pathlike;
-        let fd = fd_job::open(pathlike, bun_sys::O::RDONLY, false)?;
+        let fd = fd_job::open(&self.file.get(), bun_sys::O::RDONLY, false)?;
         let stat = bun_sys::fstat(fd.get())?;
 
         if let Data::File(file) = Store::data_mut(&self.store) {
@@ -257,7 +258,7 @@ impl FdOp for ReadFile {
         Ok(fd)
     }
 
-    fn step(&mut self, fd: Fd) -> Result<Step, Box<SystemError>> {
+    fn step(&mut self, fd: Fd, ready: bool) -> Result<Step, Box<SystemError>> {
         let mut stack_buffer = [const { MaybeUninit::uninit() }; 64 * 1024];
         loop {
             let max = (self.max_length as usize).saturating_sub(self.buffer.len());
@@ -265,7 +266,10 @@ impl FdOp for ReadFile {
                 break;
             }
             // The descriptor of stdin, for one, blocks in read().
-            if self.could_block && bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
+            if self.could_block
+                && !ready
+                && bun_core::is_readable(fd) == bun_core::Pollable::NotReady
+            {
                 return Ok(Step::Wait);
             }
             match self.read_some(fd, max, &mut stack_buffer) {
@@ -484,7 +488,7 @@ impl ReadFileUV {
 
         let stat = this.req.statbuf;
 
-        // keep in sync with resolveSizeAndLastModified
+        // keep in sync with ReadFile::open
         if let Data::File(file) = Store::data_mut(&this.store) {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
             // platform-width `isize` `to_js_time` expects.

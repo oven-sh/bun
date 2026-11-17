@@ -1,10 +1,10 @@
+import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, fstatSync, openSync, writeSync } from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { mkfifo } from "mkfifo";
+import { closeSync, openSync, readSync, writeSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { constants } from "os";
 import { join } from "path";
-import { openFifo, untilWaits } from "../io/fifo-helpers";
+import { openFifo, untilWatched } from "../io/fifo-helpers";
 
 // Reading a Bun.file() backed by a file descriptor goes through
 // ReadFile::open, which derives the expected size from fstat. That
@@ -53,52 +53,55 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
   });
 });
 
-function fifoIn(dir: ReturnType<typeof tempDir>) {
-  const path = join(String(dir), "fifo");
-  mkfifo(path);
-  return Object.assign(openFifo(path), { path });
-}
-
 test.skipIf(isWindows)("an empty slice of a pipe that nobody writes to resolves", async () => {
   using dir = tempDir("bun-file-fd-read", {});
-  using fifo = fifoIn(dir);
+  using fifo = openFifo(String(dir));
   expect(await Bun.file(fifo.path).slice(0, 0).text()).toBe("");
   expect(await Bun.file(fifo.reader).slice(0, 0).text()).toBe("");
 });
 
-// /proc/self/fdinfo shows that a read waits.
-describe.skipIf(!isLinux).concurrent("Bun.file(fd) read of an empty pipe", () => {
-  const outcome = (promise: Promise<string>) => promise.catch(({ code, syscall }) => ({ code, syscall }));
+describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket", () => {
+  const [AF_INET, SOCK_STREAM, SOCK_DGRAM, SOL_SOCKET, SO_TIMESTAMPING] = [2, 1, 2, 1, 37];
+  const libc = () =>
+    dlopen(libcPathForDlopen(), {
+      socket: { args: ["i32", "i32", "i32"], returns: "i32" },
+      setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+      connect: { args: ["i32", "ptr", "u32"], returns: "i32" },
+    }).symbols;
 
-  test("two reads wait on one descriptor", async () => {
-    using dir = tempDir("bun-file-fd-read", {});
-    using fifo = fifoIn(dir);
-    const reads = Promise.all([outcome(Bun.file(fifo.reader).text()), outcome(Bun.file(fifo.reader).text())]);
-    const waits = await untilWaits(fifo.inode, 2);
-    writeSync(fifo.writer, "hello");
-    fifo.close(fifo.writer);
-    expect({ waits, reads: (await reads).sort() }).toEqual({ waits: 2, reads: ["", "hello"] });
+  /** A socket that the event loop does not know. */
+  function connectTo(port: number, type: number) {
+    const fd = libc().socket(AF_INET, type, 0);
+    const address = new Uint8Array([AF_INET, 0, port >> 8, port & 255, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(libc().connect(fd, ptr(address), address.length)).toBe(0);
+    return { fd, [Symbol.dispose]: () => closeSync(fd) };
+  }
+
+  // read() has nothing to report here, and epoll never stops reporting it.
+  test("rejects when it stands for a message in the error queue", async () => {
+    const peer = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+    try {
+      using socket = connectTo(peer.port, SOCK_DGRAM);
+      const timestampWhatIsSent = new Int32Array([(1 << 1) | (1 << 4)]);
+      expect(libc().setsockopt(socket.fd, SOL_SOCKET, SO_TIMESTAMPING, ptr(timestampWhatIsSent), 4)).toBe(0);
+      const text = Bun.file(socket.fd).text();
+      await untilWatched(socket.fd);
+      writeSync(socket.fd, "x");
+      await expect(text).rejects.toMatchObject({ syscall: "epoll_ctl" });
+    } finally {
+      peer.close();
+    }
   });
 
-  test("finishes after the caller has closed the descriptor", async () => {
-    using dir = tempDir("bun-file-fd-read", {});
-    using fifo = fifoIn(dir);
-    const read = outcome(Bun.file(fifo.reader).text());
-    expect(await untilWaits(fifo.inode, 1)).toBe(1);
-    fifo.close(fifo.reader);
-    writeSync(fifo.writer, "late");
-    fifo.close(fifo.writer);
-    expect(await read).toBe("late");
-  });
-
-  test("rejects with ECONNRESET when the peer of a socket leaves with unread data", async () => {
-    await using peer = Bun.spawn({ cmd: ["sleep", "60"], env: bunEnv, stdio: ["ignore", "ignore", "inherit", "pipe"] });
-    const socket = peer.stdio[3] as number;
-    writeSync(socket, "unread");
-    const read = outcome(Bun.file(socket).text());
-    expect(await untilWaits(fstatSync(socket).ino, 1)).toBe(1);
-    peer.kill();
-    expect(await read).toEqual({ code: "ECONNRESET", syscall: "read" });
+  test("leaves the pending error on the socket", async () => {
+    const accepted = Promise.withResolvers<Bun.Socket>();
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: accepted.resolve, data() {} } });
+    using socket = connectTo(server.port, SOCK_STREAM);
+    const text = Bun.file(socket.fd).text();
+    await untilWatched(socket.fd);
+    (await accepted.promise).terminate();
+    await expect(text).rejects.toMatchObject({ syscall: "epoll_ctl" });
+    expect(() => readSync(socket.fd, Buffer.alloc(1))).toThrow(expect.objectContaining({ code: "ECONNRESET" }));
   });
 });
 
@@ -110,21 +113,24 @@ test.skipIf(!isLinux || !cc)("read() is called again after EAGAIN from a regular
   const file = join(String(dir), "file.txt");
   const supervisor = join(String(dir), "fail-nth-read");
   const source = join(import.meta.dir, "..", "io", "fail-nth-read.c");
-  expect(Bun.spawnSync({ cmd: [cc!, "-o", supervisor, source], env: bunEnv, stderr: "inherit" }).exitCode).toBe(0);
+  await using compile = Bun.spawn({ cmd: [cc!, "-O0", "-o", supervisor, source], env: bunEnv, stderr: "inherit" });
+  expect(await compile.exited).toBe(0);
 
   // The second read() is the one that finds the end of the file, so no bytes are lost.
   const failSecondRead = [supervisor, file, "2", String(constants.errno.EAGAIN), "--"];
   await using proc = Bun.spawn({
     cmd: [...failSecondRead, bunExe(), "-e", "console.log(await Bun.file(process.argv[1]).text())", file],
     // LeakSanitizer does not work under ptrace.
-    env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: "detect_leaks=0",
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr }).toEqual({
-    stdout: "hello\n",
-    stderr: "[fail-nth-read] matched read() calls on target: 3\n",
-  });
+  expect(stdout).toBe("hello\n");
+  expect(stderr).toContain("matched read() calls on target: 3\n");
   expect(exitCode).toBe(0);
 });

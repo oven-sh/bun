@@ -1,21 +1,18 @@
+import { mkfifo } from "mkfifo";
 import fs from "node:fs";
+import { join } from "node:path";
 
 const { O_NONBLOCK, O_RDONLY, O_WRONLY } = fs.constants;
 
-/** Both ends of the FIFO at `path`, non-blocking. */
-export function openFifo(path: string) {
-  const open = new Set<number>();
+/** Makes a FIFO in `dir` and opens both ends, non-blocking. */
+export function openFifo(dir: string) {
+  const path = join(dir, "fifo");
+  mkfifo(path);
   const reader = fs.openSync(path, O_RDONLY | O_NONBLOCK);
   const writer = fs.openSync(path, O_WRONLY | O_NONBLOCK);
-  open.add(reader).add(writer);
+  const open = new Set([reader, writer]);
   const close = (fd: number) => void (open.delete(fd) && fs.closeSync(fd));
-  return {
-    reader,
-    writer,
-    inode: fs.fstatSync(reader).ino,
-    close,
-    [Symbol.dispose]: () => [...open].forEach(close),
-  };
+  return { path, reader, writer, close, [Symbol.dispose]: () => [...open].forEach(close) };
 }
 
 function untilEAGAIN(step: () => number) {
@@ -40,37 +37,22 @@ export function drain(reader: number) {
   return untilEAGAIN(() => fs.readSync(reader, buffer));
 }
 
-/** Reads until `promise` settles. Returns how much that was. */
-export async function drainUntil(reader: number, promise: Promise<unknown>) {
-  let settled = false;
-  promise.finally(() => (settled = true)).catch(() => {});
-  let total = 0;
-  while (!settled) {
-    total += drain(reader);
+/** Linux: resolves when this process has asked epoll to tell it when `fd` is readable or writable. */
+export async function untilWatched(fd: number) {
+  const inode = fs.fstatSync(fd).ino;
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    for (const name of fs.readdirSync("/proc/self/fdinfo")) {
+      let info = "";
+      try {
+        info = fs.readFileSync("/proc/self/fdinfo/" + name, "utf8");
+      } catch {}
+      for (const [, events, ino] of info.matchAll(/^tfd:.* events:\s*([0-9a-f]+) .* ino:([0-9a-f]+)/gm)) {
+        // EPOLLIN | EPOLLOUT: a one-shot entry that has fired has neither.
+        if (parseInt(ino, 16) === inode && parseInt(events, 16) & 0b101) return;
+      }
+    }
     await Bun.sleep(1);
   }
-  return total + drain(reader);
-}
-
-/** Linux: how many times this process has asked epoll to tell it when the file is readable or writable. */
-export function countWaits(inode: number) {
-  let count = 0;
-  for (const fd of fs.readdirSync("/proc/self/fdinfo")) {
-    let info = "";
-    try {
-      info = fs.readFileSync("/proc/self/fdinfo/" + fd, "utf8");
-    } catch {}
-    for (const [, events, ino] of info.matchAll(/^tfd:.* events:\s*([0-9a-f]+) .* ino:([0-9a-f]+)/gm)) {
-      // EPOLLIN | EPOLLOUT: a one-shot entry that has fired has neither.
-      if (parseInt(ino, 16) === inode && parseInt(events, 16) & 0b101) count++;
-    }
-  }
-  return count;
-}
-
-/** Linux: `countWaits` once it is `count`, or after 3 seconds. */
-export async function untilWaits(inode: number, count: number) {
-  const deadline = performance.now() + 3000;
-  while (countWaits(inode) !== count && performance.now() < deadline) await Bun.sleep(1);
-  return countWaits(inode);
+  throw new Error(`nothing waits for fd ${fd}`);
 }

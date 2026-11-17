@@ -10,6 +10,7 @@ import { chmodSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
+  isLinux,
   isPosix,
   isRoot,
   isWindows,
@@ -3820,4 +3821,97 @@ test.if(isWindows)("operands longer than the path buffer fail with ENAMETOOLONG"
   expect(await Bun.file(join(String(dir), "in.txt")).text()).toBe("content\n");
   expect(await Bun.file(join(String(dir), "out.txt")).text()).toBe("hi\n");
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("builtin errors", () => {
+  async function run(script: string, files = {}) {
+    using dir = tempDir("builtin-errors", files);
+    await using proc = Bun.spawn({
+      cmd: [BUN, "-e", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { seen: JSON.parse(stdout || "null"), stderr, exitCode };
+  }
+
+  test("a bad option gets the same message captured and on a file descriptor", async () => {
+    // Several messages name the wrong flag. They are pinned, not endorsed.
+    const unsupported = "unsupported option, please open a GitHub issue -- ";
+    const messages = {
+      "cat -": "cat: illegal option -- -\n",
+      "cat -zq": "cat: illegal option -- q\n",
+      "cat -n f": `cat: ${unsupported}-n\n`,
+      "cp -zq a b": "cp: illegal option -- zq\n",
+      "cp -f a b": `cp: ${unsupported}-f\n`,
+      "cp -p a b": `cp: ${unsupported}-P\n`,
+      "ls -a@": "ls: illegal option -- a\n",
+      "mkdir -pzq a": "mkdir: illegal option -- q\n",
+      "mkdir -pm 1 a": `mkdir: ${unsupported}-m \n`,
+      "mkdir --mode": `mkdir: ${unsupported}--mode\n`,
+      "rm -fz a": "rm: illegal option -- fz\n",
+      "rm -- a": "rm: illegal option -- -\n",
+      "rm -fi a": 'rm: "-i" is not supported yet',
+      "rm -if": "usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n",
+      "touch -z": "touch: illegal option -- \n",
+      "touch -a f": `touch: ${unsupported}-a\n`,
+      "touch --time": `touch: ${unsupported}--reference=FILE\n`,
+    };
+    const script = `
+      const seen = {};
+      for (const raw of ${JSON.stringify(Object.keys(messages))}) {
+        const captured = await Bun.$\`\${{ raw }}\`.quiet().nothrow();
+        const toFile = await Bun.$\`\${{ raw }} 2> err\`.quiet().nothrow();
+        seen[raw] = {
+          captured: { message: captured.stderr.toString(), exitCode: captured.exitCode },
+          toFile: { message: await Bun.file("err").text(), exitCode: toFile.exitCode },
+        };
+      }
+      console.log(JSON.stringify(seen));
+    `;
+    const expected = {};
+    for (const [raw, message] of Object.entries(messages)) {
+      expected[raw] = { captured: { message, exitCode: 1 }, toFile: { message, exitCode: 1 } };
+    }
+    expect(await run(script)).toEqual({ seen: expected, stderr: "", exitCode: 0 });
+  });
+
+  test.if(isLinux)("exit code when the output cannot be written", async () => {
+    const ENOSPC = 28;
+    // These two are pinned, not endorsed.
+    const negatedENOSPC = 2 ** 16 - ENOSPC;
+    const ignored = 0;
+    const expected = {
+      "echo hi > /dev/full": negatedENOSPC,
+      "which > /dev/full": negatedENOSPC,
+      "which nope > /dev/full": negatedENOSPC,
+      "echo hi | cat > /dev/full": ENOSPC,
+      "cat nope 2> /dev/full": ENOSPC,
+      "rm -z a 2> /dev/full": ENOSPC,
+      "pwd > /dev/full": 1,
+      "export > /dev/full": 1,
+      "basename a/b > /dev/full": 1,
+      "dirname a/b > /dev/full": 1,
+      "seq 3 > /dev/full": 1,
+      "yes > /dev/full": 1,
+      "cd nope 2> /dev/full": 1,
+      "exit a 2> /dev/full": 1,
+      "touch -z 2> /dev/full": 1,
+      "mv nope new 2> /dev/full": 1,
+      "rm nope 2> /dev/full": 1,
+      "ls > /dev/full": ignored,
+      "mkdir -v new > /dev/full": ignored,
+      "cp -v file copy > /dev/full": ignored,
+      "rm -v file > /dev/full": ignored,
+    };
+    const script = `
+      const seen = {};
+      for (const raw of ${JSON.stringify(Object.keys(expected))}) {
+        seen[raw] = (await Bun.$\`\${{ raw }}\`.quiet().nothrow()).exitCode;
+      }
+      console.log(JSON.stringify(seen));
+    `;
+    expect(await run(script, { file: "x" })).toEqual({ seen: expected, stderr: "", exitCode: 0 });
+  });
 });

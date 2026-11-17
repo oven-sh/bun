@@ -791,6 +791,28 @@ bun::N_AVX2::UnfilterUp                                              [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
+# Bun CRC-32 and Adler-32 (src/jsc/bindings/highway_checksums.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets,
+# and CPUID in N_AVX2::Crc32 for Crc32Vpclmulqdq. (6 symbols)
+# ----------------------------------------------------------------------------
+bun::N_SSE4::Crc32            [PCLMULQDQ]
+bun::N_AVX2::Crc32            [AVX, AVX2, BMI2, PCLMULQDQ]
+bun::N_AVX2::Crc32Vpclmulqdq  [AVX, AVX2, BMI2, PCLMULQDQ, VPCLMULQDQ]
+bun::N_AVX3_DL::Crc32         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+bun::N_AVX2::Adler32          [AVX, AVX2]
+bun::N_AVX3_DL::Adler32       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun DEFLATE (src/deflate).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (3 symbols)
+# ----------------------------------------------------------------------------
+bun_deflate::block::write_body::bmi2             [BMI2]
+bun_deflate::decompressor::decode_blocks::bmi2   [BMI2]
+bun_deflate::decompressor::decode_dynamic::bmi2  [BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun byte sets (src/jsc/bindings/highway_byte_set.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
 # ----------------------------------------------------------------------------
@@ -905,22 +927,6 @@ rsaz_1024_sqr_avx2             [AVX, AVX2]
 # ----------------------------------------------------------------------------
 CRYPTO_rdrand                [RDRAND]
 CRYPTO_rdrand_multiple8_buf  [RDRAND]
-
-
-# ----------------------------------------------------------------------------
-# libdeflate.
-# (10 symbols)
-# ----------------------------------------------------------------------------
-adler32_x86_avx2                   [AVX, AVX2]
-adler32_x86_avx2_vnni              [AVX, AVX2, AVX_VNNI]
-adler32_x86_avx512_vl256_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI]
-adler32_x86_avx512_vl512_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI]
-crc32_x86_pclmulqdq                [PCLMULQDQ]
-crc32_x86_pclmulqdq_avx            [AVX, PCLMULQDQ]
-crc32_x86_vpclmulqdq_avx2          [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl256  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl512  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-deflate_decompress_bmi2            [BMI2]
 
 
 # ----------------------------------------------------------------------------

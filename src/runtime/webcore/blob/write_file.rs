@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 #[cfg(not(windows))]
-use bun_io::fd_wait::{FdWait, Interest, JobFd};
+use bun_io::fd_wait::{Interest, JobFd};
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 #[cfg(not(windows))]
@@ -41,14 +41,10 @@ impl WriteFile {
         cx: &bun_jsc::JsThread<'_>,
     ) -> JSValue {
         let start = (source_blob.offset.get() as usize).min(source.shared_view().len());
-        let file = destination.data.as_file();
         let write = WriteFile {
             range: start..start + source_blob.shared_view().len(),
             written: 0,
-            // Only what the store knows already: fstat() is expensive, and a path is opened with O_NONBLOCK.
-            could_block: file.pathlike.is_fd()
-                && file.seekable.is_some()
-                && !sys::is_regular_file(file.mode),
+            could_block: false,
             mkdirp,
             destination,
             source,
@@ -67,20 +63,24 @@ impl FdOp for WriteFile {
     type Js = (jsc::JSPromiseStrong, bun_ptr::BackRef<JSGlobalObject>);
 
     fn open(&mut self) -> Result<JobFd, Box<SystemError>> {
+        let file = self.destination.data.as_file();
+        let pathlike = &file.pathlike;
         let fd = fd_job::open(
-            &self.destination.data.as_file().pathlike,
+            pathlike,
             sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
             self.mkdirp,
         )?;
 
+        // Only what the store knows by now: fstat() is expensive, and a path is opened with O_NONBLOCK.
+        self.could_block =
+            pathlike.is_fd() && file.seekable.is_some() && !sys::is_regular_file(file.mode);
+
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !self.could_block && self.range.len() > 1024 {
             // Preallocating grows the file, and O_APPEND writes after its end.
-            let appends = match fd {
-                JobFd::Owned(_) => false,
-                JobFd::Borrowed(fd) => sys::get_fcntl_flags(fd)
-                    .map_or(true, |flags| flags as i32 & sys::O::APPEND != 0),
-            };
+            let appends = pathlike.is_fd()
+                && sys::get_fcntl_flags(fd.get())
+                    .is_ok_and(|flags| flags as i32 & sys::O::APPEND != 0);
             if !appends {
                 let _ = sys::preallocate_file(fd.get().native(), 0, self.range.len() as i64);
             }
@@ -88,27 +88,33 @@ impl FdOp for WriteFile {
         Ok(fd)
     }
 
-    fn step(&mut self, fd: Fd) -> Result<Step, Box<SystemError>> {
-        let is_full = || bun_core::is_writable(fd) == bun_core::Pollable::NotReady;
-        let bytes = &self.source.shared_view()[self.range.clone()];
-        while self.written < bytes.len() {
-            if self.could_block && is_full() {
+    fn step(&mut self, fd: Fd, mut ready: bool) -> Result<Step, Box<SystemError>> {
+        let bytes = self.source.shared_view().get(self.range.clone());
+        let bytes = bytes.unwrap_or_default();
+        let mut eof = false;
+        loop {
+            // After the last write too: scripts count on room in the pipe when the promise resolves.
+            if self.could_block
+                && !core::mem::take(&mut ready)
+                && bun_core::is_writable(fd) == bun_core::Pollable::NotReady
+            {
                 return Ok(Step::Wait);
+            }
+            if eof || self.written >= bytes.len() {
+                return Ok(Step::Done);
             }
             // Not pwrite(): the destination may not be seekable.
             match sys::write(fd, &bytes[self.written..]) {
-                Ok(0) => break,
-                Ok(wrote) => self.written += wrote,
+                Ok(wrote) => {
+                    self.written += wrote;
+                    eof = wrote == 0;
+                }
                 Err(err) if err.get_errno() != sys::E::EAGAIN => return Err(err.into()),
                 Err(_) if self.could_block => return Ok(Step::Wait),
-                // epoll refuses a regular file, which is never full. kqueue misses that the reader of a macOS FIFO left.
-                Err(_) if !bun_core::Environment::IS_KQUEUE && is_full() && FdWait::can_park() => {
-                    return Ok(Step::Wait);
-                }
-                Err(_) => return Ok(Step::Again),
+                // Spins: https://github.com/oven-sh/bun/pull/35953
+                Err(_) => {}
             }
         }
-        Ok(Step::Done)
     }
 
     fn then(
@@ -345,7 +351,9 @@ mod windows_impl {
             let result = if let Some(err) = self.to_system_error() {
                 Err(Box::new(err))
             } else {
-                note_written(self.file_blob.store().expect("infallible: store present"));
+                if let Some(store) = self.file_blob.store() {
+                    note_written(store);
+                }
                 Ok(self.total_written as SizeType)
             };
             drop(self);
@@ -439,7 +447,7 @@ mod windows_impl {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Reports a finished write to its promise.
-fn settle(
+pub(super) fn settle(
     promise: &mut JSPromise,
     global_this: &JSGlobalObject,
     count: Result<SizeType, Box<SystemError>>,
@@ -461,7 +469,9 @@ fn settle(
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(super) fn note_written(destination: &blob::Store) {
-    if let PathOrFileDescriptor::Path(path) = &destination.data.as_file().pathlike {
+    if let blob::store::Data::File(file) = &destination.data
+        && let PathOrFileDescriptor::Path(path) = &file.pathlike
+    {
         crate::node::fs::note_opened_for_write(path.slice(), true);
     }
 }

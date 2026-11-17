@@ -3,6 +3,7 @@ pub mod acl;
 pub mod crate_error;
 pub mod error;
 pub mod storage_class;
+pub mod upload;
 
 pub use crate_error::Error;
 

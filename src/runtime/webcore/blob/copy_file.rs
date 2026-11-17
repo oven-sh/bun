@@ -8,6 +8,10 @@ use crate::server::file_response_stream::StreamFd;
 use crate::webcore::blob::MAX_SIZE;
 #[cfg(not(windows))]
 use crate::webcore::blob::creating_parents;
+#[cfg(not(windows))]
+use crate::webcore::blob::fd_job::Target;
+#[cfg(not(windows))]
+use crate::webcore::blob::write_file::{note_written, settle};
 use crate::webcore::blob::{SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(not(windows))]
@@ -42,6 +46,8 @@ use bun_sys_jsc::ErrorJsc as _;
 pub(crate) struct CopyFile {
     destination: RefPtr<Store>,
     source: RefPtr<Store>,
+    destination_file: Target,
+    source_file: Target,
     /// What the store knew when the copy was asked for.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     destination_cached_mode: Mode,
@@ -69,22 +75,18 @@ impl jsc::JobContext for CopyFile {
         mut promise: jsc::JSPromiseStrong,
         cx: &jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
-        let promise = promise.swap();
-        match this.copied {
-            Ok(copied) => {
-                super::write_file::note_written(&this.destination);
-                promise.resolve(cx.global(), JSValue::js_number_from_uint64(copied))
+        let copied = this.copied.map_err(|mut err| {
+            if let PathOrFileDescriptor::Path(path) = &this.source.data.as_file().pathlike
+                && err.path.is_empty()
+            {
+                err.path = bun_core::String::clone_utf8(path.slice());
             }
-            Err(mut err) => {
-                if let PathOrFileDescriptor::Path(path) = &this.source.data.as_file().pathlike
-                    && err.path.is_empty()
-                {
-                    err.path = bun_core::String::clone_utf8(path.slice());
-                }
-                let instance = err.to_error_instance_with_async_stack(cx.global(), promise);
-                promise.reject(cx.global(), Ok(instance))
-            }
+            err
+        });
+        if copied.is_ok() {
+            note_written(&this.destination);
         }
+        settle(promise.swap(), cx.global(), copied)
     }
 }
 
@@ -101,6 +103,8 @@ impl CopyFile {
         new_mode: Option<Mode>,
     ) -> JSValue {
         let copy = CopyFile {
+            destination_file: Target::of(&destination),
+            source_file: Target::of(&source),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             destination_cached_mode: destination.data.as_file().mode,
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -120,13 +124,12 @@ impl CopyFile {
     }
 
     fn opens_destination(&self) -> bool {
-        self.destination.data.as_file().pathlike.is_path()
+        !matches!(self.destination_file, Target::Fd(_))
     }
 
     fn copy(&mut self) -> Result<SizeType, Box<SystemError>> {
-        let source_file = &self.source.data.as_file().pathlike;
-        let destination_file = &self.destination.data.as_file().pathlike;
-        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let source_file = &self.source_file.get();
+        let destination_file = &self.destination_file.get();
 
         #[cfg(not(target_os = "macos"))]
         let known_stat: Option<Stat> = None;
@@ -136,7 +139,8 @@ impl CopyFile {
             (PathOrFileDescriptor::Path(from), PathOrFileDescriptor::Path(to))
                 if self.offset == 0 =>
             {
-                let from = from.slice_z(&mut path_buf);
+                let mut from_buf = bun_paths::path_buffer_pool::get();
+                let from = from.slice_z(&mut from_buf);
                 let stat = bun_sys::stat(from)?;
                 if bun_sys::S::ISDIR(stat.st_mode as u32) {
                     return Err(unsupported_directory_error());
@@ -157,39 +161,46 @@ impl CopyFile {
 
         // Source first: if it fails, no destination file is left behind.
         let source = match source_file {
-            PathOrFileDescriptor::Fd(fd) => JobFd::Borrowed(*fd),
+            PathOrFileDescriptor::Fd(fd) => JobFd::borrowed(*fd),
             PathOrFileDescriptor::Path(path) => {
-                File::open(path.slice_z(&mut path_buf), OPEN_SOURCE_FLAGS, 0)?.into()
+                let mut buf = bun_paths::path_buffer_pool::get();
+                JobFd::opened(File::open(path.slice_z(&mut buf), OPEN_SOURCE_FLAGS, 0)?)
             }
         };
         let destination = match destination_file {
-            PathOrFileDescriptor::Fd(fd) => JobFd::Borrowed(*fd),
+            PathOrFileDescriptor::Fd(fd) => JobFd::borrowed(*fd),
             PathOrFileDescriptor::Path(path) => {
-                let path = path.slice_z(&mut path_buf);
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let path = path.slice_z(&mut buf);
                 let mode = self.new_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 let open = || File::open(path, OPEN_DESTINATION_FLAGS, mode);
-                creating_parents(&mut self.mkdirp, path.as_bytes(), open)?.into()
+                JobFd::opened(creating_parents(&mut self.mkdirp, path.as_bytes(), open)?)
             }
         };
-        drop(path_buf);
 
         // open() sets the mode of a new file only.
-        let set_mode = |mode| bun_sys::fchmod(destination.get(), mode);
-        let stat = known_stat
-            .map_or_else(|| bun_sys::fstat(source.get()), Ok)
-            .inspect_err(|_| drop(self.new_mode.map(set_mode)))?;
+        let set_mode = || match self.new_mode {
+            Some(mode) => bun_sys::fchmod(destination.get(), mode),
+            None => Ok(()),
+        };
+        let stat = match known_stat.map_or_else(|| bun_sys::fstat(source.get()), Ok) {
+            Ok(stat) => stat,
+            Err(err) => {
+                // The destination may exist already, and fstat() has the error to report.
+                let _ = set_mode();
+                return Err(err.into());
+            }
+        };
         let copied = self.copy_opened(source.get(), destination.get(), &stat)?;
-        self.new_mode.map(set_mode).transpose()?;
+        set_mode()?;
         Ok(copied)
     }
 
     #[cfg(target_os = "macos")]
     fn finish_clone(&self, to: &bun_core::ZStr, stat: &Stat) -> bun_sys::Result<SizeType> {
-        let size = SizeType::try_from(stat.st_size).expect("int cast");
+        let size = stat.st_size.max(0) as SizeType;
         let copied = if self.max_length < size {
-            let len = i64::try_from(self.max_length).expect("int cast");
-            // SAFETY: `to` is NUL-terminated.
-            let _ = unsafe { bun_sys::c::truncate(to.as_ptr(), len) };
+            let _ = bun_sys::truncate(to, self.max_length as i64);
             self.max_length
         } else {
             size
@@ -207,11 +218,11 @@ impl CopyFile {
             return Err(unsupported_directory_error());
         }
 
+        let size = stat.st_size.max(0) as SizeType;
         let mut max_length = self.max_length;
         // BSD fstat on a pipe reports bytes currently buffered in st_size;
         // only a regular-file st_size is a length.
-        if stat.st_size != 0 && bun_sys::S::ISREG(mode) {
-            let size = SizeType::try_from(stat.st_size).expect("int cast");
+        if size != 0 && bun_sys::S::ISREG(mode) {
             max_length = size.min(max_length).saturating_sub(self.offset);
             if max_length == 0 {
                 return Ok(0);
@@ -258,7 +269,7 @@ impl CopyFile {
                     ..Default::default()
                 };
                 match bun_sys::fcopyfile(src, dest, data.bits()) {
-                    Ok(()) => copied = u64::try_from(stat.st_size).expect("int cast"),
+                    Ok(()) => copied = size,
                     // The file cannot seek: `bun test bun-write.test | xargs echo`
                     Err(err) if err.get_errno() == bun_sys::E::EBADF => {
                         read_write_loop(src, dest, 0, &mut copied)?
@@ -269,9 +280,8 @@ impl CopyFile {
             #[cfg(target_os = "freebsd")]
             read_write_loop(src, dest, 0, &mut copied)?;
 
-            if stat.st_size != 0 && SizeType::try_from(stat.st_size).expect("int cast") > max_length
-            {
-                let _ = bun_sys::ftruncate(dest, i64::try_from(max_length).expect("int cast"));
+            if size > max_length {
+                let _ = bun_sys::ftruncate(dest, max_length as i64);
                 copied = copied.min(max_length);
             }
             Ok(copied)
@@ -306,11 +316,7 @@ impl CopyFile {
             let written: isize = match syscall {
                 TryWith::CopyFileRange => linux::copy_file_range(from, None, to, None, remain, 0),
                 TryWith::Sendfile => linux::sendfile(to, from, None, remain),
-                // SAFETY: null offsets are allowed.
-                TryWith::Splice => unsafe {
-                    let cursor = core::ptr::null_mut();
-                    libc::splice(from, cursor, to, cursor, remain, 0)
-                },
+                TryWith::Splice => linux::splice(from, to, remain),
             };
 
             match bun_sys::get_errno(written) {
@@ -335,7 +341,7 @@ impl CopyFile {
         if self.opens_destination() {
             let size = if unknown_size { 0 } else { remain };
             read_write_loop(src, dest, size, &mut copied)?;
-            let _ = bun_sys::ftruncate(dest, i64::try_from(copied).expect("int cast"));
+            let _ = bun_sys::ftruncate(dest, copied as i64);
         } else {
             let cap = if unknown_size {
                 MAX_SIZE
@@ -614,7 +620,8 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
             return;
         }
 
-        let prev = this.read_write_loop.uv_buf.slice();
+        let prev_start = buf_len - this.read_write_loop.uv_buf.len as usize;
+        let prev = &this.read_write_loop.read_buf[prev_start..];
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
         this.read_write_loop_write();
         return;

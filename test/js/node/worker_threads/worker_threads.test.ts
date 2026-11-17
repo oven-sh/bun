@@ -3026,7 +3026,7 @@ describe("VM teardown ordering", () => {
          const w = new Worker(
            'const { workerData, parentPort } = require("worker_threads");' +
            'const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: workerData.url, retry: 3 });' +
-           // writer(): a MultiPartUpload, whose single-send failure path retries.
+           // writer(): its single PUT retries on failure.
            'const wr = s3.file("key").writer({ retry: 3 }); wr.write(Buffer.alloc(1024 * 1024)); wr.end().catch(() => {});' +
            'parentPort.postMessage("uploading");',
            { eval: true, workerData: { url: "${server.url.href}" } });

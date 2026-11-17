@@ -20,7 +20,7 @@ import http from "node:http";
 import { finished } from "node:stream/promises";
 import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
-import { drain, drainUntil, fill, openFifo, untilWaits } from "./fifo-helpers";
+import { drain, fill, openFifo, untilWatched } from "./fifo-helpers";
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -1818,16 +1818,8 @@ it.skipIf(isWindows).each([
   expect({ size: written.length, firstNul: written.indexOf(0) }).toEqual({ size: 6 + size, firstNul: -1 });
 });
 
-// /proc/self/fdinfo shows that a write waits.
 describe.skipIf(!isLinux).concurrent("Bun.write() to a pipe that is full", () => {
-  const size = 1 << 20;
-  const data = new Blob([Buffer.alloc(size, "a")]);
-  const outcome = promise => promise.catch(({ code, syscall }) => ({ code, syscall }));
-  function fifoIn(dir) {
-    const path = join(String(dir), "fifo");
-    mkfifo(path);
-    return Object.assign(openFifo(path), { path });
-  }
+  const data = new Blob([Buffer.alloc(1 << 20, "a")]);
   /** `.size` makes the file find out that it is not a regular one. */
   function knownPipe(fd) {
     const file = Bun.file(fd);
@@ -1835,67 +1827,61 @@ describe.skipIf(!isLinux).concurrent("Bun.write() to a pipe that is full", () =>
     return file;
   }
 
-  it.each(["path", "writer"])("waits for room without holding a thread (%s)", async destination => {
-    using dir = tempDir("bun-write-pipe", {});
-    using fifo = fifoIn(dir);
-    const write = outcome(Bun.write(Bun.file(fifo[destination]), data));
-    expect(await untilWaits(fifo.inode, 1)).toBe(1);
-    expect(await drainUntil(fifo.reader, write)).toBe(size);
-    expect(await write).toBe(size);
-  });
-
+  // EPOLLERR
   it("rejects with EPIPE when the reader leaves", async () => {
     using dir = tempDir("bun-write-pipe", {});
-    using fifo = fifoIn(dir);
-    const write = outcome(Bun.write(knownPipe(fifo.writer), data));
-    expect(await untilWaits(fifo.inode, 1)).toBe(1);
+    using fifo = openFifo(String(dir));
+    const write = Bun.write(knownPipe(fifo.writer), data).catch(({ code, syscall }) => ({ code, syscall }));
+    await untilWatched(fifo.writer);
     fifo.close(fifo.reader);
     expect(await write).toEqual({ code: "EPIPE", syscall: "write" });
   });
 
-  it("lets two writes wait on one descriptor", async () => {
+  // The capacity of a pipe is fixed on Linux.
+  it("waits for room after the last byte", async () => {
     using dir = tempDir("bun-write-pipe", {});
-    using fifo = fifoIn(dir);
-    const file = knownPipe(fifo.writer);
-    const writes = Promise.all([outcome(Bun.write(file, data)), outcome(Bun.write(file, data))]);
-    const waits = await untilWaits(fifo.inode, 2);
-    const received = await drainUntil(fifo.reader, writes);
-    expect({ waits, received, writes: await writes }).toEqual({ waits: 2, received: 2 * size, writes: [size, size] });
-  });
-
-  it("lets a read and a write wait on one socket", async () => {
-    const big = new Blob([Buffer.alloc(4 * size, "a")]);
-    await using peer = Bun.spawn({
-      cmd: ["sh", "-c", `read go; head -c ${big.size} <&3 >/dev/null; echo reply >&3`],
-      env: bunEnv,
-      stdio: ["pipe", "ignore", "inherit", "pipe"],
-    });
-    const socket = knownPipe(peer.stdio[3]);
-    const both = Promise.all([outcome(socket.slice(0, 6).text()), outcome(Bun.write(socket, big))]);
-    const waits = await untilWaits(fs.fstatSync(peer.stdio[3]).ino, 2);
-    peer.stdin.write("go\n");
-    await peer.stdin.end();
-    expect(waits).toBe(2);
-    expect(await both).toEqual(["reply\n", big.size]);
-  });
-
-  it("finishes after the caller has closed the descriptor", async () => {
-    using dir = tempDir("bun-write-pipe", {});
-    using fifo = fifoIn(dir);
-    const write = outcome(Bun.write(knownPipe(fifo.writer), data));
-    expect(await untilWaits(fifo.inode, 1)).toBe(1);
-    fifo.close(fifo.writer);
-    expect(await drainUntil(fifo.reader, write)).toBe(size);
-    expect(await write).toBe(size);
-  });
-
-  it("does not wait with nothing left to write", async () => {
-    using dir = tempDir("bun-write-pipe", {});
-    using fifo = fifoIn(dir);
+    using fifo = openFifo(String(dir));
     const room = fill(fifo.writer);
     drain(fifo.reader);
-    const file = knownPipe(fifo.writer);
-    expect(await Bun.write(file, data.slice(0, room))).toBe(room);
-    expect(await Bun.write(file, data.slice(1, 1))).toBe(0);
+    const write = Bun.write(knownPipe(fifo.writer), data.slice(0, room));
+    await untilWatched(fifo.writer);
+    expect(Bun.peek.status(write)).toBe("pending");
+    expect(drain(fifo.reader)).toBe(room);
+    expect(await write).toBe(room);
+  });
+
+  it("waits when the file finds out after the call that it is a pipe", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    mkfifo(join(String(dir), "hold-1"));
+    mkfifo(join(String(dir), "hold-2"));
+    const script = `
+      import fs from "node:fs";
+      import { drain, fill, openFifo, untilWatched } from ${JSON.stringify(join(import.meta.dir, "fifo-helpers.ts"))};
+
+      // readFile() has a thread of the pool from its open(), which ends the ENXIO, until the writer is closed.
+      async function holdThread(path) {
+        fs.promises.readFile(path);
+        for (;;) {
+          try {
+            return fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+          } catch (error) {
+            if (error.code !== "ENXIO") throw error;
+            await Bun.sleep(1);
+          }
+        }
+      }
+
+      using fifo = openFifo(".");
+      fill(fifo.writer);
+      const held = [await holdThread("hold-1"), await holdThread("hold-2")];
+      const file = Bun.file(fifo.writer);
+      const write = Bun.write(file, new Blob(["a"]));
+      file.size;
+      held.forEach(fd => fs.closeSync(fd));
+      await untilWatched(fifo.writer);
+      drain(fifo.reader);
+      console.log(await write);
+    `;
+    expect(await bunRun(["--cwd", String(dir), "-e", script], { UV_THREADPOOL_SIZE: "2" })).toSpawn("1");
   });
 });

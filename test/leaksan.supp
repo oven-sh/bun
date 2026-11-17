@@ -42,9 +42,6 @@ leak:lsquic_global_init
 leak:us_create_quic_client_context
 leak:lsquic_engine_connect
 leak:lsquic_engine_packet_in
-leak:lshpack_wrapper_decode
-leak:lshpack_wrapper_encode
-leak:lshpack_wrapper_init
 leak:jsc.ipc.onData2
 leak:runtime.node.fs_events.InitLibrary
 leak:runtime.node.fs_events.FSEventsLoop._schedule
@@ -83,7 +80,6 @@ leak:getaddrinfo
 leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:runtime.dns_jsc.dns.Resolver.globalLookupService
-leak:jsHTTPParser_execute
 leak:URL__host
 leak:runtime.node.node_os.version
 leak:runtime.node.node_os.release

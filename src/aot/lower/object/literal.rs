@@ -410,6 +410,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.add_spread(object, value);
             return;
         }
+        if !self.enter_nesting(hir[source].pos) {
+            return;
+        }
+        let counted = self.enter_counted_expression(source);
         match hir[source].kind {
             ExprKind::Object(properties) => {
                 for property in properties.iter() {
@@ -446,6 +450,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             _ => unreachable!("ends_in_literal_of_plain_members has looked"),
         }
+        self.leave_counted_expression(counted);
+        self.leave_nesting();
     }
 
     pub(in crate::lower) fn lower_property_of_written_literal(

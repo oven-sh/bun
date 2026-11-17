@@ -174,7 +174,7 @@ impl<'bump> QueryCondition<'bump> for StyleQuery<'bump> {
 impl<'bump> StyleQuery<'bump> {
     fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         match self {
-            Self::Feature(p) => Self::Feature(Box::new(super::dc::property(p, bump))),
+            Self::Feature(p) => Self::Feature(Box::new(p.deep_clone(bump))),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
             Self::Operation {
                 operator,

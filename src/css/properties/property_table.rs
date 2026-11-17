@@ -27,6 +27,15 @@ macro_rules! if_row_has {
     ([$($part:tt)+] { $($yes:tt)* } else { $($no:tt)* }) => { $($yes)* };
 }
 
+macro_rules! prefix_feature {
+    ($Variant:ident) => {
+        Some(PrefixFeature::$Variant)
+    };
+    ($Variant:ident legacy) => {
+        None
+    };
+}
+
 /// A row is `"name": Variant(Value[, VendorPrefix: PREFIX | PREFIX[, legacy]]) [with parser],`.
 macro_rules! define_properties {
     ($(
@@ -66,9 +75,7 @@ macro_rules! define_properties {
             /// The caniuse entry for the prefixes that targets need. A `legacy` name has none.
             const fn prefix_feature(self) -> Option<PrefixFeature> {
                 match self {
-                    $($(PropertyIdTag::$Variant => {
-                        if_row_has!([$($legacy)?] { None } else { Some(PrefixFeature::$Variant) })
-                    })?)+
+                    $($(PropertyIdTag::$Variant => prefix_feature!($Variant $($legacy)?),)?)+
                     _ => None,
                 }
             }

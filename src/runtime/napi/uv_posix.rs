@@ -1356,7 +1356,8 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
         return UV_EINVAL;
     };
     // SAFETY: fn contract. No script runs through it, and a VM that is not closed has its global object.
-    let vm = VirtualMachine::get_or_null(unsafe { Loop::assume(&req) });
+    let proof = unsafe { Loop::assume(&req) };
+    let vm = VirtualMachine::get_or_null(proof);
     // A finalizer can call this during the GC that destroys the heap.
     if vm.is_some_and(|vm| vm.closed()) {
         return UV_ECANCELED;
@@ -1378,7 +1379,8 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
         // SAFETY: fn contract.
         return WorkRef(req).schedule_for(unsafe { &(*loop_.as_ptr()).shared.handle });
     };
-    Job::<UvWorkJob>::schedule(&vm.global().js_thread_of_caller(), WorkRef(req), ());
+    let global = vm.in_js(proof).global();
+    Job::<UvWorkJob>::schedule(&global.js_thread_of_caller(), WorkRef(req), ());
     0
 }
 

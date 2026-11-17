@@ -1008,9 +1008,9 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    pub fn get_or_null(loop_: Loop<'_>) -> Option<&Js<'_, VirtualMachine>> {
-        // SAFETY: allocated, as `loop_` says.
-        VM.get().map(|vm| unsafe { &*vm }.in_js(loop_))
+    pub fn get_or_null(_: Loop<'_>) -> Option<&VirtualMachine> {
+        // SAFETY: allocated, as the `Loop` says.
+        VM.get().map(|vm| unsafe { &*vm })
     }
 
     /// Returns the main thread's VM. Callable from any thread. The VM is never freed, but other

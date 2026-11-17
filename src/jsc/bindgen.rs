@@ -1208,8 +1208,8 @@ unsafe impl<T> crate::job::JsAffine for StrongWrapper<T> {}
 
 fn rooted_value(root: &Strong) -> JSValue {
     // SAFETY: nothing calls this once the fields of the VM drop. Only a flag is read.
-    let loop_ = unsafe { bun_core::Loop::assume(root) };
-    assert!(VirtualMachine::get_or_null(loop_).is_some_and(|vm| !vm.closed()));
+    let vm = VirtualMachine::get_or_null(unsafe { bun_core::Loop::assume(root) });
+    assert!(vm.is_some_and(|vm| !vm.closed()));
     root.get()
 }
 

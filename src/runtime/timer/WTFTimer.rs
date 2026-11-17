@@ -225,8 +225,8 @@ impl WTFTimer {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
     // SAFETY: a VM's thread makes these from the creation of its global object to the end of `~VM`. No script runs here.
-    let loop_ = unsafe { bun_core::Loop::assume(&run_loop_timer) };
-    let Some(vm) = VirtualMachine::get_or_null(loop_) else {
+    let vm = VirtualMachine::get_or_null(unsafe { bun_core::Loop::assume(&run_loop_timer) });
+    let Some(vm) = vm else {
         return ptr::null_mut();
     };
 

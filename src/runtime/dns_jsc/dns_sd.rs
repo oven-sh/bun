@@ -710,7 +710,7 @@ impl SharedConnection {
 }
 
 fn event_loop_scope(loop_: Loop<'_>) -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'_>> {
-    VirtualMachine::get_or_null(loop_).map(VirtualMachine::enter_event_loop_scope)
+    VirtualMachine::get_or_null(loop_).map(|vm| vm.in_js(loop_).enter_event_loop_scope())
 }
 
 /// Gives `pending` back if mDNSResponder cannot answer it.

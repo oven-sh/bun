@@ -5272,7 +5272,10 @@ impl NapiFinalizerTask {
             }
             return;
         };
-        debug_assert!(ptr::eq(vm, self.finalizer.env.to_js().bun_vm()));
+        debug_assert!(ptr::eq(
+            vm.in_js(loop_),
+            self.finalizer.env.to_js().bun_vm()
+        ));
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {
@@ -5292,7 +5295,7 @@ impl NapiFinalizerTask {
             // SAFETY: the hook owns the box from here.
             unsafe {
                 vm.rare_data().push_cleanup_hook(
-                    vm.global(),
+                    vm.in_js(loop_).global(),
                     this.cast::<c_void>(),
                     Self::run_as_cleanup_hook,
                 )

@@ -222,8 +222,7 @@ impl Impl {
         // collection, and the handle carries no allocation, so skipping the
         // slot release is the whole of teardown. The Rust VM TLS outlives ~VM.
         // SAFETY: allocated while its thread has it. Only a flag is read.
-        let loop_ = unsafe { bun_core::Loop::assume(&this) };
-        match crate::virtual_machine::VirtualMachine::get_or_null(loop_) {
+        match crate::VirtualMachineRef::get_or_null(unsafe { bun_core::Loop::assume(&this) }) {
             Some(vm) => {
                 if vm.is_shutting_down() {
                     return;

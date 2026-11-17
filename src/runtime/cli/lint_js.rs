@@ -402,6 +402,7 @@ unsafe fn end_vm(frees: bool, loop_: Loop) {
     let Some(vm) = VirtualMachine::get_or_null(loop_) else {
         return;
     };
+    let vm = vm.in_js(loop_);
     if !frees && !bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false) {
         let _lock = vm.global().vm().get_api_lock();
         return vm.on_exit();

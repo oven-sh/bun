@@ -97,7 +97,7 @@ enum RmParseFlag {
     ContinueParsing,
     Done,
     IllegalOption,
-    IllegalOptionWithFlag,
+    IllegalOptionWithFlag(u8),
 }
 
 impl Rm {
@@ -145,8 +145,8 @@ impl Rm {
                         return Self::write_err_literal(interp, cmd, idx, usage);
                     }
 
-                    let arg = Builtin::of(interp, cmd).arg_bytes(idx as usize).to_vec();
-                    match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, &arg) {
+                    let arg = Builtin::of(interp, cmd).arg_bytes(idx as usize);
+                    match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, arg) {
                         RmParseFlag::ContinueParsing => {
                             if let RmState::ParseOpts { idx: i, .. } =
                                 &mut Self::state_mut(interp, cmd).state
@@ -269,7 +269,7 @@ impl Rm {
                                 b"rm: illegal option -- -\n",
                             );
                         }
-                        RmParseFlag::IllegalOptionWithFlag => {
+                        RmParseFlag::IllegalOptionWithFlag(ch) => {
                             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
                                 Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                                     idx,
@@ -279,10 +279,7 @@ impl Rm {
                                 return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
                                     child,
                                     Some(Kind::Rm),
-                                    format_args!(
-                                        "illegal option -- {}\n",
-                                        bstr::BStr::new(&arg[1..])
-                                    ),
+                                    format_args!("illegal option -- {}\n", bstr::BStr::new(&[ch])),
                                     safeguard,
                                 );
                             }
@@ -290,7 +287,7 @@ impl Rm {
                                 interp,
                                 cmd,
                                 Some(Kind::Rm),
-                                format_args!("illegal option -- {}\n", bstr::BStr::new(&arg[1..])),
+                                format_args!("illegal option -- {}\n", bstr::BStr::new(&[ch])),
                             )
                             .to_vec();
                             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
@@ -523,7 +520,7 @@ impl Rm {
                 b'd' => opts.remove_empty_dirs = true,
                 b'i' => opts.prompt_behaviour = PromptBehaviour::Once,
                 b'I' => opts.prompt_behaviour = PromptBehaviour::Always,
-                _ => return RmParseFlag::IllegalOptionWithFlag,
+                _ => return RmParseFlag::IllegalOptionWithFlag(ch),
             }
         }
         RmParseFlag::ContinueParsing

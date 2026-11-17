@@ -53,7 +53,7 @@ pub(crate) enum MvState {
 
 /// mv uses its own simpler parser.
 enum MvParseError {
-    IllegalOption(&'static [u8]),
+    IllegalOption(u8),
     ShowUsage,
 }
 
@@ -101,11 +101,11 @@ impl Mv {
             Tag::Idle => {
                 if let Err(e) = Self::parse_opts(interp, cmd) {
                     let buf: Vec<u8> = match e {
-                        MvParseError::IllegalOption(s) => Builtin::fmt_error_arena(
+                        MvParseError::IllegalOption(ch) => Builtin::fmt_error_arena(
                             interp,
                             cmd,
                             Some(Kind::Mv),
-                            format_args!("illegal option -- {}\n", bstr::BStr::new(s)),
+                            format_args!("illegal option -- {}\n", bstr::BStr::new(&[ch])),
                         )
                         .to_vec(),
                         MvParseError::ShowUsage => Kind::Mv.usage_string().to_vec(),
@@ -371,7 +371,7 @@ impl Mv {
                     return Ok(());
                 }
                 MvFlag::ContinueParsing => {}
-                MvFlag::IllegalOption(s) => return Err(MvParseError::IllegalOption(s)),
+                MvFlag::IllegalOption(ch) => return Err(MvParseError::IllegalOption(ch)),
             }
             idx += 1;
         }
@@ -388,7 +388,7 @@ impl Mv {
                 b'n' => *no_clobber = true,
                 b'f' => *no_clobber = false,
                 b'h' | b'i' | b'v' => {}
-                _ => return MvFlag::IllegalOption(b"-"),
+                _ => return MvFlag::IllegalOption(ch),
             }
         }
         MvFlag::ContinueParsing
@@ -398,7 +398,7 @@ impl Mv {
 enum MvFlag {
     ContinueParsing,
     Done,
-    IllegalOption(&'static [u8]),
+    IllegalOption(u8),
 }
 
 /// `openat(target, O_RDONLY|O_DIRECTORY)`

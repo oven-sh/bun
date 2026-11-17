@@ -2221,22 +2221,28 @@ impl<'a> ParseError<'a> {
 
 pub(crate) enum ParseFlagResult<'a> {
     ContinueParsing,
-    Done,
-    IllegalOption(&'a [u8]),
+    /// The builtin has no such option. `parse_one_flag` names it in the error.
+    IllegalOption,
     Unsupported(&'a [u8]),
+}
+
+impl<'a> ParseFlagResult<'a> {
+    /// `name` is the option as the argument spells it.
+    fn into_result(self, name: &'a [u8]) -> Result<(), ParseError<'a>> {
+        match self {
+            ParseFlagResult::ContinueParsing => Ok(()),
+            ParseFlagResult::IllegalOption => Err(ParseError::IllegalOption(name)),
+            ParseFlagResult::Unsupported(s) => Err(ParseError::Unsupported(s)),
+        }
+    }
 }
 
 /// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
 pub(crate) trait FlagParser {
-    /// Handle a `--long` flag. Return `None` to fall through to short parsing.
+    /// Handle a `--long` flag. Return `None` when the builtin has no such flag.
     fn parse_long<'a>(&mut self, flag: &'a [u8]) -> Option<ParseFlagResult<'a>>;
-    /// Handle one byte of a `-abc` cluster. Return `None` to keep iterating.
-    fn parse_short<'a>(
-        &mut self,
-        ch: u8,
-        smallflags: &'a [u8],
-        i: usize,
-    ) -> Option<ParseFlagResult<'a>>;
+    /// Handle `ch`, the option at index `i` of a `-abc` cluster. Return `None` to keep iterating.
+    fn parse_short(&mut self, ch: u8, i: usize) -> Option<ParseFlagResult<'static>>;
 }
 
 /// Returns the trailing non-flag args (`args[idx..]`) on success.
@@ -2252,36 +2258,33 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
         // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init) that stay
         // put until the node is freed; every caller is done with `'a` inside the builtin's `start`.
         let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
-        match parse_one_flag(opts, flag) {
-            ParseFlagResult::Done => return Ok(Some(&args[idx..])),
-            ParseFlagResult::ContinueParsing => {}
-            ParseFlagResult::IllegalOption(s) => return Err(ParseError::IllegalOption(s)),
-            ParseFlagResult::Unsupported(s) => return Err(ParseError::Unsupported(s)),
+        if flag.is_empty() || flag[0] != b'-' {
+            return Ok(Some(&args[idx..]));
         }
+        parse_one_flag(opts, flag)?;
         idx += 1;
     }
     Err(ParseError::ShowUsage)
 }
 
-fn parse_one_flag<'a, O: FlagParser>(opts: &mut O, flag: &'a [u8]) -> ParseFlagResult<'a> {
-    if flag.is_empty() || flag[0] != b'-' {
-        return ParseFlagResult::Done;
-    }
+/// `flag` starts with `-`.
+fn parse_one_flag<'a, O: FlagParser>(opts: &mut O, flag: &'a [u8]) -> Result<(), ParseError<'a>> {
     if flag.len() == 1 {
-        return ParseFlagResult::IllegalOption(b"-");
+        return Err(ParseError::IllegalOption(b"-"));
     }
     if flag.len() > 2 && flag[1] == b'-' {
-        if let Some(r) = opts.parse_long(flag) {
-            return r;
-        }
+        return match opts.parse_long(flag) {
+            Some(result) => result.into_result(&flag[2..]),
+            None => Err(ParseError::IllegalOption(&flag[2..])),
+        };
     }
     let small_flags = &flag[1..];
     for (i, &ch) in small_flags.iter().enumerate() {
-        if let Some(r) = opts.parse_short(ch, small_flags, i) {
-            return r;
+        if let Some(result) = opts.parse_short(ch, i) {
+            return result.into_result(&small_flags[i..=i]);
         }
     }
-    ParseFlagResult::ContinueParsing
+    Ok(())
 }
 
 // ────────────────────────────────────────────────────────────────────────────

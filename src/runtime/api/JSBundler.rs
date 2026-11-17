@@ -2560,7 +2560,7 @@ impl BuildArtifact {
         bun_core::write_pretty!(
             writer,
             ENABLE_ANSI_COLORS,
-            "(<blue>{s}<r>) {{\n",
+            "(<blue>{s}<r>) {{",
             <&'static str>::from(self.output_kind),
         )?;
 
@@ -2570,7 +2570,7 @@ impl BuildArtifact {
             // `formatter` while it is also borrowed for the body; decrement
             // after the block instead.
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             bun_core::write_pretty!(
                 writer,
                 ENABLE_ANSI_COLORS,
@@ -2580,9 +2580,8 @@ impl BuildArtifact {
             formatter
                 .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
-            writer.write_str("\n")?;
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             bun_core::write_pretty!(
                 writer,
                 ENABLE_ANSI_COLORS,
@@ -2593,9 +2592,8 @@ impl BuildArtifact {
             formatter
                 .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
-            writer.write_str("\n")?;
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
 
             bun_core::write_pretty!(
                 writer,
@@ -2608,9 +2606,8 @@ impl BuildArtifact {
                 formatter
                     .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
-                writer.write_str("\n")?;
 
-                formatter.write_indent(writer)?;
+                formatter.write_break(writer)?;
                 bun_core::write_pretty!(
                     writer,
                     ENABLE_ANSI_COLORS,
@@ -2622,9 +2619,8 @@ impl BuildArtifact {
             formatter
                 .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
-            writer.write_str("\n")?;
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             formatter.reset_line();
             self.blob
                 .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
@@ -2633,8 +2629,7 @@ impl BuildArtifact {
                 formatter
                     .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
-                writer.write_str("\n")?;
-                formatter.write_indent(writer)?;
+                formatter.write_break(writer)?;
                 write!(
                     writer,
                     "{}",
@@ -2657,8 +2652,7 @@ impl BuildArtifact {
 
             formatter.indent_dec();
         }
-        writer.write_str("\n")?;
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         writer.write_str("}")?;
         formatter.reset_line();
         Ok(())

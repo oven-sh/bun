@@ -44,8 +44,7 @@
 #include <JavaScriptCore/IteratorOperations.h>
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-
-extern "C" BunString Bun__inspect_singleline(Zig::GlobalObject* globalObject, JSC::JSValue value);
+#include "UtilInspect.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -163,7 +162,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
             iterable = iterFn.isCallable();
         }
         if (!iterable) {
-            auto inspected = Bun__inspect_singleline(defaultGlobalObject(&lexicalGlobalObject), portsValue).transferToWTFString();
+            auto inspected = Bun__inspect_singleline(defaultGlobalObject(&lexicalGlobalObject), portsValue, Bun::SingleLineHooks::OwnLayout).transferToWTFString();
             RETURN_IF_EXCEPTION(throwScope, {});
             Bun::throwTypeErrorOrOutOfMemory(&lexicalGlobalObject, throwScope, tryMakeString("MessageEvent constructor: eventInitDict.ports ("_s, inspected, ") is not iterable."_s));
             return {};
@@ -173,7 +172,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
             auto scope = DECLARE_THROW_SCOPE(vm);
             auto* wrapped = item.isCell() ? JSMessagePort::toWrapped(vm, item) : nullptr;
             if (!wrapped) {
-                auto inspected = Bun__inspect_singleline(defaultGlobalObject(&g), item).transferToWTFString();
+                auto inspected = Bun__inspect_singleline(defaultGlobalObject(&g), item, Bun::SingleLineHooks::OwnLayout).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, );
                 Bun::throwTypeErrorOrOutOfMemory(&g, scope, tryMakeString("MessageEvent constructor: Expected eventInitDict.ports["_s, i, "] (\""_s, inspected, "\") to be an instance of MessagePort."_s));
                 return;
@@ -193,7 +192,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
     }
     if (!sourceValue.isUndefinedOrNull()) {
         result.source = convert<IDLNullable<IDLInterface<MessagePort>>>(lexicalGlobalObject, sourceValue, [&sourceValue](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
-            auto inspected = Bun__inspect_singleline(defaultGlobalObject(&lexicalGlobalObject), sourceValue).transferToWTFString();
+            auto inspected = Bun__inspect_singleline(defaultGlobalObject(&lexicalGlobalObject), sourceValue, Bun::SingleLineHooks::OwnLayout).transferToWTFString();
             if (throwScope.exception()) [[unlikely]]
                 return;
             Bun::throwTypeErrorOrOutOfMemory(&lexicalGlobalObject, throwScope, tryMakeString("MessageEvent constructor: Expected eventInitDict.source (\""_s, inspected, "\") to be an instance of MessagePort."_s));

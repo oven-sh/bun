@@ -29,14 +29,26 @@ Structure* createUtilInspectOptionsStructure(VM& vm, JSC::JSGlobalObject* global
     return structure;
 }
 
-JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, unsigned max_depth, bool colors)
+// Mirrors `CustomInspectFlags` in src/jsc/ConsoleObject.rs.
+enum class CustomInspectFlag : uint8_t {
+    Colors = 1 << 0,
+    SingleLine = 1 << 1,
+};
+
+JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, unsigned max_depth, OptionSet<CustomInspectFlag> flags)
 {
+    bool colors = flags.contains(CustomInspectFlag::Colors);
     JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
     if (!stylizeFn) return nullptr;
     JSObject* options = JSC::constructEmptyObject(vm, globalObject->utilInspectOptionsStructure());
     options->putDirectOffset(vm, 0, stylizeFn);
     options->putDirectOffset(vm, 1, jsNumber(max_depth));
     options->putDirectOffset(vm, 2, jsBoolean(colors));
+    if (flags.contains(CustomInspectFlag::SingleLine)) [[unlikely]] {
+        // What node's Buffer hook passes for one line: https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L976-L980
+        Bun::putDirectNamed(vm, options, "breakLength"_s, jsNumber(std::numeric_limits<double>::infinity()));
+        Bun::putDirectNamed(vm, options, "compact"_s, jsBoolean(true));
+    }
     return options;
 }
 
@@ -46,7 +58,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSC::EncodedJSValue encodedThisValue,
     unsigned depth,
     unsigned max_depth,
-    bool colors)
+    uint8_t flags)
 {
     JSValue functionToCall = JSValue::decode(encodedFunctionValue);
     JSValue thisValue = JSValue::decode(encodedThisValue);
@@ -60,7 +72,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
         // Of its operands it reads `showHidden` of the second.
         arguments.append(constructEmptyObject(globalObject));
     } else {
-        JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
+        JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, OptionSet<CustomInspectFlag>::fromRaw(flags));
         RETURN_IF_EXCEPTION(scope, {});
         JSFunction* inspectFn = globalObject->utilInspectFunction();
         RETURN_IF_EXCEPTION(scope, {});

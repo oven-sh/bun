@@ -163,6 +163,9 @@ describe("matcher messages", () => {
         }
         test.each([[new HTMLElement()]])("%p and %o", () => {});
         test.each([{ el: new HTMLElement() }])("$el", () => {});
+        class DOMStringMap {}
+        const file = new File(["x"], "f.txt", { lastModified: 1 });
+        test.each([[Object.assign(new DOMStringMap(), { file })]])("dataset %p", () => {});
       `,
     });
     await using proc = Bun.spawn({
@@ -175,7 +178,19 @@ describe("matcher messages", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('(pass) <i a="1" /> and %o');
     expect(stderr).toContain('(pass) <i a="1" />');
+    expect(stderr).toContain('(pass) dataset {"file": File (1 bytes) { name: "f.txt", lastModified: 1 }}');
     expect(exitCode).toBe(0);
+  });
+
+  // An inspect.custom hook prints a URL. A native printer prints a File.
+  test("a value in a collection is on one line, whatever prints it", () => {
+    const url = `URL { href: 'http://example.com/', origin: 'http://example.com', protocol: 'http:', username: '', password: '', host: 'example.com', hostname: 'example.com', port: '', pathname: '/', search: '', searchParams: URLSearchParams {}, hash: '' }`;
+    const file = `File (1 bytes) { name: "f.txt", lastModified: 1 }`;
+    const values = () => ({ u: new URL("http://example.com/"), f: new File(["x"], "f.txt", { lastModified: 1 }) });
+    expect(utils.stringify(new NodeList([values().u, values().f, { plain: 1 }]))).toBe(
+      `[${url}, ${file}, { plain: 1 }]`,
+    );
+    expect(utils.stringify(Object.assign(new DOMStringMap(), values()))).toBe(`{"f": ${file}, "u": ${url}}`);
   });
 
   test("every kind of value", () => {

@@ -58,6 +58,7 @@
 #include "JSBufferEncodingType.h"
 #include "ErrorCode.h"
 #include "NodeValidator.h"
+#include "UtilInspect.h"
 #include "wtf/Assertions.h"
 #include "wtf/Forward.h"
 #include <JavaScriptCore/JSBase.h>
@@ -96,9 +97,6 @@ extern "C" void highway_bswap64(uint8_t* data, size_t len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
-
-// export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
-extern "C" BunString Bun__inspect_singleline(Zig::GlobalObject* globalObject, JSC::JSValue value);
 
 using namespace JSC;
 using namespace WebCore;
@@ -1973,7 +1971,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 result.append(": "_s);
                 auto value = castedThis->get(globalObject, ident);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto inspected = Bun__inspect_singleline(globalObject, value).transferToWTFString();
+                auto inspected = Bun__inspect_singleline(globalObject, value, Bun::SingleLineHooks::OneLine).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, {});
                 result.append(inspected);
                 i++;

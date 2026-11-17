@@ -457,7 +457,6 @@ export type DepName =
   | "highway"
   | "libuv"
   | "lolhtml"
-  | "lshpack"
   | "lsqpack"
   | "lsquic"
   | "mimalloc"

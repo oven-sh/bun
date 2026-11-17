@@ -492,15 +492,13 @@ describe.concurrent("bun run", () => {
         "subdir/test.js": `console.log(process.env.PWD ?? "<unset>");`,
       });
 
-      const { PWD, ...envNoPwd } = bunEnv;
-
       await using proc = Bun.spawn({
         cmd: buildCmd("test.js"),
         cwd: String(dir),
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
-        env: envNoPwd,
+        env: { ...bunEnv, PWD: undefined },
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

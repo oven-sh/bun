@@ -45,7 +45,8 @@ declare module "bun" {
            * Replaces the built-in check of the host name, as in `node:tls`. Bun
            * calls it once for each connection, after the certificate chain
            * verified and before it sends the user name or the password. Bun
-           * does not call it with `rejectUnauthorized: false`.
+           * does not call it with `rejectUnauthorized: false`. The certificate
+           * has no `issuerCertificate`, and `this` is `undefined`.
            *
            * @param hostname `serverName`, or else the URL host. `"localhost"`
            * for a unix socket.

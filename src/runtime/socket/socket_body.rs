@@ -4488,19 +4488,10 @@ pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
 
     #[cfg(not(windows))]
     {
-        let mut fds_: [libc::c_int; 2] = [0, 0];
-        // SAFETY: libc FFI.
-        let rc =
-            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr()) };
-        if rc != 0 {
-            let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
-            return Err(global.throw_value(err.to_js(global)));
+        match sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, true) {
+            Ok(pair) => Ok(pair.map(sys::Fd::native)),
+            Err(err) => Err(global.throw_value(err.to_js(global))),
         }
-
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[0]), true);
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[1]), true);
-
-        Ok(fds_)
     }
 }
 

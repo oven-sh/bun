@@ -214,8 +214,6 @@ const args = (names: readonly string[]): Record<string, b.Type> =>
   Object.fromEntries(names.map(name => (name.startsWith("...") ? [name.slice(3), b.any.variadic] : [name, b.any])));
 
 const promise = b.any.returning("Promise");
-/** A command that cannot be sent answers the error and does not throw it. */
-const promiseOrError = b.any.returning("Promise", "Error");
 
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 
@@ -242,10 +240,10 @@ export const RedisClient = b.class({
             name,
             {
               args: args(names),
-              returns: name === "connect" ? promise : promiseOrError,
+              returns: promise,
               capability: "js",
               throws: true,
-              passThis: true,
+              passThis: name === "connect",
               length,
               rustName,
             },

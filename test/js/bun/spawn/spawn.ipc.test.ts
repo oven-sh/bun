@@ -603,10 +603,11 @@ async function runPair(parent: string, child: string, env: Record<string, string
   const helpers = `
     const fs = require("node:fs");
     const net = require("node:net");
+    // So that a child does not outlive a test that timed out.
+    const deadline = Date.now() + 120_000;
     function until(file) {
-      const deadline = Date.now() + 30_000;
       while (!fs.existsSync(file)) {
-        if (Date.now() > deadline) throw new Error("30 seconds have passed without " + file);
+        if (Date.now() > deadline) throw new Error("gave up waiting for " + file);
         Bun.sleepSync(1);
       }
     }
@@ -615,7 +616,7 @@ async function runPair(parent: string, child: string, env: Record<string, string
         try {
           return syscall();
         } catch (e) {
-          if (e.code !== "EAGAIN") throw e;
+          if (e.code !== "EAGAIN" || Date.now() > deadline) throw e;
           Bun.sleepSync(1);
         }
       }
@@ -639,7 +640,11 @@ async function runPair(parent: string, child: string, env: Record<string, string
         ipc() {},
         ...options,
       });
-    const listen = () => new Promise(resolve => { const server = net.createServer().listen(0, () => resolve(server)); });
+    const listen = () =>
+      new Promise((resolve, reject) => {
+        const server = net.createServer().once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve(server));
+      });
     const turn = () => new Promise(resolve => setImmediate(resolve));
     const openFds = () => fs.readdirSync("/proc/self/fd").length;
     // Bun.build() runs the event loop until the setup() of a plugin has settled.
@@ -692,6 +697,35 @@ describe.concurrent("the send queue", () => {
     expect(result).toEqual({ stdout: ["a", "b", "c"], stderr: "", exitCode: 0 });
   });
 
+  it("has the same number of GC roots for any number of callbacks", async () => {
+    const result = await runPair(
+      `
+        const roots = () => require("bun:jsc").heapStats().protectedObjectCount;
+        const server = await listen();
+        const child = spawnChild();
+        const called = [];
+        child.send("handle", server);
+        for (let i = 0; i < 10; i++) child.send(i, () => called.push(i));
+        const before = roots();
+        for (let i = 10; i < 1000; i++) child.send(i, () => called.push(i));
+        console.log(roots() - before);
+        Bun.gc(true);
+        child.send("last");
+        await child.exited;
+        console.log(called.length, called.every((it, i) => it === i));
+        server.close();
+      `,
+      `
+        process.on("message", (message, handle) => {
+          handle?.close();
+          if (message === "last") process.disconnect();
+        });
+      `,
+    );
+    expect(result).toEqual({ stdout: ["0", "1000 true"], stderr: "", exitCode: 0 });
+  });
+
+  // The child uses descriptor 3 directly. Windows frames what goes through its pipe.
   it.skipIf(isWindows)("writes a long backlog of replies without overflowing the stack", async () => {
     const count = isDebug ? 10_000 : 100_000;
     const result = await runPair(
@@ -710,6 +744,7 @@ describe.concurrent("the send queue", () => {
     expect(result).toEqual({ stdout: [String(count)], stderr: "", exitCode: 0 });
   });
 
+  // Linux only: reads /proc/self/fd.
   it.skipIf(!isLinux)("releases a handle if the channel closes while its message is serialized", async () => {
     const result = await runPair(
       `
@@ -734,6 +769,7 @@ describe.concurrent("the send queue", () => {
   });
 });
 
+// Linux only: reads /proc/self/fd.
 describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
   // The tag byte makes the receiver ignore the message that carries the descriptor, and `line` then claims it.
   const sendDescriptorWith = (line: string) => `
@@ -781,6 +817,35 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
         console.log("leaked", openFds() - before);
       `,
       sendDescriptorWith('\x02{"$hasHandle":true}'),
+    );
+    expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
+  });
+
+  it("is closed by a child that queues a cluster message, because node:cluster is not loaded", async () => {
+    const result = await runPair(
+      `
+        // Both ends of the channel are children.
+        const spawnEnd = (role, channel) =>
+          spawnChild({
+            cmd: [process.execPath, "child.js", role],
+            env: { ...process.env, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+            stdio: ["ignore", "inherit", "inherit", channel],
+            ipc: undefined,
+          });
+        const receiver = spawnEnd("receive", "pipe");
+        await Promise.all([receiver.exited, spawnEnd("send", receiver.stdio[3]).exited]);
+      `,
+      `
+        if (process.argv[2] === "send") {
+          ${sendDescriptorWith('\x02{"$hasHandle":true}')}
+        } else {
+          process.on("message", () => {
+            console.log("leaked", openFds() - before);
+            process.disconnect();
+          });
+          const before = openFds();
+        }
+      `,
     );
     expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
   });

@@ -38,8 +38,9 @@ impl Phase {
         match (self, event) {
             (Closed | Reported, _) => None,
             (_, TransportClosed) => Some(Closed),
+            (ClosingAfterWrite, _) => None,
             (_, CloseBlocked) => Some(ClosingAfterWrite),
-            (Closing | ClosingAfterRead | ClosingAfterWrite, _) => None,
+            (Closing | ClosingAfterRead, _) => None,
             (Open | Draining, PeerExited) => Some(ClosingAfterRead),
             (Open | Draining, ReadFailed) => Some(Closing),
             (Open, Disconnect { awaits_ack: true }) => Some(Draining),

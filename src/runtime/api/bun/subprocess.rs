@@ -260,6 +260,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn compute_has_pending_activity(&self) -> bool {
+        // Not only while the socket is open: the task that reports the close still calls `self`.
         if self.ipc().is_some_and(|ipc| !ipc.is_close_reported()) {
             return true;
         }

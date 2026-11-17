@@ -223,27 +223,25 @@ pub(crate) fn on_internal_message_primary<'a>(
     let Some(ipc_data) = subprocess.ipc() else {
         return;
     };
+    // TODO: remove these strongs.
     let listener = Listener::new(cx.global(), worker, callback);
     (ipc_data.cluster).with_mut(|peer| peer.listener = Some(listener));
 }
 
 pub(crate) fn handle_internal_message_primary(
     global: &JSGlobalObject,
-    subprocess: &Subprocess<'_>,
+    peer: &JsCell<ClusterPeer>,
+    context: bun_event_loop::ContextId,
     message: JSValue,
 ) -> JsResult<()> {
-    let Some(ipc_data) = subprocess.ipc() else {
+    let Some((worker, listener)) = peer.get().listener.as_ref().map(Listener::get) else {
         return Ok(());
     };
-
-    let Some((worker, listener)) = ipc_data.cluster.get().listener.as_ref().map(Listener::get)
-    else {
-        return Ok(());
-    };
+    // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     let acked = (message.get(global, "ack")?.filter(|ack| ack.is_int32()))
-        .and_then(|ack| (ipc_data.cluster).with_mut(|peer| peer.take_callback(ack.as_int32())));
+        .and_then(|ack| peer.with_mut(|peer| peer.take_callback(ack.as_int32())));
     global.bun_vm().event_loop().run_callback(
-        subprocess.context,
+        context,
         acked.as_ref().map_or(listener, Strong::get),
         global,
         worker,

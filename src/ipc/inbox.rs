@@ -56,6 +56,7 @@ impl Inbox {
         Ok(Some(value))
     }
 
+    #[inline]
     fn peek(&mut self, max_string_len: usize) -> Framed<'_> {
         let unread = &self.data[self.start..];
         match &mut self.framing {

@@ -657,10 +657,14 @@ pub fn env_dir_resolved_and_as_written(base_dir: &[u8], dir: &[u8]) -> [Box<[u8]
     [resolved.as_bytes().into(), as_written]
 }
 
-/// Unlike [`resolve_env_dir`], an absolute `dir` is opened as it is written.
+/// Unlike [`resolve_env_dir`], opens a fully qualified `dir` as it is written.
 fn make_open_env_dir(base_dir: &[u8], dir: &[u8]) -> crate::Result<bun_sys::Fd> {
-    let path = Api::BunInstall::resolve_path(base_dir_for(base_dir, dir), dir);
-    make_open_dir(&path)
+    let as_written = expand_home(dir);
+    if bun_paths::is_fully_qualified(&as_written) {
+        return make_open_dir(&as_written);
+    }
+    let base_dir = base_dir_for(base_dir, &as_written);
+    make_open_dir(&PoolPath::resolve_any_sep(&[base_dir, &as_written])?)
 }
 
 pub fn open_global_dir(base_dir: &[u8], explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {

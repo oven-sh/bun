@@ -16,7 +16,7 @@ import {
   unprivilegedSpawnOptions,
 } from "harness";
 import { cpSync, mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { basename, join, sep } from "path";
+import { basename, join, parse, sep } from "path";
 import { TestRegistry } from "registry";
 import {
   dummyAfterAll,
@@ -2767,7 +2767,7 @@ describe.concurrent.skipIf(isWindows)("global directories longer than the path b
   // A -g command opens the global directory (which has to contain a package.json) and then the
   // global bin directory; `bun pm bin -g` prints the latter. Every variable the two lookups read is
   // set, so that a case reaches exactly the arm it names: the directory not under test is named
-  // outright ($BUN_INSTALL_GLOBAL_DIR and $BUN_INSTALL_BIN are opened as given, not joined), and
+  // outright (an absolute $BUN_INSTALL_GLOBAL_DIR or $BUN_INSTALL_BIN is opened as given), and
   // $XDG_CONFIG_HOME holds an .npmrc so that neither the bunfig nor the .npmrc lookup joins $HOME.
   async function runGlobal(
     args: string[],
@@ -2867,6 +2867,20 @@ const envWithoutInstallDirs = {
 };
 
 describe.concurrent("global directories from the environment", () => {
+  const files = { "cwd/package.json": "{}", "home/.npmrc": "" };
+
+  async function pmGlobal(dir: string, subcommand: string, variables: NodeJS.Dict<string>) {
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", subcommand, "-g"],
+      cwd: join(dir, "cwd"),
+      env: { ...envWithoutInstallDirs, [isWindows ? "USERPROFILE" : "HOME"]: join(dir, "home"), ...variables },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
   test.each([
     ["bin", { BUN_INSTALL: ".here" }, "cwd/.here/bin\n"],
     ["bin", { BUN_INSTALL_BIN: "here" }, "cwd/here\n"],
@@ -2879,20 +2893,52 @@ describe.concurrent("global directories from the environment", () => {
     ["bin", { XDG_CACHE_HOME: "" }, "home/.bun/bin\n"],
     ["bin", { BUN_INSTALL_BIN: "~\\here" }, "home/here\n"],
     ["bin", { BUN_INSTALL_GLOBAL_DIR: "~\\here" }, "home/.bun/bin\n"],
+    ["bin", { BUN_INSTALL_BIN: "~/bin", HOME: "here", USERPROFILE: "here" }, "cwd/here/bin\n"],
   ])("bun pm %s -g with %j", async (subcommand, variables, expected) => {
-    using dir = tempDir("pm-bin-global-relative", { "cwd/package.json": "{}", "home/.npmrc": "" });
-    await using proc = spawn({
-      cmd: [bunExe(), "pm", subcommand, "-g"],
-      cwd: join(String(dir), "cwd"),
-      env: { ...envWithoutInstallDirs, [isWindows ? "USERPROFILE" : "HOME"]: join(String(dir), "home"), ...variables },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    using dir = tempDir("pm-bin-global-relative", files);
+    const { stdout, stderr, exitCode } = await pmGlobal(String(dir), subcommand, variables);
 
     expect({ stdout, stderr }).toEqual({ stdout: `${dir}/${expected}`.replaceAll("/", sep), stderr: "" });
     expect(await readdirSorted(String(dir))).toEqual(["cwd", "home"]);
     expect(exitCode).toBe(0);
+  });
+
+  describe.each(["BUN_INSTALL_BIN", "BUN_INSTALL_GLOBAL_DIR"])("%s", variable => {
+    test("with a leading backslash starts from the root", async () => {
+      using dir = tempDir("pm-bin-global-rooted", files);
+      const here = join(String(dir), "here");
+      const value = here.slice(parse(here).root.length - 1).replaceAll("/", "\\");
+      const { stderr, exitCode } = await pmGlobal(String(dir), "bin", { [variable]: value });
+
+      expect(stderr).toBe("");
+      expect(await readdirSorted(String(dir))).toEqual(["cwd", "here", "home"]);
+      expect(await readdirSorted(join(String(dir), "cwd"))).toEqual(["package.json"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // Windows removes `link/..` before it follows the link.
+    test.skipIf(isWindows)("follows a symlink before .. in an absolute path", async () => {
+      using dir = tempDir("pm-bin-global-link", { ...files, "real/dir/.keep": "" });
+      symlinkSync("real/dir", join(String(dir), "link"));
+      const { stderr, exitCode } = await pmGlobal(String(dir), "bin", { [variable]: `${dir}/link/../here` });
+
+      expect(stderr).toBe("");
+      expect(await readdirSorted(join(String(dir), "real"))).toEqual(["dir", "here"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // On Windows an environment variable cannot be this long.
+    test.skipIf(isWindows)("that only fits without the cwd is not created anywhere else", async () => {
+      using dir = tempDir("pm-bin-global-too-long", { ...files, "home/.bun/install/global/.keep": "" });
+      const value = Buffer.alloc(MAX_PATH_BYTES - 1, Buffer.alloc(200, "x") + "/").toString();
+      const { stdout, stderr, exitCode } = await pmGlobal(String(dir), "bin", { [variable]: value });
+
+      expect(stderr).toContain("ENAMETOOLONG");
+      expect(stdout).toBe("");
+      expect(await readdirSorted(join(String(dir), "cwd"))).toEqual(["package.json"]);
+      expect(await readdirSorted(join(String(dir), "home/.bun/install/global"))).toEqual([".keep"]);
+      expect(exitCode).toBe(1);
+    });
   });
 
   test.each(["~", "absolute"])("cache rm refuses to delete a BUN_INSTALL spelled with backslashes (%s)", async kind => {

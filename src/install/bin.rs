@@ -825,6 +825,23 @@ fn is_bin_entry(entry: &sys::dir_iterator::IteratorResult<'_>) -> bool {
         && !strings::contains_char(entry.name.slice_u8(), b'\\')
 }
 
+#[cfg(windows)]
+struct WindowsShimPaths {
+    bunx: OSPath,
+    exe: OSPath,
+}
+
+#[cfg(windows)]
+impl WindowsShimPaths {
+    fn new(abs_dest: &ZStr) -> Result<Self, NameTooLong> {
+        let mut bunx = OSPath::from(abs_dest)?;
+        let mut exe = OSPath::from(&bunx)?;
+        bunx.extend_from_slice(b".bunx")?;
+        exe.extend_from_slice(b".exe")?;
+        Ok(Self { bunx, exe })
+    }
+}
+
 pub struct Linker<'a> {
     pub bin: Bin,
 
@@ -905,23 +922,14 @@ impl<'a> Linker<'a> {
 
         // A path that does not fit has no shim: `create_windows_shim` refuses it.
         #[cfg(windows)]
-        if let Ok((abs_bunx_file, abs_exe_file)) = Self::windows_shim_paths(abs_dest) {
-            let had_bunx_file = sys::unlink_w(&abs_bunx_file).is_ok();
+        if let Ok(shim_paths) = WindowsShimPaths::new(abs_dest) {
+            let had_bunx_file = sys::unlink_w(&shim_paths.bunx).is_ok();
             // An `.exe` without its `.bunx` is a program, `bun.exe` for one.
             if global_owner.is_some() && !had_bunx_file {
                 return;
             }
-            let _ = sys::unlink_w(&abs_exe_file);
+            let _ = sys::unlink_w(&shim_paths.exe);
         }
-    }
-
-    #[cfg(windows)]
-    fn windows_shim_paths(abs_dest: &ZStr) -> Result<(OSPath, OSPath), NameTooLong> {
-        let mut bunx = OSPath::from(abs_dest)?;
-        let mut exe = OSPath::from(&bunx)?;
-        bunx.extend_from_slice(b".bunx")?;
-        exe.extend_from_slice(b".exe")?;
-        Ok((bunx, exe))
     }
 
     /// Returns true if the symlink at `abs_dest` with the target `link` points into `abs_dir`. The
@@ -1174,20 +1182,20 @@ impl<'a> Linker<'a> {
     ) -> Result<(), Error> {
         let mut shim_buf = [0u16; 32768];
         let mut read_in_buf = [0u8; WinShimShebang::MAX_SHEBANG_INPUT_LENGTH];
-        let (abs_bunx_file, abs_exe_file) = Self::windows_shim_paths(abs_dest)?;
+        let shim_paths = WindowsShimPaths::new(abs_dest)?;
         let foreign_exe_exists = (global
             || Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path))
-            && sys::exists_os_path(&abs_exe_file, false);
+            && sys::exists_os_path(&shim_paths.exe, false);
 
         // An `.exe` without its `.bunx` is a program, `bun.exe` for one.
-        if foreign_exe_exists && !sys::exists_os_path(&abs_bunx_file, false) {
+        if foreign_exe_exists && !sys::exists_os_path(&shim_paths.bunx, false) {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::EEXIST));
         }
 
         let open_bunx_file = || {
             sys::File::openat_os_path(
                 Fd::invalid(),
-                &abs_bunx_file,
+                &shim_paths.bunx,
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                 0o664,
             )
@@ -1241,7 +1249,7 @@ impl<'a> Linker<'a> {
 
         if let Err(err) = sys::File::write_file_os_path(
             Fd::invalid(),
-            &abs_exe_file,
+            &shim_paths.exe,
             crate::windows_shim::embedded_executable_data(),
         ) {
             let err: crate::Error = err.into();

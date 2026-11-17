@@ -507,8 +507,7 @@ impl Pass {
         Self::return_or_throw(global, threw, value)
     }
 
-    /// What `await value` waits on, once it has settled. `None` if `value` isn't thenable. The matcher waits for a
-    /// pending one. Where nothing can wait, this throws and leaves `value` as it was.
+    /// The settled promise behind `value`, or `None` if it isn't thenable. The matcher waits for a pending one.
     pub(crate) fn settled(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<AnyPromise>> {
         let question = Question {
             asked: Asked::Promise,
@@ -529,8 +528,7 @@ impl Pass {
         Ok(Some(promise))
     }
 
-    /// `settled()` where nothing can wait. A pending promise or a thenable stays as it was: a handled mark, a
-    /// reaction or a call of `then()` would outlive the throw.
+    /// `settled()` where nothing can wait: it refuses a pending promise or a thenable without touching it.
     #[cold]
     #[optimize(size)]
     fn settled_already(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {

@@ -501,7 +501,6 @@ impl Expect {
     }
 
     /// A promise that settles the way `await value` would, or `None` if `value` isn't thenable.
-    /// A promise is only marked as handled if this returns it, or returns a promise that follows it.
     #[optimize(size)]
     fn promise_to_await(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
         let promise = value.as_any_promise();

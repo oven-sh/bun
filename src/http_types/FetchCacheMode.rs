@@ -1,18 +1,12 @@
 /// https://developer.mozilla.org/en-US/docs/Web/API/Request/cache
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FetchCacheMode {
-    #[strum(serialize = "default")]
     Default,
-    #[strum(serialize = "no-store")]
     NoStore,
-    #[strum(serialize = "reload")]
     Reload,
-    #[strum(serialize = "no-cache")]
     NoCache,
-    #[strum(serialize = "force-cache")]
     ForceCache,
-    #[strum(serialize = "only-if-cached")]
     OnlyIfCached,
 }
 

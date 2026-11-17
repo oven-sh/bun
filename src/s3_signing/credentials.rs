@@ -1000,7 +1000,7 @@ pub fn guess_region(endpoint: &[u8]) -> &[u8] {
 // URI encoding helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
+#[derive(Debug, thiserror::Error)]
 pub enum EncodeError {
     #[error("BufferTooSmall")]
     BufferTooSmall,
@@ -1059,7 +1059,7 @@ fn normalize_name(name: &[u8]) -> &[u8] {
 // Errors
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SignError {
     #[error("MissingCredentials")]
     MissingCredentials,

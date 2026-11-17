@@ -12,7 +12,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(thiserror::Error, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TimeoutError {
     #[error("Timeout")]
     Timeout,

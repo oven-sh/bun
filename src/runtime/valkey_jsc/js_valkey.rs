@@ -854,18 +854,21 @@ impl JSValkeyClient {
         js_promise
     }
 
-    fn read(&self, data: &[u8]) -> JsResult<()> {
+    fn read(&self, data: &[u8]) {
         let socket = *self.socket.get().socket();
         let mut input = self.client.with_mut(|client| client.feed(data));
         while let Some(event) = self.client.with_mut(|client| client.next_event(&mut input)) {
-            self.dispatch(event)?;
+            if let Err(err) = self.dispatch(event)
+                && jsc::task::report_error_or_terminate(self.vm.global(), err).is_err()
+            {
+                return;
+            }
             // Script closed this socket, and may have dialed the next: the rest is not for that one.
             if *self.socket.get().socket() != socket {
-                break;
+                return;
             }
             self.send_next_command();
         }
-        Ok(())
     }
 
     fn dispatch(&self, event: Event<JSPromiseStrong>) -> JsResult<()> {
@@ -897,10 +900,7 @@ impl JSValkeyClient {
                 let error = valkey_error_to_js(global, &message, RedisError::ServerError);
                 promise.reject(global, Ok(error))
             }
-            Event::Message(mut data) => {
-                let _ = self.on_message(&mut data);
-                Ok(())
-            }
+            Event::Message(mut data) => self.on_message(&mut data),
             Event::Subscribed(acked) => {
                 let count = self.subscription_callback_map().size();
                 self.on_acked(acked, JSValue::js_number(f64::from(count)))
@@ -922,7 +922,7 @@ impl JSValkeyClient {
             Acked::Nobody => Ok(()),
             Acked::Channel(mut promise) => promise.resolve(global, for_channel),
             Acked::Raw(mut promise, mut push) => {
-                promise.resolve(global, resp_value_to_js(&mut push, global)?)
+                promise.settle(global, resp_value_to_js(&mut push, global))
             }
         }
     }
@@ -1295,19 +1295,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub(crate) fn on_timeout(_: &JSValkeyClient, _: SocketType<SSL>) {}
 
-    pub(crate) fn on_data(
-        this: &JSValkeyClient,
-        socket: SocketType<SSL>,
-        data: &[u8],
-    ) -> JsResult<()> {
+    pub(crate) fn on_data(this: &JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) {
         debug_assert!(*this.socket.get().socket() == socket.socket);
         let _guard = this.ref_guard();
-        let result = this.read(data);
+        this.read(data);
         if this.get_connected() {
             this.reset_connection_timeout();
         }
         this.update_poll_ref();
-        result
     }
 
     pub(crate) fn on_writable(this: &JSValkeyClient, socket: SocketType<SSL>) {

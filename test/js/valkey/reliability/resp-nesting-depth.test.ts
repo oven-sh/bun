@@ -465,4 +465,63 @@ describe("Valkey: RESP push frame routing", () => {
       });
     });
   });
+
+  describe("a push that does not convert to a JS value", () => {
+    // A map whose key is a map: the key has no prototype, so it cannot become a property name.
+    const unconvertible = "%1\r\n%0\r\n:1\r\n";
+
+    // The server answers the PING with `read` and ends the connection; the log is printed from onclose.
+    async function run(beforePing: string, read: string) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const log = [];
+          process.on("uncaughtException", err => log.push("uncaught " + err.name));
+          const server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket, chunk) {
+                if (chunk.includes("HELLO")) socket.write("+OK\\r\\n");
+                else if (chunk.includes("PING")) socket.end(${JSON.stringify(read)});
+                else socket.write(${JSON.stringify(String(ack("subscribe", "a", 1)))});
+              },
+            },
+          });
+          const client = new Bun.RedisClient("redis://127.0.0.1:" + server.port, { autoReconnect: false });
+          client.onclose = () => setImmediate(() => (console.log(log.join("\\n")), server.stop(true)));
+          const note = name => [value => log.push(name + " " + value), err => log.push(name + " rejected " + err.name)];
+          await client.subscribe("a", message => log.push("message " + message));
+          ${beforePing}
+          client.ping().then(...note("ping"));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { log: stdout.trim().split(/\r?\n/), stderr, exitCode };
+    }
+
+    test.concurrent("an ack rejects the request it answers", async () => {
+      const read = `>3\r\n${bulk("punsubscribe")}${unconvertible}:0\r\n+PONG\r\n`;
+      expect(await run(`client.punsubscribe("x*").then(...note("punsubscribe"));`, read)).toEqual({
+        log: ["punsubscribe rejected TypeError", "ping PONG"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("a message is reported, and the rest of the read is handled", async () => {
+      const message = (payload: string) => `>3\r\n${bulk("message")}${bulk("a")}${payload}`;
+      expect(await run("", message(unconvertible) + message(bulk("next")) + "+PONG\r\n")).toEqual({
+        log: ["uncaught TypeError", "message next", "ping PONG"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });

@@ -37,13 +37,19 @@ describe("package-lock.json migration fixes", () => {
 
     // The errors, warnings and notes of `bun install`. macOS has another name for a connection that the offline
     // registry refuses.
-    const diagnostics = (stderr: string) =>
-      stderr
+    // `bun install` reports the manifests that it could not download in the order in which the requests end, and that
+    // order is not fixed. Those lines are sorted. Every other line keeps its place.
+    const diagnostics = (stderr: string) => {
+      const lines = stderr
         .split("\n")
         .filter(line => /^(error|warn|note): /.test(line))
         .map(line =>
           line.replace(/^(\w+): FailedToOpenSocket (downloading package manifest )/, "$1: ConnectionRefused $2"),
         );
+      const isManifest = (line: string) => line.includes(" downloading package manifest ");
+      const manifests = lines.filter(isManifest).sort();
+      return lines.map(line => (isManifest(line) ? manifests.shift()! : line));
+    };
 
     test.each(names)("%s", async name => {
       const at = names.indexOf(name);

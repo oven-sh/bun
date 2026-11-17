@@ -358,6 +358,9 @@ impl Inflater {
             };
         }
 
+        if self.run.is_none() {
+            self.window.resume(self.history.min(self.max_distance))?;
+        }
         if self.window.pending() != 0 {
             if out.room() != 0 && self.pending_distance > self.history {
                 self.window.drop_pending();

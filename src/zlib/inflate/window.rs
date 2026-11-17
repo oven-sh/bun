@@ -18,11 +18,11 @@ const MIN_GROWTH: usize = 256;
 pub(super) struct Window {
     /// Only as long as it has had to be.
     pub(super) bytes: Vec<u8>,
-    /// Where the next byte goes. The byte `n` back is at `end - n`, or at `end - n + LAP` if that is negative.
+    /// Where the next byte goes. One within reach is `n` back at `end - n`, or at `end - n + LAP` if that is negative.
     pub(super) end: usize,
     /// What is between it and `end` has not been handed out.
     handed_out: usize,
-    /// What `grow()` has added so far.
+    /// What `grow()` has added since `resume()`.
     grown: usize,
 }
 
@@ -90,14 +90,29 @@ impl Window {
         Ok(())
     }
 
+    fn slide(&mut self, by: usize) -> Result<()> {
+        let written = self.bytes.get_mut(..self.end).ok_or(Error::Internal)?;
+        written.copy_within(by.., 0);
+        self.end -= by;
+        self.handed_out -= by;
+        Ok(())
+    }
+
     /// The last one is over, and nothing is pending.
     pub(super) fn start_lap(&mut self) -> Result<()> {
         debug_assert_eq!(self.pending(), 0);
         self.bytes.resize(FULL_LEN, 0);
-        let written = self.bytes.get_mut(..self.end).ok_or(Error::Internal)?;
-        written.copy_within(LAP.., 0);
-        self.end -= LAP;
-        self.handed_out = self.end;
+        self.slide(LAP)
+    }
+
+    /// Only `reach` of the bytes that have been handed out are still needed, and few can do with little memory.
+    #[inline]
+    pub(super) fn resume(&mut self, reach: usize) -> Result<()> {
+        self.grown = 0;
+        if self.handed_out > 2 * reach && self.bytes.len() < FULL_LEN {
+            // By whole cache lines: https://sourceware.org/bugzilla/show_bug.cgi?id=30994
+            self.slide((self.handed_out - reach) / 64 * 64)?;
+        }
         Ok(())
     }
 
@@ -135,5 +150,22 @@ impl Window {
             self.handed_out = self.end;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_reach_takes_little_memory() {
+        let mut window = Window::default();
+        for byte in 0..=u8::MAX {
+            assert_eq!(window.resume(1000), Ok(()));
+            assert_eq!(window.record(&[byte; 300], 1000), Ok(()));
+        }
+        assert!(window.bytes.len() <= 2300);
+        let reach = window.bytes.get(window.end - 901..window.end - 899);
+        assert_eq!(reach, Some(&[252, 253][..]));
     }
 }

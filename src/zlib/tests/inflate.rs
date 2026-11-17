@@ -969,3 +969,45 @@ fn a_vec_grows_up_to_the_limit() {
     let status = Inflater::new(Container::Raw).inflate_to_vec(&mut &[7][..], &mut out, 9);
     assert_eq!(status, Err(Damage::BlockType.into()));
 }
+
+#[test]
+fn a_small_window_is_kept_over_many_short_calls() {
+    let mut random = Random::new(7);
+    for (window_bits, to_vec) in [(8, false), (9, true), (12, false), (13, true), (14, false)] {
+        let window = 1 << window_bits;
+        let mut inflater = Inflater::with_window_bits(Container::Raw, window_bits).unwrap();
+        let mut plain = random.mixed(window, 512);
+        inflater.set_dictionary(&plain).unwrap();
+        loop {
+            let start = plain.len();
+            let distance = window + usize::from(start > 80_000);
+            let (len, others) = (3 + random.below(256), random.up_to(90));
+            let others = random.mixed(others, 512);
+            let mut raw = Writer::default();
+            raw.fixed(false).copy(len, distance).literals(&others);
+            let raw = raw.end_block().stored(false, &others).finish();
+            (0..len).for_each(|_| plain.push(plain[plain.len() - distance]));
+            plain.extend([&others[..], &others].concat());
+            let (mut input, mut out) = (&raw[..], Vec::with_capacity(random.up_to(99)));
+            let status = match to_vec {
+                true => inflater.inflate_to_vec(&mut input, &mut out, 999),
+                false => loop {
+                    let room = if out.is_empty() { 259 } else { 40 };
+                    let (more, status) = step(&mut inflater, &mut input, room, false);
+                    out.extend(more);
+                    if status != Ok(Status::NeedsOutput) {
+                        break status;
+                    }
+                },
+            };
+            if distance > window {
+                assert_eq!(status, Err(Damage::DistanceTooFarBack.into()));
+                break;
+            }
+            assert_eq!(
+                (&out[..], status),
+                (&plain[start..], Ok(Status::NeedsInput))
+            );
+        }
+    }
+}

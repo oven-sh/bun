@@ -935,6 +935,7 @@ impl<'a> Coordinator<'a> {
             let w = &mut self.workers[slot];
             w.reset_pipes();
             w.reached_ready = false;
+            w.waits_for_heavy_file_to_end = false;
             match w.start(&SpawnContext {
                 vm: self.vm,
                 cwd: self.cwd,

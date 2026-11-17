@@ -2389,6 +2389,11 @@ function nativeSocketFinal(this: any, callback) {
     return;
   }
   this._handle?.shutdown();
+  // A pause would hide the peer's FIN. As in onDataIncomingMessage(), uWS drops the body that nothing reads.
+  if (this.isPaused() && this.parser?._consumed && !this.parser.incoming?._consuming) {
+    this[kHandle]?.stopParsing();
+    this._handle?.resume();
+  }
   finishBehindResponses(this, callback);
 }
 // The FIN waits for the response bytes that uWS still holds. An empty write completes behind them, or at the close, which reports what failed.

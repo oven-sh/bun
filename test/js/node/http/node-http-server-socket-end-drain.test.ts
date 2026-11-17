@@ -247,6 +247,29 @@ describe.skipIf(isWindows).each(["http", "https"] as const)(
   },
 );
 
+test.concurrent.each(["http", "https"] as const)(
+  "%s: a socket that an unread upload paused closes when end() and the client's FIN have ended both sides",
+  async protocol => {
+    await using server = protocol === "https" ? https.createServer(tlsCert) : http.createServer();
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" };
+    const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+    try {
+      client.on("error", () => {}).resume();
+      client.write(`POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n\r\n`);
+      const [req, res] = (await once(server, "request")) as [IncomingMessage, ServerResponse];
+      client.write(Buffer.alloc(200_000));
+      await once(req.socket, "pause");
+      req.socket.end();
+      await once(res, "close");
+      expect(req.socket.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+    }
+  },
+);
+
 // An http.Server socket has allowHalfOpen: end() sends the FIN, and the request in flight still gets its body.
 describe.each(["http", "https"] as const)("%s: the request body behind the FIN of socket.end()", protocol => {
   const createServer = (onRequest: http.RequestListener) =>

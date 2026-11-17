@@ -19,7 +19,7 @@ import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = ["libdeflate", "lshpack", "zlib", "zstd"];
+export const safeStackDependencies: readonly DepName[] = ["libdeflate", "zlib", "zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -755,7 +755,7 @@ export const bunOnlyFlags: Flag[] = [
   },
   // C standard: gnu17 on unix (cmake: C_STANDARD 17 with C_EXTENSIONS
   // default ON → -std=gnu17). Can't go to C23 — MSVC doesn't support it.
-  // Most .c files are usockets/llhttp which would compile fine without,
+  // Most .c files are usockets, which would compile fine without,
   // but explicit is better than compiler-default drift.
   {
     flag: "-std=gnu17",
@@ -1944,12 +1944,6 @@ export function bunIncludes(cfg: Config): string[] {
   } else {
     // libuv stubs for unix (real libuv used on windows)
     includes.push(join(cwd, "src/jsc/bindings/libuv"));
-  }
-
-  // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
-  // a compat copy for this case.
-  if (cfg.linux && cfg.abi === "musl") {
-    includes.push(join(vendorDir, "lshpack/compat/queue"));
   }
 
   return includes;

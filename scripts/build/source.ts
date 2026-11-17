@@ -457,7 +457,6 @@ export type DepName =
   | "libdeflate"
   | "libuv"
   | "lolhtml"
-  | "lshpack"
   | "lsqpack"
   | "lsquic"
   | "mimalloc"

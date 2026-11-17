@@ -271,6 +271,17 @@ describe("Bun.serve http2 lifecycle", () => {
     raw.close();
   });
 
+  test("a name and its value may take 64 KiB when --max-http-header-size allows for it", async () => {
+    await using fx = await startFixture({ tls: false, execArgv: ["--max-http-header-size=100000"] });
+    const field = (length: number): [string, string] => ["x-big", Buffer.alloc(length - 5, "c").toString()];
+    const raw = await RawH2.connect(fx.port, false);
+    raw.headers(1, [...baseHeaders("/hello"), field(65536)]);
+    expect((await raw.body(1)).toString()).toBe("hello");
+    raw.headers(3, [...baseHeaders("/hello"), field(65537)]);
+    expect(await raw.goaway()).toEqual({ lastStreamId: 1, code: 11 });
+    raw.close();
+  });
+
   test("stop(true) sends GOAWAY before closing", async () => {
     await using fx = await startFixture({ tls: false });
     const raw = await RawH2.connect(fx.port, false);

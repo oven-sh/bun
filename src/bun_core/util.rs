@@ -1042,17 +1042,15 @@ impl Stdio {
 /// (`readlink("/proc/self/fd/N")` on Linux, `fcntl(F_GETPATH)` on macOS,
 /// `fcntl(F_KINFO)` on FreeBSD), so it lives at T0 — moved down from
 /// `bun_sys::fd` per PORTING.md (no cross-crate extern).
-///
-/// SAFETY: `buf` must be valid for `cap` writable bytes.
-pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
+pub fn fd_path_raw(fd: Fd, buf: &mut [u8]) -> isize {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut proc = [0u8; 32];
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut proc[..]);
         let _ = write!(c, "/proc/self/fd/{}\0", fd.0);
-        // SAFETY: proc is NUL-terminated above; buf has cap bytes.
-        let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
+        // SAFETY: proc is NUL-terminated above; `readlink` writes at most `buf.len()` bytes.
+        let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.as_mut_ptr().cast(), buf.len()) };
         if n < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1065,10 +1063,9 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = cap;
-        // SAFETY: F_GETPATH expects buf with at least MAXPATHLEN bytes; callers
-        // pass ≥1024 which is the platform MAXPATHLEN on Darwin.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
+        let buf = &mut buf[..libc::MAXPATHLEN as usize];
+        // SAFETY: F_GETPATH writes at most MAXPATHLEN bytes.
+        let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf.as_mut_ptr()) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1077,20 +1074,14 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
                 0
             };
         }
-        // SAFETY: kernel wrote a NUL-terminated path.
-        return unsafe { libc::strlen(buf.cast()) as isize };
+        return crate::slice_to_nul(buf).len() as isize;
     }
     #[cfg(target_os = "freebsd")]
     {
-        use core::ptr::{addr_of, addr_of_mut};
-        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
-        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
-        unsafe {
-            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
-                .write(core::mem::size_of::<libc::kinfo_file>() as libc::c_int);
-        }
-        // SAFETY: F_KINFO expects a *mut kinfo_file with kf_structsize set.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, kif.as_mut_ptr()) };
+        let mut kif: libc::kinfo_file = crate::ffi::zeroed();
+        kif.kf_structsize = core::mem::size_of::<libc::kinfo_file>() as libc::c_int;
+        // SAFETY: F_KINFO writes one `kinfo_file`.
+        let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, &raw mut kif) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1099,12 +1090,9 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
                 0
             };
         }
-        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
-        let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
-        let len = unsafe { libc::strlen(path.cast()) };
-        let n = len.min(cap);
-        // SAFETY: path has `len` initialized bytes; buf has `cap` bytes.
-        unsafe { core::ptr::copy_nonoverlapping(path, buf, n) };
+        let path = crate::ffi::c_field_bytes(&kif.kf_path);
+        let n = path.len().min(buf.len());
+        buf[..n].copy_from_slice(&path[..n]);
         return n as isize;
     }
     #[cfg(not(any(
@@ -1114,7 +1102,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         target_os = "freebsd"
     )))]
     {
-        let _ = (fd, buf, cap);
+        let _ = (fd, buf);
         0
     }
 }
@@ -1196,8 +1184,7 @@ impl core::fmt::Display for Fd {
             #[cfg(debug_assertions)]
             if fd.0 >= 3 {
                 let mut buf = [0u8; 1024];
-                // SAFETY: buf is 1024 bytes, passed with matching cap.
-                let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
+                let n = fd_path_raw(fd, &mut buf);
                 if n > 0 {
                     write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
                 } else if n == -1 {
@@ -4009,26 +3996,10 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
         && !RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get())
 }
 
-/// Terminate the current OS thread without unwinding.
-/// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
-pub(crate) fn exit_thread() -> ! {
-    #[cfg(unix)]
-    {
-        // `retval` is stored opaquely for `pthread_join` and never
-        // dereferenced by libc itself; thread termination leaks but cannot
-        // violate memory safety (same rationale as `std::process::exit`
-        // being safe), so `safe fn` discharges the link-time proof.
-        unsafe extern "C" {
-            safe fn pthread_exit(retval: *mut core::ffi::c_void) -> !;
-        }
-        pthread_exit(core::ptr::null_mut());
-    }
-    #[cfg(windows)]
-    // `ExitThread` is declared `safe fn` in `bun_windows_sys::kernel32`.
-    crate::windows_sys::kernel32::ExitThread(0);
-    #[cfg(not(any(unix, windows)))]
+/// Not `pthread_exit`: it frees a stack that other threads may borrow from, and runs TLS destructors while the reload prepares `execve`.
+fn park_until_reloaded() -> ! {
     loop {
-        core::hint::spin_loop();
+        std::thread::sleep(std::time::Duration::from_secs(3600));
     }
 }
 
@@ -4039,33 +4010,7 @@ pub fn maybe_handle_panic_during_process_reload() {
         crate::output::flush();
         #[cfg(debug_assertions)]
         crate::output::debug_warn("panic() called during process reload, ignoring\n");
-        // POSIX `pthread_exit`; Windows `ExitThread`.
-        exit_thread();
-    }
-    // Spin if pthread_exit was a no-op (pathological).
-    while is_process_reload_in_progress_on_another_thread() {
-        core::hint::spin_loop();
-        #[cfg(unix)]
-        {
-            // `&libc::timespec` / `Option<&mut libc::timespec>` are
-            // ABI-identical to libc's `const struct timespec *` / nullable
-            // `struct timespec *`; the types encode the only pointer-validity
-            // preconditions, so `safe fn` discharges the link-time proof.
-            unsafe extern "C" {
-                #[link_name = "nanosleep"]
-                safe fn libc_nanosleep(
-                    req: &libc::timespec,
-                    rem: Option<&mut libc::timespec>,
-                ) -> core::ffi::c_int;
-            }
-            let _ = libc_nanosleep(
-                &libc::timespec {
-                    tv_sec: 1,
-                    tv_nsec: 0,
-                },
-                None,
-            );
-        }
+        park_until_reloaded();
     }
 }
 
@@ -4093,12 +4038,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         if may_return {
             return;
         }
-        // Park (not pthread_exit): the loser may be the JS main thread, and
-        // running its TLS destructors concurrently with the winner's execve
-        // preparation is the same hazard class the swap exists to avoid.
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(3600));
-        }
+        park_until_reloaded();
     }
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 

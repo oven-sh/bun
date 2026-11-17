@@ -4387,6 +4387,19 @@ it("ref() and unref() work on an heir of Server.prototype that no constructor ha
   expect(heir.ref()).toBe(heir);
 });
 
+it("the stand-in socket of a standalone ServerResponse finishes and closes", async () => {
+  const socket = new ServerResponse(new IncomingMessage(null as any)).socket!;
+  const events: string[] = [];
+  socket.on("finish", () => events.push("finish"));
+  socket.on("close", () => events.push("close"));
+  socket.write("dropped", () => events.push("write callback"));
+  socket.end();
+  await new Promise(resolve => setImmediate(resolve));
+  socket.destroy();
+  await new Promise(resolve => setImmediate(resolve));
+  expect(events).toEqual(["write callback", "finish", "close"]);
+});
+
 it("standalone ServerResponse end() after writeHead() sets writableEnded (#25632)", async () => {
   // With no native handle and no socket assigned, end() after writeHead() must
   // still transition to `finished` / `writableEnded` and buffer the rendered

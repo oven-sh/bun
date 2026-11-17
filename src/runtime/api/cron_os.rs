@@ -127,9 +127,6 @@ enum Failure {
     #[error(transparent)]
     TooManyTriggers(#[from] bun_cron::schtasks::TooManyTriggers),
     #[cfg(target_os = "macos")]
-    #[error(transparent)]
-    TooManyIntervals(#[from] bun_cron::launchd::TooManyIntervals),
-    #[cfg(target_os = "macos")]
     #[error("Cannot write to ~/Library/Logs/bun/cron: {}", BStr::new(.0.name()))]
     LogDir(sys::Error),
 }
@@ -495,7 +492,6 @@ mod backend {
 
     pub(super) fn register(job: &Registration<'_>) -> Result<Command, Failure> {
         let home = HOME.get().ok_or("HOME environment variable not set")?;
-        let contents = launchd::plist(job, home)?;
         let dir = format!("{}/Library/LaunchAgents", BStr::new(home));
         (Fd::cwd().make_path(dir.as_bytes()))
             .map_err(|_| "Failed to create ~/Library/LaunchAgents directory")?;
@@ -512,7 +508,7 @@ mod backend {
         let plist = write_file(
             plist_path(home, &job.title).as_bytes(),
             (sys::O::TRUNC, 0o644),
-            contents.as_bytes(),
+            launchd::plist(job, home).as_bytes(),
             ["Failed to create plist file", "Failed to write plist"],
         )?;
         Ok(bootout(&job.title, Step::BootoutOld(plist)))

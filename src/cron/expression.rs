@@ -92,19 +92,14 @@ impl CronExpression {
 
     /// The five fields as the OS schedulers see them: `None` where every value matches, however it was written.
     pub(crate) fn restricted_fields(&self) -> [Option<u64>; 5] {
-        let [minute, hour, day, month, weekday] = [
+        [
             (self.minutes, ALL_MINUTES),
             (self.hours, ALL_HOURS),
             (self.days, ALL_DAYS),
             (self.months, ALL_MONTHS),
             (self.weekdays, ALL_WEEKDAYS),
         ]
-        .map(|(set, all)| (set != all).then_some(set));
-        // "The 15th or any weekday" is every day.
-        if self.day_or_weekday && (day.is_none() || weekday.is_none()) {
-            return [minute, hour, None, month, None];
-        }
-        [minute, hour, day, month, weekday]
+        .map(|(set, all)| (set != all).then_some(set))
     }
 
     fn matches_day(&self, at: WallClock) -> bool {
@@ -316,11 +311,7 @@ fn parse_field(
         } else if let Some((low @ [_, ..], high)) = strings::split_once_char(base, b'-')
             && !strings::contains_char(high, b'-')
         {
-            match (value(low)?, value(high)?) {
-                // `FRI-SUN` is `5-7`. `5-0` descends.
-                (low @ 1.., 0) if named(high).is_some() => (low, 7),
-                range => range,
-            }
+            (value(low)?, value(high)?)
         } else {
             let low = value(base)?;
             (low, if step.is_some() { max } else { low })

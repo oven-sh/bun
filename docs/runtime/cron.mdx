@@ -100,7 +100,7 @@ Bun.cron.parse("0 9 * * Monday-Friday");
 Bun.cron.parse("0 0 1 January *");
 ```
 
-Both `0` and `7` mean Sunday in the weekday field. A range can end in `SUN`: `FRI-SUN` is `5-7`.
+Both `0` and `7` mean Sunday in the weekday field.
 
 ### Predefined nicknames
 
@@ -145,7 +145,7 @@ When you specify **both** day-of-month and day-of-week (neither is `*`), the exp
 Bun.cron.parse("0 0 15 * FRI");
 ```
 
-When you specify only one (the other is `*`), Bun uses only that field for matching. Only a lone `*` counts: `0 0 15 * 0-6` and `0 0 */1 * MON` match every day. Vixie cron and cronie read `*/1` as `*`. Bun does not.
+When you specify only one (the other is `*`), Bun uses only that field for matching.
 
 ---
 
@@ -316,7 +316,7 @@ Bun uses [launchd](https://developer.apple.com/library/archive/documentation/Mac
 ~/Library/LaunchAgents/bun.cron.<title>.plist
 ```
 
-The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported. Bun expands them into multiple `StartCalendarInterval` dicts as a Cartesian product. `Bun.cron()` rejects an expression that needs more than 10,000 dicts, such as `1-59 1-23 2-31 * *`. A field that is `*` adds none.
+The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported. Bun expands them into multiple `StartCalendarInterval` dicts as a Cartesian product.
 
 **Viewing registered jobs:**
 

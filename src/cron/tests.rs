@@ -41,21 +41,8 @@ fn normalizes() {
             "50,54,58 5,14,23 1,2,3 1,12 1,2,3",
         ),
         ("0-59 */1 1-31 1-12 0-7", "* * * * *"),
-        ("0 0 15 * *", "0 0 15 * *"),
-        ("0 0 15 * 5", "0 0 15 * 5"),
-        ("0 0 15 * 0-6", "0 0 * * *"),
-        ("0 0 15 6 1-7", "0 0 * 6 *"),
-        ("0 0 1-31 * 1", "0 0 * * *"),
-        ("0 0 */1 * 1", "0 0 * * *"),
         ("0 0 * * 5-7", "0 0 * * 0,5,6"),
         ("0 0 * * 7", "0 0 * * 0"),
-        ("0 0 * * FRI-SUN", "0 0 * * 0,5,6"),
-        ("0 0 * * sat-Sunday", "0 0 * * 0,6"),
-        ("0 0 * * 5-sun", "0 0 * * 0,5,6"),
-        ("0 0 * * mon-sun", "0 0 * * *"),
-        ("0 0 * * fri-sun/2", "0 0 * * 0,5"),
-        ("0 0 * * 7-sun", "0 0 * * 0"),
-        ("0 0 * * sun-sun", "0 0 * * 0"),
         ("*/127 -0 +1 1_0 *", "0 0 1 10 *"),
         ("@yearly", "0 0 1 1 *"),
         ("@ANNUALLY", "0 0 1 1 *"),
@@ -84,10 +71,7 @@ fn refuses() {
         ("*/ * * * *", InvalidStep),
         ("99/1/1 * * * *", InvalidStep),
         ("5-1 * * * *", InvalidRange),
-        ("* * * * 5-0", InvalidRange),
-        ("* * * * fri-0", InvalidRange),
-        ("* * * * sat-mon", InvalidRange),
-        ("* * * dec-jan *", InvalidRange),
+        ("* * * * sat-sun", InvalidRange),
         ("60 * * * *", InvalidNumber),
         ("* * 0 * *", InvalidNumber),
         ("* * * * 8", InvalidNumber),
@@ -182,8 +166,6 @@ fn next() {
         ("0 0 13 * fri", "2026-01-01 00:00", Some("2026-01-02 00:00")),
         ("0 0 * * mon", "2026-11-16 12:00", Some("2026-11-23 00:00")),
         ("0 0 1-31 * 1", "2026-11-16 12:00", Some("2026-11-17 00:00")),
-        ("0 0 */1 * 1", "2026-11-16 12:00", Some("2026-11-17 00:00")),
-        ("0 0 15 * 0-6", "2026-11-16 12:00", Some("2026-11-17 00:00")),
         ("0 0 29 feb *", "2026-01-01 00:00", Some("2028-02-29 00:00")),
         ("0 0 30 feb *", "2026-01-01 00:00", None),
         // `Zone::MAX_MS` is 2100-01-01 00:00.
@@ -257,7 +239,7 @@ fn crontab_without_entry() {
 fn plist() {
     let escaped = job("30 2 * * 1", b"/a&b/<bun>", b"/\"it's\"/\xff.ts");
     assert_eq!(
-        launchd::plist(&escaped, b"/Users/a&b").unwrap(),
+        launchd::plist(&escaped, b"/Users/a&b"),
         include_str!("tests/job.plist")
     );
     let dict = |keys: &[(&str, u8)]| {
@@ -278,10 +260,10 @@ fn plist() {
     };
     for (text, interval) in [
         ("* * * * *", dict(&[])),
-        ("0 0 1-31 * 1", dict(&[("Minute", 0), ("Hour", 0)])),
-        ("0 0 */1 * 1", dict(&[("Minute", 0), ("Hour", 0)])),
-        ("0 0 15 * 0-6", dict(&[("Minute", 0), ("Hour", 0)])),
-        ("* * 15 6 0-6", dict(&[("Month", 6)])),
+        (
+            "0 0 1-31 * 1",
+            dict(&[("Minute", 0), ("Hour", 0), ("Weekday", 1)]),
+        ),
         (
             "0,30 1,2 * * *",
             array(&[
@@ -299,26 +281,9 @@ fn plist() {
             ]),
         ),
     ] {
-        let plist = launchd::plist(&job(text, b"", b""), b"").unwrap();
+        let plist = launchd::plist(&job(text, b"", b""), b"");
         let (after, before) = ("<key>StartCalendarInterval</key>\n", "<key>StandardOutPath");
         assert_eq!(between(&plist, after, before), interval, "{text}");
-    }
-}
-
-#[test]
-fn plist_cap() {
-    for (text, intervals) in [
-        ("*/5 9-17 * * 1-5", Ok(540)),
-        ("1-59 1-23 * * 1-6", Ok(8142)),
-        ("0-49 0-19 1-10 * *", Ok(10_000)),
-        ("0-49 0-19 1-5 * 1-5", Ok(5000 + 5000)),
-        ("0-28 0-22 1-15 * *", Err(launchd::TooManyIntervals)), // 10,005
-        ("0-49 0-19 1-6 * 1-5", Err(launchd::TooManyIntervals)), // 6000 + 5000
-        ("1-59 1-23 2-31 2-12 1-6", Err(launchd::TooManyIntervals)), // 537,372
-    ] {
-        let plist = launchd::plist(&job(text, b"", b""), b"");
-        let dicts = plist.map(|xml| strings::split(xml.as_bytes(), b"    <dict>").count() - 1);
-        assert_eq!(dicts, intervals, "{text}");
     }
 }
 
@@ -337,9 +302,6 @@ fn task_xml() {
         ("0 * * * *", "00:00", "PT60M"),
         ("30 1/6 * * *", "01:30", "PT6H"),
         ("30 5 1-31 * 0-7", "05:30", "PT24H"),
-        ("30 5 1-31 * 1", "05:30", "PT24H"),
-        ("30 5 */1 * 1", "05:30", "PT24H"),
-        ("*/15 * 15 * 0-6", "00:00", "PT15M"),
     ] {
         let xml = xml(text).unwrap();
         assert_eq!(between(&xml, "2000-01-01T", ":00<"), start, "{text}");
@@ -353,7 +315,6 @@ fn task_xml() {
         ("0 0 * 2 1", 1, "ScheduleByMonthDayOfWeek"),
         ("0 0 1 * *", 1, "ScheduleByMonth"),
         ("0 0 * 2 *", 1, "ScheduleByMonth"),
-        ("0 0 1-31 2 1", 1, "ScheduleByMonth"),
         ("0-47 0 * * *", 48, "ScheduleByDay"),
         ("0-23 0 1 * 1", 48, "ScheduleByMonth"),
     ] {

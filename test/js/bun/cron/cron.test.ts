@@ -734,7 +734,10 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
 
   test.each([
     { schedule: "0 0 15 * 5", written: "0 0 15 * 5" },
-    { schedule: "0 0 15 * 0-6", written: "0 0 * * *" },
+    { schedule: "0 0 15 * 0-6", written: "0 0 15 * *" },
+    { schedule: "0 0 1-31 * 1", written: "0 0 * * 1" },
+    { schedule: "0 9 */1 * 1-5", written: "0 9 * * 1,2,3,4,5" },
+    { schedule: "0 0 1 * */1", written: "0 0 1 * *" },
   ])("$schedule is written as $written", async ({ schedule, written }) => {
     expect(await run(`await Bun.cron("./job.ts", "${schedule}", "t");`)).toEqual({
       stdout: "",
@@ -950,17 +953,6 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
       await Bun.cron.remove("bun-test-sudo");
     `);
     expect(result).toEqual({ stdout: "false bun.cron.bun-test-sudo.plist\n", stderr: "", exitCode: 0 });
-  });
-
-  test.skipIf(!isMacOS)("too many calendar intervals reject before anything is written", async () => {
-    const result = await run(`
-      import * as fs from "node:fs";
-      console.log(await Bun.cron("./job.ts", "0-28 0-22 1-15 * *", "bun-test-cap").catch(e => e.message));
-      console.log(fs.existsSync("home/Library/LaunchAgents"));
-      await Bun.cron.remove("bun-test-cap");
-    `);
-    expect(result.stdout).toMatch(/too many calendar intervals for launchd \(max 10000\).*\nfalse\n$/);
-    expect(result.exitCode).toBe(0);
   });
 
   test.each(["process.exit(0)", `postMessage("terminate")`])("a Worker ends with a call in flight: %s", async end => {
@@ -1483,7 +1475,6 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
   test.each([
     { title: "test-mac-log", schedule: "@yearly", logDirectory: "kept" },
     { title: "test-mac-log-deleted", schedule: "@yearly", logDirectory: "deleted" },
-    { title: "test-mac-10000-dicts", schedule: "0-49 0-19 1-10 1 *", logDirectory: "kept" },
   ])("$schedule runs and logs, log directory $logDirectory", async job => {
     using home = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() { console.log("ran"); } };`,
@@ -1917,11 +1908,6 @@ describe("Bun.cron.parse", () => {
     const results = nextN("0 0 * * MON-FRI/2", from, 6);
     // Mon=1, Wed=3, Fri=5 repeating
     expect(results.map(t => new Date(t).getUTCDay())).toEqual([1, 3, 5, 1, 3, 5]);
-  });
-
-  test("FRI-SUN is 5-7", () => {
-    const from = Date.UTC(2025, 0, 13, 0, 0, 0); // Monday
-    expect(nextN("0 0 * * FRI-SUN", from, 6)).toEqual(nextN("0 0 * * 5-7", from, 6));
   });
 
   test("day 7 and SUN both schedule on Sundays", () => {

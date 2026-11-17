@@ -700,6 +700,12 @@ impl JSValkeyClient {
         }
     }
 
+    pub(crate) fn preconnect(&self, object: Object<'_>) {
+        if let Some(attempt) = self.client.with_mut(Client::preconnect) {
+            self.dial(object, attempt);
+        }
+    }
+
     fn dial(&self, object: Object<'_>, attempt: Attempt) {
         self.update_poll_ref(object);
         let hold = Rc::new(Hold::new(self, object));

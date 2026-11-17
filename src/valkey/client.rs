@@ -41,7 +41,7 @@ impl Default for Config {
 }
 
 enum State {
-    /// Never dialed.
+    /// Never dialed, or only by a [`Client::preconnect`] that failed.
     Idle,
     /// The socket is connecting, or in its TLS handshake.
     Dialing,
@@ -93,6 +93,8 @@ pub struct Client<P> {
     config: Config,
     state: State,
     retries: u32,
+    /// Script sent a command, connected or closed. Until then nobody would hear why the client gave up.
+    is_used: bool,
     is_subscriber: bool,
     output: OffsetByteList,
     input: OffsetByteList,
@@ -192,6 +194,7 @@ impl<P> Client<P> {
             config,
             state: State::Idle,
             retries: 0,
+            is_used: false,
             is_subscriber: false,
             output: OffsetByteList::default(),
             input: OffsetByteList::default(),
@@ -281,6 +284,7 @@ impl<P> Client<P> {
     }
 
     pub fn close(&mut self) -> Close {
+        self.is_used = true;
         let close = match self.state {
             State::Idle | State::Closed | State::Ending(End::Final | End::Failed) => {
                 return Close::Nothing;
@@ -294,6 +298,12 @@ impl<P> Client<P> {
     }
 
     pub fn first_dial(&mut self) -> Option<Attempt> {
+        self.is_used = true;
+        self.preconnect()
+    }
+
+    /// A dial that script did not ask for. If it fails for good, the first command dials again.
+    pub fn preconnect(&mut self) -> Option<Attempt> {
         matches!(self.state, State::Idle).then(|| self.dial())
     }
 
@@ -383,7 +393,12 @@ impl<P> Client<P> {
             }
             Reason::RetriesUsedUp
         };
-        self.state = State::Closed;
+        if self.is_used {
+            self.state = State::Closed;
+        } else {
+            self.state = State::Idle;
+            self.retries = 0;
+        }
         Lost::ForGood {
             reason,
             pending: self.take_pending(),

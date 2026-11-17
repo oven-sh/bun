@@ -540,6 +540,53 @@ mod lifecycle {
     }
 
     #[test]
+    fn a_preconnect_that_fails_unused_is_forgotten() {
+        fn preconnect(then: impl Fn(&mut Driver)) -> State {
+            let mut it = Driver::new(Config {
+                max_retries: 0,
+                ..database(1)
+            });
+            it.attempt = it.client.preconnect();
+            it.start();
+            then(&mut it);
+            state_of(it)
+        }
+        let hello_is_refused = |it: &mut Driver| it.read("-NO\r\n");
+        assert_eq!(preconnect(hello_is_refused), Idle);
+        let select_is_refused = |it: &mut Driver| it.read("+OK\r\n-NO\r\n");
+        assert_eq!(preconnect(select_is_refused), Idle);
+        let retries_are_used_up = Driver::lost;
+        assert_eq!(preconnect(retries_are_used_up), Idle);
+
+        let script_waits_for_it = |it: &mut Driver| {
+            assert!(it.client.first_dial().is_none());
+            it.lost();
+        };
+        assert_eq!(preconnect(script_waits_for_it), Closed);
+        let script_closes_it = |it: &mut Driver| {
+            drop(it.client.close());
+            it.lost();
+        };
+        assert_eq!(preconnect(script_closes_it), Closed);
+    }
+
+    #[test]
+    fn retries_start_over_after_a_forgotten_preconnect() {
+        let mut it = Driver::new(Config {
+            max_retries: 1,
+            ..Config::default()
+        });
+        it.attempt = it.client.preconnect();
+        it.lost();
+        it.attempt = it.client.redial();
+        it.lost();
+        it.log.clear();
+        it.dial();
+        it.lost();
+        assert_eq!(it.take(), ["retry in 50 []"]);
+    }
+
+    #[test]
     fn no_retry() {
         let mut it = Driver::connected(Config::default());
         assert!(matches!(it.lose(true), Lost::ForGood { .. }));

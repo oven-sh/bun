@@ -75,10 +75,10 @@ impl Driver {
     fn flush(&mut self) {
         let len = self.client.output().len().min(self.window);
         if len > 0 {
-            let words = self.client.output()[..len]
-                .split(|&byte| byte == b'\n')
-                .filter(|line| !matches!(line.first(), None | Some(b'*' | b'$')))
-                .map(|line| line.trim_ascii_end().escape_ascii().to_string());
+            let words = str::from_utf8(&self.client.output()[..len])
+                .unwrap()
+                .split_ascii_whitespace()
+                .filter(|line| !matches!(line.as_bytes(), [b'*' | b'$', ..]));
             self.log
                 .push(format!("write {}", words.collect::<Vec<_>>().join(" ")));
             self.window -= len;
@@ -109,8 +109,9 @@ impl Driver {
             self.log.push(format!("refuse #{}: {reason}", self.sent));
             return;
         }
-        let words: Vec<&[u8]> = command.as_bytes().split(|&byte| byte == b' ').collect();
-        match self.client.send(words[0], &words[1..], reply, self.sent) {
+        let words: Vec<&str> = command.split_ascii_whitespace().collect();
+        let name = words[0].as_bytes();
+        match self.client.send(name, &words[1..], reply, self.sent) {
             Sent::Buffered => self.flush(),
             Sent::Batched => self.batch_is_due = true,
             Sent::Queued => {}
@@ -480,11 +481,11 @@ mod handshake {
 
     #[test]
     fn credentials() {
-        for (username, password, expected) in [
-            ("", "", "write HELLO 3"),
-            ("", "p", "write HELLO 3 AUTH default p"),
-            ("u", "p", "write HELLO 3 AUTH u p"),
-            ("u", "", "write HELLO 3 AUTH u "),
+        for (username, password, count, expected) in [
+            ("", "", b"*2", "write HELLO 3"),
+            ("", "p", b"*5", "write HELLO 3 AUTH default p"),
+            ("u", "p", b"*5", "write HELLO 3 AUTH u p"),
+            ("u", "", b"*5", "write HELLO 3 AUTH u"),
         ] {
             let mut it = Driver::new(Config {
                 username: username.as_bytes().into(),
@@ -492,7 +493,9 @@ mod handshake {
                 ..Config::default()
             });
             it.client.dial();
-            it.start();
+            it.client.start();
+            assert!(it.client.output().starts_with(count));
+            it.flush();
             assert_eq!(it.take(), [expected]);
         }
     }

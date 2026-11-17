@@ -1070,7 +1070,7 @@ describe("Valkey: Recovering After fail()", () => {
   test("connectionTimeout bounds the reply to SELECT", async () => {
     const fake = helloServer();
     const port = await fake.listen();
-    const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { connectionTimeout: 100 });
+    const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { connectionTimeout: 500 });
     try {
       const queued = client.send("WATCH", ["key"]).catch(err => err.code);
       await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });

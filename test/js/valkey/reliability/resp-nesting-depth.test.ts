@@ -466,23 +466,6 @@ describe("Valkey: RESP push frame routing", () => {
     });
   });
 
-  test("a reply behind an attribute is routed like the bare reply", async () => {
-    const attributed = (reply: string | Buffer) => Buffer.from(`|1\r\n+ttl\r\n:9\r\n${reply}`);
-    const payloads = [
-      attributed("-ERR no\r\n"),
-      attributed(":1\r\n"),
-      Buffer.concat([attributed(ack("invalidate", "key", 1)), ok]),
-    ];
-    await withMockClient(payloads, async client => {
-      const outcomes = await Promise.allSettled([client.get("key"), client.exists("key"), client.set("key", "value")]);
-      expect(outcomes).toEqual([
-        { status: "rejected", reason: expect.objectContaining({ code: "ERR_REDIS_SERVER_ERROR", message: "ERR no" }) },
-        { status: "fulfilled", value: true },
-        { status: "fulfilled", value: "OK" },
-      ]);
-    });
-  });
-
   describe("a push that does not convert to a JS value", () => {
     // A map whose key is a map: the key has no prototype, so it cannot become a property name.
     const unconvertible = "%1\r\n%0\r\n:1\r\n";
@@ -539,6 +522,23 @@ describe("Valkey: RESP push frame routing", () => {
         stderr: "",
         exitCode: 0,
       });
+    });
+  });
+
+  test("a reply behind an attribute is routed like the bare reply", async () => {
+    const attributed = (reply: string | Buffer) => Buffer.from(`|1\r\n+ttl\r\n:9\r\n${reply}`);
+    const payloads = [
+      attributed("-ERR no\r\n"),
+      attributed(":1\r\n"),
+      Buffer.concat([attributed(ack("invalidate", "key", 1)), ok]),
+    ];
+    await withMockClient(payloads, async client => {
+      const outcomes = await Promise.allSettled([client.get("key"), client.exists("key"), client.set("key", "value")]);
+      expect(outcomes).toEqual([
+        { status: "rejected", reason: expect.objectContaining({ code: "ERR_REDIS_SERVER_ERROR", message: "ERR no" }) },
+        { status: "fulfilled", value: true },
+        { status: "fulfilled", value: "OK" },
+      ]);
     });
   });
 });

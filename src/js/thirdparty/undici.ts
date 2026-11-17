@@ -8,7 +8,9 @@ const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
 const kEmptyObject = ObjectCreate(null);
 
-const nativeFetch: (input: string | URL | Request, init?: object) => Promise<Response> = Bun.fetch;
+const nativeFetch = Bun.fetch as unknown as ((input: string | URL | Request, init?: object) => Promise<Response>) & {
+  preconnect: typeof Bun.fetch.preconnect;
+};
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response: typeof globalThis.Response = bindings[0];
 const Request: typeof globalThis.Request = bindings[1];
@@ -49,11 +51,20 @@ function resolveConnect(dispatcher) {
   return undefined;
 }
 
-function runLookup(lookup, hostname, connect, signal) {
-  return new Promise((resolve, reject) => {
+// Bounded like undici's connector: connect.timeout (default 10s) covers the
+// lookup, so a hook that never calls back fails with ConnectTimeoutError.
+function runLookup(lookup, hostname, connect, signal): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);
     let onAbort;
+    const timeout = typeof connect.timeout === "number" && connect.timeout >= 0 ? connect.timeout : 10_000;
+    const timer = setTimeout(
+      () => fail(new ConnectTimeoutError(`lookup for "${hostname}" timed out after ${timeout}ms`)),
+      timeout,
+    );
+    timer.unref?.();
     const settle = fn => value => {
+      clearTimeout(timer);
       if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
       fn(value);
     };
@@ -125,7 +136,43 @@ async function applyConnect(url, connect, signal) {
   const host = url.host;
   const pinned = new URL(url);
   pinned.hostname = isIP(address) === 6 ? `[${address}]` : address;
+  // The URL setter ignores an address it cannot represent (an IPv6 zone id,
+  // for example); treat that as a failed lookup instead of resolving `host` again.
+  if (pinned.hostname === hostname) {
+    throw new TypeError(`lookup returned an address a URL cannot carry for "${hostname}" (received ${address})`);
+  }
   return { url: pinned, host, serverName: protocol === "https:" ? bare : undefined };
+}
+
+// Per-hop options for a pinned connection. The original hostname goes into
+// tls.serverName; the user's own serverName or proxy wins. A pinned hop is a
+// direct connection, like undici's Agent, so the environment proxy is off.
+function pinnedInit(init, pin) {
+  const out = { ...init };
+  if (init?.proxy === undefined) out.proxy = false;
+  if (pin.serverName !== undefined) {
+    if (init?.session != null && init?.tls == null) {
+      throw new NotSupportedError(
+        "a Bun.FetchSession cannot be combined with a connect.lookup hook over HTTPS; pass the TLS options as the request's tls option instead",
+      );
+    }
+    out.tls = pinnedTls(init?.tls, pin);
+  }
+  return out;
+}
+
+// Bodies that cannot be sent twice: a web or node stream, or any other
+// (async) iterable that is not one of the buffered BodyInit shapes.
+function isStreamingBody(body) {
+  if (body == null || typeof body !== "object") return false;
+  if (typeof body === "string" || isArrayBuffer(body) || ArrayBuffer.isView(body)) return false;
+  if (body instanceof Blob || body instanceof FormData || body instanceof URLSearchParams) return false;
+  return (
+    body instanceof ReadableStream ||
+    typeof body[Symbol.asyncIterator] === "function" ||
+    typeof body[Symbol.iterator] === "function" ||
+    (typeof body.pipe === "function" && typeof body.on === "function")
+  );
 }
 
 // The `tls` option for a pinned hop: the caller's own tls options, plus the
@@ -173,13 +220,13 @@ async function followRedirectsWithConnect(url, init, connect, opts) {
     }
     const hopHeaders = new Headers(headers);
     let target = url.href;
-    let tls = init.tls;
+    let hopInit = init;
     if (pin !== undefined) {
       target = pin.url.href;
       if (!hopHeaders.has("host")) hopHeaders.set("host", pin.host);
-      tls = pinnedTls(tls, pin);
+      hopInit = pinnedInit(init, pin);
     }
-    const resp = await nativeFetch(target, { ...init, method, headers: hopHeaders, body, redirect: "manual", tls });
+    const resp = await nativeFetch(target, { ...hopInit, method, headers: hopHeaders, body, redirect: "manual" });
     const { status } = resp;
     const location = isRedirectStatus(status) ? resp.headers.get("location") : null;
     if (location === null) {
@@ -217,8 +264,7 @@ async function followRedirectsWithConnect(url, init, connect, opts) {
       headers.delete("content-location");
       headers.delete("content-type");
       headers.delete("content-length");
-    } else if (body instanceof ReadableStream || (typeof body?.pipe === "function" && typeof body?.on === "function")) {
-      // Covers web ReadableStream and node:stream Readable bodies alike.
+    } else if (isStreamingBody(body)) {
       throw hopError(
         `cannot follow the ${status} redirect to ${next.href}: the request body is a stream that was already sent; use a buffered body to follow redirects`,
       );
@@ -227,11 +273,17 @@ async function followRedirectsWithConnect(url, init, connect, opts) {
   }
 }
 
+// Usage errors surface as-is; connection-phase failures become the
+// TypeError("fetch failed") undici's fetch rejects with, the cause attached.
 function fetchLookupError(err) {
-  return err instanceof UndiciError ? err : fetchFailed(err);
+  return err instanceof NotSupportedError || err instanceof InvalidArgumentError ? err : fetchFailed(err);
 }
 
 async function fetchWithConnect(input, init, connect) {
+  // Native fetch also takes a plain { url, ...init } object as input.
+  if (input !== null && typeof input === "object" && !(input instanceof Request) && !(input instanceof URL)) {
+    input = new Request(input.url, input);
+  }
   const isRequest = input instanceof Request;
   const url = new URL(isRequest ? input.url : input);
   const redirectMode = init?.redirect ?? (isRequest ? input.redirect : undefined) ?? "follow";
@@ -249,19 +301,19 @@ async function fetchWithConnect(input, init, connect) {
     if (pin === undefined) return nativeFetch(input, init);
     const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
     if (!headers.has("host")) headers.set("host", pin.host);
-    const tls = pinnedTls(init?.tls, pin);
+    const hopInit = { ...pinnedInit(init, pin), headers };
     const resp = isRequest
       ? // Request's constructor reads `input` as an init dict: method/headers/body carry over.
-        await nativeFetch(new Request(pin.url.href, input), { ...init, headers, tls })
-      : await nativeFetch(pin.url.href, { ...init, headers, tls });
+        await nativeFetch(new Request(pin.url.href, input as ConstructorParameters<typeof Request>[1]), hopInit)
+      : await nativeFetch(pin.url.href, hopInit);
     ObjectDefineProperty(resp, "url", { __proto__: null, configurable: true, value: url.href });
     return resp;
   }
   const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
   const method = init?.method ?? (isRequest ? input.method : "GET");
-  // Buffer a Request body so 307/308 hops can replay it.
-  const body =
-    init?.body !== undefined ? init.body : isRequest && input.body != null ? await input.arrayBuffer() : undefined;
+  // A Request body streams into the first hop; a body-preserving redirect
+  // afterwards is rejected like any other stream body.
+  const body = init?.body !== undefined ? init.body : isRequest ? (input.body ?? undefined) : undefined;
   return followRedirectsWithConnect(url, { ...init, signal }, connect, {
     method,
     body,
@@ -402,6 +454,7 @@ interface RequestOptions {
   query?: ConstructorParameters<typeof globalThis.URLSearchParams>[0] | null;
   reset?: boolean;
   throwOnError?: boolean;
+  dispatcher?: Dispatcher | null;
 }
 
 async function request(
@@ -475,30 +528,24 @@ async function request(
   const connect = resolveConnect(dispatcher);
   const hasLookup = connect != null && (typeof connect === "function" || typeof connect.lookup === "function");
 
+  // undici's raw flat header array is normalized on every path.
+  const requestHeaders = $isArray(inputHeaders)
+    ? headersFromRequestOptions(inputHeaders)
+    : inputHeaders || kEmptyObject;
+
   let resp: Response & { trailers?: undefined };
   if (hasLookup && followRedirects) {
     resp = await followRedirectsWithConnect(new URL(url), { signal, mode: "cors", keepalive: !reset }, connect, {
       method,
       body: inputBody,
-      headers: headersFromRequestOptions(inputHeaders),
+      headers: new Headers(requestHeaders),
       limit: maxRedirections,
       redirectError: () => new Error("redirected too many times"),
       hopError: message => new Error(message),
       lookupError: err => err,
     });
   } else {
-    let requestHeaders = inputHeaders || kEmptyObject;
-    let tls;
-    if (hasLookup) {
-      const pin = await applyConnect(typeof url === "string" ? new URL(url) : url, connect, signal);
-      if (pin !== undefined) {
-        url = pin.url;
-        requestHeaders = headersFromRequestOptions(inputHeaders);
-        if (!requestHeaders.has("host")) requestHeaders.set("host", pin.host);
-        tls = pinnedTls(undefined, pin);
-      }
-    }
-    resp = await nativeFetch(url, {
+    let init: object = {
       signal,
       mode: "cors",
       method,
@@ -507,8 +554,17 @@ async function request(
       redirect: followRedirects ? "follow" : "manual",
       maxRedirects: followRedirects ? maxRedirections : undefined,
       keepalive: !reset,
-      tls,
-    });
+    };
+    if (hasLookup) {
+      const pin = await applyConnect(typeof url === "string" ? new URL(url) : url, connect, signal);
+      if (pin !== undefined) {
+        url = pin.url;
+        const headers = new Headers(requestHeaders);
+        if (!headers.has("host")) headers.set("host", pin.host);
+        init = { ...pinnedInit(init, pin), headers };
+      }
+    }
+    resp = await nativeFetch(url, init);
   }
 
   const { status: statusCode, headers, trailers } = resp;

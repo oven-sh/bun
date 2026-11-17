@@ -70,6 +70,7 @@ const crates = [
   "bun_standalone_graph",
   "bun_sys",
   "bun_threading",
+  "bun_test_schedule",
   "bun_trim",
   "bun_valkey",
   "bun_webp",

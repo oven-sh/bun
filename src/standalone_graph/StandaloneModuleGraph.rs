@@ -58,7 +58,7 @@ pub struct StandaloneModuleGraph {
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
     /// InternalModuleRegistry id → its bytecode inside the serialized graph (JSC reads it in place; see `File::bytecode`).
-    /// The `u32`: where the module's cache entry starts in its bytecode (a linked payload, see `linked_bytecode_payload`).
+    /// The `u32`: where the module's cache entry starts in those bytes (a linked payload, see `linked_bytecode_payload`).
     pub builtin_bytecode: Vec<(u32, *mut [u8], u32)>,
     /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; installed on the VM's `DecoderStringTable` at startup.
     pub bytecode_string_table: &'static [u8],

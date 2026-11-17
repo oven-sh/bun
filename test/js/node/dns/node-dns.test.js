@@ -1,6 +1,6 @@
 import { dnsGetaddrinfoError } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
@@ -1371,6 +1371,26 @@ describe("resolve record types", () => {
     const { socket, resolver } = await startFakeServer(qname => [rr(qname, 5, wireName("c.test")), ...rest]);
     try {
       expect(await resolver.resolveAny(NAME)).toStrictEqual(expected);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // lookupService() asks the servers of the default resolver.
+  test.concurrent("lookupService() names the address in its error, and keeps ports apart", async () => {
+    const { socket } = await startFakeServer((qname, qtype) =>
+      qname.startsWith("1.") ? byQtype.get(qtype).answers(qname) : [],
+    );
+    try {
+      const script = `
+        const dns = require("node:dns");
+        dns.setServers(["127.0.0.1:${socket.address().port}"]);
+        const services = [61001, 61002, 61001].map(port => dns.promises.lookupService("192.0.2.1", port));
+        for (const { service } of await Promise.all(services)) console.log(service);
+        const { message, hostname } = await dns.promises.lookupService("192.0.2.2", 80).catch(e => e);
+        console.log(message, hostname);
+      `;
+      expect(await bunRun(["-e", script])).toSpawn("61001\n61002\n61001\ngetnameinfo ENOTFOUND 192.0.2.2 192.0.2.2");
     } finally {
       socket.close();
     }

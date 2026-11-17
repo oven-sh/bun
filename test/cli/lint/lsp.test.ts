@@ -593,14 +593,8 @@ describe.concurrent("bun lint --lsp", () => {
           textDocument: { uri: uriOf(path), version: enable ? 3 : 2 },
           contentChanges: [{ text: enable ? "hello;\n" : "hello; hello;\n" }],
         });
-        // The version before may be linted again before the change is read: the publish for this one is awaited.
-        const version = enable ? 3 : 2;
-        const published = await client.notification(
-          it =>
-            it.method === "textDocument/publishDiagnostics" &&
-            it.params.uri === uriOf(path) &&
-            it.params.version === version,
-        );
+        const published = await client.diagnostics(path);
+        expect(published.params.version).toBe(enable ? 3 : 2);
         expect(published.params.diagnostics).toEqual(enable ? hello : [...hello, ...hello]);
       }
       expect((await client.request("shutdown")).result).toBeNull();
@@ -820,10 +814,8 @@ describe.concurrent("bun lint --lsp", () => {
         textDocument: { uri: uriOf(path), version: 3 },
         contentChanges: [{ text: 'debugger;\nexport const a: number = "c";\n' }],
       });
-      // The version-2 document may be linted again before the change is read: the publish for version 3 is awaited.
-      const isVersion3 = (it: Message) =>
-        it.method === "textDocument/publishDiagnostics" && it.params.uri === uriOf(path) && it.params.version === 3;
-      expect((await client.notification(isVersion3)).params.diagnostics).toEqual([]);
+      const third = await client.diagnostics(path);
+      expect(third.params).toEqual({ uri: uriOf(path), version: 3, diagnostics: [] });
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
@@ -1100,6 +1092,98 @@ describe.concurrent("bun lint --lsp", () => {
       const { exitCode, garbage, rest } = await client.end();
       expect([garbage, rest]).toEqual([[], ""]);
       expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // The lint of a document is done before its code actions are answered: what is published when the answer comes is
+  // all that the setting made the server lint.
+  test(
+    "lints no document again when a setting changes that changes no diagnostic",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", { "bunfig.toml": '[lint.rules]\n"no-var" = "error"\n', "a.js": "" });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.js");
+      const uri = uriOf(path);
+      open(client, path, "var a = 1;\nconsole.log(a);\n");
+      expect((await client.diagnostics(path)).params.diagnostics.map((it: any) => it.code)).toEqual(["no-var"]);
+      const publishes = () => client.received.filter(it => it.method === "textDocument/publishDiagnostics").length;
+      const actions = () =>
+        client.request("textDocument/codeAction", {
+          textDocument: { uri },
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+          context: { diagnostics: [] },
+        });
+      const settings = [{ format: { enable: false } }, { lint: { run: "onSave" } }, { format: { enable: true } }];
+      for (const bun of settings) {
+        client.notify("workspace/didChangeConfiguration", { settings: { bun } });
+        expect((await actions()).error).toBeUndefined();
+        expect({ bun, publishes: publishes() }).toEqual({ bun, publishes: 1 });
+      }
+      // The document may have changed since it was last linted.
+      client.notify("workspace/didChangeConfiguration", { settings: { bun: { lint: { run: "onType" } } } });
+      expect((await actions()).error).toBeUndefined();
+      expect(publishes()).toBe(2);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // A plugin holds the thread of the outer folder in the second lint of e.js, so the lint of sub/d.js stays queued
+  // there while sub becomes a folder of its own, whose bunfig.toml turns the rule off.
+  test.skipIf(isWindows)(
+    "lints a document with the configuration of the folder that it is in now, after a folder inside another is added",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "demo/hold": "error", "no-var": "error" },
+        }),
+        "plugin.mjs": holdsSecondLint,
+        "e.js": "",
+        "sub/bunfig.toml": '[lint.rules]\n"no-var" = "off"\n',
+        "sub/d.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const [outer, inner] = [join(String(dir), "e.js"), join(String(dir), "sub", "d.js")];
+      open(client, outer, "export const e = 1;\n");
+      expect((await client.diagnostics(outer)).params.diagnostics).toEqual([]);
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(outer), version: 2 },
+        contentChanges: [{ text: "export const e = 2;\n" }],
+      });
+      const held = join(String(dir), "held");
+      while (!existsSync(held)) await Bun.sleep(5);
+      open(client, inner, "var d = 1;\nconsole.log(d);\n");
+      client.notify("workspace/didChangeWorkspaceFolders", {
+        event: { added: [{ uri: uriOf(String(dir), "sub"), name: "sub" }], removed: [] },
+      });
+      const ofInner = await client.diagnostics(inner);
+      writeFileSync(join(String(dir), "release"), "");
+      // The outer folder lints e.js twice more: the lint that was held, and one for its folders having changed. The
+      // lint of d.js that it had queued comes between them.
+      const isOuter = (it: Message) =>
+        it.method === "textDocument/publishDiagnostics" && it.params.uri === uriOf(outer) && it.params.version === 2;
+      await client.notification(isOuter);
+      await client.notification(isOuter);
+      const codes = client.received
+        .filter(it => it.method === "textDocument/publishDiagnostics" && it.params.uri === uriOf(inner))
+        .map(it => it.params.diagnostics.map((diagnostic: any) => diagnostic.code));
+      expect(codes).toEqual([ofInner.params.diagnostics.map((diagnostic: any) => diagnostic.code)]);
+      expect(codes.flat()).not.toContain("no-var");
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
       expect(exitCode).toBe(0);
     },
     timeout,

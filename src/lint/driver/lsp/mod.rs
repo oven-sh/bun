@@ -501,6 +501,20 @@ impl<'s> Server<'s> {
         self.latest.lock().get(&document.uri) == Some(&document.serial)
     }
 
+    /// Whether `root` is the one to speak of `document`: it is the latest state, and the folders have not changed so
+    /// that it belongs to another root.
+    fn is_for(&self, root: &Root, document: &Document) -> bool {
+        let is_of_root = || {
+            let folders = self.folders.lock();
+            let inside = (folders.iter()).filter(|it| paths::is_at_or_inside(it, &document.path));
+            match inside.max_by_key(|it| it.len()) {
+                Some(folder) => root.is_folder && *folder == root.path,
+                None => !root.is_folder,
+            }
+        };
+        self.is_latest(document) && is_of_root()
+    }
+
     fn send_diagnostics(&self, document: &Document, diagnostics: Vec<Json>) {
         self.out.notify(
             "textDocument/publishDiagnostics",
@@ -527,10 +541,11 @@ impl<'s> Server<'s> {
         self.send_diagnostics(document, Vec::new());
     }
 
-    /// Whether the request `id`, which is about `document`, is still to be answered. If not it is answered here.
-    fn is_wanted(&self, id: &Json, document: &Document) -> bool {
+    /// Whether the request `id`, which is about `document`, is still for `root` to answer. If not it is answered
+    /// here.
+    fn is_wanted(&self, id: &Json, root: &Root, document: &Document) -> bool {
         let is_cancelled = (self.pending.lock().iter()).any(|it| it.0 == *id && it.1);
-        let is_latest = self.is_latest(document);
+        let is_latest = self.is_for(root, document);
         if is_cancelled {
             self.cancel(id);
         } else if !is_latest {
@@ -775,7 +790,7 @@ impl<'s> Server<'s> {
                 fixes: false,
             };
             // A request may wait for it: the thread of the root hears of one that is not linted too.
-            let outcome = (self.is_latest(&document))
+            let outcome = (self.is_for(root, &document))
                 .then(|| session.lint(&document.path, document.text.clone(), how));
             let notes = session.notes();
             root.change(|queue| {
@@ -1060,7 +1075,7 @@ impl Worker<'_, '_> {
                 document,
                 with_types,
             } => {
-                if server.is_latest(&document) {
+                if server.is_for(self.root, &document) {
                     let how = How {
                         with_types,
                         fixes: false,
@@ -1084,7 +1099,7 @@ impl Worker<'_, '_> {
                 if generation != self.generation {
                     return;
                 }
-                if let Some(outcome) = outcome.filter(|_| server.is_latest(&document)) {
+                if let Some(outcome) = outcome.filter(|_| server.is_for(self.root, &document)) {
                     let shows = self.shows_types(&document);
                     let linted = session.and_then(|_| self.outcome(outcome));
                     self.publish(session, &document, true, shows, linted);
@@ -1097,7 +1112,7 @@ impl Worker<'_, '_> {
                 document,
                 range,
             } => {
-                if server.is_wanted(&id, &document) {
+                if server.is_wanted(&id, self.root, &document) {
                     let edits = self.format(&document, range);
                     server.finish(&id, Ok(edits.map_or(Json::Null, Json::Array)));
                 }
@@ -1161,7 +1176,7 @@ impl Worker<'_, '_> {
     fn answer(&mut self, session: Option<&Session>, actions: Actions, may_wait: bool) {
         let server = self.server;
         let (id, document) = (&actions.id, &actions.document);
-        if !server.is_wanted(id, document) {
+        if !server.is_wanted(id, self.root, document) {
             return;
         }
         let only = actions.only.as_deref();
@@ -1707,8 +1722,11 @@ impl<'d> Desk<'d, '_, '_> {
                 }
                 *server.settings.lock() = after;
                 // The configurations of the folders are as they were: their engines go on, and each thread follows
-                // the settings with its next job.
-                self.lint_all();
+                // the settings with its next job. The diagnostics change only with these.
+                let lints_more = after.lints && after.lints_on_type && !before.lints_on_type;
+                if after.lints != before.lints || lints_more {
+                    self.lint_all();
+                }
             }
             b"workspace/didChangeWorkspaceFolders" => {
                 let list = |key: &str| {

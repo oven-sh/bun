@@ -129,6 +129,17 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(result3).toBe("3.14");
       });
 
+      test("should increment with options with INCREX", async () => {
+        const redis = ctx.redis;
+        // INCREX needs Redis 8.8.
+        if ((await redis.command("INFO", "INCREX"))[0] === null) return;
+
+        expect(await redis.increx("increx-int")).toEqual([1, 1]);
+        expect(await redis.increx("increx-int", "BYINT", 5, "EX", 60)).toEqual([6, 5]);
+        expect(await redis.ttl("increx-int")).toBeGreaterThan(0);
+        expect(await redis.increx("increx-float", "BYFLOAT", 1.5)).toEqual([1.5, 1.5]);
+      });
+
       test("should decrement by specified amount with DECRBY", async () => {
         const redis = ctx.redis;
         const counterKey = "decrby-counter";

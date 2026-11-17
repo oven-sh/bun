@@ -1,6 +1,8 @@
-use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer};
+use crate::node::{BlobOrStringOrBuffer as JSArgument, StringOrBuffer};
+use crate::webcore::{Blob, BlobExt as _};
 use bun_collections::VecExt as _;
 use bun_collections::smallvec::SmallVec;
+use bun_core::Utf8Bytes;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsResult,
@@ -50,6 +52,10 @@ fn require_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()
 }
 
 fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgument>> {
+    if value.is_string_literal() {
+        return JSArgument::from_js(global, value);
+    }
+
     if value.is_undefined_or_null() {
         return Ok(None);
     }
@@ -57,7 +63,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     if value.is_number() {
         // Allow numbers to be passed as strings.
         let str = value.to_js_string(global)?;
-        return JSArgument::from_js_maybe_file(global, str.to_js(), FileBlobs::Reject);
+        return JSArgument::from_js(global, str.to_js());
     }
 
     // Copy the bytes. A later argument's `toString()` can detach this buffer before the command is serialized.
@@ -70,7 +76,48 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
         ))));
     }
 
-    JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
+    match JSArgument::from_js(global, value) {
+        Ok(Some(JSArgument::Blob(blob))) if blob.in_memory_view().is_none() => {
+            Err(global.throw_invalid_arguments(format_args!("S3 blob cannot be used here")))
+        }
+        arg => arg,
+    }
+}
+
+/// An argument of a hash write: buffers and Blobs as bytes, anything else that is not nullish as `String(value)`.
+#[inline(always)]
+fn bytes_or_text(
+    global: &JSGlobalObject,
+    value: JSValue,
+    method: &'static str,
+    field: &'static str,
+    expected: &'static str,
+) -> JsResult<Utf8Bytes<'static>> {
+    if value.is_undefined_or_null() {
+        return Err(global.throw_invalid_argument_type(method, field, expected));
+    }
+    if value.is_object() {
+        return object_bytes_or_text(global, value);
+    }
+    value.to_utf8(global)
+}
+
+#[inline(never)]
+fn object_bytes_or_text(global: &JSGlobalObject, value: JSValue) -> JsResult<Utf8Bytes<'static>> {
+    match from_js(global, value)? {
+        Some(JSArgument::StringOrBuffer(StringOrBuffer::Utf8(bytes))) => Ok(bytes),
+        Some(arg) => Ok(Utf8Bytes::Owned(arg.slice().to_vec())),
+        None => value.to_utf8(global),
+    }
+}
+
+fn trim_nullish_end(mut values: &[JSValue]) -> &[JSValue] {
+    while let [rest @ .., last] = values
+        && last.is_undefined_or_null()
+    {
+        values = rest;
+    }
+    values
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -98,6 +145,8 @@ enum Varargs {
     Strict,
     /// `null` and `undefined` are left out, after a required first argument of this name.
     KeyThenSkipNullish(&'static str),
+    /// The same first argument. `null` and `undefined` are left out at the end and throw ahead of another argument.
+    KeyThenTrimNullish(&'static str),
 }
 
 /// The arguments after a key, without `null` and `undefined`.
@@ -157,18 +206,23 @@ impl JSValkeyClient {
         command: &Command<Varargs>,
         values: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        let values = JsLocal::to_js_slice(values);
+        let mut values = JsLocal::to_js_slice(values);
         command.check_state(self)?;
 
-        if let Varargs::KeyThenSkipNullish(name) = command.args
+        if let Varargs::KeyThenSkipNullish(name) | Varargs::KeyThenTrimNullish(name) = command.args
             && values.first().is_none_or(|key| key.is_undefined_or_null())
         {
             return Err(global.throw_missing_arguments_value(&[name]));
         }
+        if let Varargs::KeyThenTrimNullish(_) = command.args {
+            values = trim_nullish_end(values);
+        }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(values.len());
         for &value in values {
-            if value.is_undefined_or_null() && !matches!(command.args, Varargs::Strict) {
+            if value.is_undefined_or_null()
+                && matches!(command.args, Varargs::KeyThenSkipNullish(_))
+            {
                 continue;
             }
             args.push(command.arg(global, value, "additional arguments", "string or buffer")?);
@@ -218,17 +272,14 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         command.check_state(self)?;
 
-        let text = |value: JsLocal<'_>, field, expected| match value.to_js() {
-            value if value.is_undefined_or_null() => {
-                Err(global.throw_invalid_argument_type(command.method, field, expected))
-            }
-            value => value.to_bun_string(global),
+        let arg = |value: JsLocal<'_>, field, expected| {
+            bytes_or_text(global, value.to_js(), command.method, field, expected)
         };
-        let key = text(key, "key", "string or buffer")?;
-        let field = text(field, "field", "string or buffer")?;
-        let increment = text(increment, "increment", "number or string")?;
-
-        let args = [key.to_utf8(), field.to_utf8(), increment.to_utf8()];
+        let args = [
+            arg(key, "key", "string or buffer")?,
+            arg(field, "field", "string or buffer")?,
+            arg(increment, "increment", "number or string")?,
+        ];
         Ok(self.send(this, global, command.wire.as_bytes(), &args, command.reply))
     }
 }
@@ -279,6 +330,16 @@ macro_rules! cmd_key_varargs {
         method!(
             $fn_name(args: &[JsLocal<'_>]) => send_varargs(args),
             $name, $command, $state, Value, Varargs::KeyThenSkipNullish($arg0_name)
+        );
+    };
+}
+
+/// For arguments or replies whose position matters.
+macro_rules! cmd_key_positional {
+    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
+        method!(
+            $fn_name(args: &[JsLocal<'_>]) => send_varargs(args),
+            $name, $command, $state, Value, Varargs::KeyThenTrimNullish("key")
         );
     };
 }
@@ -335,7 +396,27 @@ impl JSValkeyClient {
         command: JsLocal<'_>,
         args: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let global = cx.global();
+        self.send_raw(this, cx.global(), command, args, Reply::Value)
+    }
+
+    pub(crate) fn send_buffer(
+        &self,
+        this: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        command: JsLocal<'_>,
+        args: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        self.send_raw(this, cx.global(), command, args, Reply::Buffer)
+    }
+
+    fn send_raw(
+        &self,
+        this: JsWrapper<'_, Self>,
+        global: &JSGlobalObject,
+        command: JsLocal<'_>,
+        args: JsLocal<'_>,
+        reply: Reply,
+    ) -> JsResult<JSValue> {
         let command = command.to_js().to_bun_string(global)?;
 
         let args_array = args.to_js();
@@ -356,7 +437,7 @@ impl JSValkeyClient {
             args.push(v);
         }
 
-        Ok(self.send(this, global, command.to_utf8().slice(), &args, Reply::Value))
+        Ok(self.send(this, global, command.to_utf8().slice(), &args, reply))
     }
 
     cmd!(get, "get", "GET", NotSubscriber, key: "key");
@@ -389,10 +470,7 @@ impl JSValkeyClient {
         };
         args.push(value);
 
-        for arg in JsLocal::to_js_slice(options) {
-            if arg.is_undefined_or_null() {
-                break;
-            }
+        for arg in trim_nullish_end(JsLocal::to_js_slice(options)) {
             let Some(v) = from_js(global, *arg)? else {
                 return Err(global.throw_invalid_argument_type(
                     "set",
@@ -512,10 +590,7 @@ impl JSValkeyClient {
                 args.push(field);
             }
         } else {
-            for arg in fields {
-                if arg.is_undefined_or_null() {
-                    break;
-                }
+            for arg in trim_nullish_end(fields) {
                 let Some(field) = from_js(global, *arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         "hmget",
@@ -539,22 +614,30 @@ impl JSValkeyClient {
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         fields: &[JsLocal<'_>],
+        method: &'static str,
         command: &'static str,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, command)?;
 
-        let key = key.to_js().to_bun_string(global)?;
+        let field_arg = |field| bytes_or_text(global, field, method, "field", "string or buffer");
+        let value_arg =
+            |value| bytes_or_text(global, value, method, "value", "string or buffer or number");
+        let key = bytes_or_text(global, key.to_js(), method, "key", "string or buffer")?;
 
         let fields = JsLocal::to_js_slice(fields);
         let second_arg = fields.first().copied().unwrap_or(JSValue::UNDEFINED);
 
         let object_iter;
-        let mut args: Vec<bun_core::Utf8Bytes<'_>> = Vec::new();
+        let mut args: Vec<Utf8Bytes<'_>> = Vec::new();
 
-        args.push(key.to_utf8());
+        args.push(key);
 
-        if second_arg.is_object() && !second_arg.is_array() {
+        if second_arg.is_object()
+            && !second_arg.is_array()
+            && !second_arg.js_type().is_array_buffer_like()
+            && second_arg.as_class_ref::<Blob>().is_none()
+        {
             // Pattern 1: Object/Record - hset(key, {field: value, ...})
             let Some(obj) = second_arg.get_object() else {
                 return Err(global.throw_invalid_argument_type(command, "fields", "object"));
@@ -574,7 +657,7 @@ impl JSValkeyClient {
             while let Some((field_name, value)) = object_iter.next()? {
                 args.push(field_name.to_utf8());
 
-                args.push(value.to_utf8(global)?);
+                args.push(value_arg(value)?);
             }
         } else if second_arg.is_array() {
             // Pattern 3: Array - hmset(key, [field, value, ...])
@@ -588,14 +671,14 @@ impl JSValkeyClient {
             args.ensure_total_capacity(1 + iter.len as usize);
 
             while let Some(field_js) = iter.next()? {
-                args.push(field_js.to_utf8(global)?);
+                args.push(field_arg(field_js)?);
 
                 let Some(value_js) = iter.next()? else {
                     return Err(global.throw(format_args!(
                         "Array must have an even number of elements (field-value pairs)"
                     )));
                 };
-                args.push(value_js.to_utf8(global)?);
+                args.push(value_arg(value_js)?);
             }
         } else {
             // Pattern 2: Variadic - hset(key, field, value, ...)
@@ -613,8 +696,9 @@ impl JSValkeyClient {
 
             args.ensure_total_capacity(1 + fields.len());
 
-            for field_or_value in fields {
-                args.push(field_or_value.to_utf8(global)?);
+            for &[field, value] in fields.as_chunks().0 {
+                args.push(field_arg(field)?);
+                args.push(value_arg(value)?);
             }
         }
 
@@ -632,7 +716,7 @@ impl JSValkeyClient {
         key: JsLocal<'_>,
         fields: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        self.hset_impl(this, cx, key, fields, "HSET")
+        self.hset_impl(this, cx, key, fields, "hset", "HSET")
     }
 
     pub(crate) fn hmset(
@@ -642,12 +726,12 @@ impl JSValkeyClient {
         key: JsLocal<'_>,
         fields: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        self.hset_impl(this, cx, key, fields, "HMSET")
+        self.hset_impl(this, cx, key, fields, "hmset", "HMSET")
     }
 
     cmd_key_varargs!(hdel, "hdel", "HDEL", "key", NotSubscriber);
-    cmd_key_varargs!(hrandfield, "hrandfield", "HRANDFIELD", "key", NotSubscriber);
-    cmd_key_varargs!(hscan, "hscan", "HSCAN", "key", NotSubscriber);
+    cmd_key_positional!(hrandfield, "hrandfield", "HRANDFIELD", NotSubscriber);
+    cmd_key_positional!(hscan, "hscan", "HSCAN", NotSubscriber);
     cmd_strings_varargs!(hgetdel, "hgetdel", "HGETDEL", NotSubscriber);
     cmd_strings_varargs!(hgetex, "hgetex", "HGETEX", NotSubscriber);
     cmd_strings_varargs!(hsetex, "hsetex", "HSETEX", NotSubscriber);
@@ -694,7 +778,7 @@ impl JSValkeyClient {
         Ok(self.send(this, global, b"PING", args_slice, Reply::Value))
     }
 
-    cmd!(bitcount, "bitcount", "BITCOUNT", NotSubscriber, key: "key");
+    cmd_key_positional!(bitcount, "bitcount", "BITCOUNT", NotSubscriber);
     cmd_strings_varargs!(blmove, "blmove", "BLMOVE", NotSubscriber);
     cmd_strings_varargs!(blmpop, "blmpop", "BLMPOP", NotSubscriber);
     cmd_strings_varargs!(blpop, "blpop", "BLPOP", NotSubscriber);
@@ -725,7 +809,7 @@ impl JSValkeyClient {
     cmd!(llen, "llen", "LLEN", NotSubscriber, key: "key");
     cmd_strings_varargs!(lmove, "lmove", "LMOVE", NotSubscriber);
     cmd_strings_varargs!(lmpop, "lmpop", "LMPOP", NotSubscriber);
-    cmd_key_varargs!(lpop, "lpop", "LPOP", "key", NotSubscriber);
+    cmd_key_positional!(lpop, "lpop", "LPOP", NotSubscriber);
     cmd_strings_varargs!(lpos, "lpos", "LPOS", NotSubscriber);
     cmd!(lrange, "lrange", "LRANGE", NotSubscriber, key: "key", start: "start", stop: "stop");
     cmd!(lrem, "lrem", "LREM", NotSubscriber, key: "key", count: "count", element: "element");
@@ -740,7 +824,7 @@ impl JSValkeyClient {
     cmd!(pexpiretime, "pexpiretime", "PEXPIRETIME", NotSubscriber, key: "key");
     cmd!(pttl, "pttl", "PTTL", NotSubscriber, key: "key");
     cmd!(randomkey, "randomkey", "RANDOMKEY", NotSubscriber);
-    cmd_key_varargs!(rpop, "rpop", "RPOP", "key", NotSubscriber);
+    cmd_key_positional!(rpop, "rpop", "RPOP", NotSubscriber);
     cmd!(
         rpoplpush, "rpoplpush", "RPOPLPUSH", NotSubscriber,
         source: "source", destination: "destination"
@@ -761,15 +845,9 @@ impl JSValkeyClient {
     cmd!(zcard, "zcard", "ZCARD", NotSubscriber, key: "key");
     cmd!(zcount, "zcount", "ZCOUNT", NotSubscriber, key: "key", min: "min", max: "max");
     cmd!(zlexcount, "zlexcount", "ZLEXCOUNT", NotSubscriber, key: "key", min: "min", max: "max");
-    cmd_key_varargs!(zpopmax, "zpopmax", "ZPOPMAX", "key", NotSubscriber);
-    cmd_key_varargs!(zpopmin, "zpopmin", "ZPOPMIN", "key", NotSubscriber);
-    cmd_key_varargs!(
-        zrandmember,
-        "zrandmember",
-        "ZRANDMEMBER",
-        "key",
-        NotSubscriber
-    );
+    cmd_key_positional!(zpopmax, "zpopmax", "ZPOPMAX", NotSubscriber);
+    cmd_key_positional!(zpopmin, "zpopmin", "ZPOPMIN", NotSubscriber);
+    cmd_key_positional!(zrandmember, "zrandmember", "ZRANDMEMBER", NotSubscriber);
     cmd_strings_varargs!(zrange, "zrange", "ZRANGE", NotSubscriber);
     cmd_strings_varargs!(zrevrange, "zrevrange", "ZREVRANGE", NotSubscriber);
     cmd_strings_varargs!(
@@ -784,18 +862,11 @@ impl JSValkeyClient {
         "ZREVRANGEBYSCORE",
         NotSubscriber
     );
-    cmd_key_varargs!(
-        zrangebylex,
-        "zrangebylex",
-        "ZRANGEBYLEX",
-        "key",
-        NotSubscriber
-    );
-    cmd_key_varargs!(
+    cmd_key_positional!(zrangebylex, "zrangebylex", "ZRANGEBYLEX", NotSubscriber);
+    cmd_key_positional!(
         zrevrangebylex,
         "zrevrangebylex",
         "ZREVRANGEBYLEX",
-        "key",
         NotSubscriber
     );
     cmd!(append, "append", "APPEND", NotSubscriber, key: "key", value: "value");
@@ -806,6 +877,7 @@ impl JSValkeyClient {
         incrbyfloat, "incrbyfloat", "INCRBYFLOAT", NotSubscriber,
         key: "key", increment: "increment"
     );
+    cmd_key_positional!(increx, "increx", "INCREX", NotSubscriber);
     cmd!(decrby, "decrby", "DECRBY", NotSubscriber, key: "key", decrement: "decrement");
     cmd_key_varargs!(lpush, "lpush", "LPUSH", "key", NotSubscriber);
     cmd_key_varargs!(lpushx, "lpushx", "LPUSHX", "key", NotSubscriber);
@@ -823,7 +895,7 @@ impl JSValkeyClient {
         zincrby, "zincrby", "ZINCRBY", NotSubscriber,
         key: "key", increment: "increment", member: "member"
     );
-    cmd_key_varargs!(zmscore, "zmscore", "ZMSCORE", "key", NotSubscriber);
+    cmd_key_positional!(zmscore, "zmscore", "ZMSCORE", NotSubscriber);
     cmd_strings_varargs!(zadd, "zadd", "ZADD", NotSubscriber);
     cmd_strings_varargs!(zscan, "zscan", "ZSCAN", NotSubscriber);
     cmd_strings_varargs!(zdiff, "zdiff", "ZDIFF", NotSubscriber);
@@ -838,7 +910,7 @@ impl JSValkeyClient {
     cmd_strings_varargs!(bzpopmin, "bzpopmin", "BZPOPMIN", NotSubscriber);
     cmd_strings_varargs!(bzpopmax, "bzpopmax", "BZPOPMAX", NotSubscriber);
     cmd_key_varargs!(del, "del", "DEL", "key", NotSubscriber);
-    cmd_key_varargs!(mget, "mget", "MGET", "key", NotSubscriber);
+    cmd_key_positional!(mget, "mget", "MGET", NotSubscriber);
     cmd_strings_varargs!(mset, "mset", "MSET", NotSubscriber);
     cmd_strings_varargs!(msetnx, "msetnx", "MSETNX", NotSubscriber);
     cmd_strings_varargs!(script, "script", "SCRIPT", NotSubscriber);
@@ -850,7 +922,7 @@ impl JSValkeyClient {
     );
     cmd!(substr, "substr", "SUBSTR", NotSubscriber, key: "key", start: "start", end: "end");
     cmd!(hstrlen, "hstrlen", "HSTRLEN", NotSubscriber, key: "key", field: "field");
-    cmd_key_varargs!(zrank, "zrank", "ZRANK", "key", NotSubscriber);
+    cmd_key_positional!(zrank, "zrank", "ZRANK", NotSubscriber);
     cmd_strings_varargs!(zrangestore, "zrangestore", "ZRANGESTORE", NotSubscriber);
     cmd_key_varargs!(zrem, "zrem", "ZREM", "key", NotSubscriber);
     cmd!(
@@ -865,7 +937,7 @@ impl JSValkeyClient {
         zremrangebyscore, "zremrangebyscore", "ZREMRANGEBYSCORE", NotSubscriber,
         key: "key", min: "min", max: "max"
     );
-    cmd_key_varargs!(zrevrank, "zrevrank", "ZREVRANK", "key", NotSubscriber);
+    cmd_key_positional!(zrevrank, "zrevrank", "ZREVRANK", NotSubscriber);
     cmd_strings_varargs!(psubscribe, "psubscribe", "PSUBSCRIBE", DontCare);
     cmd_strings_varargs!(punsubscribe, "punsubscribe", "PUNSUBSCRIBE", DontCare);
     cmd_strings_varargs!(pubsub, "pubsub", "PUBSUB", DontCare);
@@ -949,18 +1021,21 @@ impl JSValkeyClient {
         let global = cx.global();
         require_not_subscriber(self, "publish")?;
 
-        let mut args: Vec<JSArgument> = Vec::with_capacity(2);
-
-        for (value, field) in [(channel.to_js(), "channel"), (message.to_js(), "message")] {
-            if value.is_string()
-                && let Some(arg) = from_js(global, value)?
-            {
-                args.push(arg);
-            } else {
-                return Err(global.throw_invalid_argument_type("publish", field, "string"));
-            }
-        }
-        Ok(self.send(this, global, b"PUBLISH", &args, Reply::Value))
+        let channel = if channel.to_js().is_string()
+            && let Some(channel) = from_js(global, channel.to_js())?
+        {
+            channel
+        } else {
+            return Err(global.throw_invalid_argument_type("publish", "channel", "string"));
+        };
+        let Some(message) = from_js(global, message.to_js())? else {
+            return Err(global.throw_invalid_argument_type(
+                "publish",
+                "message",
+                "string or buffer",
+            ));
+        };
+        Ok(self.send(this, global, b"PUBLISH", &[channel, message], Reply::Value))
     }
 
     pub(crate) fn subscribe(

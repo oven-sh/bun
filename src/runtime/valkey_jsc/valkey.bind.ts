@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 /** `...name` is variadic. `rustName` only where the struct already has the snake_case name. */
 const commands: Record<string, readonly [args: readonly string[], length: number, rustName?: string]> = {
   append: [["key", "value"], 0],
-  bitcount: [["key"], 0],
+  bitcount: [["...args"], 0],
   bitfield: [["...args"], 1],
   bitop: [["...args"], 3],
   bitpos: [["...args"], 2],
@@ -81,6 +81,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   incr: [["key"], 1],
   incrby: [["key", "increment"], 2],
   incrbyfloat: [["key", "increment"], 2],
+  increx: [["...args"], 1],
   info: [["...args"], 0],
   keys: [["pattern"], 0],
   lastsave: [[], 0],
@@ -131,6 +132,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   sdiffstore: [["...args"], 2],
   select: [["...args"], 0],
   send: [["command", "args"], 2, "js_send"],
+  sendBuffer: [["command", "args"], 2],
   set: [["key", "value", "...options"], 2],
   setbit: [["key", "offset", "value"], 3],
   setex: [["key", "seconds", "value"], 3],

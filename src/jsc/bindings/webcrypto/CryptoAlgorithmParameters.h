@@ -57,8 +57,7 @@ struct CryptoAlgorithmAesKeyParams {
 };
 
 struct CryptoAlgorithmEcKeyParams {
-    // An isolated copy: callbacks that hold it can be destroyed on the work pool.
-    String namedCurve;
+    String namedCurve; // Shared with the JS string: only a copy can leave the thread.
 };
 
 struct CryptoAlgorithmEcdhKeyDeriveParams {
@@ -108,7 +107,7 @@ struct CryptoAlgorithmRsaPssParams {
     size_t saltLength;
 };
 
-// A normalized algorithm. It owns its bytes and refers to nothing in the JS heap.
+// A normalized algorithm. It owns its buffers and holds no JS object.
 struct CryptoAlgorithmParameters {
     using Dictionary = std::variant<std::monostate,
         CryptoAlgorithmAeadParams,

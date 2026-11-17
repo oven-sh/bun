@@ -25,6 +25,7 @@
 #include "JSJsonWebKey.h"
 
 #include "JSCryptoKeyUsage.h"
+#include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
@@ -34,6 +35,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <variant>
 #include <wtf/HashSet.h>
+#include <wtf/text/StringHash.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -150,6 +152,7 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
+    static_assert(std::variant_size_v<decltype(JsonWebKeyMember::field)> == 4, "Every kind but Oth is written below");
     for (auto& [name, field] : jsonWebKeyMembers) {
         if (auto* string = std::get_if<String JsonWebKey::*>(&field)) {
             if (auto& value = dictionary.**string; !value.isNull())

@@ -31,6 +31,7 @@
 
 #include "BufferSource.h"
 #include "CryptoAlgorithm.h"
+#include "CryptoAlgorithmParameters.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "JSCryptoKey.h"
 #include "JSDOMConvert.h"
@@ -41,6 +42,7 @@
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
 #include "CryptoKeyOKP.h"
+#include "CryptoKeyPair.h"
 #include "CryptoKeyRSA.h"
 #include "BunString.h"
 #include "ErrorCode.h"
@@ -54,6 +56,9 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/Uint8Array.h>
 #include <functional>
+#include <utility>
+#include <variant>
+#include <wtf/text/MakeString.h>
 #include <JavaScriptCore/JSONObject.h>
 
 namespace WebCore {
@@ -85,14 +90,14 @@ enum class Operations {
 
 using Dictionary = CryptoAlgorithmParameters::Dictionary;
 using IDLAlgorithmIdentifier = IDLUnion<IDLObject, IDLDOMString>;
-using IDLBytes = IDLUnion<IDLArrayBufferView, IDLArrayBuffer>;
+using IDLBufferSourceUnion = IDLUnion<IDLArrayBufferView, IDLArrayBuffer>;
 using IDLEnforcedOctet = IDLEnforceRangeAdaptor<IDLOctet>;
 using IDLEnforcedUnsignedShort = IDLEnforceRangeAdaptor<IDLUnsignedShort>;
 using IDLEnforcedUnsignedLong = IDLEnforceRangeAdaptor<IDLUnsignedLong>;
 
 template<typename IDLType> static constexpr ASCIILiteral idlTypeName() = delete;
 template<> constexpr ASCIILiteral idlTypeName<IDLAlgorithmIdentifier>() { return "(object or DOMString)"_s; }
-template<> constexpr ASCIILiteral idlTypeName<IDLBytes>() { return "(ArrayBufferView or ArrayBuffer)"_s; }
+template<> constexpr ASCIILiteral idlTypeName<IDLBufferSourceUnion>() { return "(ArrayBufferView or ArrayBuffer)"_s; }
 template<> constexpr ASCIILiteral idlTypeName<IDLDOMString>() { return "DOMString"_s; }
 template<> constexpr ASCIILiteral idlTypeName<IDLEnforcedOctet>() { return "octet"_s; }
 template<> constexpr ASCIILiteral idlTypeName<IDLEnforcedUnsignedShort>() { return "unsigned short"_s; }
@@ -137,7 +142,7 @@ struct DictionaryReader {
 
     BufferSource optionalBytes(ASCIILiteral member) const
     {
-        auto bytes = optional<IDLBytes>(member);
+        auto bytes = optional<IDLBufferSourceUnion>(member);
         return bytes ? BufferSource { WTF::move(*bytes) } : BufferSource {};
     }
 
@@ -166,9 +171,18 @@ static bool fitsInVector(const BufferSource& data)
     return WTF::isValidCapacityForVector<uint8_t>(data.length());
 }
 
-static Vector<uint8_t> copyBytes(const BufferSource& data)
+// CheckSize leaves the buffer members empty, for a caller that never runs the operation.
+enum class Bytes : bool {
+    CheckSize,
+    Copy
+};
+
+// Readers call it last, after `hash` ran its getters. The size checks run before them, so their error wins.
+[[nodiscard]] static bool tryCopy(Vector<uint8_t>& to, const BufferSource& from, Bytes bytes)
 {
-    return Vector<uint8_t> { std::span { data.data(), data.length() } };
+    if (bytes == Bytes::CheckSize)
+        return fitsInVector(from);
+    return to.tryAppend(std::span { from.data(), from.length() });
 }
 
 static Exception inputTooLarge()
@@ -176,7 +190,12 @@ static Exception inputTooLarge()
     return Exception { OperationError, "Input data is too large"_s };
 }
 
-static ExceptionOr<CryptoAlgorithmParameters> normalizeCryptoAlgorithmParameters(JSGlobalObject&, const SubtleCrypto::AlgorithmIdentifier&, Operations);
+static Exception unrecognizedAlgorithm()
+{
+    return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+}
+
+static ExceptionOr<CryptoAlgorithmParameters> normalizeCryptoAlgorithmParameters(JSGlobalObject&, const SubtleCrypto::AlgorithmIdentifier&, Operations, Bytes = Bytes::Copy);
 
 static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& state, const SubtleCrypto::AlgorithmIdentifier& algorithmIdentifier)
 {
@@ -186,8 +205,7 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
     return digestParams.returnValue().identifier;
 }
 
-// In every reader: convert all members, check sizes, normalize `hash`, and only then copy the bytes.
-static ExceptionOr<Dictionary> readAeadParams(JSGlobalObject& state, JSObject& object, ASCIILiteral dictionaryName)
+static ExceptionOr<Dictionary> readAeadParams(JSGlobalObject& state, JSObject& object, ASCIILiteral dictionaryName, Bytes bytes)
 {
     constexpr uint8_t defaultTagLength = 128;
     auto scope = DECLARE_THROW_SCOPE(state.vm());
@@ -195,39 +213,44 @@ static ExceptionOr<Dictionary> readAeadParams(JSGlobalObject& state, JSObject& o
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto additionalData = reader.optionalBytes("additionalData"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    BufferSource iv = reader.required<IDLBytes>("iv"_s);
+    BufferSource iv = reader.required<IDLBufferSourceUnion>("iv"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto tagLength = reader.optional<IDLEnforcedOctet>("tagLength"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     if (!fitsInVector(iv) || !fitsInVector(additionalData))
         return inputTooLarge();
-    return Dictionary { CryptoAlgorithmAeadParams { .iv = copyBytes(iv), .additionalData = copyBytes(additionalData), .tagLength = tagLength.value_or(defaultTagLength) } };
+    CryptoAlgorithmAeadParams params { {}, {}, tagLength.value_or(defaultTagLength) };
+    if (!tryCopy(params.iv, iv, bytes) || !tryCopy(params.additionalData, additionalData, bytes))
+        return inputTooLarge();
+    return Dictionary { WTF::move(params) };
 }
 
-static ExceptionOr<Dictionary> readAesCbcCfbParams(JSGlobalObject& state, JSObject& object)
+static ExceptionOr<Dictionary> readAesCbcCfbParams(JSGlobalObject& state, JSObject& object, Bytes bytes)
 {
     auto scope = DECLARE_THROW_SCOPE(state.vm());
     auto reader = openDictionary(state, object, "AesCbcCfbParams"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    BufferSource iv = reader.required<IDLBytes>("iv"_s);
+    BufferSource iv = reader.required<IDLBufferSourceUnion>("iv"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    if (!fitsInVector(iv))
+    CryptoAlgorithmAesCbcCfbParams params;
+    if (!tryCopy(params.iv, iv, bytes))
         return inputTooLarge();
-    return Dictionary { CryptoAlgorithmAesCbcCfbParams { copyBytes(iv) } };
+    return Dictionary { WTF::move(params) };
 }
 
-static ExceptionOr<Dictionary> readAesCtrParams(JSGlobalObject& state, JSObject& object)
+static ExceptionOr<Dictionary> readAesCtrParams(JSGlobalObject& state, JSObject& object, Bytes bytes)
 {
     auto scope = DECLARE_THROW_SCOPE(state.vm());
     auto reader = openDictionary(state, object, "AesCtrParams"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    BufferSource counter = reader.required<IDLBytes>("counter"_s);
+    BufferSource counter = reader.required<IDLBufferSourceUnion>("counter"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto length = reader.required<IDLEnforcedOctet>("length"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    if (!fitsInVector(counter))
+    CryptoAlgorithmAesCtrParams params { {}, length };
+    if (!tryCopy(params.counter, counter, bytes))
         return inputTooLarge();
-    return Dictionary { CryptoAlgorithmAesCtrParams { copyBytes(counter), length } };
+    return Dictionary { WTF::move(params) };
 }
 
 static ExceptionOr<Dictionary> readAesKeyParams(JSGlobalObject& state, JSObject& object)
@@ -247,7 +270,7 @@ static ExceptionOr<Dictionary> readEcKeyParams(JSGlobalObject& state, JSObject& 
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto namedCurve = reader.required<IDLDOMString>("namedCurve"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    return Dictionary { CryptoAlgorithmEcKeyParams { WTF::move(namedCurve).isolatedCopy() } };
+    return Dictionary { CryptoAlgorithmEcKeyParams { WTF::move(namedCurve) } };
 }
 
 // Both members are read before either is converted, and errors call `public` "publicKey".
@@ -286,16 +309,16 @@ template<typename Params> static ExceptionOr<Dictionary> readHashParams(JSGlobal
     return Dictionary { Params { hashIdentifier.returnValue() } };
 }
 
-static ExceptionOr<Dictionary> readHkdfParams(JSGlobalObject& state, JSObject& object)
+static ExceptionOr<Dictionary> readHkdfParams(JSGlobalObject& state, JSObject& object, Bytes bytes)
 {
     auto scope = DECLARE_THROW_SCOPE(state.vm());
     auto reader = openDictionary(state, object, "HkdfParams"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto hash = reader.required<IDLAlgorithmIdentifier>("hash"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    BufferSource info = reader.required<IDLBytes>("info"_s);
+    BufferSource info = reader.required<IDLBufferSourceUnion>("info"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    BufferSource salt = reader.required<IDLBytes>("salt"_s);
+    BufferSource salt = reader.required<IDLBufferSourceUnion>("salt"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     if (!fitsInVector(salt) || !fitsInVector(info))
         return inputTooLarge();
@@ -303,7 +326,10 @@ static ExceptionOr<Dictionary> readHkdfParams(JSGlobalObject& state, JSObject& o
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     if (hashIdentifier.hasException())
         return hashIdentifier.releaseException();
-    return Dictionary { CryptoAlgorithmHkdfParams { .hashIdentifier = hashIdentifier.returnValue(), .salt = copyBytes(salt), .info = copyBytes(info) } };
+    CryptoAlgorithmHkdfParams params { hashIdentifier.returnValue(), {}, {} };
+    if (!tryCopy(params.salt, salt, bytes) || !tryCopy(params.info, info, bytes))
+        return inputTooLarge();
+    return Dictionary { WTF::move(params) };
 }
 
 static ExceptionOr<Dictionary> readHmacKeyParams(JSGlobalObject& state, JSObject& object)
@@ -322,19 +348,20 @@ static ExceptionOr<Dictionary> readHmacKeyParams(JSGlobalObject& state, JSObject
     return Dictionary { CryptoAlgorithmHmacKeyParams { hashIdentifier.returnValue(), length } };
 }
 
-static ExceptionOr<Dictionary> readContextParams(JSGlobalObject& state, JSObject& object)
+static ExceptionOr<Dictionary> readContextParams(JSGlobalObject& state, JSObject& object, Bytes bytes)
 {
     auto scope = DECLARE_THROW_SCOPE(state.vm());
     auto reader = openDictionary(state, object, "ContextParams"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto context = reader.optionalBytes("context"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    if (!fitsInVector(context))
+    CryptoAlgorithmMlDsaParams params;
+    if (!tryCopy(params.context, context, bytes))
         return inputTooLarge();
-    return Dictionary { CryptoAlgorithmMlDsaParams { copyBytes(context) } };
+    return Dictionary { WTF::move(params) };
 }
 
-static ExceptionOr<Dictionary> readPbkdf2Params(JSGlobalObject& state, JSObject& object)
+static ExceptionOr<Dictionary> readPbkdf2Params(JSGlobalObject& state, JSObject& object, Bytes bytes)
 {
     auto scope = DECLARE_THROW_SCOPE(state.vm());
     auto reader = openDictionary(state, object, "Pbkdf2Params"_s);
@@ -343,7 +370,7 @@ static ExceptionOr<Dictionary> readPbkdf2Params(JSGlobalObject& state, JSObject&
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto iterations = reader.required<IDLEnforcedUnsignedLong>("iterations"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    BufferSource salt = reader.required<IDLBytes>("salt"_s);
+    BufferSource salt = reader.required<IDLBufferSourceUnion>("salt"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     if (!fitsInVector(salt))
         return inputTooLarge();
@@ -351,10 +378,13 @@ static ExceptionOr<Dictionary> readPbkdf2Params(JSGlobalObject& state, JSObject&
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     if (hashIdentifier.hasException())
         return hashIdentifier.releaseException();
-    return Dictionary { CryptoAlgorithmPbkdf2Params { hashIdentifier.returnValue(), copyBytes(salt), iterations } };
+    CryptoAlgorithmPbkdf2Params params { hashIdentifier.returnValue(), {}, iterations };
+    if (!tryCopy(params.salt, salt, bytes))
+        return inputTooLarge();
+    return Dictionary { WTF::move(params) };
 }
 
-static ExceptionOr<Dictionary> readRsaHashedKeyGenParams(JSGlobalObject& state, JSObject& object)
+static ExceptionOr<Dictionary> readRsaHashedKeyGenParams(JSGlobalObject& state, JSObject& object, Bytes bytes)
 {
     auto scope = DECLARE_THROW_SCOPE(state.vm());
     auto reader = openDictionary(state, object, "RsaHashedKeyGenParams"_s);
@@ -371,19 +401,23 @@ static ExceptionOr<Dictionary> readRsaHashedKeyGenParams(JSGlobalObject& state, 
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     if (hashIdentifier.hasException())
         return hashIdentifier.releaseException();
-    return Dictionary { CryptoAlgorithmRsaHashedKeyGenParams { hashIdentifier.returnValue(), modulusLength, copyBytes(publicExponent) } };
+    CryptoAlgorithmRsaHashedKeyGenParams params { hashIdentifier.returnValue(), modulusLength, {} };
+    if (!tryCopy(params.publicExponent, publicExponent, bytes))
+        return inputTooLarge();
+    return Dictionary { WTF::move(params) };
 }
 
-static ExceptionOr<Dictionary> readRsaOaepParams(JSGlobalObject& state, JSObject& object)
+static ExceptionOr<Dictionary> readRsaOaepParams(JSGlobalObject& state, JSObject& object, Bytes bytes)
 {
     auto scope = DECLARE_THROW_SCOPE(state.vm());
     auto reader = openDictionary(state, object, "RsaOaepParams"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto label = reader.optionalBytes("label"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-    if (!fitsInVector(label))
+    CryptoAlgorithmRsaOaepParams params;
+    if (!tryCopy(params.label, label, bytes))
         return inputTooLarge();
-    return Dictionary { CryptoAlgorithmRsaOaepParams { copyBytes(label) } };
+    return Dictionary { WTF::move(params) };
 }
 
 static ExceptionOr<Dictionary> readRsaPssParams(JSGlobalObject& state, JSObject& object)
@@ -396,7 +430,7 @@ static ExceptionOr<Dictionary> readRsaPssParams(JSGlobalObject& state, JSObject&
     return Dictionary { CryptoAlgorithmRsaPssParams { saltLength } };
 }
 
-static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& object, CryptoAlgorithmIdentifier identifier, Operations operation)
+static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& object, CryptoAlgorithmIdentifier identifier, Operations operation, Bytes bytes)
 {
     switch (operation) {
     case Operations::Encrypt:
@@ -405,18 +439,18 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
             return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
         case CryptoAlgorithmIdentifier::RSA_OAEP:
-            return readRsaOaepParams(state, object);
+            return readRsaOaepParams(state, object, bytes);
         case CryptoAlgorithmIdentifier::AES_CBC:
         case CryptoAlgorithmIdentifier::AES_CFB:
-            return readAesCbcCfbParams(state, object);
+            return readAesCbcCfbParams(state, object, bytes);
         case CryptoAlgorithmIdentifier::AES_CTR:
-            return readAesCtrParams(state, object);
+            return readAesCtrParams(state, object, bytes);
         case CryptoAlgorithmIdentifier::AES_GCM:
-            return readAeadParams(state, object, "AesGcmParams"_s);
+            return readAeadParams(state, object, "AesGcmParams"_s, bytes);
         case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
-            return readAeadParams(state, object, "AeadParams"_s);
+            return readAeadParams(state, object, "AeadParams"_s, bytes);
         default:
-            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+            return unrecognizedAlgorithm();
         }
     case Operations::Sign:
     case Operations::Verify:
@@ -432,9 +466,9 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::ML_DSA_44:
         case CryptoAlgorithmIdentifier::ML_DSA_65:
         case CryptoAlgorithmIdentifier::ML_DSA_87:
-            return readContextParams(state, object);
+            return readContextParams(state, object, bytes);
         default:
-            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+            return unrecognizedAlgorithm();
         }
     case Operations::Digest:
         switch (identifier) {
@@ -448,7 +482,7 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::SHA3_512:
             return Dictionary {};
         default:
-            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+            return unrecognizedAlgorithm();
         }
     case Operations::GenerateKey:
         switch (identifier) {
@@ -457,7 +491,7 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP:
-            return readRsaHashedKeyGenParams(state, object);
+            return readRsaHashedKeyGenParams(state, object, bytes);
         case CryptoAlgorithmIdentifier::AES_CTR:
         case CryptoAlgorithmIdentifier::AES_CBC:
         case CryptoAlgorithmIdentifier::AES_GCM:
@@ -479,7 +513,7 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::ML_KEM_1024:
             return Dictionary {};
         default:
-            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+            return unrecognizedAlgorithm();
         }
     case Operations::DeriveBits:
         switch (identifier) {
@@ -488,11 +522,11 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::X25519:
             return readEcdhKeyDeriveParams(state, object, "X25519Params"_s);
         case CryptoAlgorithmIdentifier::HKDF:
-            return readHkdfParams(state, object);
+            return readHkdfParams(state, object, bytes);
         case CryptoAlgorithmIdentifier::PBKDF2:
-            return readPbkdf2Params(state, object);
+            return readPbkdf2Params(state, object, bytes);
         default:
-            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+            return unrecognizedAlgorithm();
         }
     case Operations::ImportKey:
         switch (identifier) {
@@ -533,7 +567,7 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::SHA3_384:
         case CryptoAlgorithmIdentifier::SHA3_512:
         case CryptoAlgorithmIdentifier::None:
-            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+            return unrecognizedAlgorithm();
         }
         break;
     case Operations::WrapKey:
@@ -542,7 +576,7 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::AES_KW:
             return Dictionary {};
         default:
-            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+            return unrecognizedAlgorithm();
         }
     case Operations::Encapsulate:
     case Operations::Decapsulate:
@@ -551,7 +585,7 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::ML_KEM_1024:
             return Dictionary {};
         default:
-            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+            return unrecognizedAlgorithm();
         }
     case Operations::GetKeyLength:
         switch (identifier) {
@@ -568,15 +602,15 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
             return Dictionary {};
         default:
-            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+            return unrecognizedAlgorithm();
         }
     }
 
-    RELEASE_ASSERT_NOT_REACHED();
+    return unrecognizedAlgorithm();
 }
 
 // https://w3c.github.io/webcrypto/#algorithm-normalization-normalize-an-algorithm
-static ExceptionOr<CryptoAlgorithmParameters> normalizeCryptoAlgorithmParameters(JSGlobalObject& state, const SubtleCrypto::AlgorithmIdentifier& algorithmIdentifier, Operations operation)
+static ExceptionOr<CryptoAlgorithmParameters> normalizeCryptoAlgorithmParameters(JSGlobalObject& state, const SubtleCrypto::AlgorithmIdentifier& algorithmIdentifier, Operations operation, Bytes bytes)
 {
     VM& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -593,9 +627,9 @@ static ExceptionOr<CryptoAlgorithmParameters> normalizeCryptoAlgorithmParameters
 
     auto identifier = CryptoAlgorithmRegistry::singleton().identifier(name);
     if (!identifier) [[unlikely]]
-        return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+        return unrecognizedAlgorithm();
 
-    auto dictionary = readDictionary(state, *object, *identifier, operation);
+    auto dictionary = readDictionary(state, *object, *identifier, operation, bytes);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     if (dictionary.hasException())
         return dictionary.releaseException();
@@ -612,6 +646,17 @@ static std::optional<CryptoAlgorithmParameters> normalizeOrReject(JSGlobalObject
         promise.reject(result.releaseException());
         return std::nullopt;
     }
+    return result.releaseReturnValue();
+}
+
+// AES-KW, or else any algorithm that encrypts. Unwrapping takes the same dictionaries.
+static std::optional<CryptoAlgorithmParameters> normalizeWrapAlgorithmOrReject(JSGlobalObject& state, const SubtleCrypto::AlgorithmIdentifier& algorithmIdentifier, DeferredPromise& promise)
+{
+    auto scope = DECLARE_THROW_SCOPE(state.vm());
+    auto result = normalizeCryptoAlgorithmParameters(state, algorithmIdentifier, Operations::WrapKey);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (result.hasException())
+        RELEASE_AND_RETURN(scope, normalizeOrReject(state, algorithmIdentifier, Operations::Encrypt, promise));
     return result.releaseReturnValue();
 }
 
@@ -727,7 +772,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
                 },
                 [&promise](auto& bufferSource) -> std::optional<KeyData> {
                     if (!WTF::isValidCapacityForVector<uint8_t>(bufferSource->byteLength())) {
-                        promise->reject(OperationError, "Input data is too large"_s);
+                        promise->reject(inputTooLarge());
                         return std::nullopt;
                     }
                     return KeyData { Vector(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
@@ -753,11 +798,12 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
 // nullopt: the promise was rejected.
 static std::optional<Vector<uint8_t>> copyToVector(BufferSource&& data, Ref<DeferredPromise>& promise)
 {
-    if (!fitsInVector(data)) {
-        promise->reject(OperationError, "Input data is too large"_s);
+    Vector<uint8_t> copy;
+    if (!tryCopy(copy, data, Bytes::Copy)) {
+        promise->reject(inputTooLarge());
         return std::nullopt;
     }
-    return copyBytes(data);
+    return copy;
 }
 
 static bool isSupportedExportKey(CryptoAlgorithmIdentifier identifier)
@@ -851,17 +897,31 @@ RefPtr<DeferredPromise> getPromise(DeferredPromise* index, WeakPtr<SubtleCrypto>
     return nullptr;
 }
 
+// For the callback of a job, which can be destroyed on the work pool. nullopt: the promise was rejected.
+static std::optional<CryptoAlgorithmParameters> isolateOrReject(CryptoAlgorithmParameters&& importParams, DeferredPromise& promise)
+{
+    if (auto* ecParams = std::get_if<CryptoAlgorithmEcKeyParams>(&importParams.dictionary)) {
+        ecParams->namedCurve = tryMakeString(ecParams->namedCurve);
+        if (ecParams->namedCurve.isNull()) {
+            promise.reject(inputTooLarge());
+            return std::nullopt;
+        }
+    }
+    return WTF::move(importParams);
+}
+
 static JSObject* convertDictionaryToJS(JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoKeyPair& keyPair)
 {
     auto& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
-    auto privateKey = toJS(&lexicalGlobalObject, &globalObject, *keyPair.privateKey);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::putDirectNamed(vm, result, "privateKey"_s, privateKey);
-    auto publicKey = toJS(&lexicalGlobalObject, &globalObject, *keyPair.publicKey);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::putDirectNamed(vm, result, "publicKey"_s, publicKey);
+    for (auto [name, key] : { std::pair { "privateKey"_s, keyPair.privateKey.get() }, std::pair { "publicKey"_s, keyPair.publicKey.get() } }) {
+        if (!key)
+            continue;
+        auto value = toJS(&lexicalGlobalObject, &globalObject, *key);
+        RETURN_IF_EXCEPTION(scope, {});
+        Bun::putDirectNamed(vm, result, name, value);
+    }
     return result;
 }
 
@@ -1162,10 +1222,14 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
+    auto isolatedParams = isolateOrReject(WTF::move(*importParams), promise);
+    if (!isolatedParams)
+        return;
+
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& derivedKey) mutable {
+    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*isolatedParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& derivedKey) mutable {
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=169395
         KeyData data = derivedKey;
         auto callback = [index, weakThis](CryptoKey& key) mutable {
@@ -1423,10 +1487,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto keyWrapParams = normalizeCryptoAlgorithmParameters(state, wrapAlgorithmIdentifier, Operations::WrapKey);
-    RETURN_IF_EXCEPTION(scope, void());
-    bool isEncryption = keyWrapParams.hasException();
-    auto wrapParams = isEncryption ? normalizeOrReject(state, wrapAlgorithmIdentifier, Operations::Encrypt, promise) : keyWrapParams.releaseReturnValue();
+    auto wrapParams = normalizeWrapAlgorithmOrReject(state, wrapAlgorithmIdentifier, promise);
     RETURN_IF_EXCEPTION(scope, void());
     if (!wrapParams)
         return;
@@ -1466,7 +1527,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, wrapAlgorithm, wrappingKey = Ref { wrappingKey }, wrapParams = WTF::move(*wrapParams), isEncryption, context, workQueue = m_workQueue](SubtleCrypto::KeyFormat format, KeyData&& key) mutable {
+    auto callback = [index, weakThis, wrapAlgorithm, wrappingKey = Ref { wrappingKey }, wrapParams = WTF::move(*wrapParams), context, workQueue = m_workQueue](SubtleCrypto::KeyFormat format, KeyData&& key) mutable {
         if (weakThis) {
             // get() peeks the map's Ref as a raw pointer; the JWK error paths below remove that
             // Ref before rejecting, so hold our own reference like the unwrapKey callback does.
@@ -1481,7 +1542,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                 case SubtleCrypto::KeyFormat::RawPublic:
                 case SubtleCrypto::KeyFormat::RawSeed:
                 case SubtleCrypto::KeyFormat::Raw:
-                    bytes = std::get<Vector<uint8_t>>(key);
+                    bytes = WTF::move(std::get<Vector<uint8_t>>(key));
                     break;
                 case SubtleCrypto::KeyFormat::Jwk: {
                     // FIXME: Converting to JS just to JSON-Stringify seems inefficient. We should find a way to go directly from the struct to JSON.
@@ -1506,7 +1567,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                         paddedSize = roundUpToMultipleOf(8, paddedSize);
                     if (!jwkUTF8 || paddedSize > Bun::maxVectorSize<uint8_t>() || !bytes.tryReserveInitialCapacity(paddedSize)) [[unlikely]] {
                         weakThis->m_pendingPromises.remove(index);
-                        promise->reject(OperationError, "Input data is too large"_s);
+                        promise->reject(inputTooLarge());
                         return;
                     }
                     bytes.append(jwkUTF8->bytes());
@@ -1524,7 +1585,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                         rejectWithException(promise.releaseNonNull(), ec, msg);
                 };
 
-                if (!isEncryption) {
+                if (wrapParams.identifier == CryptoAlgorithmIdentifier::AES_KW) {
                     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
                     // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-wrapKey
                     // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
@@ -1553,10 +1614,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
     if (!wrappedKey)
         return;
 
-    auto keyUnwrapParams = normalizeCryptoAlgorithmParameters(state, unwrapAlgorithmIdentifier, Operations::UnwrapKey);
-    RETURN_IF_EXCEPTION(scope, void());
-    bool isDecryption = keyUnwrapParams.hasException();
-    auto unwrapParams = isDecryption ? normalizeOrReject(state, unwrapAlgorithmIdentifier, Operations::Decrypt, promise) : keyUnwrapParams.releaseReturnValue();
+    auto unwrapParams = normalizeWrapAlgorithmOrReject(state, unwrapAlgorithmIdentifier, promise);
     RETURN_IF_EXCEPTION(scope, void());
     if (!unwrapParams)
         return;
@@ -1595,10 +1653,14 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
         return;
     }
 
+    auto isolatedParams = isolateOrReject(WTF::move(*unwrappedKeyAlgorithm), promise);
+    if (!isolatedParams)
+        return;
+
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, format, importAlgorithm, unwrappedKeyAlgorithm = WTF::move(*unwrappedKeyAlgorithm), extractable, keyUsagesBitmap](const Vector<uint8_t>& bytes) mutable {
+    auto callback = [index, weakThis, format, importAlgorithm, unwrappedKeyAlgorithm = WTF::move(*isolatedParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& bytes) mutable {
         if (weakThis) {
             if (RefPtr promise = weakThis->m_pendingPromises.get(index)) {
                 auto& state = *(promise->globalObject());
@@ -1670,7 +1732,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    if (!isDecryption) {
+    if (unwrapParams->identifier == CryptoAlgorithmIdentifier::AES_KW) {
         // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
         // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-unwrapKey
         // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
@@ -1840,10 +1902,14 @@ void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
 
+    auto isolatedParams = isolateOrReject(WTF::move(*importParams), promise);
+    if (!isolatedParams)
+        return;
+
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*importParams), extractable, keyUsagesBitmap](Vector<uint8_t>&& sharedKeyBytes, Vector<uint8_t>&& ciphertext) mutable {
+    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*isolatedParams), extractable, keyUsagesBitmap](Vector<uint8_t>&& sharedKeyBytes, Vector<uint8_t>&& ciphertext) mutable {
         KeyData data = WTF::move(sharedKeyBytes);
         auto keyCallback = [index, weakThis, ciphertext = WTF::move(ciphertext)](CryptoKey& sharedKey) mutable {
             if (auto promise = getPromise(index, weakThis)) {
@@ -1956,10 +2022,14 @@ void SubtleCrypto::decapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
 
+    auto isolatedParams = isolateOrReject(WTF::move(*importParams), promise);
+    if (!isolatedParams)
+        return;
+
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& sharedKeyBytes) mutable {
+    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*isolatedParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& sharedKeyBytes) mutable {
         KeyData data = sharedKeyBytes;
         auto keyCallback = [index, weakThis](CryptoKey& sharedKey) mutable {
             if (auto promise = getPromise(index, weakThis)) {
@@ -2001,7 +2071,7 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto normalize = [&](const AlgorithmIdentifier& identifier, Operations op) -> std::optional<CryptoAlgorithmParameters> {
-        auto result = normalizeCryptoAlgorithmParameters(state, identifier, op);
+        auto result = normalizeCryptoAlgorithmParameters(state, identifier, op, Bytes::CheckSize);
         if (throwScope.exception()) [[unlikely]] {
             (void)throwScope.tryClearException();
             return std::nullopt;

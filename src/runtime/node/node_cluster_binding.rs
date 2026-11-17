@@ -4,44 +4,63 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
-use crate::ipc::{IsInternal, SerializeAndSendResult};
+use crate::ipc::{Handle, SerializeAndSendResult};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsCell, JsResult, Strong};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::generated_bindgen::node_cluster_binding::{
     BindAddress, BindAddressType, BindResult, BoundHandle,
 };
 
-// Struct lives in `crate::ipc` —
-// `SendQueue` stores one inline so it must live at that tier. Re-exported here so
-// existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
-pub(crate) use crate::ipc::InternalMsgHolder;
-
 bun_output::declare_scope!(IPC, visible);
 
-// ArrayHashMap::new() is not const, so the global is lazily seeded on first
-// access via `child_singleton()`.
-// PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
-// fields (`Strong`). RacyCell — single-thread access is the contract.
-pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
-    bun_core::RacyCell::new(None);
+/// `callback.call(worker, message, handle)` for each message of node:cluster.
+struct Listener {
+    worker: Strong,
+    callback: Strong,
+}
 
-/// `&mut` to the (lazily-initialized) JS-thread singleton.
-///
-/// Centralises the `RacyCell<Option<_>> → &mut InternalMsgHolder` deref so the
-/// three host-fn callers stay safe at the call site (PORTING.md §Global mutable
-/// state). Callers must be on the JS thread and
-/// must not hold the borrow across a re-entrant `child_singleton()` call.
-#[inline]
-fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
-    // SAFETY: only called on the single JS thread.
-    // `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
-    // `'static` storage so the returned `&mut` is valid for any caller-chosen
-    // `'a`. Aliasing: each of the three callers borrows for a single
-    // statement/block with no nested call to this fn.
-    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
+impl Listener {
+    fn new(global: &JSGlobalObject, worker: JsLocal<'_>, callback: JsLocal<'_>) -> Self {
+        Self {
+            worker: Strong::create(worker.to_js(), global),
+            callback: Strong::create(callback.to_js(), global),
+        }
+    }
+
+    fn get(&self) -> (JSValue, JSValue) {
+        (self.worker.get(), self.callback.get())
+    }
+}
+
+/// The primary's side of the channel to one worker.
+#[derive(Default)]
+pub(crate) struct ClusterPeer {
+    seq: i32,
+    /// By the `seq` of the message whose `ack` they wait for.
+    callbacks: bun_collections::ArrayHashMap<i32, Strong>,
+    listener: Option<Listener>,
+}
+
+impl ClusterPeer {
+    pub(crate) fn take_callback(&mut self, seq: i32) -> Option<Strong> {
+        Some(self.callbacks.fetch_swap_remove(&seq)?.1)
+    }
+}
+
+enum ChildInbox {
+    /// For node:cluster, once it is loaded.
+    Queued(Vec<Strong>),
+    Ready(Listener),
+}
+
+#[thread_local]
+static CHILD_INBOX: JsCell<ChildInbox> = JsCell::new(ChildInbox::Queued(Vec::new()));
+
+pub(crate) fn forget_child_listener() {
+    CHILD_INBOX.set(ChildInbox::Queued(Vec::new()));
 }
 
 pub(crate) fn on_internal_message_child<'a>(
@@ -49,23 +68,39 @@ pub(crate) fn on_internal_message_child<'a>(
     worker: JsLocal<'a>,
     callback: JsLocal<'a>,
 ) -> JsResult<()> {
-    bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let global = cx.global();
-    let singleton = child_singleton();
-    // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = StrongOptional::create(worker.to_js(), global);
-    singleton.cb = StrongOptional::create(callback.to_js(), global);
-    singleton.flush(global)
+    let ready = ChildInbox::Ready(Listener::new(global, worker, callback));
+    if let ChildInbox::Queued(messages) = CHILD_INBOX.replace(ready) {
+        for message in messages {
+            handle_internal_message_child(global, message.get(), JSValue::NULL);
+        }
+    }
+    Ok(())
 }
 
+/// Returns whether `handle` was passed on. A queued message goes without it.
 pub(crate) fn handle_internal_message_child(
     global: &JSGlobalObject,
     message: JSValue,
     handle: JSValue,
-) -> JsResult<()> {
-    bun_output::scoped_log!(IPC, "handleInternalMessageChild");
-
-    child_singleton().dispatch(message, handle, global)
+) -> bool {
+    let Some((worker, callback)) = CHILD_INBOX.with_mut(|inbox| match inbox {
+        ChildInbox::Ready(listener) => Some(listener.get()),
+        ChildInbox::Queued(messages) => {
+            messages.push(Strong::create(message, global));
+            None
+        }
+    }) else {
+        return false;
+    };
+    global.bun_vm().event_loop().run_callback(
+        bun_event_loop::ContextId::NONE,
+        callback,
+        global,
+        worker,
+        &[message, handle],
+    );
+    true
 }
 
 pub(crate) fn send_helper_primary<'a>(
@@ -90,7 +125,7 @@ pub(crate) fn send_helper_primary<'a>(
         return Ok(None);
     };
 
-    let mut native_handle: Option<crate::ipc::Handle> = None;
+    let mut native_handle = None;
     if let Some(handle) = handle {
         let handle = handle.to_js();
         let Some(fd_value) = handle.get(global, "fd")? else {
@@ -116,8 +151,11 @@ pub(crate) fn send_helper_primary<'a>(
             bun_sys::Fd::from_system(raw as u64 as usize as *mut core::ffi::c_void)
         };
         message.put(global, b"$hasHandle", JSValue::TRUE);
+        let Ok(h) = Handle::new(native_fd, handle, false) else {
+            return Ok(None);
+        };
         #[cfg(windows)]
-        {
+        let h = {
             let peer_pid = subprocess.pid() as u32;
             let Some(hex) = crate::ipc_host::attach_windows_socket_payload(
                 global, message, native_fd, peer_pid,
@@ -125,36 +163,25 @@ pub(crate) fn send_helper_primary<'a>(
             else {
                 return Ok(None);
             };
-            let mut h = crate::ipc::Handle::init(native_fd, handle);
+            let mut h = h;
             h.win_export_hex = Some(hex);
             h.peer_pid = peer_pid;
-            native_handle = Some(h);
-        }
-        #[cfg(not(windows))]
-        {
-            native_handle = match crate::ipc::Handle::init_dup(native_fd, handle, false) {
-                Ok(h) => Some(h),
-                Err(_) => return Ok(None),
-            };
-        }
+            h
+        };
+        native_handle = Some(h);
     }
-    let this_seq = ipc_data.internal_msg_queue.with_mut(|q| {
-        let seq = q.seq;
+    let callback = callback.map(|callback| Strong::create(callback.to_js(), global));
+    let this_seq = ipc_data.cluster.with_mut(|peer| {
+        let seq = peer.seq;
+        peer.seq = seq.wrapping_add(1);
         if let Some(callback) = callback {
-            let _ = q
-                .callbacks
-                .put(seq, StrongOptional::create(callback.to_js(), global));
+            let _ = peer.callbacks.put(seq, callback);
+            if let Some(h) = &mut native_handle {
+                h.cluster_seq = Some(seq);
+            }
         }
-        q.seq = seq.wrapping_add(1);
         seq
     });
-    if callback.is_some() {
-        if let Some(h) = &mut native_handle {
-            h.cluster_seq = Some(this_seq);
-        }
-    }
-
-    // sequence number for InternalMsgHolder
     message.put(global, b"seq", JSValue::js_number(this_seq as f64));
 
     // similar code as bun.jsc.Subprocess.doSend
@@ -171,7 +198,7 @@ pub(crate) fn send_helper_primary<'a>(
     let success = ipc_data.serialize_and_send(
         global,
         message,
-        IsInternal::Internal,
+        bun_ipc::Kind::Internal,
         JSValue::NULL,
         native_handle,
     );
@@ -196,12 +223,8 @@ pub(crate) fn on_internal_message_primary<'a>(
     let Some(ipc_data) = subprocess.ipc() else {
         return;
     };
-    let global = cx.global();
-    // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.with_mut(|q| {
-        q.worker = StrongOptional::create(worker.to_js(), global);
-        q.cb = StrongOptional::create(callback.to_js(), global);
-    });
+    let listener = Listener::new(cx.global(), worker, callback);
+    (ipc_data.cluster).with_mut(|peer| peer.listener = Some(listener));
 }
 
 pub(crate) fn handle_internal_message_primary(
@@ -213,58 +236,21 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    if !ipc_data.internal_msg_queue.get().is_ready() {
+    let Some((worker, listener)) = ipc_data.cluster.get().listener.as_ref().map(Listener::get)
+    else {
         return Ok(());
-    }
-
-    let event_loop = global.bun_vm().event_loop();
-
-    // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
-    if let Some(p) = message.get(global, "ack")? {
-        if p.is_int32() {
-            let ack = p.as_int32();
-            let entry = ipc_data.internal_msg_queue.with_mut(|q| {
-                let cb = q.callbacks.get(&ack).and_then(|s| s.get());
-                if q.callbacks.contains_key(&ack) {
-                    q.callbacks.swap_remove(&ack);
-                }
-                cb.zip(q.worker.get())
-            });
-            if let Some((cb, worker)) = entry {
-                event_loop.run_callback(
-                    subprocess.context,
-                    cb,
-                    global,
-                    worker,
-                    &[
-                        message,
-                        JSValue::NULL, // handle
-                    ],
-                );
-                return Ok(());
-            }
-        }
-    }
-    let (cb, worker) = {
-        let q = ipc_data.internal_msg_queue.get();
-        (q.cb.get().unwrap(), q.worker.get().unwrap())
     };
-    event_loop.run_callback(
+    let acked = (message.get(global, "ack")?.filter(|ack| ack.is_int32()))
+        .and_then(|ack| (ipc_data.cluster).with_mut(|peer| peer.take_callback(ack.as_int32())));
+    global.bun_vm().event_loop().run_callback(
         subprocess.context,
-        cb,
+        acked.as_ref().map_or(listener, Strong::get),
         global,
         worker,
-        &[
-            message,
-            JSValue::NULL, // handle
-        ],
+        &[message, JSValue::NULL],
     );
     Ok(())
 }
-
-//
-//
-//
 
 pub(crate) fn set_ref(enabled: bool) {
     let vm = VirtualMachine::get();

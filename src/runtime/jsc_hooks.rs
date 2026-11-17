@@ -1092,19 +1092,6 @@ fn load_standalone_sourcemap(
     unsafe { (*graph).find(path)?.sourcemap.load() }
 }
 
-/// `node_cluster_binding.child_singleton.deinit()` —
-/// `IPCInstance.handleIPCClose`.
-///
-/// Called on the JS thread (the `CHILD_SINGLETON` static is JS-thread-only).
-pub(crate) fn ipc_child_singleton_deinit() {
-    // `InternalMsgHolder`'s owned fields (`Strong`s, map, `Vec`) all impl
-    // `Drop`; taking the `Option` runs them.
-    // SAFETY: JS-thread-only mutable static (see `child_singleton()` doc).
-    unsafe {
-        (*crate::node::node_cluster_binding::CHILD_SINGLETON.get()).take();
-    }
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // VmLoaderVTable — supplies the high-tier bodies for
 // `bun_bundler::options::{normalize_specifier, get_loader_and_virtual_source}`.

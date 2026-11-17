@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isDebug, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -596,4 +596,209 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
+});
+
+/** Runs parent.js next to child.js. Both have the helpers below. */
+async function runPair(parent: string, child: string, env: Record<string, string> = {}) {
+  const helpers = `
+    const fs = require("node:fs");
+    const net = require("node:net");
+    function until(file) {
+      const deadline = Date.now() + 30_000;
+      while (!fs.existsSync(file)) {
+        if (Date.now() > deadline) throw new Error("30 seconds have passed without " + file);
+        Bun.sleepSync(1);
+      }
+    }
+    function retry(syscall) {
+      for (;;) {
+        try {
+          return syscall();
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+          Bun.sleepSync(1);
+        }
+      }
+    }
+    function write(bytes) {
+      bytes = Buffer.from(bytes);
+      for (let offset = 0; offset < bytes.length; ) offset += retry(() => fs.writeSync(3, bytes, offset));
+    }
+    function advancedFrame(message) {
+      const body = Buffer.from(require("bun:jsc").serialize(message));
+      const header = Buffer.from([2, 0, 0, 0, 0]);
+      header.writeUInt32LE(body.length, 1);
+      return Buffer.concat([header, body]);
+    }
+    const spawnChild = options =>
+      Bun.spawn({
+        cmd: [process.execPath, "child.js"],
+        env: { ...process.env, BUN_JSC_gcMaxHeapSize: undefined },
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "json",
+        ipc() {},
+        ...options,
+      });
+    const listen = () => new Promise(resolve => { const server = net.createServer().listen(0, () => resolve(server)); });
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+    const openFds = () => fs.readdirSync("/proc/self/fd").length;
+    // Bun.build() runs the event loop until the setup() of a plugin has settled.
+    const runEventLoopUntil = promise =>
+      void Bun.build({ entrypoints: ["./empty.js"], plugins: [{ name: "wait", setup: () => promise.then(() => {}) }] });
+  `;
+  using dir = tempDir("ipc-pair", { "parent.js": helpers + parent, "child.js": helpers + child, "empty.js": "" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "parent.js"],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.split("\n").filter(Boolean), stderr, exitCode };
+}
+
+describe.concurrent("the send queue", () => {
+  it("does not run a setter on Array.prototype to store a callback", async () => {
+    const result = await runPair(
+      `
+        const server = await listen();
+        const child = spawnChild();
+        // Nothing follows a handle until it is acked, so the next three are joined.
+        child.send("handle", server);
+        child.send("a", () => console.log("a"));
+        child.send("b", () => console.log("b"));
+        Object.defineProperty(Array.prototype, 2, {
+          configurable: true,
+          set() {
+            delete Array.prototype[2];
+            console.log("setter");
+            for (let i = 0; i < 16; i++) child.send("handle", server);
+          },
+        });
+        child.send("c", () => console.log("c"));
+        delete Array.prototype[2];
+        child.send("last");
+        await child.exited;
+        server.close();
+      `,
+      `
+        process.on("message", (message, handle) => {
+          handle?.close();
+          if (message === "last") process.disconnect();
+        });
+      `,
+    );
+    expect(result).toEqual({ stdout: ["a", "b", "c"], stderr: "", exitCode: 0 });
+  });
+
+  it.skipIf(isWindows)("writes a long backlog of replies without overflowing the stack", async () => {
+    const count = isDebug ? 10_000 : 100_000;
+    const result = await runPair(
+      `await spawnChild({ ipc: () => fs.writeFileSync("queued", "") }).exited;`,
+      `
+        // Each announces a handle that does not come, and is answered with a NACK.
+        write(Buffer.alloc(${count} * 22, '{"cmd":"NODE_HANDLE"}\\n'));
+        write('"last"\\n');
+        until("queued");
+        const buffer = Buffer.alloc(1 << 20);
+        let total = 0;
+        for (let n = 1; n && total < ${count} * 27; total += n) n = retry(() => fs.readSync(3, buffer));
+        console.log(total / 27);
+      `,
+    );
+    expect(result).toEqual({ stdout: [String(count)], stderr: "", exitCode: 0 });
+  });
+});
+
+describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
+  // The tag byte makes the receiver ignore the message that carries the descriptor, and `line` then claims it.
+  const sendDescriptorWith = (line: string) => `
+    const server = await listen();
+    write("\\x02");
+    process.send("ignored", server, () => {
+      server.close();
+      process.send("last");
+    });
+    write(${JSON.stringify(line + "\n")});
+  `;
+
+  it("is closed by a parent, which has no use for one in a cluster message", async () => {
+    const result = await runPair(
+      `
+        const before = openFds();
+        await spawnChild().exited;
+        await turn();
+        console.log("leaked", openFds() - before);
+      `,
+      sendDescriptorWith('\x02{"$hasHandle":true}'),
+    );
+    expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
+  });
+});
+
+// Linux only: what one write() sends has to arrive in one read.
+describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop", () => {
+  it.each([
+    ["messages arrive in order", `advancedFrame("m3")`, ["m1", "m2", "m3"]],
+    [
+      "an undecodable message is reported once",
+      `[2, 4, 0, 0, 0, 255, 255, 255, 255]`,
+      ["m1", "m2", "Unable to deserialize data."],
+    ],
+  ])("while messages are buffered: %s", async (_, later, expected) => {
+    const result = await runPair(
+      `
+        process.on("uncaughtException", error => console.log(error.message));
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        spawnChild({
+          serialization: "advanced",
+          onDisconnect,
+          ipc(message) {
+            console.log(message);
+            if (message === "m0") fs.writeFileSync("one byte is buffered", "");
+            if (message !== "m1") return;
+            fs.writeFileSync("in the handler", "");
+            runEventLoopUntil(disconnected);
+          },
+        });
+      `,
+      `
+        const bytes = Buffer.concat(["m1", "m2"].map(advancedFrame));
+        write(Buffer.concat([advancedFrame("m0"), bytes.subarray(0, 1)]));
+        until("one byte is buffered");
+        write(bytes.subarray(1));
+        until("in the handler");
+        write(${later});
+      `,
+    );
+    expect(result).toEqual({ stdout: ["m0", ...expected], stderr: "", exitCode: 0 });
+  });
+
+  it.each(["json", "advanced"])("until nothing else keeps the Subprocess: %s", async serialization => {
+    const result = await runPair(
+      `
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        spawnChild({
+          serialization: "${serialization}",
+          onDisconnect,
+          ipc(message, child) {
+            console.log(message.length);
+            if (message !== "first") return;
+            child.disconnect();
+            runEventLoopUntil(Promise.all([disconnected, child.exited]));
+          },
+        });
+        until("written");
+      `,
+      `
+        const frame = "${serialization}" === "json" ? it => Buffer.from(JSON.stringify(it) + "\\n") : advancedFrame;
+        // The receiver collects garbage while it decodes the second one.
+        write(Buffer.concat(["first", Array.from({ length: 5000 }, (_, i) => ({ i })), "last"].map(frame)));
+        fs.writeFileSync("written", "");
+      `,
+      { BUN_JSC_gcMaxHeapSize: "196608", BUN_JSC_useGenerationalGC: "0", BUN_JSC_useConcurrentGC: "0" },
+    );
+    expect(result).toEqual({ stdout: ["5", "5000", "4"], stderr: "", exitCode: 0 });
+  });
 });

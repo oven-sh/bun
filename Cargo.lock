@@ -943,6 +943,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_ipc"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_jpeg"
 version = "0.0.0"
 dependencies = [
@@ -1632,6 +1640,7 @@ dependencies = [
  "bun_install_jsc",
  "bun_install_types",
  "bun_io",
+ "bun_ipc",
  "bun_jpeg",
  "bun_js_parser",
  "bun_js_parser_jsc",

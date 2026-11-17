@@ -22,7 +22,6 @@ use crate::api::bun::Terminal;
 use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::{Process, Rusage, Status};
 use crate::ipc as IPC;
-use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::streams::SourceHandle;
 use crate::webcore::{self, AbortSignal, FileSink};
@@ -261,17 +260,8 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn compute_has_pending_activity(&self) -> bool {
-        // `ipc_data` is never set back to `None` after init, so checking only
-        // for `is_some()` would keep the JSSubprocess strongly referenced for the
-        // lifetime of the VM. The IPC side contributes pending activity until
-        // `_onAfterIPCClosed` has actually run: gating on `close_event_sent`
-        // (rather than `socket != .closed`) keeps the wrapper Strong across the
-        // window where the socket is already `.closed` but the task holding a
-        // raw `*SendQueue` into `ipc_data` is still queued.
-        if let Some(ipc) = self.ipc() {
-            if !ipc.close_event_sent.get() {
-                return true;
-            }
+        if self.ipc().is_some_and(|ipc| !ipc.is_close_reported()) {
+            return true;
         }
 
         if self.has_pending_activity_stdio() {
@@ -1069,46 +1059,22 @@ impl Subprocess<'_> {
         }
     }
 
-    pub(crate) fn handle_ipc_message(
-        &self,
-        message: &IPC::DecodedIPCMessage,
-        handle: JSValue,
-    ) -> JsResult<()> {
+    pub(crate) fn handle_ipc_message(&self, message: JSValue, handle: JSValue) {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
-        match message {
-            // In future versions we can read this in order to detect version mismatches,
-            // or disable future optimizations if the subprocess is old.
-            IPC::DecodedIPCMessage::Version(v) => {
-                bun_output::scoped_log!(IPC, "Child IPC version is {}", v);
-            }
-            IPC::DecodedIPCMessage::Data(data) => {
-                bun_output::scoped_log!(IPC, "Received IPC message from child");
-                let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
-                let _keep = jsc::EnsureStillAlive(this_jsvalue);
-                if !this_jsvalue.is_empty() {
-                    if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
-                        let global_this = self.global_this();
-                        global_this.bun_vm().event_loop().run_callback(
-                            self.context,
-                            cb,
-                            global_this,
-                            this_jsvalue,
-                            &[*data, this_jsvalue, handle],
-                        );
-                    }
-                }
-            }
-            IPC::DecodedIPCMessage::Internal(data) => {
-                bun_output::scoped_log!(IPC, "Received IPC internal message from child");
-                let global_this = self.global_this;
-                node_cluster_binding::handle_internal_message_primary(
-                    global_this.get(),
-                    self,
-                    *data,
-                )?;
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+        let _keep = jsc::EnsureStillAlive(this_jsvalue);
+        if !this_jsvalue.is_empty() {
+            if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
+                let global_this = self.global_this();
+                global_this.bun_vm().event_loop().run_callback(
+                    self.context,
+                    cb,
+                    global_this,
+                    this_jsvalue,
+                    &[message, this_jsvalue, handle],
+                );
             }
         }
-        Ok(())
     }
 
     pub(crate) fn handle_ipc_close(&self) {

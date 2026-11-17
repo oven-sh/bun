@@ -62,8 +62,6 @@ pub(crate) mod imported_class_test;
 pub(crate) mod ipc;
 pub(crate) mod ipc_host;
 pub(crate) mod jsc_hooks;
-#[path = "JSONLineBuffer.rs"]
-pub(crate) mod json_line_buffer;
 pub(crate) mod linear_fifo_testing;
 pub(crate) mod napi;
 pub(crate) mod removed_feature;

@@ -75,6 +75,7 @@ members = [
   "src/ini",
   "src/install_jsc",
   "src/install_types",
+  "src/ipc",
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
@@ -452,6 +453,7 @@ bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
 bun_install_jsc = { path = "src/install_jsc" }
 bun_install_types = { path = "src/install_types" }
+bun_ipc = { path = "src/ipc" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }

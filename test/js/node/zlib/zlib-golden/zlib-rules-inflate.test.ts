@@ -219,6 +219,17 @@ describe("a match", () => {
     }
   });
 
+  test("beyond the window is all right if it ends before the room does", () => {
+    // With codes so short, several literals are read at a time.
+    const literals = lengths(258, { ...[2, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10], [END]: 10, 257: 3 });
+    const some = (count: number) => Array.from({ length: count }, (_, i) => (i * 7 + (i >> 3)) & 1);
+    const tokens = [...some(300), { length: 3, distance: 290 }, ...some(200)];
+    const data = dynamic(new Bits(), literals, lengths(17, { 0: 1, 16: 1 }), tokens, true).end();
+    const sizes = Array.from({ length: 60 }, (_, i) => 260 + i);
+    const errors = sizes.map(chunkSize => inflate("InflateRaw", [data], { windowBits: 8, chunkSize }).error);
+    expect(errors).toEqual(sizes.map(size => (size > 266 && size < 303 ? tooFar : undefined)));
+  });
+
   test("does not reach into the stream in front of it", () => {
     const first = fixed(new Bits(), text("first"), true).end();
     const second = fixed(new Bits(), [A, { length: 3, distance: 2 }], true).end();
@@ -340,6 +351,14 @@ describe("a dynamic block", () => {
     expect(raw(upToDistance([0, 1]).put(1, 1))).toBe(damaged("invalid distance code"));
     expect(raw(upToDistance([0]).put(0, 1))).toBe(damaged("invalid distance code"));
     expect(raw(upToDistance([0, 0, 0]).put(1, 1))).toBe(damaged("invalid distance code"));
+  });
+
+  test("needs no more than that bit to tell", () => {
+    const literals = lengths(258, { [A]: 1, [END]: 2, 257: 2 });
+    const codes = codesOf(literals);
+    const bits = dynamicHeader(new Bits(), literals, [1], true).code(codes[A]);
+    while (bits.length % 8 !== 5) bits.code(codes[A]);
+    expect(raw(bits.code(codes[257]).put(1, 1))).toBe(damaged("invalid distance code"));
   });
 
   test("forgets the codes of the one in front of it", () => {
@@ -583,6 +602,14 @@ describe("a gzip stream", () => {
     expect(`${zlib.gunzipSync(Buffer.concat([...Array(3000).fill(empty), member]))}`).toBe(`${plain}`);
   });
 
+  test("has the whole window behind a zlib stream that has not", () => {
+    const data = input("noise", 600);
+    const far = fixed(stored(new Bits(), data, false), [{ length: 3, distance: 600 }], true).end();
+    const expected = concat(data, data.subarray(0, 3));
+    const members = concat(inGzip(body, plain), inZlib(body, plain, 9), inGzip(far, expected));
+    expect(zlib.unzipSync(members)).toEqual(concat(plain, plain, expected));
+  });
+
   test("is followed by zeros, or by nothing but members", () => {
     const member = inGzip(body, plain);
     expect(inflate("Gunzip", [concat(member, [0, 1, 2], member)])).toEqual({
@@ -671,6 +698,14 @@ describe("flush values", () => {
       `${20 + end} abcdeA`,
     ]);
   });
+
+  test("Z_BLOCK goes on from the end of a block", () => {
+    const [first, second] = ["ab", "cd"].map(it => stored(new Bits(), Buffer.from(it), false).end());
+    using engine = new Engine("InflateRaw");
+    engine.write(first);
+    engine.write(concat(second, first), Z_BLOCK);
+    expect([engine.read, `${engine.output}`]).toEqual([14, "abcd"]);
+  });
 });
 
 test.each(["InflateRaw", "Inflate", "Gunzip"] as const)("reset() in any place starts over: %s", mode => {
@@ -691,6 +726,18 @@ test.each(["InflateRaw", "Inflate", "Gunzip"] as const)("reset() in any place st
     expect(engine.output.subarray(before).equals(expected)).toBe(true);
     engine.reset();
   }
+});
+
+test.each([
+  ["a literal", Array(65).fill(A)],
+  ["a match", [A, { length: 258, distance: 1 }]],
+  ["a match from too far back", [...Array(64).fill(A), { length: 3, distance: 65 }]],
+])("reset() forgets %s that there was no room for", (_, tokens) => {
+  using engine = new Engine("InflateRaw");
+  engine.writeUntilFull(fixed(new Bits(), tokens, true).end());
+  engine.reset();
+  engine.write(body, Z_FINISH);
+  expect([engine.error, `${engine.output}`]).toEqual([undefined, `${plain}`]);
 });
 
 describe("Bun.inflateSync() and Bun.gunzipSync() take the container from windowBits", () => {

@@ -158,6 +158,39 @@ describe("flushes", () => {
   });
 });
 
+describe("params()", () => {
+  const written = (from: number[], to: number[], flush: number) => {
+    const stream: any = zlib.createDeflateRaw({ level: from[0], strategy: from[1] });
+    const [data, out] = [input("markup", 2000), Buffer.alloc(4000)];
+    let error: string | undefined;
+    stream._handle.onerror = (message: string) => (error = message);
+    stream._handle.writeSync(flush, data, 0, 1000, out, 0, out.length);
+    const used = out.length - stream._writeState[0];
+    stream._handle.params(...to);
+    if (!error) stream._handle.writeSync(Z_FINISH, data, 1000, 1000, out, used, out.length - used);
+    stream.close();
+    return error ?? hex(out.subarray(0, out.length - stream._writeState[0]));
+  };
+  const otherWays = [
+    [1, DEFAULT],
+    [0, DEFAULT],
+    [9, DEFAULT],
+    [6, RLE],
+  ];
+
+  test.each(otherWays)("do not change to level %d and strategy %d in the middle of a block", (...to) => {
+    const unchanged = (flush: number) => written([6, DEFAULT], [6, DEFAULT], flush);
+    expect(written([6, DEFAULT], to, Z_NO_FLUSH)).toBe(unchanged(Z_NO_FLUSH));
+    expect(written([6, DEFAULT], to, Z_BLOCK)).not.toBe(unchanged(Z_BLOCK));
+    expect(written([6, DEFAULT], to, Z_FINISH)).toBe("stream error");
+  });
+
+  test("but do to a level that works the same way", () => {
+    expect(written([6, DEFAULT], [3, DEFAULT], Z_NO_FLUSH)).not.toBe(written([6, DEFAULT], [6, DEFAULT], Z_NO_FLUSH));
+    expect(written([6, DEFAULT], [3, DEFAULT], Z_FINISH)).toBe("buffer error");
+  });
+});
+
 describe("matches", () => {
   test.each([9, 10, 12, 15])("start at most 262 bytes short of the window of windowBits %d", windowBits => {
     const reach = (1 << windowBits) - 262;

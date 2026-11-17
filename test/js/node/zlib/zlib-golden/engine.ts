@@ -22,11 +22,14 @@ export class Engine {
     this.#chunk = Buffer.alloc(this.#stream._chunkSize);
   }
 
-  /** Whether all of `input` was taken. */
-  write(input: Uint8Array, flush: number = Z_NO_FLUSH) {
+  /**
+   * Whether all of `input` was taken. Unless it `drains`, it asks for no more output then, like the writers of PNG
+   * files and of tarballs.
+   */
+  write(input: Uint8Array, flush: number = Z_NO_FLUSH, drains = true) {
     const [handle, state, chunk] = [this.#stream._handle, this.#stream._writeState, this.#chunk];
     let left = input.length;
-    for (let room = 0; room === 0;) {
+    for (let room = 0; room === 0 && (drains || left !== 0);) {
       handle.writeSync(flush, input, input.length - left, left, chunk, this.#used, chunk.length - this.#used);
       if (this.error) return false;
       this.read += left - state[1];
@@ -41,9 +44,14 @@ export class Engine {
     return left === 0;
   }
 
-  params(level: number, strategy: number) {
-    this.write(nothing, Z_SYNC_FLUSH);
+  params(level: number, strategy: number, flushes = true) {
+    if (flushes) this.write(nothing, Z_SYNC_FLUSH);
     this.#stream._handle.params(level, strategy);
+  }
+
+  /** Where a stream stops if nobody reads from it. The output is dropped. */
+  writeUntilFull(input: Uint8Array) {
+    this.#stream._handle.writeSync(Z_NO_FLUSH, input, 0, input.length, Buffer.alloc(64), 0, 64);
   }
 
   reset() {

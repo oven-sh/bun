@@ -37,6 +37,8 @@ const recipes = {
   distant: { symbols: next => next(256), fresh: 2, repeat: [3, 5, 32768] },
   /** Each byte is half as frequent as another. */
   skewed: { symbols: next => Math.clz32(next(0x1000000) + 1) * 7, fresh: 4096, repeat: [0, 0, 1] },
+  /** Long matches to choose from, far down the hash chains. */
+  echoes: { symbols: next => next(2), fresh: 12, repeat: [28, 90, 32000] },
   zeros: { symbols: () => 0, fresh: 1, repeat: [70000, 70000, 1] },
 } satisfies Record<string, Recipe>;
 

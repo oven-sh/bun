@@ -18,7 +18,7 @@ import {
 const cases = (await loadCases()).steps;
 
 test("there is something to compress", () => {
-  expect(cases.length).toBe(1614);
+  expect(cases.length).toBe(1800);
 });
 
 test.each(inParts(fewerIfSlow(cases, 5), 100))("part %#", some => {
@@ -60,7 +60,7 @@ test("a stream gives the same bytes", async () => {
     return { ...c, steps: [...steps, c.source[1]].join(" ") };
   };
   const some = fewerIfSlow(sample(cases, 12), 3)
-    .filter(c => c.steps)
+    .filter(c => /^[^!P]+$/.test(c.steps))
     .map(forStream);
   expect(some.length).toBeGreaterThan(30);
   const actual = await Promise.all(some.map(throughStream));

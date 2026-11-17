@@ -8,7 +8,7 @@ import { deflate, deflateDifferences, fewerIfSlow, inParts, loadCases, optionsOf
 const cases = (await loadCases()).whole;
 
 test("there is something to compress", () => {
-  expect(cases.length).toBe(1113);
+  expect(cases.length).toBe(1123);
 });
 
 test.each(inParts(fewerIfSlow(cases, 5), 60))("part %#", some => {

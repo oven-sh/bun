@@ -24,7 +24,8 @@ export type DeflateCase = {
   dictionary?: Source;
   /**
    * Separated by spaces: `12` writes so many bytes, `12:2` does so with that flush value, `p9,1` changes the level and
-   * the strategy, `r` starts another stream. What is left of the source goes with Z_FINISH.
+   * the strategy, `r` starts another stream. What is left of the source goes with Z_FINISH. Unlike a stream, `12!` does
+   * not drain the output and `P9,1` does not flush.
    */
   steps: string;
   result: string;
@@ -37,7 +38,7 @@ export type DamagedCase = {
   results: string[];
 };
 
-export type Cases = { whole: DeflateCase[]; steps: DeflateCase[]; damaged: DamagedCase[] };
+export type Cases = { whole: DeflateCase[]; steps: DeflateCase[]; rare: DeflateCase[]; damaged: DamagedCase[] };
 
 export const fixture = join(import.meta.dir, "cases.json.gz");
 export const library = "libdeflate";
@@ -67,16 +68,19 @@ export function deflate(c: DeflateCase) {
   const lengths: number[] = [];
   /** Where each is in the source and in the output. */
   const streams = [{ read: 0, written: 0, isFinished: false }];
-  function write(length: number, flush: number) {
-    engine.write(source.subarray(engine.read, engine.read + length), flush);
+  function write(length: number, flush: number, drains?: boolean) {
+    engine.write(source.subarray(engine.read, engine.read + length), flush, drains);
     streams.at(-1)!.isFinished = flush === Z_FINISH;
   }
   for (const step of c.steps.split(" ").filter(Boolean)) {
     if (step === "r") {
       engine.reset();
       streams.push({ read: engine.read, written: engine.written, isFinished: false });
-    } else if (step[0] === "p") {
-      engine.params(...(step.slice(1).split(",").map(Number) as [number, number]));
+    } else if (step[0] === "p" || step[0] === "P") {
+      const [level, strategy] = step.slice(1).split(",").map(Number);
+      engine.params(level, strategy, step[0] === "p");
+    } else if (step.endsWith("!")) {
+      write(parseInt(step), Z_NO_FLUSH, false);
     } else {
       const [length, flush = Z_NO_FLUSH] = step.split(":").map(Number);
       write(length, flush);

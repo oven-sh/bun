@@ -27,7 +27,9 @@ function noted(name: string, before: string, after: string) {
   if (before !== after) changed.push(`${name}\n--- before\n${before}--- after\n${after}`);
   return after;
 }
-for (const c of [...cases.whole, ...cases.steps]) c.result = noted(nameOf(c), c.result, observeDeflate(c));
+for (const c of [...cases.whole, ...cases.steps, ...cases.rare]) {
+  c.result = noted(nameOf(c), c.result, observeDeflate(c));
+}
 for (const c of cases.damaged) {
   c.results = observeDamaged(c).map((after, i) => noted(`${c.stream} damage ${i}`, c.results[i], after));
 }

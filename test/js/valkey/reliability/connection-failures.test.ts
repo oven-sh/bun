@@ -2414,6 +2414,11 @@ describe("Valkey: Recovering After fail()", () => {
         reason: "ERR_REDIS_AUTHENTICATION_FAILED: WRONGPASS invalid password",
       },
       {
+        name: "a server without HELLO, which echoes the password",
+        HELLO: () => "-ERR unknown command `HELLO`, with args beginning with: `3`, `AUTH`, `user`, `s3cret`, \r\n",
+        reason: "ERR_REDIS_AUTHENTICATION_FAILED: ERR unknown command `HELLO`",
+      },
+      {
         name: "an unsupported protocol",
         HELLO: () => "%1\r\n+proto\r\n:2\r\n",
         reason: "ERR_REDIS_INVALID_RESPONSE: Server does not support RESP3",

@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 
 use bun_collections::OffsetByteList;
+use bun_core::strings;
 
 use crate::command::{self, ACKS, Ack, Reply};
 use crate::valkey_protocol::{Push, RESPValue, RedisError, ReplyScanner, ScanResult, ValkeyReader};
@@ -568,10 +569,12 @@ impl<P> Client<P> {
     fn on_hello(&mut self, value: RESPValue) -> Event<P> {
         use RedisError::{AuthenticationFailed, UnsupportedProtocol};
         match value {
-            RESPValue::Error(message) => Event::Broken {
-                message,
-                error: AuthenticationFailed,
-            },
+            RESPValue::Error(message) => {
+                // Redis 5 has no HELLO. It echoes the arguments, and the password is one.
+                let echo = strings::split_once(&message, b", with args beginning with");
+                let message = echo.map_or(&*message, |(message, _)| message);
+                broken(message, AuthenticationFailed)
+            }
             RESPValue::SimpleString(ref text) if **text != *b"OK" => broken(
                 b"Authentication failed (unexpected response)",
                 AuthenticationFailed,

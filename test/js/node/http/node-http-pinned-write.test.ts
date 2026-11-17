@@ -305,8 +305,8 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   `;
 
   test.skipIf(isWindows)("a resizable ArrayBuffer is copied into backpressure, not held by reference", async () => {
-    // resize() mprotect()s trimmed pages PROT_NONE and a pin doesn't block
-    // it, so a retained raw slice faults on spill / EFAULT-spins on drain.
+    // resize() mprotect()s trimmed pages PROT_NONE, so a raw slice that
+    // nothing keeps mapped faults on spill / EFAULT-spins on drain.
     // Run in a child so the crash is observed as exit != 0.
     await using proc = Bun.spawn({
       // end() spills any held tail; memcpy from PROT_NONE if held by reference.

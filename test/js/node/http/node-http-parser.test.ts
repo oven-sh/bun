@@ -799,8 +799,8 @@ describe("HTTPParser.prototype.execute", () => {
   });
 
   // A callback can shrink a resizable ArrayBuffer, or grow a WebAssembly.Memory, while the parser is
-  // still scanning the input. Both unmap the input bytes, which a pin does not stop, so each case
-  // runs in a child process: the parse must finish on bytes that stay mapped.
+  // still scanning the input. Both can unmap the input bytes, so each case runs in a child process:
+  // the parse must finish on bytes that stay mapped.
   const head = "POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n";
   const tail = "0\r\n\r\n";
   const payloadSize = 1024;

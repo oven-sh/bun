@@ -7341,6 +7341,31 @@ it.skipIf(isWindows).each([
   }
 });
 
+it.skipIf(isWindows).each<[string, (buffer: ArrayBuffer) => unknown]>([
+  ["resize()", buffer => buffer.resize(1)],
+  ["transfer()", buffer => buffer.transfer(1)],
+  ["resize() of its new owner", buffer => buffer.transfer().resize(1)],
+])("a pending fs.read completes if %s cuts off its range of a resizable ArrayBuffer", async (_, shrink) => {
+  using dir = tempDir("fs-read-shrink", {});
+  const fifo = join(String(dir), "fifo");
+  mkfifo(fifo, 0o666);
+  const reader = openSync(fifo, "r+");
+  const writer = openSync(fifo, "w");
+  try {
+    const buffer = new ArrayBuffer(128 * 1024, { maxByteLength: 128 * 1024 });
+    const pending = promisify(fs.read)(reader, new Uint8Array(buffer), 64 * 1024, 5, null);
+    try {
+      shrink(buffer);
+    } finally {
+      writeSync(writer, "hello");
+    }
+    expect((await pending).bytesRead).toBe(5);
+  } finally {
+    closeSync(reader);
+    closeSync(writer);
+  }
+});
+
 it("writevSync does not write bytes from a buffer detached by an index getter during argument conversion", () => {
   using dir = tempDir("fs-writev-detach", {});
   const file = join(String(dir), "out.bin");
@@ -7397,8 +7422,8 @@ it("fs.writev treats a position that is not a number as the current offset", asy
   expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
-// A pin outlasts a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
-// its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
+// The pool thread copies the path into its own buffer, so it must read the bytes captured at call time, not the
+// shrunk buffer.
 it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {
   // The unfixed build segfaults on the pool thread, so this runs in a child process.
   await using proc = Bun.spawn({

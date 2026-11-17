@@ -4132,6 +4132,7 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
     if (!value.isCell())
         return;
     JSC::JSCell* cell = value.asCell();
+    ASSERT(!cell->isPendingDestruction());
     JSC::JSType type = cell->type();
     if (type == JSC::ArrayBufferType)
         static_cast<JSC::JSArrayBuffer*>(cell)->impl()->endBorrow();

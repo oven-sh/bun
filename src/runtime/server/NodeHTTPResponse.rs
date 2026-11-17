@@ -2181,7 +2181,7 @@ impl NodeHTTPResponse {
                     bytes_len
                 );
                 // For buffers, pin so `transfer()` does not free the tail.
-                // If a pin can't keep the bytes mapped, copy them into the backpressure buffer instead.
+                // If a pin can't keep the bytes, copy them into the backpressure buffer instead.
                 let pinned_value = match buffer_value {
                     Some(buffer_value) => match buffer_value.as_pinned_arraybuffer(global_object) {
                         Some(ab) if ab.can_be_freed_while_pinned() => {

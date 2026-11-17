@@ -187,8 +187,8 @@ impl ArrayBuffer {
         Some(copy)
     }
 
-    /// True if a pin doesn't keep these bytes mapped. `resize()` unmaps the pages it trims, and
-    /// `grow()` can replace the block of a non-shared `WebAssembly.Memory`.
+    /// True if a pin doesn't keep these bytes. `grow()` can replace the block of a non-shared
+    /// `WebAssembly.Memory`, and `resize()` zeroes a range that it trimmed when it grows over it again.
     /// Copy these bytes if the borrow outlives the call.
     ///
     /// A call instead of a field, so that `as_array_buffer` callers that never ask don't pay for the answer.

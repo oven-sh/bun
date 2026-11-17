@@ -2256,7 +2256,7 @@ describe("a string or a buffer, as bytes", () => {
     expect(pinned(detached, () => void detachAndReuse(detached.buffer))).toEqual(eight);
     expect(detached.byteLength).toBe(0);
     expect(isBufferPinned(detached)).toBe(false);
-    // A shrink unmaps pages, so a resizable buffer is copied.
+    // A resizable buffer is copied.
     const resizable = new ArrayBuffer(8, { maxByteLength: 1 << 20 });
     new Uint8Array(resizable).set(eight);
     expect(pinned(resizable, () => resizable.resize(0))).toEqual(eight);

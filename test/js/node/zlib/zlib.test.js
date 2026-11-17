@@ -2,6 +2,7 @@ import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { isBufferPinned } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, detachAndReuse, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -1050,6 +1051,13 @@ describe("async write buffer lifetime", () => {
       });
     });
 
+    it("is read to its end in an async context", async () => {
+      const input = inputOf(original);
+      const pending = new AsyncLocalStorage().run(1, util.promisify(zlib.deflate), input);
+      detach(input);
+      expect(zlib.inflateSync(await pending)).toEqual(original);
+    });
+
     it("is read to its end by a stream that waits for its reader", async () => {
       const input = inputOf(zlib.gzipSync(original));
       const gunzip = zlib.createGunzip({ readableHighWaterMark: 1 });
@@ -1068,8 +1076,8 @@ describe("async write buffer lifetime", () => {
         "-e",
         `const zlib = require("node:zlib"), { compressGzip } = require("node:zlib/iter"), { bytes, pull } = require("node:stream/iter");
          const original = crypto.getRandomValues(new Uint8Array(4096)), input = original.slice();
-         const { write } = zlib.createGzip()._handle.constructor.prototype;
-         zlib.createGzip()._handle.constructor.prototype.write = function (flush, chunk) {
+         const prototype = Object.getPrototypeOf(zlib.createGzip()._handle), { write } = prototype;
+         prototype.write = function (flush, chunk) {
            write.apply(this, arguments);
            if (chunk === input) input.buffer.transfer(0);
          };

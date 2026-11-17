@@ -46,9 +46,17 @@ impl Yes {
     /// Four chunks, then the event loop gets a turn.
     pub(crate) fn write(interp: &Interpreter, cmd: NodeId) -> Yield {
         let chunk = &Self::of(interp, cmd).chunk[..];
+        // The mini loop runs no JS, and `YesTask::enqueue` can block in it.
+        let shares_loop = matches!(interp.event_loop, EventLoopHandle::Js { .. });
         for _ in 0..4 {
             match Builtin::sink(interp, cmd, IoKind::Stdout) {
-                Sink::Fd(fd) => return fd.enqueue(chunk),
+                Sink::Fd(fd) => match fd.enqueue(chunk) {
+                    // A file is written on the spot.
+                    Yield::OnIoWriterChunk {
+                        child, err: None, ..
+                    } if shares_loop && child.node == cmd => {}
+                    next => return next,
+                },
                 Sink::Memory(memory) => {
                     if let Err(e) = memory.write(chunk) {
                         let name = bstr::BStr::new(e.name());
@@ -121,7 +129,11 @@ impl YesTask {
     pub(crate) fn run_from_main_thread(this: &Self) {
         // SAFETY: `interp` was set in `start` and outlives the task.
         let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
-        Yes::write(interp, cmd).run(interp);
+        let next = match interp.interrupted(cmd) {
+            true => Builtin::done(interp, cmd, 1),
+            false => Yes::write(interp, cmd),
+        };
+        next.run(interp);
     }
 
     /// Signature matches

@@ -1567,6 +1567,29 @@ describe("undici dispatcher connect.lookup", () => {
     buf.write("hello");
     const { body } = await request(url, { dispatcher: agent, method: "POST", body: buf });
     expect(await body!.text()).toBe("hello");
+    // An IP literal skips the hook, but the manual-redirect path still yields once before sending.
+    buf.write("hello");
+    const pending = undiciFetch(`http://127.0.0.1:${server.port}/`, {
+      dispatcher: agent,
+      method: "POST",
+      body: buf,
+      redirect: "manual",
+    });
+    buf.fill(0x78);
+    expect(await (await pending).text()).toBe("hello");
+  });
+
+  it("https: an Agent's connect TLS options reach an https hop that an http start URL redirects to", async () => {
+    await using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("upgraded") });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => Response.redirect(`https://localhost:${target.port}/`, 302),
+    });
+    const agent = new Agent({ connect: { ca: tlsCert.cert } });
+    const res = await undiciFetch(`http://localhost:${origin.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe("upgraded");
+    const { body } = await request(`http://localhost:${origin.port}/`, { dispatcher: agent, maxRedirections: 1 });
+    expect(await body!.text()).toBe("upgraded");
   });
 
   it("an Agent without connect options leaves requests untouched", async () => {

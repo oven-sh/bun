@@ -212,7 +212,9 @@ function mergeConnectTls(init, fromConnect) {
 
 // No lookup hook: stay native, which keeps `tls` across its own redirect following.
 function withConnectTls(url, init, connect) {
-  if (url.protocol !== "https:") return init;
+  const { protocol } = url;
+  // An http: start can redirect to https:; with a session its TLS stays as is.
+  if (protocol !== "https:" && (protocol !== "http:" || init?.session != null)) return init;
   const fromConnect = connectTls(connect);
   if (fromConnect === undefined) return init;
   return { ...init, tls: mergeConnectTls(init, fromConnect) };
@@ -377,7 +379,12 @@ async function fetchWithConnect(input, init, connect) {
       if (signal?.aborted && err === signal.reason) throw err;
       throw fetchLookupError(err);
     }
-    if (pin === undefined) return nativeFetch(input, init == null ? undefined : { ...init, headers });
+    if (pin === undefined) {
+      if (init == null) return nativeFetch(input, undefined);
+      const plainInit = { ...init, headers };
+      if (body !== undefined) plainInit.body = body;
+      return nativeFetch(input, plainInit);
+    }
     const { host } = pin;
     if (host !== undefined && !headers.has("host")) headers.set("host", host);
     const hopInit = { ...connectInit(init, pin, connect), headers, body, redirect: redirectMode };

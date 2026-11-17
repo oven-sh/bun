@@ -853,9 +853,9 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   });
 
   // Last member's ISIZE trailer > 512 KiB (LibdeflateState::shared_buffer) so
-  // the libdeflate fast path takes the decompress_to_vec branch, which must
+  // the libdeflate fast path takes the exact-size branch, which must
   // also detect unconsumed input and fall through.
-  it.concurrent("content-length, last member > 512 KiB (decompress_to_vec branch)", async () => {
+  it.concurrent("content-length, last member > 512 KiB (exact-size branch)", async () => {
     const big = Buffer.alloc(600 * 1024, "BIG-LAST-MEMBER-");
     const body = Buffer.concat([M1, gzipSync(big)]);
     const server = createNetServer(socket => {

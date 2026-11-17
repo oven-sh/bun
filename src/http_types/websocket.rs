@@ -67,9 +67,6 @@ pub enum ProtocolError {
     UnsupportedPayloadLength,
     MessageTooBig,
     InvalidCloseCode(u16),
-    /// Found by whoever decodes the payload, like the next one.
-    InvalidUtf8,
-    InvalidCompressedData,
 }
 
 fn copy_masked(key: Option<MaskingKey>, output: &mut [u8], input: &[u8]) {
@@ -123,11 +120,13 @@ impl Header {
     }
 
     /// `frame` is [`Self::frame_size`] long and `payload` is `len` long.
+    #[inline(always)]
     pub fn encode(self, frame: &mut [u8], payload: &[u8]) {
         copy_masked(self.key, self.write(frame), payload);
     }
 
     /// [`Self::encode`] for a payload that `fill` writes, all `len` bytes of it.
+    #[inline(always)]
     pub fn encode_with(self, frame: &mut [u8], fill: impl FnOnce(&mut [u8])) {
         let payload = self.write(frame);
         fill(payload);
@@ -135,7 +134,7 @@ impl Header {
     }
 
     /// Returns the room for the payload.
-    #[inline]
+    #[inline(always)]
     fn write(self, frame: &mut [u8]) -> &mut [u8] {
         let (head, payload) = frame.split_at_mut(frame.len() - self.len);
         let bit = |is_set, bit| if is_set { bit } else { 0 };
@@ -197,6 +196,8 @@ pub enum Event<'a> {
 pub struct Input<'a> {
     bytes: &'a [u8],
     control: ControlPayload,
+    /// An event came out of this read, so `bytes` starts with a header.
+    is_past_event: bool,
 }
 
 impl<'a> Input<'a> {
@@ -204,6 +205,7 @@ impl<'a> Input<'a> {
         Self {
             bytes,
             control: ControlPayload::new(),
+            is_past_event: false,
         }
     }
 }
@@ -282,7 +284,7 @@ impl Reader {
         self.buffer = Buffer::init();
     }
 
-    /// Takes back the allocation of a message, unless another message has started since.
+    /// Takes back the allocation of a message, unless bytes of another message are buffered.
     pub fn recycle(&mut self, payload: Payload<'_>) {
         if let Payload::Buffered(mut buffer) = payload
             && self.buffer.readable_length() == 0
@@ -297,6 +299,49 @@ impl Reader {
     /// Consumes `input` up to the end of the next event. Stops after a Close frame (§5.5.1) or an error.
     #[inline(always)]
     pub fn next<'a>(
+        &mut self,
+        input: &'a mut Input<'_>,
+    ) -> Option<Result<Event<'a>, ProtocolError>> {
+        // One held byte stays: it could be any byte of a frame that `input` starts, and is checked as a header.
+        if core::mem::replace(&mut input.is_past_event, true)
+            && !input.bytes.is_empty()
+            && (self.held.len() > 1 || matches!(self.state, State::Body(_)))
+        {
+            return self.read_event_before_unfinished_frame(input);
+        }
+        self.read_event(input)
+    }
+
+    /// A read made inside the last event ended within a frame, which waits for the frames that came before it.
+    #[cold]
+    #[inline(never)]
+    fn read_event_before_unfinished_frame<'a>(
+        &mut self,
+        input: &'a mut Input<'_>,
+    ) -> Option<Result<Event<'a>, ProtocolError>> {
+        let held = core::mem::take(&mut self.held);
+        let mut unfinished = None;
+        if let State::Body(body) = self.state {
+            self.state = State::Head((!body.fin).then_some(body.message));
+            unfinished = Some((body, core::mem::replace(&mut self.buffer, Buffer::init())));
+        }
+        let event = self.read_event(input);
+        if let State::Head(open) = self.state
+            && self.held.is_empty()
+        {
+            self.held = held;
+            if let Some((body, buffer)) = unfinished
+                && open.is_none() == body.fin
+                && self.buffer.readable_length() == 0
+            {
+                (self.state, self.buffer) = (State::Body(body), buffer);
+            }
+        }
+        event
+    }
+
+    #[inline(always)]
+    fn read_event<'a>(
         &mut self,
         input: &'a mut Input<'_>,
     ) -> Option<Result<Event<'a>, ProtocolError>> {
@@ -329,6 +374,7 @@ impl Reader {
         None
     }
 
+    /// What is too short to parse fits in `held`. Only an invalid head can be shorter than what was held.
     #[inline(always)]
     fn read_head(&mut self, open: Option<Message>, input: &mut Input<'_>) -> Option<Head> {
         let held = self.held.len();
@@ -340,13 +386,15 @@ impl Reader {
         }
         let available = bytes.len();
         let Some(head) = self.parse_head(open, &mut bytes, &mut input.control) else {
+            debug_assert_eq!(fits.len(), input.bytes.len());
             if held == 0 {
                 self.held.append_slice_assume_capacity(fits);
             }
             input.bytes = &[];
             return None;
         };
-        input.bytes = &input.bytes[available - bytes.len() - held..];
+        let consumed = (available - bytes.len()).saturating_sub(held);
+        input.bytes = input.bytes.get(consumed..).unwrap_or_default();
         self.held.clear();
         Some(head)
     }

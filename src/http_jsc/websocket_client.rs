@@ -87,7 +87,7 @@ pub struct ConnectedOptions {
 }
 
 impl ConnectedOptions {
-    fn max_payload_length(&self) -> usize {
+    fn payload_limit(&self) -> usize {
         match self.max_payload_length {
             0 => usize::MAX,
             max => max,
@@ -406,12 +406,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                     rare.libdeflate_decompressor(),
                     data,
                     &mut decompressed,
-                    self.options.max_payload_length(),
+                    self.options.payload_limit(),
                 )
                 .map_err(|err| match err {
-                    websocket_deflate::Error::InflateFailed => {
-                        ProtocolError::InvalidCompressedData.into()
-                    }
+                    websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ProtocolError::MessageTooBig.into(),
                     websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
                 }),
@@ -429,6 +427,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Data will be cloned in C++.
     fn dispatch_data(&self, data: &[u8], kind: Opcode) {
         let Some(out) = self.cpp_websocket() else {
+            self.clear_data();
             return;
         };
 
@@ -440,7 +439,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let utf16_bytes = match strings::to_utf16_alloc(data, true, false) {
                     Ok(v) => v,
                     Err(strings::ToUTF16Error::InvalidByteSequence) => {
-                        self.fail(ProtocolError::InvalidUtf8.into());
+                        self.fail(ErrorCode::InvalidUtf8);
                         return;
                     }
                     Err(strings::ToUTF16Error::OutOfMemory) => {
@@ -456,11 +455,14 @@ impl<const SSL: bool> WebSocket<SSL> {
                 out.did_receive_text(text);
             }
             Opcode::Text if !self.accepts_utf8(data) => {
-                self.fail(ProtocolError::InvalidUtf8.into());
+                self.fail(ErrorCode::InvalidUtf8);
             }
-            _ => {
+            Opcode::Text | Opcode::Binary | Opcode::Ping | Opcode::Pong => {
                 jsc::mark_binding!();
                 out.did_receive_bytes(data, kind as u8);
+            }
+            Opcode::Continue | Opcode::Close => {
+                self.fail(ProtocolError::UnexpectedOpcode(kind as u8).into());
             }
         }
     }
@@ -483,7 +485,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Fires `message` events, so never call this from inside a JS call into the WebSocket.
     pub(crate) fn deliver_initial_data(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
-        if !this.parsing.get() && this.cpp_websocket().is_some_and(|ws| !ws.is_paused()) {
+        if this.cpp_websocket().is_some_and(|ws| !ws.is_paused()) {
             this.parse_initial_data();
         }
     }
@@ -528,7 +530,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Record the peer's Close frame and echo it, unless we already sent ours.
     fn recv_close(&self, code: u16, reason: &[u8]) {
         if !self.accepts_utf8(reason) {
-            return self.fail(ProtocolError::InvalidUtf8.into());
+            return self.fail(ErrorCode::InvalidUtf8);
         }
         let text = BunString::clone_utf8(reason);
         self.close_received.set(Some((code, text.clone())));
@@ -606,6 +608,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// `flags`: bit 0 = FIN, bit 1 = compress if large enough, bit 2 = always compress.
+    #[inline(always)]
     fn send(this: ThisPtr<Self>, source: Source<'_>, op: u8, flags: u8) {
         // A write to the tunnel can fire onClose → finish() and release the refs on `this`.
         let _guard = RefPtr::from_this(this);
@@ -616,7 +619,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some(opcode) = Opcode::from_u8(op) else {
             return;
         };
-        let mut header = this.header(opcode, flags & 0b001 != 0, source.utf8_len());
+        let header = this.header(opcode, flags & 0b001 != 0, source.utf8_len());
         // Fragmented messages are never compressed.
         let may_compress = header.fin && matches!(opcode, Opcode::Text | Opcode::Binary);
         let must_compress = may_compress && flags & 0b100 != 0;
@@ -624,6 +627,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         let frame_size = header.frame_size();
         let is_small = match source {
+            // By units, so that a longer string can still be compressed.
             Source::Utf16(utf16) => utf16.len() * 4 < STACK_FRAME_SIZE,
             Source::Latin1(_) | Source::Bytes(_) => frame_size < STACK_FRAME_SIZE,
         };
@@ -634,9 +638,18 @@ impl<const SSL: bool> WebSocket<SSL> {
             return this.enqueue_encoded_bytes(frame);
         }
 
-        let compressed = (must_compress
-            || (may_compress && flags & 0b010 != 0 && header.len >= MIN_COMPRESS_SIZE))
-            .then(|| this.compress(source, header.len))
+        let compress = must_compress
+            || (may_compress && flags & 0b010 != 0 && header.len >= MIN_COMPRESS_SIZE);
+        this.enqueue_message(source, header, compress);
+        if idle {
+            this.debug_assert_socket_writable();
+            this.send_buffer_out();
+        }
+    }
+
+    fn enqueue_message(&self, source: Source<'_>, mut header: Header, compress: bool) {
+        let compressed = compress
+            .then(|| self.compress(source, header.len))
             .flatten();
         let source = match &compressed {
             Some(compressed) => {
@@ -646,18 +659,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
             None => source,
         };
-        {
-            let frame_size = header.frame_size();
-            let mut send_buffer = this.send_buffer.borrow_mut();
-            let frame = bun_core::handle_oom(send_buffer.writable_with_size(frame_size));
-            source.encode(header, frame);
-            send_buffer.update(frame_size);
-        }
-
-        if idle {
-            this.debug_assert_socket_writable();
-            this.send_buffer_out();
-        }
+        let frame_size = header.frame_size();
+        let mut send_buffer = self.send_buffer.borrow_mut();
+        let frame = bun_core::handle_oom(send_buffer.writable_with_size(frame_size));
+        source.encode(header, frame);
+        send_buffer.update(frame_size);
     }
 
     /// In debug builds, assert that the underlying socket can still be written
@@ -892,7 +898,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             reader: JsCell::new(Reader::new(ReaderOptions {
                 masked: options.is_server,
                 deflate: deflate_params.is_some(),
-                max_payload: options.max_payload_length(),
+                max_payload: options.payload_limit(),
             })),
             send_state: Cell::new(SendState::Open),
             close_received: Cell::new(None),
@@ -1425,6 +1431,8 @@ pub enum ErrorCode {
     FailedToConnect,
     Ended,
     FailedToAllocateMemory,
+    InvalidCompressedData,
+    InvalidUtf8,
     TlsHandshakeFailed,
     // Proxy error codes
     ProxyConnectFailed,
@@ -1477,11 +1485,11 @@ impl ErrorCode {
             Self::FailedToAllocateMemory        => ("Failed to allocate memory",                    "",                                       None),
             Protocol(ControlFrameIsFragmented)  => ("Protocol error - control frame is fragmented", "WS_ERR_EXPECTED_FIN",                    Some(1002)),
             Protocol(InvalidControlLength(_))   => ("Protocol error - invalid control frame",       "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH",  Some(1002)),
-            Protocol(InvalidCompressedData)     => ("Invalid compressed data",                      "Z_DATA_ERROR",                           Some(1007)),
+            Self::InvalidCompressedData         => ("Invalid compressed data",                      "Z_DATA_ERROR",                           Some(1007)),
             Protocol(UnexpectedMask)            => ("Protocol error - unexpected mask from server", "WS_ERR_UNEXPECTED_MASK",                 Some(1002)),
             Protocol(ReservedOpcode(_))         => ("Protocol error - unsupported control frame",   "WS_ERR_INVALID_OPCODE",                  Some(1002)),
             Protocol(UnexpectedOpcode(_))       => ("Protocol error - unexpected opcode",           "WS_ERR_INVALID_OPCODE",                  Some(1002)),
-            Protocol(InvalidUtf8)               => ("Server sent invalid UTF8",                     "WS_ERR_INVALID_UTF8",                    Some(1007)),
+            Self::InvalidUtf8                   => ("Server sent invalid UTF8",                     "WS_ERR_INVALID_UTF8",                    Some(1007)),
             Self::TlsHandshakeFailed            => ("TLS handshake failed",                         "",                                       None),
             Protocol(MessageTooBig)             => ("Message too big",                              "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH",      Some(1009)),
             Self::ProxyConnectFailed            => ("Proxy connection failed",                      "",                                       None),
@@ -1537,6 +1545,7 @@ impl Source<'_> {
         }
     }
 
+    #[inline(always)]
     fn encode(self, header: Header, frame: &mut [u8]) {
         match self {
             Self::Utf16(utf16) => header.encode_with(frame, |payload| {

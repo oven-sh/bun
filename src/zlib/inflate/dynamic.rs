@@ -60,6 +60,11 @@ pub(super) struct DynamicCodes {
 }
 
 impl DynamicCodes {
+    /// Between blocks.
+    pub(super) fn free_memory(&mut self) {
+        (self.tables, self.coded) = (None, Vec::new());
+    }
+
     pub(super) fn tables(&self) -> Option<&Tables> {
         self.tables.as_deref()
     }

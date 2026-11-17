@@ -124,7 +124,7 @@ impl PerMessageDeflate {
 
         inflate_message(&mut self.inflater, in_buf, out, max_len)?;
         if self.decompress_no_context_takeover {
-            self.inflater.reset();
+            self.inflater.reset_and_wait();
         }
         Ok(())
     }

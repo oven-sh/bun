@@ -161,7 +161,7 @@ impl Inflater {
             max_distance: MAX_DISTANCE,
             history: 0,
             pending_distance: 0,
-            window: Window::default(),
+            window: Window::new(MAX_DISTANCE),
             run: None,
             dynamic: DynamicCodes::default(),
         }
@@ -174,6 +174,7 @@ impl Inflater {
         }
         Ok(Self {
             window_bits,
+            window: Window::new(1 << window_bits),
             ..Self::new(container)
         })
     }
@@ -213,6 +214,12 @@ impl Inflater {
         self.pending_distance = 0;
         self.run = None;
         self.window.clear();
+    }
+
+    /// The same, if that is going to take a while.
+    pub fn reset_and_wait(&mut self) {
+        self.reset();
+        self.save_memory();
     }
 
     /// After [`Status::NeedsDictionary`], or in front of a raw stream.
@@ -270,6 +277,20 @@ impl Inflater {
         1 << self.window_bits
     }
 
+    /// How much of what has been handed out is still needed.
+    fn reach(&self) -> usize {
+        self.history.min(self.max_distance)
+    }
+
+    /// Whoever asks for a small window has many streams that wait between blocks.
+    #[inline]
+    fn save_memory(&mut self) {
+        if self.window_bits < MAX_WINDOW_BITS {
+            self.window.shrink(self.reach());
+            self.dynamic.free_memory();
+        }
+    }
+
     /// If the output is full, the next step may copy from `kept_if_full` bytes in front of its own.
     fn step(
         &mut self,
@@ -291,6 +312,9 @@ impl Inflater {
             self.history = self.history.saturating_add(out.buf.len()).min(kept);
             if !matches!(self.state, State::Checksum | State::Length | State::Done) {
                 self.record(&mut out, kept)?;
+            }
+            if let (Status::NeedsInput, State::BlockHeader) = (status, self.state) {
+                self.save_memory();
             }
             Ok(status)
         });
@@ -359,7 +383,7 @@ impl Inflater {
         }
 
         if self.run.is_none() {
-            self.window.resume(self.history.min(self.max_distance))?;
+            self.window.resume(self.reach())?;
         }
         if self.window.pending() != 0 {
             if out.room() != 0 && self.pending_distance > self.history {

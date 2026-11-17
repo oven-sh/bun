@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::format::MAX_WINDOW_BITS;
+use crate::vec;
 
 pub(super) const MAX_DISTANCE: usize = 1 << MAX_WINDOW_BITS;
 /// How far past `end` a few literals and a match may write, and more, so that a lap has whole cache lines.
@@ -13,8 +14,11 @@ const CARRIED: usize = 320;
 const LAP_END: usize = CARRIED + LAP;
 const FULL_LEN: usize = LAP_END + SLACK;
 const MIN_GROWTH: usize = 256;
+/// In front of what is within reach, before that is moved to the start.
+const MAX_WASTED: usize = 4096;
+/// With the slack, so that it adds up to sizes that mimalloc has.
+const SHORT_MESSAGE_ROOM: usize = 2048;
 
-#[derive(Default)]
 pub(super) struct Window {
     /// Only as long as it has had to be.
     pub(super) bytes: Vec<u8>,
@@ -24,9 +28,22 @@ pub(super) struct Window {
     handed_out: usize,
     /// What `grow()` has added since `resume()`.
     grown: usize,
+    /// The capacity, unless a long message has needed all.
+    usual_capacity: usize,
 }
 
 impl Window {
+    pub(super) fn new(size: usize) -> Self {
+        let for_short_messages = size + size.min(MAX_WASTED) + SHORT_MESSAGE_ROOM;
+        Self {
+            bytes: Vec::new(),
+            end: 0,
+            handed_out: 0,
+            grown: 0,
+            usual_capacity: for_short_messages.min(FULL_LEN),
+        }
+    }
+
     pub(super) fn clear(&mut self) {
         self.end = 0;
         self.handed_out = 0;
@@ -98,9 +115,14 @@ impl Window {
         Ok(())
     }
 
+    fn slide_by_lines(&mut self, max: usize) -> Result<()> {
+        // https://sourceware.org/bugzilla/show_bug.cgi?id=30994
+        self.slide(max / 64 * 64)
+    }
+
     /// The last one is over, and nothing is pending.
     pub(super) fn start_lap(&mut self) -> Result<()> {
-        debug_assert_eq!(self.pending(), 0);
+        debug_assert_eq!((self.pending(), self.bytes.capacity()), (0, FULL_LEN));
         self.bytes.resize(FULL_LEN, 0);
         self.slide(LAP)
     }
@@ -108,7 +130,6 @@ impl Window {
     /// Only `reach` of the bytes that have been handed out are still needed, and few can do with little memory.
     #[inline]
     pub(super) fn resume(&mut self, reach: usize) -> Result<()> {
-        const MAX_WASTED: usize = 4096;
         const { assert!(MAX_DISTANCE + MAX_WASTED > FULL_LEN) };
         self.grown = 0;
         // What waits for room is long, and better off in laps.
@@ -116,20 +137,50 @@ impl Window {
             && self.handed_out > reach + reach.min(MAX_WASTED)
             && self.bytes.len() < FULL_LEN
         {
-            // By whole cache lines: https://sourceware.org/bugzilla/show_bug.cgi?id=30994
-            self.slide((self.handed_out - reach) / 64 * 64)?;
+            self.slide_by_lines(self.handed_out - reach)?;
         }
         Ok(())
+    }
+
+    /// Gives back what a long message has taken, but for the last `reach` bytes. Nothing is pending.
+    pub(super) fn shrink(&mut self, reach: usize) {
+        debug_assert_eq!(self.pending(), 0);
+        if self.end == 0 {
+            self.bytes = Vec::new();
+        } else if self.bytes.capacity() > self.usual_capacity
+            && let Ok(mut kept) = vec::with_room(self.usual_capacity)
+        {
+            let in_last_lap = LAP - reach.saturating_sub(self.end)..LAP;
+            for part in [in_last_lap, self.end.saturating_sub(reach)..self.end] {
+                kept.extend_from_slice(self.bytes.get(part).unwrap_or_default());
+            }
+            (self.end, self.handed_out) = (kept.len(), kept.len());
+            self.bytes = kept;
+        }
+    }
+
+    fn capacity_for(&self, len: usize) -> usize {
+        if len <= self.usual_capacity {
+            self.usual_capacity
+        } else {
+            FULL_LEN
+        }
+    }
+
+    fn make_room(&mut self, len: usize) -> Result<()> {
+        let additional = self.capacity_for(len).saturating_sub(self.bytes.len());
+        Ok(self.bytes.try_reserve_exact(additional)?)
     }
 
     /// Moves `limit()` past `end`, by about `wanted` bytes. The lap is not over.
     #[cold]
     pub(super) fn grow(&mut self, wanted: usize) -> Result<()> {
-        self.bytes.try_reserve_exact(FULL_LEN - self.bytes.len())?;
         let growth = wanted.max(self.grown).clamp(MIN_GROWTH, LAP);
         self.grown += growth;
-        self.bytes
-            .resize((self.end + growth + SLACK).min(FULL_LEN), 0);
+        let max_len = self.capacity_for(self.end + MIN_GROWTH + SLACK);
+        let len = (self.end + growth + SLACK).min(max_len);
+        self.make_room(len)?;
+        self.bytes.resize(len, 0);
         Ok(())
     }
 
@@ -138,6 +189,10 @@ impl Window {
         let mut bytes = bytes.split_at(bytes.len().saturating_sub(max)).1;
         if bytes.len() == max {
             self.clear();
+        } else if self.end + bytes.len() > self.usual_capacity.max(max)
+            && self.bytes.len() < FULL_LEN
+        {
+            self.slide_by_lines(self.end + bytes.len() - max)?;
         }
         while !bytes.is_empty() {
             if self.is_lap_over() {
@@ -148,7 +203,7 @@ impl Window {
             if let Some(room) = self.bytes.get_mut(self.end..self.end + piece.len()) {
                 room.copy_from_slice(piece);
             } else {
-                self.bytes.try_reserve_exact(FULL_LEN - self.bytes.len())?;
+                self.make_room(self.end + piece.len())?;
                 self.bytes.truncate(self.end);
                 self.bytes.extend_from_slice(piece);
             }
@@ -165,7 +220,7 @@ mod tests {
 
     #[test]
     fn a_short_reach_takes_little_memory() {
-        let mut window = Window::default();
+        let mut window = Window::new(MAX_DISTANCE);
         for byte in 0..=u8::MAX {
             assert_eq!(window.resume(1000), Ok(()));
             assert_eq!(window.record(&[byte; 300], 1000), Ok(()));
@@ -173,5 +228,21 @@ mod tests {
         assert!(window.bytes.len() <= 2300);
         let reach = window.bytes.get(window.end - 901..window.end - 899);
         assert_eq!(reach, Some(&[252, 253][..]));
+    }
+
+    #[test]
+    fn a_small_window_gives_back_what_a_long_message_took() {
+        let bytes: [u8; 40_000] = core::array::from_fn(|at| (at % 251) as u8);
+        // In the first lap, just behind the start of the second, and further into it.
+        for len in [9000, LAP_END + 100, 40_000] {
+            let mut window = Window::new(1024);
+            for piece in bytes.split_at(len).0.chunks(1000) {
+                assert_eq!(window.record(piece, MAX_DISTANCE), Ok(()));
+            }
+            assert_eq!(window.bytes.capacity(), FULL_LEN);
+            window.shrink(1024);
+            assert!(window.bytes.capacity() < 5000);
+            assert_eq!(bytes.get(len - 1024..len), window.bytes.get(..window.end));
+        }
     }
 }

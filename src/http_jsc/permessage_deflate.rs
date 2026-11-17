@@ -47,7 +47,7 @@ pub(crate) fn inflate_message(
             Ok(inflate::Status::NeedsInput) => {}
             // RFC 7692 §7.2.3.4: a message may end with a final block. The next one starts another stream.
             Ok(inflate::Status::StreamEnd) => {
-                inflater.reset();
+                inflater.reset_and_wait();
                 break;
             }
             Err(bun_zlib::Error::Alloc(_)) => return Err(InflateError::OutOfMemory),

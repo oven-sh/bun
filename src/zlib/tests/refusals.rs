@@ -13,6 +13,7 @@ use crate::writer::Writer;
 thread_local! {
     /// How many allocations are granted, and how many are refused after them.
     static GRANTS: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
+    static BYTES_IN_USE: Cell<usize> = const { Cell::new(0) };
 }
 
 struct Refusing;
@@ -28,11 +29,13 @@ unsafe impl GlobalAlloc for Refusing {
             Some((grants, refusals)) => GRANTS.set(Some((grants - 1, refusals))),
             None => {}
         }
+        BYTES_IN_USE.update(|bytes| bytes.wrapping_add(layout.size()));
         // SAFETY: the caller's promises are passed on.
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        BYTES_IN_USE.update(|bytes| bytes.wrapping_sub(layout.size()));
         // SAFETY: as above.
         unsafe { System.dealloc(pointer, layout) }
     }
@@ -176,4 +179,118 @@ fn a_vec_that_cannot_be_doubled_grows_by_an_eighth() {
         assert_eq!(out.capacity(), capacity);
         assert!(out == vec![7; capacity.min(94_000)]);
     }
+}
+
+/// Of many lengths, each with a flush behind it.
+fn messages(window_bits: u8) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let input = Random::new(3).mixed(150_000, 1 << window_bits);
+    let options = options(6, 0, window_bits, 8);
+    let mut deflater = Deflater::new(deflate::Container::Raw, options).unwrap();
+    let mut rest = &input[..];
+    let messages = [100, 3000, 33_500, 40, 20_000, 700, 70_000, 5, 9000, 13_655].map(|len| {
+        let (mut message, piece) = (Vec::new(), rest.split_off(..len).unwrap());
+        deflater
+            .deflate_to_vec(piece, &mut message, Flush::Sync)
+            .unwrap();
+        message
+    });
+    (input, messages.into())
+}
+
+#[test]
+fn a_small_window_takes_little_memory_between_messages() {
+    for (window_bits, piece) in (8..15).flat_map(|bits| [(bits, usize::MAX), (bits, 50)]) {
+        let (input, messages) = messages(window_bits.max(9));
+        let mut out = Vec::with_capacity(input.len() + 1);
+        let before = BYTES_IN_USE.get();
+        let mut inflater = Inflater::with_window_bits(Container::Raw, window_bits).unwrap();
+        let max = (1 << window_bits) + 6200;
+        for message in &messages {
+            for mut piece in message.chunks(piece) {
+                let status = inflater.inflate_to_vec(&mut piece, &mut out, usize::MAX);
+                assert_eq!(status, Ok(Status::NeedsInput));
+            }
+            assert!(BYTES_IN_USE.get() - before < max);
+        }
+        assert!(out == input);
+
+        out.clear();
+        let status = inflater.inflate_to_vec(&mut &raw(&input, 6, 8)[..], &mut out, 50_000);
+        assert_eq!(status, Ok(Status::NeedsOutput));
+        inflater.reset_and_wait();
+        assert_eq!(BYTES_IN_USE.get(), before);
+    }
+}
+
+#[test]
+fn short_or_stored_messages_do_not_take_the_memory_for_long_ones() {
+    for (window_bits, level, len, piece, max) in [
+        (9, 0, 5000, 450, 4000),
+        (9, 1, 1500, 9999, 4000),
+        (14, 0, 60_000, 8000, 23_000),
+    ] {
+        let stream = raw(&Random::new(4).bytes(len), level, 8);
+        let mut inflater = Inflater::with_window_bits(Container::Raw, window_bits).unwrap();
+        let mut out = Vec::with_capacity(99_999);
+        let before = BYTES_IN_USE.get();
+        inflater.set_dictionary(&[7; 500]).unwrap();
+        for mut piece in stream[..stream.len() - 1].chunks(piece) {
+            let status = inflater.inflate_to_vec(&mut piece, &mut out, usize::MAX);
+            assert_eq!(status, Ok(Status::NeedsInput));
+            assert!(BYTES_IN_USE.get() - before < max);
+        }
+    }
+}
+
+#[test]
+fn the_largest_window_keeps_its_memory() {
+    let (_, messages) = messages(15);
+    let (mut inflater, mut out) = (Inflater::new(Container::Raw), Vec::with_capacity(150_001));
+    for grants in [None, Some((0, usize::MAX))] {
+        GRANTS.set(grants);
+        let is_done = messages.iter().all(|message| {
+            inflater.inflate_to_vec(&mut &message[..], &mut out, usize::MAX)
+                == Ok(Status::NeedsInput)
+        });
+        GRANTS.set(None);
+        assert!(is_done);
+        inflater.reset_and_wait();
+        out.clear();
+    }
+}
+
+#[test]
+fn stored_bytes_join_what_a_small_window_has_from_its_last_lap() {
+    for len in (33_000..34_200).step_by(37) {
+        let mut first = Writer::default();
+        first.fixed(false).literals(b"abcdefg");
+        (0..len / 200).for_each(|_| _ = first.copy(200, 7));
+        first.literals(&Random::new(5).bytes(len % 200)).end_block();
+        let stream = first.stored(false, &[9; 300]).fixed(true).copy(258, 512);
+        let stream = stream.end_block().finish();
+        let expected = crate::plain::inflate(&stream, &[]).bytes;
+        let mut inflater = Inflater::with_window_bits(Container::Raw, 9).unwrap();
+        let (mut out, (head, tail)) = (Vec::new(), stream.split_at(stream.len() - 100));
+        for mut piece in [head, tail] {
+            inflater
+                .inflate_to_vec(&mut piece, &mut out, usize::MAX)
+                .unwrap();
+        }
+        inflater.reset_and_wait();
+        assert!(out == expected, "{len}");
+        let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
+        assert_eq!(status, Ok(Status::StreamEnd));
+    }
+}
+
+#[test]
+fn refused_memory_is_an_error_between_messages_or_not_needed() {
+    let (_, messages) = messages(10);
+    refuse_each_allocation(|| {
+        let (mut inflater, mut out) = (Inflater::with_window_bits(Container::Raw, 10)?, Vec::new());
+        for message in &messages {
+            inflater.inflate_to_vec(&mut &message[..], &mut out, usize::MAX)?;
+        }
+        Ok(out)
+    });
 }

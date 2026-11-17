@@ -424,6 +424,7 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_opaque",
+ "enum-map",
  "libc",
  "strum",
 ]
@@ -521,6 +522,15 @@ dependencies = [
  "const_format",
  "libc",
  "scopeguard",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_cron"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
  "thiserror",
 ]
 
@@ -1617,6 +1627,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
+ "bun_cron",
  "bun_csrf",
  "bun_css",
  "bun_css_jsc",
@@ -1682,6 +1693,7 @@ dependencies = [
  "bun_sys",
  "bun_sys_jsc",
  "bun_tcc_sys",
+ "bun_test_schedule",
  "bun_text_diff",
  "bun_threading",
  "bun_trim",
@@ -1960,9 +1972,12 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_alloc",
+ "bun_base64",
  "bun_boringssl",
  "bun_collections",
  "bun_core",
+ "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
  "strum",
@@ -1975,9 +1990,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_analytics",
- "bun_base64",
  "bun_boringssl",
  "bun_boringssl_sys",
  "bun_collections",
@@ -1987,12 +2000,9 @@ dependencies = [
  "bun_io",
  "bun_jsc",
  "bun_ptr",
- "bun_sha_hmac",
  "bun_sql",
  "bun_uws",
  "scopeguard",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -2088,6 +2098,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_test_schedule"
+version = "0.0.0"
+
+[[package]]
 name = "bun_text_diff"
 version = "0.0.0"
 dependencies = [
@@ -2177,7 +2191,7 @@ dependencies = [
 name = "bun_valkey"
 version = "0.0.0"
 dependencies = [
- "bstr",
+ "bun_collections",
  "bun_core",
  "strum",
 ]

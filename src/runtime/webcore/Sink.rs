@@ -11,8 +11,9 @@ use crate::generated_bindgen::sink::{
 use crate::webcore::SinkHandle;
 use crate::webcore::fetch::FetchRequestBodySink;
 use crate::webcore::file_sink::FileSink;
+use crate::webcore::s3::multipart::NetworkSink;
 use crate::webcore::streams::{
-    self, HTTPResponseSink, HTTPSResponseSink, NetworkSink, Result::Temporary, SourceHandle,
+    self, HTTPResponseSink, HTTPSResponseSink, Result::Temporary, SourceHandle,
 };
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload, JsScope, JsWrapper};
 use bun_jsc::{
@@ -554,9 +555,7 @@ impl AnyControlledSink {
                 Self::HTTPSResponseSink(sink) => {
                     SinkHandle::HttpsResponse(BackRef::from_raw_mut(sink.as_ptr()))
                 }
-                Self::NetworkSink(sink) => {
-                    SinkHandle::S3Upload(BackRef::from_raw_mut(sink.as_ptr()))
-                }
+                Self::NetworkSink(sink) => SinkHandle::S3Upload(BackRef::from_raw(sink.as_ptr())),
                 Self::FetchRequestBodySink(sink) => {
                     SinkHandle::FetchRequestBody(BackRef::from_raw_mut(sink.as_ptr()))
                 }

@@ -6360,13 +6360,16 @@ impl NodeFS {
         )))
     }
 
-    pub(crate) fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
+    pub(crate) fn mkdtemp(
+        &mut self,
+        args: &args::MkdirTemp,
+        flavor: Flavor,
+    ) -> Maybe<ret::Mkdtemp> {
         if let Some(error) =
             creation_in_executable(args.prefix.slice(), sys::Tag::mkdtemp, E::EROFS)
         {
             return Err(error);
         }
-        let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();
         // Node rejects an empty prefix with EINVAL (its snprintf builds a
         // five-X template here); otherwise we'd create a random dir in cwd.
@@ -6378,24 +6381,24 @@ impl NodeFS {
                 ..Default::default()
             });
         }
-        let len = prefix_slice.len().min(prefix_buf.len().saturating_sub(7));
-        prefix_buf[..len].copy_from_slice(&prefix_slice[..len]);
-        prefix_buf[len..len + 6].copy_from_slice(b"XXXXXX");
-        prefix_buf[len + 6] = 0;
+        let template = || [prefix_slice, b"XXXXXX\0"].concat();
 
         #[cfg(windows)]
         {
+            let _ = flavor;
+            let template = template();
             let mut req = uv::fs_t::uninitialized();
+            // SAFETY: `template` is NUL-terminated. Without a callback, the request is over when this returns.
             let rc = unsafe {
                 uv::uv_fs_mkdtemp(
                     bun_io::Loop::get(),
                     &raw mut req,
-                    prefix_buf.as_ptr().cast(),
+                    template.as_ptr().cast(),
                     None,
                 )
             };
             if let Some(err) = rc.to_error(sys::Tag::mkdtemp) {
-                return Err(err.with_path(&prefix_buf[..len + 6]));
+                return Err(err.with_path(ZStr::from_slice_with_nul(&template).as_bytes()));
             }
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
             // UTF-8 string owned by the request; dropping it runs
@@ -6405,7 +6408,14 @@ impl NodeFS {
         }
 
         #[cfg(not(windows))]
-        sys::mkdtemp(&mut prefix_buf[..len + 7]).map(|name| encode_path_result(name, args.encoding))
+        match sys::mkdtemp(&mut template()) {
+            Ok(name) => Ok(encode_path_result(name, args.encoding)),
+            // As Node, whose async forms name what libc tried.
+            Err(err) if flavor == Flavor::Sync => {
+                Err(err.with_path(ZStr::from_slice_with_nul(&template()).as_bytes()))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub(crate) fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
@@ -8074,8 +8084,12 @@ impl NodeFS {
             }
             return Ok(());
         }
-        Syscall::rmdir(args.path.slice_z(&mut self.sync_error_buf))
-            .map_err(|err| err.with_path_and_syscall(args.path.slice(), sys::Tag::rmdir))
+        #[cfg(windows)]
+        use Syscall::rmdir;
+        #[cfg(not(windows))]
+        use sys::posix::rmdir;
+        rmdir(args.path.slice_z(&mut self.sync_error_buf))
+            .map_err(|err| err.with_path(args.path.slice()))
     }
 
     pub(crate) fn rm(&mut self, args: &args::Rm, flavor: Flavor) -> Maybe<ret::Rm> {

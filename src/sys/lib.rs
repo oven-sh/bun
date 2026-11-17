@@ -7463,6 +7463,20 @@ pub mod posix {
         Ok(())
     }
 
+    // ── rmdir ──
+
+    /// The call that libuv makes. [`crate::rmdir`] is `unlinkat`.
+    #[cfg(unix)]
+    pub fn rmdir(path: &bun_core::ZStr) -> super::Maybe<()> {
+        // SAFETY: `path` is NUL-terminated.
+        while unsafe { libc::rmdir(path.as_ptr()) } < 0 {
+            if super::last_errno() != libc::EINTR {
+                return Err(super::err_with_path(super::Tag::rmdir, path));
+            }
+        }
+        Ok(())
+    }
+
     // ── rlimit ──
     #[cfg(unix)]
     #[repr(C)]

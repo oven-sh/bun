@@ -15,6 +15,10 @@ impl Expect {
         if m.not() {
             return fail!(m, "Expected: not <green>{}<r>\n", m.show(expected));
         }
+        // The two comparisons below only choose the message.
+        if let Some(unexplained) = m.unexplained() {
+            return Err(unexplained);
+        }
         if received.jest_deep_equals(expected, m.global)? || received.jest_strict_deep_equals(expected, m.global)? {
             if self.custom_label.is_empty() {
                 return fail!(m, "Expected: <green>{}<r>\nReceived: serializes to the same string\n", m.show(expected));

@@ -241,6 +241,12 @@ impl<'a> Matcher<'a> {
         Self { signed_not, ..*self }
     }
 
+    /// `Some` in an attempt that `expect.poll()` retries: the failure, thrown without a message.
+    #[cold]
+    pub(super) fn unexplained(&self) -> Option<JsError> {
+        self.call.retried_wait().map(|wait| self.global.throw_value(wait))
+    }
+
     /// Throws `body` under the label or the signature.
     #[cold]
     #[optimize(size)]
@@ -261,6 +267,9 @@ impl<'a> Matcher<'a> {
     #[cold]
     #[optimize(size)]
     fn fail_under(&self, signature: &dyn fmt::Display, body: fmt::Arguments<'_>) -> JsError {
+        if let Some(unexplained) = self.unexplained() {
+            return unexplained;
+        }
         let mut message = String::with_capacity(256);
         let rendered = write!(message, "{}\n\n{body}", self.call.label_or(signature));
         // If printing a value threw (a getter, a Proxy trap), propagate that error like Jest does.
@@ -304,7 +313,25 @@ impl<'a> Matcher<'a> {
     #[cold]
     #[optimize(size)]
     pub(super) fn fail_diff(&self, expected: JSValue, received: JSValue) -> Verdict {
-        let diff = DiffFormatter::new(self.global, received, expected, self.not())?;
+        let diff = self.diff(expected, received, self.not())?;
         Err(self.fail(format_args!("{diff}\n")))
+    }
+
+    /// For a failure that has a heading and never has `.not`.
+    #[cold]
+    #[optimize(size)]
+    pub(super) fn fail_diff_under(&self, heading: fmt::Arguments<'_>, expected: JSValue, received: JSValue) -> Verdict {
+        let diff = self.diff(expected, received, false)?;
+        Err(self.fail(format_args!("{heading}{diff}\n")))
+    }
+
+    /// Prints both values in full. An attempt that `expect.poll()` retries fails before that.
+    #[cold]
+    #[optimize(size)]
+    fn diff(&self, expected: JSValue, received: JSValue, not: bool) -> JsResult<DiffFormatter<'static>> {
+        if let Some(unexplained) = self.unexplained() {
+            return Err(unexplained);
+        }
+        DiffFormatter::new(self.global, received, expected, not)
     }
 }

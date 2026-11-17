@@ -1243,7 +1243,8 @@ impl Expect {
 
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
-    /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
+    /// With a `call` (symmetric matching), throws an exception in JS if the matcher result didn't result in a pass.
+    /// Throws in both cases if the matcher result is invalid.
     #[optimize(size)]
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
@@ -1254,7 +1255,7 @@ impl Expect {
         args: &[JSValue],
         flags: Flags,
         parent: Option<&RefPtr<bun_test::RefData>>,
-        silent: bool,
+        call: Option<&MatcherCall<'_>>,
     ) -> JsResult<bool> {
         // call the custom matcher implementation
         let what = args.first().copied().unwrap_or(JSValue::UNDEFINED);
@@ -1311,9 +1312,13 @@ impl Expect {
         }
 
         if flags.not() { pass = !pass; }
-        if pass || silent { return Ok(pass); }
+        let Some(call) = call.filter(|_| !pass) else { return Ok(pass) };
 
         // handle failure
+        // Before `message()`: nothing reads it in an attempt that `expect.poll()` retries.
+        if let Some(wait) = call.retried_wait() {
+            return Err(global_this.throw_value(wait));
+        }
         if message.is_callable() {
             // Pass the global object itself as `this`.
             message = message.call_with_global_this(global_this, &[])?;
@@ -1384,7 +1389,7 @@ impl Expect {
 
         let args = call.arguments;
         Self::with_matcher_args(value, args.len(), |index| Ok(args[index]), |matcher_args| {
-            Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, matcher_args, call.flags, expect.parent.as_ref(), false)
+            Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, matcher_args, call.flags, expect.parent.as_ref(), Some(call))
         })?;
 
         Ok(call.this)
@@ -1861,7 +1866,7 @@ impl ExpectCustomAsymmetricMatcher {
         // prepare the args array as `[received, ...captured_args]`
         let args_count = captured_args.get_length(global_this)? as usize;
         Expect::with_matcher_args(received, args_count, |index| captured_args.get_index(global_this, index as u32), |matcher_args| {
-            Expect::execute_custom_matcher(global_this, &bun_core::String::EMPTY, &matcher_name, matcher_fn, this_value, matcher_args, self.flags, None, true)
+            Expect::execute_custom_matcher(global_this, &bun_core::String::EMPTY, &matcher_name, matcher_fn, this_value, matcher_args, self.flags, None, None)
         })
     }
 

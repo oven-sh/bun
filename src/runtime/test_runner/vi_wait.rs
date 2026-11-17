@@ -10,6 +10,7 @@ use bun_jsc::{
 };
 
 use super::expect::expect_deferred::RunningEntry;
+use super::expect::js as expect_js;
 use super::jest::Jest;
 use super::timers::fake_timers::{self, Stop};
 use crate::generated_bindgen::vi_wait as generated;
@@ -39,6 +40,9 @@ pub(crate) struct ViWait {
     interval_ms: u32,
     deadline: Cell<Timespec>,
     callback_pending: Cell<bool>,
+    /// While the callback of a `Kind::Poll` runs in an attempt that another attempt follows. A matcher that fails
+    /// then doesn't say why: it throws the wait.
+    retried: Cell<bool>,
     /// The wait is dropped once the test file that started it ends.
     test_file: Option<u32>,
     /// For `Kind::Poll`, the wait is also dropped once this test ends.
@@ -140,12 +144,15 @@ impl ViWait {
             interval_ms,
             timeout_ms,
             None,
+            None,
         )
     }
 
+    /// `expect` is the `Expect` that the matcher of each attempt runs on.
     pub(crate) fn poll_matcher(
         global: &JSGlobalObject,
         attempt: JSValue,
+        expect: JSValue,
         interval_ms: u32,
         timeout_ms: u32,
         test: Option<RunningEntry>,
@@ -157,6 +164,7 @@ impl ViWait {
             interval_ms,
             timeout_ms,
             test,
+            Some(expect),
         )
     }
 
@@ -168,6 +176,7 @@ impl ViWait {
         interval_ms: u32,
         timeout_ms: u32,
         test: Option<RunningEntry>,
+        attempts_expect: Option<JSValue>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let promise = JSPromise::create(global).to_js();
@@ -176,6 +185,7 @@ impl ViWait {
             interval_ms,
             deadline: Cell::new(Timespec::EPOCH),
             callback_pending: Cell::new(false),
+            retried: Cell::new(false),
             test_file: running_test_file(),
             test,
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::ViWait),
@@ -197,12 +207,17 @@ impl ViWait {
         );
 
         let this = ViWait::from_js(&this_value).expect("to_js returns the wrapper");
+        if let Some(expect) = attempts_expect {
+            expect_js::result_value_set_cached(expect, global, this_value);
+        }
         this.root.set(Strong::create(this_value, global));
         this.keep_alive.ref_(bun_io::js_vm_ctx());
         // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
         unsafe { AbortHandle::arm_owner(this.as_ptr(), cx.context()) };
 
-        if let Err(err) = this.poll(global, this_value, true) {
+        // The deadline starts after the first attempt, and so does the interval.
+        let retried = interval_ms.max(1) < timeout_ms;
+        if let Err(err) = this.poll(global, this_value, true, retried) {
             match thrown_value(global, err) {
                 Ok(error) => this.settle(global, this_value, Err(error))?,
                 Err(err) => {
@@ -214,7 +229,7 @@ impl ViWait {
         if this.is_pending() {
             let now = Timespec::now(TimespecMockMode::ForceRealTime);
             this.deadline.set(now.add_ms(i64::from(timeout_ms)));
-            this.arm(&now);
+            timer_all().update(&raw const this.timer, &this.next_fire(&now).0);
         }
         Ok(promise)
     }
@@ -223,15 +238,20 @@ impl ViWait {
         self.root.is_some()
     }
 
-    fn arm(&self, now: &Timespec) {
+    /// When the timer fires after an attempt that starts at `now`, and whether it fires for another attempt.
+    fn next_fire(&self, now: &Timespec) -> (Timespec, bool) {
         let next_poll = now.add_ms(i64::from(self.interval_ms.max(1)));
         let deadline = self.deadline.get();
-        let next = if next_poll.order(&deadline).is_lt() {
-            next_poll
+        if next_poll.order(&deadline).is_lt() {
+            (next_poll, true)
         } else {
-            deadline
-        };
-        timer_all().update(&raw const self.timer, &next);
+            (deadline, false)
+        }
+    }
+
+    /// Whether `wait` is a wait whose callback runs now, in an attempt of `expect.poll()` that another attempt follows.
+    pub(crate) fn is_retried(wait: JSValue) -> bool {
+        ViWait::from_js(&wait).is_some_and(|wait| wait.retried.get())
     }
 
     /// Idempotent. The wrapper may be collected afterwards.
@@ -295,11 +315,16 @@ impl ViWait {
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
+        retried: bool,
     ) -> JsResult<Option<JSValue>> {
         let Some(callback) = js::callback_get_cached(this_value) else {
             return Ok(None);
         };
-        let result = callback.call(global, JSValue::UNDEFINED, &[])?;
+        // Only for a matcher that this call reaches: one that runs after a promise can be in the last attempt.
+        self.retried.set(retried);
+        let result = callback.call(global, JSValue::UNDEFINED, &[]);
+        self.retried.set(false);
+        let result = result?;
         if !result.is_object() || result.is_callable() {
             return Ok(Some(result));
         }
@@ -331,7 +356,13 @@ impl ViWait {
     }
 
     #[optimize(size)]
-    fn poll(&self, global: &JSGlobalObject, this_value: JSValue, is_first: bool) -> JsResult<()> {
+    fn poll(
+        &self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        is_first: bool,
+        retried: bool,
+    ) -> JsResult<()> {
         // As in Vitest, `waitFor` and `waitUntil` advance a fake clock on every tick of theirs, and `expect.poll` between two attempts.
         if self.kind != Kind::Poll || !(is_first || self.callback_pending.get()) {
             match fake_timers::advance_by_ms(global, f64::from(self.interval_ms)) {
@@ -345,7 +376,7 @@ impl ViWait {
         if self.callback_pending.get() || !self.is_pending() {
             return Ok(());
         }
-        match self.run_callback(global, this_value) {
+        match self.run_callback(global, this_value, retried) {
             Ok(Some(value)) => self.on_value(global, this_value, value),
             Ok(None) => Ok(()),
             Err(err) => self.on_error(global, this_value, thrown_value(global, err)?),
@@ -369,7 +400,9 @@ impl ViWait {
 
     fn time_out(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
         let timeout_error = js::timeout_error_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
-        let Some(error) = js::last_error_get_cached(this_value).filter(|error| error.to_boolean())
+        // The wait itself is what a matcher threw in an attempt that was retried. The attempt after it hasn't settled.
+        let Some(error) = js::last_error_get_cached(this_value)
+            .filter(|&error| error != this_value && error.to_boolean())
         else {
             return self.settle(global, this_value, Err(timeout_error));
         };
@@ -402,13 +435,14 @@ impl ViWait {
             .abort_handle
             .context_id()
             .map(|context| vm.enter_context(context));
+        let (next, retried) = self.next_fire(now);
         let result = if self.timer.next.get().order(&self.deadline.get()).is_lt() {
-            self.poll(global, this_value, false)
+            self.poll(global, this_value, false, retried)
         } else {
             self.time_out(global, this_value)
         };
         if self.is_pending() {
-            self.arm(now);
+            timer_all().update(&raw const self.timer, &next);
         }
         this_value.ensure_still_alive();
         result

@@ -82,6 +82,14 @@ impl<'a> MatcherCall<'a> {
     pub(crate) fn payload_ref(&self) -> &'a Expect {
         self.expect
     }
+
+    /// `Some` while an attempt of `expect.poll()` that another attempt follows calls the matcher: nothing reads why
+    /// it failed. It is the wait that runs the attempts. The matcher throws it in place of an error with a message.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn retried_wait(&self) -> Option<JSValue> {
+        expect_js::result_value_get_cached(self.this).filter(|&wait| ViWait::is_retried(wait))
+    }
 }
 
 unsafe extern "C" {
@@ -1125,6 +1133,7 @@ impl Expect {
         ViWait::poll_matcher(
             global,
             attempt,
+            expect,
             interval_ms.to_int32() as u32,
             timeout_ms.to_int32() as u32,
             RunningEntry::of(self),

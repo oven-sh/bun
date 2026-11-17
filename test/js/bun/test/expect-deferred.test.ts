@@ -2140,4 +2140,195 @@ describe.concurrent("expect.poll()", () => {
     expect(stdout).toEqual(['0 {"a":1,"b":2,"c":3,"d":4,"e":5,"f":6}']);
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
+
+  test("an attempt that another attempt follows doesn't build a failure message", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      import { vi } from "bun:test";
+      const options = { interval: 1, timeout: 60_000 };
+      // \`late\` comes after the key that isn't ready. A comparison that fails at \`ready\` doesn't read it. A print does.
+      let reads = 0;
+      let messages = 0;
+      const value = ready => ({
+        ready,
+        get late() {
+          reads++;
+          return 1;
+        },
+      });
+      expect.extend({
+        toBeReady: received => ({ pass: received.ready, message: () => (messages++, "not ready") }),
+      });
+      const held = value(false);
+      const called = (clear, then) => {
+        const mock = jest.fn();
+        mock(value(false));
+        return ready => (ready && (clear && mock.mockClear(), mock(then)), mock);
+      };
+      const matchers = {
+        toEqual: poll => poll(value).toEqual({ ready: true, late: 1 }),
+        toMatchObject: poll => poll(value).toMatchObject({ ready: true }),
+        "not.toBe": poll => poll(ready => (ready ? value(true) : held)).not.toBe(held),
+        toBe: poll => poll(ready => (ready ? held : value(false))).toBe(held),
+        toHaveBeenCalledWith: poll => poll(called(false, 1)).toHaveBeenCalledWith(1),
+        toHaveBeenNthCalledWith: poll => poll(called(true, 1)).toHaveBeenNthCalledWith(1, 1),
+        toBeReady: poll => poll(value).toBeReady(),
+      };
+      // A function that returns a promise has its matcher called after the promise, when the attempt can be the last one.
+      for (const [kind, polled] of [["sync", fn => fn], ["async", fn => async () => fn()]]) {
+        test(kind, async () => {
+          for (const [name, matcher] of Object.entries(matchers)) {
+            reads = messages = 0;
+            let attempts = 0;
+            await matcher(make => expect.poll(polled(() => make(++attempts >= 5)), options));
+            console.log(\`\${kind} \${name}: \${attempts} attempts, \${reads} reads, \${messages} messages\`);
+          }
+        });
+      }
+      test("in vi.waitFor, a matcher throws an error with its message in every attempt", async () => {
+        const errors = [];
+        const callback = () => {
+          try {
+            expect({ attempt: errors.length + 1 }).toEqual({ attempt: 0 });
+          } catch (error) {
+            errors.push(error);
+            throw error;
+          }
+        };
+        const rejected = await vi.waitFor(callback, { interval: 1, timeout: 20 }).catch(error => error);
+        const attempts = errors.map(error => /\\+ +"attempt": (\\d+),/.exec(Bun.stripANSI(error.message))?.[1]);
+        console.log(errors.length > 1, rejected === errors.at(-1), attempts.join() === errors.map((_, index) => index + 1).join());
+      });
+    `);
+    expect(stdout).toEqual([
+      // The comparison of the attempt that passes reads `late` once.
+      "sync toEqual: 5 attempts, 1 reads, 0 messages",
+      "sync toMatchObject: 5 attempts, 0 reads, 0 messages",
+      "sync not.toBe: 5 attempts, 0 reads, 0 messages",
+      "sync toBe: 5 attempts, 0 reads, 0 messages",
+      "sync toHaveBeenCalledWith: 5 attempts, 0 reads, 0 messages",
+      "sync toHaveBeenNthCalledWith: 5 attempts, 0 reads, 0 messages",
+      "sync toBeReady: 5 attempts, 0 reads, 0 messages",
+      // One print in each of the 4 attempts that fail. A failed toBe also compares the two objects, twice.
+      "async toEqual: 5 attempts, 5 reads, 0 messages",
+      "async toMatchObject: 5 attempts, 4 reads, 0 messages",
+      "async not.toBe: 5 attempts, 4 reads, 0 messages",
+      "async toBe: 5 attempts, 12 reads, 0 messages",
+      "async toHaveBeenCalledWith: 5 attempts, 4 reads, 0 messages",
+      "async toHaveBeenNthCalledWith: 5 attempts, 4 reads, 0 messages",
+      "async toBeReady: 5 attempts, 0 reads, 4 messages",
+      "true true true",
+    ]);
+    expect(results).toEqual([
+      "(pass) sync",
+      "(pass) async",
+      "(pass) in vi.waitFor, a matcher throws an error with its message in every attempt",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("the attempt that the timeout follows builds the message, and the timeout calls nothing", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      const show = error => [Bun.stripANSI(error.message).replaceAll("\\n", " ").trim(), "<-", error.cause?.message].join(" ");
+      let calls = 0;
+      let messages = 0;
+      expect.extend({
+        toBeReady(received) {
+          calls++;
+          return { pass: received.ready === true, message: () => (messages++, "not ready at attempt " + received.attempt) };
+        },
+        toBeReadyLater: async received => (await later(), { pass: received.ready, message: () => (messages++, "not ready") }),
+      });
+      test("a function that returns a value", async () => {
+        let attempts = 0;
+        let reads = 0;
+        const polled = () => ({
+          attempt: ++attempts,
+          get late() {
+            reads++;
+            return 1;
+          },
+        });
+        const diffed = await expect.poll(polled, { interval: 10, timeout: 60 }).toEqual({ attempt: 0, late: 1 }).catch(error => error);
+        console.log(attempts > 1, reads, Bun.stripANSI(diffed.message).includes('"attempt": ' + attempts + ","), diffed.cause.message);
+        attempts = calls = messages = 0;
+        const custom = await expect.poll(polled, { interval: 10, timeout: 60 }).toBeReady().catch(error => error);
+        console.log(attempts > 1, calls === attempts, messages, show(custom) === "not ready at attempt " + attempts + " <- Matcher did not succeed in time.");
+      });
+      test("an interval that isn't shorter than the timeout", async () => {
+        for (const interval of [50, 100]) {
+          calls = messages = 0;
+          let attempts = 0;
+          const error = await expect.poll(() => ({ attempt: ++attempts }), { interval, timeout: 50 }).toBeReady().catch(error => error);
+          console.log(interval, attempts, calls, messages, show(error));
+        }
+      });
+      test("a function that returns a promise", async () => {
+        // An iterator can only be read once, so to call the matcher again on one that failed would pass.
+        const pending = new Map([["job-1", {}], ["job-2", {}]]);
+        const error = await expect
+          .poll(async () => (await later(), pending.keys()), { interval: 1, timeout: 100 })
+          .not.toContain("job-1")
+          .catch(error => error);
+        console.log(show(error).replace(/ Received: .* <-/, " <-"));
+      });
+      test("a value, then a promise that is pending at the timeout", async () => {
+        calls = messages = 0;
+        let attempts = 0;
+        const error = await expect
+          .poll(() => (++attempts === 1 ? { ready: false, attempt: 1 } : never()), { interval: 1, timeout: 50 })
+          .toBeReady()
+          .catch(error => error);
+        console.log(show(error), attempts, calls, messages);
+      });
+      test("a matcher that waits for a promise in each attempt", async () => {
+        messages = 0;
+        let attempts = 0;
+        await expect.poll(() => ({ ready: ++attempts >= 3 }), { interval: 1, timeout: 60_000 }).toBeReadyLater();
+        console.log(attempts, messages);
+      });
+      test("a matcher on the Expect of the attempts, outside an attempt", async () => {
+        // A chainable matcher returns its Expect, and the promise of the poll looks for a \`then\` on it.
+        let leaked;
+        Object.defineProperty(Object.prototype, "then", {
+          configurable: true,
+          get() {
+            if (Object.getPrototypeOf(this) === Object.getPrototypeOf(expect(0))) leaked ??= this;
+          },
+        });
+        try {
+          let attempts = 0;
+          await expect.poll(() => ({ key: ++attempts >= 3 ? 1 : undefined }), { interval: 1, timeout: 60_000 }).toContainKey("key");
+        } finally {
+          delete Object.prototype.then;
+        }
+        try {
+          leaked?.toBe("something else");
+          console.log("did not throw");
+        } catch (error) {
+          console.log(leaked !== undefined, error instanceof Error);
+        }
+      });
+    `);
+    expect(stdout).toEqual([
+      // One print, by the last attempt. The matcher is called once in each attempt.
+      "true 1 true Matcher did not succeed in time.",
+      "true true 1 true",
+      "50 1 1 1 not ready at attempt 1 <- Matcher did not succeed in time.",
+      "100 1 1 1 not ready at attempt 1 <- Matcher did not succeed in time.",
+      'expect(received).not.toContain(expected)  Expected to not contain: "job-1" <- Matcher did not succeed in time.',
+      // Attempt 1 was retried and has no message. Nothing calls the matcher again for one.
+      "Matcher did not succeed in time. <-  2 1 0",
+      "3 2",
+      "true true",
+    ]);
+    expect(results).toEqual([
+      "(pass) a function that returns a value",
+      "(pass) an interval that isn't shorter than the timeout",
+      "(pass) a function that returns a promise",
+      "(pass) a value, then a promise that is pending at the timeout",
+      "(pass) a matcher that waits for a promise in each attempt",
+      "(pass) a matcher on the Expect of the attempts, outside an attempt",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });

@@ -7,7 +7,6 @@ use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, js_error_to_write_erro
 use super::Expect;
 use super::matcher::{EXPECTED, Matcher, NO_PARAMS, Params, This, Verdict, fail, params};
 use super::mock::{self, Rows};
-use crate::test_runner::diff_format::DiffFormatter;
 
 const ARGUMENTS: Params = params!("<green>...expected<r>");
 
@@ -244,10 +243,7 @@ impl Expect {
             _ if m.not() => {
                 fail!(m, "Expected call #{} not to be with: <green>{}<r>\nBut it was.", nth, m.show(expected))
             }
-            Some(call) => {
-                let diff = DiffFormatter::new(global, call, expected, false)?;
-                Err(m.fail(format_args!("Call #{nth}:\n{diff}\n")))
-            }
+            Some(call) => m.fail_diff_under(format_args!("Call #{nth}:\n"), expected, call),
             None => mock::fail_called_less(&m, count, nth, ""),
         }
     }

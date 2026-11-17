@@ -6,7 +6,6 @@ use bun_jsc::{BuiltinName, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuff
 use super::Expect;
 use super::matcher::{EXPECTED, Matcher, NO_PARAMS, Params, This, Verdict, fail, params};
 use super::mock::{self, Rows};
-use crate::test_runner::diff_format::DiffFormatter;
 
 const NTH_EXPECTED: Params = params!("<green>n<r>, <green>expected<r>");
 
@@ -174,8 +173,7 @@ fn has_values(m: &Matcher<'_>, mock: JSValue, kind: Kind, times: Times, argument
 #[optimize(size)]
 fn fail_mismatch(m: &Matcher<'_>, label: fmt::Arguments<'_>, expected: JSValue, received: JSValue) -> Verdict {
     if expected.is_string() && received.is_string() {
-        let diff = DiffFormatter::new(m.global, received, expected, false)?;
-        return Err(m.fail(format_args!("{label}{diff}\n")));
+        return m.fail_diff_under(label, expected, received);
     }
     fail!(m, "{}Expected: <green>{}<r>\nReceived: <red>{}<r>", label, m.show(expected), m.show(received))
 }

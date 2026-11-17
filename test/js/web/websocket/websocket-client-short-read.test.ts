@@ -879,7 +879,6 @@ describe("data received while a frame's listener spins the event loop", () => {
       await barrier(client.url);
       client.connection.write(Buffer.concat([payload, start]));
       await client.returned;
-      client.connection.write(text("y"));
       await barrier(client.url);
       expect(client.seen).toEqual([
         "text 4000 bytes",

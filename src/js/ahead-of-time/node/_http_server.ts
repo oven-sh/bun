@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 61b136e556fafe40ec98c2155328b808924046f2cc31df71cc6928c0b7c15d31.
+// Written against that file with the SHA-256 843724adabbd2352e0faa10c847aab6c22c4b70160eaf229a8feaeeace6cc170.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -5946,6 +5946,8 @@ ServerResponse.prototype.flushHeaders = function (this: $Node.ServerResponse) {
   if (this[kImplicitHeaderFromEnd]) return;
 
   this._headerSent = true;
+  // Socket already gone, and 'close' is still to come.
+  if (handle.flags & NodeHTTPResponseFlags.closed_or_completed) return;
   try {
     writeHeadToHandle(this, exchange, handle);
   } catch (err) {

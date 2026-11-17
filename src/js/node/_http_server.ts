@@ -3929,6 +3929,8 @@ ServerResponse.prototype.flushHeaders = function () {
   if (this[kImplicitHeaderFromEnd]) return;
 
   this._headerSent = true;
+  // Socket already gone, and 'close' is still to come.
+  if (handle.flags & NodeHTTPResponseFlags.closed_or_completed) return;
   let renderedHeaders;
   try {
     renderedHeaders = renderNativeHeaders(this);

@@ -4429,6 +4429,36 @@ it("standalone ServerResponse end() after writeHead() sets writableEnded (#25632
   expect(cbCalled).toBe(false);
 });
 
+it("flushHeaders() after the listener threw doesn't throw", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.on("uncaughtException", err => console.log("uncaught", err.code ?? err.message));
+        const server = require("node:http").createServer((req, res) => {
+          setImmediate(() => {
+            server.close();
+            server.closeAllConnections();
+            res.flushHeaders();
+            console.log("flushed", res.headersSent);
+          });
+          throw new Error("thrown");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = require("node:net").connect(server.address().port, "127.0.0.1");
+          client.on("error", () => {}).resume().write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "uncaught thrown\nflushed true\n", exitCode: 0 });
+});
+
 it("flushHeaders on a 204 response carries no chunked framing", async () => {
   // noBodyStatus must suppress the Transfer-Encoding header in flushHeaders()
   // and the terminating chunk in internalEnd(), like the one-shot end() path.

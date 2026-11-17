@@ -312,7 +312,7 @@ fn a_long_period_may_be_broken_anywhere() {
 #[test]
 fn matches_reach_into_stored_blocks_and_dictionaries_of_any_size() {
     let sizes = [
-        0, 1, 255, 700, 9000, 32767, 32768, 32769, 33119, 33440, 65535,
+        0, 1, 255, 700, 9000, 32767, 32768, 32769, 33151, 33472, 65535,
     ];
     let mut random = Random::new(1);
     for first in sizes {
@@ -337,6 +337,42 @@ fn matches_reach_into_stored_blocks_and_dictionaries_of_any_size() {
             check(&stream.end_block().finish(), &dictionary, &mut random);
         }
     }
+}
+
+#[test]
+fn a_few_literals_may_follow_a_stored_block() {
+    let bytes = Random::new(1).bytes(320);
+    let mut calls = 0;
+    for (literals, is_match_next) in (0..20).flat_map(|it| [(it, false), (it, true)]) {
+        let mut raw = Writer::default();
+        raw.stored(false, &bytes[..300])
+            .fixed(false)
+            .literals(&bytes[300..][..literals]);
+        if is_match_next {
+            raw.copy(5, 299 + literals);
+        }
+        let raw = raw.end_block().fixed(true).end_block().finish();
+        let plain = plain::inflate(&raw, &[]).bytes;
+        for (container, stream) in [
+            (Container::Raw, raw.clone()),
+            (Container::Zlib, in_zlib(&raw, &plain, None)),
+            (Container::Gzip, in_gzip(&raw, &plain)),
+        ] {
+            for (held_back, room) in
+                (0..24).flat_map(|it| (298..plain.len() + 2).map(move |room| (it, room)))
+            {
+                let mut first = Some((stream.len() - held_back, room));
+                let sizes = || first.take().unwrap_or((999, 999));
+                let result = run(&mut Inflater::new(container), &stream, false, sizes);
+                assert_eq!(
+                    (&result.bytes, result.end),
+                    (&plain, End::Stream(stream.len()))
+                );
+                calls = result.calls ^ u32::rotate_left(calls, 1);
+            }
+        }
+    }
+    assert_eq!(calls, 0xfc67_22bf, "zlib-ng 2.3.3 stops elsewhere");
 }
 
 #[test]
@@ -795,6 +831,37 @@ fn a_zlib_header_is_one_that_an_inflater_takes() {
     }
     assert!(has_zlib_header(&[0x78, 0x9c, 0]));
     assert!(!has_zlib_header(&[0x78]));
+}
+
+#[test]
+fn a_vec_is_like_one_buffer_however_it_grows() {
+    let mut random = Random::new(1);
+    let start = random.bytes(9000);
+    for is_stored in [false, true] {
+        let mut stream = Writer::default();
+        match is_stored {
+            true => stream.stored(false, &start).fixed(true),
+            false => stream.fixed(true).literals(&start),
+        };
+        let stream = stream.copy(258, 9000).copy(258, 257).end_block().finish();
+        let plain = plain::inflate(&stream, &[]).bytes;
+        for capacity in [0, 1, 300, 8999, 9000, 9001, 9257, 9258, 20_000] {
+            let new = || Inflater::with_window_bits(Container::Raw, 8).unwrap();
+            let mut out = Vec::with_capacity(capacity);
+            let status = new().inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
+            assert!(status == Ok(Status::StreamEnd) && out == plain);
+            // The next call has only the window to copy from.
+            for max in [8000, 9000, 9100, 9258] {
+                let (mut inflater, mut input) = (new(), &stream[..]);
+                let mut out = Vec::with_capacity(capacity);
+                let status = inflater.inflate_to_vec(&mut input, &mut out, max);
+                assert_eq!(status, Ok(Status::NeedsOutput));
+                let status = inflater.inflate_to_vec(&mut input, &mut out, usize::MAX);
+                assert_eq!(status, Err(Damage::DistanceTooFarBack.into()));
+                assert!(out == plain[..max.max(9000)]);
+            }
+        }
+    }
 }
 
 #[test]

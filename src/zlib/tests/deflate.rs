@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use bun_zlib::deflate::{Container, Flush, Level, Options, Status, Strategy, compress};
 use bun_zlib::{Deflater, Error, Result};
 
@@ -215,8 +217,8 @@ fn and_so_do_some_that_few_sequences_are_like() {
 }
 
 #[test]
-fn level_9_takes_zeros_for_what_it_has_not_hashed() {
-    // So it finds the second position, which starts with one.
+fn the_rolling_hash_starts_over_after_reset() {
+    // From zero, so the second position is found, which starts with one.
     let input = b"1\0abcd2\0abcd345";
     let set_level = |deflater: &mut Deflater, level: i32| {
         let is_set = deflater.set_params(level.try_into().unwrap(), Strategy::Default);
@@ -330,6 +332,62 @@ fn codes_for_code_lengths_have_at_most_7_bits() {
         .flat_map(|it| vec![it; times(it)])
         .collect();
     assert_eq!(longest_codes(&input), (7, 14, 0x0956_06f0));
+}
+
+#[test]
+fn level_9_looks_at_4096_candidates() {
+    let found = [4094, 4095, 4096, 4097].map(|count| {
+        [0, 1, 2000, count].map(|of_other_bytes| {
+            let mut random = Random::new(1);
+            let mut input = b"-abc0123456789".to_vec();
+            for at in 0..count {
+                // They have the same hash.
+                input.extend(if at < count - of_other_bytes {
+                    b"abc"
+                } else {
+                    b"Abc"
+                });
+                input.push(128 + random.below(100) as u8);
+            }
+            let len_with = |end: &[u8]| {
+                let (input, mut out) = ([&input, end].concat(), Vec::new());
+                compress(&input, &mut out, Container::Raw, options(9, 4, 15, 9)).unwrap();
+                out.len()
+            };
+            // The first is one match if that is found, and else a literal and a match like the second.
+            len_with(b"\xf0\xf1abc0123456789") < len_with(b"\xf0\xf1-bc0123456789")
+        })
+    });
+    assert_eq!(found, [[true; 4], [true; 4], [false; 4], [false; 4]]);
+}
+
+#[test]
+fn a_block_that_does_not_compress_is_stored_however_long_it_is() {
+    // As many symbols as fit in a block: literals of 9 bits, matches of 3 bytes in 25 bits, and one of 258 bytes.
+    let (mut random, mut input, mut seen) = (Random::new(1), vec![144, 145], BTreeMap::new());
+    while input.len() < 16_513 + 3 * 16_253 + 258 {
+        let start = input
+            .len()
+            .saturating_sub(16_385 + random.below(16_000))
+            .max(1);
+        let more = match input.len() {
+            ..16_513 => vec![144 + random.below(112) as u8],
+            65_272 => input[start..start + 258].to_vec(),
+            _ if seen.get(&input[start..start + 3]) == Some(&1) => input[start..start + 3].to_vec(),
+            _ => continue,
+        };
+        let joined = [&input[input.len() - 2..], &more].concat();
+        let triples = joined.array_windows::<3>();
+        if triples.clone().take(2).all(|it| !seen.contains_key(it)) {
+            triples.for_each(|&it| *seen.entry(it).or_insert(0) += 1);
+            input.extend(more);
+        }
+    }
+    input.extend([0; 300]);
+    let mut out = Vec::new();
+    compress(&input, &mut out, Container::Raw, options(9, 4, 15, 9)).unwrap();
+    assert_eq!(out[..5], [0, 0xfa, 0xff, 5, 0]);
+    check_stream(Container::Raw, &mut out, &[], &input);
 }
 
 #[test]

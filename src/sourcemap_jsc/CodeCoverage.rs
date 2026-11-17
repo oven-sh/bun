@@ -93,8 +93,7 @@ impl core::iter::Sum for Counts {
 }
 
 impl<'a> Report<'a> {
-    /// The covered and total counts of this file. `lines_which_have_executed`
-    /// is a subset of `executable_lines`, so no intersection is needed.
+    /// The covered and total counts of this file.
     pub fn counts(&self) -> Counts {
         let lines = Metric {
             covered: self.lines_which_have_executed.count(),

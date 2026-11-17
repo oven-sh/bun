@@ -2473,8 +2473,6 @@ fn print_coverage_table<const COLORS: bool>(
         .map(|r| resolve_path::relative(relative_dir, &r.source_url).len())
         .fold(b"All files".len(), usize::max);
 
-    // The `All files` row sums the counts of every file, so a file weighs by
-    // its size. It is not the mean of the rows.
     let zero = Fraction {
         functions: 0.0,
         lines: 0.0,

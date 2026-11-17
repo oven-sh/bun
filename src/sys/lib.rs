@@ -4668,7 +4668,7 @@ pub mod c {
     #[cfg(windows)]
     pub use crate::windows::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT};
     #[cfg(windows)]
-    pub use bun_windows_sys::kernel32::{FlushFileBuffers, SetConsoleCtrlHandler};
+    pub use bun_windows_sys::kernel32::SetConsoleCtrlHandler;
 
     // ── `bun.c` Darwin surface — C symbols picked up via
     // `@cImport` of system headers. The `libc` crate already binds all of

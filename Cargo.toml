@@ -69,6 +69,7 @@ members = [
   "src/trim/removable_features",
   "src/highway",
   "src/histogram",
+  "src/hpack",
   "src/http1",
   "src/http_jsc",
   "src/http_types",
@@ -446,6 +447,7 @@ bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
+bun_hpack = { path = "src/hpack" }
 bun_http1 = { path = "src/http1" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
@@ -524,6 +526,10 @@ opt-level = 3
 
 # Runs for every line of a response head and every chunk of a body.
 [profile.dev.package.bun_http1]
+opt-level = 3
+
+# Runs for every field of an HTTP/2 header block.
+[profile.dev.package.bun_hpack]
 opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.

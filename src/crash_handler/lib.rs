@@ -398,38 +398,11 @@ impl Write for StderrWriter {
     fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         #[cfg(windows)]
         {
-            // On Windows this is `GetStdHandle(STD_ERROR_HANDLE)` + kernel32
-            // `WriteFile`, NOT the CRT. Routing through MSVCRT `_write(2,…)`
-            // would (1) text-mode-translate `\n`→`\r\n` and (2) take the CRT
-            // per-fd lock, which can self-deadlock when the VEH crash handler
-            // fires on a thread that faulted *inside* CRT stdio. WriteFile is
-            // lock-free at the kernel32 layer.
-            // `WriteFile` is declared locally because `bun_windows_sys::
-            // kernel32` does not (yet) export it (cf. src/sys/lib.rs).
-            #[link(name = "kernel32")]
-            unsafe extern "system" {
-                fn WriteFile(
-                    hFile: bun_sys::windows::HANDLE,
-                    lpBuffer: *const u8,
-                    nNumberOfBytesToWrite: u32,
-                    lpNumberOfBytesWritten: *mut u32,
-                    lpOverlapped: *mut core::ffi::c_void,
-                ) -> i32;
-            }
-            let h = bun_sys::windows::kernel32::GetStdHandle(bun_sys::windows::STD_ERROR_HANDLE);
-            let mut written: u32 = 0;
-            // SAFETY: `h` is the cached stderr HANDLE (or INVALID_HANDLE_VALUE,
-            // in which case WriteFile fails harmlessly); `bytes` is valid for
-            // reads of `len`; `written` is a valid out-pointer; lpOverlapped
-            // is null for synchronous I/O.
-            unsafe {
-                WriteFile(
-                    h,
-                    bytes.as_ptr(),
-                    bytes.len() as u32,
-                    &mut written,
-                    core::ptr::null_mut(),
-                );
+            use bun_sys::windows::{INVALID_HANDLE_VALUE, STD_ERROR_HANDLE, kernel32};
+            // Not the C runtime, whose lock of the descriptor this thread may hold.
+            let handle = kernel32::GetStdHandle(STD_ERROR_HANDLE);
+            if handle != INVALID_HANDLE_VALUE && !bytes.is_empty() {
+                let _ = bun_sys::write(bun_sys::Fd::from_system(handle), bytes);
             }
         }
         #[cfg(not(windows))]
@@ -985,41 +958,16 @@ mod draft {
                         } else {
                             #[cfg(windows)]
                             {
-                                {
-                                    let mut name: bun_sys::windows::PWSTR = core::ptr::null_mut();
-                                    // SAFETY: GetCurrentThread/GetThreadDescription are valid Win32 calls
-                                    let result = unsafe {
-                                        bun_sys::windows::GetThreadDescription(
-                                            bun_sys::windows::GetCurrentThread(),
-                                            &mut name,
-                                        )
-                                    };
-                                    // SAFETY: `name` is the PWSTR out-param written by GetThreadDescription; deref is guarded by the S_OK check via `&&` short-circuit
-                                    if bun_sys::windows::HRESULT_CODE(result)
-                                        == bun_sys::windows::S_OK
-                                        && unsafe { *name } != 0
-                                    {
-                                        // SAFETY: `name` is a valid NUL-terminated wide string
-                                        // (PWSTR out-param from GetThreadDescription).
-                                        let span = unsafe { bun_core::ffi::wstr_units(name) };
-                                        if write!(writer, "({})", bun_fmt::utf16(span)).is_err() {
-                                            abort();
-                                        }
-                                        // NOTE: `GetThreadDescription` heap-allocates `name` and the
-                                        // caller is meant to `LocalFree` it. This runs on a
-                                        // `noreturn` crash path immediately before `ExitProcess(3)`,
-                                        // so the leak is intentional.
-                                    } else {
-                                        if write!(
-                                            writer,
-                                            "(thread {})",
-                                            bun_sys::windows::kernel32::GetCurrentThreadId()
-                                        )
-                                        .is_err()
-                                        {
-                                            abort();
-                                        }
-                                    }
+                                let written = match bun_sys::windows::name_of_current_thread() {
+                                    [] => write!(
+                                        writer,
+                                        "(thread {})",
+                                        bun_sys::windows::kernel32::GetCurrentThreadId()
+                                    ),
+                                    name => write!(writer, "({})", bun_fmt::utf16(name)),
+                                };
+                                if written.is_err() {
+                                    abort();
                                 }
                             }
                             #[cfg(any(
@@ -1908,14 +1856,9 @@ mod draft {
                 return;
             }
             REPORTS_ABORTS.store(true, Ordering::Relaxed);
-            // SAFETY: the handlers have the signatures that `signal` and the engine call and are never unloaded.
-            unsafe {
-                libc::signal(
-                    libc::SIGABRT,
-                    handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
-                );
-                WTFSetAbortReporter(Some(report_abort_windows));
-            }
+            bun_sys::windows::set_abort_handler(Some(handle_abort_windows));
+            // SAFETY: the reporter has the signature that the engine calls and is never unloaded.
+            unsafe { WTFSetAbortReporter(Some(report_abort_windows)) };
         }
     }
 
@@ -2148,7 +2091,7 @@ mod draft {
             unsafe {
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
                 if REPORTS_ABORTS.swap(false, Ordering::Relaxed) {
-                    libc::signal(libc::SIGABRT, libc::SIG_DFL);
+                    bun_sys::windows::set_abort_handler(None);
                     WTFSetAbortReporter(None);
                 }
             }
@@ -2302,13 +2245,7 @@ mod draft {
     extern "C" fn handle_abort_windows(_signal: core::ffi::c_int) {
         // The C runtime has put the default action back, with which the `abort()` of a second thread would end the
         // process in the middle of this report.
-        // SAFETY: the handler has the signature that `signal` calls and is never unloaded.
-        unsafe {
-            libc::signal(
-                libc::SIGABRT,
-                handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
-            );
-        }
+        bun_sys::windows::set_abort_handler(Some(handle_abort_windows));
         report_abort_windows()
     }
 
@@ -3008,27 +2945,6 @@ mod draft {
         #[cfg(windows)]
         {
             use bun_sys::windows;
-            let mut process: windows::PROCESS_INFORMATION = bun_core::ffi::zeroed();
-            let mut startup_info = windows::STARTUPINFOW {
-                cb: core::mem::size_of::<windows::STARTUPINFOW>() as u32,
-                lpReserved: core::ptr::null_mut(),
-                lpDesktop: core::ptr::null_mut(),
-                lpTitle: core::ptr::null_mut(),
-                dwX: 0,
-                dwY: 0,
-                dwXSize: 0,
-                dwYSize: 0,
-                dwXCountChars: 0,
-                dwYCountChars: 0,
-                dwFillAttribute: 0,
-                dwFlags: 0,
-                wShowWindow: 0,
-                cbReserved2: 0,
-                lpReserved2: core::ptr::null_mut(),
-                hStdInput: core::ptr::null_mut(),
-                hStdOutput: core::ptr::null_mut(),
-                hStdError: core::ptr::null_mut(),
-            };
             let mut sysdir = [0u16; 300];
             let Ok(sysdir_len) = windows::GetSystemDirectoryW(&mut sysdir) else {
                 return;
@@ -3075,32 +2991,7 @@ mod draft {
             if cmd_line.append(0).is_err() {
                 return;
             }
-            // SAFETY: we just wrote a NUL terminator at len-1
-            let end = cmd_line.len() - 1;
-            let cmd_line_slice = &mut cmd_line.slice()[0..end];
-            // Rust has no [:0] sentinel slices — pass the raw pointer instead.
-            // SAFETY: all pointer args are either null or point to stack-local buffers/structs valid for the duration of the call; cmd_line is NUL-terminated above
-            let spawn_result = unsafe {
-                windows::kernel32::CreateProcessW(
-                    core::ptr::null(),
-                    cmd_line_slice.as_mut_ptr(),
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                    1, // true
-                    0,
-                    core::ptr::null_mut(),
-                    core::ptr::null(),
-                    &mut startup_info,
-                    &mut process,
-                )
-            };
-
-            // we don't care what happens with the process
-            // NOTE: on success `CreateProcessW` returns two open kernel handles in
-            // `process.hProcess` / `process.hThread` that the caller is meant to
-            // `CloseHandle`. `report()` runs immediately before
-            // `crash()` → `ExitProcess(3)`, so the kernel reclaims them anyway.
-            let _ = spawn_result;
+            let _ = windows::start_process(cmd_line.slice());
         }
         #[cfg(any(
             target_os = "macos",

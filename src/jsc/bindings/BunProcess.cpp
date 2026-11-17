@@ -298,7 +298,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // https://github.com/oven-sh/bun/issues/7921
         // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
         { "openssl", "1.1.0" },
-        // keep in sync with src/jsc/bindings/node/http/llhttp/README.md
+        // Not linked: src/http1/message parses in its place.
         { "llhttp", "9.4.2" },
         { "mimalloc", BUN_VERSION_MIMALLOC },
         { "uwebsockets", BUN_VERSION_UWS },
@@ -312,7 +312,6 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // Use commit hash for libdeflate to match test expectations
         { "libdeflate", BUN_VERSION_LIBDEFLATE_HASH },
         { "usockets", BUN_VERSION_USOCKETS },
-        { "lshpack", BUN_VERSION_LSHPACK },
         // Use commit hash for zstd (semantic version extraction not working yet)
         { "zstd", BUN_VERSION_ZSTD_HASH },
         { "v8", REPORTED_NODEJS_V8_VERSION },

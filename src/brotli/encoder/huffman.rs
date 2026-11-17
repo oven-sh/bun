@@ -381,16 +381,7 @@ fn sort(unsorted: &[u64], count: usize, ties: Ties, sorted: &mut [u64]) {
     /// Without gaps, the kernel compares each leaf with each.
     const MAX_FOR_KERNEL: usize = 128;
     let has_gaps = matches!(ties, Ties::Unordered) && count >= MIN_FOR_GAPS;
-    use super::switches::{SL_MAX_32, SL_RUST, SL_SHELL_ONLY, is_on};
-    let max = if is_on(SL_SHELL_ONLY) {
-        0
-    } else if is_on(SL_MAX_32) {
-        32
-    } else {
-        MAX_FOR_KERNEL
-    };
-    if !is_on(SL_RUST)
-        && (has_gaps || count <= max)
+    if (has_gaps || count <= MAX_FOR_KERNEL)
         && brotli_sort_leaves(unsorted, count, has_gaps, sorted)
     {
         return;

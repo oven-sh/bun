@@ -18,7 +18,6 @@ use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
 use crate::repository::RepositoryExt as _;
-use crate::resolution::with_forward_slashes;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
     TruncatedPackageNameHash,
@@ -2151,10 +2150,9 @@ pub(crate) fn parse_into_binary_lockfile(
             );
         };
 
-        let listed_before = lockfile.workspace_paths.insert(
-            name_hash,
-            sbuf!(lockfile).append(&with_forward_slashes(path))?,
-        );
+        let listed_before = lockfile
+            .workspace_paths
+            .insert(name_hash, sbuf!(lockfile).append(path)?);
         match listed_before.and_then(|_| lockfile.workspace_paths.get_index(&name_hash)) {
             Some(index) => member_rows[index] = row,
             None => member_rows.push(row),
@@ -2269,7 +2267,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             let mut pkg = Package {
                 resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
-                    sbuf!(lockfile).append(&with_forward_slashes(row.key.slice()))?,
+                    sbuf!(lockfile).append(row.key.slice())?,
                 )),
                 ..Default::default()
             };
@@ -3505,7 +3503,7 @@ fn parse_append_dependencies(
                 behavior: Behavior::WORKSPACE,
                 version: DependencyVersion {
                     value: DependencyVersionValue::Workspace(
-                        sbuf!(lockfile).append(&with_forward_slashes(row.key.slice()))?,
+                        sbuf!(lockfile).append(row.key.slice())?,
                     ),
                     literal: String::default(),
                 },

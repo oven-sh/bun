@@ -4,9 +4,8 @@ mod keys_of_cache;
 #[cfg(test)]
 mod tests;
 
-use bun_paths::is_absolute;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_paths::{PathStyle as _, is_absolute};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Bound, Parent};
 use bun_sema::hir::{ExprId, File, NodeData};
@@ -245,7 +244,9 @@ fn read_text_of_run(files: &Files<'_>, file: FileId, text: &TextOfRun) -> Option
             };
             files.module(named).file_name().to_vec()
         }
-        TextOfRun::Dirname(of) => dirname::<Posix>(&read_text_of_run(files, file, of)?).to_vec(),
+        TextOfRun::Dirname(of) => {
+            Posix::dirname_or_root(&read_text_of_run(files, file, of)?).to_vec()
+        }
         TextOfRun::Concatenation(parts) => {
             let [first, second] = &**parts;
             let mut whole = read_text_of_run(files, file, first)?;
@@ -282,9 +283,10 @@ pub(crate) fn collect_loads_of_run(files: &Files<'_>, options: &Options<'_>) -> 
                 end.map(|end| files.atoms.bytes(end)),
             );
             let start = match start {
-                [b'.', ..] => {
-                    write_whole_start(dirname::<Posix>(files.module(file).file_name()), start)
-                }
+                [b'.', ..] => write_whole_start(
+                    Posix::dirname_or_root(files.module(file).file_name()),
+                    start,
+                ),
                 _ => start.to_vec(),
             };
             let start = &start[..];

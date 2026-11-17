@@ -7,8 +7,7 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList, index_sort};
 use bun_core::ZStr;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, UnwrapOrOom as _};
-use bun_paths::resolve_path::platform_to_posix_in_place;
-use bun_paths::{MAX_PATH_BYTES, NameTooLong, PathBuffer, SlicePath};
+use bun_paths::{MAX_PATH_BYTES, NameTooLong, PathBuffer, SlicePath, platform_to_posix_in_place};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{
@@ -381,7 +380,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             }
             if is_workspace_path {
                 path.clear();
-                crash_if_too_long(path.push_any_sep(name));
+                crash_if_too_long(path.push(name));
                 // Keeps the `/` that it has in the lockfile.
                 platform_to_posix_in_place(path.as_mut_slice());
             } else {

@@ -226,8 +226,6 @@ pub enum Error {
     #[error(transparent)]
     Bunfig(#[from] bun_bunfig::Error),
     #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
-    #[error(transparent)]
     Fmt(#[from] core::fmt::Error),
 }
 
@@ -369,7 +367,6 @@ impl Error {
             Self::Parsers(e) => e.name(),
             Self::JsPrinter(e) => e.name(),
             Self::Bunfig(e) => e.name(),
-            Self::Paths(e) => e.name(),
             Self::Fmt(_) => "FmtError",
         }
     }
@@ -400,7 +397,6 @@ impl From<bun_archive::Error> for Error {
             bun_archive::Error::Sys(s) => Self::Sys(s),
             bun_archive::Error::Alloc(a) => Self::Alloc(a),
             bun_archive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
-            bun_archive::Error::Paths(p) => Self::Paths(p),
             bun_archive::Error::LeavesDestination(e) => Self::Sys(e.into()),
         }
     }

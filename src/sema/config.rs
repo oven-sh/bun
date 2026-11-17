@@ -17,8 +17,8 @@ use crate::util::{FxHashSet, SharedSort};
 use crate::verify::{ConfigLocation, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
+use bun_paths::PathStyle as _;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 
 mod build_options;
 #[cfg(test)]
@@ -244,7 +244,7 @@ impl Project {
         let mut name = if options.out_dir.is_empty() {
             config.to_vec()
         } else if options.root_dir.is_empty() {
-            join(&options.out_dir, bun_paths::basename_posix(config))
+            join(&options.out_dir, Posix::basename(config))
         } else {
             let is_case_sensitive = options.use_case_sensitive_file_names;
             let relative =
@@ -716,7 +716,7 @@ fn open_config(
         at: problem.span.map(at),
         ..ConfigError::new(problem.code, &[])
     };
-    let base = dirname::<Posix>(path);
+    let base = Posix::dirname_or_root(path);
     let mut own = Raw::default();
     // `getDefaultCompilerOptions`
     if path.ends_with(b"/jsconfig.json") {
@@ -833,8 +833,8 @@ impl PendingConfig {
         // relative to that file's directory.
         // `relativeDifference`: from the extending file's directory. 18003 prints the result.
         let (base, extended_dir) = (
-            dirname::<Posix>(&self.path),
-            dirname::<Posix>(extended_path),
+            Posix::dirname_or_root(&self.path),
+            Posix::dirname_or_root(extended_path),
         );
         let relative_difference =
             get_relative_path_from_directory(base, extended_dir, is_case_sensitive);
@@ -999,7 +999,7 @@ pub fn load_overriding(
     let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
         return Err(errors);
     };
-    let base = dirname::<Posix>(path);
+    let base = Posix::dirname_or_root(path);
     let references = get_project_references(&raw.references, base);
     let has_references = references.is_some_and(|list| !list.is_empty());
     merge_compiler_options(&mut raw.compiler, overrides(has_references), &[]);
@@ -1875,7 +1875,7 @@ fn include_base_path(absolute: &[u8]) -> Vec<u8> {
         // `HasExtension`
         None if !strings::contains_char(get_base_file_name(absolute), b'.') => absolute.to_vec(),
         None => {
-            let directory = dirname::<Posix>(absolute);
+            let directory = Posix::dirname_or_root(absolute);
             directory.strip_suffix(b"/").unwrap_or(directory).to_vec()
         }
         Some(wildcard) => {

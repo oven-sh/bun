@@ -9,8 +9,8 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
-use bun_paths::resolve_path::{self, Platform, platform};
-use bun_paths::{Path, PoolPath, VecPath};
+use bun_paths::platform::Windows;
+use bun_paths::{ForwardSlashPath, Path, PathStyle as _, PoolPath, VecPath, windows_to_platform};
 use bun_sys::{Fd, File};
 
 use super::add_catalog;
@@ -77,7 +77,7 @@ pub(crate) fn root_package_json_path() -> Box<[u8]> {
 
 pub(crate) fn workspace_package_json_path(workspace_path: &[u8]) -> Box<[u8]> {
     let top_level = FileSystem::get().top_level_dir();
-    let path = Path::resolve_any_sep(&[top_level, workspace_path, b"package.json"]);
+    let path = Path::resolve(&[top_level, workspace_path, b"package.json"]);
     path.as_bytes().into()
 }
 
@@ -140,8 +140,7 @@ pub(crate) fn select_targets(
 
     let patterns = manager.options.filter_patterns;
 
-    let subject =
-        |rel: &[u8]| workspace_selection::abs_posix_dir(top_level, rel).unwrap_or_default();
+    let subject = |rel: &[u8]| workspace_selection::abs_posix_dir(top_level, rel);
     let mut candidates: Vec<(WorkspaceTarget, Box<[u8]>)> = Vec::with_capacity(members.count() + 1);
     candidates.push((
         WorkspaceTarget {
@@ -317,8 +316,7 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
     } else {
         path.starts_with(b".") || (!path.is_empty() && !strings::contains(path, b"://"))
     };
-    (is_path && !path.starts_with(b"//") && !Platform::AUTO.is_absolute(path))
-        .then_some((prefix, path))
+    (is_path && !path.starts_with(b"//") && !bun_paths::is_absolute(path)).then_some((prefix, path))
 }
 
 #[cold]
@@ -333,7 +331,8 @@ fn local_path_too_long(request: &UpdateRequest) -> ! {
 }
 
 fn resolve_from_cwd(cwd: &[u8], request: &UpdateRequest, path: &[u8]) -> PoolPath {
-    PoolPath::resolve_any_sep(&[cwd, path]).unwrap_or_else(|_| local_path_too_long(request))
+    PoolPath::resolve(&[cwd, &windows_to_platform(path)])
+        .unwrap_or_else(|_| local_path_too_long(request))
 }
 
 /// `None` means the global package.json, which stores `abs` itself, like `-g /abs/path` does.
@@ -343,28 +342,27 @@ fn spell_relative_to(
     prefix: &[u8],
     abs: &[u8],
 ) -> Vec<u8> {
-    let rel: &[u8] = match package_json_path.and_then(bun_paths::dirname) {
-        Some(target_dir) => &PoolPath::relative_any_sep(target_dir, abs)
-            .unwrap_or_else(|_| local_path_too_long(request)),
-        None => abs,
-    };
+    let target_dir = package_json_path.and_then(bun_paths::dirname);
+    let relative = (target_dir.map(|dir| ForwardSlashPath::relative(dir, abs)))
+        // In a relative path in package.json, `\` is a separator.
+        .filter(|relative| !strings::contains_char(relative, b'\\'));
+    let rel: &[u8] = &relative.unwrap_or_else(|| ForwardSlashPath::resolve(&[abs]));
+    if rel.len() >= bun_paths::MAX_PATH_BYTES {
+        local_path_too_long(request);
+    }
     let mut positional = Vec::with_capacity(request.name.len() + prefix.len() + rel.len() + 4);
     if request.is_aliased {
         positional.extend_from_slice(request.name);
         positional.push(b'@');
     }
     positional.extend_from_slice(prefix);
-    let path_start = positional.len();
-    let escapes =
-        rel.starts_with(b"..") && rel.get(2).is_none_or(|&c| Platform::AUTO.is_separator(c));
-    if !escapes && package_json_path.is_some() {
+    if !bun_paths::climbs_out(rel) {
         positional.extend_from_slice(b"./");
     }
     positional.extend_from_slice(rel);
-    resolve_path::platform_to_posix_in_place(&mut positional[path_start..]);
     // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
     let typed = request.version.literal.slice(request.version_buf());
-    if typed.ends_with(b"/") && !positional.ends_with(b"/") {
+    if Windows::has_trailing_sep(typed) && !positional.ends_with(b"/") {
         positional.push(b'/');
     }
     positional
@@ -384,7 +382,7 @@ pub(super) fn respell_local_paths(
             bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
             None,
         )
-    } else if resolve_path::dirname::<platform::Auto>(&package_json_path) == original_cwd {
+    } else if bun_paths::dirname_or_root(&package_json_path) == original_cwd {
         return updates;
     } else {
         (original_cwd, Some(&*package_json_path))

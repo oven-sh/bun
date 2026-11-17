@@ -3,7 +3,6 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
 use bun_core::{Global, Output};
-use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
@@ -346,12 +345,7 @@ pub(crate) fn install_hoisted_packages(
                 // up to 64 directories open.
                 deferred: (cfg!(not(windows)) && !FileSystem::get().fs.need_to_close_files())
                     .then(|| DeferredLinks::init(&lockfile_ref)),
-                node_modules: NodeModulesFolder {
-                    path: FileSystem::get()
-                        .top_level_dir_without_trailing_slash()
-                        .to_vec(),
-                    tree_id: 0,
-                },
+                node_modules: NodeModulesFolder::default(),
                 skip_verify_installed_version_number,
                 skip_delete,
                 workspaces_seen: Vec::new(),
@@ -380,7 +374,7 @@ pub(crate) fn install_hoisted_packages(
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
                 seen_bin_links: StringHashMap::<()>::default(),
-                destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
+                destination_dir_subpath: bun_paths::VecPath::new(),
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
@@ -402,23 +396,12 @@ pub(crate) fn install_hoisted_packages(
             };
         };
 
-        installer.node_modules.path.push(SEP);
-
-        let top_level_len = FileSystem::get()
-            .top_level_dir_without_trailing_slash()
-            .len()
-            + 1;
-
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
             if installer.must_link_before(node_modules.tree_id) {
                 link_deferred(mgr_ptr, &mut installer, log_level)?;
             }
 
-            installer.node_modules.path.truncate(top_level_len);
-            installer
-                .node_modules
-                .path
-                .extend_from_slice(node_modules.relative_path.as_bytes());
+            installer.node_modules.set_path(node_modules.relative_path);
             installer.node_modules.tree_id = node_modules.tree_id;
             let mut remaining: &[DependencyID] = node_modules.dependencies;
             installer.current_tree_id = node_modules.tree_id;

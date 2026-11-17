@@ -1,5 +1,4 @@
 use core::cmp::Ordering;
-use std::io::Write as _;
 
 use bun_collections::DynamicBitSet;
 use bun_core::fmt::PathSep;
@@ -14,7 +13,7 @@ use bun_install::package_manager_real::{
     setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
-use bun_paths::{Path, resolve_path};
+use bun_paths::Path;
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
@@ -83,7 +82,7 @@ impl InstalledFilter {
             ResolutionTag::Workspace => {
                 // Resolve `..`: Windows treats one that is left in an absolute path as a literal name.
                 let workspace = resolution.workspace().slice(buf);
-                return bun_sys::exists_z(&Path::resolve_any_sep(&[self.top_level_dir, workspace]));
+                return bun_sys::exists_z(&Path::resolve(&[self.top_level_dir, workspace]));
             }
             _ => {}
         }
@@ -217,8 +216,8 @@ impl PackageManagerCommand {
                 Err(_) => path,
             };
             if !matches!(
-                resolve_path::is_parent_or_equal(dir, real),
-                resolve_path::ParentEqual::Unrelated
+                bun_paths::is_parent_or_equal(dir, real),
+                bun_paths::ParentEqual::Unrelated
             ) {
                 return Some(what);
             }
@@ -351,11 +350,11 @@ impl PackageManagerCommand {
                 && Output::enable_ansi_colors_stderr()
                 && let Some(path) = env_var::PATH.get()
             {
-                let bin_dir = strings::without_trailing_slash(output_path);
+                let bin_dir = bun_paths::without_trailing_sep(output_path);
                 let in_path = path
                     .split(|b| *b == bun_paths::DELIMITER)
                     .filter(|s| !s.is_empty())
-                    .map(strings::without_trailing_slash)
+                    .map(bun_paths::without_trailing_sep)
                     .any(|entry| {
                         if cfg!(windows) {
                             strings::eql_case_insensitive_ascii(entry, bin_dir, true)
@@ -552,10 +551,8 @@ impl PackageManagerCommand {
                             };
                             if dry_run {
                                 bun_core::prettyln!(
-                                    "<r><d>dry run:<r> would delete {}{}{}",
-                                    bstr::BStr::new(strings::without_trailing_slash(tmp)),
-                                    bun_paths::SEP_STR,
-                                    bun_fmt::escape_control_chars(name),
+                                    "<r><d>dry run:<r> would delete {}",
+                                    bun_fmt::escape_control_chars(&Path::from_parts(&[tmp, name])),
                                 );
                             } else if let Err(err) = tmp_dir.delete_tree(name) {
                                 Output::err(err, "Could not delete {s}", (bstr::BStr::new(name),));
@@ -907,16 +904,11 @@ fn print_node_modules_folder_structure(
         let package_name = lockfile.buffers.dependencies[dependency_id as usize]
             .name
             .slice(string_bytes);
-        let mut possible_path: Vec<u8> = Vec::new();
-        write!(
-            &mut possible_path,
-            "{}{}{}{}node_modules",
-            bstr::BStr::new(&directory.relative_path),
-            bun_paths::SEP_STR,
-            bstr::BStr::new(package_name),
-            bun_paths::SEP_STR,
-        )
-        .expect("unreachable");
+        // `@scope/name` keeps its `/` in the path of a tree.
+        let mut possible_path = bun_paths::VecPath::from(&directory.relative_path);
+        possible_path.push_trailing_sep();
+        possible_path.extend_from_slice(package_name);
+        possible_path.push(b"node_modules");
 
         if index + 1 == sorted_len {
             more_packages[depth] = false;

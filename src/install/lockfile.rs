@@ -2,6 +2,7 @@
 
 use core::cmp::Ordering;
 use core::fmt;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::Error as BunError;
@@ -13,7 +14,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, UnwrapOrOom as _};
-use bun_paths::{NameTooLong, Path, PoolPath, SEP, SEP_STR, resolve_path};
+use bun_paths::{Path, PoolPath, SEP};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -31,7 +32,7 @@ use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
     Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache,
 };
-use crate::resolution_real::{self as resolution, Resolution};
+use crate::resolution_real::{self as resolution, Resolution, TaggedValue};
 use crate::string_builder;
 use crate::update_request::UpdateRequest;
 use crate::{
@@ -220,7 +221,7 @@ impl LinkedMembers {
         if self.members.is_empty() {
             return None;
         }
-        self.members.get(strings::without_trailing_slash(path))
+        self.members.get(bun_paths::without_trailing_sep(path))
     }
 
     /// Records the workspace at `path` if a symlink leads to it. `is_behind_link` is what the
@@ -239,14 +240,13 @@ impl LinkedMembers {
     fn is_in(folder: &[u8], path: &[u8]) -> bool {
         !folder.is_empty()
             && !path.is_empty()
-            && resolve_path::is_parent_or_equal(folder, path)
-                != resolve_path::ParentEqual::Unrelated
+            && bun_paths::is_parent_or_equal(folder, path) != bun_paths::ParentEqual::Unrelated
     }
 
     /// Checks every folder on the way to the workspace at `path` with `lstat`. This is for a
     /// workspace that no directory listing covered.
     pub(crate) fn look_at(&mut self, path: &[u8]) {
-        let path = strings::without_trailing_slash(path);
+        let path = bun_paths::without_trailing_sep(path);
         if crate::bin::path_climbs_out(path) || self.get(path).is_some() {
             return;
         }
@@ -257,7 +257,7 @@ impl LinkedMembers {
             if self.real_folders.contains_key(folder) {
                 continue;
             }
-            let abs = Path::resolve_any_sep(&[FileSystem::get().top_level_dir(), folder]);
+            let abs = Path::resolve(&[FileSystem::get().top_level_dir(), folder]);
             let is_link = !sys::lstat(&abs).is_ok_and(|st| {
                 sys::kind_from_mode(st.st_mode as sys::Mode) != sys::EntryKind::SymLink
             });
@@ -270,7 +270,7 @@ impl LinkedMembers {
 
     /// Records the workspace at `path`, which is known to be reached through a symlink.
     pub(crate) fn add(&mut self, path: &[u8]) {
-        let path = strings::without_trailing_slash(path);
+        let path = bun_paths::without_trailing_sep(path);
         if crate::bin::path_climbs_out(path) || self.get(path).is_some() {
             return;
         }
@@ -289,7 +289,7 @@ impl LinkedMembers {
     /// fails.
     pub(crate) fn real_path_of(path: &[u8]) -> Box<[u8]> {
         let mut real_buf = bun_paths::path_buffer_pool::get();
-        let path = Path::resolve_any_sep(&[FileSystem::get().top_level_dir(), path]);
+        let path = Path::resolve(&[FileSystem::get().top_level_dir(), path]);
         match sys::realpath(&path, &mut *real_buf) {
             Ok(real_path) => real_path.into(),
             Err(_) => Box::default(),
@@ -594,6 +594,7 @@ impl Lockfile {
     ) -> LoadResult {
         let result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
         if matches!(result, LoadResult::Ok(_)) {
+            self.convert_windows_paths(dir).unwrap_or_oom();
             self.rebase_folder_dependencies().unwrap_or_oom();
         }
         result
@@ -700,6 +701,45 @@ impl Lockfile {
             migrated: Migrated::None,
             format: LockfileFormat::Binary,
         })
+    }
+
+    /// Older versions wrote `\` on Windows. `dir` is the project.
+    fn convert_windows_paths(&mut self, dir: Fd) -> Result<(), AllocError> {
+        let mut string_buf = SemverStringBuf {
+            bytes: &mut self.buffers.string_bytes,
+            pool: &mut self.string_pool,
+        };
+        let mut convert = |stored: SemverString| {
+            let path = stored.slice(string_buf.bytes);
+            let spelling = if cfg!(windows) {
+                bun_paths::platform_to_posix(path)
+            } else {
+                sys::existing_spelling(dir, path)
+            };
+            match spelling {
+                Cow::Borrowed(_) => Ok(stored),
+                Cow::Owned(converted) => string_buf.append(&converted),
+            }
+        };
+        for resolution in self.packages.items_resolution_mut() {
+            *resolution = Resolution::init(match resolution.tag {
+                ResolutionTag::Folder => TaggedValue::Folder(convert(*resolution.folder())?),
+                ResolutionTag::Symlink => TaggedValue::Symlink(convert(*resolution.symlink())?),
+                ResolutionTag::Workspace => {
+                    TaggedValue::Workspace(convert(*resolution.workspace())?)
+                }
+                _ => continue,
+            });
+        }
+        for path in self.workspace_paths.values_mut() {
+            *path = convert(*path)?;
+        }
+        for dependency in &mut self.buffers.dependencies {
+            if let dependency::Value::Workspace(path) = &mut dependency.version.value {
+                *path = convert(*path)?;
+            }
+        }
+        Ok(())
     }
 
     /// The stored literal is relative to the package. `Package::parse` also rebases the
@@ -999,7 +1039,9 @@ impl Lockfile {
                 && crate::dedupe::applied_override(self, row as DependencyID, dependency)
                     .and_then(|rule| match &rule.version().value {
                         dependency::Value::Folder(folder) => {
-                            join_top_level_dir(&[folder.slice(buf)])
+                            join_top_level_dir(&[&bun_paths::windows_to_platform(
+                                folder.slice(buf),
+                            )])
                         }
                         _ => None,
                     })
@@ -1137,7 +1179,12 @@ impl Lockfile {
                 rows.get(self.buffers.dependencies.as_slice())
             })
             .iter()
-            .filter(|dependency| dependency.behavior.is_bundled())
+            .filter(move |dependency| {
+                dependency.behavior.is_bundled()
+                    && crate::package_installer::alias_is_safe_install_target(
+                        dependency.name.slice(buf),
+                    )
+            })
     }
 
     pub(crate) fn is_overridden_dependency(&self, id: DependencyID) -> bool {
@@ -1914,14 +1961,13 @@ impl<'a> Printer<'a> {
             Path::from(input_lockfile_path)
         } else {
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let mut path = Path::from(sys::getcwd_z(&mut cwd_buf)?);
-            path.resolve_any_sep_in_place(&[input_lockfile_path]);
+            let mut path = Path::resolve(&[sys::getcwd_z(&mut cwd_buf)?, input_lockfile_path]);
+            path.copy_trailing_sep_from(input_lockfile_path);
             path
         };
 
         if lockfile_path.first() == Some(&SEP) {
-            let dir = lockfile_path.dirname().unwrap_or(SEP_STR.as_bytes());
-            let _ = sys::chdir(&Path::from(dir));
+            let _ = sys::chdir(&Path::from(bun_paths::dirname_or_root(&lockfile_path)));
         }
 
         // An entry point (`bun bun.lockb`): the resolver FS singleton may not exist yet.
@@ -1960,7 +2006,7 @@ impl<'a> Printer<'a> {
                 );
                 Global::crash();
             }
-            crate::lockfile::LoadResult::Ok(_) => {}
+            crate::lockfile::LoadResult::Ok(_) => lockfile.convert_windows_paths(Fd::cwd())?,
         }
 
         match printer::Yarn::print(&lockfile, &mut Output::writer_buffered()) {
@@ -2175,20 +2221,11 @@ pub(crate) fn linked_workspace_path_in(
     range.satisfies(version, range_buf, buf).then_some(path)
 }
 
-/// Resolves `parts` against `base`. Every `\` outside of `base` is a separator, as it is in a lockfile.
-pub(crate) fn resolve_for_lockfile(base: &[u8], parts: &[&[u8]]) -> Result<PoolPath, NameTooLong> {
-    let mut path = PoolPath::from(base)?;
-    path.resolve_any_sep_in_place(parts)?;
-    if bun_paths::has_literal_backslash(&path) {
-        let relative = Path::relative_any_sep(base, &path);
-        return PoolPath::resolve(&[base, &relative]);
-    }
-    Ok(path)
-}
-
-/// [`resolve_for_lockfile`] against the project root. `None` if it doesn't fit in a path buffer.
+/// Resolves `parts` against the project root. `None` if it doesn't fit in a path buffer.
 pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<PoolPath> {
-    resolve_for_lockfile(FileSystem::get().top_level_dir(), parts).ok()
+    let mut path = PoolPath::from_top_level_dir().ok()?;
+    path.resolve_in_place(parts).ok()?;
+    Some(path)
 }
 
 impl Lockfile {

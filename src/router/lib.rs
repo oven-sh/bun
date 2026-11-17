@@ -14,7 +14,8 @@ use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+use bun_paths::platform::Auto;
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, PathStyle as _, SEP, SEP_STR, SlicePath};
 
 use bun_http_types::URLPath::URLPath;
 
@@ -460,7 +461,7 @@ impl<'a> RouteLoader<'a> {
         let mut route_dirname_len: u16 = 0;
 
         // Call bun_paths directly to avoid the higher-tier bun_resolver dep.
-        let relative_dir = bun_paths::resolve_path::relative(base_dir, &config.dir);
+        let relative_dir = bun_paths::Path::relative(base_dir, &config.dir);
         if !relative_dir.starts_with(b"..") {
             route_dirname_len =
                 (relative_dir.len() + usize::from(config.dir[config.dir.len() - 1] != SEP)) as u16;
@@ -596,9 +597,7 @@ impl<'a> RouteLoader<'a> {
                             let entry_dir = entry.dir();
                             debug_assert!(entry_dir.len() + 1 >= base_dir.len());
                             if entry_dir.len() >= base_dir.len() {
-                                debug_assert!(bun_paths::resolve_path::is_sep_any(
-                                    entry_dir[base_dir.len() - 1]
-                                ));
+                                debug_assert!(bun_paths::is_sep(entry_dir[base_dir.len() - 1]));
                             }
 
                             // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
@@ -705,7 +704,7 @@ impl Route {
         let base = &base_[0..base_.len() - extname.len()];
 
         // The public path and the longer absolute path are both built in `route_file_buf`.
-        let dir = bun_paths::string_paths::without_trailing_any_sep(entry.dir());
+        let dir = bun_paths::without_trailing_sep(entry.dir());
         if dir.len() + 1 + base_.len() >= MAX_PATH_BYTES {
             log.add_error_fmt(
                 None,
@@ -720,7 +719,7 @@ impl Route {
             return None;
         }
 
-        let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
+        let public_dir = Auto::without_leading_sep(Auto::without_trailing_sep(public_dir_));
 
         // this is a path like
         // "/pages/index.js"
@@ -733,35 +732,12 @@ impl Route {
                 if base.is_empty() {
                     break 'brk public_dir;
                 }
-                let mut buf: &mut [u8] = &mut route_file_buf[..];
-
-                if !public_dir.is_empty() {
-                    // NOTE: reshaped for borrowck — `buf` already aliases
-                    // route_file_buf[..]; write through it instead of re-borrowing.
-                    buf[0] = b'/';
-                    buf = &mut buf[1..];
-                    buf[..public_dir.len()].copy_from_slice(public_dir);
+                let mut path = SlicePath::new(&mut route_file_buf[..]);
+                for part in [b"/", public_dir, base_] {
+                    (path.push(part)).expect("shorter than the absolute path");
                 }
-                buf[public_dir.len()] = b'/';
-                buf = &mut buf[public_dir.len() + 1..];
-                buf[..base.len()].copy_from_slice(base);
-                buf = &mut buf[base.len()..];
-                buf[..extname.len()].copy_from_slice(extname);
-                buf = &mut buf[extname.len()..];
-
-                let written_len = buf.as_ptr() as usize - route_file_buf.as_ptr() as usize;
-
-                #[cfg(windows)]
-                {
-                    bun_paths::resolve_path::platform_to_posix_in_place(
-                        &mut route_file_buf[0..written_len],
-                    );
-                }
-
-                // SAFETY: written_len computed from sub-slice pointer arithmetic above
-                break 'brk unsafe {
-                    core::slice::from_raw_parts(route_file_buf.as_ptr(), written_len)
-                };
+                bun_paths::platform_to_posix_in_place(path.as_mut_slice());
+                path.into_zstr()
             };
 
             let mut name = &public_path[0..public_path.len() - extname.len()];
@@ -881,13 +857,11 @@ impl Route {
             let abs_path: AbsPath = {
                 // Intern into DirnameStore so the slice is genuinely `'static`
                 // and the `Interned` widen is sound on Windows.
-                let normalized = bun_paths::resolve_path::platform_to_posix_buf(
-                    abs_path_str,
-                    &mut bufs.normalized_abs_path_buf,
-                );
+                let mut normalized = bun_paths::Path::from(abs_path_str);
+                bun_paths::platform_to_posix_in_place(normalized.as_mut_slice());
                 let interned: &'static [u8] = FileSystem::get()
                     .dirname_store()
-                    .append(normalized)
+                    .append(&normalized)
                     .expect("unreachable");
                 Interned::from_static(interned)
             };
@@ -991,8 +965,6 @@ pub(crate) mod sorter {
 
 struct RouteBufs {
     route_file_buf: PathBuffer,
-    #[cfg(windows)]
-    normalized_abs_path_buf: bun_sys::windows::PathBuffer,
 }
 
 thread_local! {
@@ -1000,8 +972,6 @@ thread_local! {
     // (keeps PT_TLS MemSiz small — see test/js/bun/binary/tls-segment-size).
     static ROUTE_BUFS: RefCell<Box<RouteBufs>> = RefCell::new(Box::new(RouteBufs {
         route_file_buf: PathBuffer::ZEROED,
-        #[cfg(windows)]
-        normalized_abs_path_buf: bun_sys::windows::PathBuffer::ZEROED,
     }));
 }
 

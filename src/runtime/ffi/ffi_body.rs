@@ -668,7 +668,6 @@ impl CompileC {
 
         #[cfg(target_os = "macos")]
         {
-            let mut pathbuf = bun_paths::path_buffer_pool::get();
             'add_system_include_dir: {
                 let dirs_to_try: [&[u8]; 2] = [
                     env_var::SDKROOT.get().unwrap_or(b""),
@@ -679,22 +678,14 @@ impl CompileC {
 
                 for sdkroot in dirs_to_try {
                     if !sdkroot.is_empty() {
-                        let include_dir = path::resolve_path::join_abs_string_buf_z::<
-                            path::platform::Auto,
-                        >(
-                            sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"include"]
-                        );
-                        if state.add_sys_include_path(include_dir).is_err() {
+                        let include_dir = path::Path::resolve(&[sdkroot, b"usr/include"]);
+                        if state.add_sys_include_path(&include_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add sysinclude path"));
                             return Err(crate::Error::JSError);
                         }
 
-                        let lib_dir = path::resolve_path::join_abs_string_buf_z::<
-                            path::platform::Auto,
-                        >(
-                            sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"lib"]
-                        );
-                        if state.add_library_path(lib_dir).is_err() {
+                        let lib_dir = path::Path::resolve(&[sdkroot, b"usr/lib"]);
+                        if state.add_library_path(&lib_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add library path"));
                             return Err(crate::Error::JSError);
                         }
@@ -1561,12 +1552,10 @@ impl FFI {
                 Ok(d) => break 'brk d,
                 Err(_) => {
                     // if that fails, try resolving the filepath relative to the current working directory
-                    let mut backup_buf = bun_paths::path_buffer_pool::get();
-                    let backup_name =
-                        Fs::FileSystem::get().abs_buf_checked(&[name], &mut backup_buf[..]);
-                    match backup_name.map(open) {
-                        Some(Ok(d)) => break 'brk d,
-                        Some(Err(_)) | None => {
+                    let cwd = Fs::FileSystem::get().top_level_dir();
+                    match bun_paths::PoolPath::resolve(&[cwd, name]).map(|path| open(&path)) {
+                        Ok(Ok(d)) => break 'brk d,
+                        Ok(Err(_)) | Err(_) => {
                             // Then, if that fails, report an error with the library name and system error
                             let dlerror_msg = get_dl_error();
 

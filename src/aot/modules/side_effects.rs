@@ -1,5 +1,4 @@
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::join_spill;
+use bun_paths::{PosixPath, slashes_to_posix};
 use bun_sema::resolve::DeclaredSideEffects;
 
 pub(super) fn is_declared_free_of_side_effects(
@@ -22,8 +21,7 @@ fn is_pattern(entry: &[u8]) -> bool {
 }
 
 pub(crate) fn names(directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
-    let mut long_path = Vec::new();
-    let named = join_spill::<Posix>(&mut long_path, &[directory, entry]);
+    let named: &[u8] = &PosixPath::join(&[directory, &slashes_to_posix(entry)]);
     match is_pattern(entry) {
         true => bun_glob::Prepared::new(named).r#match(path).matches(),
         false => named == path,

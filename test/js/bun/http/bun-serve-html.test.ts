@@ -2057,7 +2057,7 @@ describe("production headers and import.meta.env", () => {
 
 test.concurrent.skipIf(isWindows).each([
   ["../web", "../web/index.html"],
-  ["./a\\b", "a/b/index.html"],
+  ["./a\\b", "a\\\\b/index.html"],
 ])("dev server entry module id matches when the cwd contains a backslash (page in %s)", async (pages, id) => {
   const cwd = "a\\b";
   using dir = tempDir("html-backslash", {

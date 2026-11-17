@@ -455,22 +455,14 @@ fn pack_entry(
 
     let mut walker = bun_core::handle_oom(walker_skippable::walk(dir.fd(), &[], &[]));
     walker.resolve_unknown_entry_types = true;
-    #[cfg(windows)]
-    let mut rel_buf = bun_paths::path_buffer_pool::get();
     #[cfg(unix)]
     let mut target_buf = bun_paths::path_buffer_pool::get();
-    #[cfg(unix)]
-    let mut join_buf = None;
 
     while let Some(entry) = walker.next()? {
         #[cfg(not(windows))]
         let rel: &[u8] = entry.path.as_bytes();
         #[cfg(windows)]
-        let rel: &[u8] = {
-            let len = bun_paths::strings::from_wpath(&mut rel_buf[..], entry.path.as_slice()).len();
-            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_buf[..len]);
-            &rel_buf[..len]
-        };
+        let rel: &[u8] = &bun_paths::ForwardSlashPath::from_parts(&[entry.path.as_slice()]);
         if rel.len() > MAX_PACK_PATH_LEN || !is_safe_relative_path(rel) {
             return Err(refuse("cache entry path cannot be packed", rel));
         }
@@ -497,8 +489,7 @@ fn pack_entry(
                 {
                     let len = sys::readlinkat(entry.dir, entry.basename, &mut target_buf[..])?;
                     let target = ZStr::nul_terminate(&mut target_buf, len);
-                    if len > MAX_PACK_PATH_LEN
-                        || !bun_archive::is_symlink_target_safe(rel, target, &mut join_buf)
+                    if len > MAX_PACK_PATH_LEN || !bun_archive::is_symlink_target_safe(rel, target)
                     {
                         return Err(refuse(
                             "cache entry has symlink that may point outside it",
@@ -749,8 +740,6 @@ fn unpack_package(
     // Symlinks are created last, so that no path can go through one while files are being written.
     #[cfg(unix)]
     let mut links: Vec<bun_archive::DeferredSymlink> = Vec::new();
-    #[cfg(unix)]
-    let mut join_buf = None;
 
     loop {
         let (header, rel) = r.header(&mut path)?;
@@ -801,11 +790,7 @@ fn unpack_package(
                 #[cfg(unix)]
                 {
                     if strings::contains_char(target.as_bytes(), 0)
-                        || !bun_archive::is_symlink_target_safe(
-                            rel.as_bytes(),
-                            target,
-                            &mut join_buf,
-                        )
+                        || !bun_archive::is_symlink_target_safe(rel.as_bytes(), target)
                     {
                         return Err(r.refuse("unsafe symlink target", rel.as_bytes()));
                     }
@@ -866,8 +851,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
 /// Returns false if something already exists at `to`. It's left alone.
 #[cfg(windows)]
 fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::Maybe<bool> {
-    let mut to_buf = bun_paths::w_path_buffer_pool::get();
-    let to_w = bun_paths::strings::to_wpath_normalized(&mut to_buf, to.as_bytes());
+    let to_w: &[u16] = &sys::nt_path(to, sys::Tag::rename)?;
     // A virus scanner or indexer may have the new files open. See `cache_publish::RenameRetry`.
     let mut retries: u32 = 0;
     loop {
@@ -1015,7 +999,9 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
         }
     };
     // `PackageManager::init` has changed directory since it was typed.
-    let Ok(abs_file) = bun_paths::PoolPath::resolve_any_sep(&[original_cwd, file]) else {
+    let abs_file = bun_paths::PoolPath::resolve(&[original_cwd, file])
+        .and_then(|mut abs_file| abs_file.copy_trailing_sep_from(file).map(|()| abs_file));
+    let Ok(abs_file) = abs_file else {
         bun_core::pretty_errorln!("<r><red>error<r><d>:<r> \\<file\\> is too long");
         Global::exit(1);
     };

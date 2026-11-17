@@ -1,5 +1,7 @@
+use bun_core::strings;
 use bun_js_parser::ImportMetaGlobHost;
-use bun_paths::strings;
+use bun_paths::platform::Auto;
+use bun_paths::{PathStyle as _, PoolPath};
 
 use crate::dir_info::DirInfo;
 use crate::package_json::{ESModule, Status};
@@ -73,12 +75,11 @@ impl Resolver<'_> {
 
         let (before, after) =
             strings::split_once_char(original_path, b'*').unwrap_or((original_path, b""));
-        let name_start = strings::last_index_of_any(before, b"/\\").map_or(0, |slash| slash + 1);
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let dir = self.fs_ref().abs_buf_checked(
-            &[tsconfig.abs_base_url_for_paths(), &before[..name_start]],
-            &mut buf[..],
-        )?;
+        let name_start = (before.iter())
+            .rposition(|&byte| bun_paths::is_sep(byte))
+            .map_or(0, |slash| slash + 1);
+        let dir =
+            PoolPath::resolve(&[tsconfig.abs_base_url_for_paths(), &before[..name_start]]).ok()?;
         Some((
             dir.to_vec(),
             [&before[name_start..], matched_text, after].concat(),
@@ -123,7 +124,7 @@ impl Resolver<'_> {
             };
             (
                 package_json.source.path.name().dir.to_vec(),
-                strings::without_leading_path_separator(&path).to_vec(),
+                Auto::without_leading_sep(&path).to_vec(),
             )
         })
     }

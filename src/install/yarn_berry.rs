@@ -4,7 +4,8 @@ use bun_alloc::AllocError;
 use bun_ast::{E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_paths::string_paths::without_trailing_any_sep;
+use bun_paths::platform::Windows;
+use bun_paths::{ForwardSlashPath, PathStyle as _, windows_to_platform, without_trailing_sep};
 use bun_semver as semver;
 use bun_semver::String;
 use bun_sys::Fd;
@@ -276,21 +277,14 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
     let rc_name = env(b"YARN_RC_FILENAME").unwrap_or(b".yarnrc.yml");
     let home = bun_core::env_var::HOME
         .get_not_empty()
-        .map(without_trailing_any_sep);
+        .map(without_trailing_sep);
 
-    let mut folder: &[u8] = crate::bun_fs::FileSystem::get().top_level_dir_without_trailing_slash();
     let mut in_project = true;
     let mut read_home = false;
-    loop {
+    for folder in bun_paths::ancestors(crate::bun_fs::FileSystem::get().top_level_dir()) {
         read_yarnrc_file(log, &mut out, folder, rc_name, in_project)?;
         in_project = false;
         read_home |= home == Some(folder);
-        match bun_paths::dirname(folder) {
-            Some(parent) if parent.len() < folder.len() => {
-                folder = without_trailing_any_sep(parent);
-            }
-            _ => break,
-        }
     }
     if let (Some(home), false) = (home, read_home) {
         read_yarnrc_file(log, &mut out, home, rc_name, false)?;
@@ -343,15 +337,15 @@ fn read_yarnrc_file(
     rc_name: &[u8],
     in_project: bool,
 ) -> Result<(), Error> {
-    let path = [folder, b"/", rc_name].concat();
-    let data = match bun_sys::File::read_from(Fd::cwd(), &path) {
+    let path: &[u8] = &bun_paths::Path::from_parts(&[folder, rc_name]);
+    let data = match bun_sys::File::read_from(Fd::cwd(), path) {
         Ok(data) => data,
         Err(err) if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
             return Ok(());
         }
-        Err(_) => bail!(log, "could not read {}", shown(&path)),
+        Err(_) => bail!(log, "could not read {}", shown(path)),
     };
-    let source = bun_ast::Source::init_path_string(path.as_slice(), data.as_slice());
+    let source = bun_ast::Source::init_path_string(path, data.as_slice());
     let arena = bun_alloc::Arena::new();
     // The parser's messages point into `path` and `data`, which `log` outlives.
     let mut parse_log = bun_ast::Log::init();
@@ -361,7 +355,7 @@ fn read_yarnrc_file(
         &arena,
         bun_parsers::yaml::CyclicAliases::Reject,
     ) else {
-        bail!(log, "{} is not valid YAML", shown(&path));
+        bail!(log, "{} is not valid YAML", shown(path));
     };
 
     if in_project {
@@ -452,7 +446,7 @@ fn project_patch_paths(source: &[u8], params: &Params<'_>) -> Option<Vec<Vec<u8>
         }
         if let Some(rest) = one.strip_prefix(b"~/") {
             paths.push(rest.to_vec());
-        } else if bun_paths::is_absolute(one) {
+        } else if Windows::is_absolute(one) {
             paths.push(one.to_vec());
         } else {
             paths.push(join_folder(&owner_dir(params)?, one));
@@ -520,21 +514,11 @@ fn owner_dir(params: &Params<'_>) -> Option<Vec<u8>> {
 /// Joins the paths the way the folder resolver stores them: `.` and `..` resolved, with `/`
 /// separators on every platform.
 fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
-    use bun_paths::resolve_path::{join_string_buf, platform};
-    if bun_paths::is_absolute(path) {
-        return path.to_vec();
+    let path = windows_to_platform(path);
+    if bun_paths::is_absolute(&path) {
+        return path.into_owned();
     }
-    let mut buf = bun_paths::path_buffer_pool::get();
-    if base.len() + path.len() + 2 > buf.len() {
-        // The result is longer than any valid path, so the install will report the folder as
-        // missing.
-        return [base, b"/", path].concat();
-    }
-    let mut joined = join_string_buf::<platform::Auto>(&mut buf[..], &[base, path]).to_vec();
-    if cfg!(windows) {
-        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined);
-    }
-    joined
+    ForwardSlashPath::join(&[&windows_to_platform(base), &path]).to_vec()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1054,8 +1038,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                     p.is_empty()
                         || p.as_slice() == b"."
                         || strings::contains_char(p, 0)
-                        || bun_paths::is_absolute(p)
-                        || strings::split_any(p, b"/\\").any(|part| part == b"..")
+                        || Windows::is_absolute(p.as_slice())
+                        || Windows::components(p.as_slice()).any(|part| part == b"..")
                 }),
             };
             if let Some(path) = outside {

@@ -39,33 +39,11 @@ mod bun_http {
 /// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
 pub use bun_collections::StringSet;
 
-pub(crate) fn validate_path(
-    log: &mut bun_ast::Log,
-    cwd: &[u8],
-    rel_path: &[u8],
-    path_kind: &[u8],
-) -> Box<[u8]> {
-    if rel_path.is_empty() {
-        return Box::default();
-    }
-    // TODO: switch to getFdPath()-based implementation
-    // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
-    // buffer which is then boxed.
-    let out =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
-    if out.is_empty() {
-        log.add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "Invalid {}: {}",
-                bstr::BStr::new(path_kind),
-                bstr::BStr::new(rel_path),
-            ),
-        );
-        return Box::default();
-    }
-    Box::from(out)
+/// The deepest directory that holds all of `entry_points`.
+pub fn default_root_dir(entry_points: &[Box<[u8]>]) -> &[u8] {
+    let dirs = entry_points.iter().map(|it| bun_paths::dirname_or_root(it));
+    let common = bun_paths::common_ancestor(dirs);
+    common.filter(|dir| !dir.is_empty()).unwrap_or(b".")
 }
 
 // `AllowUnresolved` is defined canonically in
@@ -166,11 +144,9 @@ pub(crate) fn init_external_modules(
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            let normalized = validate_path(log, cwd, external, b"external path");
-
-            if !normalized.is_empty() {
-                result.abs_paths.insert(&normalized).expect("unreachable");
-            }
+            let mut normalized = bun_paths::Path::resolve(&[cwd, external]);
+            normalized.copy_trailing_sep_from(external);
+            result.abs_paths.insert(&normalized).expect("unreachable");
         }
     }
 
@@ -591,18 +567,8 @@ pub fn get_loader_and_virtual_source<'a>(
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
         let eval_source: &'a bun_ast::Source<'a> = unsafe { &*eval_source };
-        // The eval/stdin entry path uses the platform path separator
-        // (`/` becomes `\` on Windows), so the suffix is per-platform.
-        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[eval]"
-        } else {
-            b"/[eval]"
-        };
-        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[stdin]"
-        } else {
-            b"/[stdin]"
-        };
+        const EVAL_SUFFIX: &[u8] = bun_paths::path_literal!("/[eval]").as_bytes();
+        const STDIN_SUFFIX: &[u8] = bun_paths::path_literal!("/[stdin]").as_bytes();
         if strings::ends_with(specifier, EVAL_SUFFIX) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
@@ -2141,11 +2107,8 @@ pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
             // Single-level mkdir
             // (fails ENOENT if parent missing). Do NOT use `make_path` (the
             // recursive `mkdir -p` variant) here.
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let len = output_dir.len().min(buf.0.len() - 1);
-            buf.0[..len].copy_from_slice(&output_dir[..len]);
-            let z = bun_core::ZStr::nul_terminate(&mut buf, len);
-            if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
+            let path = bun_paths::Path::from(output_dir);
+            if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), &path, 0o755) {
                 let err: crate::Error = err.into();
                 Output::print_errorln(format_args!(
                     "error: Unable to mkdir \"{}\": \"{}\"",
@@ -2406,11 +2369,7 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
 ) -> bun_io::Result<()> {
     let mut rest: &[u8] = dir;
     loop {
-        // On POSIX `\` is a legal filename byte, not a separator, so only split
-        // on it under Windows (matches `write_replacing_slashes_on_windows`).
-        let sep = rest
-            .iter()
-            .position(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
+        let sep = rest.iter().position(|&b| bun_paths::is_sep(b));
         let seg = sep.map_or(rest, |i| &rest[..i]);
         PathTemplate::write_replacing_slashes_on_windows(
             writer,
@@ -2519,21 +2478,7 @@ impl PathTemplate {
         w: &mut W,
         slice: &[u8],
     ) -> bun_io::Result<()> {
-        #[cfg(windows)]
-        {
-            let mut remain = slice;
-            while let Some(i) = strings::index_of_char(remain, b'/') {
-                let i = i as usize;
-                w.write_all(&remain[0..i])?;
-                w.write_all(&[b'\\'])?;
-                remain = &remain[i + 1..];
-            }
-            w.write_all(remain)
-        }
-        #[cfg(not(windows))]
-        {
-            w.write_all(slice)
-        }
+        w.write_all(&bun_paths::posix_to_platform(slice))
     }
 
     pub const CHUNK: PathTemplateConst = PathTemplateConst {

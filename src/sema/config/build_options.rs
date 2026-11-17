@@ -159,7 +159,7 @@ fn find_outputs_of_referenced_projects(
             host,
             &session,
             path,
-            dirname::<Posix>(path),
+            Posix::dirname_or_root(path),
             raw,
             errors,
         ))
@@ -171,7 +171,7 @@ fn find_outputs_of_referenced_projects(
             .into_iter()
             .find(|directory| !directory.is_empty())?;
         let root_directory = match options.root_dir.is_empty() {
-            true => dirname::<Posix>(&referenced.config_path),
+            true => Posix::dirname_or_root(&referenced.config_path),
             false => &options.root_dir[..],
         };
         Some((output_directory.clone(), root_directory.to_vec()))
@@ -218,7 +218,7 @@ fn project_for_build(
     mut errors: Vec<ConfigError>,
     root_files: RootFiles,
 ) -> Project {
-    let base = dirname::<Posix>(path);
+    let base = Posix::dirname_or_root(path);
     let keeps_type_errors_to_itself = (raw.compiler.iter())
         .any(|option| option.0 == b"noCheck" && matches!(option.1, Json::Bool(true)));
     merge_compiler_options(&mut raw.compiler, compile_build_overrides(), &[]);

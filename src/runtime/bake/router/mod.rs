@@ -3,7 +3,7 @@
 //! updating for DevServer, or serializing to a binary for use in production.
 
 use bun_alloc::ArenaVecExt as _;
-use bun_paths::strings;
+use bun_core::strings;
 use core::mem::size_of;
 
 use bun_alloc::{AllocError, Arena};
@@ -190,7 +190,7 @@ impl FrameworkRouter {
         // errdefer: Vec drops on error path automatically
 
         for (type_index, ty) in types.iter_mut().enumerate() {
-            ty.abs_root = strings::paths::without_trailing_slash_windows_path(&ty.abs_root).into();
+            ty.abs_root = paths::without_trailing_sep(&ty.abs_root).into();
             debug_assert!(paths::is_absolute(&ty.abs_root));
 
             routes.push(Route {
@@ -206,7 +206,7 @@ impl FrameworkRouter {
             });
         }
         Ok(FrameworkRouter {
-            root: strings::paths::without_trailing_slash_windows_path(root).into(),
+            root: paths::without_trailing_sep(root).into(),
             types,
             routes,
             dynamic_routes: DynamicRouteMap::default(),

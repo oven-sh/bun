@@ -432,17 +432,8 @@ mod _impl {
             });
         }
 
-        // Per-platform path-separator literal suffixes.
-        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[eval]"
-        } else {
-            b"/[eval]"
-        };
-        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[stdin]"
-        } else {
-            b"/[stdin]"
-        };
+        const EVAL_SUFFIX: &[u8] = bun_paths::path_literal!("/[eval]").as_bytes();
+        const STDIN_SUFFIX: &[u8] = bun_paths::path_literal!("/[stdin]").as_bytes();
         if let Some(main) = vm.main()
             && !strings::ends_with(main, EVAL_SUFFIX)
             && !strings::ends_with(main, STDIN_SUFFIX)
@@ -507,12 +498,7 @@ mod _impl {
         global_object: &JSGlobalObject,
         directory: &[u8],
     ) -> JsResult<JSValue> {
-        if cfg!(windows) {
-            let to_separator = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
-            let spelled: Vec<u8> = directory.iter().map(to_separator).collect();
-            return bun_string_jsc::create_utf8_for_js(global_object, &spelled);
-        }
-        bun_string_jsc::create_utf8_for_js(global_object, directory)
+        bun_string_jsc::create_utf8_for_js(global_object, &bun_paths::posix_to_platform(directory))
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -571,7 +557,6 @@ mod _impl {
         to: &'a bun_core::ZStr,
         buf: &'a mut bun_paths::PathBuffer,
     ) -> ChdirTarget<'a> {
-        use bun_paths::resolve_path::{self, platform};
         let Some(graph) = bun_standalone_graph::Graph::get_ref() else {
             return ChdirTarget::OnDisk(to);
         };
@@ -579,11 +564,11 @@ mod _impl {
         if !bun_paths::is_absolute(to.as_bytes()) && current.is_none() {
             return ChdirTarget::OnDisk(to);
         }
-        let path = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            current.unwrap_or(b"/"),
-            &mut buf[..],
-            &[to.as_bytes()],
-        );
+        let mut path = bun_paths::SlicePath::new(&mut buf[..]);
+        if (path.resolve_in_place(&[current.unwrap_or(b"/"), to.as_bytes()])).is_err() {
+            return ChdirTarget::InExecutable(Err(bun_sys::E::ENAMETOOLONG));
+        }
+        let path = path.into_zstr();
         if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
             return ChdirTarget::InExecutable(graph.dir_key(path.as_bytes()));
         }
@@ -637,9 +622,7 @@ mod _impl {
                 }
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
-                    bun_paths::string_paths::without_trailing_slash_windows_path(
-                        vm.top_level_dir(),
-                    ),
+                    bun_paths::without_trailing_sep(vm.top_level_dir()),
                 )
             }
             bun_sys::Result::Err(e) => {

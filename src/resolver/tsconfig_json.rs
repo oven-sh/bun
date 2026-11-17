@@ -2,6 +2,8 @@ use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
+use bun_paths::platform::Windows;
+use bun_paths::{PathStyle as _, windows_to_platform};
 use enumset::{EnumSet, EnumSetType};
 
 // D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
@@ -302,7 +304,7 @@ impl TSConfigJSON {
         out
     }
 
-    /// Support ${configDir}, but avoid allocating when possible.
+    /// Reads a path, which can have ${configDir} in it.
     ///
     /// https://github.com/microsoft/TypeScript/issues/57485
     ///
@@ -315,10 +317,11 @@ impl TSConfigJSON {
     // We convert it to an absolute path during module resolution, so we shouldn't need to do that here.
     // https://github.com/microsoft/TypeScript/blob/ef802b1e4ddaf8d6e61d6005614dd796520448f8/src/compiler/commandLineParser.ts#L3243-L3245
     fn str_replacing_templates(
-        input: Box<[u8]>,
+        input: &[u8],
         source: &bun_ast::Source,
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
         const TEMPLATE: &[u8] = b"${configDir}";
+        let input = windows_to_platform(input);
         let mut remaining: &[u8] = &input;
         let mut string_builder = bun_core::StringBuilder {
             len: 0,
@@ -334,9 +337,8 @@ impl TSConfigJSON {
             remaining = &remaining[index + TEMPLATE.len()..];
         }
 
-        // If we didn't find any template variables, return the original string without allocating.
         if remaining.len() == input.len() {
-            return Ok(input);
+            return Ok(input.into());
         }
 
         string_builder.count_z(remaining);
@@ -413,7 +415,7 @@ impl TSConfigJSON {
         if let Some(extends_value) = extends_value {
             if !source.path.is_node_module() {
                 if let Some(str) = extends_value.as_str() {
-                    result.extends = Box::from(str);
+                    result.extends = windows_to_platform(str).into();
                 }
             }
         }
@@ -476,11 +478,10 @@ impl TSConfigJSON {
             // Parse "baseUrl"
             if let Some(base_url_prop) = base_url_v {
                 if let Some(base_url) = base_url_prop.as_str() {
-                    result.base_url =
-                        match Self::str_replacing_templates(Box::from(base_url), source) {
-                            Ok(v) => v,
-                            Err(_) => return Ok(None),
-                        };
+                    result.base_url = match Self::str_replacing_templates(base_url, source) {
+                        Ok(v) => v,
+                        Err(_) => return Ok(None),
+                    };
                     has_base_url = true;
                 }
             }
@@ -667,13 +668,11 @@ impl TSConfigJSON {
                                         });
                                         if let Some(str_) = item.as_str() {
                                             let item_loc = this_item_loc;
-                                            let str = match Self::str_replacing_templates(
-                                                Box::from(str_),
-                                                source,
-                                            ) {
-                                                Ok(v) => v,
-                                                Err(_) => return Ok(None),
-                                            };
+                                            let str =
+                                                match Self::str_replacing_templates(str_, source) {
+                                                    Ok(v) => v,
+                                                    Err(_) => return Ok(None),
+                                                };
                                             // errdefer allocator.free(str) — handled by Drop.
                                             if Self::is_valid_tsconfig_path_pattern(
                                                 &str, log, source, item_loc,
@@ -817,12 +816,12 @@ impl TSConfigJSON {
         }
 
         // Relative "./" or "../" or ".\\" or "..\\"
-        if c0 == b'.' && (bun_paths::is_sep_any(c1) || (c1 == b'.' && bun_paths::is_sep_any(c2))) {
+        if c0 == b'.' && (Windows::is_sep(c1) || (c1 == b'.' && Windows::is_sep(c2))) {
             return true;
         }
 
         // Absolute DOS "c:/" or "c:\\"
-        if c1 == b':' && bun_paths::is_sep_any(c2) {
+        if c1 == b':' && Windows::is_sep(c2) {
             match c0 {
                 b'a'..=b'z' | b'A'..=b'Z' => {
                     return true;
@@ -832,7 +831,7 @@ impl TSConfigJSON {
         }
 
         // Absolute unix "/"
-        if bun_paths::is_sep_any(c0) {
+        if Windows::is_sep(c0) {
             return true;
         }
 

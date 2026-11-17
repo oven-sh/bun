@@ -12,7 +12,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{Dependency, Integrity, PackageID, Resolution};
-use bun_paths::{self as path, PathBuffer, SEP};
+use bun_paths::{self as path, PathBuffer, SlicePath};
 use bun_semver as Semver;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
@@ -383,7 +383,7 @@ pub struct CacheDir {
 
 /// Node.js refuses to import a module whose real path has a `\` in a name.
 pub fn node_can_import_from(dir: &[u8]) -> bool {
-    !path::has_literal_backslash(dir)
+    cfg!(windows) || !bun_core::strings::contains_char(dir, b'\\')
 }
 
 /// An empty variable counts as unset, because it would resolve to the project directory.
@@ -1045,6 +1045,19 @@ pub struct CacheDirAndSubpath<'a> {
     pub(crate) cache_dir_subpath: &'a ZStr,
 }
 
+/// `folder` is spelled as in the lockfile.
+pub(crate) fn folder_in<'a>(
+    buf: &'a mut PathBuffer,
+    dir: &[u8],
+    folder: &[u8],
+) -> Result<&'a ZStr, bun_paths::NameTooLong> {
+    let mut path = SlicePath::new(buf);
+    path.set(dir)?;
+    path.push_trailing_sep()?;
+    path.extend_from_slice(folder)?;
+    Ok(path.into_zstr())
+}
+
 /// this is copy pasted from `installPackageWithNameAndResolution()`
 /// it's not great to do this
 pub fn compute_cache_dir_and_subpath<'a>(
@@ -1058,6 +1071,14 @@ pub fn compute_cache_dir_and_subpath<'a>(
     let name = pkg_name;
     let mut cache_dir = Fd::cwd();
     let mut cache_dir_subpath: &ZStr = ZStr::EMPTY;
+    let too_long = |_| {
+        Output::err(
+            "ENAMETOOLONG",
+            "folder path for package <b>{}<r> is too long",
+            (bun_fmt::s(name),),
+        );
+        Global::exit(1)
+    };
 
     match resolution.tag {
         ResolutionTag::Npm => {
@@ -1086,8 +1107,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = bun_core::zstr!(".");
             } else {
-                folder_path_buf[..folder.len()].copy_from_slice(folder);
-                cache_dir_subpath = ZStr::nul_terminate(folder_path_buf, folder.len());
+                cache_dir_subpath =
+                    folder_in(folder_path_buf, b"", folder).unwrap_or_else(too_long);
             }
             cache_dir = Fd::cwd();
         }
@@ -1122,8 +1143,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = bun_core::zstr!(".");
             } else {
-                folder_path_buf[..folder.len()].copy_from_slice(folder);
-                cache_dir_subpath = ZStr::nul_terminate(folder_path_buf, folder.len());
+                cache_dir_subpath =
+                    folder_in(folder_path_buf, b"", folder).unwrap_or_else(too_long);
             }
             cache_dir = Fd::cwd();
         }
@@ -1152,20 +1173,9 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 } else {
                     global_link_dir_path(manager)
                 };
-                let ptr = &mut folder_path_buf.0[..];
-                if global_link_dir.len() + 1 + folder.len() < ptr.len() {
-                    let mut off = 0usize;
-                    ptr[off..off + global_link_dir.len()].copy_from_slice(global_link_dir);
-                    off += global_link_dir.len();
-                    if global_link_dir.last().is_some_and(|&c| c != SEP) {
-                        ptr[off] = SEP;
-                        off += 1;
-                    }
-                    ptr[off..off + folder.len()].copy_from_slice(&folder);
-                    off += folder.len();
-                    cache_dir_subpath = ZStr::nul_terminate(ptr, off);
-                    cache_dir = directory;
-                }
+                cache_dir_subpath =
+                    folder_in(folder_path_buf, global_link_dir, &folder).unwrap_or_else(too_long);
+                cache_dir = directory;
             }
         }
         _ => {}

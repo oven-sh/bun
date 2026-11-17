@@ -2515,32 +2515,61 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("in a directory name
     });
   });
 
-  test("backslashes in specifiers, main and tsconfig paths are separators", async () => {
+  test("backslashes in relative specifiers, main and tsconfig paths are separators", async () => {
     const files = {
       ...project,
       "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["${configDir}\\lib\\*"] } } }),
       "node_modules/main/package.json": JSON.stringify({ name: "main", main: "lib\\main.js" }),
-      "pages/index.js": "",
       "entry.ts": String.raw`
-        console.log(require.resolve("@/x"), require.resolve("main"), require.resolve("./lib\\x"));
-        console.log(require.resolve(import.meta.dir + "\\pages\\..\\lib\\x"));
-        console.log(require.resolve(import.meta.dir + "/lib\\/x"), Bun.resolveSync("main", import.meta.dir + "\\"));
-        console.log(new Bun.FileSystemRouter({ style: "nextjs", dir: import.meta.dir + "\\pages" }).routes["/"]);
+        console.log(require.resolve("@/x"), require.resolve("main"));
+        console.log(require.resolve("./lib\\x"), require.resolve("main\\lib\\main"));
+        for (const bare of [".\\lib\\x", "..\\up.cjs"])
+          try {
+            console.log(require.resolve(bare));
+          } catch (error) {
+            console.log(error.code);
+          }
       `,
     };
     expect(await run(files, "entry.ts")).toEqual({
       stdout: [
-        "<dir>/lib/x.js <dir>/node_modules/main/lib/main.js <dir>/lib/x.js",
-        "<dir>/lib/x.js",
         "<dir>/lib/x.js <dir>/node_modules/main/lib/main.js",
-        "<dir>/pages/index.js\n",
+        "<dir>/lib/x.js <dir>/node_modules/main/lib/main.js",
+        "MODULE_NOT_FOUND",
+        "MODULE_NOT_FOUND\n",
       ].join("\n"),
       stderr: "",
       exitCode: 0,
     });
   });
 
-  test("files with a backslash in their own name are not resolved", async () => {
+  test("backslashes in absolute paths are part of a name", async () => {
+    const files = {
+      ...project,
+      "pages/index.js": "",
+      "entry.ts": String.raw`
+        for (const resolve of [
+          () => require.resolve(import.meta.dir + "\\lib\\x"),
+          () => require.resolve(import.meta.dir + "/pages\\..\\lib/x"),
+          () => Bun.resolveSync("./lib/x", import.meta.dir + "\\"),
+          () => new Bun.FileSystemRouter({ style: "nextjs", dir: import.meta.dir + "\\pages" }).routes["/"],
+        ]) {
+          try {
+            console.log(resolve());
+          } catch {
+            console.log("not found");
+          }
+        }
+      `,
+    };
+    expect(await run(files, "entry.ts")).toEqual({
+      stdout: "not found\nnot found\nnot found\nnot found\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a file with a backslash in its own name comes first", async () => {
     const files = {
       "lib/x.cjs": `module.exports = "separator";`,
       "lib\\x.cjs": `module.exports = "literal";`,
@@ -2548,11 +2577,11 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("in a directory name
       "entry.ts": String.raw`
         require("fs").symlinkSync(".", "link");
         for (const path of ["/lib\\x.cjs", "/link/lib\\x.cjs", "/d/e\\..\\..\\lib\\x.cjs"])
-          console.log(await import(import.meta.dir + path).then(module => module.default, error => error.code));
+          console.log((await import(import.meta.dir + path)).default, require("." + path));
       `,
     };
     expect(await run(files, "entry.ts")).toEqual({
-      stdout: "ERR_MODULE_NOT_FOUND\nERR_MODULE_NOT_FOUND\nseparator\n",
+      stdout: "literal literal\nliteral literal\nliteral literal\n",
       stderr: "",
       exitCode: 0,
     });
@@ -2568,12 +2597,12 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("in a directory name
   });
 
   test("Bun.build({ files })", async () => {
-    const entry = String.raw`
+    const entry = `
       const { outputs } = await Bun.build({
         entrypoints: ["./disk.js"],
         files: {
           [process.cwd() + "/a.js"]: "import './lib/b.js'",
-          [process.cwd() + "/lib\\b.js"]: "import x from './x.js'; console.log(x)",
+          [process.cwd() + "/lib/b.js"]: "import x from './x.js'; console.log(x)",
         },
       });
       eval(await outputs[0].text());
@@ -2666,4 +2695,61 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("in a directory name
     expect(stderr).toContain("Ran 1 test across 1 file.");
     expect(exitCode).toBe(0);
   });
+});
+
+test.concurrent.skipIf(isWindows).each(["require", "import"])(
+  '%s() with a backslash does not get past "exports"',
+  async load => {
+    using dir = tempDir("resolve-backslash-exports", {
+      "node_modules/pk/package.json": JSON.stringify({
+        name: "pk",
+        exports: { ".": "./index.js", "./open": "./o.js" },
+      }),
+      "node_modules/pk/index.js": `module.exports = "index";`,
+      "node_modules/pk/o.js": `module.exports = "open";`,
+      "node_modules/pk/secret.js": `module.exports = "secret";`,
+      "entry.cjs": String.raw`
+      (async () => {
+        for (const specifier of ["pk/secret.js", "pk\\secret.js", "pk\\.\\secret.js"]) {
+          try {
+            await ${load}(specifier);
+            console.log("loaded");
+          } catch {
+            console.log("refused");
+          }
+        }
+      })();
+    `,
+    });
+    expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn("refused\nrefused\nrefused");
+  },
+);
+
+test.concurrent.skipIf(isWindows).each([
+  ["bun a\\b.js", ["a\\b.js"]],
+  ["bun run ./a\\b.js", ["run", "./a\\b.js"]],
+  ["bun .\\f.js", [".\\f.js"]],
+  ["bun --preload ./a\\b.js", ["--preload", "./a\\b.js", "empty.js"]],
+  ["new Worker()", ["-e", String.raw`new Worker("./a\\b.js")`]],
+  ["createRequire()", ["-e", String.raw`require("module").createRequire(process.cwd() + "/c\\d/x.js")("./e.js")`]],
+  ["NODE_PATH", ["-e", `require("e.js")`]],
+])("a backslash is part of a name: %s", async (_, args) => {
+  using dir = tempDir("resolve-backslash-name", {
+    "a\\b.js": `console.log("literal");`,
+    "a/b.js": `console.log("separator");`,
+    "c\\d/e.js": `console.log("literal");`,
+    "c/d/e.js": `console.log("separator");`,
+    ".\\f.js": `console.log("literal");`,
+    "f.js": `console.log("separator");`,
+    "empty.js": "",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: String(dir),
+    env: { ...bunEnv, NODE_PATH: join(String(dir), "c\\d") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "literal\n", stderr: "", exitCode: 0 });
 });

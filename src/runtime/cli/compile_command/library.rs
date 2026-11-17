@@ -8,8 +8,7 @@ use bun_alloc::Arena;
 use bun_ast::Expr;
 use bun_core::{Global, Output};
 use bun_options_types::context::ContextData;
-use bun_paths::VecPath;
-use bun_paths::string_paths::without_trailing_any_sep;
+use bun_paths::{VecPath, without_trailing_sep};
 
 pub(crate) use self::declarations::{add_declaration_files, is_declaration_file};
 pub(crate) use self::package_files::add_package_files;
@@ -84,7 +83,7 @@ impl Project {
                 package_json: Some(PackageJsonFile { path, contents }),
             },
             None => Project {
-                directory: without_trailing_any_sep(working_directory).to_vec(),
+                directory: without_trailing_sep(working_directory).to_vec(),
                 package_json: None,
             },
         }
@@ -108,12 +107,7 @@ impl Project {
 }
 
 fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
-    VecPath::resolve_any_sep(&[working_directory, path]).into_vec()
-}
-
-/// Unlike [`absolute_path`], keeps a `\` on POSIX, as the bundler does when it writes.
-fn absolute_outdir(working_directory: &[u8], outdir: &[u8]) -> Vec<u8> {
-    VecPath::resolve(&[working_directory, outdir]).into_vec()
+    VecPath::resolve(&[working_directory, path]).into_vec()
 }
 
 fn is_inside(ancestor: &[u8], path: &[u8]) -> bool {
@@ -134,7 +128,7 @@ pub(super) fn find_default_library_entry_points(
     outdir: &[u8],
 ) -> Result<Vec<Box<[u8]>>, LibraryError> {
     let project = Project::find(working_directory);
-    let outdir = absolute_outdir(working_directory, outdir);
+    let outdir = absolute_path(working_directory, outdir);
     check_outdir(&project, &outdir)?;
     let arena = Arena::new();
     let package_json = project.parse_package_json(&arena)?;
@@ -153,7 +147,7 @@ fn find_external_packages(
     entry_points: &[Box<[u8]>],
 ) -> Result<Vec<Box<[u8]>>, LibraryError> {
     let project = Project::find(working_directory);
-    let outdir = absolute_outdir(working_directory, outdir);
+    let outdir = absolute_path(working_directory, outdir);
     check_outdir(&project, &outdir)?;
     let is_overwritten =
         |entry_point: &[u8]| is_inside(&outdir, &absolute_path(working_directory, entry_point));

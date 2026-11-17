@@ -2,14 +2,11 @@ use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::load::source_provider::{Failed, SourceFile};
 use bun_ast::{Loader, Log, Target};
-use bun_core::strings;
-use bun_paths::resolve_path;
 use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 
 use super::database_log::read_database_with_log;
 use super::paths::{relative_path, report_long_path};
-use super::plugins::with_separators_of_host;
 use super::services::BuildContext;
 use crate::ContentHasher;
 use crate::bun_fs as Fs;
@@ -107,7 +104,7 @@ fn create_embedded_file(
         false => name_under_root(context, file, &template),
     };
     let path = match runs_in_place {
-        true => with_separators_of_host(file.path, cfg!(windows)).into_owned(),
+        true => bun_paths::posix_to_platform(file.path).into_owned(),
         false => embedded_path(&context.module_prefix, &dest_path),
     };
     let output = OutputFile::init(Options {
@@ -138,7 +135,11 @@ pub(crate) fn embedded_name(
 }
 
 pub(crate) fn embedded_path(module_prefix: &[u8], dest_path: &[u8]) -> Vec<u8> {
-    [module_prefix, strings::remove_leading_dot_slash(dest_path)].concat()
+    [
+        module_prefix,
+        bun_paths::without_leading_dot_slash(dest_path),
+    ]
+    .concat()
 }
 
 fn create_embedded_template(
@@ -190,14 +191,14 @@ fn name_under_root(
 
 fn posix_path(path: &[u8]) -> Vec<u8> {
     let mut path = path.to_vec();
-    resolve_path::platform_to_posix_in_place::<u8>(&mut path);
+    bun_paths::platform_to_posix_in_place::<u8>(&mut path);
     path
 }
 
 fn print_embedded_name(template: &PathTemplate) -> Vec<u8> {
     let mut name = Vec::new();
     template.print(&mut name, false).expect("oom");
-    resolve_path::platform_to_posix_in_place::<u8>(&mut name);
+    bun_paths::platform_to_posix_in_place::<u8>(&mut name);
     name
 }
 
@@ -298,6 +299,7 @@ mod tests {
     use super::super::services::with_test_context;
     use super::*;
     use crate::options::BundleOptions;
+    use bun_core::strings;
 
     impl EmbeddedFiles {
         fn embed_outputs(&self, outputs: Vec<OutputFile>) {

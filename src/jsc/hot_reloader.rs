@@ -5,13 +5,8 @@ use bun_bundler::Transpiler;
 #[cfg(not(windows))]
 use bun_collections::StringHashMap;
 use bun_collections::StringSet;
-#[cfg(not(windows))]
-use bun_core::ZStr;
 use bun_core::{Output, ZBox};
-#[cfg(not(windows))]
-use bun_paths::SEP;
-#[cfg(not(windows))]
-use bun_paths::strings;
+use bun_paths::Path;
 #[cfg(not(windows))]
 use bun_ptr::BackRef;
 use bun_resolver::Resolver;
@@ -157,7 +152,7 @@ impl MainFile {
             ..Default::default()
         };
 
-        if let Some(dir) = bun_core::dirname(file) {
+        if let Some(dir) = bun_paths::dirname(file) {
             debug_assert!(bun_core::is_slice_in_buffer(dir, file));
             debug_assert!(file.len() > dir.len() + 1);
             main.dir_hash = Watcher::get_hash(&file[0..dir.len() + 1]);
@@ -393,7 +388,8 @@ impl bun_watcher::WatcherContext for HotReloader {
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         #[cfg(windows)]
         let _ = (changed_files, parents, files);
-        let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
+        #[cfg(not(windows))]
+        let mut changed_path = Path::new();
 
         for event in events.iter() {
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
@@ -420,10 +416,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            bstr::BStr::new(bun_paths::resolve_path::relative(
-                                top_level_dir,
-                                file_path
-                            ))
+                            bstr::BStr::new(Path::relative(top_level_dir, file_path).as_bytes())
                         ));
                     }
 
@@ -515,23 +508,8 @@ impl bun_watcher::WatcherContext for HotReloader {
                                     for (entry_id, parent_hash) in parents.iter().enumerate() {
                                         if *parent_hash == current_hash {
                                             let affected_path: &[u8] = &file_paths[entry_id];
-                                            // bun_sys::access takes a &ZStr; build one on the
-                                            // stack from the &[u8] watch-list slice.
-                                            let was_deleted = {
-                                                let mut zbuf = bun_paths::path_buffer_pool::get();
-                                                if affected_path.len() >= zbuf.len() {
-                                                    false
-                                                } else {
-                                                    zbuf[..affected_path.len()]
-                                                        .copy_from_slice(affected_path);
-                                                    let z = ZStr::nul_terminate(
-                                                        &mut zbuf,
-                                                        affected_path.len(),
-                                                    );
-                                                    bun_sys::access(z, libc::F_OK).is_err()
-                                                }
-                                            };
-                                            if !was_deleted {
+                                            let path = Path::from(affected_path);
+                                            if bun_sys::access(&path, libc::F_OK).is_ok() {
                                                 continue;
                                             }
 
@@ -585,19 +563,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                                 if changed_name != main_basename {
                                     continue;
                                 }
-                                let main_exists = {
-                                    let mut zbuf = bun_paths::path_buffer_pool::get();
-                                    if self.main.file.len() >= zbuf.len() {
-                                        false
-                                    } else {
-                                        zbuf[..self.main.file.len()]
-                                            .copy_from_slice(self.main.file);
-                                        let z =
-                                            ZStr::nul_terminate(&mut zbuf, self.main.file.len());
-                                        bun_sys::access(z, libc::F_OK).is_ok()
-                                    }
-                                };
-                                if main_exists {
+                                if bun_sys::exists(self.main.file) {
                                     self.changed_paths.record(self.main.file);
                                     changed = true;
                                 }
@@ -609,7 +575,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
-                            'names: for &changed_name in affected {
+                            for &changed_name in affected {
                                 if changed_name.is_empty()
                                     || changed_name[0] == b'~'
                                     || changed_name[0] == b'.'
@@ -686,37 +652,10 @@ impl bun_watcher::WatcherContext for HotReloader {
 
                                             break 'brk path_string.as_bytes();
                                         } else {
-                                            let file_path_without_trailing_slash =
-                                                strings::trim_right(file_path, &[SEP]);
-                                            if file_path_without_trailing_slash.len()
-                                                + changed_name.len()
-                                                >= _on_file_update_path_buf.len()
-                                            {
-                                                continue 'names;
-                                            }
-                                            _on_file_update_path_buf
-                                                [0..file_path_without_trailing_slash.len()]
-                                                .copy_from_slice(file_path_without_trailing_slash);
-                                            _on_file_update_path_buf
-                                                [file_path_without_trailing_slash.len()] = SEP;
-
-                                            // The separator written at index `len` is
-                                            // immediately overwritten by the
-                                            // `changed_name` copy, and the slice takes
-                                            // one stale byte past the copy. Deliberate:
-                                            // changing it would change the resulting
-                                            // path hash.
-                                            _on_file_update_path_buf
-                                                [file_path_without_trailing_slash.len()
-                                                    ..file_path_without_trailing_slash.len()
-                                                        + changed_name.len()]
-                                                .copy_from_slice(changed_name);
-                                            let path_slice = &_on_file_update_path_buf[0
-                                                ..file_path_without_trailing_slash.len()
-                                                    + changed_name.len()
-                                                    + 1];
-                                            file_hash = Watcher::get_hash(path_slice);
-                                            break 'brk path_slice;
+                                            changed_path.set(file_path);
+                                            changed_path.push(changed_name);
+                                            file_hash = Watcher::get_hash(&changed_path);
+                                            break 'brk &changed_path;
                                         }
                                     };
 
@@ -729,10 +668,9 @@ impl bun_watcher::WatcherContext for HotReloader {
                                     if self.verbose {
                                         Self::debug(format_args!(
                                             "File change: {}",
-                                            bstr::BStr::new(bun_paths::resolve_path::relative(
-                                                top_level_dir,
-                                                abs_path,
-                                            ))
+                                            bstr::BStr::new(
+                                                Path::relative(top_level_dir, abs_path).as_bytes()
+                                            )
                                         ));
                                     }
                                 }
@@ -742,10 +680,9 @@ impl bun_watcher::WatcherContext for HotReloader {
                         if self.verbose {
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
-                                bstr::BStr::new(bun_paths::resolve_path::relative(
-                                    top_level_dir,
-                                    file_path
-                                )),
+                                bstr::BStr::new(
+                                    Path::relative(top_level_dir, file_path).as_bytes()
+                                ),
                                 affected.len()
                             ));
                         }

@@ -1,7 +1,6 @@
 use crate::options::Externals;
 use bun_core::strings::last_index_of_char;
-use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-use bun_paths::{is_absolute, is_package_path, path_buffer_pool};
+use bun_paths::{Path, is_absolute, is_package_path, windows_to_platform};
 
 pub(crate) fn is_external(externals: &Externals, specifier: &[u8], directory: &[u8]) -> bool {
     if matches_pattern(&externals.patterns, specifier) {
@@ -47,9 +46,10 @@ fn matches_path(paths: &[Vec<u8>], specifier: &[u8], directory: &[u8]) -> bool {
     if !is_absolute(directory) {
         return false;
     }
-    let mut buffer = path_buffer_pool::get();
-    join_abs_string_buf_checked::<platform::Auto>(directory, &mut buffer[..], &[specifier])
-        .is_some_and(|path| contains(paths, path))
+    let specifier = windows_to_platform(specifier);
+    let mut path = Path::resolve(&[directory, &specifier]);
+    path.copy_trailing_sep_from(&specifier);
+    contains(paths, &path)
 }
 
 pub(crate) fn contains(sorted_list: &[Vec<u8>], item: &[u8]) -> bool {

@@ -5,9 +5,10 @@ use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 use bun_core::{MutableString, strings};
 use bun_core::{Output, slice_as_bytes};
-#[cfg(unix)]
-use bun_paths::PathBuffer;
-use bun_paths::{OSPathChar, OSPathSliceZ, SEP, SEP_STR};
+#[cfg(windows)]
+use bun_paths::PathStyle as _;
+use bun_paths::platform::Posix;
+use bun_paths::{GenericPath, OSPathChar, OSPathSliceZ, PathUnit, SEP, SliceBackend};
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
 use bun_sys::{self, Fd, FdExt, File};
@@ -198,13 +199,17 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
-/// Whether Windows takes the normalized `path` to start somewhere else than in the directory it is opened in.
-#[cfg(windows)]
-pub fn starts_elsewhere_on_windows<T: bun_paths::PathChar>(path: &[T]) -> bool {
-    bun_paths::is_absolute_windows_t(path)
-        || matches!(path, [letter, colon, ..]
-            if bun_paths::resolve_path::is_drive_letter_t(*letter) && *colon == T::from_u8(b':'))
-        || path.split(|c| bun_paths::is_sep_any_t(*c)).next() == Some(T::lit(b".."))
+/// Returns where an entry is extracted, with `/`. Both slashes separate, and `..` stops at the destination. `None` if it does not fit in `buf` with a NUL behind it.
+pub fn normalize_entry_path<'a, T: PathUnit>(path: &[T], buf: &'a mut [T]) -> Option<&'a mut [T]> {
+    let mut rooted = GenericPath::<SliceBackend<'_, T>, Posix>::new(buf);
+    rooted.set(b"/").ok()?;
+    rooted.extend_from_slice(path).ok()?;
+    bun_paths::slashes_to_posix_in_place(rooted.as_mut_slice());
+    rooted.resolve_in_place::<u8>(&[]).ok()?;
+    rooted.copy_trailing_sep_from(path).ok()?;
+    let len = rooted.len();
+    buf.copy_within(1..len, 0);
+    Some(&mut buf[..len - 1])
 }
 
 /// Returns the first component of an entry's path, which is the archive's root folder.
@@ -223,11 +228,7 @@ pub fn first_path_component(path: &[OSPathChar]) -> &[OSPathChar] {
 /// path with leading `..` preserved; the target is unsafe if the result
 /// climbs above the extraction root.
 #[cfg(unix)]
-pub fn is_symlink_target_safe(
-    symlink_path: &[u8],
-    link_target_bytes: &[u8],
-    symlink_join_buf: &mut Option<bun_paths::path_buffer_pool::Guard>,
-) -> bool {
+pub fn is_symlink_target_safe(symlink_path: &[u8], link_target_bytes: &[u8]) -> bool {
     // Absolute symlink targets are never safe - they could point anywhere
     if link_target_bytes.is_empty() || link_target_bytes[0] == b'/' {
         return false;
@@ -246,36 +247,12 @@ pub fn is_symlink_target_safe(
         }
     }
 
-    // Get the directory containing the symlink
-    let symlink_dir = bun_paths::dirname_simple(symlink_path);
-
-    let join_buf: &mut PathBuffer =
-        symlink_join_buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
-
-    // Normalize symlink_dir/link_target as a relative path. An absolute fake
-    // root cannot be used here: POSIX normalization clamps excess `..` at `/`,
-    // so a target like `../../../packages/x` would normalize back under any
-    // fake root that happens to match a real ancestor directory name.
-    if symlink_dir.len() + 1 + link_target_bytes.len() >= join_buf.len() {
+    // Relative, because `..` stops at the root of an absolute path.
+    let symlink_dir = bun_paths::dirname_or_root(symlink_path);
+    let Ok(resolved) = bun_paths::PoolPath::join(&[symlink_dir, link_target_bytes]) else {
         return false;
-    }
-    let mut written = 0usize;
-    if !symlink_dir.is_empty() {
-        join_buf[..symlink_dir.len()].copy_from_slice(symlink_dir);
-        written = symlink_dir.len();
-        join_buf[written] = b'/';
-        written += 1;
-    }
-    join_buf[written..written + link_target_bytes.len()].copy_from_slice(link_target_bytes);
-    written += link_target_bytes.len();
-
-    let mut norm_buf = bun_paths::path_buffer_pool::get();
-    let resolved = bun_paths::resolve_path::normalize_string_generic_t::<u8, true, false>(
-        &join_buf[..written],
-        &mut norm_buf[..],
-        b'/',
-        |c| c == b'/',
-    );
+    };
+    let resolved = resolved.as_bytes();
 
     !(strings::eql(resolved, b"..") || strings::has_prefix_comptime(resolved, b"../"))
 }
@@ -300,17 +277,20 @@ impl DeferredSymlink {
 #[cfg(unix)]
 pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: bool) -> u32 {
     for symlink in symlinks {
-        let dirname = bun_paths::dirname_simple(symlink.path.as_bytes());
+        let path = symlink.path.as_bytes();
+        let dirname = match path.ends_with(b"/") {
+            true => path,
+            false => bun_paths::dirname_or_root(path),
+        };
         if !dirname.is_empty() {
             let _ = beneath::make_path(dir_fd, dirname, Symlinks::FollowInside);
         }
     }
 
     let mut created: u32 = 0;
-    let mut join_buf = None;
     for symlink in symlinks {
         let (target, path) = (symlink.target.as_zstr(), symlink.path.as_bytes());
-        let is_safe = |path: &[u8]| is_symlink_target_safe(path, target.as_bytes(), &mut join_buf);
+        let is_safe = |path: &[u8]| is_symlink_target_safe(path, target.as_bytes());
         match beneath::symlinkat_where_safe(target, dir_fd, path, is_safe) {
             Ok(()) => created += 1,
             Err(_) => {
@@ -327,31 +307,15 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
     created
 }
 
-/// Recursive mkdir over a WTF-16 path: component-iterates the
-/// wide path and `NtCreateFile`s each prefix with `FILE_OPEN_IF`, walking back
-/// on `FileNotFound` and forward again on success. This stays in WTF-16
-/// throughout (no UTF-8 round-trip — `bun_sys::make_path_w` is the *different*
-/// `bun.makePathW` helper which transcodes via `from_w_path` and would lose
-/// lone surrogates / skip `\??\` long-path prefixing).
 #[cfg(windows)]
-fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
-    use bun_sys::{E, WindowsOpenDirOp, WindowsOpenDirOptions, open_dir_at_windows};
-    // Access mask (`STANDARD_RIGHTS_READ | FILE_READ_ATTRIBUTES |
-    // FILE_READ_EA | SYNCHRONIZE | FILE_TRAVERSE`) is selected by setting `read_only`,
-    // and `FILE_OPEN_IF` via `OpenOrCreate`.
+fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> bun_sys::Maybe<()> {
+    use bun_sys::{WindowsOpenDirOp, WindowsOpenDirOptions, open_dir_at_windows};
     let opts = WindowsOpenDirOptions {
         op: WindowsOpenDirOp::OpenOrCreate,
         ..Default::default()
     };
-    // tar entry paths are dir-relative (no drive/UNC/`\??\`) so `init` never
-    // returns BadPathName here.
-    let it = bun_paths::ComponentIterator::init(sub_path, bun_paths::PathFormat::Windows)?;
-    bun_paths::make_path_with(it, |prefix| {
-        match open_dir_at_windows(dir_fd, prefix, opts).map(File::from_fd) {
-            Ok(_) => Ok(bun_paths::MakePathStep::Created),
-            Err(e) if e.get_errno() == E::ENOENT => Ok(bun_paths::MakePathStep::NotFound(e.into())),
-            Err(e) => Err(e.into()),
-        }
+    bun_sys::mkdir_recursive_with(sub_path, |prefix| {
+        open_dir_at_windows(dir_fd, prefix, opts).map(|fd| drop(File::from_fd(fd)))
     })
 }
 
@@ -470,24 +434,19 @@ impl Archiver {
                 }
             }
 
-            let pathname = remaining;
-            if pathname.is_empty() || pathname.len() >= normalized_buf.len() {
+            let Some(pathname) = normalize_entry_path(remaining, &mut normalized_buf[..]) else {
                 continue 'loop_;
-            }
-            let normalized = bun_paths::resolve_path::normalize_buf_t::<
-                u8,
-                bun_paths::platform::Auto,
-            >(pathname, &mut normalized_buf[..]);
-            let normalized_len = normalized.len();
-            let pathname: &[u8] = &normalized_buf[..normalized_len];
-            if pathname.is_empty() || pathname == b"." {
+            };
+            bun_paths::posix_to_platform_in_place(pathname);
+            let pathname: &[u8] = pathname;
+            if pathname.is_empty() {
                 continue 'loop_;
             }
             #[cfg(windows)]
-            if starts_elsewhere_on_windows(pathname) {
+            if bun_paths::platform::Windows::climbs_out(pathname) {
                 continue 'loop_;
             }
-            let dirname = strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
+            let first_sep = strings::index_of_char_usize(pathname, SEP);
 
             let size: usize = usize::try_from(entry.size().max(0)).unwrap();
             let in_the_way = leaves_root(pathname)?
@@ -500,25 +459,7 @@ impl Archiver {
                     });
 
             if in_the_way {
-                let is_already_top_level = dirname.is_empty();
-                let path_to_use_: &[u8] = 'brk: {
-                    let __pathname: &[u8] = pathname;
-
-                    if is_already_top_level {
-                        break 'brk __pathname;
-                    }
-
-                    let index = strings::index_of_char_usize(__pathname, SEP).unwrap();
-                    break 'brk &__pathname[..index];
-                };
-                let mut temp_buf = [0u8; 1024];
-                temp_buf[..path_to_use_.len()].copy_from_slice(path_to_use_);
-                let path_to_use: &[u8] = if !is_already_top_level {
-                    temp_buf[path_to_use_.len()] = SEP;
-                    &temp_buf[..path_to_use_.len() + 1]
-                } else {
-                    &temp_buf[..path_to_use_.len()]
-                };
+                let path_to_use = first_sep.map_or(pathname, |sep| &pathname[..=sep]);
 
                 let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
                 if !overwrite_entry.found_existing {
@@ -549,9 +490,6 @@ impl Archiver {
 
         // reshaped for borrowck — ctx is Option<&mut>, rebound as needed
         let mut ctx = ctx;
-
-        #[cfg(unix)]
-        let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
 
         #[cfg(unix)]
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
@@ -639,12 +577,7 @@ impl Archiver {
                 debug_assert_eq!(options.depth_to_skip, 1);
                 normalize_npm_entry_path(entry, &mut normalized_buf[..])?
             } else {
-                (pathname.len() < normalized_buf.len()).then(|| {
-                    bun_paths::resolve_path::normalize_buf_t::<OSPathChar, bun_paths::platform::Auto>(
-                        pathname,
-                        &mut normalized_buf[..],
-                    )
-                })
+                normalize_entry_path(pathname, &mut normalized_buf[..])
             };
             let Some(path) = normalized else {
                 if options.log {
@@ -658,9 +591,10 @@ impl Archiver {
                 }
                 continue;
             };
-            if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
+            if path.is_empty() {
                 continue;
             }
+            bun_paths::posix_to_platform_in_place(path);
 
             #[cfg(windows)]
             if options.npm {
@@ -684,7 +618,7 @@ impl Archiver {
 
             // On POSIX the leading separators are already gone.
             #[cfg(windows)]
-            if starts_elsewhere_on_windows(path) {
+            if bun_paths::platform::Windows::climbs_out(path) {
                 continue 'loop_;
             }
 
@@ -723,7 +657,7 @@ impl Archiver {
                                     bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
                                     _ => {}
                                 }
-                                let dirname = bun_paths::dirname_simple(path_slice);
+                                let dirname = bun_paths::dirname_or_root(path_slice);
                                 if dirname.is_empty() {
                                     return Err(err.into());
                                 }
@@ -740,7 +674,7 @@ impl Archiver {
                         // Validate that the symlink target doesn't escape the extraction directory.
                         // This prevents path traversal attacks where a malicious tarball creates a symlink
                         // pointing outside (e.g., to /tmp), then writes files through that symlink.
-                        if !is_symlink_target_safe(path_slice, link_target, &mut symlink_join_buf) {
+                        if !is_symlink_target_safe(path_slice, link_target) {
                             // Skip symlinks that would escape the extraction directory
                             if options.log {
                                 bun_core::warn!(
@@ -797,7 +731,7 @@ impl Archiver {
                             Ok(fd) => fd,
                             Err(err) => match err.get_errno() {
                                 bun_sys::E::EACCES | bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                    let dirname = bun_paths::dirname_simple(path_slice);
+                                    let dirname = bun_paths::dirname_or_root(path_slice);
                                     if dirname.is_empty() {
                                         return Err(err.into());
                                     }

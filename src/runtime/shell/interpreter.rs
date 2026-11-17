@@ -1772,58 +1772,14 @@ impl ShellExecEnv {
         new_cwd_: &[u8],
         in_init: bool,
     ) -> bun_sys::Result<()> {
-        let is_abs = bun_paths::is_absolute(new_cwd_);
-
-        // Bounds-check against a `[4096]u8` buffer on *every* platform. Do NOT
-        // use `bun_paths::PathBuffer` here: on Windows that is `MAX_PATH_BYTES
-        // = 32767*3+1` ≈ 96 KiB of zero-filled stack per `cd`, and the
-        // `>= buf.len()` check would change the ENAMETOOLONG bound.
-        let mut buf = [0u8; 4096];
-        let required_len = if is_abs {
-            new_cwd_.len()
-        } else {
-            self.cwd().len() + 1 + new_cwd_.len()
-        };
-        if required_len >= buf.len() {
-            return Err(bun_sys::Error::from_code_int(
-                bun_sys::E::ENAMETOOLONG as _,
-                bun_sys::Tag::chdir,
-            ));
+        // The same limit on every platform.
+        type Cwd = bun_paths::StackPath<4096>;
+        let new_cwd = match bun_paths::is_absolute(new_cwd_) {
+            true => Cwd::from(new_cwd_),
+            false => Cwd::resolve(&[self.cwd(), new_cwd_]),
         }
-
-        // Build NUL-terminated `new_cwd` in `buf`.
-        let new_cwd_len: usize = if is_abs {
-            buf[..new_cwd_.len()].copy_from_slice(new_cwd_);
-            new_cwd_.len()
-        } else {
-            // `join_z_buf` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD`
-            // strings reflect the resolved path (not `<cwd>/..`).
-            // Note: reshaped for borrowck — capture only the joined length
-            // so the borrow on `buf` is released before stripping below.
-            let mut n = {
-                let existing_cwd = self.cwd();
-                bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(
-                    &mut buf[..],
-                    &[existing_cwd, new_cwd_],
-                )
-                .as_bytes()
-                .len()
-            };
-            // remove trailing separator (Windows checks `\\` first then falls
-            // through to `/`; POSIX only `/`).
-            #[cfg(windows)]
-            if n > 1 && buf[n - 1] == b'\\' {
-                n -= 1;
-            } else if n > 1 && buf[n - 1] == b'/' {
-                n -= 1;
-            }
-            #[cfg(not(windows))]
-            if n > 1 && buf[n - 1] == b'/' {
-                n -= 1;
-            }
-            n
-        };
-        let new_cwd_z = bun_core::ZStr::nul_terminate(&mut buf, new_cwd_len);
+        .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir))?;
+        let new_cwd_z: &bun_core::ZStr = &new_cwd;
 
         self.cwd_fd = OwnedFd(shell_openat(
             self.cwd_fd.fd(),
@@ -2031,13 +1987,11 @@ pub(crate) fn shell_join_path(
     syscall: bun_sys::Tag,
     parts: &[&[u8]],
 ) -> bun_sys::Result<bun_core::ZBox> {
-    let mut spill = Vec::new();
-    let joined =
-        bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(&mut spill, parts);
+    let joined = bun_paths::VecPath::join(parts);
     if joined.len() >= bun_paths::MAX_PATH_BYTES {
-        return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(joined));
+        return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(&joined));
     }
-    Ok(bun_core::ZBox::from_bytes(joined))
+    Ok(joined.into_zbox())
 }
 
 /// Resolves a builtin's path `operand` against the shell's `cwd`.
@@ -2046,7 +2000,7 @@ pub(crate) fn shell_resolve_operand(
     cwd: &[u8],
     operand: &[u8],
 ) -> bun_sys::Result<bun_core::ZBox> {
-    if bun_paths::Platform::AUTO.is_absolute(operand) {
+    if bun_paths::is_absolute(operand) {
         shell_join_path(syscall, &[operand])
     } else {
         shell_join_path(syscall, &[cwd, operand])
@@ -2068,42 +2022,19 @@ fn shell_get_path<'a>(
     if to.as_bytes() == b"/dev/null" {
         return Ok(crate::shell::shell_body::WINDOWS_DEV_NULL);
     }
-    let name_too_long =
-        || bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(to.as_bytes());
-    if bun_paths::Platform::Posix.is_absolute(to.as_bytes()) {
-        let source_root_len = {
-            let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
-            bun_paths::resolve_path::windows_filesystem_root(dirpath).len()
-        };
-        // `dirpath` already occupies `buf[0..]` and the root is its prefix, so
-        // no copy is needed. Splice `to[1..]` after the root.
-        let to_tail = &to.as_bytes()[1..];
-        let end = source_root_len + to_tail.len();
-        if end >= buf.len() {
-            return Err(name_too_long());
-        }
-        buf[source_root_len..end].copy_from_slice(to_tail);
-        return Ok(bun_core::ZStr::nul_terminate(buf, end));
-    }
-    if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
+    use bun_paths::{PathStyle as _, platform::Windows};
+    if Windows::is_absolute(to.as_bytes()) && !Windows::volume(to.as_bytes()).is_empty() {
         return Ok(to);
     }
-    // Relative path. Join outside `buf` because `join_z_buf` doesn't bounds-check,
-    // then copy the normalized result into `buf` if there's room.
-    let mut spill = Vec::new();
-    let joined = {
-        let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
-        bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(
-            &mut spill,
-            &[dirpath, to.as_bytes()],
-        )
-    };
-    let len = joined.len();
-    if len >= buf.len() {
-        return Err(name_too_long());
-    }
-    buf[..len].copy_from_slice(joined);
-    Ok(bun_core::ZStr::nul_terminate(buf, len))
+    let mut dir_buf = bun_paths::path_buffer_pool::get();
+    let dirpath = bun_sys::get_fd_path(dirfd, &mut dir_buf).map_err(|e| e.with_fd(dirfd))?;
+    let mut path = bun_paths::SlicePath::new(&mut buf[..]);
+    (path.resolve_in_place(&[dirpath, to.as_bytes()]))
+        .and_then(|()| path.copy_trailing_sep_from(to.as_bytes()))
+        .map_err(|_| {
+            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(to.as_bytes())
+        })?;
+    Ok(path.into_zstr())
 }
 
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
@@ -2150,8 +2081,9 @@ pub(crate) fn shell_openat(
 ) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
+        use bun_paths::{PathStyle as _, platform::Windows};
         if flags & bun_sys::O::DIRECTORY != 0 {
-            if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
+            if Windows::has_leading_sep(path.as_bytes()) {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
                 return bun_sys::open_dir_at_windows_a(

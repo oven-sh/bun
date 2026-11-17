@@ -8,6 +8,7 @@ use bstr::BStr;
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
+use bun_paths::Path;
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided, check_entry_point_dirs};
 use bun_sema_driver::{
@@ -685,15 +686,13 @@ fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
 /// change. This covers every file outside `node_modules`, including type-only files and
 /// configuration files. Returns `None` if there's no file watcher.
 pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
     let watcher = std::sync::Arc::clone(vm.bun_watcher.get().as_deref()?);
     let cwd = working_directory();
     Some(Box::new(move |path| {
         if !bun_core::strings::contains(path, b"/node_modules/") {
             // The watcher keys files by their native path.
-            let _ =
-                watcher.add_file_by_path_slow(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+            let _ = watcher.add_file_by_path_slow(&Path::resolve(&[&cwd, to_native(path)]));
         }
     }))
 }
@@ -702,12 +701,11 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
 /// may start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     sources
         .map(|(path, text)| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
+            let path = Path::resolve(&[cwd, path]);
             let text = without_utf8_bom(text).to_vec();
-            (bun_sema_driver::host::from_native(path), text)
+            (bun_sema_driver::host::from_native(&path), text)
         })
         .collect()
 }
@@ -891,9 +889,8 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         }
     }
     pages.retain(|page| {
-        let page =
-            bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[page]);
-        !bun_core::strings::contains(page, bun_paths::NODE_MODULES_NEEDLE)
+        let page = Path::resolve(&[cwd, page]);
+        !bun_core::strings::contains(&page, bun_paths::NODE_MODULES_NEEDLE)
     });
     pages
 }
@@ -901,8 +898,7 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Absolute paths of the local files that the HTML entry point `page` imports, found with the
 /// bundler's HTML scanner. Empty if the page can't be read or parsed. The bundler reports that.
 fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
-    use bun_paths::{platform::Auto, resolve_path};
-    let page = resolve_path::join_abs_string::<Auto>(cwd, &[page]).to_vec();
+    let page = Path::resolve(&[cwd, page]);
     let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &page) else {
         return Vec::new();
     };
@@ -914,12 +910,12 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         return Vec::new();
     }
     let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
-    let directory = resolve_path::dirname::<Auto>(&page);
+    let directory = bun_paths::dirname_or_root(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
     (records.unwrap_or_default().iter())
         .map(|record| record.path.text())
         .filter(|path| !is_url(path))
-        .map(|path| resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec())
+        .map(|path| Path::resolve(&[directory, path]).to_vec())
         .collect()
 }
 

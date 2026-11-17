@@ -113,7 +113,7 @@ impl MemoryHost {
     }
 
     fn add_parent_directories(&mut self, path: &[u8]) {
-        let parents = ancestors(dirname::<Posix>(path));
+        let parents = ancestors(Posix::dirname_or_root(path));
         self.directories.extend(parents.map(<[u8]>::to_vec));
     }
 
@@ -357,7 +357,7 @@ pub(crate) fn resolve_in(
     format_resolution(resolver.resolve_code(&CodeRequest {
         specifier: specifier.as_bytes(),
         importer,
-        directory: dirname::<Posix>(importer),
+        directory: Posix::dirname_or_root(importer),
         kind,
         form: CodeImportForm::Static,
     }))
@@ -382,7 +382,7 @@ pub(crate) fn resolve_computed_in(
     suffix: &str,
     kind: CodeImportKind,
 ) -> String {
-    let options = CodeOptions::bun_run(dirname::<Posix>(importer.as_bytes()));
+    let options = CodeOptions::bun_run(Posix::dirname_or_root(importer.as_bytes()));
     let pattern = ComputedPattern {
         importer,
         prefix,
@@ -413,7 +413,7 @@ pub(crate) fn resolve_computed_with(
         prefix: pattern.prefix.as_bytes(),
         suffix: pattern.suffix.as_bytes(),
         importer,
-        directory: dirname::<Posix>(importer),
+        directory: Posix::dirname_or_root(importer),
         kind: pattern.kind,
         form: CodeImportForm::Static,
         site: Default::default(),

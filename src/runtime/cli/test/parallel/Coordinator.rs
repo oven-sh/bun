@@ -319,7 +319,7 @@ impl<'a> Coordinator<'a> {
             for (idx, running_ms) in &running {
                 bun_core::pretty_errorln!(
                     "  {} <d>({}s)<r>",
-                    bstr::BStr::new(self.rel_path(*idx)),
+                    bstr::BStr::new(self.rel_path(*idx).as_bytes()),
                     running_ms / 1000
                 );
             }
@@ -328,7 +328,10 @@ impl<'a> Coordinator<'a> {
                 bun_core::pretty_errorln!("{} file(s) had not started:", not_started);
                 for w in self.workers.iter() {
                     for idx in w.range.lo..w.range.hi {
-                        bun_core::pretty_errorln!("  {}", bstr::BStr::new(self.rel_path(idx)));
+                        bun_core::pretty_errorln!(
+                            "  {}",
+                            bstr::BStr::new(self.rel_path(idx).as_bytes())
+                        );
                     }
                 }
             }
@@ -578,8 +581,8 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    pub(crate) fn rel_path(&self, file_idx: u32) -> &[u8] {
-        bun_paths::resolve_path::relative(
+    pub(crate) fn rel_path(&self, file_idx: u32) -> bun_paths::Path {
+        bun_paths::Path::relative(
             bun_paths::fs::FileSystem::instance().top_level_dir(),
             self.files[file_idx as usize].as_bytes(),
         )
@@ -601,7 +604,7 @@ impl<'a> Coordinator<'a> {
             header,
             "\n{}{}:\n",
             bstr::BStr::new(file_prefix),
-            bstr::BStr::new(self.rel_path(file_idx))
+            bstr::BStr::new(self.rel_path(file_idx).as_bytes())
         );
         let _ = Output::error_writer().write_all(&header);
     }
@@ -971,7 +974,7 @@ impl<'a> Coordinator<'a> {
         self.break_dots();
         bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
-            bstr::BStr::new(self.rel_path(file_idx)),
+            bstr::BStr::new(self.rel_path(file_idx).as_bytes()),
             bstr::BStr::new(reason),
         );
         self.reporter.count_failed_file();
@@ -1005,7 +1008,7 @@ impl<'a> Coordinator<'a> {
         self.break_dots();
         bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
-            bstr::BStr::new(self.rel_path(file_idx)),
+            bstr::BStr::new(self.rel_path(file_idx).as_bytes()),
             detail,
         );
         self.reporter.count_failed_file();
@@ -1036,7 +1039,7 @@ impl<'a> Coordinator<'a> {
                 "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
             ),
             bstr::BStr::new(describe_status(&mut buf, status)),
-            bstr::BStr::new(self.rel_path(file_idx)),
+            bstr::BStr::new(self.rel_path(file_idx).as_bytes()),
         );
         Output::flush();
         self.terminate_workers_after_panic(b"aborted: worker panicked");
@@ -1119,10 +1122,13 @@ impl<'a> Coordinator<'a> {
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
                     // Reshaped for borrowck — inline rel_path body
                     // since `self.workers` is mutably borrowed.
-                    bstr::BStr::new(bun_paths::resolve_path::relative(
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        self.files[idx as usize].as_bytes(),
-                    )),
+                    bstr::BStr::new(
+                        bun_paths::Path::relative(
+                            bun_paths::fs::FileSystem::instance().top_level_dir(),
+                            self.files[idx as usize].as_bytes(),
+                        )
+                        .as_bytes()
+                    ),
                     bstr::BStr::new(reason),
                 );
                 self.reporter.count_failed_file();

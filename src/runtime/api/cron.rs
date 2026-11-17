@@ -1971,7 +1971,7 @@ fn resolve_path(global: &JSGlobalObject, path_: &[u8]) -> crate::Result<ZString>
     let vm = global.bun_vm();
     let srcloc = global.get_caller_src_loc();
     let caller_utf8 = srcloc.str.to_utf8();
-    let raw_dir = path::resolve_path::dirname::<path::platform::Auto>(caller_utf8.slice());
+    let raw_dir = path::dirname_or_root(caller_utf8.slice());
     let source_dir: &[u8] = if raw_dir.is_empty() { b"." } else { raw_dir };
     let mut resolved = vm
         .transpiler
@@ -2001,11 +2001,7 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
         bun_core::fast_random(),
     )
     .map_err(|_| bun_alloc::AllocError)?;
-    let joined = path::resolve_path::join_abs_string::<path::platform::Auto>(
-        RealFS::platform_temp_dir(),
-        &[name.as_bytes()],
-    );
-    Ok(ZString::from_bytes(joined))
+    Ok(path::VecPath::resolve(&[RealFS::platform_temp_dir(), name.as_bytes()]).into_zbox())
 }
 
 // ============================================================================

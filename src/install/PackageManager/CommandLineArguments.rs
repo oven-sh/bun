@@ -1828,9 +1828,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
 
         // A second `chdir` would resolve a relative path from inside the first one's target.
         if let Some(cwd_) = args.option(b"--cwd").filter(|_| first_parse) {
+            let cwd_: &[u8] = &bun_sys::existing_spelling(bun_sys::Fd::cwd(), cwd_);
             let final_path = if cwd_.starts_with(b".") {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                PoolPath::resolve_any_sep(&[bun_sys::getcwd_z(&mut buf)?, cwd_])
+                PoolPath::resolve(&[bun_sys::getcwd_z(&mut buf)?, cwd_])
             } else {
                 PoolPath::from(cwd_)
             };

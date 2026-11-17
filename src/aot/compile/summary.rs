@@ -2,7 +2,6 @@ use super::{EntryPointPaths, FolderPaths, FollowedName, LoadedProject};
 use crate::diagnostics::ProgramView;
 use crate::ir::{InParallel, collect_from_each, for_each_mut};
 use crate::link::ProgramModule;
-use crate::load::module_paths::with_separators_of_host;
 use crate::load::sources::SourceKind;
 use crate::load::{
     EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, file_size, is_host_path,
@@ -11,6 +10,7 @@ use crate::load::{
 use crate::modules::{ModuleGraph, ModuleRef, SiteAnswer};
 use crate::report::{FunctionSources, ModuleOrigin, ModuleSource, SourceTexts};
 use crate::statistics::{Stage, StepClock};
+use bun_paths::posix_to_platform;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::hir::ExprKind;
@@ -43,7 +43,7 @@ pub(super) fn collect_entry_point_paths(
             EntryPointPaths {
                 source_path: match is_host_path(file_name) {
                     true => public_path.clone(),
-                    false => with_separators_of_host(to_native(file_name), cfg!(windows)),
+                    false => posix_to_platform(to_native(file_name)).into_owned(),
                 },
                 public_path,
             }
@@ -52,9 +52,7 @@ pub(super) fn collect_entry_point_paths(
 }
 
 fn folder_of(path: &[u8]) -> &[u8] {
-    let end = path
-        .iter()
-        .rposition(|&byte| bun_paths::is_sep_native(byte));
+    let end = path.iter().rposition(|&byte| bun_paths::is_sep(byte));
     &path[..end.unwrap_or(0)]
 }
 
@@ -69,10 +67,8 @@ pub(super) fn collect_program_file_paths(
         .map(|&file| {
             let paths = EntryPointPaths {
                 public_path: sources.public_path(file).to_vec(),
-                source_path: with_separators_of_host(
-                    to_native(files.module(file).file_name()),
-                    cfg!(windows),
-                ),
+                source_path: posix_to_platform(to_native(files.module(file).file_name()))
+                    .into_owned(),
             };
             (file, paths)
         })

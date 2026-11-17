@@ -736,7 +736,7 @@ describe.concurrent.skipIf(isWindows).each([
       "dependencies.one-dep",
     );
 
-    for (const filter of ["./x:/other", "{x:/other}", "{\\x:}"]) {
+    for (const filter of ["./x:/other", "{x:/other}", "{./x:}"]) {
       expect(await project.run("run", "--filter", filter, "name")).toMatchObject({
         stdout: expect.stringContaining("other name: other\n"),
         exitCode: 0,
@@ -752,11 +752,15 @@ describe.concurrent.skipIf(isWindows).each([
       exitCode: 0,
     });
     writeFileSync(join(project.path, "node_modules", "tarball", "added.txt"), "");
-    const patchesDir = `--patches-dir=${project.path}\\my\\patches`;
-    expect(await project.run("patch", "--commit", "tarball", "--dry-run", patchesDir)).toMatchObject({
-      stdout: expect.stringContaining("would write my/patches/tarball@"),
-      exitCode: 0,
-    });
+    // The value goes into package.json, where a backslash separates.
+    for (const patchesDir of [`${project.path}/my/patches`, "my\\patches"]) {
+      expect(
+        await project.run("patch", "--commit", "tarball", "--dry-run", `--patches-dir=${patchesDir}`),
+      ).toMatchObject({
+        stdout: expect.stringContaining("would write my/patches/tarball@"),
+        exitCode: 0,
+      });
+    }
   });
 
   // Older versions wrote backslashes into bun.lock on Windows.
@@ -791,40 +795,50 @@ test.concurrent.skipIf(isWindows).each([
   expect(await readdirSorted(String(dir))).toEqual(["a\\b", "app"]);
 });
 
-// bun.lock is shared with Windows, so paths in it never keep a backslash.
-test.concurrent.skipIf(isWindows).each([
-  ["workspaces", (path: string) => ({ workspaces: [path] }), "dep@workspace:pk/g"],
-  ["dependencies", (path: string) => ({ dependencies: { dep: `file:${path}` } }), "dep@file:pk/g"],
-  ["link:", (path: string) => ({ dependencies: { dep: `link:${path}` } }), "dep@link:./pk/g"],
-  [
-    "overrides",
-    (path: string) => ({ dependencies: { dep: "*" }, overrides: { dep: `file:${path}` } }),
-    "dep@file:pk/g",
-  ],
-])("%s: a backslash after the project dir in an absolute path is a separator", async (_, fields, resolution) => {
-  using dir = tempDir("absolute-backslash", {
-    "a\\b": {
-      "package.json": ({ root }) => JSON.stringify({ name: "app", ...fields(join(root, "pk\\g")) }),
-      "pk\\g/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
-      "pk/g/package.json": JSON.stringify({ name: "dep", version: "2.0.0" }),
-    },
+// A path that starts with `/` was not written for Windows.
+describe.concurrent.skipIf(isWindows).each(["hoisted", "isolated"] as const)("%s linker", linker => {
+  test.each([
+    ["workspaces", (path: string) => ({ workspaces: [path], dependencies: { dep: "*" } }), "dep@workspace:"],
+    ["dependencies", (path: string) => ({ dependencies: { dep: `file:${path}` } }), "dep@file:"],
+    ["link:", (path: string) => ({ dependencies: { dep: `link:${path}` } }), "dep@link:./"],
+    ["overrides", (path: string) => ({ dependencies: { dep: "*" }, overrides: { dep: `file:${path}` } }), "dep@file:"],
+  ])("%s: a backslash separates in a relative path only", async (_, fields, prefix) => {
+    for (const [written, folder, version] of [
+      [(root: string) => join(root, "pk\\g"), "pk\\g", "1.0.0"],
+      [() => ".\\pk\\g", "pk/g", "2.0.0"],
+    ] as const) {
+      using dir = tempDir("absolute-backslash", {
+        "a\\b": {
+          "package.json": ({ root }) => JSON.stringify({ name: "app", ...fields(written(root)) }),
+          "pk\\g/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+          "pk/g/package.json": JSON.stringify({ name: "dep", version: "2.0.0" }),
+        },
+      });
+      const project = join(String(dir), "a\\b");
+      const installed = () => file(join(project, "node_modules", "dep", "package.json")).json();
+      await registry.writeBunfig(project, { linker });
+
+      await runBunInstall(installEnv(project), project);
+      const lockfile = readFileSync(join(project, "bun.lock"), "utf8");
+      expect(Bun.JSONC.parse(lockfile)).toHaveProperty("packages.dep.0", prefix + folder);
+      expect(await installed()).toHaveProperty("version", version);
+
+      await rm(join(project, "node_modules"), { recursive: true });
+      await runBunInstall(installEnv(project), project, { frozenLockfile: true });
+      expect(await installed()).toHaveProperty("version", version);
+      expect(readFileSync(join(project, "bun.lock"), "utf8")).toBe(lockfile);
+    }
   });
-  const project = join(String(dir), "a\\b");
-  await registry.writeBunfig(project, { linker: "hoisted" });
-
-  await runBunInstall(installEnv(project), project);
-
-  expect(Bun.JSONC.parse(readFileSync(join(project, "bun.lock"), "utf8"))).toHaveProperty("packages.dep.0", resolution);
-  expect(await file(join(project, "node_modules", "dep", "package.json")).json()).toHaveProperty("version", "2.0.0");
 });
 
-test.concurrent.skipIf(isWindows)("link: resolves inside an override folder spelled with a backslash", async () => {
+test.concurrent.skipIf(isWindows)("link: resolves inside an override folder with a backslash in its name", async () => {
   using dir = tempDir("override-backslash", {
     "package.json": ({ root }) =>
       JSON.stringify({ dependencies: { "one-dep": "1.0.0" }, overrides: { "no-deps": `file:${root}/pk\\g` } }),
-    "pk\\g/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
-    "pk/g/package.json": JSON.stringify({ name: "no-deps", version: "2.0.0", dependencies: { a: "link:../a" } }),
-    "pk/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "pk\\g/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0", dependencies: { a: "link:../a" } }),
+    "pk/g/package.json": JSON.stringify({ name: "no-deps", version: "2.0.0" }),
+    "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "pk/a/package.json": JSON.stringify({ name: "a", version: "2.0.0" }),
   });
   await registry.writeBunfig(String(dir), { linker: "hoisted" });
 
@@ -832,7 +846,7 @@ test.concurrent.skipIf(isWindows)("link: resolves inside an override folder spel
 
   expect(Bun.JSONC.parse(readFileSync(join(String(dir), "bun.lock"), "utf8"))).toHaveProperty(
     "packages.a.0",
-    "a@link:./pk/a",
+    "a@link:./a",
   );
 });
 
@@ -872,28 +886,27 @@ test.concurrent.skipIf(isWindows).each(["hoisted", "isolated"] as const)(
   },
 );
 
-test.concurrent.skipIf(isWindows).each(["vendor\\inner", "\\vendor\\inner"])(
-  "bun.lock is stable for a nested file:%s dependency",
-  async folder => {
-    const outer = { name: "outer", version: "1.0.0", dependencies: { inner: `file:${folder}` } };
-    const files = { "package/package.json": JSON.stringify(outer), "package/vendor/inner/package.json": "{}" };
-    using dir = tempDir("lockfile-backslash-stable", {
-      "package.json": JSON.stringify({ dependencies: { outer: "file:./outer.tgz" } }),
-      "outer.tgz": Buffer.from(await new Bun.Archive(files, { compress: "gzip" }).bytes()),
-    });
-    const project = String(dir);
-    await registry.writeBunfig(project, { linker: "isolated" });
+test.concurrent.skipIf(isWindows)("bun.lock is stable for a nested file:vendor\\inner dependency", async () => {
+  const outer = { name: "outer", version: "1.0.0", dependencies: { inner: "file:vendor\\inner" } };
+  const files = { "package/package.json": JSON.stringify(outer), "package/vendor/inner/package.json": "{}" };
+  using dir = tempDir("lockfile-backslash-stable", {
+    "package.json": JSON.stringify({ dependencies: { outer: "file:./outer.tgz" } }),
+    "outer.tgz": Buffer.from(await new Bun.Archive(files, { compress: "gzip" }).bytes()),
+  });
+  const project = String(dir);
+  await registry.writeBunfig(project, { linker: "isolated" });
 
-    await runBunInstall(installEnv(project), project);
-    const lockfile = readFileSync(join(project, "bun.lock"), "utf8");
-    await runBunInstall(installEnv(project), project, { savesLockfile: false, packages: ["--force"] });
+  await runBunInstall(installEnv(project), project);
+  const lockfile = readFileSync(join(project, "bun.lock"), "utf8");
+  await runBunInstall(installEnv(project), project, { savesLockfile: false, packages: ["--force"] });
 
-    expect(lockfile).toMatch(/"inner@file:(\.\/)?vendor\/inner"/);
-    expect(readFileSync(join(project, "bun.lock"), "utf8")).toBe(lockfile);
-  },
-);
+  expect(lockfile).toMatch(/"inner@file:(\.\/)?vendor\/inner"/);
+  expect(readFileSync(join(project, "bun.lock"), "utf8")).toBe(lockfile);
+});
 
-test.concurrent.each([".", "./", ".."])("bundleDependencies entry %p does not replace the store folder", async name => {
+test.concurrent.each(
+  (["isolated", "hoisted"] as const).flatMap(linker => [".", "./", ".."].map(name => [linker, name] as const)),
+)("%s: bundleDependencies entry %p does not replace node_modules", async (linker, name) => {
   using dir = tempDir("folder-bundles-dot", {
     "package.json": JSON.stringify({ dependencies: { folder: "file:./folder" } }),
     "folder/package.json": JSON.stringify({
@@ -905,11 +918,13 @@ test.concurrent.each([".", "./", ".."])("bundleDependencies entry %p does not re
     "folder/node_modules/.keep": "",
   });
   const project = String(dir);
-  await registry.writeBunfig(project, { linker: "isolated" });
+  await registry.writeBunfig(project, { linker });
 
   await runBunInstall(installEnv(project), project, { allowWarnings: true });
 
-  expect(lstatSync(join(project, "node_modules/.bun/folder@file+folder/node_modules")).isDirectory()).toBeTrue();
+  const parent = linker === "isolated" ? "node_modules/.bun/folder@file+folder" : "node_modules/folder";
+  const stat = lstatSync(join(project, parent, "node_modules"), { throwIfNoEntry: false });
+  expect(stat?.isSymbolicLink() ?? false).toBeFalse();
   expect(await file(join(project, "node_modules/folder/package.json")).json()).toHaveProperty("name", "folder");
 });
 
@@ -1354,6 +1369,17 @@ describe.skipIf(isWindows).each(["isolated", "hoisted"] as const)("links in a fi
       expect(await file(join(copy, "build", "index.js")).text()).toBe("module.exports = 'built';");
     },
   );
+
+  test.concurrent("one to a file whose name starts with a backslash is a link in the copy", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: { ...files, "vendor/lib/\\named.js": "module.exports = 'named';" },
+    });
+    symlinkSync("\\named.js", join(packageDir, "vendor", "lib", "alias.js"));
+
+    await runBunInstall(installEnv(packageDir), packageDir);
+    expect(readlinkSync(join(packageDir, "node_modules", "lib", "alias.js"))).toBe("\\named.js");
+  });
 
   test.concurrent("one that's skipped is reported in a warning when the folder is installed", async () => {
     using outside = tempDir("folder-links-outside", { "secret.txt": "secret" });
@@ -2125,7 +2151,7 @@ describe.concurrent("transitive file dependencies of registry packages", () => {
     ]);
   });
 
-  test.each(["../../../the-files", ...(isWindows ? [] : ["..\\..\\..\\the-files"])])(
+  test.each(["../../../the-files", ...(isWindows ? [] : ["..\\..\\..\\the-files", "\\the-files"])])(
     "a folder path escaping its package is refused when it comes from bun.lock: %s",
     async folder => {
       const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
@@ -2160,7 +2186,6 @@ describe.concurrent("transitive file dependencies of registry packages", () => {
 
   test.skipIf(isWindows).each([
     ".\\the-files",
-    "\\the-files",
     // would reach .bun/the-files if a\b\c\d counted as one name
     "a\\b\\c\\d/../../../../the-files",
   ])("a backslash in a folder path is a separator: %s", async folder => {

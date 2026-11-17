@@ -221,7 +221,7 @@ struct ParsedConfig {
 
 impl ParsedConfig {
     fn parse(path: &[u8], json: &Json) -> ParsedConfig {
-        let config_dir = dirname::<Posix>(path);
+        let config_dir = Posix::dirname_or_root(path);
         let extends = string_entry(json, b"extends")
             .filter(|text| !text.is_empty() && !is_in_node_modules(config_dir))
             .map(|text| join(config_dir, text));
@@ -296,7 +296,7 @@ impl<'h> Resolver<'h> {
         is_javascript: impl FnOnce() -> bool,
     ) -> &'h TranspileSettings {
         match self.is_aot_source_of_dependency(path, is_javascript) {
-            true => self.aot_package_settings(dirname::<Posix>(path)),
+            true => self.aot_package_settings(Posix::dirname_or_root(path)),
             false => self.configured_transpile_settings(path),
         }
     }
@@ -343,7 +343,7 @@ impl<'h> Resolver<'h> {
             return known;
         }
         let stated = ancestors(directory)
-            .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
+            .take_while(|&ancestor| Posix::basename(ancestor) != b"node_modules")
             .map(|ancestor| inside(ancestor, b"package.json"))
             .filter(|path| self.is_file(path))
             .find_map(|path| self.read_config(&path).filter(|it| it.has_compiler_options));

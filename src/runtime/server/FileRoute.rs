@@ -265,22 +265,7 @@ impl FileRoute {
 
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 
-        let fd_result: bun_sys::Result<Fd> = {
-            #[cfg(windows)]
-            {
-                let mut path_buffer = bun_paths::path_buffer_pool::get();
-                path_buffer[..path.len()].copy_from_slice(path);
-                bun_sys::open(
-                    bun_core::ZStr::nul_terminate(&mut path_buffer, path.len()),
-                    open_flags,
-                    0,
-                )
-            }
-            #[cfg(not(windows))]
-            {
-                bun_sys::open_a(path, open_flags, 0)
-            }
-        };
+        let fd_result = bun_sys::open(&bun_paths::Path::from(path), open_flags, 0);
 
         let Ok(fd) = fd_result else {
             req.set_yield(true);

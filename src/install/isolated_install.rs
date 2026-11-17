@@ -26,6 +26,7 @@ use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
+use crate::resolvers::folder_resolver::is_root_above_project;
 use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::linear_fifo::DynamicBuffer;
@@ -336,8 +337,6 @@ pub fn store_folders(
             ResolutionTag::Root => {}
             ResolutionTag::Workspace => {
                 entry_dir.extend_from_slice(lockfile.str(holder_res.workspace()));
-                // The lockfile may have been written on Windows.
-                paths::slashes_to_posix_in_place(&mut entry_dir);
             }
             _ => write!(
                 entry_dir,
@@ -1477,9 +1476,7 @@ pub(crate) fn move_node_modules_aside(
         if lockfile.is_member_path_outside(workspace_path) {
             continue;
         }
-        let mut workspace_node_modules = Path::new();
-        workspace_node_modules.push_any_sep(workspace_path);
-        workspace_node_modules.push(b"node_modules");
+        let mut workspace_node_modules = Path::from_parts(&[workspace_path, b"node_modules"]);
         if is_linked(&workspace_node_modules) != Some(false) {
             continue;
         }
@@ -2268,7 +2265,9 @@ pub(crate) fn install_isolated_packages(
                     let folder = pkg_res.folder().slice(string_buf);
                     // The resolver rejects these, so only an edited or old lockfile gets here.
                     let refused = crate::bin::bin_target_escapes_package_dir(folder)
-                        && (nested || !lockfile_ro.is_trusted_folder_package(pkg_id));
+                        && (nested
+                            || !lockfile_ro.is_trusted_folder_package(pkg_id)
+                            || is_root_above_project(folder));
                     if nested || refused {
                         let state = if refused {
                             Output::err_generic(

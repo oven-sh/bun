@@ -35,7 +35,7 @@ pub(crate) fn remove_stale_workspace_links(previous: &Lockfile, current: &Lockfi
 /// `readlink` only succeeds for a symlink or a junction, so a real directory or file is left alone.
 fn remove_link_in(package_dir: &[u8], name: &[u8]) {
     let mut path = Path::from_top_level_dir();
-    path.push_any_sep(package_dir);
+    path.push(package_dir);
     path.push(b"node_modules");
     // Nothing is removed from a `node_modules` that is a symlink. See `LinkedNodeModules`.
     if is_link(&path) == Some(true) {

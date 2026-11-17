@@ -1,12 +1,13 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::platform_to_posix_in_place;
-use bun_paths::{GenericPath, PoolPath, VecBackend, slashes_to_posix_in_place};
+use bun_paths::{
+    ForwardSlashPath, MAX_PATH_BYTES, platform_to_posix, windows_to_platform, without_trailing_sep,
+};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -72,6 +73,15 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
     (remain, negated)
 }
 
+/// As in npm, `\` in a `workspaces` array is a separator and not an escape.
+pub fn workspaces_entry(entry: &[u8]) -> Cow<'_, [u8]> {
+    if cfg!(windows) {
+        platform_to_posix(entry)
+    } else {
+        windows_to_platform(entry)
+    }
+}
+
 /// The `!` entries of a `workspaces` array. `bun install` and `bun run --filter` apply the same
 /// rule.
 #[derive(Default)]
@@ -83,13 +93,11 @@ impl NegatedWorkspaces {
     pub fn take(&mut self, entry: &[u8]) -> bool {
         let (glob, negated) = strip_negations(entry);
         if negated {
-            let mut glob = glob.to_vec();
-            platform_to_posix_in_place::<u8>(&mut glob);
-            let mut remain: &[u8] = &glob;
+            let mut remain: &[u8] = &workspaces_entry(glob);
             while let Some(rest) = remain.strip_prefix(b"./") {
                 remain = rest;
             }
-            self.0.push(strings::without_trailing_slash(remain).into());
+            self.0.push(without_trailing_sep(remain).into());
         }
         negated
     }
@@ -107,13 +115,8 @@ impl NegatedWorkspaces {
     }
 }
 
-/// Has no `\`, because globs read it as an escape. `None` if it is too long.
-pub fn abs_posix_dir(base: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
-    let mut dir = PoolPath::resolve_any_sep(&[base, path]).ok()?;
-    slashes_to_posix_in_place(dir.as_mut_slice());
-    // Converting can leave a `//` or a `..`.
-    let dir = GenericPath::<VecBackend, Posix>::resolve(&[&dir]);
-    Some(dir.into_vec().into())
+pub fn abs_posix_dir(base: &[u8], path: &[u8]) -> Box<[u8]> {
+    ForwardSlashPath::resolve(&[base, path]).as_bytes().into()
 }
 
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
@@ -149,10 +152,13 @@ fn parse(raw: &[u8], original_cwd: &[u8]) -> Selector {
     }
 
     let resolve = |part: &[u8]| -> Prepared<Box<[u8]>> {
-        let Some(joined) = abs_posix_dir(original_cwd, part) else {
+        // A glob reads `\` as an escape.
+        let base = strings::replace_owned(&platform_to_posix(original_cwd), b"\\", b"\\\\");
+        let joined = abs_posix_dir(&base, part);
+        if joined.len() >= MAX_PATH_BYTES {
             Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
             Global::crash();
-        };
+        }
         Prepared::new(joined)
     };
 
@@ -514,8 +520,7 @@ pub fn select_lockfile_workspaces(
                 ResolutionTag::Workspace => res.workspace().slice(string_buf),
                 _ => b".",
             };
-            // A path out of bun.lock that fits no path buffer is selected by its name only.
-            abs_posix_dir(top_level_dir, rel).unwrap_or_default()
+            abs_posix_dir(top_level_dir, rel)
         })
         .collect();
 

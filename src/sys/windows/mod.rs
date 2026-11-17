@@ -137,7 +137,6 @@ pub use bun_windows_sys::BOOLEAN;
 pub use bun_windows_sys::CHAR;
 pub use bun_windows_sys::DWORD;
 pub use bun_windows_sys::LPVOID;
-pub use bun_windows_sys::MAX_PATH;
 pub use bun_windows_sys::PATH_MAX_WIDE;
 pub use bun_windows_sys::WORD;
 /// `PVOID` (winnt.h) — alias of `LPVOID`. Keep the alias so existing
@@ -242,7 +241,6 @@ pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
     [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
 
 pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
-pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
 pub use bun_paths::PathBuffer;
 pub use bun_paths::WPathBuffer;
@@ -1243,9 +1241,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     };
 
     let opened = NtCreateFile(
-        options
-            .dir
-            .filter(|_| !bun_paths::is_absolute_windows_wtf16(sub_path_w)),
+        options.dir.filter(|_| !bun_paths::is_absolute(sub_path_w)),
         object_name,
         NtCreateFileOptions {
             access_mask: windows::SYNCHRONIZE | windows::DELETE,
@@ -1557,6 +1553,7 @@ pub mod rescle {
         description: Option<&[u8]>,
         copyright: Option<&[u8]>,
     ) -> Result<(), RescleError> {
+        use bun_paths::{GenericPath, VecBackend};
         const _: () = assert!(cfg!(windows));
 
         // Validate version string format if provided
@@ -1585,19 +1582,8 @@ pub mod rescle {
 
         // Allocate UTF-16 strings (global mimalloc; allocator param dropped)
 
-        // Icon is a path, so use toWPathNormalized with proper buffer handling
-        let mut icon_buf = bun_paths::w_path_buffer_pool::get();
-        let icon_w: Option<&bun_core::WStr> = if let Some(i) = icon {
-            let path_w = bun_paths::string_paths::to_w_path_normalized(&mut icon_buf, i);
-            // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
-            let len = path_w.len();
-            let buf_u16 = icon_buf.as_mut_slice();
-            buf_u16[len] = 0;
-            // SAFETY: buf_u16[len] == 0 written above; pointer + len form a valid NUL-terminated wide slice
-            Some(bun_core::WStr::from_buf(&buf_u16[..], len))
-        } else {
-            None
-        };
+        let icon_path = icon.map(|icon| GenericPath::<VecBackend<u16>>::join(&[icon]));
+        let icon_w: Option<&bun_core::WStr> = icon_path.as_deref();
 
         let title_w = title
             .map(|t| bun_core::strings::to_utf16_alloc_for_real(t, false, true))
@@ -2044,7 +2030,7 @@ pub fn move_opened_file_at(
             rename_info,
             win32::FILE_RENAME_INFORMATION_EX {
                 Flags: flags,
-                RootDirectory: if bun_paths::is_absolute_windows_wtf16(new_file_name) {
+                RootDirectory: if bun_paths::is_absolute(new_file_name) {
                     ptr::null_mut()
                 } else {
                     new_dir_fd.native()

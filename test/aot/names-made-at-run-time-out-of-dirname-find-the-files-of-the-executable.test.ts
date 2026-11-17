@@ -109,3 +109,53 @@ test("names made at run time out of __dirname find the files of the executable",
   mkdirSync(site);
   for (const [index, hooks] of allHooks.entries()) expect(await run([executable], hooks)).toEqual(expected[index]);
 }, 600_000);
+
+test.skipIf(isWindows)("a backslash in a name made at run time means what it means to plain Bun", async () => {
+  const names = ["./a\\b.js", "./c\\d.js", "./lib\\", "./lib", "open\\lib\\x.js", "closed\\lib\\x.js", ".\\lib.js"];
+  using dir = tempDir("aot-backslash-in-made-names", {
+    "site/main.js": `
+      for (const name of JSON.parse(process.env.NAMES)) {
+        try { console.log(name, require(name).name); } catch (e) { console.log(name, "throws"); }
+      }
+      console.log(require("open").name, require("closed").name);`,
+    "site/a\\b.js": `exports.name = "as written";`,
+    "site/a/b.js": `exports.name = "converted";`,
+    "site/c/d.js": `exports.name = "converted";`,
+    "site/lib.js": `exports.name = "file";`,
+    "site/lib/index.js": `exports.name = "folder";`,
+    "site/node_modules/open/package.json": `{ "name": "open", "main": "lib/x.js" }`,
+    "site/node_modules/open/lib/x.js": `exports.name = "open";`,
+    "site/node_modules/closed/package.json": `{ "name": "closed", "exports": "./lib/x.js" }`,
+    "site/node_modules/closed/lib/x.js": `exports.name = "closed";`,
+    "away/empty.txt": "",
+  });
+  const run = async (cmd: string[], cwd: string) => {
+    const env = { ...bunEnv, NAMES: JSON.stringify(names) };
+    await using proc = Bun.spawn({ cmd, cwd: join(String(dir), cwd), env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lines: stdout.trim().split("\n"), stderr: exitCode === 0 ? "" : stderr, exitCode };
+  };
+  const expected = {
+    lines: [
+      "./a\\b.js as written",
+      "./c\\d.js converted",
+      "./lib\\ folder",
+      "./lib file",
+      "open\\lib\\x.js open",
+      "closed\\lib\\x.js throws",
+      ".\\lib.js throws",
+      "open closed",
+    ],
+    stderr: "",
+    exitCode: 0,
+  };
+  expect(await run([bunExe(), "--no-install", "main.js"], "site")).toEqual(expected);
+
+  const executable = join(String(dir), nameOfExecutable);
+  const sources = ["./main.js", "./a\\b.js", "./a/b.js", "./c/d.js", "./lib.js", "./lib/index.js"];
+  sources.push("./node_modules/open/lib/x.js", "./node_modules/closed/lib/x.js");
+  const built = await run([bunExe(), "build", "--compile", "--aot", ...sources, "--outfile", executable], "site");
+  expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+  renameSync(join(String(dir), "site"), join(String(dir), "moved-away"));
+  expect(await run([executable], "away")).toEqual(expected);
+});

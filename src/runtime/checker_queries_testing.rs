@@ -2,11 +2,10 @@ use std::num::NonZeroUsize;
 
 use bun_aot::builtins::name_values_of_unlinked_files;
 use bun_aot::statistics::{LimitId, LimitValues};
-use bun_core::strings;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::{JSGlobalObject, JsError, JsResult};
+use bun_paths::PathStyle as _;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::{
     BuiltinClassIndex, BuiltinTypePath, BuiltinTypeSymbols, Denotation, FileOrigin, QueryInputs,
@@ -94,7 +93,7 @@ pub(crate) fn describe_checker_queries(
     // Bun's resolver reads an entry point as it is written, so it stays a native path.
     let entry_points = [entry_point.to_vec()];
     let entry_path = from_native(entry_point);
-    let directory = strings::without_trailing_slash(dirname::<Posix>(&entry_path));
+    let directory = Posix::without_trailing_sep(Posix::dirname_or_root(&entry_path));
     let conditions = [AOT_CONDITION.to_vec()];
     let host =
         DiskWithBuiltinModules::new(global.bun_vm(), requested_threads, directory, &conditions);

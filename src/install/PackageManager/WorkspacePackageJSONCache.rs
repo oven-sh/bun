@@ -174,12 +174,7 @@ impl WorkspacePackageJSONCache {
         #[cfg(not(windows))]
         let path: &[u8] = abs_package_json_path;
         #[cfg(windows)]
-        let mut posix_path = bun_paths::Path::from(abs_package_json_path);
-        #[cfg(windows)]
-        let path: &[u8] = {
-            bun_paths::dangerously_convert_path_to_posix_in_place(posix_path.as_mut_slice());
-            &posix_path
-        };
+        let path: &[u8] = &bun_paths::ForwardSlashPath::join(&[abs_package_json_path]);
 
         // reshaped for borrowck — we cannot hold an entry borrow across
         // `self.map.remove`, so check

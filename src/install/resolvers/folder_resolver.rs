@@ -2,7 +2,7 @@ use core::fmt;
 
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
-use bun_paths::{Path, PoolPath};
+use bun_paths::{ForwardSlashPath, Path, PoolPath};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
@@ -11,8 +11,8 @@ use crate::bun_json::Expr;
 use crate::dependency::{self};
 use crate::install::{Features, Lockfile, PackageID};
 use crate::lockfile::Package as LockfilePackage;
+use crate::lockfile_real::StringBuilder;
 use crate::lockfile_real::package::ResolverContext;
-use crate::lockfile_real::{StringBuilder, resolve_for_lockfile};
 use crate::npm;
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::process_dependency_list::{ListedDependencies, OnlyDependencies};
@@ -27,21 +27,15 @@ pub enum FolderResolution {
 
 pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
     pub manager: &'a PackageManager,
-    pub workspace: &'a semver::String,
+    pub workspace: &'a [u8],
 }
 
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let str_to_use = self
-            .manager
-            .lockfile
-            .workspace_paths
-            .get(&semver::string::Builder::string_hash(
-                self.manager.lockfile.str(self.workspace),
-            ))
-            .unwrap_or(self.workspace);
-
-        let search_path = self.manager.lockfile.str(str_to_use);
+        let lockfile = &self.manager.lockfile;
+        let search_path = (lockfile.workspace_paths)
+            .get(&semver::string::Builder::string_hash(self.workspace))
+            .map_or(self.workspace, |path| lockfile.str(path));
 
         let mut paths = normalize_package_json_path(
             GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
@@ -152,10 +146,18 @@ fn normalize_package_json_path(
         GlobalOrRelative::Global(path) => path,
         GlobalOrRelative::Relative(_) => top_level_dir,
     };
-    let mut abs = resolve_for_lockfile(base, &[non_normalized_path]).ok()?;
+    let mut abs = PoolPath::resolve(&[base, non_normalized_path]).ok()?;
     let rel = Path::relative(top_level_dir, &abs);
     abs.push(b"package.json").ok()?;
     Some(Paths { abs, rel })
+}
+
+/// A `file:` folder is copied, and this one would take the whole file system.
+pub(crate) fn is_root_above_project(folder: &[u8]) -> bool {
+    let project = FileSystem::get().top_level_dir();
+    let abs = ForwardSlashPath::resolve(&[project, folder]);
+    matches!(abs.as_bytes(), b"/" | [_, b':', b'/'])
+        && ForwardSlashPath::relative(project, &abs).starts_with(b"..")
 }
 
 fn read_package_json_from_disk(
@@ -235,7 +237,7 @@ fn read_package_json_from_disk(
                         && dependency::is_link_path(resolver.folder_path)
                         && matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>
                 {
-                    let dir = bun_core::ZBox::from_bytes(bun_paths::dirname_simple(abs.as_bytes()));
+                    let dir = Path::from(bun_paths::dirname_or_root(abs));
                     if !bun_sys::directory_exists_at(Fd::cwd(), &dir).unwrap_or(false) {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
                     }
@@ -321,10 +323,8 @@ pub(crate) fn get_or_put(
         return FolderResolution::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
     };
     // replace before getting hash
-    if cfg!(windows) {
-        bun_paths::dangerously_convert_path_to_posix_in_place(paths.abs.as_mut_slice());
-        bun_paths::dangerously_convert_path_to_posix_in_place(paths.rel.as_mut_slice());
-    }
+    bun_paths::platform_to_posix_in_place(paths.abs.as_mut_slice());
+    bun_paths::platform_to_posix_in_place(paths.rel.as_mut_slice());
     let abs: &ZStr = &paths.abs;
     let rel: &[u8] = &paths.rel;
 
@@ -356,9 +356,7 @@ pub(crate) fn get_or_put(
             (ResolutionTag::Symlink, &*link_path, Features::LINK)
         }
         GlobalOrRelative::Relative(dependency::version::Tag::Folder) => {
-            // A `file:` folder is copied, which would take the whole file system.
-            let is_root = matches!(bun_paths::dirname(abs), Some(b"/" | [_, b':', b'/']));
-            if is_root && rel.starts_with(b"..") {
+            if is_root_above_project(rel) {
                 manager.log_mut().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,

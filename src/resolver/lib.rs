@@ -50,7 +50,7 @@ pub use tsconfig_json::TSConfigJSON;
 // `result` / `standalone_module_graph` sibling modules.
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext};
+pub use resolver::{BrowserMapPathKind, Bufs, Resolver, module_type_from_ext};
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
     MatchStatus, PathPair, Result, ResultFlags, ResultUnion,
@@ -276,8 +276,7 @@ pub mod fs {
                 }
             };
             // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the
-            // same cwd. `bun_paths::resolve_path::relative*` and
-            // (in debug builds) `Path::from_top_level_dir` need `bun_paths::fs::FileSystem::
+            // same cwd. In debug builds `Path::from_top_level_dir` needs `bun_paths::fs::FileSystem::
             // instance()` (a strict `OnceLock` — panics if unset), and the
             // doc-comment on that `init` names this as the intended seeding
             // point. This keeps both halves in lockstep.
@@ -285,7 +284,7 @@ pub mod fs {
             // `Err`). `cwd` is passed as raw bytes — POSIX paths are not
             // guaranteed UTF-8, and the lower tier stores/serves bytes.
             bun_paths::fs::FileSystem::init(cwd);
-            bun_paths::fs::set_top_level_dir(cwd);
+            bun_core::set_top_level_dir(cwd);
             // SAFETY: single-threaded startup; called from
             // `Transpiler::init` before any worker spawn.
             unsafe {
@@ -327,71 +326,6 @@ pub mod fs {
             MAX_FD.load(Ordering::Relaxed)
         }
 
-        /// Joins `parts` against `top_level_dir` into `buf`, returning the
-        /// absolute path slice.
-        pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
-            use bun_paths::resolve_path::{join_abs_string_buf, platform};
-            join_abs_string_buf::<platform::Loose>(self.top_level_dir(), buf, parts)
-        }
-
-        /// Returns `None` on overflow.
-        pub fn abs_buf_checked<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
-            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-            join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir(), buf, parts)
-        }
-
-        /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
-        pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
-            use bun_paths::resolve_path::{normalize_string_buf, platform};
-            normalize_string_buf::<false, platform::Auto, false>(str, buf)
-        }
-
-        /// Joins against `top_level_dir`
-        /// into the resolver-shared threadlocal join buffer.
-        pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            join_abs_string::<platform::Loose>(self.top_level_dir(), parts)
-        }
-
-        /// `ENAMETOOLONG` on overflow.
-        pub(crate) fn abs_checked(
-            &self,
-            parts: &[&[u8]],
-        ) -> core::result::Result<&[u8], bun_errno::SystemErrno> {
-            use bun_paths::resolve_path::{join_abs_string_checked, platform};
-            join_abs_string_checked::<platform::Loose>(self.top_level_dir(), parts)
-                .ok_or(bun_errno::SystemErrno::ENAMETOOLONG)
-        }
-
-        /// Like `abs`, but interns the joined path into `DirnameStore` and
-        /// returns the `'static` copy.
-        pub(crate) fn abs_alloc(
-            &self,
-            parts: &[&[u8]],
-        ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            let joined = join_abs_string::<platform::Loose>(self.top_level_dir(), parts);
-            // Route through DirnameStore so
-            // the resolver's `&'static [u8]` storage contract holds.
-            DirnameStore::instance()
-                .append_slice(joined)
-                .map_err(|_| bun_alloc::AllocError)
-        }
-
-        /// Relative path from `from` to `to`. Returns a slice into the
-        /// resolver-shared threadlocal relative buffer; caller must dup
-        /// before the next call.
-        pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(from, to)
-        }
-
-        /// Relative path from
-        /// `top_level_dir` to `to`. Returns a slice into the resolver-shared
-        /// threadlocal relative buffer; caller must dup before the next call.
-        pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(self.top_level_dir(), to)
-        }
-
         /// Returns the process cwd. `process.chdir()` on any thread replaces it.
         #[inline]
         pub fn top_level_dir(&self) -> &'static [u8] {
@@ -402,18 +336,13 @@ pub mod fs {
         /// `DirnameStore` or a process-lifetime buffer like `cwd_buf`).
         #[inline]
         pub fn set_top_level_dir(&self, dir: &'static [u8]) {
-            bun_paths::fs::set_top_level_dir(dir);
+            bun_core::set_top_level_dir(dir);
         }
 
         /// `top_level_dir` with any trailing separator stripped (root `/` is
         /// left intact).
         pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
-            let d = self.top_level_dir();
-            if d.len() > 1 && d.last() == Some(&bun_paths::SEP) {
-                &d[..d.len() - 1]
-            } else {
-                d
-            }
+            bun_paths::without_trailing_sep(self.top_level_dir())
         }
 
         /// The process-global directory-name interning store.
@@ -638,7 +567,7 @@ pub mod fs {
                 // display path goes into the per-build arena, not the
                 // process-lifetime `FilenameStore` (it is recomputed each build).
                 let pretty: &'b mut [u8] = alloc.alloc_slice_copy(self.pretty);
-                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(pretty);
+                bun_paths::platform_to_posix_in_place(pretty);
                 new.pretty = pretty;
                 new.assert_pretty_is_valid();
                 Ok(new)
@@ -687,7 +616,6 @@ pub mod fs {
     };
 
     use bun_core::Generation;
-    use bun_paths::strings;
     use bun_ptr::Interned;
     use bun_sys::Fd;
     use bun_threading::Mutex;
@@ -1042,7 +970,7 @@ pub mod fs {
             store_fd: bool,
             iterator: &mut I,
         ) -> crate::CrateResult<&'static EntriesOption> {
-            let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
+            let dir = bun_paths::without_trailing_sep(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
             let _unlock_guard = self.entries_mutex.lock_guard();
@@ -1221,13 +1149,11 @@ pub mod fs {
                 // error was swallowed at `Entry.kind`, and a directory symlink
                 // was permanently misclassified as `.file` — surfacing as
                 // EISDIR at module load time.
-                let mut wbuf = bun_paths::w_path_buffer_pool::get();
-                let wpath = bun_paths::strings::paths::to_kernel32_path(
-                    &mut wbuf.0[..],
-                    absolute_path_c.as_bytes(),
-                );
+                let Ok(wpath) = bun_sys::long_path(absolute_path_c, bun_sys::Tag::open) else {
+                    return Ok(cache);
+                };
                 let owned = match w::CreateFileW(
-                    wpath,
+                    &wpath,
                     0,
                     w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
                     w::OPEN_EXISTING,
@@ -1439,10 +1365,7 @@ pub mod fs {
                 .or_else(|| env_var::TMP.get_not_empty())
                 .or_else(|| env_var::TEMP.get_not_empty())
             {
-                if dir.len() > 1 && dir[dir.len() - 1] == bun_paths::SEP {
-                    return &dir[0..dir.len() - 1];
-                }
-                return dir;
+                return bun_paths::without_trailing_sep(dir);
             }
 
             #[cfg(target_os = "windows")]
@@ -1453,34 +1376,24 @@ pub mod fs {
                 // `bun_core::Once` in `platform_temp_dir()`; the `OnceLock` here is
                 // the allowed process-lifetime singleton (PORTING.md §Forbidden
                 // exception), not a per-call leak.
+                use bun_paths::VecPath;
                 static OWNED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
                 return OWNED
                     .get_or_init(|| {
-                        if let Some(windir) =
-                            env_var::SYSTEMROOT.get().or_else(|| env_var::WINDIR.get())
+                        if let Some(windir) = (env_var::SYSTEMROOT.get_not_empty())
+                            .or_else(|| env_var::WINDIR.get_not_empty())
                         {
-                            let mut out =
-                                bun_core::strings::without_trailing_slash(windir).to_vec();
-                            out.extend_from_slice(b"\\Temp");
-                            return out;
+                            return VecPath::from_parts(&[windir, b"Temp"]).into_vec();
                         }
-                        if let Some(profile) = env_var::HOME.get() {
-                            let mut buf = bun_paths::path_buffer_pool::get();
-                            let parts: [&[u8]; 1] = [b"AppData\\Local\\Temp"];
-                            let out = bun_paths::resolve_path::join_abs_string_buf::<
-                                bun_paths::resolve_path::platform::Loose,
-                            >(profile, &mut buf[..], &parts);
-                            return out.to_vec();
+                        if let Some(profile) = env_var::HOME.get_not_empty() {
+                            return VecPath::resolve(&[profile, b"AppData/Local/Temp"]).into_vec();
                         }
                         let mut tmp_buf = bun_paths::path_buffer_pool::get();
                         let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
                             Ok(len) => &tmp_buf[..len],
                             Err(_) => panic!("Failed to get cwd for platformTempDir"),
                         };
-                        let root = bun_paths::resolve_path::windows_filesystem_root(cwd);
-                        let mut out = bun_core::strings::without_trailing_slash(root).to_vec();
-                        out.extend_from_slice(b"\\Windows\\Temp");
-                        out
+                        VecPath::resolve(&[cwd, b"/Windows/Temp"]).into_vec()
                     })
                     .as_slice();
             }
@@ -1598,7 +1511,7 @@ pub mod dir_entry_accessor {
     use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS};
     use bun_core::ZStr;
     use bun_glob::walk::{self, Accessor, AccessorDirIter};
-    use bun_paths::{Platform, resolve_path};
+    use bun_paths::Path;
     use bun_sys::{self as Syscall, Result as Maybe, Stat};
 
     pub struct DirEntryAccessor;
@@ -1669,22 +1582,11 @@ pub mod dir_entry_accessor {
     }
 
     impl DirEntryAccessor {
-        /// Joins `path` onto the handle's directory. The result can be longer than a path buffer.
-        fn full_path<'a>(
-            handle: &DirEntryHandle,
-            path: &'a ZStr,
-            buf: &'a mut [u8],
-            spill: &'a mut Vec<u8>,
-        ) -> &'a ZStr {
+        /// Joins `path` onto the handle's directory.
+        fn full_path(handle: &DirEntryHandle, path: &[u8]) -> Path {
             match handle.value {
-                Some(entry) if !Platform::AUTO.is_absolute(path.as_bytes()) => {
-                    resolve_path::join_z_buf_spill::<bun_paths::platform::Auto>(
-                        buf,
-                        spill,
-                        &[entry.dir, path.as_bytes()],
-                    )
-                }
-                _ => path,
+                Some(entry) if !bun_paths::is_absolute(path) => Path::join(&[entry.dir, path]),
+                _ => Path::from(path),
             }
         }
     }
@@ -1694,33 +1596,15 @@ pub mod dir_entry_accessor {
         type DirIter = DirEntryDirIter;
 
         fn statat(handle: &DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let mut spill = Vec::new();
-            Syscall::stat(Self::full_path(handle, path_, &mut buf[..], &mut spill))
+            Syscall::stat(&Self::full_path(handle, path_))
         }
 
         /// Like statat but does not follow symlinks.
         fn lstatat(handle: &DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            if let Some(entry) = handle.value {
-                return Syscall::lstatat(entry.fd, path_);
+            match handle.value {
+                Some(entry) => Syscall::lstatat(entry.fd, path_),
+                None => Syscall::lstat(path_),
             }
-
-            let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
-                if let Some(entry) = handle.value {
-                    let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
-                        &mut buf,
-                        &[entry.dir, path_.as_bytes()],
-                    );
-                    let len = slice.len();
-                    ZStr::nul_terminate(&mut buf, len)
-                } else {
-                    path_
-                }
-            } else {
-                path_
-            };
-            Syscall::lstat(path)
         }
 
         fn open(path: &ZStr) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
@@ -1731,9 +1615,7 @@ pub mod dir_entry_accessor {
             handle: &DirEntryHandle,
             path_: &ZStr,
         ) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let mut spill = Vec::new();
-            let path = Self::full_path(handle, path_, &mut buf[..], &mut spill);
+            let path = Self::full_path(handle, path_);
             // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
             // The glob implementation specifically checks for this error when dealing with symlinks
             // return Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));

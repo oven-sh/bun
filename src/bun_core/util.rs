@@ -627,49 +627,6 @@ impl core::ops::DerefMut for WPathBuffer {
     }
 }
 
-/// Directory portion of `path` (handles trailing-sep stripping and root).
-pub fn dirname(path: &[u8]) -> Option<&[u8]> {
-    use crate::path_sep::is_sep_native as is_sep;
-
-    if path.is_empty() {
-        return None;
-    }
-    // Strip trailing separators.
-    let mut end = path.len();
-    while end > 1 && is_sep(path[end - 1]) {
-        end -= 1;
-    }
-    // Windows: skip drive prefix `X:` so `C:\foo` → `C:\`, `C:foo` → None.
-    let root_end: usize =
-        if cfg!(windows) && end >= 2 && path[1] == b':' && path[0].is_ascii_alphabetic() {
-            if end >= 3 && is_sep(path[2]) { 3 } else { 2 }
-        } else if is_sep(path[0]) {
-            1
-        } else {
-            0
-        };
-    // Scan back for last separator after the root.
-    let mut i = end;
-    while i > root_end {
-        i -= 1;
-        if is_sep(path[i]) {
-            // Return up to (excluding) the separator found — do NOT collapse a
-            // preceding run of separators, so `/foo//bar` → `/foo/`. Preserve
-            // that contract for re-export parity with `bun_paths::dirname`.
-            return Some(&path[..i]);
-        }
-    }
-    // No separator AFTER root, but content past it (e.g. "/foo", "C:\foo"):
-    // return the root prefix iff the root itself ends in a separator
-    // (`"/foo"` → `"/"`, `"C:\\foo"` → `"C:\\"`). A bare drive prefix with no
-    // separator (`"C:foo"`, root_end==2) falls through to `None`. Root-only
-    // inputs ("/", "C:\") have `end == root_end` and also fall through.
-    if root_end > 0 && end > root_end && is_sep(path[root_end - 1]) {
-        return Some(&path[..root_end]);
-    }
-    None
-}
-
 // ─── Fd + fd module (from bun_sys::fd) ────────────────────────────────────
 // TYPE_ONLY: bun_core needs only the handle wrapper + stdin/out/err/cwd ctors.
 // Full method set (close, makeLibUVOwned, …) stays in bun_sys which re-exports
@@ -3749,23 +3706,6 @@ pub fn set_argv(view: &'static &'static [&'static ZStr]) {
 }
 
 // ── getcwd ────────────────────────────────────────────────────────────────
-/// `getcwd` tolerating an unreachable cwd (e.g. deleted while we run): falls
-/// back to the executable's directory like Node's `Environment::GetCwd`, so
-/// startup proceeds and `process.cwd()` surfaces the real error later.
-pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
-    if let Ok(cwd) = getcwd(buf) {
-        return cwd;
-    }
-    let dir: &[u8] = self_exe_path()
-        .ok()
-        .and_then(|p| dirname(p.as_bytes()))
-        // Paths from /proc/self/exe are not bounded by MAX_PATH_BYTES.
-        .filter(|d| d.len() < buf.0.len())
-        .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
-    buf.0[..dir.len()].copy_from_slice(dir);
-    ZStr::nul_terminate(buf, dir.len())
-}
-
 /// Writes the current working directory into `buf` and returns it.
 pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
     #[cfg(unix)]
@@ -3848,7 +3788,7 @@ pub(crate) fn which<'a>(
         return None;
     }
     // If `bin` contains a separator, resolve relative to cwd only.
-    let has_sep = bin.iter().copied().any(crate::path_sep::is_sep_native);
+    let has_sep = crate::strings::contains_char(bin, b'/');
     fn check<'a>(buf: &'a mut PathBuffer, dir: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
         let mut n = 0usize;
         if !dir.is_empty() {
@@ -3872,7 +3812,7 @@ pub(crate) fn which<'a>(
         (unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0).then_some(path)
     }
     // Absolute `bin` → probe it directly without joining `cwd`.
-    if crate::path_sep::is_absolute_native(bin) {
+    if bin.starts_with(b"/") {
         return check(buf, b"", bin);
     }
     if has_sep {

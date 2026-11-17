@@ -201,13 +201,10 @@ impl CopyFile {
         }
     }
 
-    fn open_destination(&mut self, path_buf: &mut PathBuffer) -> Option<File> {
+    fn open_destination(&mut self) -> Option<File> {
+        // Not `slice_z`, which makes "" of a path that does not fit.
+        let dest = &bun_paths::Path::from(self.destination_file_store.pathlike.path().slice());
         loop {
-            // Not `slice_z`, which makes "" of a path that does not fit.
-            let path = self.destination_file_store.pathlike.path().slice();
-            let len = path.len().min(path_buf.len() - 1);
-            path_buf[..len].copy_from_slice(&path[..len]);
-            let dest = bun_core::ZStr::nul_terminate(path_buf, len);
             let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
             let errno = match File::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                 Ok(file) => return Some(file),
@@ -610,7 +607,7 @@ impl CopyFile {
                 self.source_fd = source.insert(file).fd();
             }
             if self.destination_fd == Fd::INVALID {
-                let Some(file) = self.open_destination(&mut path_buf) else {
+                let Some(file) = self.open_destination() else {
                     return;
                 };
                 self.destination_fd = destination.insert(file).fd();
@@ -1217,13 +1214,7 @@ impl CopyFileWindows {
                 bun_sys::Tag::open,
             )),
             bun_sys::FileKind::CharacterDevice => Ok(None),
-            _ => {
-                let Ok(path) = bun_sys::get_fd_path(fd, buf) else {
-                    return Ok(None);
-                };
-                let len = path.len();
-                Ok(Some(bun_core::ZStr::nul_terminate(buf, len)))
-            }
+            _ => Ok(bun_sys::get_fd_path_z(fd, buf).ok()),
         }
     }
 

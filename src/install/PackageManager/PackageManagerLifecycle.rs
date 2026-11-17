@@ -496,7 +496,7 @@ pub(crate) fn resolve_bin_dirs_in_path(
         if i > 0 {
             path.push(bun_paths::DELIMITER);
         }
-        let trimmed = strings::without_trailing_slash(entry);
+        let trimmed = bun_paths::without_trailing_sep(entry);
         if let Some(dir) = (spellings.iter())
             .find_map(|bin| trimmed.strip_suffix(*bin))
             .filter(|dir| bun_paths::is_absolute(dir))
@@ -519,7 +519,7 @@ fn append_path_without_ancestor_bins(
 ) -> Result<(), bun_alloc::AllocError> {
     let bin = bun_paths::path_literal!("/node_modules/.bin").as_bytes();
     for entry in strings::split(inherited, &[bun_paths::DELIMITER]) {
-        let is_ancestor_bin = strings::without_trailing_slash(entry)
+        let is_ancestor_bin = bun_paths::without_trailing_sep(entry)
             .strip_suffix(bin)
             .is_some_and(|dir| {
                 cwd.strip_prefix(dir)

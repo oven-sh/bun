@@ -95,19 +95,8 @@ pub(crate) mod js_bundler {
             let bytes: Box<[u8]> = blob_or_string.slice().into();
             drop(blob_or_string);
 
-            // Clone the key since we need to own it.
-            let mut key = prop.to_owned_slice();
-
-            // Normalize backslashes to forward slashes for cross-platform consistency.
-            if cfg!(unix) && key.starts_with(b"/") {
-                bun_paths::slashes_to_posix_keeping_known_dirs(key.as_mut_slice());
-            } else {
-                bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                    key.as_mut_slice(),
-                );
-            }
-
-            this.map.put_assume_capacity(&key, bytes);
+            let path = prop.to_owned_slice();
+            this.map.put_assume_capacity(&FileMap::key(&path), bytes);
         }
 
         Ok(this)
@@ -1389,21 +1378,7 @@ pub(crate) mod js_bundler {
                         }
                     }
 
-                    if entry_points.len() == 1 {
-                        let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            &entry_points[0],
-                        );
-                        break 'brk Utf8Bytes::Borrowed(if d.is_empty() { b"." } else { d });
-                    }
-
-                    // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
-                    // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
-                    // adapter on the stack.
-                    let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
-                    break 'brk Utf8Bytes::Borrowed(
-                        bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
-                            .unwrap_or(b"."),
-                    );
+                    break 'brk Utf8Bytes::Borrowed(options::default_root_dir(entry_points));
                 };
 
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
@@ -1752,7 +1727,6 @@ pub(crate) mod js_bundler {
                     }
 
                     if compile.outfile.is_empty() {
-                        use bun_paths::{PathStyle as _, platform::Loose};
                         let entry_point: &[u8] = &this.entry_points.keys()[0];
                         // The build expands the patterns again, and reports one without a match.
                         let expanded_entry_points = compile.aot.as_ref().and_then(|_| {
@@ -1769,9 +1743,8 @@ pub(crate) mod js_bundler {
                         };
                         let mut outfile = bun_paths::stem(entry_point);
                         if matches!(outfile, b"index" | b"bun") {
-                            // `Loose`: a file name must not have a `\`.
-                            outfile =
-                                bun_paths::dirname(entry_point).map_or(outfile, Loose::basename);
+                            outfile = (bun_paths::dirname(entry_point))
+                                .map_or(outfile, bun_paths::basename);
                         }
                         let outfile = crate::cli::build_command::compile_outfile(outfile);
 

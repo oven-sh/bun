@@ -15,6 +15,8 @@ use bun_core::{FeatureFlags, Output};
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
 use bun_core::{string_joiner::StringJoiner, strings};
+use bun_paths::platform::Posix;
+use bun_paths::{ForwardSlashPath, PathStyle as _};
 use bun_sourcemap as source_map;
 
 use crate::analyze_transpiled_module;
@@ -553,7 +555,6 @@ impl IntermediateOutput {
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
-        let mut file_path_posix: Vec<u8> = Vec::new();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -573,9 +574,7 @@ impl IntermediateOutput {
                 }
 
                 let mut count: usize = 0;
-                let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
-                    bun_paths::platform::Posix,
-                >(&chunk.final_rel_path);
+                let mut from_chunk_dir = Posix::dirname_or_root(&chunk.final_rel_path);
                 if from_chunk_dir == b"." {
                     from_chunk_dir = b"";
                 }
@@ -586,6 +585,15 @@ impl IntermediateOutput {
                 let use_outdir_relative_path = from_chunk_dir.is_empty()
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
+                let reference_to = |file_path: &[u8]| {
+                    let mut path = if use_outdir_relative_path {
+                        ForwardSlashPath::from(file_path)
+                    } else {
+                        ForwardSlashPath::relative(from_chunk_dir, file_path)
+                    };
+                    bun_paths::platform_to_posix_in_place(path.as_mut_slice());
+                    chunk.content.escape_reference(path)
+                };
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
@@ -666,26 +674,9 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
-                            // Normalize like the write pass below so the counted length matches.
-                            let file_path: &[u8] = {
-                                file_path_posix.clear();
-                                file_path_posix.extend_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                    &mut file_path_posix,
-                                );
-                                &file_path_posix
-                            };
-                            let cheap_normalizer = cheap_prefix_normalizer(
-                                import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
-                                },
-                            );
+                            let reference = reference_to(file_path);
+                            let cheap_normalizer =
+                                cheap_prefix_normalizer(import_prefix, &reference);
                             count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
                         }
                         QueryKind::None => {}
@@ -845,26 +836,9 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // Normalize Windows paths to '/' in a copy because the source is borrowed immutably.
-                            let file_path: &[u8] = {
-                                file_path_posix.clear();
-                                file_path_posix.extend_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                    &mut file_path_posix,
-                                );
-                                &file_path_posix
-                            };
-                            let cheap_normalizer = cheap_prefix_normalizer(
-                                import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
-                                },
-                            );
+                            let reference = reference_to(file_path);
+                            let cheap_normalizer =
+                                cheap_prefix_normalizer(import_prefix, &reference);
 
                             if !cheap_normalizer[0].is_empty() {
                                 total_buf.extend_from_slice(cheap_normalizer[0]);
@@ -1406,6 +1380,21 @@ impl<'a> Content<'a> {
     #[inline]
     pub(crate) fn is_javascript(&self) -> bool {
         matches!(self, Content::Javascript(_))
+    }
+    /// `path` is printed between double quotes, as a JavaScript string or as a URL.
+    fn escape_reference(&self, path: ForwardSlashPath) -> ForwardSlashPath {
+        if !strings::contains_any(&path, b"\\\"") {
+            return path;
+        }
+        let mut escaped = ForwardSlashPath::new();
+        for byte in path.as_bytes() {
+            match byte {
+                b'\\' | b'"' if self.is_javascript() => write!(escaped, "\\x{byte:02X}"),
+                b'\\' | b'"' => write!(escaped, "%{byte:02X}"),
+                _ => escaped.extend_from_slice(core::slice::from_ref(byte)),
+            }
+        }
+        escaped
     }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
 

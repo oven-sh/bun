@@ -17,19 +17,6 @@ use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;
 
-/// For a path that Windows may have written to bun.lock. `\a` becomes `./a`, not `/a`. No-op on Windows.
-pub(crate) fn with_forward_slashes(path: &[u8]) -> Cow<'_, [u8]> {
-    if !bun_paths::has_literal_backslash(path) {
-        return path.into();
-    }
-    let mut path = path.to_vec();
-    if path[0] == b'\\' {
-        path.insert(0, b'.');
-    }
-    bun_paths::slashes_to_posix_in_place(&mut path);
-    path.into()
-}
-
 impl Resolution {
     /// True when this resolution can satisfy `dep_version`: npm ranges by
     /// semver, git/github by exact repo equality. Any other kind pairing
@@ -168,6 +155,11 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         unsafe { &(*core::ptr::from_ref(&self.value)).git }
     }
 
+    /// `local_tarball` is as package.json spells it.
+    pub(crate) fn local_tarball_path<'a>(&'a self, buf: &'a [u8]) -> Cow<'a, [u8]> {
+        bun_paths::windows_to_platform(self.local_tarball().slice(buf))
+    }
+
     pub(crate) fn can_enqueue_install_task(&self) -> bool {
         self.tag.can_enqueue_install_task()
     }
@@ -181,19 +173,19 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
 
         if let Some(link) = strings::without_prefix_if_possible_comptime(res_str, b"link:") {
-            let link = string_buf.append(&with_forward_slashes(link))?;
+            let link = string_buf.append(link)?;
             return Ok(Self::init(TaggedValue::Symlink(link)));
         }
 
         if let Some(workspace) =
             strings::without_prefix_if_possible_comptime(res_str, b"workspace:")
         {
-            let workspace = string_buf.append(&with_forward_slashes(workspace))?;
+            let workspace = string_buf.append(workspace)?;
             return Ok(Self::init(TaggedValue::Workspace(workspace)));
         }
 
         if let Some(folder) = strings::without_prefix_if_possible_comptime(res_str, b"file:") {
-            let folder = string_buf.append(&with_forward_slashes(folder))?;
+            let folder = string_buf.append(folder)?;
             return Ok(Self::init(TaggedValue::Folder(folder)));
         }
 
@@ -313,7 +305,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 )));
             }
             return Ok(Resolution::init(TaggedValue::Folder(
-                string_buf.append(path)?,
+                string_buf.append(&bun_paths::windows_to_platform(path))?,
             )));
         }
 
@@ -698,7 +690,7 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
                 writer,
                 "{}",
                 fmt_path(
-                    res.local_tarball().slice(buf),
+                    &res.local_tarball_path(buf),
                     PathFormatOptions {
                         path_sep: PathSep::Posix,
                         ..Default::default()
@@ -741,7 +733,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for URLFormatter<'a, SemverInt> {
         match res.tag {
             Tag::Npm => write!(writer, "{}", BStr::new(res.npm().url.slice(buf))),
             Tag::LocalTarball => fmt_path(
-                res.local_tarball().slice(buf),
+                &res.local_tarball_path(buf),
                 PathFormatOptions {
                     path_sep: PathSep::Posix,
                     ..Default::default()
@@ -779,6 +771,13 @@ pub struct Formatter<'a, SemverInt: VersionInt> {
 }
 
 impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
+    fn local_tarball(&self) -> Cow<'a, [u8]> {
+        match self.path_sep {
+            PathSep::Any => self.resolution.local_tarball().slice(self.buf).into(),
+            PathSep::Auto | PathSep::Posix => self.resolution.local_tarball_path(self.buf),
+        }
+    }
+
     /// See [`URLFormatter::write_to`] for rationale — `Display` is lossy on
     /// non-UTF-8 path bytes; this writes the lockfile string-buffer slices
     /// verbatim via `write_all`.
@@ -794,7 +793,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
                 writer,
                 "{}",
                 fmt_path(
-                    res.local_tarball().slice(buf),
+                    &self.local_tarball(),
                     PathFormatOptions {
                         path_sep: self.path_sep,
                         ..Default::default()
@@ -861,7 +860,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
         match res.tag {
             Tag::Npm => res.npm().version.fmt(buf).fmt(writer),
             Tag::LocalTarball => fmt_path(
-                res.local_tarball().slice(buf),
+                &self.local_tarball(),
                 PathFormatOptions {
                     path_sep: self.path_sep,
                     ..Default::default()

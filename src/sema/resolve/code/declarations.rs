@@ -22,7 +22,7 @@ impl<'h> Resolver<'h> {
             candidates.find(|candidate| self.is_file(candidate))
         };
         let found = find_file(stem).or_else(|| {
-            let manifest = self.nearest_code_manifest(dirname::<Posix>(path))?;
+            let manifest = self.nearest_code_manifest(Posix::dirname_or_root(path))?;
             let relative = stem.strip_prefix(manifest.directory)?;
             let relative = [b".", relative].concat();
             let mut folders = find_declaration_folders(manifest.exports.as_ref()?);

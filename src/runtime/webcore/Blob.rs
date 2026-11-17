@@ -3313,7 +3313,7 @@ pub(crate) enum Retry {
 /// Create the parent directories of `path`.
 #[inline(never)]
 pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
-    let Some(dirname) = bun_core::dirname(path) else {
+    let Some(dirname) = bun_paths::dirname(path) else {
         return Err(bun_sys::Error::from_code(
             bun_sys::E::ENOENT,
             bun_sys::Tag::mkdir,
@@ -3446,7 +3446,7 @@ fn write_file_with_empty_source_to_destination(
                                 }
                                 let dirpath: &[u8] = match &file.pathlike {
                                     PathOrFileDescriptor::Path(path) => {
-                                        match bun_core::dirname(path.slice()) {
+                                        match bun_paths::dirname(path.slice()) {
                                             Some(d) => d,
                                             None => break 'err,
                                         }

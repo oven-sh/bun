@@ -433,7 +433,7 @@ impl List {
             bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",
                 BStr::new(SEP_STR.as_bytes()),
-                escape_control_chars(strings::without_trailing_slash(
+                escape_control_chars(bun_paths::without_trailing_sep(
                     &self.cwd.as_bytes()[i + 1..]
                 )),
                 resolution,
@@ -441,7 +441,7 @@ impl List {
         } else {
             bun_core::pretty!(
                 "<d>{s} @{f}<r>\n",
-                escape_control_chars(strings::without_trailing_slash(self.cwd.as_bytes())),
+                escape_control_chars(bun_paths::without_trailing_sep(self.cwd.as_bytes())),
                 resolution,
             );
         }

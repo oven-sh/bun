@@ -342,7 +342,9 @@ impl PmPkgCommand {
                 let bin_path = str.slice8();
                 let pkg_dir = bun_paths::dirname(&pkg.path).unwrap_or(cwd);
 
-                if !bun_sys::exists_z(&Path::resolve_any_sep(&[pkg_dir, bin_path])) {
+                if !bun_install::bin::bin_target_in_package(bin_path)
+                    .is_some_and(|target| bun_sys::exists_z(&Path::resolve(&[pkg_dir, &target])))
+                {
                     bun_core::warn!(
                         "No bin file found at {}",
                         bun_core::fmt::EscapeControlChars(bstr::BStr::new(bin_path))

@@ -6,8 +6,8 @@
 use crate::{Category, Diagnostic, Report, TaskOutput};
 use bstr::{BStr, BString, ByteSlice};
 use bun_core::strings;
+use bun_paths::PathStyle as _;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
 use bun_sema::util::SharedSort;
@@ -741,7 +741,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         let manifest = relative_path(&it.manifest, style.cwd, style);
         let cwd_flag = match it.is_cwd_manifest {
             true => BString::default(),
-            false => alloc_print!(" --cwd={}", BStr::new(dirname::<Posix>(&manifest))),
+            false => alloc_print!(" --cwd={}", BStr::new(Posix::dirname_or_root(&manifest))),
         };
         pretty!(
             out,

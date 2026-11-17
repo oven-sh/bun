@@ -5,6 +5,8 @@
 //! there, so the two can be compared.
 
 use bun_core::strings;
+use bun_paths::PathStyle as _;
+use bun_paths::platform::Posix;
 use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
@@ -316,7 +318,7 @@ impl Virtual {
     }
 
     fn add_directories_above(&mut self, path: &[u8]) {
-        let mut dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
+        let mut dir = Posix::dirname_or_root(path);
         loop {
             if self
                 .directories
@@ -327,7 +329,7 @@ impl Virtual {
             {
                 break;
             }
-            dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(dir);
+            dir = Posix::dirname_or_root(dir);
         }
     }
 
@@ -1747,12 +1749,11 @@ fn run_one(
         let moves = !files.options.declaration_dir.is_empty() || !out_dir.is_empty();
         let looked_up = match common.filter(|it| moves && !it.is_empty()) {
             Some(common) => {
-                use bun_paths::{platform::Posix, resolve_path::relative_normalized};
                 let dir = match out_dir.is_empty() {
                     true => cwd.as_bytes(),
                     false => &out_dir[..],
                 };
-                join(dir, relative_normalized::<Posix, true>(common, path))
+                join(dir, &bun_paths::PosixPath::relative(common, path))
             }
             None => path.to_vec(),
         };

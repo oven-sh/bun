@@ -2685,10 +2685,7 @@ mod draft {
                     address: addr.wrapping_sub(base_address) as i32,
 
                     object: if name != image_path.as_slice() {
-                        // GetModuleFileNameW output never has a trailing separator
-                        // or bare drive prefix, so `basename_windows`'s
-                        // stripping is a no-op on this domain.
-                        let basename = bun_paths::basename_windows(name);
+                        let basename = bun_paths::basename(name);
                         Some(Box::<[u8]>::from(
                             &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
                         ))
@@ -3523,13 +3520,11 @@ mod draft {
         compile_unit_name: &[u8],
         tty_config: TtyConfig,
     ) -> crate::Result<()> {
-        // `Environment::BASE_PATH` is `&[u8]`, which `const_format::concatcp!` cannot
-        // ingest. The constant is tiny and this path is debug-only — build it once
-        // at runtime in a stack BoundedArray (no heap, async-signal-safe).
-        let mut base_path_buf = BoundedArray::<u8, { bun_paths::MAX_PATH_BYTES }>::default();
-        let _ = base_path_buf.append_slice(Environment::BASE_PATH);
-        let _ = base_path_buf.append_slice(bun_paths::SEP_STR.as_bytes());
-        let base_path: &[u8] = base_path_buf.const_slice();
+        // No heap: this can run in a signal handler.
+        let mut base_path = bun_paths::StackPath::<1024>::new();
+        let _ = base_path.set(Environment::BASE_PATH);
+        let _ = base_path.push_trailing_sep();
+        let base_path: &[u8] = &base_path;
         {
             if let Some(sl) = source_location {
                 if sl.file_name.starts_with(base_path) {

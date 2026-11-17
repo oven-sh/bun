@@ -55,7 +55,7 @@ pub(crate) fn add_typed_files(
             continue;
         }
         // The type checker reads `\` as a separator.
-        if bun_paths::has_literal_backslash(&file.dest_path) {
+        if cfg!(not(windows)) && bun_core::strings::contains_char(&file.dest_path, b'\\') {
             continue;
         }
         let source_map = output_files.get(file.source_map_index as usize);

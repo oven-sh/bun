@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 
-use bun_paths::strings;
+use bun_core::strings;
 use bun_semver as Semver;
 use bun_semver::{SlicedString, String};
 
@@ -790,16 +790,7 @@ impl TagExt for Tag {
             return Tag::DistTag;
         }
 
-        if strings::starts_with_windows_drive_letter_t(dependency)
-            // Platform-native separator only
-            // (`/` on POSIX, `/` or `\` on Windows).
-            && {
-                #[cfg(windows)]
-                { matches!(dependency[2], b'/' | b'\\') }
-                #[cfg(not(windows))]
-                { dependency[2] == b'/' }
-            }
-        {
+        if starts_with_drive_letter(dependency) && bun_paths::is_sep(dependency[2]) {
             if is_tarball(dependency) {
                 return Tag::Tarball;
             }
@@ -1122,7 +1113,7 @@ pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u
                 return None;
             }
         }
-        if strings::starts_with_windows_drive_letter_t(&dep[i..]) {
+        if starts_with_drive_letter(&dep[i..]) {
             return Some(&dep[i..]);
         }
     }
@@ -1484,7 +1475,7 @@ pub(crate) fn parse_with_tag(
                 // check for absolute windows paths
                 #[cfg(windows)]
                 {
-                    if protocol == 1 && strings::starts_with_windows_drive_letter_t(dependency) {
+                    if protocol == 1 && starts_with_drive_letter(dependency) {
                         return Some(Version {
                             literal: sliced.value(),
                             value: Value::Folder(sliced.sub(dependency).value()),
@@ -1584,4 +1575,9 @@ fn hgi_to_tag(info: &hosted_git_info::HostedGitInfo) -> Tag {
         | hosted_git_info::HostProvider::Gist
         | hosted_git_info::HostProvider::Sourcehut => Tag::Git,
     }
+}
+
+/// `C:` and at least one more byte.
+fn starts_with_drive_letter(text: &[u8]) -> bool {
+    matches!(text, [letter, b':', _, ..] if letter.is_ascii_alphabetic())
 }

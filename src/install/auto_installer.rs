@@ -22,9 +22,10 @@
 
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
+use std::borrow::Cow;
 
 use bun_install_types::resolver_hooks as hooks;
-use bun_paths::{PoolPath, SlicePath};
+use bun_paths::{PoolPath, SlicePath, windows_to_platform};
 use bun_semver::{SlicedString, String as SemverString};
 use bun_threading::Futex;
 
@@ -249,26 +250,29 @@ impl hooks::AutoInstaller for PackageManager {
             ),
             _ => None,
         };
-        let (base, path): (&[u8], &[u8]) = if let Some(member) = &member {
-            (self.root_dir.dir, self.lockfile.str(member))
+        let (base, path): (&[u8], Cow<'_, [u8]>) = if let Some(member) = &member {
+            (self.root_dir.dir, self.lockfile.str(member).into())
         } else {
             let package_json_dir = package_json_dir?;
             match &version.value {
-                dependency::Value::Folder(folder) => (package_json_dir, folder.slice(version_buf)),
+                dependency::Value::Folder(folder) => (
+                    package_json_dir,
+                    windows_to_platform(folder.slice(version_buf)),
+                ),
                 dependency::Value::Symlink(symlink) => {
                     let target = symlink.slice(version_buf);
                     if dependency::is_link_path(target) {
-                        (package_json_dir, target)
+                        (package_json_dir, windows_to_platform(target))
                     } else {
                         directories::try_global_link_dir(self).ok()?;
-                        (directories::global_link_dir_path(self), target)
+                        (directories::global_link_dir_path(self), target.into())
                     }
                 }
                 _ => return None,
             }
         };
         let mut resolved = SlicePath::new(buf);
-        resolved.resolve_any_sep_in_place(&[base, path]).ok()?;
+        resolved.resolve_in_place(&[base, &path]).ok()?;
         Some(resolved.into_zstr())
     }
 
@@ -335,9 +339,8 @@ impl hooks::AutoInstaller for PackageManager {
             && let dependency::Value::Tarball(tarball) = &version.value
             && let hooks::URI::Local(path) = tarball.uri
         {
-            let Ok(joined) =
-                PoolPath::resolve_any_sep(&[package_json_dir, path.slice(version_buf)])
-            else {
+            let path = windows_to_platform(path.slice(version_buf));
+            let Ok(joined) = PoolPath::resolve(&[package_json_dir, &path]) else {
                 return hooks::EnqueueResult::NotFound;
             };
             absolute.extend_from_slice(b"file:");

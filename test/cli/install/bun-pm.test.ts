@@ -2891,7 +2891,8 @@ describe.concurrent("global directories from the environment", () => {
     ["bin", { BUN_INSTALL_BIN: "" }, "home/.bun/bin\n"],
     ["bin", { BUN_INSTALL_GLOBAL_DIR: "" }, "home/.bun/bin\n"],
     ["bin", { XDG_CACHE_HOME: "" }, "home/.bun/bin\n"],
-    ["bin", { BUN_INSTALL_BIN: "~\\here" }, "home/here\n"],
+    ["bin", { BUN_INSTALL_BIN: "~\\here" }, isWindows ? "home/here\n" : "cwd/~\\here\n"],
+    ["bin", { BUN_INSTALL_BIN: "~/a\\b" }, isWindows ? "home/a/b\n" : "home/a\\b\n"],
     ["bin", { BUN_INSTALL_GLOBAL_DIR: "~\\here" }, "home/.bun/bin\n"],
     ["bin", { BUN_INSTALL_BIN: "~/bin", HOME: "here", USERPROFILE: "here" }, "cwd/here/bin\n"],
   ])("bun pm %s -g with %j", async (subcommand, variables, expected) => {
@@ -2904,10 +2905,10 @@ describe.concurrent("global directories from the environment", () => {
   });
 
   describe.each(["BUN_INSTALL_BIN", "BUN_INSTALL_GLOBAL_DIR"])("%s", variable => {
-    test("with a leading backslash starts from the root", async () => {
+    test("with a leading separator starts from the root", async () => {
       using dir = tempDir("pm-bin-global-rooted", files);
       const here = join(String(dir), "here");
-      const value = here.slice(parse(here).root.length - 1).replaceAll("/", "\\");
+      const value = here.slice(parse(here).root.length - 1);
       const { stderr, exitCode } = await pmGlobal(String(dir), "bin", { [variable]: value });
 
       expect(stderr).toBe("");
@@ -2941,22 +2942,22 @@ describe.concurrent("global directories from the environment", () => {
     });
   });
 
-  test.each(["~", "absolute"])("cache rm refuses to delete a BUN_INSTALL spelled with backslashes (%s)", async kind => {
-    using side = tempDir("pm-bun-install-backslashes", { ...sideFiles, ...projectFiles, "home/tools/bun/bin/bun": "" });
-    const bunInstall = join(String(side), "home/tools/bun");
-    const value = `${kind === "~" ? "~" : join(String(side), "home")}\\tools\\bun`;
+  test.each(["~", "absolute"])("cache rm refuses to delete a BUN_INSTALL with a backslash (%s)", async kind => {
+    using side = tempDir("pm-bun-install-backslashes", { ...sideFiles, ...projectFiles, "home/to\\ols/bin/bun": "" });
+    const bunInstall = join(String(side), "home", "to\\ols");
+    const value = kind === "~" ? "~/to\\ols" : bunInstall;
     const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: value, BUN_INSTALL_CACHE_DIR: value });
 
     expect(await pmCache(["rm"], join(String(side), "proj"), spawnEnv)).toEqual(refused(bunInstall, "$BUN_INSTALL"));
     expect(await readdirSorted(bunInstall)).toEqual(["bin"]);
   });
 
-  test.skipIf(isWindows)("BUN_INSTALL with a leading backslash is absolute", async () => {
+  test.skipIf(isWindows)("BUN_INSTALL with a leading backslash is a name", async () => {
     using side = tempDir("pm-cache-dir-rooted", { ...sideFiles, ...projectFiles });
-    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: join(String(side), "x").replaceAll("/", "\\") });
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: "\\x" });
 
     expect(await pmCache([], join(String(side), "proj"), spawnEnv)).toEqual({
-      stdout: join(String(side), "x/install/cache"),
+      stdout: join(String(side), "proj/\\x/install/cache"),
       stderr: "",
       exitCode: 0,
     });
@@ -2979,25 +2980,22 @@ describe.concurrent("global directories from the environment", () => {
     },
   );
 
-  test.skipIf(isWindows).each(["../link/../x", "..\\link\\..\\x"])(
-    "cache rm -g refuses to delete real/x when BUN_INSTALL is %s",
-    async BUN_INSTALL => {
-      using side = tempDir("pm-bun-install-link-relative", {
-        ...sideFiles,
-        ...projectFiles,
-        "real/dir/.keep": "",
-        "real/x/bin/bun": "",
-      });
-      symlinkSync("real/dir", join(String(side), "link"));
-      const cacheDir = join(String(side), "real/x");
-      const spawnEnv = cacheEnv(String(side), { BUN_INSTALL, BUN_INSTALL_CACHE_DIR: cacheDir });
+  test.skipIf(isWindows)("cache rm -g refuses to delete real/x when BUN_INSTALL is ../link/../x", async () => {
+    using side = tempDir("pm-bun-install-link-relative", {
+      ...sideFiles,
+      ...projectFiles,
+      "real/dir/.keep": "",
+      "real/x/bin/bun": "",
+    });
+    symlinkSync("real/dir", join(String(side), "link"));
+    const cacheDir = join(String(side), "real/x");
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: "../link/../x", BUN_INSTALL_CACHE_DIR: cacheDir });
 
-      expect(await pmCache(["rm", "-g"], join(String(side), "proj"), spawnEnv)).toEqual(
-        refused(cacheDir, "$BUN_INSTALL"),
-      );
-      expect(await readdirSorted(cacheDir)).toEqual(["bin"]);
-    },
-  );
+    expect(await pmCache(["rm", "-g"], join(String(side), "proj"), spawnEnv)).toEqual(
+      refused(cacheDir, "$BUN_INSTALL"),
+    );
+    expect(await readdirSorted(cacheDir)).toEqual(["bin"]);
+  });
 
   test("a relative BUN_INSTALL resolves against the project, or the cwd with -g", async () => {
     using side = tempDir("pm-relative-bun-install-side", sideFiles);

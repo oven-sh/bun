@@ -10,8 +10,7 @@ use bun_core::{self, Global, Output, env_var};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
 use bun_options_types::context::Context;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, SlicePath};
+use bun_paths::{ParentEqual, PathBuffer, SlicePath, is_parent_or_equal};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::bunfig::{Bunfig, Counts};
@@ -38,7 +37,7 @@ fn join_config_path<'buf>(
     buf: &'buf mut PathBuffer,
 ) -> Option<&'buf ZStr> {
     let mut config_path = SlicePath::new(buf);
-    config_path.resolve_any_sep_in_place(&[dir, path]).ok()?;
+    config_path.resolve_in_place(&[dir, path]).ok()?;
     config_path.copy_trailing_sep_from(path).ok()?;
     Some(config_path.into_zstr())
 }
@@ -165,7 +164,7 @@ pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> 
             return Ok(true);
         }
         // Stop at `root`. If `dir` is outside `root`, only `dir` itself is read, not its parents.
-        if resolve_path::is_parent_or_equal(root, dir) != resolve_path::ParentEqual::Parent {
+        if is_parent_or_equal(root, dir) != ParentEqual::Parent {
             break;
         }
     }
@@ -328,11 +327,8 @@ pub fn load_config_for_tool(
         return Ok(());
     }
     let config_path: Option<&ZStr> = if config_path_[0] == b'/' {
-        if config_path_.len() < config_buf.len() {
-            Some(resolve_path::z(config_path_, &mut config_buf))
-        } else {
-            None
-        }
+        let mut config_path = SlicePath::new(&mut config_buf);
+        (config_path.set(config_path_).ok()).map(|()| config_path.into_zstr())
     } else {
         if ctx.args.absolute_working_dir.is_none() {
             let mut secondbuf = bun_paths::path_buffer_pool::get();

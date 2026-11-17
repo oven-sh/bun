@@ -742,13 +742,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     /// The relative path from the chunk directory to a file source, as written
     /// into the source map's `sources` array. `sources` entries are URLs, so the
     /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
-    fn source_map_relative_path(
-        chunk_abs_dir: &[u8],
-        source_abs_path: &[u8],
-    ) -> Result<Box<[u8]>, AllocError> {
-        let mut rel = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, source_abs_path)?;
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
-        Ok(rel)
+    fn source_map_relative_path(chunk_abs_dir: &[u8], source_abs_path: &[u8]) -> ForwardSlashPath {
+        ForwardSlashPath::relative(chunk_abs_dir, source_abs_path)
     }
 
     pub(crate) fn generate_source_map_for_chunk(
@@ -790,7 +785,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 // (drops at scope exit).
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text);
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -817,7 +812,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text);
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -1909,13 +1904,7 @@ impl<'a> LinkerContext<'_, 'a> {
                 for piece in pieces.slice() {
                     match piece.query.kind() {
                         crate::chunk::QueryKind::Asset => {
-                            let mut from_chunk_dir =
-                                bun_paths::resolve_path::dirname::<
-                                    bun_paths::resolve_path::platform::Posix,
-                                >(&chunk.final_rel_path);
-                            if from_chunk_dir == b"." {
-                                from_chunk_dir = b"";
-                            }
+                            let from_chunk_dir = Posix::dirname_or_root(&chunk.final_rel_path);
                             let parse_graph = self.parse_graph();
                             let additional_files: &[AdditionalFile] =
                                 parse_graph.input_files.items_additional_files()
@@ -1927,10 +1916,7 @@ impl<'a> LinkerContext<'_, 'a> {
                                 let path = &self.graph.additional_output_files
                                     [*output_file_id as usize]
                                     .dest_path;
-                                hash.write(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Posix,
-                                    false,
-                                >(from_chunk_dir, path));
+                                hash.write(&ForwardSlashPath::relative(from_chunk_dir, path));
                             }
                         }
                         crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
@@ -2534,6 +2520,8 @@ impl LinkerContext<'_, '_> {
 // already imported at the top of the file.
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
+use bun_paths::platform::Posix;
+use bun_paths::{ForwardSlashPath, PathStyle as _};
 
 // `ImportTracker::{Status,Iterator}`'s canonical definition lives
 // in `bundle_v2.rs`. Re-exported here so the 30+

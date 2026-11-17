@@ -1,4 +1,6 @@
 use bun_ast::Target;
+use bun_paths::PathStyle as _;
+use bun_paths::platform::Windows;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, Decl};
@@ -2685,7 +2687,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         };
         match self.file.inputs.sources.source_path(file) {
-            Some(path) if !bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name)) => {
+            Some(path) if !Windows::is_absolute(self.file.queries.atom_bytes(name)) => {
                 Some(self.emit_text(&path))
             }
             _ => Some(self.emit_name_as_given(name, given)),
@@ -2783,7 +2785,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if !is_url
             && let ModuleRef::File(file) = module
-            && !bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name))
+            && !Windows::is_absolute(self.file.queries.atom_bytes(name))
             && let Some(path) = self.file.inputs.sources.source_path(file)
         {
             return self.emit_text(&path);
@@ -2798,7 +2800,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         is_url: bool,
     ) -> ValueId {
-        let is_path = bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name));
+        let is_path = Windows::is_absolute(self.file.queries.atom_bytes(name));
         let name = self.file.intern_atom(name);
         let referrer = self.file.module_id();
         let is_host_value =

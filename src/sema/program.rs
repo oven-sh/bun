@@ -57,9 +57,8 @@ use bstr::ByteSlice;
 use bun_core::file_steps::{self, FileStep};
 use bun_core::strings;
 use bun_paths::fs::Path;
-use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_paths::{PathStyle as _, path_buffer_pool};
 use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -2003,7 +2002,7 @@ impl PackageJsonInfoCache {
     /// `loadSourceFileMetaData`: looks for the scope of a file before anything in the file is
     /// resolved, and logs nothing.
     fn load_source_file_meta_data(&mut self, host: &dyn Host, file_name: &[u8]) {
-        for dir in ancestors(dirname::<Posix>(file_name)) {
+        for dir in ancestors(Posix::dirname_or_root(file_name)) {
             if !self.with_scope.insert(dir.to_vec()) {
                 break;
             }
@@ -3944,7 +3943,7 @@ fn reference_problem(options: &Options, code: u32, path: &[u8]) -> Problem {
 /// `resolveTripleslashPathReference`: the path that the `/// <reference path>` with the value
 /// `reference_text` in the file at `from` refers to.
 fn referenced_path(reference_text: &[u8], from: &[u8]) -> Vec<u8> {
-    join(dirname::<Posix>(from), reference_text)
+    join(Posix::dirname_or_root(from), reference_text)
 }
 
 /// `getSourceFileFromReference`: the file that a `/// <reference path>` in `from` resolves to,
@@ -5239,7 +5238,7 @@ fn implied_format_reason(
         return None;
     }
     // `loadSourceFileMetaData`, which `parseTask.load` doesn't call for a library.
-    let scope = ancestors(dirname::<Posix>(module.file_name()))
+    let scope = ancestors(Posix::dirname_or_root(module.file_name()))
         .filter(|_| !module.is_lib)
         .find_map(|dir| Some((resolver.package_json(dir)?, dir)))
         .map(|(json, dir)| (join(dir, b"package.json"), json));
@@ -5281,7 +5280,7 @@ pub(crate) fn source_file_may_be_emitted(
     }
     // `GetCommonSourceDirectory`, if `rootDir` or the configuration file determines it.
     let common = match options.root_dir.as_slice() {
-        b"" => dirname::<Posix>(&options.config_path),
+        b"" => Posix::dirname_or_root(&options.config_path),
         root_dir => root_dir,
     };
     // `GetSourceFilePathInNewDirWorker`: a JSON file outside that directory would overwrite itself.
@@ -5439,7 +5438,7 @@ fn output_path_errors(
         let specified = if !options.root_dir.is_empty() {
             options.root_dir.as_slice()
         } else if !options.config_path.is_empty() {
-            dirname::<Posix>(&options.config_path)
+            Posix::dirname_or_root(&options.config_path)
         } else {
             b""
         };
@@ -5475,7 +5474,7 @@ fn output_path_errors(
             common_directory_of(&paths, &options.current_directory, is_case_sensitive)
         && !is_same_path(
             &computed,
-            dirname::<Posix>(&options.config_path),
+            Posix::dirname_or_root(&options.config_path),
             is_case_sensitive,
         )
     {
@@ -7900,7 +7899,7 @@ impl<'s> Files<'s> {
             {
                 return None;
             }
-            let stem = join(dirname::<Posix>(path), text);
+            let stem = join(Posix::dirname_or_root(path), text);
             let for_tsx: &'static [u8] = if options.jsx == JsxEmit::Preserve {
                 b".jsx"
             } else {

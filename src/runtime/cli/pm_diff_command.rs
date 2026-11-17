@@ -93,9 +93,9 @@ pub(crate) fn exec(
             use bun_paths::VecPath;
             let home = bun_core::env_var::HOME.get_not_empty();
             let mut path = match (arg.strip_prefix(b"~/"), home) {
-                (Some(rest), Some(home)) => VecPath::resolve_any_sep(&[original_cwd, home, rest]),
+                (Some(rest), Some(home)) => VecPath::resolve(&[original_cwd, home, rest]),
                 _ if looks_like_path(arg) && !bun_paths::is_absolute(arg) => {
-                    VecPath::resolve_any_sep(&[original_cwd, arg])
+                    VecPath::resolve(&[original_cwd, arg])
                 }
                 _ => return arg.to_vec(),
             };
@@ -210,12 +210,7 @@ impl<'a> Filter<'a> {
 }
 
 fn looks_like_path(spec: &[u8]) -> bool {
-    spec.starts_with(b".")
-        || spec.starts_with(b"/")
-        || spec.starts_with(b"~/")
-        || (cfg!(windows)
-            && (spec.starts_with(b"\\")
-                || (spec.len() > 2 && spec[1] == b':' && matches!(spec[2], b'\\' | b'/'))))
+    spec.starts_with(b".") || spec.starts_with(b"~/") || bun_paths::is_absolute(spec)
 }
 
 fn classify(spec: &[u8]) -> Spec {
@@ -386,8 +381,7 @@ fn is_npm_name(name: &[u8]) -> bool {
 }
 
 fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
-    let mut path = original_cwd.to_vec();
-    path.extend_from_slice(b"/package.json");
+    let path = bun_paths::Path::from_parts(&[original_cwd, b"package.json"]);
     // The folder we are in, before the workspace root the manager walked up to.
     if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path)
         && let Some(name) = package_json_name(&bytes)
@@ -555,7 +549,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         let mut normalized = vec![0; entry.path().len() + 1];
         let rel =
             bun_archive::normalize_npm_entry_path(entry, &mut normalized)?.unwrap_or_default();
-        bun_paths::resolve_path::platform_to_posix_in_place(rel);
+        bun_paths::platform_to_posix_in_place(rel);
         if rel.is_empty() {
             continue;
         }
@@ -2184,7 +2178,6 @@ fn string_pairs(e: Option<&bun_ast::Expr>, bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>
 /// Returns one of `INSTALL_FIELDS` as sorted pairs, normalized so that two spellings that install
 /// the same thing compare equal. A registry rewrites some fields when a package is published.
 fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
-    use bun_paths::resolve_path::{join_abs_string_checked, platform};
     let Some(value) = json.get(field) else {
         return Vec::new();
     };
@@ -2200,11 +2193,8 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
             }
             for (name, path) in &mut pairs {
                 *name = bun_paths::basename(name).to_vec();
-                if let Some(normal) =
-                    join_abs_string_checked::<platform::Posix>(b"/", &[path.as_slice()])
-                {
-                    *path = normal.to_vec();
-                }
+                let written = bun_paths::slashes_to_posix(path);
+                *path = bun_paths::PosixPath::resolve(&[b"/", &written]).to_vec();
             }
         }
         b"directories" => pairs.retain(|(name, _)| name == b"bin"),

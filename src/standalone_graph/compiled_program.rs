@@ -8,8 +8,9 @@ use std::borrow::Cow;
 
 use bun_collections::StringArrayHashMap;
 use bun_collections::index_sort;
+use bun_core::strings;
 use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
-use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
+use bun_paths::{PathBuffer, SlicePath, path_buffer_pool, platform_to_posix};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
     CompiledProgram, FoundForFileSystemAlone, ImageFile, NamesReadLater, RefusedData,
@@ -833,13 +834,8 @@ pub(crate) fn add_source_directories(
             }
         }
     }
-    let mut buffer = path_buffer_pool::get();
     for entry_point in program.entry_points.iter() {
-        let source_path = entry_point.source_path;
-        if source_path.len() <= buffer.len() {
-            let source_path = resolve_path::platform_to_posix_buf(source_path, &mut buffer[..]);
-            add_ancestor_directories(dirs, source_path);
-        }
+        add_ancestor_directories(dirs, &platform_to_posix(entry_point.source_path));
     }
 }
 
@@ -1095,27 +1091,9 @@ fn requests_directory(name: &[u8]) -> bool {
     !cfg!(windows) && without_dots.unwrap_or(name).last() == Some(&b'/')
 }
 
-/// Writes `path.resolve(base, name)` without a trailing `/` and returns its length. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a name.
-fn join_posix_key(base: &[u8], name: &[u8], buffer: &mut PathBuffer) -> Option<usize> {
-    let mut length = 0;
-    for part in strings::split(base, b"/").chain(strings::split(name, b"/")) {
-        match part {
-            b"" | b"." => {}
-            b".." => length = strings::last_index_of_char(&buffer[..length], b'/').unwrap_or(0),
-            _ => {
-                let end = length + 1 + part.len();
-                buffer.get_mut(length + 1..end)?.copy_from_slice(part);
-                buffer[length] = b'/';
-                length = end;
-            }
-        }
-    }
-    (length < buffer.len()).then_some(length)
-}
-
 /// `name` as a key of `files` and `dirs`: absolute, normalized, posix-separated, without trailing separators.
 fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr> {
-    let name = bun_paths::string_paths::without_nt_prefix::<u8>(name);
+    let name = bun_paths::without_nt_prefix(name);
     if name.is_empty() || strings::contains_char(name, 0) {
         return None;
     }
@@ -1133,21 +1111,12 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     } else {
         b"/"
     };
-    if cfg!(not(windows)) {
-        let length = join_posix_key(base, name, buffer)?;
-        return Some(ZStr::nul_terminate(buffer, length));
-    }
-    let joined = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-        base,
-        &mut buffer[..],
-        &[name],
-    )?;
-    let mut length = joined.len();
-    resolve_path::platform_to_posix_in_place(&mut buffer[..length]);
-    while length > 0 && buffer[length - 1] == b'/' {
-        length -= 1;
-    }
-    Some(ZStr::nul_terminate(buffer, length))
+    let mut key = SlicePath::new(buffer);
+    key.resolve_in_place(&[base, name]).ok()?;
+    key.strip_nt_prefix();
+    bun_paths::platform_to_posix_in_place(key.as_mut_slice());
+    key.truncate(strings::trim_right(&key, b"/").len());
+    Some(key.into_zstr())
 }
 
 fn is_shared_library_name(name: &[u8]) -> bool {
@@ -2200,7 +2169,7 @@ impl StandaloneModuleGraph {
         };
         // An executable that was moved finds nothing.
         let root = program.root_on_build_machine();
-        if root.is_some_and(|it| !bun_sys::exists(strings::without_trailing_slash(it))) {
+        if root.is_some_and(|it| !bun_sys::exists(bun_paths::without_trailing_sep(it))) {
             return found;
         }
         let mut missing: StringArrayHashMap<()> = StringArrayHashMap::new();
@@ -2270,7 +2239,7 @@ impl StandaloneModuleGraph {
 
     /// The disk has the source folder `name`. What the executable still answers for in it, where the sources are not there: that can't be moved or removed with the folder. Where they are, the disk has all the names there are.
     pub fn list_beside_disk(&self, name: &[u8], recursive: bool) -> Vec<(Box<[u8]>, bool)> {
-        let name = strings::without_trailing_slash(name);
+        let name = bun_paths::without_trailing_sep(name);
         let mut buffer = path_buffer_pool::get();
         let found = absolute_key(name, &mut buffer);
         let Some((program, found)) = self.compiled_program.as_ref().zip(found) else {
@@ -3372,7 +3341,7 @@ pub(crate) mod tests {
             let mut buffer = path_buffer_pool::get();
             let real_path = bun_sys::realpath(&ZBox::from_vec(path), &mut buffer).unwrap();
             let mut real_path = real_path.to_vec();
-            resolve_path::platform_to_posix_in_place(&mut real_path);
+            bun_paths::platform_to_posix_in_place(&mut real_path);
             TemporaryFolder(real_path)
         }
 

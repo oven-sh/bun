@@ -21,8 +21,6 @@ use bun_options_types::context::{
     Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
 };
 use bun_options_types::schema::api;
-use bun_paths::platform;
-use bun_paths::resolve_path;
 use bun_removable_features::{Feature, RuntimeRequirement, is_removed};
 
 use super::startup_options::{RequirementRow, RowName};
@@ -42,11 +40,8 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 }
 
 /// Whether `bun test` takes the argument for a path. One such argument makes paths of all.
-fn reads_as_path_of_tests(argument: &[u8]) -> bool {
-    bun_paths::is_absolute(argument)
-        || argument.starts_with(b"./")
-        || argument.starts_with(b"../")
-        || (cfg!(windows) && (argument.starts_with(b".\\") || argument.starts_with(b"..\\")))
+pub(crate) fn reads_as_path_of_tests(argument: &[u8]) -> bool {
+    !bun_paths::is_package_path(argument) && !matches!(argument, b"." | b"..")
 }
 
 /// `bun test --files-from <list>`. Every line is a path, never a filter. A list
@@ -1254,12 +1249,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.original_cwd = Some(Box::from(original_cwd));
             original_cwd
         };
-        let mut spill = Vec::new();
-        let out =
-            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
-        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
-        // the `chdir` arg and the stored `absolute_working_dir`.
-        let out_z = bun_core::ZBox::from_bytes(out);
+        let spelling = bun_sys::existing_spelling(bun_sys::Fd::cwd(), cwd_arg);
+        let out_z = bun_paths::VecPath::resolve(&[base, &spelling]);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
             Output::err(
                 err,
@@ -1282,7 +1273,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // A deleted cwd must not abort the runtime (Node boots and lets
         // `process.cwd()` throw later); fall back to the executable's dir.
         let mut temp = bun_paths::path_buffer_pool::get();
-        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
+        Box::<[u8]>::from(crate::cli::getcwd_or_exe_dir(&mut temp).as_bytes())
     } else {
         // Everything else (install/test/build/...) must not silently act on
         // whatever project happens to live above the executable.
@@ -1395,12 +1386,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
-        let mut spill = Vec::new();
-        Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
-            ctx.args.absolute_working_dir.as_deref().unwrap(),
-            &mut spill,
-            &[ts],
-        ))
+        let cwd = ctx.args.absolute_working_dir.as_deref().unwrap();
+        let mut path = bun_paths::Path::resolve(&[cwd, ts]);
+        path.copy_trailing_sep_from(ts);
+        path.as_bytes().into()
     });
 
     opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
@@ -3140,7 +3129,7 @@ fn parse_build_command_options(
                 );
                 Global::exit(1);
             }
-            *slot = strings::concat(&[b"./", strings::remove_leading_dot_slash(value)]);
+            *slot = strings::concat(&[b"./", bun_paths::without_leading_dot_slash(value)]);
         }
     }
 

@@ -3,8 +3,8 @@ use std::borrow::Cow;
 use bun_ast::Target;
 use bun_builtin_sources::{Archive, Manifest, PartSeenByEveryFile, VIRTUAL_ROOT};
 use bun_core::strings;
+use bun_paths::PathStyle as _;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_resolve_builtins::{Alias, Cfg, Module};
 use bun_sema::program::HostModuleId;
@@ -474,7 +474,7 @@ fn collect_directories(
         debug_assert!(path.starts_with(HOST_ROOT));
         let mut child: &[u8] = path;
         let mut is_child_file = true;
-        for directory in ancestors(dirname::<Posix>(path)) {
+        for directory in ancestors(Posix::dirname_or_root(path)) {
             let is_listed = directories.contains_key(directory);
             let entries = directories.entry(directory.to_vec()).or_default();
             let names = match is_child_file {

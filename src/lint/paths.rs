@@ -8,7 +8,7 @@
 
 use bun_core::strings;
 use bun_node_path as node;
-use bun_paths::resolve_path::{
+use bun_paths::{
     platform_to_posix_in_place, posix_to_platform_in_place, slashes_to_posix_in_place,
 };
 use bun_sema::resolve::is_same_path;

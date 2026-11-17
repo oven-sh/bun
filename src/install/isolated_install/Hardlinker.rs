@@ -63,7 +63,7 @@ impl Hardlinker {
 
                 match entry.kind {
                     EntryKind::Directory => {
-                        sys::make_path::make_path::<u16>(&sys::Dir::cwd(), &dest)?;
+                        sys::make_path::make_path(&sys::Dir::cwd(), &dest)?;
                     }
                     EntryKind::File => {
                         // `dest` is absolute for an entry of the global virtual store.
@@ -97,8 +97,7 @@ impl Hardlinker {
                                 let Some(dest_parent) = dest.dirname() else {
                                     return Err(link_err1);
                                 };
-                                let _ =
-                                    sys::make_path::make_path::<u16>(&sys::Dir::cwd(), dest_parent);
+                                let _ = sys::make_path::make_path(&sys::Dir::cwd(), dest_parent);
                             }
                             _ => return Err(link_err1),
                         }

@@ -100,7 +100,7 @@ impl<'h> Resolver<'h> {
             false => self.code_options().working_directory.as_slice(),
         };
         is_path(request.specifier)
-            && self.is_in_package_left_outside(request, own_folder, dirname::<Posix>(path))
+            && self.is_in_package_left_outside(request, own_folder, Posix::dirname_or_root(path))
     }
 
     fn is_in_package_left_outside(

@@ -20,8 +20,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsPtr, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path::{join_abs_string, platform};
-use bun_paths::{self as paths, SEP};
+use bun_paths::{self as paths};
 use bun_ptr::BackRef;
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
@@ -220,22 +219,11 @@ fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let outdir_slice = &config.outdir.list;
     let outfile_slice = &compile.outfile.list;
-    let joined: &[u8] = if !outdir_slice.is_empty() {
-        join_abs_string::<platform::Auto>(top_level_dir, &[outdir_slice, outfile_slice])
-    } else if paths::is_absolute(outfile_slice) {
-        outfile_slice
-    } else {
-        // For relative paths, ensure we make them absolute relative to the current working directory
-        join_abs_string::<platform::Auto>(top_level_dir, &[outfile_slice])
-    };
+    let mut joined = paths::Path::resolve(&[top_level_dir, outdir_slice, outfile_slice]);
     if compile.compile_target.os == OperatingSystem::Windows && !joined.ends_with(b".exe") {
-        let mut v = Vec::with_capacity(joined.len() + 4);
-        v.extend_from_slice(joined);
-        v.extend_from_slice(b".exe");
-        v.into_boxed_slice()
-    } else {
-        Box::from(joined)
+        joined.extend_from_slice(b".exe");
     }
+    joined.as_bytes().into()
 }
 
 /// Without `.exe`, as in the CLI.
@@ -605,11 +593,9 @@ impl JSBundleCompletionTask {
                     let sourcemap_full_path: Box<[u8]> = if dirname.is_empty() || dirname == b"." {
                         Box::from(map_basename)
                     } else {
-                        let mut v = Vec::with_capacity(dirname.len() + 1 + map_basename.len());
-                        v.extend_from_slice(dirname);
-                        v.push(SEP);
-                        v.extend_from_slice(map_basename);
-                        v.into_boxed_slice()
+                        let mut path = paths::Path::from(dirname);
+                        path.push(map_basename);
+                        path.as_bytes().into()
                     };
 
                     // Write the sourcemap file to disk next to the executable
@@ -1174,10 +1160,7 @@ impl JSBundleCompletionTask {
                     false => config.dir.list.as_slice(),
                 };
                 let path = config.tsconfig_override.list.as_slice();
-                let mut spill = Vec::new();
-                Box::from(bun_paths::resolve_path::join_abs_string_spill::<
-                    bun_paths::platform::Auto,
-                >(cwd, &mut spill, &[path]))
+                paths::Path::resolve(&[cwd, path]).as_bytes().into()
             }),
             ..Default::default()
         }

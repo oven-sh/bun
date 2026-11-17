@@ -501,8 +501,7 @@ impl CacheStaging {
     fn new(cache_dir: Fd, cache_dir_path: &[u8]) -> Result<Self, Error> {
         let mut tmp_name_buf = [0u8; 64];
         let tmp_name =
-            Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
-                .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())?;
         let tmp_path = bun_paths::VecPath::resolve(&[cache_dir_path, tmp_name]).into_vec();
         Ok(Self {
             entry: UnfinishedEntry::new(cache_dir, tmp_name),

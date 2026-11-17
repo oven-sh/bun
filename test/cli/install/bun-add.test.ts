@@ -3041,6 +3041,19 @@ describe("a relative local path typed from a directory below package.json", () =
     expect(exitCode).toBe(0);
   });
 
+  it.skipIf(isWindows).each(["a\\b", "a\\\\b"])("an absolute path through a directory named %s", async name => {
+    const cwd = await makeNestedCwd();
+    const lib = join(add_dir, name);
+    await mkdir(lib);
+    await writeFile(join(lib, "package.json"), JSON.stringify({ name: "lib", version: "3.0.0" }));
+
+    const { stderr, exitCode } = await run(cwd, "add", lib);
+    expect(stderr).not.toContain("error:");
+    expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({ lib });
+    expect((await file(join(package_dir, "node_modules", "lib", "package.json")).json()).version).toBe("3.0.0");
+    expect(exitCode).toBe(0);
+  });
+
   // A Windows command line cannot carry a path longer than the path buffer.
   it.skipIf(isWindows)("a path that does not fit a path buffer once joined with the cwd is an error", async () => {
     const cwd = await makeNestedCwd();

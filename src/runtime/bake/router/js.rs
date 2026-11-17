@@ -46,7 +46,7 @@ impl JSFrameworkRouter {
         )?;
 
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
-        let abs_root: Box<[u8]> = paths::Path::resolve_any_sep(&[top_level_dir, root.slice()])
+        let abs_root: Box<[u8]> = paths::Path::resolve(&[top_level_dir, root.slice()])
             .as_bytes()
             .into();
 

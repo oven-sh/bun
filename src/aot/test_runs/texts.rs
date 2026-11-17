@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::mem::take;
 
 use bun_core::strings;
+use bun_paths::PathStyle as _;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{
     BindOptions, Binding, BindingInitializer, Bound, Decl, Parent, RuntimeBindOptions,
@@ -768,7 +768,7 @@ impl<'a, 's> TextReader<'a, 's> {
             analysis: request.analysis,
             atoms: request.atoms,
             builtins,
-            folder: Some(dirname::<Posix>(request.path)),
+            folder: Some(Posix::dirname_or_root(request.path)),
         };
         TextReader::of_tree(tree, fold, file)
     }

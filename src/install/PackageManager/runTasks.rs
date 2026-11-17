@@ -1450,7 +1450,7 @@ pub fn is_bunx_tree(dir: &[u8]) -> bool {
     if !bun_paths::is_absolute(tree) {
         return false;
     }
-    let [tree, dir] = [tree, dir].map(bun_paths::string_paths::without_trailing_any_sep);
+    let [tree, dir] = [tree, dir].map(bun_paths::without_trailing_sep);
     if tree == dir {
         return true;
     }

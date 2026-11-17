@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
-use bun_paths::resolve_path::basename;
+use bun_paths::PathStyle as _;
+use bun_paths::platform::Posix;
 use bun_sema::atom::{Interner, known};
 use bun_sema::bind::{BindOptions, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileInputs, analyze_file};
@@ -69,7 +70,7 @@ pub(crate) fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
         is_library: false,
         host_values: &[],
         jsx: JsxMode::Classic,
-        own_name: arena.alloc_slice_copy(basename(path)),
+        own_name: arena.alloc_slice_copy(Posix::basename(path)),
     };
     let (_, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     let mut sites = analysis.import_sites.iter();

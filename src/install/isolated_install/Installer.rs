@@ -2102,12 +2102,8 @@ impl<'a> Installer<'a> {
             let folder = pkg_res.folder().slice(string_buf);
             for bundled in lockfile.bundled_by_folder(folder) {
                 let dep_name = bundled.name.slice(string_buf);
-                // The name comes from the folder's package.json.
-                if !crate::package_installer::alias_is_safe_install_target(dep_name) {
-                    continue;
-                }
                 let Ok(shipped) = build_abs_path(|path| {
-                    path.resolve_any_sep_in_place(&[folder, b"node_modules"])?;
+                    path.resolve_in_place(&[folder, b"node_modules"])?;
                     path.push(dep_name)
                 }) else {
                     continue;
@@ -2747,7 +2743,7 @@ impl<'a> Installer<'a> {
                 debug_assert!(!base.is_empty());
                 // Windows junctions do not resolve `..`.
                 buf.set(base)?;
-                buf.resolve_any_sep_in_place(&[target])
+                buf.resolve_in_place(&[target])
             }
             _ => {
                 // `None`: the root. `buf` is already top_level_dir.
@@ -2776,7 +2772,7 @@ impl<'a> Installer<'a> {
         let path = build_abs_path(|path| {
             self.append_real_store_node_modules_path(path, entry_id, Which::Staging)?;
             path.push(package_dir_name)?;
-            path.resolve_any_sep_in_place(&[folder])
+            path.resolve_in_place(&[folder])
         })?;
 
         match sys::directory_exists_at(Fd::cwd(), &path) {
@@ -2848,7 +2844,7 @@ struct BinLinks {
 /// resolved there. Elsewhere the kernel resolves it, also when the project is behind a symlink.
 fn append_workspace_path(buf: &mut PoolPath, workspace_path: &[u8]) -> PathResult<()> {
     if cfg!(not(windows)) || !crate::bin::path_climbs_out(workspace_path) {
-        return buf.push_any_sep(workspace_path);
+        return buf.push(workspace_path);
     }
     *buf = PoolPath::resolve(&[bun_fs::FileSystem::get().top_level_dir(), workspace_path])?;
     Ok(())

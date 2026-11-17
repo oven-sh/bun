@@ -852,6 +852,7 @@ dependencies = [
  "bun_install_types",
  "bun_options_types",
  "bun_parsers",
+ "bun_paths",
  "bun_url",
  "strum",
 ]
@@ -1456,8 +1457,6 @@ dependencies = [
  "bun_highway",
  "bun_simdutf_sys",
  "const_format",
- "libc",
- "thiserror",
 ]
 
 [[package]]

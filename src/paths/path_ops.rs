@@ -4,19 +4,20 @@ use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::ops::Range;
 
-use bun_core::strings::{self, CodeUnitsMut};
-
 use crate::path_style::{
     Components, PathStyle, Root, VolumeKind, common_path_prefix_len, eq_ignore_case_and_sep,
     eq_path, len_without_trailing_sep,
 };
 use crate::path_unit::PathUnit;
-use crate::platform::{Loose, Posix};
-use crate::resolve_path::{slashes_to_posix_in_place, slashes_to_windows_in_place};
+use crate::platform::Posix;
+use crate::{slashes_to_posix_in_place, slashes_to_windows_in_place};
 
 /// The most a result can outgrow its inputs: the `./` that `prevent_new_volume` inserts.
 pub(crate) const NORMALIZE_OVERHEAD: usize = 2;
 pub(crate) const NAMESPACE_OVERHEAD: usize = br"?\UNC\".len() + NORMALIZE_OVERHEAD;
+
+pub(crate) const LONG_PATH_PREFIX: [u8; 4] = *br"\\?\";
+pub(crate) const NT_PATH_PREFIX: [u8; 4] = *br"\??\";
 
 /// A path's buffer during one edit. The capacity is already reserved.
 pub(crate) struct EditBuf<'a, U, S> {
@@ -120,30 +121,15 @@ impl<'a, U: PathUnit, S: PathStyle> EditBuf<'a, U, S> {
         let added = &mut self.as_mut_slice()[start..];
         if S::SEP == b'\\' {
             slashes_to_windows_in_place(added);
-        } else if S::BACKSLASH_IS_SEP {
+        } else if S::WIN32 {
             slashes_to_posix_in_place(added);
         }
-    }
-
-    /// Converts `\` to `/` from `start`. The first `absolute_len` units keep known directory names.
-    #[inline(always)]
-    fn convert_backslashes(&mut self, start: usize, absolute_len: usize) {
-        let added = &mut self.as_mut_slice()[start..];
-        if U::index_of_unit(added, U::from_u8(b'\\')).is_none() {
-            return;
-        }
-        let (absolute, relative) = added.split_at_mut(absolute_len);
-        match U::units_mut(absolute) {
-            CodeUnitsMut::U8(absolute) => slashes_to_posix_keeping_known_dirs(absolute),
-            CodeUnitsMut::U16(absolute) => slashes_to_posix_in_place(absolute),
-        }
-        slashes_to_posix_in_place(relative);
     }
 
     /// Inserts `./` if collapsing exposed a volume: `a\..\C:\b` becomes `.\C:\b`.
     #[inline(always)]
     fn prevent_new_volume(&mut self, before: Root) {
-        if S::BACKSLASH_IS_SEP
+        if S::WIN32
             && before.kind == VolumeKind::None
             && Root::parse::<S>(self.as_slice()).kind != VolumeKind::None
         {
@@ -154,31 +140,6 @@ impl<'a, U: PathUnit, S: PathStyle> EditBuf<'a, U, S> {
             );
         }
     }
-}
-
-/// Converts `\` to `/`, except in components that match one in `$HOME` or a working directory.
-#[cold]
-#[inline(never)]
-pub fn slashes_to_posix_keeping_known_dirs(absolute: &mut [u8]) {
-    crate::fs::with_known_dirs(|dirs| {
-        if !dirs.iter().any(|dir| strings::contains_char(dir, b'\\')) {
-            return slashes_to_posix_in_place(absolute);
-        }
-        let mut rest = absolute;
-        while !rest.is_empty() {
-            let len = strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len());
-            let (component, after) = rest.split_at_mut(len);
-            rest = after.get_mut(1..).unwrap_or_default();
-            if !strings::contains_char(component, b'\\') {
-                continue;
-            }
-            let longest_known = (dirs.iter().flat_map(|dir| Posix::components(dir)))
-                .filter(|known| matches!(component.strip_prefix(*known), Some([] | [b'\\', ..])))
-                .map(<[u8]>::len)
-                .max();
-            slashes_to_posix_in_place(&mut component[longest_known.unwrap_or(0)..]);
-        }
-    });
 }
 
 #[inline(always)]
@@ -234,7 +195,7 @@ fn trimmed_range_slow<S: PathStyle>(part: &[impl PathUnit], is_first: bool) -> R
     if root_len > 0 {
         return 0..end;
     }
-    let rest = without_leading_dot_slash::<S, _>(&part[..end]);
+    let rest = skip_leading_seps_and_dots::<S, _>(&part[..end]);
     if is_first && rest.is_empty() {
         return 0..end.min(1);
     }
@@ -242,7 +203,7 @@ fn trimmed_range_slow<S: PathStyle>(part: &[impl PathUnit], is_first: bool) -> R
 }
 
 #[inline(always)]
-fn without_leading_dot_slash<S: PathStyle, C: PathUnit>(mut path: &[C]) -> &[C] {
+fn skip_leading_seps_and_dots<S: PathStyle, C: PathUnit>(mut path: &[C]) -> &[C] {
     loop {
         path = S::without_leading_sep(path);
         match path {
@@ -256,7 +217,7 @@ fn without_leading_dot_slash<S: PathStyle, C: PathUnit>(mut path: &[C]) -> &[C] 
 /// `part` can only form a volume if `path` is empty or a lone separator.
 #[inline(always)]
 fn root_to_preserve<S: PathStyle>(path: &[impl PathUnit], part: &[impl PathUnit]) -> Option<Root> {
-    if !S::BACKSLASH_IS_SEP {
+    if !S::WIN32 {
         return None;
     }
     match path {
@@ -285,23 +246,6 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
         for part in parts {
             self.push(&TrimmedPart::new::<S>(self.as_slice(), part));
         }
-    }
-
-    #[inline(never)]
-    pub(crate) fn push_any_sep<C: PathUnit>(&mut self, part: &[C]) {
-        let old_len = self.len;
-        self.push_trailing_sep();
-        let start = self.len;
-        if old_len == 0 && S::is_absolute(part) {
-            self.extend_from_slice(part);
-            self.convert_backslashes(0, self.len);
-        } else {
-            let rest = Loose::without_leading_sep(part);
-            let is_only_seps = rest.is_empty() && !part.is_empty();
-            self.extend_from_slice(if is_only_seps { C::lit(b".") } else { rest });
-            self.convert_backslashes(start, 0);
-        }
-        self.trim_appended_part(old_len, start);
     }
 
     /// Applies `push` trimming to the text at `start..`. `old_len` is the length before the separator.
@@ -405,11 +349,11 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
     fn normalize_to_slashes(&mut self, mut root: Root) -> Root {
         let path = self.as_mut_slice();
         let components_start = root.len;
-        if S::BACKSLASH_IS_SEP {
+        if S::WIN32 {
             slashes_to_posix_in_place(path);
             match root.kind {
-                VolumeKind::Drive if S::WIN32 => path[0] = path[0].to_ascii_upper(),
-                VolumeKind::None | VolumeKind::Drive => {}
+                VolumeKind::None => {}
+                VolumeKind::Drive => path[0] = path[0].to_ascii_upper(),
                 VolumeKind::Unc | VolumeKind::Device => root = collapse_volume_seps(path, root),
             }
         }
@@ -484,7 +428,7 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
 /// POSIX only: the parts before it need not be copied or reserved.
 #[inline(always)]
 pub(crate) fn last_absolute_posix_part<S: PathStyle>(parts: &[&[impl PathUnit]]) -> Option<usize> {
-    if S::BACKSLASH_IS_SEP {
+    if S::WIN32 {
         return None;
     }
     parts.iter().rposition(|part| S::is_absolute(part))
@@ -561,7 +505,7 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
     /// On POSIX, the caller has already skipped to [`last_absolute_posix_part`].
     #[inline(always)]
     fn concat_for_resolve<C: PathUnit>(&mut self, parts: &[&[C]]) -> Root {
-        if !S::BACKSLASH_IS_SEP {
+        if !S::WIN32 {
             return self.concat_parts(parts);
         }
         let current = Root::parse::<S>(self.as_slice());
@@ -616,31 +560,6 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
         let root = self.normalize_to_slashes(root);
         self.finish_normalize(root, false);
     }
-
-    #[inline(always)]
-    pub(crate) fn resolve_any_sep<C: PathUnit>(&mut self, parts: &[&[C]]) {
-        if S::BACKSLASH_IS_SEP {
-            self.resolve(parts);
-        } else if let [first, rest @ ..] = parts
-            && S::is_absolute(first)
-        {
-            self.resolve_posix_any_sep(first, rest);
-        } else {
-            self.resolve_posix_any_sep(&[], parts);
-        }
-    }
-
-    #[inline(never)]
-    pub(crate) fn resolve_posix_any_sep<C: PathUnit>(&mut self, absolute: &[C], relative: &[&[C]]) {
-        debug_assert!(self.len == 0 || absolute.is_empty());
-        let start = self.len;
-        self.extend_from_slice(absolute);
-        let absolute_len = self.len - start;
-        let root = self.concat_parts(relative);
-        self.convert_backslashes(start, absolute_len);
-        let root = self.normalize_to_slashes(root);
-        self.finish_normalize(root, false);
-    }
 }
 
 // ── relative ──
@@ -655,12 +574,9 @@ pub(crate) struct Resolved<'a, U> {
 impl<'a, U: PathUnit> Resolved<'a, U> {
     /// `Some` if `path` is already absolute and normalized.
     #[inline(always)]
-    pub(crate) fn try_borrow<S: PathStyle, const ANY_SEP: bool>(path: &'a [U]) -> Option<Self> {
-        let is_normalized = !S::WIN32
-            && path.first()?.eq_ascii(b'/')
-            && !((S::BACKSLASH_IS_SEP || ANY_SEP)
-                && U::index_of_unit(path, U::from_u8(b'\\')).is_some())
-            && U::index_of_untidy_slash(path).is_none();
+    pub(crate) fn try_borrow<S: PathStyle>(path: &'a [U]) -> Option<Self> {
+        let is_normalized =
+            !S::WIN32 && path.first()?.eq_ascii(b'/') && U::index_of_untidy_slash(path).is_none();
         is_normalized.then(|| Self {
             path: S::without_trailing_sep(path),
             root: Root::without_volume(true),
@@ -717,7 +633,7 @@ impl<'a, U: PathUnit> Relative<'a, U> {
     #[inline]
     pub(crate) fn new<S: PathStyle>(from: Resolved<'_, U>, to: Resolved<'a, U>) -> Self {
         if from.root.is_absolute() != to.root.is_absolute()
-            || (S::BACKSLASH_IS_SEP && !eq_path::<S, U>(from.volume(), to.volume()))
+            || (S::WIN32 && !eq_path::<S, U>(from.volume(), to.volume()))
         {
             return Self {
                 dotdots: 0,
@@ -744,11 +660,7 @@ impl<'a, U: PathUnit> Relative<'a, U> {
 
     #[inline(always)]
     pub(crate) fn max_len<S: PathStyle>(&self) -> usize {
-        let overhead = if S::BACKSLASH_IS_SEP {
-            NORMALIZE_OVERHEAD
-        } else {
-            0
-        };
+        let overhead = if S::WIN32 { NORMALIZE_OVERHEAD } else { 0 };
         3 * self.dotdots + self.rest.len() + overhead
     }
 }
@@ -771,30 +683,23 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
     }
 
     #[inline(never)]
-    fn write_resolved<const ANY_SEP: bool>(&mut self, operand: Unresolved<'_, U>) -> Root {
+    fn write_resolved(&mut self, operand: Unresolved<'_, U>) -> Root {
         debug_assert!(self.len == 0);
         self.extend_from_slice(operand.base);
-        let absolute_len = match operand.base {
-            [] => operand.path.len(),
-            _ => self.len,
-        };
         let root = self.concat_for_resolve(&[operand.path]);
-        if ANY_SEP {
-            self.convert_backslashes(0, absolute_len);
-        }
         self.normalize_to_slashes(root)
     }
 
     /// Slow path: resolves both operands into the buffer, then compacts the result over them.
     #[inline(never)]
-    pub(crate) fn resolve_and_write_relative<const ANY_SEP: bool>(
+    pub(crate) fn resolve_and_write_relative(
         &mut self,
         from: Unresolved<'_, U>,
         to: Unresolved<'_, U>,
     ) {
-        let from_root = self.write_resolved::<ANY_SEP>(from);
+        let from_root = self.write_resolved(from);
         let (dotdots, rest_len, root) = self.append_with(|from, spare| {
-            let to_root = spare.write_resolved::<ANY_SEP>(to);
+            let to_root = spare.write_resolved(to);
             let relative = Relative::new::<S>(
                 Resolved {
                     path: from,
@@ -810,9 +715,6 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
         self.replace_prefix_with_dotdots(self.len - rest_len, dotdots);
         if rest_len == 0 {
             self.truncate(self.len.saturating_sub(1));
-        } else if ANY_SEP {
-            slashes_to_posix_in_place(self.as_mut_slice());
-            self.normalize_to_slashes(root);
         }
         if self.len > 0 {
             self.finish_normalize(root, false);
@@ -825,9 +727,9 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
 impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
     /// Normalizes first, because Win32 does not normalize what follows `prefix`.
     pub(crate) fn add_namespace_prefix(&mut self, prefix: [u8; 4]) {
-        self.join::<U>(&[]);
-        let root = Root::parse::<S>(self.as_slice());
-        let is_nt = prefix == crate::windows::NT_OBJECT_PREFIX_U8;
+        let root = self.normalize_to_slashes(Root::parse::<S>(self.as_slice()));
+        self.finish_normalize(root, false);
+        let is_nt = prefix == NT_PATH_PREFIX;
         let prefix = prefix.map(U::from_u8);
         match root.kind {
             VolumeKind::Drive if root.is_absolute() => self.splice(0..0, &prefix),
@@ -835,7 +737,9 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
                 self.splice(0..1, U::lit(b"UNC"));
                 self.splice(0..0, &prefix);
             }
-            VolumeKind::Device if is_nt => self.as_mut_slice()[..3].copy_from_slice(&prefix[..3]),
+            VolumeKind::Device if is_nt || root.has_nt_prefix(self.as_slice()) => {
+                self.as_mut_slice()[..3].copy_from_slice(&prefix[..3]);
+            }
             // Prefix `\a` too, so that NT fails the lookup instead of opening `\Device\..`.
             VolumeKind::None if is_nt && root.is_absolute() => self.splice(0..0, &prefix),
             VolumeKind::Drive | VolumeKind::Device | VolumeKind::None => {}
@@ -844,15 +748,12 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
 
     pub(crate) fn strip_nt_prefix(&mut self) {
         let path = self.as_slice();
-        if Root::parse::<S>(path).kind != VolumeKind::Device || !path[2].eq_ascii(b'?') {
+        if !Root::parse::<S>(path).has_nt_prefix(path) {
             return;
         }
         let inner = S::without_leading_sep(&path[3..]);
-        let inner_root = Root::parse::<S>(inner);
-        if inner_root.kind == VolumeKind::Drive {
-            if inner_root.is_absolute() {
-                self.splice(0..path.len() - inner.len(), &[]);
-            }
+        if S::is_absolute(inner) {
+            self.splice(0..path.len() - inner.len(), &[]);
         } else if let Some(share) = S::strip_prefix(inner, U::lit(b"UNC"))
             && let Some(server) = Components::<S, U>::new(share).next()
             && !matches!(server, [c] if c.eq_ascii(b'.') || c.eq_ascii(b'?'))

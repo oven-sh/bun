@@ -201,8 +201,8 @@ impl Host for StatementsHost {
 
     fn is_dir(&self, path: &[u8]) -> bool {
         let is_same = |directory: &[u8]| is_same_path(directory, path, self.is_case_sensitive);
-        let mut directories =
-            (self.files.iter()).flat_map(|file| ancestors(dirname::<Posix>(file.0.as_bytes())));
+        let mut directories = (self.files.iter())
+            .flat_map(|file| ancestors(Posix::dirname_or_root(file.0.as_bytes())));
         directories.any(is_same)
     }
 

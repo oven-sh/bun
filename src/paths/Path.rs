@@ -10,10 +10,10 @@ use crate::path_backend::{
     PathBackend, PoolBackend, PoolOrVecBackend, SliceBackend, StackBackend, VecBackend,
 };
 use crate::path_ops::{
-    EditBuf, NAMESPACE_OVERHEAD, NORMALIZE_OVERHEAD, Relative, Resolved, TrimmedPart, Unresolved,
-    last_absolute_posix_part, max_joined_len, max_relative_len,
+    EditBuf, LONG_PATH_PREFIX, NAMESPACE_OVERHEAD, NORMALIZE_OVERHEAD, NT_PATH_PREFIX, Relative,
+    Resolved, TrimmedPart, Unresolved, last_absolute_posix_part, max_joined_len, max_relative_len,
 };
-use crate::path_style::{PathStyle, last_component, stem_len};
+use crate::path_style::{PathStyle, Root, last_component, stem_len};
 use crate::path_unit::PathUnit;
 use crate::platform::{Auto, ForwardSlash, Posix};
 use crate::{OSPathChar, PathChar};
@@ -32,6 +32,8 @@ pub type StackPath<const N: usize> = GenericPath<StackBackend<N>>;
 pub type SlicePath<'a> = GenericPath<SliceBackend<'a>>;
 /// [`Path`] that writes `/` on every platform.
 pub type ForwardSlashPath = GenericPath<PoolOrVecBackend, ForwardSlash>;
+/// [`Path`] with POSIX syntax on every platform: no drives, and `\` is part of a name.
+pub type PosixPath = GenericPath<PoolOrVecBackend, Posix>;
 
 type ZSlice<B> = <<B as PathBackend>::Unit as PathUnit>::ZSlice;
 
@@ -105,43 +107,13 @@ impl<B: PathBackend + Default, S: PathStyle> GenericPath<B, S> {
     /// Node's `path.resolve`, but the result stays relative if no part is absolute.
     #[inline]
     pub fn resolve<C: PathUnit>(parts: &[&[C]]) -> B::Output<Self> {
-        Self::build_with(|new| new.try_resolve::<false, C>(parts))
-    }
-
-    /// For paths from config, lockfiles or flags: `\` separates on POSIX too, except in absolute components that match `$HOME` or a working directory.
-    #[inline]
-    pub fn resolve_any_sep<C: PathUnit>(parts: &[&[C]]) -> B::Output<Self> {
-        Self::build_with(|new| new.try_resolve::<true, C>(parts))
+        Self::build_with(|new| new.try_resolve(parts))
     }
 
     /// Node's `path.relative`, against the top-level directory. Returns `to` if it is on another drive or share.
     #[inline]
     pub fn relative(from: &[B::Unit], to: &[B::Unit]) -> B::Output<Self> {
-        Self::build_with(|new| new.try_relative::<false>(from, to))
-    }
-
-    /// Reads its arguments like [`Self::resolve_any_sep`] and leaves no `\` in a component of the result.
-    #[inline]
-    pub fn relative_any_sep(from: &[B::Unit], to: &[B::Unit]) -> B::Output<Self> {
-        Self::build_with(|new| new.try_relative::<true>(from, to))
-    }
-}
-
-impl GenericPath<PoolOrVecBackend, Posix> {
-    /// The body of `resolve_path::join_abs*`, which keep a trailing `/`.
-    #[inline]
-    pub(crate) fn join_abs_any_sep(cwd: &[u8], relative: &[&[u8]]) -> Self {
-        let max_len = cwd.len() + max_joined_len::<u8, u8>(relative);
-        let last = relative.iter().rfind(|part| !part.is_empty());
-        let trailing_sep = last.unwrap_or(&cwd).ends_with(b"/");
-        Self::build_with(|new| {
-            new.edit(max_len, |buf| {
-                buf.resolve_posix_any_sep(cwd, relative);
-                if trailing_sep {
-                    buf.push_trailing_sep();
-                }
-            })
-        })
+        Self::build_with(|new| new.try_relative(from, to))
     }
 }
 
@@ -246,16 +218,6 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         B::output(self.try_push(part))
     }
 
-    /// [`Self::push`], reading `\` like [`Self::resolve_any_sep`].
-    #[inline]
-    pub fn push_any_sep<C: PathUnit>(&mut self, part: &[C]) -> B::Output<()> {
-        if S::BACKSLASH_IS_SEP {
-            return self.push(part);
-        }
-        let max_len = self.len + 1 + B::Unit::max_len_for(part);
-        B::output(self.edit_or_retry_on_heap(max_len, |buf| buf.push_any_sep(part)))
-    }
-
     /// [`Self::push`] of the formatted text.
     pub fn push_fmt(&mut self, args: fmt::Arguments<'_>) -> B::Output<()> {
         let len = self.len;
@@ -326,25 +288,19 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
     /// [`Self::resolve`] with `self` as the first part.
     #[inline]
     pub fn resolve_in_place<C: PathUnit>(&mut self, parts: &[&[C]]) -> B::Output<()> {
-        B::output(self.try_resolve::<false, C>(parts))
+        B::output(self.try_resolve(parts))
     }
 
-    /// [`Self::resolve_any_sep`] with `self` as the first part. A `\` already in `self` is left alone.
-    #[inline]
-    pub fn resolve_any_sep_in_place<C: PathUnit>(&mut self, parts: &[&[C]]) -> B::Output<()> {
-        B::output(self.try_resolve::<true, C>(parts))
-    }
-
-    /// Normalizes to `\\?\C:\a` or `\\?\UNC\server\share\a`, which lifts `MAX_PATH`. No-op unless the style is `Windows`.
+    /// Normalizes to `\\?\C:\a` or `\\?\UNC\server\share\a`, which lifts `MAX_PATH`. Drops a trailing separator. No-op unless the style is `Windows`.
     #[inline]
     pub fn make_long_path(&mut self) -> B::Output<()> {
-        self.add_namespace_prefix(crate::windows::LONG_PATH_PREFIX_U8)
+        self.add_namespace_prefix(LONG_PATH_PREFIX)
     }
 
-    /// Normalizes to `\??\C:\a` or `\??\UNC\server\share\a`, for `ntdll`. No-op unless the style is `Windows`.
+    /// [`Self::make_long_path`] for `ntdll`: `\??\C:\a` or `\??\UNC\server\share\a`.
     #[inline]
     pub fn make_nt_path(&mut self) -> B::Output<()> {
-        self.add_namespace_prefix(crate::windows::NT_OBJECT_PREFIX_U8)
+        self.add_namespace_prefix(NT_PATH_PREFIX)
     }
 
     /// Strips `\\?\` or `\??\` if a drive or UNC spelling exists. Leaves `\\?\Volume{..}` alone.
@@ -354,6 +310,20 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
             let result = self.edit(self.len, |buf| buf.strip_nt_prefix());
             debug_assert!(result.is_ok());
         }
+    }
+}
+
+impl<B: PathBackend<Unit = u8>> GenericPath<B> {
+    /// On Windows `\a` becomes `C:\a`, with the drive or share of the process's working directory.
+    #[inline]
+    pub fn add_current_drive(&mut self) -> B::Output<()> {
+        if cfg!(windows) && Root::parse::<Auto>(self.as_slice()) == Root::without_volume(true) {
+            let mut buf = crate::path_buffer_pool::get();
+            if let Ok(cwd) = bun_core::getcwd(&mut buf) {
+                return self.prepend(Auto::volume(cwd.as_bytes()));
+            }
+        }
+        B::output(Ok(()))
     }
 }
 
@@ -411,7 +381,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
     fn try_push<C: PathUnit>(&mut self, part: &[C]) -> Result<(), B::Error> {
         let part = TrimmedPart::new::<S>(self.as_slice(), part);
         let max_len = self.len + part.max_len::<B::Unit>();
-        if is_max_len_exact::<B::Unit, C>() && !S::BACKSLASH_IS_SEP {
+        if is_max_len_exact::<B::Unit, C>() && !S::WIN32 {
             self.edit(max_len, |buf| buf.push(&part))
         } else {
             self.edit_or_retry_on_heap(max_len, |buf| buf.push(&part))
@@ -433,7 +403,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         let start = self.len;
         self.try_write_fmt(args)?;
         let mut max_len = self.len;
-        if S::BACKSLASH_IS_SEP {
+        if S::WIN32 {
             max_len += NORMALIZE_OVERHEAD;
         }
         self.edit_or_retry_on_heap(max_len, |buf| buf.trim_appended_part(old_len, start))
@@ -470,10 +440,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
     }
 
     #[inline(always)]
-    fn try_resolve<const ANY_SEP: bool, C: PathUnit>(
-        &mut self,
-        parts: &[&[C]],
-    ) -> Result<(), B::Error> {
+    fn try_resolve<C: PathUnit>(&mut self, parts: &[&[C]]) -> Result<(), B::Error> {
         let (kept_len, parts) = match last_absolute_posix_part::<S>(parts) {
             Some(index) => (0, &parts[index..]),
             None => (self.len, parts),
@@ -481,23 +448,19 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         let max_len = kept_len + max_joined_len::<B::Unit, C>(parts);
         self.edit_or_retry_on_heap(max_len, |buf| {
             buf.truncate(kept_len);
-            if ANY_SEP {
-                buf.resolve_any_sep(parts);
-            } else {
-                buf.resolve(parts);
-            }
+            buf.resolve(parts);
         })
     }
 
     /// `self` is empty.
     #[inline(always)]
-    pub(crate) fn try_relative<const ANY_SEP: bool>(
+    pub(crate) fn try_relative(
         &mut self,
         from: &[B::Unit],
         to: &[B::Unit],
     ) -> Result<(), B::Error> {
-        if let Some(from) = Resolved::try_borrow::<S, ANY_SEP>(from)
-            && let Some(to) = Resolved::try_borrow::<S, ANY_SEP>(to)
+        if let Some(from) = Resolved::try_borrow::<S>(from)
+            && let Some(to) = Resolved::try_borrow::<S>(to)
         {
             let relative = Relative::new::<S>(from, to);
             let max_len = relative.max_len::<S>();
@@ -505,17 +468,13 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         }
         let (from, to) = (Unresolved::new::<S>(from), Unresolved::new::<S>(to));
         self.edit_or_retry_on_heap(max_relative_len(from, to), |buf| {
-            if ANY_SEP && !S::BACKSLASH_IS_SEP {
-                buf.resolve_and_write_relative::<true>(from, to);
-            } else {
-                buf.resolve_and_write_relative::<false>(from, to);
-            }
+            buf.resolve_and_write_relative(from, to);
         })
     }
 
     #[inline(always)]
     fn add_namespace_prefix(&mut self, prefix: [u8; 4]) -> B::Output<()> {
-        if S::SEP != b'\\' {
+        if S::SEP != b'\\' || self.len == 0 {
             return B::output(Ok(()));
         }
         let max_len = self.len + NAMESPACE_OVERHEAD;

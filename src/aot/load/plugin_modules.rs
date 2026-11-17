@@ -9,8 +9,8 @@ use crate::options::EntryText;
 use bun_ast::{ImportKind, Kind, Loader, Log};
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings::BOM;
+use bun_paths::PathStyle as _;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::resolve::{CodeImportForm, CodeImportKind, CodeRequest, Host, to_path};
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, ShardedMap};
@@ -436,7 +436,7 @@ impl<'a> PluginModules<'a> {
             return Some(working_directory.to_vec());
         }
         let as_file = from_argument(working_directory, plugin_path);
-        Some(dirname::<Posix>(&as_file).to_vec())
+        Some(Posix::dirname_or_root(&as_file).to_vec())
     }
 
     pub(crate) fn provider_path<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {

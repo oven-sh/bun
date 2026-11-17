@@ -750,6 +750,9 @@ describe("bunshell", () => {
       TestBuilder.command`echo ~/Documents`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("normal");
       TestBuilder.command`echo ~/Do"cu"me"nts"`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("compound word");
       TestBuilder.command`echo ~/LOL hi hello`.stdout(`${process.env.HOME}/LOL hi hello\n`).runAsTest("multiple words");
+      TestBuilder.command`HOME=/h USERPROFILE=/h && echo ~'\x'`
+        .stdout(isWindows ? "/h\\x\n" : "~\\x\n")
+        .runAsTest("backslash");
     });
 
     describe("normal", async () => {

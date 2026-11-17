@@ -8,6 +8,7 @@ use crate::shell::interpreter::{
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use bun_paths::Path;
 use core::ops::ControlFlow;
 
 #[derive(Default)]
@@ -275,21 +276,11 @@ impl ShellWork for ShellMkdirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
 
     fn run_from_thread_pool(&mut self, _: &ShellTask) {
-        use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
-        let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.filepath) {
-            // Owned `Vec<u8>`; ensure NUL-terminated.
-            if self.filepath.last() != Some(&0) {
-                self.filepath.push(0);
-            }
-            bun_core::ZStr::from_slice_with_nul(&self.filepath)
-        } else {
-            resolve_path::join_z_spill::<platform::Auto>(
-                &mut spill,
-                &[&self.cwd_path, &self.filepath],
-            )
+        let filepath: &bun_core::ZStr = &match bun_paths::is_absolute(&self.filepath) {
+            true => Path::from(&self.filepath),
+            false => Path::join(&[&self.cwd_path, &self.filepath]),
         };
 
         // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
@@ -353,19 +344,10 @@ impl MkdirCtx for MkdirVerboseVTable<'_> {
         if !self.active {
             return;
         }
-        let out = &mut *self.inner;
-        #[cfg(windows)]
-        {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let str = bun_paths::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
-            out.extend_from_slice(str.as_bytes());
-            out.push(b'\n');
-        }
-        #[cfg(not(windows))]
-        {
-            out.extend_from_slice(dirpath.as_bytes());
-            out.push(b'\n');
-        }
+        let mut dirpath = Path::from(&dirpath[..]);
+        dirpath.strip_nt_prefix();
+        self.inner.extend_from_slice(&dirpath);
+        self.inner.push(b'\n');
     }
 }
 

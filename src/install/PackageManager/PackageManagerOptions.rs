@@ -8,7 +8,6 @@ use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
-use bun_paths::string_paths::without_trailing_any_sep;
 use bun_paths::{NameTooLong, Path, PoolPath};
 
 /// Network policy for this install.
@@ -621,24 +620,11 @@ pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
-fn make_open_dir(mut path: &[u8]) -> crate::Result<bun_sys::Fd> {
-    if cfg!(unix) {
-        // `dir\` was written on Windows.
-        path = without_trailing_any_sep(path);
-    }
+fn make_open_dir(path: &[u8]) -> crate::Result<bun_sys::Fd> {
     bun_sys::Dir::cwd()
         .make_open_path(path, Default::default())
         .map(|d| d.into_raw())
         .map_err(Into::into)
-}
-
-/// On POSIX, `\a` is an absolute path that was written on Windows.
-fn base_dir_for<'a>(base_dir: &'a [u8], dir: &[u8]) -> &'a [u8] {
-    if cfg!(unix) && dir.starts_with(b"\\") {
-        b"/"
-    } else {
-        base_dir
-    }
 }
 
 /// Resolves `<dir>/<subdir>`. `dir` comes from the environment and can have any length.
@@ -647,19 +633,17 @@ pub(crate) fn resolve_env_dir(
     dir: &[u8],
     subdir: &[u8],
 ) -> Result<PoolPath, NameTooLong> {
-    PoolPath::resolve_any_sep(&[base_dir_for(base_dir, dir), &expand_home(dir), subdir])
+    PoolPath::resolve(&[base_dir, &expand_home(dir), subdir])
 }
 
 /// The two differ when a symlink comes before a `..`.
 pub fn env_dir_resolved_and_as_written(base_dir: &[u8], dir: &[u8]) -> [Box<[u8]>; 2] {
-    let base_dir = base_dir_for(base_dir, dir);
     let dir = expand_home(dir);
-    let resolved = Path::resolve_any_sep(&[base_dir, &dir]);
+    let resolved = Path::resolve(&[base_dir, &dir]);
     if cfg!(windows) || bun_paths::is_absolute(&dir) {
         return [resolved.as_bytes().into(), dir];
     }
-    let mut as_written = Path::from(base_dir);
-    as_written.push_any_sep(&dir);
+    let as_written = Path::from_parts(&[base_dir, &dir]);
     [resolved, as_written].map(|path| path.as_bytes().into())
 }
 
@@ -669,8 +653,7 @@ fn make_open_env_dir(base_dir: &[u8], dir: &[u8]) -> crate::Result<bun_sys::Fd> 
     if bun_paths::is_fully_qualified(&as_written) {
         return make_open_dir(&as_written);
     }
-    let base_dir = base_dir_for(base_dir, &as_written);
-    make_open_dir(&PoolPath::resolve_any_sep(&[base_dir, &as_written])?)
+    make_open_dir(&PoolPath::resolve(&[base_dir, &as_written])?)
 }
 
 pub fn open_global_dir(base_dir: &[u8], explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {

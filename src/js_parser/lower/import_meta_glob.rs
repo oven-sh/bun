@@ -11,7 +11,8 @@ use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Loc, S, Stmt};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_glob::BunGlobWalker;
-use bun_paths::{ForwardSlashPath, PoolPath, fs, resolve_path};
+use bun_paths::platform::Posix;
+use bun_paths::{ForwardSlashPath, PathStyle as _, PoolPath, PosixPath, fs};
 
 use crate::lexer::T;
 use crate::p::P;
@@ -193,15 +194,11 @@ fn is_node_modules(name: &[u8]) -> bool {
 
 fn path_below<'p>(ancestor: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
     let below = path.strip_prefix(ancestor)?;
-    if below.is_empty()
-        || ancestor
-            .last()
-            .is_none_or(|&last| bun_paths::is_sep_native(last))
-    {
+    if below.is_empty() || ancestor.last().is_none_or(|&last| bun_paths::is_sep(last)) {
         return Some(below);
     }
     let (&separator, below) = below.split_first()?;
-    bun_paths::is_sep_native(separator).then_some(below)
+    bun_paths::is_sep(separator).then_some(below)
 }
 
 /// Vite leaves these unescaped in `query` keys and values, plus `=` in values.
@@ -224,14 +221,12 @@ fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
 }
 
 fn absolute_from(dir: &[u8], path: &[u8]) -> Option<Vec<u8>> {
-    let absolute = PoolPath::resolve_any_sep(&[dir, path]).ok()?;
+    let absolute = PoolPath::resolve(&[dir, path]).ok()?;
     Some(absolute.to_vec())
 }
 
 fn with_posix_separators(path: &[u8]) -> Vec<u8> {
-    let mut path = path.to_vec();
-    resolve_path::platform_to_posix_in_place::<u8>(&mut path);
-    path
+    bun_paths::platform_to_posix(path).into_owned()
 }
 
 fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
@@ -244,7 +239,6 @@ fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
 
 fn is_not_an_import_path(path: &[u8], is_bundling: bool) -> bool {
     !strings::is_valid_utf8(path)
-        || (!cfg!(windows) && strings::contains_char(path, b'\\'))
         // The runtime parses everything after `?` as a query.
         || (!is_bundling && strings::contains_char(path, b'?'))
 }
@@ -319,13 +313,8 @@ impl Pattern {
     #[optimize(size)]
     fn new(negated: bool, dir: &[u8], text: &[u8]) -> Option<Pattern> {
         let text = &*without_extglobs(text);
-        let mut buf = vec![0u8; text.len() + 1];
-        let normalized: &[u8] = resolve_path::normalize_string_generic_t::<u8, true, false>(
-            text,
-            &mut buf,
-            b'/',
-            |char| char == b'/',
-        );
+        let text = Posix::without_leading_sep(text);
+        let normalized: &[u8] = &PosixPath::resolve(&[text]);
 
         // Unescape plain names here, because on Windows the walker treats `\` as a separator.
         let mut names = Vec::with_capacity(normalized.len());
@@ -393,7 +382,7 @@ fn find_files(
         shared_dir = Some(shared);
 
         if pattern.is_name {
-            if let Ok(file) = PoolPath::resolve_any_sep(&[&pattern.dir, &pattern.glob])
+            if let Ok(file) = PoolPath::resolve(&[&pattern.dir, &pattern.glob])
                 && matches!(
                     bun_sys::exists_at_type(bun_sys::Fd::cwd(), &file),
                     Ok(bun_sys::ExistsAtType::File)

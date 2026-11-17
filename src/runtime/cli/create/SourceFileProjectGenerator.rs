@@ -12,7 +12,6 @@ use bun_core::{Global, Output};
 use bun_js_parser::js_lexer;
 use bun_paths as path;
 use bun_paths::fs::FileSystem;
-use bun_paths::resolve_path;
 use bun_sys::{self, Fd};
 
 // Generate project files based on the entry point and dependencies
@@ -127,8 +126,7 @@ fn create_file(filename: &[u8], contents: &[u8], existing: Existing) -> bun_sys:
     };
 
     // Create parent directories if needed
-    let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
-    if !dirname.is_empty() {
+    if let Some(dirname) = path::dirname(filename) {
         let _ = bun_sys::Dir::cwd().make_path(dirname);
     }
 
@@ -237,16 +235,8 @@ fn generate_files(
     let extension = path::extension(basename);
     let basename = &basename[0..basename.len() - extension.len()];
 
-    let mut normalized_buf = bun_paths::path_buffer_pool::get();
-    let normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
-        resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
-            &mut normalized_buf,
-            FileSystem::instance().top_level_dir(),
-            entry_point,
-        )
-    } else {
-        resolve_path::normalize_buf::<path::platform::Loose>(entry_point, &mut normalized_buf)
-    };
+    let top_level_dir = FileSystem::instance().top_level_dir();
+    let normalized_name = path::ForwardSlashPath::relative(top_level_dir, entry_point);
     let normalized_name = &normalized_name[0..normalized_name.len() - extension.len()];
 
     let mut max_filename_len: usize = 0;

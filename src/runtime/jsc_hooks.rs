@@ -2759,7 +2759,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     origin,
                     b"",
                     &mut public_path,
-                    bun_paths::Platform::Loose,
                 );
                 bun_string_jsc::create_utf8_for_js(global_object, &public_path)
                     .map_err(|_| crate::Error::JSError)?
@@ -2814,12 +2813,8 @@ fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
     }
     // kqueue watchers need a file descriptor to receive event notifications on it; inotify/win32 watch by path.
     let file = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if path_text.len() >= buf.len() {
-            return;
-        }
-        let z = bun_paths::resolve_path::z(path_text, &mut buf);
-        match bun_sys::File::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
+        let path = bun_paths::Path::from(path_text);
+        match bun_sys::File::open(&path, bun_watcher::WATCH_OPEN_FLAGS, 0) {
             Ok(file) => Some(file),
             Err(_) => return,
         }
@@ -3321,16 +3316,14 @@ fn get_loader_and_virtual_source<'a>(
 
     // Synthetic `[eval]`/`[stdin]` source.
     if let Some(eval_source) = jsc_vm.module_loader.eval_source.get() {
-        // Note: the suffix is `\\[eval]` on Windows; the
-        // separator-agnostic `Path::sep_any()` check matches both.
         const EVAL: &[u8] = b"[eval]";
         const STDIN: &[u8] = b"[stdin]";
         let is_eval = specifier.len() > EVAL.len()
             && specifier.ends_with(EVAL)
-            && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - EVAL.len() - 1]);
+            && bun_paths::is_sep(specifier[specifier.len() - EVAL.len() - 1]);
         let is_stdin = specifier.len() > STDIN.len()
             && specifier.ends_with(STDIN)
-            && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
+            && bun_paths::is_sep(specifier[specifier.len() - STDIN.len() - 1]);
         if is_eval || is_stdin {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
@@ -3577,15 +3570,8 @@ fn unreadable_file_error(
     log: &mut bun_ast::Log,
     path: &[u8],
 ) -> Option<JSValue> {
-    let mut buffer = bun_paths::path_buffer_pool::get();
-    if path.len() >= buffer.len() {
-        return None;
-    }
-    let error = bun_sys::access(
-        bun_paths::resolve_path::z(path, &mut buffer),
-        bun_sys::posix::R_OK,
-    )
-    .err()?;
+    let path_z = bun_paths::PoolPath::from(path).ok()?;
+    let error = bun_sys::access(&path_z, bun_sys::posix::R_OK).err()?;
     let _ = log.add_error_fmt(
         None,
         bun_ast::Loc::EMPTY,
@@ -4292,12 +4278,9 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
 /// Writes `{tmpdir}/{name}` into `out_buf` and returns the length.
 fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usize> {
-    let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        tmpdir,
-        out_buf,
-        &[name],
-    );
-    Some(result.len())
+    let mut path = bun_paths::SlicePath::new(out_buf);
+    path.resolve_in_place(&[tmpdir, name]).ok()?;
+    Some(path.len())
 }
 
 /// euid, not uid: `open(2)` sets the new file's owner to euid, so a
@@ -4346,15 +4329,9 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     files.push((addon.name, addon.contents.as_bytes()));
 
     let uid = extract_owner_uid();
-    let mut persistent_folder = [
-        Fs::RealFS::tmpdir_path(),
-        bun_paths::SEP_STR.as_bytes(),
-        format!(".bun-{uid}-{hash:x}").as_bytes(),
-    ]
-    .concat();
-    if cfg!(windows) {
-        bun_paths::resolve_path::slashes_to_windows_in_place(&mut persistent_folder);
-    }
+    let name = format!(".bun-{uid}-{hash:x}");
+    let persistent_folder =
+        bun_paths::VecPath::from_parts(&[Fs::RealFS::tmpdir_path(), name.as_bytes()]).into_vec();
     let per_process_folder = [
         &persistent_folder[..],
         format!("-{:x}", bun_core::fast_random()).as_bytes(),
@@ -4363,20 +4340,13 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     let folder = [persistent_folder, per_process_folder]
         .into_iter()
         .find(|folder| make_or_find_private_folder(folder, uid))?;
-    let written_path = |path: &[u8]| -> Vec<u8> {
-        if cfg!(unix) {
-            return [&folder[..], path].concat();
+    let written_path = |path: &[u8]| {
+        let mut written = bun_paths::VecPath::from(&folder);
+        match cfg!(windows) {
+            true => written.push(&bun_core::strings::replace_owned(path, b":", b"")),
+            false => written.push(path),
         }
-        let under_folder = path
-            .iter()
-            .filter(|&&c| c != b':')
-            .map(|&c| if c == b'/' { b'\\' } else { c });
-        folder
-            .iter()
-            .copied()
-            .chain(std::iter::once(b'\\'))
-            .chain(under_folder)
-            .collect()
+        written.into_vec()
     };
     for (path, contents) in files {
         let to = bun_core::ZBox::from_vec(written_path(path));

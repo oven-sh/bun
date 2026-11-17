@@ -6,6 +6,7 @@ use std::sync::Arc;
 use bun_aot::options::default_loaders;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_options_types::schema::api;
+use bun_paths::platform::{Posix, Windows};
 
 use super::*;
 use crate::bake_types::Framework;
@@ -663,7 +664,11 @@ fn root_right_under_a_root_of_the_file_system_stays_an_absolute_path() {
         (r"\\?\C:\project\node_modules\kit", r"\\?\C:\project"),
     ];
     for (directory, root_directory) in cases {
-        let widened = widen_out_of_packages(directory.as_bytes().to_vec());
+        let widen = match directory.starts_with('/') {
+            true => widen_out_of_packages::<Posix>,
+            false => widen_out_of_packages::<Windows>,
+        };
+        let widened = widen(directory.as_bytes().to_vec());
         assert_eq!(widened, root_directory.as_bytes(), "{directory}");
     }
 }

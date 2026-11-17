@@ -168,9 +168,7 @@ impl<'a> ProcessHandle<'a> {
             let envp = crate::cli::script_or_command::with_package_script(
                 &mut env,
                 &handle.output.config.script_name,
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    &handle.output.config.package_json_path,
-                ),
+                bun_paths::dirname_or_root(&handle.output.config.package_json_path),
                 |env| env.map.to_envp(),
             );
             break 'brk spawn::spawn_process(
@@ -931,10 +929,7 @@ pub(crate) fn run_scripts_with_filter(
                 stdin: spawn::Stdio::Ignore,
                 stdout: spawn::Stdio::Buffer,
                 stderr: spawn::Stdio::Buffer,
-                cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    &script.package_json_path,
-                )
-                .into(),
+                cwd: bun_paths::dirname_or_root(&script.package_json_path).into(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {
                     loop_: EventLoopHandle::init_mini(event_loop),

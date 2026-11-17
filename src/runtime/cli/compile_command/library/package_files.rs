@@ -7,7 +7,7 @@ use bun_bundler::options::{OutputFile, OutputKind};
 use bun_core::{Global, Output, UnwrapOrOom};
 use bun_options_types::Format;
 use bun_options_types::context::ContextData;
-use bun_paths::resolve_path::platform_to_posix_in_place;
+use bun_paths::{platform_to_posix_in_place, windows_to_platform};
 use bun_sema::json::Json;
 use bun_sema::resolve::AOT_CONDITION;
 use bun_sema::util::SharedSort;
@@ -15,7 +15,7 @@ use bun_sema_driver::typed_files::typed_path_beside;
 
 use super::declarations::{declaration_path, is_declaration_file};
 use super::typed_files::is_typed_file;
-use super::{Project, absolute_outdir, absolute_path};
+use super::{Project, absolute_path};
 use crate::cli::check_command::CompilerOptions;
 use crate::cli::compile_command::build::asset_output_file;
 
@@ -65,7 +65,7 @@ pub(crate) fn add_package_files(
 ) {
     let working_directory = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
     let project = Project::find(working_directory);
-    let outdir = absolute_outdir(working_directory, &ctx.bundler_options.outdir);
+    let outdir = absolute_path(working_directory, &ctx.bundler_options.outdir);
     add_documents(&project.directory, output_files);
     let request = PackageRequest {
         project: &project,
@@ -127,7 +127,7 @@ struct ExportedFile {
 }
 
 fn posix_dest_path(file: &OutputFile) -> Vec<u8> {
-    let mut path = bun_core::strings::remove_leading_dot_slash(&file.dest_path).to_vec();
+    let mut path = bun_paths::without_leading_dot_slash(&file.dest_path).to_vec();
     platform_to_posix_in_place::<u8>(&mut path);
     path
 }
@@ -294,7 +294,7 @@ struct WrittenFiles<'a> {
 impl WrittenFiles<'_> {
     // The project's package.json names a source file, or what this build makes of it.
     fn find(&self, written: &[u8]) -> Option<usize> {
-        let path = absolute_path(self.project_directory, written);
+        let path = absolute_path(self.project_directory, &windows_to_platform(written));
         self.exported.iter().position(|file| {
             file.source == path || absolute_path(self.outdir, &file.javascript) == path
         })

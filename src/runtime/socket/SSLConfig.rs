@@ -304,7 +304,7 @@ fn handle_path(
             .throw());
     }
     // Opened later (for fetch, on the HTTP thread), and the SSL_CTX caches key on this string.
-    let mut path = if cfg!(windows) || !bun_paths::is_absolute_posix(name) {
+    let mut path = if cfg!(windows) || !bun_paths::is_absolute(name) {
         bun_paths::Path::from_top_level_dir()
     } else {
         bun_paths::Path::new()
@@ -313,13 +313,11 @@ fn handle_path(
     if cfg!(windows) {
         path.resolve_in_place(&[name]);
     } else {
-        path.push_any_sep(name);
+        path.push(name);
     }
-    // `push_any_sep` drops a trailing separator, with which no file opens.
-    let has_trailing_sep =
-        name.ends_with(b"/") || (name.ends_with(b"\\") && !path.ends_with(b"\\"));
+    // `push` drops a trailing slash, with which no file opens.
     if name.is_empty()
-        || (cfg!(not(windows)) && has_trailing_sep)
+        || (cfg!(not(windows)) && name.ends_with(b"/"))
         || bun_sys::access(&path, bun_sys::posix::F_OK).is_err()
     {
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {field} path")));

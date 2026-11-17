@@ -6,7 +6,6 @@ use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
 use crate::BoundedArray;
-use crate::CrateError as Error;
 use crate::vec::{BorrowedBuf, BorrowedCursor};
 use bun_alloc::AllocError;
 use bun_highway as highway;
@@ -352,15 +351,6 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
     index_of_char(self_, char).is_some()
 }
 
-/// `char` is an ASCII byte compared against each (possibly wider) element.
-#[inline]
-pub fn contains_char_t<T: PathByte>(self_: &[T], char: u8) -> bool {
-    match T::units(self_) {
-        CodeUnits::U8(s) => contains_char(s, char),
-        CodeUnits::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
-    }
-}
-
 #[inline]
 pub fn contains(self_: &[u8], str: &[u8]) -> bool {
     index_of(self_, str).is_some()
@@ -415,15 +405,8 @@ pub fn contains_any(slice: &[u8], chars: &[u8]) -> bool {
 }
 
 pub fn index_of_any16(self_: &[u16], chars: &[u16]) -> Option<usize> {
-    index_of_any_t(self_, chars)
-}
-
-pub fn index_of_any_t<T: PathByte>(str: &[T], chars: &[T]) -> Option<usize> {
-    if let (CodeUnits::U8(s), CodeUnits::U8(c)) = (T::units(str), T::units(chars)) {
-        return index_of_any(s, c);
-    }
     // No multi-needle highway kernel for u16; `chars` is a short constant set.
-    str.iter().position(|c| chars.iter().any(|d| d == c))
+    self_.iter().position(|c| chars.iter().any(|d| d == c))
 }
 
 pub use contains as includes;
@@ -910,11 +893,6 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
         && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
-pub use crate::strings_impl::{
-    has_prefix_t, has_prefix_t as starts_with_generic, has_suffix_t,
-    has_suffix_t as ends_with_generic,
-};
-
 #[inline]
 pub fn ends_with(self_: &[u8], str: &[u8]) -> bool {
     str.is_empty() || self_.ends_with(str)
@@ -928,11 +906,6 @@ pub fn starts_with_char(self_: &[u8], char: u8) -> bool {
 #[inline]
 pub fn ends_with_char(self_: &[u8], char: u8) -> bool {
     !self_.is_empty() && self_[self_.len() - 1] == char
-}
-
-#[inline]
-pub fn ends_with_char_or_is_zero_length(self_: &[u8], char: u8) -> bool {
-    self_.is_empty() || self_[self_.len() - 1] == char
 }
 
 pub fn ends_with_any(self_: &[u8], str: &[u8]) -> bool {
@@ -1104,19 +1077,6 @@ pub fn append(self_: &[u8], other: &[u8]) -> Box<[u8]> {
     buf.extend_from_slice(self_);
     buf.extend_from_slice(other);
     buf.into_boxed_slice()
-}
-
-#[inline]
-pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a mut [T], Error> {
-    let mut off: usize = 0;
-    for s in strs {
-        if s.len() > out.len() - off {
-            return Err(crate::CrateError::NoSpaceLeft);
-        }
-        out[off..off + s.len()].copy_from_slice(s);
-        off += s.len();
-    }
-    Ok(&mut out[0..off])
 }
 
 /// Returns a substring starting at `start` up to the end of the string.
@@ -1504,11 +1464,6 @@ pub fn trim_leading_char(slice: &[u8], char: u8) -> &[u8] {
         return &slice[i as usize..];
     }
     b""
-}
-
-/// prefix is of type &[u8] or &[u16]
-pub fn trim_prefix_comptime<'a, T: Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
-    buffer.strip_prefix(prefix).unwrap_or(buffer)
 }
 
 /// Runtime variants — prefix/suffix may borrow from a non-static
@@ -2209,18 +2164,7 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
     }
 }
 
-// The full `paths` submodule lives in
-// `bun_paths::string_paths` (it depends upward on `bun_paths` resolve/pool
-// helpers and would cycle here). Callers reach the Windows path-shape
-// helpers (`to_nt_path` / `to_kernel32_path` / `from_w_path` / …) via
-// `bun_paths::strings::*`; this module re-exports only the path-shape
-// primitives that must live at tier-0 (`crate::strings_impl`) so `bun_paths`
-// itself can build on them.
-pub use crate::strings_impl::{
-    CodeUnits, CodeUnitsMut, PathByte, basename, basename_posix, basename_windows,
-    is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
-    without_trailing_slash,
-};
+pub use crate::strings_impl::{CodeUnits, CodeUnitsMut, PathByte, without_trailing_slash};
 // Re-export the bun_core implementation so callers can spell
 // `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
 pub use crate::strings_impl::convert_utf16_to_utf8_in_buffer;

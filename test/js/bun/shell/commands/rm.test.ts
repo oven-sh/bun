@@ -484,3 +484,10 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
   });
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(isWindows)("the root check reads a backslash as part of a name, as the removal does", async () => {
+  // Without -r no directory can be removed, whatever the check decides.
+  const { exitCode, stderr } = await $`rm ${"/no-such-dir\\x\\y/.."}`.quiet();
+  expect(stderr.toString()).toBe('rm: "/no-such-dir\\x\\y/.." may not be removed\n');
+  expect(exitCode).toBe(1);
+});

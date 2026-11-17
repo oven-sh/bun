@@ -644,6 +644,7 @@ impl Default for PathFormatOptions {
     }
 }
 
+/// Only Windows has two separators, so elsewhere a path is printed as is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PathSep {
     /// Keep paths separators as is.
@@ -652,17 +653,14 @@ pub enum PathSep {
     Auto,
     /// Replace all path separators with `/`.
     Posix,
-    /// Replace all path separators with `\`.
-    Windows,
 }
 
 impl PathSep {
     fn apply(self, found: u8) -> u8 {
         match self {
-            PathSep::Windows => b'\\',
-            PathSep::Posix => b'/',
-            PathSep::Auto => crate::SEP,
-            PathSep::Any => found,
+            PathSep::Posix if cfg!(windows) => b'/',
+            PathSep::Auto if cfg!(windows) => b'\\',
+            _ => found,
         }
     }
 }

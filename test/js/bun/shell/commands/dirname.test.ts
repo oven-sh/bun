@@ -34,6 +34,8 @@ describe("dirname", async () => {
   TestBuilder.command`dirname /catalog`.exitCode(0).stdout("/\n").stderr("").runAsTest("at root");
 
   TestBuilder.command`dirname /`.exitCode(0).stdout("/\n").stderr("").runAsTest("root is idempotent");
+
+  TestBuilder.command`dirname a//b`.exitCode(0).stdout("a\n").stderr("").runAsTest("repeated slash");
 });
 
 describe("dirname without stdout", async () => {

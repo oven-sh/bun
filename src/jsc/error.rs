@@ -76,8 +76,6 @@ pub enum Error {
     ToJS(#[from] bun_ast::ToJSError),
     #[error(transparent)]
     Url(#[from] bun_url::Error),
-    #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
     #[error("{0}")]
     ErrorCode(crate::error_code::ErrorCode),
 }
@@ -124,7 +122,6 @@ impl Error {
             Self::Patch(e) => e.name(),
             Self::ToJS(e) => <&'static str>::from(e),
             Self::Url(e) => e.name(),
-            Self::Paths(e) => e.name(),
             Self::ErrorCode(e) => <&'static str>::from(*e),
         }
     }

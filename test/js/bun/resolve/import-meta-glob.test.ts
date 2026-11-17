@@ -421,6 +421,7 @@ describe.concurrent("import.meta.glob", () => {
     const importable = {
       "./w/#h.js": "#h",
       "./w/%3F.js": "%3F",
+      "./w/back\\slash.js": "back\\slash",
       "./w/h#1.js": "h#1",
       "./w/plain.js": "plain",
       "./w/q.js": "q",
@@ -439,12 +440,10 @@ describe.concurrent("import.meta.glob", () => {
       },
     );
 
-    test("bun build warns about skipped names, and can import a name containing `?`", async () => {
+    test("bun build can import a name containing `?`", async () => {
       using dir = tempDir("import-meta-glob", { ...names, "entry.js": print(", eager: true") });
       const built = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "entry.js"]);
-      expect(built.stderr.split("\n").filter(line => line.startsWith("warn"))).toEqual([
-        `warn: "import.meta.glob" skipped "./w/back\\slash.js" because its name can't be used in an import`,
-      ]);
+      expect(built.stderr).toBe("");
       expect(built.exitCode).toBe(0);
       const { stdout, stderr, exitCode } = await run(String(dir), ["out.js"]);
       expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
@@ -475,6 +474,19 @@ describe.concurrent("import.meta.glob", () => {
         });
       },
     );
+
+    test.skipIf(!isLinux)("bun build warns about a skipped name", async () => {
+      using dir = tempDir("import-meta-glob", { "w/plain.js": "", "entry.js": print("") });
+      writeFileSync(
+        Buffer.concat([Buffer.from(join(String(dir), "w", "x")), Buffer.from([0xff, 0x2e, 0x6a, 0x73])]),
+        "",
+      );
+      const { stderr, exitCode } = await run(String(dir), ["build", "--target=bun", "entry.js"]);
+      expect(stderr.split("\n").filter(line => line.startsWith("warn"))).toEqual([
+        `warn: "import.meta.glob" skipped "./w/x\uFFFD.js" because its name can't be used in an import`,
+      ]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   // Vite searches the whole file system instead.

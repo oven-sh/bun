@@ -2493,10 +2493,11 @@ describe.concurrent("test file discovery (scanner)", () => {
     },
   );
 
-  test.skipIf(isWindows)("skips a\\b but still scans a/b", async () => {
+  test.skipIf(isWindows)("scans a\\b and a/b", async () => {
     using dir = tempDir("scanner-backslash", {
-      "a\\b": { "other.test.ts": "" },
-      "t": { "a\\b": { "other.test.ts": "" }, "a": { "b": { "exists.test.ts": existsTest } } },
+      "a\\b": { "exists.test.ts": existsTest },
+      "a": { "b": { "exists.test.ts": existsTest } },
+      "c\\d.test.ts": existsTest,
     });
 
     await using proc = Bun.spawn({
@@ -2508,8 +2509,12 @@ describe.concurrent("test file discovery (scanner)", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("Ran 1 test across 1 file.");
-    expect(stderr).toContain(" 1 pass");
+    expect(stderr.match(/^.*\.test\.ts:$/gm)!.sort()).toEqual([
+      "a/b/exists.test.ts:",
+      "a\\b/exists.test.ts:",
+      "c\\d.test.ts:",
+    ]);
+    expect(stderr).toContain(" 3 pass");
     expect(exitCode).toBe(0);
   });
 

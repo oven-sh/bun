@@ -27,7 +27,12 @@ impl Basename {
             }
             let mut buf = Vec::new();
             for i in 0..argc {
-                buf.extend_from_slice(bun_paths::resolve_path::basename(bltn.arg_bytes(i)));
+                let path = bltn.arg_bytes(i);
+                buf.extend_from_slice(match bun_paths::basename(path) {
+                    // A root is its own name.
+                    b"" => bun_paths::without_trailing_sep(path),
+                    name => name,
+                });
                 buf.push(b'\n');
             }
             buf

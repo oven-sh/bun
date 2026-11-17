@@ -1,5 +1,5 @@
 use bun_alloc::AllocError;
-use bun_paths::{OSPath, OSPathChar, OSPathSlice, Path};
+use bun_paths::{OSPath, OSPathSlice, Path};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
 pub(crate) struct FileCopier {
@@ -82,14 +82,14 @@ impl FileCopier {
                 if entry.kind == EntryKind::Directory {
                     if bun_sys::windows::CreateDirectoryExW(&src, &dest).is_err() {
                         // Also taken when the directory exists, a success for make_path.
-                        bun_sys::make_path::make_path::<OSPathChar>(&dest_dir, entry.path)?;
+                        bun_sys::make_path::make_path(&dest_dir, entry.path)?;
                     }
                 } else if let Err(first_err) = bun_sys::copy_file::copy_file(&src, &dest) {
                     // No parent to create, so this is the real error. Skipping it would publish an incomplete entry.
                     let Some(entry_dirname) = bun_paths::dirname(entry.path) else {
                         return Err(first_err);
                     };
-                    let _ = bun_sys::make_path::make_path::<OSPathChar>(&dest_dir, entry_dirname);
+                    let _ = bun_sys::make_path::make_path(&dest_dir, entry_dirname);
                     bun_sys::copy_file::copy_file(&src, &dest)?;
                 }
             }
@@ -106,10 +106,7 @@ impl FileCopier {
                     Ok(f) => f,
                     Err(_) => {
                         if let Some(entry_dirname) = bun_paths::dirname(entry.path) {
-                            let _ = bun_sys::make_path::make_path::<OSPathChar>(
-                                &dest_dir,
-                                entry_dirname,
-                            );
+                            let _ = bun_sys::make_path::make_path(&dest_dir, entry_dirname);
                         }
 
                         dest_dir.create_file_z(entry.path, Default::default())?

@@ -4,11 +4,13 @@ use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
 use bun_archive::tar;
-use bun_core::{self, Output, Utf8Bytes, ZBox, strings};
+use bun_core::{self, Output, Utf8Bytes, ZBox};
 use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
 use bun_jsc::{StringJsc as _, SysErrorJsc};
+use bun_paths::PathStyle as _;
+use bun_paths::platform::Windows;
 use bun_ptr::RefPtr;
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
@@ -1055,35 +1057,9 @@ fn compress_gzip(data: &[u8], level: bun_deflate::Level) -> Result<Vec<u8>, Comp
 
 /// Check if a path is safe (no absolute paths or path traversal)
 pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
-    // Reject empty paths
-    if pathname.is_empty() {
-        return false;
-    }
-
-    // Reject absolute paths
-    if pathname[0] == b'/' || pathname[0] == b'\\' {
-        return false;
-    }
-
-    // Check for Windows drive letters (e.g., "C:")
-    if pathname.len() >= 2 && pathname[1] == b':' {
-        return false;
-    }
-
-    // Reject paths with ".." components
-    for component in strings::split(pathname, b"/") {
-        if component == b".." {
-            return false;
-        }
-        // Also check Windows-style separators
-        for win_component in strings::split(component, b"\\") {
-            if win_component == b".." {
-                return false;
-            }
-        }
-    }
-
-    true
+    !pathname.is_empty()
+        && Windows::root(pathname).is_empty()
+        && Windows::components(pathname).all(|name| name != b"..")
 }
 
 /// One pattern of the `glob` option.
@@ -1172,16 +1148,16 @@ fn extract_to_disk_filtered(
         let raw_pathname: &[u8] = &raw_pathname;
 
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
-        if raw_pathname.len() >= normalized_buf.len() {
+        let Some(pathname) = bun_archive::normalize_entry_path(raw_pathname, &mut normalized_buf)
+        else {
             continue;
-        }
-        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
-            bun_paths::platform::Posix,
-        >(raw_pathname, &mut normalized_buf[..]);
+        };
+        let pathname_len = pathname.len();
+        let pathname_z = bun_core::ZStr::nul_terminate(&mut normalized_buf, pathname_len);
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
-        if pathname == b"." || !is_safe_path(pathname) {
+        if !is_safe_path(pathname) {
             continue;
         }
 
@@ -1221,7 +1197,7 @@ fn extract_to_disk_filtered(
                 #[cfg(windows)]
                 let open = || bun_sys::openat(dir.fd(), pathname_z, flags, mode);
                 let opened = open().or_else(|err| {
-                    make_path(bun_core::dirname(pathname).ok_or(err)?)?;
+                    make_path(bun_paths::dirname(pathname).ok_or(err)?)?;
                     open()
                 });
                 let Ok(file) = opened.map(bun_sys::File::from_fd) else {

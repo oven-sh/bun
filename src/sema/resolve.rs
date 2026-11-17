@@ -9,9 +9,9 @@ use crate::util::{AppendVec, FxHashMap, FxHashSet, ShardedMap};
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::fs::Path;
-use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, slashes_to_posix_in_place, windows_volume_name_len};
+use bun_paths::platform::Windows;
+use bun_paths::{PathStyle as _, path_buffer_pool, slashes_to_posix as normalize_slashes};
 use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -1531,16 +1531,6 @@ pub fn inside(dir: &[u8], name: &[u8]) -> Vec<u8> {
     [dir, separator, name].concat()
 }
 
-/// `NormalizeSlashes`
-fn normalize_slashes(path: &[u8]) -> Cow<'_, [u8]> {
-    if !strings::contains_char(path, b'\\') {
-        return Cow::Borrowed(path);
-    }
-    let mut normalized = path.to_vec();
-    slashes_to_posix_in_place(&mut normalized);
-    Cow::Owned(normalized)
-}
-
 /// `GetEncodedRootLength`
 fn get_encoded_root_length(path: &[u8]) -> isize {
     let is_volume = |c: &u8| c.is_ascii_alphabetic();
@@ -1733,7 +1723,6 @@ fn find_plain_names(rest: &[u8]) -> Option<&[u8]> {
 
 /// `GetNormalizedAbsolutePath`. `dir` is already normalized and absolute, so it's copied as is.
 /// That leaves one pass over `rest` and one allocation.
-/// (`bun_paths::join_abs_string_buf` copies the whole path three times before it reaches a `Vec`.)
 pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
     if let Some(names) = find_plain_names(rest) {
         let dir = if dir == b"/" { b"" } else { dir };
@@ -1759,7 +1748,7 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
             [b'/', b'\\', b'\\', ..] => &rest[1..],
             _ => rest,
         };
-        let (share, after) = native.split_at(windows_volume_name_len(native).0);
+        let (share, after) = native.split_at(Windows::volume(native).len());
         if !share.is_empty() {
             let names = strings::split_any(share, b"/\\").filter(|name| !name.is_empty());
             for (i, name) in names.enumerate() {

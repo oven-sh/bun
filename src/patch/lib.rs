@@ -11,6 +11,8 @@ use core::mem;
 use bun_core::strings;
 use bun_core::{CStrList, CStrRef, ZBox, ZStr};
 use bun_paths as paths;
+use bun_paths::PathStyle as _;
+use bun_paths::platform::{Auto, Windows};
 use bun_sys::{self as sys, Fd};
 
 bun_core::declare_scope!(Patch, visible);
@@ -292,43 +294,24 @@ impl ParentDir {
     }
 }
 
-/// The separators [`paths::dirname_simple`] splits on, so the walk and the basename agree.
-const PATH_SEPS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-
 /// The verified directory holding `path`'s final component, and that component.
+/// One component at a time, refusing symlinks. [`is_safe_patch_path`] has ruled out `..`.
 fn resolve_target(
     patch_dir: Fd,
     path: &[u8],
     create_mode: Option<sys::Mode>,
 ) -> sys::Result<(ParentDir, ZBox)> {
-    if !is_safe_patch_path(path) {
+    if !is_safe_patch_path(path) || Auto::has_trailing_sep(path) {
         return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
     }
-    let parent = open_parent_beneath(patch_dir, path, create_mode)?;
-    let dir = paths::dirname_simple(path);
-    let base = if dir.is_empty() {
-        path
-    } else {
-        &path[dir.len() + 1..]
-    };
-    Ok((parent, ZBox::from_vec_with_nul(base.to_vec())))
-}
-
-/// One component at a time, refusing symlinks. [`is_safe_patch_path`] has ruled out `..`.
-fn open_parent_beneath(
-    patch_dir: Fd,
-    path: &[u8],
-    create_mode: Option<sys::Mode>,
-) -> sys::Result<ParentDir> {
-    let mut cur = ParentDir::PatchDir(patch_dir);
-    for component in strings::split_any(paths::dirname_simple(path), PATH_SEPS) {
-        if component.is_empty() || component == b"." {
-            continue;
-        }
-        let component_z = ZBox::from_vec_with_nul(component.to_vec());
-        cur = ParentDir::Opened(open_dir_component(cur.fd(), &component_z, create_mode)?);
+    let mut components = paths::components(path);
+    let base = components.next_back().unwrap_or_default();
+    let mut parent = ParentDir::PatchDir(patch_dir);
+    for component in components.filter(|&component| component != b".") {
+        let component = ZBox::from_bytes(component);
+        parent = ParentDir::Opened(open_dir_component(parent.fd(), &component, create_mode)?);
     }
-    Ok(cur)
+    Ok((parent, ZBox::from_bytes(base)))
 }
 
 /// `O_NOFOLLOW` here opens the reparse point itself and `fstat` hides it. Not atomic with the open.
@@ -973,11 +956,11 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 pub fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !strings::contains_char(path, 0)
-        && !paths::is_absolute_loose(path)
+        && !Windows::is_absolute(path)
         // On Windows, openat strips a drive prefix from a component, so `C:..` resolves to a real
         // `..`.
         && !(cfg!(windows) && strings::contains_char(path, b':'))
-        && !strings::split_any(path, b"/\\").any(|part| part == b"..")
+        && !Windows::components(path).any(|part| part == b"..")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

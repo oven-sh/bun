@@ -21,9 +21,7 @@ use bun_dotenv as dot_env;
 use bun_event_loop::{self, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
-use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
-use bun_paths::string_paths::{without_trailing_any_sep, without_trailing_slash_windows_path};
-use bun_paths::{DELIMITER, PathBuffer, PoolPath, SEP, VecPath};
+use bun_paths::{DELIMITER, ForwardSlashPath, Path, PoolPath, VecPath, without_trailing_sep};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -225,6 +223,7 @@ pub use super::package_installer::PackageInstaller;
 
 pub use self::package_manager_directories as directories;
 use directories::attempt_to_create_package_json_and_open;
+pub(crate) use directories::folder_in;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
@@ -977,13 +976,6 @@ mod holder {
     pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
-// PORTING.md §Global mutable state: single-thread (main) scratch buffers →
-// RacyCell. `PackageManager::root_package_json_path` is a slice into
-// `ROOT_PACKAGE_JSON_PATH_BUF`, which `init()` writes once.
-static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
-    bun_core::RacyCell::new(PathBuffer::ZEROED);
-
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
 // ──────────────────────────────────────────────────────────────────────────
@@ -1170,9 +1162,7 @@ fn configure_env_for_scripts_run(this: &mut PackageManager) -> Result<(), Error>
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
-            value: Box::<[u8]>::from(without_trailing_slash_windows_path(
-                FileSystem::get().top_level_dir(),
-            )),
+            value: Box::<[u8]>::from(without_trailing_sep(FileSystem::get().top_level_dir())),
         };
     }
 
@@ -1332,12 +1322,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     }
 
     // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
-    let parts: [&[u8]; 3] = [
-        without_trailing_any_sep(tempdir.name),
-        &[SEP],
-        &manager.node_gyp_tempdir_name,
-    ];
-    let node_gyp_abs_dir = parts.concat();
+    let node_gyp_abs_dir = Path::from_parts(&[tempdir.name, &manager.node_gyp_tempdir_name]);
 
     // Add our node-gyp tempdir to the path
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
@@ -1362,9 +1347,9 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     let abs_ca_z: &ZStr = opts.abs_ca_file_name;
     match err {
         http::InitError::LoadCAFile => {
-            let mut normalizer = PosixToWinNormalizer::default();
-            let normalized = normalizer.resolve_z(FileSystem::get().top_level_dir(), abs_ca_z);
-            if !bun_sys::exists_z(normalized) {
+            let mut with_drive = Path::from(abs_ca_z);
+            with_drive.add_current_drive();
+            if !bun_sys::exists_z(&with_drive) {
                 Output::err(
                     "HTTPThread",
                     "could not find CA file: '{s}'",
@@ -1407,8 +1392,7 @@ fn allocate_package_manager(
     log: *mut bun_ast::Log,
     root_dir: &'static fs::DirEntry,
     env: &mut dot_env::Loader,
-    // NUL-terminated
-    original_package_json_path: Vec<u8>,
+    original_package_json_path: VecPath,
     root_package_json_path: &'static ZStr,
     workspace_package_json_cache: WorkspacePackageJSONCache,
     workspace_name_hash: Option<PackageNameHash>,
@@ -1472,7 +1456,7 @@ fn allocate_package_manager(
         );
         wr!(
             original_package_json_path,
-            ZBox::from_vec_with_nul(original_package_json_path)
+            original_package_json_path.into_zbox()
         );
         wr!(root_package_json_path, root_package_json_path);
         wr!(workspace_package_json_cache, workspace_package_json_cache);
@@ -1692,12 +1676,8 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-/// Appends `<separator>package.json\0`. A Windows drive root, `C:\`, has its separator already.
-fn push_package_json(path: &mut Vec<u8>) {
-    if !(cfg!(windows) && path.last().is_some_and(|&c| bun_paths::is_sep_native(c))) {
-        path.push(SEP);
-    }
-    path.extend_from_slice(b"package.json\0");
+fn package_json_in(dir: &[u8]) -> VecPath {
+    VecPath::from_parts(&[dir, b"package.json"])
 }
 
 /// A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`. A later file in `project_npmrcs`
@@ -1710,7 +1690,11 @@ fn load_npmrc_files<'a>(
     diagnostics: ini::NpmrcDiagnostics,
 ) -> Api::BunInstall {
     // A path that is too long could not be opened either, so it counts as a missing file.
-    let resolve = |dir: &[u8], file: &[u8]| PoolPath::resolve_any_sep(&[dir, file]).ok();
+    let resolve = |dir: &[u8], file: &[u8]| {
+        let mut path = PoolPath::resolve(&[dir, file]).ok()?;
+        path.copy_trailing_sep_from(file).ok()?;
+        Some(path)
+    };
     // npm's `userconfig` replaces both candidates below (actions/setup-node exports it).
     let userconfig = [b"NPM_CONFIG_USERCONFIG" as &[u8], b"npm_config_userconfig"]
         .into_iter()
@@ -1799,9 +1783,8 @@ pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8
 struct PackageJsonWalk<'a> {
     cwd: &'a [u8],
     next_dir: Option<&'a [u8]>,
-    /// `<dir>/package.json` for the directory that `next` returned last. It's a `Vec` because the
-    /// cwd alone can fill a path buffer.
-    path: Vec<u8>,
+    /// `<dir>/package.json` for the directory that `next` returned last.
+    path: Path,
 }
 
 impl<'a> PackageJsonWalk<'a> {
@@ -1809,7 +1792,7 @@ impl<'a> PackageJsonWalk<'a> {
         Self {
             cwd,
             next_dir: Some(cwd),
-            path: Vec::with_capacity(cwd.len() + b"/package.json".len()),
+            path: Path::new(),
         }
     }
 
@@ -1817,10 +1800,9 @@ impl<'a> PackageJsonWalk<'a> {
     fn next(&mut self, flags: i32) -> Option<(&'a [u8], bun_sys::Maybe<bun_sys::File>)> {
         loop {
             let dir = self.next_dir?;
-            self.next_dir = bun_core::dirname(dir);
-            self.path.clear();
-            self.path.extend_from_slice(without_trailing_any_sep(dir));
-            self.path.extend_from_slice(b"/package.json");
+            self.next_dir = bun_paths::dirname(dir);
+            self.path.set(dir);
+            self.path.push(b"package.json");
             let opened = bun_sys::File::openat(
                 bun_sys::Fd::cwd(),
                 &self.path,
@@ -1877,7 +1859,7 @@ fn find_workspace_root<'a>(
         return Ok(None);
     };
     *walk = PackageJsonWalk::new(child_cwd);
-    walk.next_dir = bun_core::dirname(child_cwd);
+    walk.next_dir = bun_paths::dirname(child_cwd);
     if let Some((names, _)) = &mut members {
         **names = Package::WorkspaceMap::WorkspaceMap::init();
     }
@@ -1890,9 +1872,9 @@ fn find_workspace_root<'a>(
 #[cfg(unix)]
 fn path_as_typed(dir: &[u8]) -> Option<&'static [u8]> {
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
-    let below_dir = without_trailing_any_sep(start_dir).strip_prefix(dir)?;
+    let below_dir = without_trailing_sep(start_dir).strip_prefix(dir)?;
     let pwd = bun_core::env_var::PWD.platform_get()?;
-    let typed = without_trailing_any_sep(pwd).strip_suffix(below_dir)?;
+    let typed = without_trailing_sep(pwd).strip_suffix(below_dir)?;
     if typed == dir
         || !(below_dir.is_empty() || below_dir[0] == b'/')
         || !bun_paths::is_absolute(typed)
@@ -1925,14 +1907,13 @@ fn find_workspace_root_above<'a>(
         let Ok(json_file) = opened else {
             continue;
         };
-        #[cfg(windows)]
-        let mut parent_path_buf = bun_paths::path_buffer_pool::get();
         let json_stat_size = json_file.get_end_pos()?;
         let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
         let json_len = json_file.pread_all(&mut json_buf, 0)?;
         // Keep the path that was opened. The real path of the file descriptor may be on another
         // drive or outside the project.
-        let json_source = bun_ast::Source::init_path_string(&walk.path, &json_buf[..json_len]);
+        let json_source =
+            bun_ast::Source::init_path_string(walk.path.as_bytes(), &json_buf[..json_len]);
         initialize_store();
         let parsed = crate::bun_json::ParsedJson::parse_package_json(&json_source, log)?;
         let json = parsed.root;
@@ -1999,36 +1980,14 @@ fn find_workspace_root_above<'a>(
             );
             drop(log);
 
-            debug_assert_eq!(workspace_names.keys().len(), workspace_names.values().len());
-            for (path_, entry) in workspace_names
-                .keys()
-                .iter()
-                .zip(workspace_names.values().iter())
+            let root_dir = Package::WorkspaceMap::package_json_dir(&json_source);
+            let child_path = ForwardSlashPath::relative(root_dir, child_cwd);
+            if let Some((_, entry)) = (workspace_names.keys().iter())
+                .zip(workspace_names.values())
+                .find(|(path, _)| bun_paths::strip_prefix(&child_path, path) == Some(b""))
             {
-                let child_path: &[u8] = if bun_paths::is_absolute(path_) {
-                    child_cwd
-                } else {
-                    resolve_path::relative_normalized::<platform::Auto, true>(
-                        Package::WorkspaceMap::package_json_dir(&json_source),
-                        child_cwd,
-                    )
-                };
-
-                #[cfg(windows)]
-                let maybe_workspace_path = {
-                    parent_path_buf[..child_path.len()].copy_from_slice(child_path);
-                    resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                        &mut parent_path_buf[..child_path.len()],
-                    );
-                    &parent_path_buf[..child_path.len()]
-                };
-                #[cfg(not(windows))]
-                let maybe_workspace_path = child_path;
-
-                if strings::eql_long(maybe_workspace_path, path_) {
-                    let name_hash = Semver::string::Builder::string_hash(&entry.name);
-                    return Ok(Some((parent, json_file, name_hash)));
-                }
+                let name_hash = Semver::string::Builder::string_hash(&entry.name);
+                return Ok(Some((parent, json_file, name_hash)));
             }
 
             break;
@@ -2102,7 +2061,7 @@ fn find_project<'a>(
                 continue;
             }
             // This file could be the project's package.json.
-            Err(_) => *unreadable = Some(walk.path.as_slice().into()),
+            Err(_) => *unreadable = Some(walk.path.as_bytes().into()),
         }
         break;
     }
@@ -2110,7 +2069,7 @@ fn find_project<'a>(
     if project.is_some() && is_named {
         match find_workspace_root(
             &mut walk,
-            without_trailing_slash_windows_path(above_dir),
+            without_trailing_sep(above_dir),
             &mut bun_ast::Log::init(),
             None,
             None,
@@ -2123,7 +2082,7 @@ fn find_project<'a>(
             Ok(Some((root, _, _))) => return Some((root, root)),
             Ok(None) => {}
             // This file could be the workspace root's package.json.
-            Err(_) => *unreadable = Some(walk.path.as_slice().into()),
+            Err(_) => *unreadable = Some(walk.path.as_bytes().into()),
         }
     }
     Some((above_dir, above_dir))
@@ -2133,7 +2092,7 @@ fn find_project<'a>(
 pub fn project_directory(cwd: &[u8]) -> Option<&[u8]> {
     initialize_store();
     find_project(
-        without_trailing_slash_windows_path(cwd),
+        without_trailing_sep(cwd),
         &mut WorkspacePackageJSONCache::default(),
         &mut None,
     )
@@ -2210,24 +2169,8 @@ pub fn init(
     // and seeds `top_level_dir` from `getcwd`.
     bun_resolver::fs::FileSystem::init(None)?;
     let fs = FileSystem::get();
-    // `C:\` keeps its separator: `C:` is the current directory of drive C, not its root.
-    let top_level_dir_no_trailing_slash = without_trailing_slash_windows_path(fs.top_level_dir());
-
-    // Per-cfg const literal, no runtime alloc.
-    #[cfg(windows)]
-    const SEP_PACKAGE_JSON: &[u8] = b"\\package.json";
-    #[cfg(not(windows))]
-    const SEP_PACKAGE_JSON: &[u8] = b"/package.json";
-
-    let mut original_package_json_path_buf: Vec<u8> =
-        Vec::with_capacity(top_level_dir_no_trailing_slash.len() + SEP_PACKAGE_JSON.len() + 1);
-    original_package_json_path_buf.extend_from_slice(top_level_dir_no_trailing_slash);
-    push_package_json(&mut original_package_json_path_buf);
-
-    let path_len = original_package_json_path_buf.len() - 1;
-    let mut original_package_json_path =
-        ZStr::from_buf(&original_package_json_path_buf[..], path_len);
-    let original_cwd_clone = Box::<[u8]>::from(top_level_dir_no_trailing_slash);
+    let original_cwd_clone = Box::<[u8]>::from(without_trailing_sep(fs.top_level_dir()));
+    let mut original_package_json_path = package_json_in(&original_cwd_clone);
     let original_cwd: &[u8] = &original_cwd_clone;
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
@@ -2264,7 +2207,7 @@ pub fn init(
                 }
                 match opened {
                     Ok(f) => {
-                        this_cwd = without_trailing_slash_windows_path(dir);
+                        this_cwd = without_trailing_sep(dir);
                         break 'child Some(f);
                     }
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {}
@@ -2272,7 +2215,7 @@ pub fn init(
                         Output::err(
                             "EACCES",
                             "Permission denied while opening \"{s}\"",
-                            &[&bstr::BStr::new(&walk.path)],
+                            &[&bstr::BStr::new(walk.path.as_bytes())],
                         );
                         if need_write {
                             bun_core::note!("package.json must be writable to add packages");
@@ -2288,7 +2231,7 @@ pub fn init(
                         Output::err(
                             &e,
                             "could not open \"{s}\"",
-                            &[&bstr::BStr::new(&walk.path)],
+                            &[&bstr::BStr::new(walk.path.as_bytes())],
                         );
                         return Err(e.into());
                     }
@@ -2304,7 +2247,7 @@ pub fn init(
                 // memory.
                 workspace_package_json_cache.insert_unwritten(
                     &mut bun_ast::Log::init(),
-                    original_package_json_path.as_bytes(),
+                    &original_package_json_path,
                     directories::NEW_PACKAGE_JSON,
                 )?;
                 this_cwd = original_cwd;
@@ -2331,17 +2274,8 @@ pub fn init(
             return Err(crate::Error::MissingPackageJSON);
         };
 
-        debug_assert!(strings::eql_long(
-            &original_package_json_path_buf[..this_cwd.len()],
-            this_cwd
-        ));
-        original_package_json_path_buf.truncate(this_cwd.len());
-        push_package_json(&mut original_package_json_path_buf);
-
-        let new_path_len = original_package_json_path_buf.len() - 1;
-        original_package_json_path =
-            ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
-        let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];
+        let child_cwd = this_cwd;
+        original_package_json_path = package_json_in(child_cwd);
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root(cli.positionals.len() > 1) {
@@ -2370,9 +2304,7 @@ pub fn init(
                 // The root was found above the path as the user typed it. The root reads the
                 // workspace's package.json under that path, so the same spelling is used here.
                 if !core::ptr::eq(walk.cwd, original_cwd) {
-                    let mut typed = walk.cwd.to_vec();
-                    push_package_json(&mut typed);
-                    original_package_json_path_buf = typed;
+                    original_package_json_path = package_json_in(walk.cwd);
                 }
                 break 'root_package_json_file Some(json_file);
             }
@@ -2390,26 +2322,12 @@ pub fn init(
     if !(cli.global && cli.config.is_some()) {
         bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
     }
-    // SAFETY: main-thread global
-    let root_package_json_path: &'static ZStr = unsafe {
-        let tld = fs.top_level_dir();
-        let cwd = &mut *CWD_BUF.get();
-        cwd[..tld.len()].copy_from_slice(tld);
-        cwd[tld.len()] = 0;
-        // Route through the FsVTable setter so the resolver's cached cwd is
-        // rebound to the process-lifetime CWD_BUF (it was a transient slice
-        // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
-        // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
-        fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // Build it from `top_level_dir`, not from the fd's real path, so that relative paths never
-        // cross drives.
-        let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let tld_no_slash = without_trailing_any_sep(tld);
-        let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
-        root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
-        root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
-        ZStr::nul_terminate(root_buf, plen)
-    };
+    // Not from the fd's real path, so that relative paths never cross drives.
+    let root_package_json_path = PoolPath::from_parts(&[fs.top_level_dir(), b"package.json"])?;
+    let root_package_json_path: &'static ZStr = ZStr::from_slice_with_nul(
+        fs.dirname_store()
+            .append(root_package_json_path.as_bytes_with_nul())?,
+    );
     // From here on, package.json is read by path, and written by path by the commands that write
     // it.
     drop(root_package_json_file);
@@ -2507,7 +2425,7 @@ pub fn init(
         ctx.log,
         entries_option,
         env,
-        original_package_json_path_buf,
+        original_package_json_path,
         root_package_json_path,
         workspace_package_json_cache,
         workspace_name_hash,
@@ -2525,26 +2443,15 @@ pub fn init(
     }
     {
         // make sure folder packages can find the root package without creating a new one
-        // Posix-normalize the
-        // separators: the folder resolver's `Key` has `/` only; on Windows this path has `\`, so
-        // hashing the raw bytes would seed a key the resolver never looks up — copy into
-        // a stack buffer and convert separators in place.
-        let raw: &[u8] = root_package_json_path.as_bytes();
-        let mut buf = bun_paths::path_buffer_pool::get();
-        buf[..raw.len()].copy_from_slice(raw);
-        let normalized = &mut buf[..raw.len()];
-        if cfg!(windows) {
-            resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
-        }
+        let normalized = bun_paths::ForwardSlashPath::join(&[root_package_json_path.as_bytes()]);
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
-            FolderResolutionKey::new(FolderResolutionKind::Folder, normalized),
+            FolderResolutionKey::new(FolderResolutionKind::Folder, &normalized),
             FolderResolutionEntry {
-                abs_path: Box::<[u8]>::from(&*normalized),
+                abs_path: normalized.as_bytes().into(),
                 resolution: FolderResolution::PackageId(0),
             },
         )?;
-        // normalized.deinit() → Drop (stack buffer)
     }
 
     {
@@ -2738,7 +2645,7 @@ fn init_with_runtime_once(
         Some(separator) => &importer_dir[..=separator],
         None => importer_dir,
     };
-    let importer_dir = without_trailing_slash_windows_path(importer_dir);
+    let importer_dir = without_trailing_sep(importer_dir);
     let mut workspace_package_json_cache = WorkspacePackageJSONCache::default();
     let mut unreadable = None;
     let project = find_project(
@@ -2752,7 +2659,7 @@ fn init_with_runtime_once(
     // A bunfig.toml or .npmrc in a folder between the importer and the project is read too, and
     // overrides the ones above it.
     let mut settings_dirs: Vec<&[u8]> = core::iter::successors(Some(importer_dir), |&dir| {
-        bun_core::dirname(dir).filter(|_| dir != above_importer)
+        bun_paths::dirname(dir).filter(|_| dir != above_importer)
     })
     .collect();
     if project_dir != above_importer {
@@ -2763,7 +2670,7 @@ fn init_with_runtime_once(
     // `bun_install` was loaded from the directory the process started in. `top_level_dir` is not
     // used for that, because `process.chdir()` changes it.
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
-    let start_dir_trimmed = without_trailing_slash_windows_path(start_dir);
+    let start_dir_trimmed = without_trailing_sep(start_dir);
     // A folder nearer to the importing file overrides the ones above it, as for .npmrc. So the
     // folders below the start directory are kept apart: they override `bun_install`. If the start
     // directory is not one of the project's folders, all of them do.
@@ -2832,10 +2739,6 @@ fn init_with_runtime_once(
         return Err(bun_resolver::Error::UnreadableConfig.into());
     }
 
-    let mut original_package_json_path = FileSystem::get()
-        .top_level_dir_without_trailing_slash()
-        .to_vec();
-    original_package_json_path.extend_from_slice(b"/package.json\0");
     let manager_ptr = allocate_package_manager(
         Options {
             runtime_auto_install: true,
@@ -2844,7 +2747,7 @@ fn init_with_runtime_once(
         std::ptr::from_mut(log),
         root_dir,
         env,
-        original_package_json_path,
+        package_json_in(FileSystem::get().top_level_dir()),
         ZStr::EMPTY,
         workspace_package_json_cache,
         None,
@@ -2948,15 +2851,14 @@ fn parse_runtime_root(
     log: &mut bun_ast::Log,
     root_dir: &[u8],
 ) -> crate::Result<()> {
-    let mut path = root_dir.to_vec();
-    push_package_json(&mut path);
+    let path = package_json_in(root_dir);
     // The messages in this log point into `source`.
     let mut parse_log = bun_ast::Log::init();
     // Cloned because the `workspaces` walk below may grow the cache holding this entry.
     let (source, json) = {
         let entry = manager
             .workspace_package_json_cache
-            .get_with_path(&mut parse_log, &path[..path.len() - 1], Default::default())
+            .get_with_path(&mut parse_log, &path, Default::default())
             .unwrap()?;
         (entry.source.clone(), entry.root)
     };

@@ -8,6 +8,8 @@ use bun_collections::StringHashMap;
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_paths as path;
+use bun_paths::PathStyle as _;
+use bun_paths::platform::Posix;
 
 use crate::Chunk;
 use crate::Index;
@@ -289,7 +291,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 .template
                 .print(&mut rel_path, !c.options.compile_mode.is_executable())
                 .expect("write to Vec<u8>");
-            path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
+            path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
             // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
             // which importers of the chunk would copy verbatim.
@@ -648,6 +650,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                         // so the sourceMappingURL resolves relative to the HTML
                         // file rather than a JS file next to the .map. Point at
                         // the .map path relative to the HTML chunk's directory.
+                        let from_html_dir;
                         let [a, b]: [&[u8]; 2] = if !c.options.public_path.is_empty() {
                             cheap_prefix_normalizer(
                                 c.options.public_path,
@@ -661,11 +664,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                     matches!(ch.content, crate::chunk::Content::Html)
                                         && ch.entry_point.entry_point_id() == entry_point_id
                                 })
-                                .map(|ch| {
-                                    path::resolve_path::dirname::<path::platform::Posix>(
-                                        &ch.final_rel_path,
-                                    )
-                                })
+                                .map(|ch| Posix::dirname_or_root(&ch.final_rel_path))
                                 .unwrap_or(b"");
                             if html_dir == b"." {
                                 html_dir = b"";
@@ -675,12 +674,11 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                 if html_dir.is_empty() {
                                     &source_map_final_rel_path
                                 } else {
-                                    path::resolve_path::relative_platform::<
-                                        path::platform::Posix,
-                                        false,
-                                    >(
-                                        html_dir, &source_map_final_rel_path
-                                    )
+                                    from_html_dir = path::ForwardSlashPath::relative(
+                                        html_dir,
+                                        &source_map_final_rel_path,
+                                    );
+                                    &from_html_dir
                                 },
                             )
                         };

@@ -7,6 +7,7 @@ use bun_bundler::options::BundleOptions;
 use bun_collections::index_sort;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
+use bun_paths::Path;
 use bun_ptr::Interned;
 use bun_resolver::fs::{
     self as fs, DirEntryIterator, EntriesOption, EntryKindResolver, FileSystem,
@@ -107,13 +108,12 @@ impl<'a> Scanner<'a> {
 
     #[optimize(size)]
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
-        let mut scan_dir_buf = bun_paths::path_buffer_pool::get();
-        let Some(path) = self
-            .fs()
-            .abs_buf_checked(&[path_literal], &mut scan_dir_buf)
-        else {
+        let mut path = Path::resolve(&[self.top_level_dir(), path_literal]);
+        path.copy_trailing_sep_from(path_literal);
+        if path.len() > bun_paths::MAX_PATH_BYTES {
             return Err(ScanError::DoesNotExist);
-        };
+        }
+        let path: &[u8] = &path;
 
         let root = self
             .read_dir_with_name(path, None)
@@ -269,21 +269,10 @@ impl<'a> Scanner<'a> {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
-        let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
-
-        // Build rel_path + '/' once. rel_path is a relative path from the project
-        // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
-        let mut buf = [0u8; 4096];
-        let rel_with_slash: Option<&[u8]> = if !rel_path.is_empty()
-            && rel_path.len() < buf.len()
-            && rel_path[rel_path.len() - 1] != b'/'
-        {
-            buf[..rel_path.len()].copy_from_slice(rel_path);
-            buf[rel_path.len()] = b'/';
-            Some(&buf[..rel_path.len() + 1])
-        } else {
-            None
-        };
+        let mut relative = Path::relative(self.top_level_dir(), abs_path);
+        relative.extend_from_slice(b"/");
+        let rel_path = &relative[..relative.len() - 1];
+        let rel_with_slash = (!rel_path.is_empty()).then_some(relative.as_bytes());
 
         for pattern in self.path_ignore_patterns {
             if pattern.r#match(rel_path).matches() {
@@ -356,14 +345,12 @@ impl<'a> Scanner<'a> {
                 let Some(path) = fs::join_dir_entry(entry.dir, entry.base()) else {
                     return;
                 };
-                // Convert `\` the way the resolver will when it loads this file.
-                let path: &[u8] = &bun_paths::Path::resolve_any_sep(&[&path]);
+                let path: &[u8] = &path;
 
-                if !self.does_absolute_path_match_filter(path) {
-                    let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);
-                    if !self.does_path_match_filter(rel_path) {
-                        return;
-                    }
+                if !self.does_absolute_path_match_filter(path)
+                    && !self.does_path_match_filter(&Path::relative(self.top_level_dir(), path))
+                {
+                    return;
                 }
 
                 if self.matches_path_ignore_pattern(path) {

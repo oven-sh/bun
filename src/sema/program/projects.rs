@@ -1,6 +1,7 @@
 use super::*;
 use crate::config;
 use crate::resolve::node_module_path_parts;
+use bun_paths::PathStyle as _;
 use std::sync::OnceLock;
 
 pub(super) struct Projects<'s> {
@@ -89,7 +90,7 @@ impl<'s> Projects<'s> {
     ) -> Option<&'s Options> {
         let project = self.governing_code(context, path)?;
         if !project.config_path.is_empty()
-            && installed_package_directory(dirname::<Posix>(path)).is_none()
+            && installed_package_directory(Posix::dirname_or_root(path)).is_none()
             && make_the_same_program(context.options, project)
         {
             note(&self.listing_files, project);
@@ -110,7 +111,7 @@ impl<'s> Projects<'s> {
         context: &CodeLoadContext<'_, 's, '_>,
         path: &[u8],
     ) -> Option<&'s Options> {
-        let directory = dirname::<Posix>(path);
+        let directory = Posix::dirname_or_root(path);
         let stated = match self.aot_sources_by_directory.get_ref(directory) {
             Some(&known) => known,
             None => {
@@ -159,7 +160,7 @@ impl<'s> Projects<'s> {
         context: &CodeLoadContext<'_, 's, '_>,
         path: &[u8],
     ) -> Option<&'s Options> {
-        let directory = dirname::<Posix>(path);
+        let directory = Posix::dirname_or_root(path);
         let nearest = match self.by_directory.get_ref(directory) {
             Some(&known) => known,
             None => {

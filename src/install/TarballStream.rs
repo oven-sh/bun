@@ -19,7 +19,6 @@ use bun_collections::VecExt;
 #[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, env_var, fmt as bun_fmt};
-use bun_paths::resolve_path::{self, platform};
 use bun_paths::{self, OSPathChar, OSPathSliceZ};
 #[cfg(windows)]
 use bun_sys::Dir;
@@ -592,7 +591,7 @@ impl Extraction {
         // tokenizeScalar.rest() — need byte offset of remainder, not just
         // iterator. `split().filter()` loses that, so use a manual
         // index-of-first-'/' + skip-leading-'/' instead. The result is fed
-        // straight to `normalize_buf_t` (which takes `&[OSPathChar]`, not a
+        // straight to `normalize_entry_path` (which takes `&[OSPathChar]`, not a
         // NUL-terminated slice) so there is no need to reconstruct an
         // `OSPathSliceZ` suffix view here.
         let rest: &[OSPathChar] = tokenize_rest_after_first(pathname);
@@ -601,9 +600,7 @@ impl Extraction {
         let normalized = if self.npm_mode {
             bun_archive::normalize_npm_entry_path(entry, &mut norm_buf[..])?
         } else {
-            (rest.len() < norm_buf.len()).then(|| {
-                resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
-            })
+            bun_archive::normalize_entry_path(rest, &mut norm_buf[..])
         };
         let Some(path) = normalized else {
             bun_core::warn!(
@@ -612,27 +609,16 @@ impl Extraction {
             );
             return Ok(());
         };
-        if path.is_empty() || (path.len() == 1 && path[0] == ('.' as OSPathChar)) {
+        if path.is_empty() {
             return Ok(());
         }
-        // `normalize_buf_t` collapses interior `..` but leaves a leading `..`
-        // on a relative input. Reject those so `openat(dest_fd, ...)` can
-        // never escape the temp extraction root. `Archiver.extractToDir`
-        // sees the same normalised path; this check is belt-and-braces on
-        // top of the integrity gate.
-        if path.len() >= 2
-            && path[0] == ('.' as OSPathChar)
-            && path[1] == ('.' as OSPathChar)
-            && (path.len() == 2 || path[2] == bun_paths::SEP as OSPathChar)
-        {
-            return Ok(());
-        }
+        bun_paths::posix_to_platform_in_place(path);
         #[cfg(windows)]
         {
             if self.npm_mode {
                 apply_windows_npm_path_escapes(path);
             }
-            if bun_archive::starts_elsewhere_on_windows(path) {
+            if <bun_paths::platform::Windows as bun_paths::PathStyle>::climbs_out(path) {
                 return Ok(());
             }
         }
@@ -907,7 +893,7 @@ fn open_output_file(
                     let Some(dir) = bun_paths::dirname(path_slice) else {
                         return Err(e.to_zig_err().into());
                     };
-                    let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), dir);
+                    let _ = bun_sys::make_path::make_path(Dir::borrow(&dest_fd), dir);
                     break 'brk bun_sys::openat_windows(dest_fd, path, flags, 0)
                         .map_err(|e| e.to_zig_err().into());
                 }
@@ -937,7 +923,7 @@ fn open_output_file(
 fn make_directory(entry: &tar::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
     #[cfg(windows)]
     {
-        let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
+        let _ = bun_sys::make_path::make_path(Dir::borrow(&dest_fd), &path[..]);
         let _ = (entry, path_slice);
     }
     #[cfg(not(windows))]

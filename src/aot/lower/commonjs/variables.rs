@@ -1,3 +1,5 @@
+use bun_paths::PathStyle as _;
+use bun_paths::platform::Windows;
 use bun_sema::atom::known;
 use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Parent, ScopeKind};
 use bun_sema::fold::{Decisions, FoldedValue};
@@ -435,8 +437,7 @@ impl FileLowering<'_, '_, '_, '_> {
             let directory = with_forward_slashes(directory.clone());
             for (place, candidate) in candidates.iter().enumerate() {
                 let written = spelling_of(candidate);
-                let names_folder =
-                    bun_core::strings::without_trailing_slash(&written).len() < written.len();
+                let names_folder = written.last().is_some_and(|&last| Windows::is_sep(last));
                 let Some(mut joined) = resolve_paths(&[directory.clone(), written]) else {
                     continue;
                 };

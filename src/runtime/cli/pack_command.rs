@@ -19,8 +19,8 @@ use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_js_printer as js_printer;
 use bun_parsers::json as JSON;
-use bun_paths::resolve_path::{self, normalize_buf_z_spill};
-use bun_paths::{self as path, SEP_STR};
+use bun_paths::platform::Windows;
+use bun_paths::{self as path, Path, PathStyle as _, SEP_STR, without_trailing_sep};
 use bun_sha_hmac::sha;
 use bun_sys::{self, CloseOnDrop, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator};
 
@@ -129,8 +129,8 @@ impl PackCommand {
             Output::err_generic(
                 "cannot use both filename and destination at the same time with tarball: filename \"{}\" and destination \"{}\"",
                 (
-                    bstr::BStr::new(strings::without_trailing_slash(options.pack_filename)),
-                    bstr::BStr::new(strings::without_trailing_slash(options.pack_destination)),
+                    bstr::BStr::new(without_trailing_sep(options.pack_filename)),
+                    bstr::BStr::new(without_trailing_sep(options.pack_destination)),
                 ),
             );
             Global::crash();
@@ -146,16 +146,13 @@ impl PackCommand {
             }
             let mut abs = path::PoolPath::new();
             let result = abs
-                .resolve_any_sep_in_place(&[original_cwd, *option])
+                .resolve_in_place(&[original_cwd, *option])
                 // `--filename out/` names a directory, so writing the tarball to it has to fail.
                 .and_then(|()| abs.copy_trailing_sep_from(option));
             if result.is_err() {
                 Output::err_generic(
                     "archive {} too long: \"{}\"",
-                    (
-                        what,
-                        bstr::BStr::new(strings::without_trailing_slash(*option)),
-                    ),
+                    (what, bstr::BStr::new(without_trailing_sep(*option))),
                 );
                 Global::crash();
             }
@@ -641,7 +638,6 @@ impl Bundle {
 /// The folder that `require(name)` resolves to from `from`, with symlinks resolved, and whether it
 /// is in `from`'s own `node_modules`. The search does not go above `project`.
 fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
-    let mut spill: Vec<u8> = Vec::new();
     let mut real_path_buf = bun_paths::path_buffer_pool::get();
     let ancestors = || core::iter::successors(Some(from), |&dir| path::dirname(dir));
     let last = ancestors()
@@ -652,9 +648,7 @@ fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u
         if path::basename(dir) == b"node_modules" {
             continue;
         }
-        let parts: [&[u8]; 3] = [dir, b"node_modules", name];
-        let candidate =
-            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
+        let candidate: &ZStr = &Path::join(&[dir, b"node_modules", name]);
         let Some(found) = open_dir_if_present(&Dir::cwd(), candidate) else {
             continue;
         };
@@ -1164,17 +1158,12 @@ pub(crate) struct BinInfo {
 fn get_package_bins(json: &Expr) -> Vec<BinInfo> {
     let mut bins: Vec<BinInfo> = Vec::new();
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let mut path_spill: Vec<u8> = Vec::new();
     let mut add = |value: &Expr, ty: BinType| {
         let Some(value) = value.as_string(cli_arena()) else {
             return;
         };
-        if let Some(subpath) = bin_subpath(value, ty, &mut path_buf, &mut path_spill) {
-            bins.push(BinInfo {
-                path: ZBox::from_bytes(subpath),
-                ty,
-            });
+        if let Some(path) = bin_subpath(value, ty) {
+            bins.push(BinInfo { path, ty });
         }
     };
 
@@ -1206,15 +1195,15 @@ pub(crate) fn non_empty_bin(json: &Expr) -> Option<bun_ast::expr::Query> {
     })
 }
 
-pub(crate) fn bin_subpath<'a>(
-    value: &[u8],
-    ty: BinType,
-    buf: &'a mut [u8],
-    spill: &'a mut Vec<u8>,
-) -> Option<&'a [u8]> {
-    let normalized = normalize_buf_z_spill::<path::platform::Posix>(buf, spill, value).as_bytes();
+/// As npm reads a path in package.json: it starts at the package's root, and `..` stops there.
+pub(crate) fn path_in_package(written: &[u8]) -> ZBox {
+    ZBox::from_bytes(&path::PosixPath::join(&[b"/", &path::slashes_to_posix(written)])[1..])
+}
+
+pub(crate) fn bin_subpath(value: &[u8], ty: BinType) -> Option<ZBox> {
+    let normalized: &[u8] = &path_in_package(value);
     let subpath = match ty {
-        BinType::Dir => strings::without_trailing_slash(normalized),
+        BinType::Dir => without_trailing_sep(normalized),
         BinType::File if normalized.ends_with(b"/") || normalized == b"package.json" => {
             return None;
         }
@@ -1224,17 +1213,12 @@ pub(crate) fn bin_subpath<'a>(
     // lockfiles.
     let never_packed =
         || strings::split(subpath, b"/").any(|name| is_unconditionally_excluded(name, 2).is_some());
-    (!is_package_root_or_outside(subpath) && !never_packed()).then_some(subpath)
+    (!is_package_root_or_outside(subpath) && !never_packed()).then(|| ZBox::from_bytes(subpath))
 }
 
 /// A NUL ends the path that the OS gets, so a path that has one counts as outside.
 pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
-    p.is_empty()
-        || p == b"."
-        || path::is_absolute_loose(p)
-        || p == b".."
-        || p.starts_with(b"../")
-        || strings::contains_char(p, 0)
+    p.is_empty() || Windows::climbs_out(p) || strings::contains_char(p, 0)
 }
 
 /// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
@@ -1243,16 +1227,12 @@ pub(crate) fn bin_kind_without_following_symlinks(
     bin_path: &[u8],
 ) -> bun_sys::FileKind {
     // A trailing slash would make `lstat` resolve a symlink to a directory.
-    let bin_path = strings::without_trailing_slash(bin_path);
-    let mut spill: Vec<u8> = Vec::new();
+    let bin_path = without_trailing_sep(bin_path);
     let slashes = (bin_path.iter().enumerate()).filter_map(|(i, &c)| (c == b'/').then_some(i));
     for end in slashes.chain([bin_path.len()]) {
         // Use the absolute path, because on Windows `lstatat` reports a reparse point as the kind
         // of its target.
-        let parts: [&[u8]; 2] = [abs_workspace_path, &bin_path[..end]];
-        let abs_path =
-            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
-        let stat = match bun_sys::lstat(abs_path) {
+        let stat = match bun_sys::lstat(&Path::join(&[abs_workspace_path, &bin_path[..end]])) {
             Ok(stat) => stat,
             Err(err) if is_absent(err.get_errno()) => break,
             Err(err) => fail_file(err, "stat", bin_path),
@@ -1487,18 +1467,11 @@ pub(crate) fn published_files(
     };
     let mut includes: Vec<Pattern<'_>> = Vec::new();
     let mut excludes: Vec<Pattern<'_>> = Vec::new();
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let mut path_spill: Vec<u8> = Vec::new();
     while let Some(files_entry) = files_array.next() {
         let Some(file_entry_str) = files_entry.as_string(bump) else {
             fail_files();
         };
-        let normalized = normalize_buf_z_spill::<path::platform::Posix>(
-            &mut path_buf,
-            &mut path_spill,
-            file_entry_str,
-        );
-        match Pattern::from_utf8(normalized.as_bytes()) {
+        match Pattern::from_utf8(&path_in_package(file_entry_str)) {
             Some(parsed) if parsed.flags.contains(PatternFlags::NEGATED) => excludes.push(parsed),
             Some(parsed) => includes.push(parsed),
             None => {}
@@ -1674,9 +1647,7 @@ pub(crate) fn pack(
         Global::crash();
     }
 
-    let abs_workspace_path: &[u8] = path::string_paths::without_trailing_slash_windows_path(
-        strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
-    );
+    let abs_workspace_path = path::dirname_or_root(abs_package_json_path.as_bytes());
     let script_env = &mut ctx.manager.env_mut().map;
     script_env.put(b"npm_command", b"pack")?;
     // `configure_env_for_run` described the workspace root's package.json, not the one packed.
@@ -2134,15 +2105,12 @@ fn tarball_destination<'a>(
     fn too_long(dir: &[u8], tarball_name: TarballNameFormatter<'_>) -> ! {
         Output::err_generic(
             "archive destination name too long: \"{}/{}\"",
-            (
-                bstr::BStr::new(strings::without_trailing_slash(dir)),
-                tarball_name,
-            ),
+            (bstr::BStr::new(without_trailing_sep(dir)), tarball_name),
         );
         Global::crash();
     }
     if dest
-        .resolve_any_sep_in_place(&[abs_workspace_path, pack_destination])
+        .resolve_in_place(&[abs_workspace_path, pack_destination])
         .is_err()
     {
         too_long(pack_destination, tarball_name);
@@ -2803,7 +2771,7 @@ impl IgnorePatterns<'_> {
             (
                 action,
                 <&str>::from(ignore_kind),
-                bstr::BStr::new(strings::without_trailing_slash(dir_path)),
+                bstr::BStr::new(without_trailing_sep(dir_path)),
                 SEP_STR,
                 <&str>::from(ignore_kind),
             ),

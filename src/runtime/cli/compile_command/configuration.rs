@@ -142,8 +142,8 @@ fn note_library_entry_point(package_name: &[u8], executable_names: &[Vec<u8>]) {
 
 #[cold]
 fn note_installed_executable(working_directory: &[u8], name: &[u8], path: &[u8]) {
-    let shown_path = bun_paths::resolve_path::relative(working_directory, path);
-    let mut line = [name, b" is ", shown_path].concat();
+    let shown_path = bun_paths::Path::relative(working_directory, path);
+    let mut line = [name, b" is ", &shown_path].concat();
     if let Some(package_name) = find_package_name(path) {
         line.extend_from_slice(b", from the package ");
         line.extend_from_slice(&package_name);
@@ -282,7 +282,7 @@ fn add_addons_among_assets(ctx: &ContextData, this_transpiler: &mut Transpiler<'
     let mut unreported = bun_ast::Log::init();
     let mut addons: Vec<Vec<u8>> = Vec::new();
     for asset in &ctx.bundler_options.compile_assets {
-        let asset = super::build::trim_trailing_separators(asset);
+        let asset = bun_paths::without_trailing_sep(asset);
         if asset.ends_with(b".node") {
             addons.push(asset.to_vec());
             continue;
@@ -440,12 +440,13 @@ fn name_executable(
         }
 
         if outfile == b"index" {
-            outfile = bun_paths::basename(bun_core::dirname(first_entry_point).unwrap_or(b"index"));
+            outfile =
+                bun_paths::basename(bun_paths::dirname(first_entry_point).unwrap_or(b"index"));
             was_renamed_from_index = outfile != b"index";
         }
 
         if outfile == b"bun" {
-            outfile = bun_paths::basename(bun_core::dirname(first_entry_point).unwrap_or(b"bun"));
+            outfile = bun_paths::basename(bun_paths::dirname(first_entry_point).unwrap_or(b"bun"));
         }
     }
 
@@ -652,7 +653,7 @@ pub(super) fn output_location(
 ) -> OutputLocation {
     let mut output_dir: &[u8] = b"";
     if !outfile.is_empty() {
-        output_dir = bun_core::dirname(outfile).unwrap_or(b".");
+        output_dir = bun_paths::dirname(outfile).unwrap_or(b".");
     }
 
     let root_path: &[u8] = output_dir;
@@ -682,11 +683,8 @@ pub(super) fn output_location(
         outfile = &outfile_owned;
     } else if was_renamed_from_index && outfile != b"index" {
         // A directory of that name would fail the write with EISDIR.
-        let mut zbuf = bun_paths::path_buffer_pool::get();
-        let n = outfile.len().min(zbuf.0.len() - 1);
-        zbuf.0[..n].copy_from_slice(&outfile[..n]);
-        let z = bun_core::ZStr::nul_terminate(&mut zbuf, n);
-        if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
+        let path = bun_paths::Path::from(outfile);
+        if bun_sys::directory_exists_at(root_dir.fd, &path).unwrap_or(false) {
             outfile = b"index";
         }
     }

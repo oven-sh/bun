@@ -244,7 +244,7 @@ impl<'a> Transpiler<'a> {
         // Relative entry points that were not resolved to a node_modules package are
         // interpreted as relative to the current working directory.
         if !bun_paths::is_absolute(entry_point)
-            && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
+            && bun_paths::without_leading_dot_slash(entry_point) == entry_point
         {
             let prefixed = dot_slash.get_or_init(|| [b"./", entry_point].concat());
             assert_eq!(&prefixed[2..], entry_point, "`dot_slash` was reused");
@@ -274,16 +274,8 @@ impl<'a> Transpiler<'a> {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
                 // Bust directory cache and try again
-                let dir =
-                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(entry_point);
-                let buster_name = if bun_paths::is_absolute(entry_point) && !dir.is_empty() {
-                    let mut normalized_dir = bun_paths::Path::new();
-                    normalized_dir.push_any_sep(dir);
-                    normalized_dir
-                } else {
-                    let top_level_dir = Fs::FileSystem::get().top_level_dir();
-                    bun_paths::Path::resolve_any_sep(&[top_level_dir, entry_point, b".."])
-                };
+                let top_level_dir = Fs::FileSystem::get().top_level_dir();
+                let buster_name = bun_paths::Path::resolve(&[top_level_dir, entry_point, b".."]);
 
                 // Only re-query if we previously had something cached.
                 if self.resolver.bust_dir_cache(&buster_name) {
@@ -1436,27 +1428,14 @@ impl<'a> Transpiler<'a> {
                                 {
                                     const BYTECODE_EXT: &[u8] =
                                         crate::bytecode_sidecar::EXTENSION.as_bytes();
-                                    let mut path_buf2 = bun_paths::path_buffer_pool::get();
-                                    let n = path.text.len();
-                                    let total = n + BYTECODE_EXT.len();
-                                    // The NUL at `path_buf2[total]` has to be
-                                    // in-bounds; fall back to re-parsing the
-                                    // source instead of panicking on an
-                                    // over-long path.
-                                    if total >= path_buf2.len() {
-                                        break 'brk default_value;
-                                    }
-                                    path_buf2[..n].copy_from_slice(path.text);
-                                    path_buf2[n..][..BYTECODE_EXT.len()]
-                                        .copy_from_slice(BYTECODE_EXT);
-                                    let zpath =
-                                        bun_core::ZStr::nul_terminate(&mut path_buf2, total);
+                                    let mut bytecode_path = bun_paths::Path::from(path.text);
+                                    bytecode_path.extend_from_slice(BYTECODE_EXT);
                                     // `bun.sys.File.toSourceAt(...)` is
                                     // `read_from` + wrap-in-`bun_ast::Source`.
                                     // We only need `.contents`, so call
                                     // `read_from` directly.
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
-                                    match bun_sys::File::read_from(dir, zpath) {
+                                    match bun_sys::File::read_from(dir, &bytecode_path) {
                                         Ok(mut contents) => {
                                             let Some(payload_len) =
                                                 crate::bytecode_sidecar::payload_len(&contents)
@@ -2290,23 +2269,20 @@ impl<'a> Transpiler<'a> {
     }
 
     fn normalize_entry_point_path(_entry: &[u8]) -> &'static [u8] {
-        let fs = Fs::FileSystem::get();
-        let entry = fs.abs(&[_entry]);
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        let mut entry = bun_paths::Path::resolve(&[top_level_dir, _entry]);
+        entry.copy_trailing_sep_from(_entry);
 
         // If the absolutized path does not exist on disk, return the original
         // input unchanged so bare specifiers (`react`) and URLs are left alone.
-        if !bun_sys::exists(entry) {
+        if !bun_sys::exists_z(&entry) {
             return crate::linker::dupe(_entry);
         }
 
-        // `relative_to` would turn a `\` that is part of a name into a separator.
-        if bun_paths::has_literal_backslash(entry) {
-            return crate::linker::dupe(entry);
-        }
+        let mut entry = bun_paths::Path::relative(top_level_dir, &entry);
+        entry.copy_trailing_sep_from(_entry);
 
-        let entry = fs.relative_to(entry);
-
-        if !strings::starts_with(entry, b"./") {
+        if !entry.starts_with(b"./") {
             // Entry point paths without a leading "./" are interpreted as package
             // paths. This happens because they go through general path resolution
             // like all other import paths so that plugins can run on them. Requiring
@@ -2319,12 +2295,9 @@ impl<'a> Transpiler<'a> {
             // a leading "./" because the path may not be a file system path. For
             // example, it may be a URL. So only insert a leading "./" when the path
             // is an exact match for an existing file.
-            let mut __entry = Vec::with_capacity(2 + entry.len());
-            __entry.extend_from_slice(b"./");
-            __entry.extend_from_slice(entry);
-            return crate::linker::dupe(&__entry);
+            entry.prepend(b"./");
         }
-        crate::linker::dupe(entry)
+        crate::linker::dupe(&entry)
     }
 
     /// Returns only the count and lets
@@ -2502,7 +2475,7 @@ impl<'a> Transpiler<'a> {
             }
             writeln!(&mut msg, "  {}:", bstr::BStr::new(dest_path))?;
             for &index in indices {
-                let input = bun_paths::resolve_path::relative(
+                let input: &[u8] = &bun_paths::Path::relative(
                     Fs::FileSystem::get().top_level_dir(),
                     &self.output_files[index].src_path,
                 );
@@ -2551,8 +2524,8 @@ impl<'a> Transpiler<'a> {
         let mut file_path = Fs::Path::init(file_path_text);
 
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
-        file_path.pretty = crate::linker::dupe(rel);
+        let rel = bun_paths::Path::relative(top_level_dir, file_path_text);
+        file_path.pretty = crate::linker::dupe(&rel);
 
         let mut output_file = options::OutputFile::zero_value();
         output_file.src_path = file_path_text.into();
@@ -2734,11 +2707,8 @@ impl<'a> Transpiler<'a> {
         loader: options::Loader,
         output: &[u8],
     ) -> Box<[u8]> {
-        let rel_to_root = bun_paths::resolve_path::relative_platform::<
-            bun_paths::resolve_path::platform::Auto,
-            false,
-        >(&self.options.root_dir, file_path_text);
-        let pathname = Fs::PathName::init(rel_to_root);
+        let rel_to_root = bun_paths::Path::relative(&self.options.root_dir, file_path_text);
+        let pathname = Fs::PathName::init(&rel_to_root);
 
         let ext: &[u8] = if loader == options::Loader::Css {
             b"css"
@@ -2762,7 +2732,7 @@ impl<'a> Transpiler<'a> {
         template
             .print(&mut dest_path, true)
             .expect("write to Vec<u8>");
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut dest_path);
+        bun_paths::platform_to_posix_in_place::<u8>(&mut dest_path);
         dest_path.into_boxed_slice()
     }
 

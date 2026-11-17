@@ -10,6 +10,7 @@ use bun_paths::Path;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
+use std::borrow::Cow;
 
 use crate::_folder_resolver::{
     self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,
@@ -1344,15 +1345,17 @@ fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, a
     {
         return;
     }
+    let declared = |path| declared_path(&this.lockfile, id, path, asked.version_was_replaced);
     let path = match &asked.version.value {
         dependency::Value::Workspace(workspace) => (this.lockfile.workspace_paths)
             .get(&asked.name_hash)
-            .copied()
-            .unwrap_or(*workspace),
-        dependency::Value::Folder(folder) => *folder,
+            .map_or_else(
+                || declared(*workspace),
+                |path| Path::from(this.lockfile.str(path)),
+            ),
+        dependency::Value::Folder(folder) => declared(*folder),
         _ => return,
     };
-    let path = Path::from(this.lockfile.str(&path));
     if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag(), &path, this) {
         let locked = names_locked_for_folder(this, &listed);
         look_ahead_from(this, &listed, &locked);
@@ -2355,7 +2358,12 @@ fn bind_row_without_manifest(
                     bstr::BStr::new(this.lockfile.str(&name)),
                     PackageWorkspaceSearchPathFormatter {
                         manager: this,
-                        workspace: target,
+                        workspace: &declared_path(
+                            &this.lockfile,
+                            id,
+                            *target,
+                            version_was_replaced
+                        ),
                     },
                 );
             } else {
@@ -2873,14 +2881,15 @@ fn enqueue_local_tarball(
     // can be reallocated concurrently by the main thread while processing
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
+    let on_disk = resolution.local_tarball_path(&this.lockfile.buffers.string_bytes);
     let (tarball_path, normalize) =
         match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
-            None => (stored_string(path), true),
+            None => (stored_string(&on_disk), true),
             Some(base_dir) => (
-                stored_string(&Path::resolve_any_sep(&[
+                stored_string(&Path::resolve(&[
                     FileSystem::get().top_level_dir(),
                     base_dir,
-                    path,
+                    &on_disk,
                 ])),
                 false,
             ),
@@ -3733,8 +3742,10 @@ fn get_or_put_resolved_package(
                     && !behavior.is_bundled()
                     && (!crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
                         || this.lockfile.is_trusted_folder_dependency(dependency_id));
+                let folder_path =
+                    declared_path(&this.lockfile, dependency_id, folder, version_was_replaced);
                 if from_root_rule || this.lockfile.is_workspace_dependency(dependency_id) {
-                    break 'res resolve_project_folder(this, version, folder);
+                    break 'res resolve_project_folder(this, version, &folder_path);
                 }
 
                 let path_is_top_level_relative =
@@ -3765,9 +3776,6 @@ fn get_or_put_resolved_package(
                 {
                     // Copied out of `string_bytes`, which `StringBuilder::allocate` may grow.
                     let name_slice: Vec<u8> = this.lockfile.str(&name).to_vec();
-                    let folder_path: Vec<u8> =
-                        crate::resolution::with_forward_slashes(this.lockfile.str(&folder))
-                            .into_owned();
                     let mut builder = this.lockfile.string_builder();
 
                     builder.count(&name_slice);
@@ -3808,19 +3816,25 @@ fn get_or_put_resolved_package(
                     return bind_existing(this, dependency_id, workspace_id, success_fn);
                 }
             }
-            // package name hash should be used to find workspace path from map
-            let workspace_path: SemverString = this
-                .lockfile
-                .workspace_paths
-                .get(&name_hash)
-                .copied()
-                .unwrap_or(*workspace);
-            let res = resolve_project_folder(this, version, workspace_path);
+            let workspace_path = match this.lockfile.workspace_paths.get(&name_hash) {
+                Some(path) => Path::from(this.lockfile.str(path)),
+                None => declared_path(
+                    &this.lockfile,
+                    dependency_id,
+                    *workspace,
+                    version_was_replaced,
+                ),
+            };
+            let res = resolve_project_folder(this, version, &workspace_path);
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::Value::Symlink(symlink) => {
-            // Copied, because reading a package.json grows the lockfile's string buffer.
-            let path = Path::from(this.lockfile.str(symlink));
+            let path = declared_path(
+                &this.lockfile,
+                dependency_id,
+                *symlink,
+                version_was_replaced,
+            );
             let base = if dependency::is_link_path(&path) {
                 GlobalOrRelative::Relative(dependency::version::Tag::Symlink)
             } else {
@@ -3863,16 +3877,32 @@ fn resolved_folder_package(
 fn resolve_project_folder(
     this: &mut PackageManager,
     version: &dependency::Version,
-    path: SemverString,
+    path: &[u8],
 ) -> FolderResolutionValue {
-    // Copied, because reading a package.json grows the lockfile's string buffer.
-    let path = Path::from(this.lockfile.str(&path));
     FolderResolution::get_or_put(
         GlobalOrRelative::Relative(version.tag()),
         version,
-        &path,
+        path,
         this,
     )
+}
+
+/// Only what a local package declares was made relative to the project. The rest is as package.json spells it.
+fn declared_path(
+    lockfile: &Lockfile::Lockfile,
+    dependency_id: DependencyID,
+    path: SemverString,
+    version_was_replaced: bool,
+) -> Path {
+    let path = lockfile.str(&path);
+    match bun_paths::windows_to_platform(path) {
+        Cow::Owned(converted)
+            if version_was_replaced || !lockfile.is_dependency_of_local_package(dependency_id) =>
+        {
+            Path::from(&converted)
+        }
+        _ => Path::from(path),
+    }
 }
 
 /// For `bun update <name>`: returns true if the dependency refers to a requested package, either by

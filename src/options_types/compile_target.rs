@@ -204,12 +204,8 @@ impl CompileTarget {
                 let Ok(self_exe_path) = bun_core::self_exe_path() else {
                     break 'brk;
                 };
-                if self_exe_path.len() >= buf.len() {
-                    return Err(crate::Error::BufferTooSmall);
-                }
-                buf[..self_exe_path.len()].copy_from_slice(self_exe_path.as_bytes());
                 *needs_download = false;
-                return Ok(ZStr::nul_terminate(buf, self_exe_path.len()));
+                return Ok(self_exe_path);
             }
         }
 
@@ -220,12 +216,11 @@ impl CompileTarget {
 
         // T1 fallback ignores `_env` (full env-override chain lives in bun_install).
         let cache_dir = bun_sys::fetch_cache_directory_path();
-        let dest = path::resolve_path::join_abs_string_buf_z_checked::<path::platform::Auto>(
-            path::fs::FileSystem::instance().top_level_dir(),
-            &mut buf[..],
-            &[cache_dir.as_slice(), version_str.as_bytes()],
-        )
-        .ok_or(crate::Error::BufferTooSmall)?;
+        let top_level_dir = path::fs::FileSystem::instance().top_level_dir();
+        let mut dest = path::SlicePath::new(buf);
+        dest.resolve_in_place(&[top_level_dir, &cache_dir, version_str])
+            .map_err(|_| crate::Error::BufferTooSmall)?;
+        let dest = dest.into_zstr();
 
         if bun_sys::exists_at(Fd::cwd(), dest) {
             *needs_download = false;

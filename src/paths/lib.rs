@@ -1,12 +1,8 @@
 #![warn(unused_must_use)]
-// `Platform` is used as a const-generic param in resolve_path.rs and
-// downstream (`bun_runtime::node::path::normalize_string_t`).
-// Pinned nightly — enable the structural-match subset directly instead of the
-// `PlatformT` sealed-trait workaround.
-#![feature(adt_const_params, core_io_borrowed_buf)]
+#![feature(core_io_borrowed_buf)]
 
-pub mod error;
-pub use error::{Error, NameTooLong, Result};
+mod error;
+pub use error::NameTooLong;
 
 // `bun.w_path_buffer_pool` — u16 sibling. Backed by the same generic
 // thread-local pool as the u8 one (path_buffer_pool.rs already handles both
@@ -14,38 +10,10 @@ pub use error::{Error, NameTooLong, Result};
 pub mod w_path_buffer_pool {
     use super::WPathBuffer;
     use super::path_buffer_pool::{PathBufferPoolT, PoolGuard};
-    pub type Guard = PoolGuard<WPathBuffer>;
     #[inline]
     pub fn get() -> PoolGuard<WPathBuffer> {
         PathBufferPoolT::<WPathBuffer>::get()
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `bun.strings.paths` — Windows path-shape transcoders. Hosted here (not in
-// `bun_core::string::immutable`) to avoid a `bun_core → bun_paths` cycle.
-// Exposed as both `bun_paths::string_paths::*` and the flattened
-// `bun_paths::strings::*`.
-// ──────────────────────────────────────────────────────────────────────────
-pub mod string_paths;
-/// `bun.strings.*` superset: the full `bun_core::strings` namespace plus the
-/// path-shape transcoders that live here. Downstream crates that previously
-/// wrote `bun_core::strings::paths::X` / `bun_core::strings::to_nt_path`
-/// import `bun_paths::strings` instead.
-pub mod strings {
-    pub use super::string_paths::*;
-    pub use bun_core::strings::*;
-    // Disambiguate names that exist in both `bun_core::strings` and
-    // `string_paths` (path-shape transcoders win — they're the canonical
-    // `bun.strings.*` impl that depends on this crate's path helpers).
-    /// `bun.strings.paths` submodule alias.
-    pub use super::string_paths as paths;
-    pub use super::string_paths::from_w_path as from_wpath;
-    pub use super::string_paths::to_w_path_normalized as to_wpath_normalized;
-    pub use super::string_paths::{
-        is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
-        starts_with_windows_drive_letter_t, without_trailing_slash,
-    };
 }
 
 // Native separator re-exports (PORTING.md §Crate map: never std::path).
@@ -57,46 +25,6 @@ pub use bun_alloc::SEP_STR;
 pub const NODE_MODULES_NEEDLE: &[u8] =
     const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
 
-pub(crate) const SEP_POSIX: u8 = b'/';
-pub const SEP_WINDOWS: u8 = b'\\';
-
-/// Returns true if `p` is POSIX-absolute (starts with `/`).
-#[inline]
-pub fn is_absolute_posix(p: &[u8]) -> bool {
-    !p.is_empty() && p[0] == b'/'
-}
-
-/// Returns true if `p` is Windows-absolute. Generic over u8/u16.
-pub fn is_absolute_windows_t<T: PathChar>(p: &[T]) -> bool {
-    if p.is_empty() {
-        return false;
-    }
-    let c0 = p[0];
-    if c0 == T::from_u8(b'/') || c0 == T::from_u8(b'\\') {
-        return true;
-    }
-    // Drive letter: `X:\` or `X:/` — `X` is NOT required to be alphabetic.
-    if p.len() >= 3
-        && p[1] == T::from_u8(b':')
-        && (p[2] == T::from_u8(b'/') || p[2] == T::from_u8(b'\\'))
-    {
-        return true;
-    }
-    false
-}
-#[inline]
-pub fn is_absolute_windows(p: &[u8]) -> bool {
-    is_absolute_windows_t::<u8>(p)
-}
-/// UTF-16 sibling of [`is_absolute_windows`].
-#[inline]
-pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
-    is_absolute_windows_t::<u16>(p)
-}
-
-/// Character types valid in path slices (u8 / u16). Canonical definition;
-/// `resolve_path`, `PathUnit`, `bun_sys::make_path::MakePathUnit`,
-/// `bun_runtime::node::path::PathCharCwd`, and `bun_core::Ch` all extend it.
 mod path_char;
 pub use path_char::PathChar;
 pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
@@ -172,94 +100,40 @@ macro_rules! os_path_literal {
     }};
 }
 
-#[inline]
-pub fn is_absolute(p: &[u8]) -> bool {
-    bun_core::path_sep::is_absolute_native(p)
+/// [`PathStyle::is_sep`] for the host platform.
+#[inline(always)]
+pub fn is_sep<C: PathChar>(unit: C) -> bool {
+    platform::Auto::is_sep(unit)
 }
 
-/// Like [`is_absolute`], but on Windows the path must also start with a drive letter or a UNC root,
-/// because what `\dir` refers to depends on the current drive.
+/// [`PathStyle::is_absolute`] for the host platform.
+#[inline]
+pub fn is_absolute<C: PathUnit>(p: &[C]) -> bool {
+    platform::Auto::is_absolute(p)
+}
+
+/// [`PathStyle::is_fully_qualified`] for the host platform.
+#[inline]
 pub fn is_fully_qualified(p: &[u8]) -> bool {
-    is_absolute(p)
-        && !(cfg!(windows) && bun_core::strings::is_windows_absolute_path_missing_drive_letter(p))
+    platform::Auto::is_fully_qualified(p)
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// CANONICAL ALREADY EXISTS — no new primitive. Two entry points cover all
-// legitimate callers:
-//
-//   1. bun_paths::is_absolute(p)           — host cfg-dispatched. Use when
-//      the path came from THIS host's filesystem.
-//
-//   2. bun_paths::resolve_path::Platform::Loose.is_absolute(p) — host-agnostic
-//      (accepts '/', '\\', and 'X:/'|'X:\\' on ANY host). Use when the path is
-//      a normalized cross-platform map key / bundler specifier.
-//
-// `is_absolute_loose` is a thin discoverable wrapper for (2) so call sites
-// don't have to spell out `resolve_path::Platform::Loose.is_absolute(..)`.
-/// Host-agnostic absolute-path check: accepts `/…`, `\…`, and `X:/…`/`X:\…`
-/// on ANY host (no alphabetic gate on the drive byte). Use for
-/// cross-platform map keys / bundler specifiers
-/// where the input may have come from either OS.
+/// [`PathStyle::without_nt_prefix`] for the host platform.
 #[inline]
-pub fn is_absolute_loose(p: &[u8]) -> bool {
-    resolve_path::Platform::Loose.is_absolute(p)
+pub fn without_nt_prefix(p: &[u8]) -> &[u8] {
+    platform::Auto::without_nt_prefix(p)
 }
-
-// ───── non-normalizing join helpers ─────
-// Treats both '/' and '\\' as separators on Windows:
-// concatenates `parts`, skipping empties, inserting SEP only when neither
-// seam side already has one, and stripping exactly one leading sep when both
-// sides have one. Byte-level / ASCII-sep only — never normalizes.
-fn join_sep_vec(parts: &[&[u8]]) -> Vec<u8> {
-    let mut out: Vec<u8> = Vec::new();
-    let mut prev_last: Option<u8> = None;
-    for p in parts {
-        if p.is_empty() {
-            continue;
-        }
-        let this = match prev_last {
-            None => *p,
-            Some(prev) => {
-                let prev_sep = is_sep_native(prev);
-                let this_sep = is_sep_native(p[0]);
-                if !prev_sep && !this_sep {
-                    out.push(SEP);
-                }
-                if prev_sep && this_sep { &p[1..] } else { *p }
-            }
-        };
-        out.extend_from_slice(this);
-        prev_last = Some(p[p.len() - 1]);
-    }
-    out
-}
-/// Non-normalizing concatenation
-/// with the native separator. When `SENTINEL` the trailing NUL is included in
-/// the returned slice.
-#[inline]
-pub fn join_sep_maybe_z<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
-    let mut out = join_sep_vec(parts);
-    if SENTINEL {
-        out.push(0);
-    }
-    out.into_boxed_slice()
-}
-/// NOT full `dirname` — this is the naive "slice before last
-/// separator" used by a handful of callers that want exactly that. For full
-/// `dirname` semantics (Option, trailing-slash handling, root preservation)
-/// use [`dirname`].
-pub fn dirname_simple(p: &[u8]) -> &[u8] {
-    crate::resolve_path::last_index_of_sep(p)
-        .map(|i| &p[..i])
-        .unwrap_or(b"")
-}
-pub use bun_core::strings::{PathByte, basename_posix, basename_windows};
 
 /// [`PathStyle::dirname`] for the host platform.
 #[inline]
 pub fn dirname<C: PathUnit>(p: &[C]) -> Option<&[C]> {
     platform::Auto::dirname(p)
+}
+
+/// [`PathStyle::dirname_or_root`] for the host platform.
+#[inline]
+pub fn dirname_or_root(p: &[u8]) -> &[u8] {
+    platform::Auto::dirname_or_root(p)
 }
 
 /// [`PathStyle::basename`] for the host platform.
@@ -278,6 +152,12 @@ pub fn extension<C: PathUnit>(p: &[C]) -> &[C] {
 #[inline]
 pub fn stem<C: PathUnit>(p: &[C]) -> &[C] {
     platform::Auto::stem(p)
+}
+
+/// [`PathStyle::without_leading_dot_slash`] for the host platform.
+#[inline(always)]
+pub fn without_leading_dot_slash(p: &[u8]) -> &[u8] {
+    platform::Auto::without_leading_dot_slash(p)
 }
 
 /// [`PathStyle::without_trailing_sep`] for the host platform.
@@ -304,10 +184,38 @@ pub fn ancestors(p: &[u8]) -> impl Iterator<Item = &[u8]> {
     platform::Auto::ancestors(p)
 }
 
-/// True if a POSIX path has a `\`, which much of Bun reads as a separator.
+/// [`PathStyle::climbs_out`] for the host platform.
 #[inline]
-pub fn has_literal_backslash(p: &[u8]) -> bool {
-    cfg!(unix) && strings::contains_char(p, b'\\')
+pub fn climbs_out(p: &[u8]) -> bool {
+    platform::Auto::climbs_out(p)
+}
+
+/// [`PathStyle::common_ancestor`] for the host platform.
+#[inline]
+pub fn common_ancestor<'a>(paths: impl Iterator<Item = &'a [u8]>) -> Option<&'a [u8]> {
+    platform::Auto::common_ancestor(paths)
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ParentEqual {
+    Parent,
+    Equal,
+    Unrelated,
+}
+
+/// Like [`strip_prefix`], but ASCII case is ignored wherever the file system is likely to, as on macOS.
+pub fn is_parent_or_equal(parent: &[u8], child: &[u8]) -> ParentEqual {
+    let ignores_case = cfg!(not(any(target_os = "linux", target_os = "android")));
+    let parent = without_trailing_sep(parent);
+    let parent = match child.get(..parent.len()) {
+        Some(start) if ignores_case && start.eq_ignore_ascii_case(parent) => start,
+        _ => parent,
+    };
+    match strip_prefix(child, parent) {
+        Some(b"") => ParentEqual::Equal,
+        Some(_) => ParentEqual::Parent,
+        None => ParentEqual::Unrelated,
+    }
 }
 
 // LAYERING: `PathBuffer` / `WPathBuffer` / `MAX_PATH_BYTES` / `PATH_MAX_WIDE`
@@ -315,8 +223,6 @@ pub fn has_literal_backslash(p: &[u8]) -> bool {
 // `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_which::which`
 // etc. accept a buffer obtained from this crate without a pointer cast.
 pub use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer};
-/// Alias for [`PATH_MAX_WIDE`].
-pub const MAX_WPATH: usize = PATH_MAX_WIDE;
 
 #[cfg(windows)]
 pub type OSPathChar = u16;
@@ -331,33 +237,12 @@ pub type OSPathSliceZ = bun_core::ZStr;
 
 pub type OSPathSlice = [OSPathChar];
 
-#[cfg(windows)]
-pub type OSPathBuffer = WPathBuffer;
-#[cfg(not(windows))]
-pub type OSPathBuffer = PathBuffer;
-
 pub mod path_buffer_pool;
 
-// resolve_path: enum const-generics lowered to sealed `PlatformT` trait + ZSTs
-// (done). 46× E0106 remain — TLS-buf-returning wrappers need `'static` lifetime
-// or out-param redesign. The `_buf`-suffixed fns (explicit `&mut [u8]` param)
-// compile; the convenience wrappers don't yet. Gate the module; expose Platform.
-pub mod resolve_path;
-pub use resolve_path::{Platform, platform};
-pub mod component_iterator;
-pub use component_iterator::{
-    Component, ComponentIterator, MakePathStep, PathFormat, make_path_with,
-};
-pub mod classify;
-pub use classify::classify_rel_t;
-// Crate-root re-exports for the path-mutation helpers so `#[cfg(windows)]`
-// install paths can call
-// `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
-pub use resolve_path::{
-    dangerously_convert_path_to_posix_in_place, dangerously_convert_path_to_windows_in_place,
-    dirname_w, is_drive_letter, is_drive_letter_t, is_sep_any, is_sep_any_t, is_sep_native,
-    is_sep_native_t, join_abs_string_buf, join_abs_string_buf_z, path_to_posix_buf,
-    relative_to_common_path_buf, slashes_to_posix_in_place, slashes_to_windows_in_place,
+mod separators;
+pub use separators::{
+    platform_to_posix, platform_to_posix_in_place, posix_to_platform, posix_to_platform_in_place,
+    slashes_to_posix, slashes_to_posix_in_place, slashes_to_windows_in_place, windows_to_platform,
 };
 // Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
@@ -366,52 +251,18 @@ pub use path_buffer_pool::os_path_buffer_pool;
 #[path = "Path.rs"]
 mod path;
 pub use path::{
-    ForwardSlashPath, GenericPath, OSPath, Path, PoolPath, SlicePath, StackPath, VecPath,
+    ForwardSlashPath, GenericPath, OSPath, Path, PoolPath, PosixPath, SlicePath, StackPath, VecPath,
 };
 mod path_backend;
 pub use path_backend::{PoolBackend, PoolOrVecBackend, SliceBackend, StackBackend, VecBackend};
 mod path_ops;
-pub use path_ops::slashes_to_posix_keeping_known_dirs;
 mod path_style;
-pub use path_style::PathStyle;
+pub use path_style::{PathStyle, platform};
 mod path_unit;
-use path_unit::PathUnit;
+pub use path_unit::PathUnit;
 #[path = "EnvPath.rs"]
 pub mod env_path;
 pub use env_path::EnvPath;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Windows path-prefix constants — relocated from
-// `bun_sys::windows` so tier-1 callers
-// (this crate's `string_paths.rs`, `Path.rs` and `path_ops.rs`) can resolve them
-// without depending upward on `bun_sys`.
-// ──────────────────────────────────────────────────────────────────────────
-pub mod windows {
-    /// `\??\` — NT object-manager prefix (UTF-16).
-    pub(crate) const NT_OBJECT_PREFIX: [u16; 4] =
-        ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
-    /// `\??\UNC\` — NT object-manager UNC prefix (UTF-16).
-    pub(crate) const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
-        '\\' as u16,
-        '?' as u16,
-        '?' as u16,
-        '\\' as u16,
-        'U' as u16,
-        'N' as u16,
-        'C' as u16,
-        '\\' as u16,
-    ];
-    /// `\\?\` — Win32 long-path prefix (UTF-16).
-    pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
-        ['\\' as u16, '\\' as u16, '?' as u16, '\\' as u16];
-
-    /// `\??\` — NT object-manager prefix (UTF-8/ASCII).
-    pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
-    /// `\??\UNC\` — NT object-manager UNC prefix (UTF-8/ASCII).
-    pub(crate) const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
-    /// `\\?\` — Win32 long-path prefix (UTF-8/ASCII).
-    pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // `is_package_path` / `is_package_path_not_absolute` — pure path predicates
@@ -449,19 +300,18 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 // The full `FileSystem` (DirEntry cache, RealFS impl, FilenameStore/DirnameStore)
 // stays in `bun_resolver`; only the path-shaped types (`Path`, `PathName`)
 // and the `top_level_dir` singleton accessor move here so
-// lower tiers (`bun_logger`, `bun_paths::resolve_path`, `bun_paths::Path`) can
+// lower tiers (`bun_logger`, `bun_paths::Path`) can
 // resolve them without a `bun_resolver` edge.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
     use core::sync::atomic::{AtomicU32, Ordering};
     use std::sync::OnceLock;
 
-    use bun_core::{RwLock, ZStr};
+    use bun_core::{ZStr, strings};
 
-    use crate::PathStyle as _;
-    use crate::has_literal_backslash;
-    use crate::platform::Posix;
-    use crate::resolve_path::{is_sep_any, is_sep_native, last_index_of_sep};
+    use crate::is_sep;
+    use crate::path_style::last_index_of_sep;
+    use crate::platform::Auto;
 
     /// Minimal `FileSystem` singleton: holds `top_level_dir` only. The dir-entry
     /// cache and filename arenas remain in `bun_resolver` and reach back here
@@ -471,7 +321,7 @@ pub mod fs {
     pub struct FileSystem {
         // Stored as raw bytes (not `String`): POSIX paths are arbitrary byte
         // sequences, not guaranteed UTF-8, and every reader
-        // (`top_level_dir()`, resolve_path.rs) wants `&[u8]`.
+        // wants `&[u8]`.
         top_level_dir: Vec<u8>,
     }
 
@@ -484,46 +334,6 @@ pub mod fs {
         INSTANCE
             .get()
             .map_or_else(bun_core::top_level_dir, FileSystem::top_level_dir)
-    }
-
-    /// `/`-separated components with a `\`, from every top-level dir so far: loaded modules outlive `chdir`.
-    static BACKSLASH_COMPONENTS: RwLock<Vec<u8>> = RwLock::new(Vec::new());
-
-    /// [`bun_core::set_top_level_dir`], also recording the components that have a `\`.
-    pub fn set_top_level_dir(dir: &'static [u8]) {
-        if has_literal_backslash(dir) {
-            let mut seen = BACKSLASH_COMPONENTS.write();
-            for component in Posix::components(dir).filter(|c| has_literal_backslash(c)) {
-                if !Posix::components(&seen[..]).any(|c| c == component) {
-                    seen.push(b'/');
-                    seen.extend_from_slice(component);
-                }
-            }
-        }
-        bun_core::set_top_level_dir(dir);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_known_dirs(f: impl FnOnce(&[&[u8]])) {
-        f(&[b"", crate::path_tests::KNOWN_DIR]);
-    }
-
-    /// `$HOME` and every directory that has been the top-level dir.
-    #[cfg(not(test))]
-    pub(crate) fn with_known_dirs(f: impl FnOnce(&[&[u8]])) {
-        if !cfg!(unix) {
-            return f(&[]);
-        }
-        let mut cwd;
-        let initial = match INSTANCE.get() {
-            Some(fs) => fs.initial_top_level_dir(),
-            None => {
-                cwd = crate::path_buffer_pool::get();
-                bun_core::getcwd(&mut cwd).map_or(&b""[..], ZStr::as_bytes)
-            }
-        };
-        let home = bun_core::env_var::HOME.get().unwrap_or_default();
-        f(&[initial, home, &BACKSLASH_COMPONENTS.read()]);
     }
 
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
@@ -576,7 +386,7 @@ pub mod fs {
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
-        ) -> crate::Result<&'b ZStr> {
+        ) -> Result<&'b ZStr, bun_errno::SystemErrno> {
             let hex_value: u64 = hash ^ (bun_core::time::nano_timestamp() as u64);
 
             // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
@@ -589,7 +399,7 @@ pub mod fs {
                     bun_core::fmt::s(extname),
                 ),
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))
+            .map_err(|_| bun_errno::SystemErrno::ENOSPC)
         }
     }
 
@@ -625,9 +435,9 @@ pub mod fs {
         /// Returns the extension of `path` including the leading `.`, or `""`
         /// for extensionless / dotfile basenames.
         pub fn find_extname(path: &[u8]) -> &[u8] {
-            let start = last_index_of_sep(path).map(|i| i + 1).unwrap_or(0);
+            let start = last_index_of_sep::<Auto>(path).map(|i| i + 1).unwrap_or(0);
             let base = &path[start..];
-            if let Some(dot) = crate::strings::last_index_of_char(base, b'.') {
+            if let Some(dot) = strings::last_index_of_char(base, b'.') {
                 if dot > 0 {
                     return &base[dot..];
                 }
@@ -651,7 +461,7 @@ pub mod fs {
                 // "/index" -> "index"
                 return PathName::init(self.dir).base;
             }
-            debug_assert!(!crate::strings::contains_char(self.base, b'/'));
+            debug_assert!(!strings::contains_char(self.base, b'/'));
             // /bar/foo.js -> foo
             self.base
         }
@@ -674,7 +484,7 @@ pub mod fs {
             if self.dir.is_empty() {
                 return b"./";
             }
-            let extend = (!is_sep_native(self.dir[self.dir.len() - 1])
+            let extend = (!is_sep(self.dir[self.dir.len() - 1])
                 && (self.dir.as_ptr() as usize + self.dir.len() + 1) == self.base.as_ptr() as usize)
                 as usize;
             // SAFETY: when `extend == 1`, `dir.ptr[dir.len]` is the separator byte
@@ -699,15 +509,16 @@ pub mod fs {
             let ext: &[u8];
             let mut dir = path;
             let mut is_absolute = true;
-            let has_disk_designator = path.len() > 2
+            let has_disk_designator = cfg!(windows)
+                && path.len() > 2
                 && path[1] == b':'
                 && path[0].is_ascii_alphabetic()
-                && is_sep_any(path[2]);
+                && is_sep(path[2]);
             if has_disk_designator {
                 path = &path[2..];
             }
 
-            while let Some(i) = last_index_of_sep(path) {
+            while let Some(i) = last_index_of_sep::<Auto>(path) {
                 // Stop if we found a non-trailing slash
                 if i + 1 != path.len() && path.len() > i + 1 {
                     base = &path[i + 1..];
@@ -722,7 +533,7 @@ pub mod fs {
             }
 
             // Strip off the extension
-            if let Some(dot) = crate::strings::last_index_of_char(base, b'.') {
+            if let Some(dot) = strings::last_index_of_char(base, b'.') {
                 ext = &base[dot..];
                 base = &base[0..dot];
             } else {
@@ -731,10 +542,6 @@ pub mod fs {
 
             if is_absolute {
                 dir = b"";
-            }
-
-            if base.len() > 1 && is_sep_any(base[base.len() - 1]) {
-                base = &base[0..base.len() - 1];
             }
 
             if !is_absolute && has_disk_designator {
@@ -875,7 +682,7 @@ pub mod fs {
         #[inline]
         pub fn assert_pretty_is_valid(&self) {
             #[cfg(all(windows, debug_assertions))]
-            if crate::strings::contains_char(self.pretty, b'\\') {
+            if strings::contains_char(self.pretty, b'\\') {
                 panic!(
                     "Expected pretty file path to have only forward slashes, got '{}'",
                     bstr::BStr::new(self.pretty)
@@ -929,15 +736,14 @@ pub mod fs {
         /// Checks for `<sep>node_modules<sep>` in the
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
-            crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
+            strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
         }
 
         /// Checks for a package in `node_modules` (in any case) or in the install cache.
         pub fn is_dependency(&self) -> bool {
-            let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-            let mut components = crate::strings::split_any(self.name().dir, separators).peekable();
+            let mut components = crate::components(self.name().dir).peekable();
             while let Some(component) = components.next() {
-                if crate::strings::contains(component, b"@@@")
+                if strings::contains(component, b"@@@")
                     || component.starts_with(b"@G@")
                     || (component.eq_ignore_ascii_case(b"node_modules")
                         && components.peek().is_some())

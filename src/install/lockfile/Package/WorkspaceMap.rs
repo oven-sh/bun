@@ -5,15 +5,14 @@ use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_glob as glob;
 use bun_paths as path;
-use bun_paths::resolve_path;
-use bun_paths::{ForwardSlashPath, MAX_PATH_BYTES, PoolPath, SEP_STR};
+use bun_paths::{ForwardSlashPath, MAX_PATH_BYTES, Path, PoolPath};
 
 use super::DependencyGroup;
-use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces, resolve_for_lockfile};
+use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
-use crate::package_manager::workspace_selection::NegatedWorkspaces;
+use crate::package_manager::workspace_selection::{NegatedWorkspaces, workspaces_entry};
 
 bun_output::declare_scope!(Lockfile, hidden);
 
@@ -75,14 +74,12 @@ impl WorkspaceMap {
     pub(crate) fn mark_self_contained<'l>(&mut self, list: &[&'l [u8]]) -> Vec<&'l [u8]> {
         let keys: Vec<Box<[u8]>> = self.map.keys().to_vec();
         let mut matched = vec![false; list.len()];
-        for (i, entry) in self.map.values_mut().iter_mut().enumerate() {
-            let path = strings::without_trailing_slash(&keys[i]);
-            for (j, item) in list.iter().enumerate() {
-                let item = strings::without_trailing_slash(item);
-                let item = item.strip_prefix(b"./").unwrap_or(item);
-                if item == path || item == &*entry.name {
+        for (item, matched) in list.iter().zip(&mut matched) {
+            let item: &[u8] = &ForwardSlashPath::resolve(&[&workspaces_entry(item)]);
+            for (key, entry) in keys.iter().zip(self.map.values_mut()) {
+                if item == &**key || item == &*entry.name {
                     entry.hoisting_limits = true;
-                    matched[j] = true;
+                    *matched = true;
                 }
             }
         }
@@ -276,31 +273,10 @@ fn process_workspace_name(
     Ok(Some(entry))
 }
 
-/// `dir`, or the filesystem root for a package.json in it, where `dir` is `""` or `C:`.
-fn keeping_root<'a>(dir: &'a [u8], package_json_path: &'a [u8]) -> &'a [u8] {
-    if path::is_absolute(dir) {
-        return dir;
-    }
-    path::dirname(package_json_path).unwrap_or_default()
-}
-
-fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
-    keeping_root(
-        strings::without_suffix_comptime(
-            abs_package_json_path,
-            const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
-        ),
-        abs_package_json_path,
-    )
-}
-
 /// The absolute directory that the `workspaces` of `source` are relative to.
 pub(crate) fn package_json_dir<'a>(source: &bun_ast::Source<'a>) -> &'a [u8] {
-    let dir = keeping_root(source.path.name().dir, source.path.text);
-    if dir.is_empty() {
-        return bun_resolver::fs::FileSystem::get().top_level_dir();
-    }
-    dir
+    path::dirname(source.path.text)
+        .unwrap_or_else(|| bun_resolver::fs::FileSystem::get().top_level_dir())
 }
 
 /// `err.path` is relative to `root_dir`, or absolute when the pattern is.
@@ -313,7 +289,7 @@ fn add_glob_error(
     root_dir: &[u8],
     err: &bun_sys::Error,
 ) -> crate::Error {
-    let failed_path = path::Path::resolve(&[root_dir, &err.path]);
+    let failed_path = Path::resolve(&[root_dir, &err.path]);
     let _ = bun_ast::add_error_pretty!(
         log,
         Some(source),
@@ -387,25 +363,22 @@ impl WorkspaceMap {
                 return Err(crate::Error::InvalidPackageJSON);
             };
 
-            if input_path.is_empty()
-                || input_path == b"."
-                || input_path == b"./"
-                || input_path == b".\\"
-            {
+            if negated.take(input_path) {
                 continue;
             }
-
-            if glob::detect_glob_syntax(input_path) {
-                if !negated.take(input_path) {
-                    workspace_globs.push(Box::<[u8]>::from(input_path));
-                }
+            let entry: &[u8] = &workspaces_entry(input_path);
+            if matches!(entry, b"" | b"." | b"./") {
+                continue;
+            }
+            if glob::detect_glob_syntax(entry) {
+                workspace_globs.push(entry.into());
                 continue;
             }
 
             let mut dir = ForwardSlashPath::new();
-            let processed = match resolve_for_lockfile(root_dir, &[input_path, b"package.json"]) {
+            let processed = match PoolPath::resolve(&[root_dir, entry, b"package.json"]) {
                 Ok(abs_package_json_path) => {
-                    let abs_dir = workspace_dir_of(&abs_package_json_path);
+                    let abs_dir = path::dirname_or_root(&abs_package_json_path);
                     dir = ForwardSlashPath::relative(root_dir, abs_dir);
                     // skip root package.json
                     if dir.is_empty() {
@@ -476,19 +449,8 @@ impl WorkspaceMap {
         }
 
         if workspace_globs.len() > 0 {
-            let mut arena = Arena::new();
             for user_pattern in &workspace_globs {
-                // Capacity is retained to keep the `mi_heap` warm across patterns × matched dirs.
-                arena.reset_retain_with_limit(8 * 1024 * 1024);
-                let glob_pattern: &[u8] = if user_pattern.len() == 0 {
-                    b"package.json"
-                } else {
-                    let parts: [&[u8]; 2] = [user_pattern, b"package.json"];
-                    let mut spill: Vec<u8> = Vec::new();
-                    arena.alloc_slice_copy(resolve_path::join_spill::<path::platform::Auto>(
-                        &mut spill, &parts,
-                    ))
-                };
+                let glob_pattern: &[u8] = &Path::join(&[user_pattern, b"package.json"]);
 
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
@@ -534,8 +496,7 @@ impl WorkspaceMap {
                     let is_behind_link =
                         (!path::is_absolute(user_pattern)).then(|| iter.followed_link());
 
-                    let entry_dir: &[u8] =
-                        resolve_path::dirname::<path::platform::Auto>(matched_path);
+                    let entry_dir = path::dirname_or_root(matched_path);
 
                     if negated.excludes(entry_dir) {
                         continue;
@@ -551,14 +512,10 @@ impl WorkspaceMap {
                     let parts = [root_dir, entry_dir, b"package.json"];
                     let processed = match PoolPath::resolve(&parts) {
                         Ok(abs_package_json_path) => {
-                            let abs_dir = workspace_dir_of(&abs_package_json_path);
+                            let abs_dir = path::dirname_or_root(&abs_package_json_path);
                             let dir = ForwardSlashPath::relative(root_dir, abs_dir);
                             // Skip the root package.json, which `**` or `../*` can match again.
                             if dir.is_empty() {
-                                continue;
-                            }
-                            // bun.lock reads `\` as a separator.
-                            if path::has_literal_backslash(&dir) {
                                 continue;
                             }
 
@@ -631,8 +588,7 @@ impl WorkspaceMap {
     pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
         let root_dir: &[u8] = package_json_dir(source);
         let dir: &[u8] = &ForwardSlashPath::relative(root_dir, abs_dir);
-        // bun.lock reads `\` as a separator.
-        if dir.is_empty() || path::has_literal_backslash(dir) {
+        if dir.is_empty() {
             return false;
         }
         let scratch = Arena::new();
@@ -642,19 +598,17 @@ impl WorkspaceMap {
             let Some(input_path) = arr.item_str(i, &scratch) else {
                 return false;
             };
-            if matches!(input_path, b"" | b"." | b"./" | b".\\") {
+            if negated.take(input_path) {
                 continue;
             }
-            if glob::detect_glob_syntax(input_path) {
-                if !negated.take(input_path) {
-                    matched = matched || glob_lists(input_path, dir, abs_dir);
-                }
+            let entry: &[u8] = &workspaces_entry(input_path);
+            if glob::detect_glob_syntax(entry) {
+                matched = matched || glob_lists(entry, dir, abs_dir);
                 continue;
             }
             // A workspace listed by its exact path is a member even if a negated pattern matches.
-            if resolve_for_lockfile(root_dir, &[input_path])
-                .is_ok_and(|abs| ForwardSlashPath::relative(root_dir, &abs).as_bytes() == dir)
-            {
+            let abs = Path::resolve(&[root_dir, entry]);
+            if ForwardSlashPath::relative(root_dir, &abs).as_bytes() == dir {
                 return true;
             }
         }
@@ -670,16 +624,10 @@ fn glob_lists(user_pattern: &[u8], dir: &[u8], abs_dir: &[u8]) -> bool {
     } else {
         dir
     };
-    if strings::split_any(dir, b"/\\").any(ignored_workspace_paths) {
+    if path::components(dir).any(ignored_workspace_paths) {
         return false;
     }
-    let mut spill: Vec<u8> = Vec::new();
-    let mut pattern = resolve_path::join_spill::<path::platform::Auto>(
-        &mut spill,
-        &[user_pattern, b"package.json"],
-    )
-    .to_vec();
-    resolve_path::platform_to_posix_in_place::<u8>(&mut pattern);
+    let pattern = ForwardSlashPath::join(&[user_pattern, b"package.json"]);
     glob::matcher::match_prepared::<{ cfg!(windows) }>(
         &pattern,
         &glob::matcher::Shape::of(&pattern),

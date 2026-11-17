@@ -614,7 +614,7 @@ impl RuntimeTranspilerCache {
         let top = FileSystem::get().top_level_dir();
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get_not_empty() {
-            return Some(VecPath::resolve_any_sep(&[top, dir, b"bun/@t@"]));
+            return Some(VecPath::resolve(&[top, dir, b"bun/@t@"]));
         }
 
         // macOS uses ~/Library/Caches, not the install cache.
@@ -624,7 +624,7 @@ impl RuntimeTranspilerCache {
             b".bun/install/cache/@t@"
         };
         let home = env_var::HOME.get_not_empty()?;
-        Some(VecPath::resolve_any_sep(&[top, home, cache_subdir]))
+        Some(VecPath::resolve(&[top, home, cache_subdir]))
     }
 
     pub(crate) fn from_file(

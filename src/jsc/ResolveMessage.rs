@@ -4,6 +4,8 @@ use std::io::Write as _;
 
 use bun_ast::ImportKind;
 use bun_core::strings;
+use bun_paths::PathStyle as _;
+use bun_paths::platform::Windows;
 
 use crate::bindgen::{JsLocal, JsScope};
 use crate::build_message::LogKindJsc as _;
@@ -46,7 +48,7 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
 /// relative, separator-led, and ASCII-letter drive forms are path-like; everything else is a
 /// package. Unlike `bun_paths::is_absolute`, the drive byte must be alphabetic.
 fn is_bare_esm_specifier(s: &[u8]) -> bool {
-    let is_sep = |b: u8| b == b'/' || b == b'\\';
+    let is_sep = Windows::is_sep::<u8>;
     match s {
         [] | [b'.'] | [b'.', b'.'] => return false,
         [b, ..] if is_sep(*b) => return false,

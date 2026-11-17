@@ -33,9 +33,8 @@ use crate::modules::{
 use crate::statistics::{Stage, StepClock};
 use bun_ast::{Loader, Log};
 use bun_options_types::aot_options::ExplainSet;
-use bun_paths::is_absolute;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_paths::{PathStyle as _, is_absolute};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{
     Binding, BindingInitializer, CommonJsVariable, Decl, FnOwner, FunctionFlags, Parent,
@@ -554,7 +553,7 @@ fn embed_files_asked_by_name(
         let named_beside: FxHashSet<&[u8]> = list_file_names(files, file, is_beside).collect();
         asked.push(&named_beside);
         let module = to_native(files.module(file).file_name());
-        let mut folder = dirname::<Posix>(files.module(file).file_name());
+        let mut folder = Posix::dirname_or_root(files.module(file).file_name());
         while folder.len() >= package.len() && asked.iter().any(|it| !it.is_empty()) {
             for listed in provider.list_files_to_embed(to_native(folder), false) {
                 let name = bun_paths::basename(&listed);
@@ -564,7 +563,7 @@ fn embed_files_asked_by_name(
                     named.add(file, argument, listed);
                 }
             }
-            folder = dirname::<Posix>(folder);
+            folder = Posix::dirname_or_root(folder);
         }
     }
 }
@@ -588,7 +587,7 @@ fn find_folders_entered(
     let enters_folder = |file: FileId| !files.analysis(file).folders_entered.is_empty();
     let mut entered = Vec::new();
     for file in filter_each(files.compiled_files(), in_parallel, &enters_folder) {
-        let folder = dirname::<Posix>(files.module(file).file_name());
+        let folder = Posix::dirname_or_root(files.module(file).file_name());
         for &(operand, path) in files.analysis(file).folders_entered {
             if !is_in_left_out_code(files, left_out, file, operand) {
                 entered.push(from_argument(folder, files.atoms.bytes(path)));
@@ -607,7 +606,7 @@ fn list_file_reads(
     file: FileId,
 ) -> Vec<FileRead> {
     let analysis = files.analysis(file);
-    let folder = dirname::<Posix>(files.module(file).file_name());
+    let folder = Posix::dirname_or_root(files.module(file).file_name());
     let is_listing = |operand: ExprId| analysis.path_listings.binary_search(&operand).is_ok();
     let is_query = |operand: ExprId| analysis.path_queries.binary_search(&operand).is_ok();
     let read_by_functions_called = analysis.own_url_arguments.iter().flat_map(move |handed| {
@@ -751,7 +750,7 @@ impl<'a> PathPattern<'a> {
 }
 
 fn lists_own_folder(files: &Files<'_>, file: FileId, reads: &[FileRead]) -> bool {
-    let folder = dirname::<Posix>(files.module(file).file_name());
+    let folder = Posix::dirname_or_root(files.module(file).file_name());
     let entered = files.analysis(file).folders_entered;
     let is_entered = |operand: ExprId| entered.iter().any(|it| it.0 == operand);
     (reads.iter()).any(|it| it.is_listing && it.path == folder && !is_entered(it.operand))
@@ -792,7 +791,7 @@ fn find_adjacent_web_assembly(
     let mut found = Vec::new();
     for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
         let analysis = files.analysis(file);
-        let folder = dirname::<Posix>(files.module(file).file_name());
+        let folder = Posix::dirname_or_root(files.module(file).file_name());
         let read = analysis.module_relative_reads.iter();
         let read = read.chain(analysis.reads_ruled_out);
         let handed_on = analysis.named_paths.iter().map(|it| (it.operand, it.path));
@@ -873,7 +872,7 @@ fn warn_about_unembedded_reads(
         FxHashSet::default();
     // A file that is only asked about is embedded without its bytes. One that another call reads has them, wherever that call stands.
     for &file in &files_that_name_paths {
-        let folder = dirname::<Posix>(files.module(file).file_name());
+        let folder = Posix::dirname_or_root(files.module(file).file_name());
         for read in list_reads(file) {
             let path = read.path;
             let is_query = read.is_query && !provider.is_searched_for(to_native(&path));
@@ -951,7 +950,7 @@ fn warn_about_unembedded_reads(
     let mut noted: FxHashSet<Vec<u8>> = manifests.collect();
     let (mut created, mut listers) = (None, None);
     for &file in &files_that_name_paths {
-        let folder = dirname::<Posix>(files.module(file).file_name());
+        let folder = Posix::dirname_or_root(files.module(file).file_name());
         let mut names_build_paths = None;
         let reads = list_reads(file);
         for read in &reads {
@@ -1084,7 +1083,7 @@ fn warn_about_unembedded_reads(
 fn collect_paths_created(files: &Files<'_>) -> Vec<Vec<u8>> {
     let mut created = Vec::new();
     for &file in files.compiled_files() {
-        let folder = dirname::<Posix>(files.module(file).file_name());
+        let folder = Posix::dirname_or_root(files.module(file).file_name());
         let paths = files.analysis(file).paths_created.iter();
         created.extend(paths.map(|&it| from_argument(folder, files.atoms.bytes(it))));
     }
@@ -1138,7 +1137,7 @@ fn find_folders_listed_in_part(
     if !hands_on || package_of(file).is_none() || !(lists(file) || loads_lister()) {
         return Vec::new();
     }
-    let folder = dirname::<Posix>(files.module(file).file_name());
+    let folder = Posix::dirname_or_root(files.module(file).file_name());
     // `path.join(__dirname, "lib")` hands on the folder that it names.
     let is_named = |operand: ExprId| analysis.named_paths.iter().any(|it| it.operand == operand);
     let own = (analysis.own_folder_arguments.iter()).filter(|it| !is_named(it.0));
@@ -1196,7 +1195,7 @@ fn find_searches_missing_manifests(
     provider: &dyn SourceProvider,
 ) -> Vec<(ExprId, Vec<u8>, Code)> {
     let module = files.module(file).file_name();
-    let folder = dirname::<Posix>(module);
+    let folder = Posix::dirname_or_root(module);
     let mut seen: FxHashSet<Atom> = FxHashSet::default();
     let mut found = Vec::new();
     for named in files.analysis(file).named_paths {
@@ -1233,7 +1232,7 @@ fn find_excluded_named_paths(
     let (files, sources) = (view.files(), view.sources);
     let module = files.module(file).file_name();
     let is_of_project = provider.is_own_module_of_project(to_native(module));
-    let folder = dirname::<Posix>(module);
+    let folder = Posix::dirname_or_root(module);
     let mut found = Vec::new();
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     for named in files.analysis(file).named_paths {

@@ -8,15 +8,12 @@ use bun_core::strings;
 use crate::path_backend::PathBackend;
 use crate::path_style::VolumeKind;
 use crate::path_unit::PathUnit;
-use crate::platform::{Posix, Windows};
+use crate::platform::{Posix, Windows, WindowsForwardSlash};
 use crate::{
     GenericPath, MAX_PATH_BYTES, NameTooLong, PATH_MAX_WIDE, Path, PathStyle, PoolBackend,
     PoolOrVecBackend, PoolPath, SliceBackend, SlicePath, StackBackend, StackPath, VecBackend,
     VecPath,
 };
-
-/// What `fs::with_known_dirs` reports in tests.
-pub(crate) const KNOWN_DIR: &[u8] = br"/a\A/..\bc/a\/\a/C:\a/a\A\a/b\..\..\a/\";
 
 /// Stand in for the C++ functions, which are not linked into this test binary.
 mod ffi_stubs {
@@ -121,6 +118,153 @@ mod ffi_stubs {
             count,
         }
     }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        let haystack = unsafe { slice_from_raw(haystack, haystack_len) };
+        haystack
+            .iter()
+            .position(|&b| b == needle)
+            .unwrap_or(haystack_len)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_any_char(
+        text: *const u8,
+        text_len: usize,
+        chars: *const u8,
+        chars_len: usize,
+    ) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        let (text, chars) = unsafe {
+            (
+                slice_from_raw(text, text_len),
+                slice_from_raw(chars, chars_len),
+            )
+        };
+        text.iter()
+            .position(|b| chars.contains(b))
+            .unwrap_or(text_len)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_last_index_of_char(h: *const u8, n: usize, c: u8) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        let h = unsafe { slice_from_raw(h, n) };
+        h.iter().rposition(|&b| b == c).unwrap_or(n)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_count_char(h: *const u8, n: usize, c: u8) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        let h = unsafe { slice_from_raw(h, n) };
+        h.iter().filter(|&&b| b == c).count()
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_memrmem16(
+        h: *const u16,
+        n: usize,
+        nd: *const u16,
+        k: usize,
+    ) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        let (h, nd) = unsafe { (slice_from_raw(h, n), slice_from_raw(nd, k)) };
+        let last = n
+            .checked_sub(k)
+            .and_then(|end| (0..=end).rev().find(|&i| h[i..i + k] == *nd));
+        last.unwrap_or(usize::MAX)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
+        buf: *const u8,
+        len: usize,
+        utf16_output: *mut u16,
+    ) -> SIMDUTFResult {
+        // SAFETY: see `slice_from_raw`.
+        let input = unsafe { slice_from_raw(buf, len) };
+        let mut written = 0usize;
+        let mut i = 0usize;
+        while i < len {
+            let b = input[i];
+            let cont = |off: usize| i + off < len && input[i + off] & 0xC0 == 0x80;
+            let (cp, adv): (u32, usize) = if b < 0x80 {
+                (b as u32, 1)
+            } else if (0xC2..0xE0).contains(&b) && cont(1) {
+                (
+                    (u32::from(b & 0x1F) << 6) | u32::from(input[i + 1] & 0x3F),
+                    2,
+                )
+            } else if (0xE0..0xF0).contains(&b) && cont(1) && cont(2) {
+                let cp = (u32::from(b & 0x0F) << 12)
+                    | (u32::from(input[i + 1] & 0x3F) << 6)
+                    | u32::from(input[i + 2] & 0x3F);
+                if (0xD800..=0xDFFF).contains(&cp) {
+                    return SIMDUTFResult {
+                        status: SURROGATE,
+                        count: i,
+                    };
+                }
+                (cp, 3)
+            } else if (0xF0..0xF5).contains(&b) && cont(1) && cont(2) && cont(3) {
+                (
+                    (u32::from(b & 0x07) << 18)
+                        | (u32::from(input[i + 1] & 0x3F) << 12)
+                        | (u32::from(input[i + 2] & 0x3F) << 6)
+                        | u32::from(input[i + 3] & 0x3F),
+                    4,
+                )
+            } else {
+                return SIMDUTFResult {
+                    status: Status::TOO_SHORT,
+                    count: i,
+                };
+            };
+            // SAFETY: the caller reserved the space, which Miri checks here.
+            unsafe {
+                if cp <= 0xFFFF {
+                    utf16_output.add(written).write(cp as u16);
+                    written += 1;
+                } else {
+                    let v = cp - 0x10000;
+                    utf16_output.add(written).write(0xD800 + (v >> 10) as u16);
+                    utf16_output
+                        .add(written + 1)
+                        .write(0xDC00 + (v & 0x3FF) as u16);
+                    written += 2;
+                }
+            }
+            i += adv;
+        }
+        SIMDUTFResult {
+            status: Status::SUCCESS,
+            count: written,
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__utf16_length_from_utf8(input: *const u8, length: usize) -> usize {
+        // SAFETY: see `slice_from_raw`.
+        let input = unsafe { slice_from_raw(input, length) };
+        input
+            .iter()
+            .map(|&b| {
+                if b & 0xC0 == 0x80 {
+                    0
+                } else if b >= 0xF0 {
+                    2
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
 }
 
 thread_local!(static ALLOCATIONS: Cell<usize> = const { Cell::new(0) });
@@ -149,20 +293,6 @@ mod counting {
 
     #[global_allocator]
     static ALLOCATOR: Counting = Counting;
-}
-
-struct LooseOnPosix;
-impl PathStyle for LooseOnPosix {
-    const SEP: u8 = b'/';
-    const BACKSLASH_IS_SEP: bool = true;
-    const WIN32: bool = false;
-}
-
-struct LooseOnWindows;
-impl PathStyle for LooseOnWindows {
-    const SEP: u8 = b'/';
-    const BACKSLASH_IS_SEP: bool = true;
-    const WIN32: bool = true;
 }
 
 trait Unit: PathUnit + fmt::Debug {
@@ -195,7 +325,6 @@ enum Op {
     Prepend(String),
     WriteFmt(String, String),
     Push(String),
-    PushAnySep(String),
     PushFmt(String, String),
     SetBasename(String),
     SetExtension(String),
@@ -203,9 +332,7 @@ enum Op {
     CopyTrailingSepFrom(String),
     Join(Vec<String>),
     Resolve(Vec<String>),
-    ResolveAnySep(Vec<String>),
     Relative(String, String),
-    RelativeAnySep(String, String),
     MakeLongPath,
     MakeNtPath,
     StripNtPrefix,
@@ -228,7 +355,6 @@ fn apply<B: PathBackend<Unit: Unit>, S: PathStyle, C: Unit>(
         Op::Prepend(arg) => path.prepend(&encode(arg)),
         Op::WriteFmt(a, b) => write!(path, "{a}{b}"),
         Op::Push(arg) => path.push(&C::encode(arg)),
-        Op::PushAnySep(arg) => path.push_any_sep(&C::encode(arg)),
         Op::PushFmt(a, b) => path.push_fmt(format_args!("{a}{b}")),
         Op::SetBasename(arg) => path.set_basename(&C::encode(arg)),
         Op::SetExtension(arg) => path.set_extension(&C::encode(arg)),
@@ -236,13 +362,7 @@ fn apply<B: PathBackend<Unit: Unit>, S: PathStyle, C: Unit>(
         Op::CopyTrailingSepFrom(arg) => path.copy_trailing_sep_from(&C::encode(arg)),
         Op::Join(parts) => with_parts(parts, &mut |parts| B::output(path.try_join(parts))),
         Op::Resolve(parts) => with_parts(parts, &mut |parts| path.resolve_in_place(parts)),
-        Op::ResolveAnySep(parts) => {
-            with_parts(parts, &mut |parts| path.resolve_any_sep_in_place(parts))
-        }
-        Op::Relative(from, to) => B::output(path.try_relative::<false>(&encode(from), &encode(to))),
-        Op::RelativeAnySep(from, to) => {
-            B::output(path.try_relative::<true>(&encode(from), &encode(to)))
-        }
+        Op::Relative(from, to) => B::output(path.try_relative(&encode(from), &encode(to))),
         Op::MakeLongPath => path.make_long_path(),
         Op::MakeNtPath => path.make_nt_path(),
         Op::StripNtPrefix => {
@@ -274,7 +394,7 @@ mod model {
     }
 
     impl Parsed {
-        fn has_sep(&self) -> bool {
+        pub(super) fn has_sep(&self) -> bool {
             self.root.ends_with(['/', '\\']) && self.tail.starts_with(['/', '\\'])
         }
         pub(super) fn is_absolute(&self) -> bool {
@@ -283,7 +403,7 @@ mod model {
     }
 
     pub(super) fn is_sep<S: PathStyle>(c: char) -> bool {
-        c == '/' || (S::BACKSLASH_IS_SEP && c == '\\')
+        c == '/' || (S::WIN32 && c == '\\')
     }
 
     fn sep<S: PathStyle>() -> String {
@@ -315,11 +435,8 @@ mod model {
         let all = components::<S>(path);
         let is_double = S::WIN32 && sep_at(0) && sep_at(1) && chars.len() > 2 && !sep_at(2);
         let is_nt = S::SEP == b'\\' && (path == r"\??" || path.starts_with(r"\??\"));
-        let is_drive = S::BACKSLASH_IS_SEP
-            && !sep_at(0)
-            && chars.get(1) == Some(&':')
-            && chars[0].len_utf16() == 1
-            && (S::WIN32 || sep_at(2));
+        let is_drive =
+            S::WIN32 && !sep_at(0) && chars.get(1) == Some(&':') && chars[0].len_utf16() == 1;
 
         let (kind, volume, volume_len) = if is_double || is_nt {
             let is_device = is_nt || all[0] == "." || all[0] == "?";
@@ -339,11 +456,7 @@ mod model {
                 ends.take(count).last().unwrap(),
             )
         } else if is_drive {
-            let letter = if S::WIN32 {
-                chars[0].to_ascii_uppercase()
-            } else {
-                chars[0]
-            };
+            let letter = chars[0].to_ascii_uppercase();
             (VolumeKind::Drive, format!("{letter}:"), 2)
         } else {
             (VolumeKind::None, String::new(), 0)
@@ -535,17 +648,22 @@ mod model {
     }
 
     fn add_namespace_prefix<S: PathStyle>(path: &str, prefix: &str) -> String {
-        if S::SEP != b'\\' {
+        if S::SEP != b'\\' || path.is_empty() {
             return path.into();
         }
-        let path = join::<S>(&[path]);
+        let mut path = join::<S>(&[path]);
         let parsed = parse::<S>(&path);
+        if path.len() > parsed.root.len() && path.ends_with(is_sep::<S>) {
+            path.pop();
+        }
         match (parsed.kind, parsed.is_absolute(), prefix == r"\??\") {
             (VolumeKind::Drive, true, _) | (VolumeKind::None, true, true) => {
                 format!("{prefix}{path}")
             }
             (VolumeKind::Unc, ..) => format!(r"{prefix}UNC{}", &path[1..]),
-            (VolumeKind::Device, _, true) => format!(r"\??{}", &path[3..]),
+            (VolumeKind::Device, _, is_nt) if is_nt || &path[2..3] == "?" => {
+                format!("{}{}", &prefix[..3], &path[3..])
+            }
             _ => path,
         }
     }
@@ -568,25 +686,6 @@ mod model {
         path.into()
     }
 
-    fn convert_backslashes_except_known(path: &str) -> String {
-        let is_known = |name: &str| text(KNOWN_DIR).split('/').any(|known| known == name);
-        let convert = |name: &str| {
-            let pieces: Vec<&str> = name.split('\\').collect();
-            let kept = (1..=pieces.len()).rfind(|&n| is_known(&pieces[..n].join(r"\")));
-            let (kept, rest) = pieces.split_at(kept.unwrap_or(1));
-            [&[&kept.join(r"\")[..]], rest].concat().join("/")
-        };
-        path.split('/').map(convert).collect::<Vec<_>>().join("/")
-    }
-
-    fn any_sep_to_posix(part: &String) -> String {
-        match part.chars().next() {
-            Some('/') => convert_backslashes_except_known(part),
-            Some('\\') => format!("./{}", normalize_seps::<LooseOnPosix>(part)),
-            _ => normalize_seps::<LooseOnPosix>(part),
-        }
-    }
-
     pub(super) fn expected<S: PathStyle>(path: &str, op: &Op) -> String {
         let with_path = |parts: &'_ [String], f: fn(&[&str]) -> String| {
             let mut all = vec![path];
@@ -600,13 +699,6 @@ mod model {
             Op::Prepend(arg) => format!("{arg}{path}"),
             Op::WriteFmt(a, b) => format!("{path}{a}{b}"),
             Op::Push(arg) => push::<S>(path, arg),
-            Op::PushAnySep(arg) if S::BACKSLASH_IS_SEP || arg.is_empty() => push::<S>(path, arg),
-            Op::PushAnySep(arg) if path.is_empty() && arg.starts_with('/') => {
-                push::<S>(path, &convert_backslashes_except_known(arg))
-            }
-            Op::PushAnySep(arg) => {
-                push::<S>(path, &format!("./{}", normalize_seps::<LooseOnPosix>(arg)))
-            }
             Op::PushFmt(a, b) => push::<S>(path, &format!("{a}{b}")),
             Op::SetBasename(arg) => match parsed.components.last() {
                 None => push::<S>(path, arg),
@@ -630,17 +722,7 @@ mod model {
             Op::CopyTrailingSepFrom(_) => path.into(),
             Op::Join(parts) => with_path(parts, join::<S>),
             Op::Resolve(parts) => with_path(parts, resolve::<S>),
-            Op::ResolveAnySep(parts) if S::BACKSLASH_IS_SEP => with_path(parts, resolve::<S>),
-            Op::ResolveAnySep(parts) => {
-                let parts: Vec<String> = parts.iter().map(any_sep_to_posix).collect();
-                with_path(&parts, resolve::<S>)
-            }
             Op::Relative(from, to) => relative::<S>(from, to),
-            Op::RelativeAnySep(from, to) if S::BACKSLASH_IS_SEP => relative::<S>(from, to),
-            Op::RelativeAnySep(from, to) => {
-                let relative = relative::<S>(&any_sep_to_posix(from), &any_sep_to_posix(to));
-                collapse_dots(&without_volume::<LooseOnPosix>(&relative, false)).join("/")
-            }
             Op::MakeLongPath => add_namespace_prefix::<S>(path, r"\\?\"),
             Op::MakeNtPath => add_namespace_prefix::<S>(path, r"\??\"),
             Op::StripNtPrefix => strip_nt_prefix::<S>(path),
@@ -676,35 +758,28 @@ impl Random {
     }
 
     fn op(&mut self, round: usize) -> Op {
-        const ARMS: usize = 25;
+        const ARMS: usize = 21;
         match round % ARMS {
             0 => Op::Set(self.path()),
             1 => Op::ExtendFromSlice(self.path()),
             2 => Op::Prepend(self.path()),
             3 => Op::WriteFmt(self.path(), self.path()),
             4 => Op::Push(self.path()),
-            5 => Op::PushAnySep(self.path()),
-            6 => Op::PushFmt(self.path(), self.path()),
-            7 => Op::SetBasename(self.path()),
-            8 => Op::SetExtension(self.path()),
-            9 => Op::PushTrailingSep,
-            10 => NORMALIZE,
-            11 | 12 => Op::Join(self.paths()),
-            13 | 14 => Op::Resolve(self.paths()),
-            15 => Op::ResolveAnySep(self.paths()),
-            16 => Op::Relative(self.path(), self.path()),
-            17 | 18 => {
+            5 => Op::PushFmt(self.path(), self.path()),
+            6 => Op::SetBasename(self.path()),
+            7 => Op::SetExtension(self.path()),
+            8 => Op::PushTrailingSep,
+            9 => NORMALIZE,
+            10 | 11 => Op::Join(self.paths()),
+            12 | 13 => Op::Resolve(self.paths()),
+            14 => Op::Relative(self.path(), self.path()),
+            15 | 16 => {
                 let base = self.path();
                 Op::Relative(base.clone() + &self.path(), base + &self.path())
             }
-            19 => Op::RelativeAnySep(self.path(), self.path()),
-            20 => {
-                let base = self.path();
-                Op::RelativeAnySep(base.clone() + &self.path(), base + &self.path())
-            }
-            21 => Op::MakeLongPath,
-            22 => Op::MakeNtPath,
-            23 => Op::CopyTrailingSepFrom(self.path()),
+            17 => Op::MakeLongPath,
+            18 => Op::MakeNtPath,
+            19 => Op::CopyTrailingSepFrom(self.path()),
             _ => Op::StripNtPrefix,
         }
     }
@@ -754,16 +829,10 @@ fn check_against_model<S: PathStyle>() {
     for round in 0..12 * ROUNDS {
         let op = random.op(round);
         let before = match op {
-            Op::Relative(..) | Op::RelativeAnySep(..) => String::new(),
+            Op::Relative(..) => String::new(),
             _ => random.path(),
         };
-        // Only `u8` paths have known directories.
-        let uses_known_dirs = !S::BACKSLASH_IS_SEP
-            && matches!(
-                op,
-                Op::PushAnySep(_) | Op::ResolveAnySep(_) | Op::RelativeAnySep(..)
-            );
-        let check = match random.below(if uses_known_dirs { 2 } else { 4 }) {
+        let check = match random.below(4) {
             0 => check_every_capacity::<S, u8, u8>,
             1 => check_every_capacity::<S, u8, u16>,
             2 => check_every_capacity::<S, u16, u8>,
@@ -785,7 +854,14 @@ fn check_style_getters<S: PathStyle, U: Unit>(path: &str, dir: &str) {
         .unwrap_or_default()[..];
     let stem = &name[..name.len() - model::extension(name).len()];
     assert_eq!(S::root(&units), U::encode(&parsed.root), "{path:?}");
+    let volume = &parsed.root[..parsed.root.len() - usize::from(parsed.has_sep())];
+    assert_eq!(S::volume(&units), U::encode(volume), "{path:?}");
     assert_eq!(S::is_absolute(&units), parsed.is_absolute(), "{path:?}");
+    assert_eq!(
+        S::is_fully_qualified(&units),
+        parsed.is_absolute() && !(S::WIN32 && parsed.volume.is_empty()),
+        "{path:?}"
+    );
     assert_eq!(S::basename(&units), U::encode(name), "{path:?}");
     assert_eq!(S::stem(&units), U::encode(stem), "{path:?}");
     assert_eq!(
@@ -825,6 +901,45 @@ fn check_style_getters<S: PathStyle, U: Unit>(path: &str, dir: &str) {
             .as_deref(),
         "{path:?}"
     );
+    assert_eq!(
+        S::dirname_or_root(&units),
+        S::dirname(&units).unwrap_or(&U::encode(&parsed.root)),
+        "{path:?}"
+    );
+
+    let mut depths = parsed.components.iter().scan(0, |depth, name| {
+        *depth += match &name[..] {
+            "." => 0,
+            ".." => -1,
+            _ => 1,
+        };
+        Some(*depth)
+    });
+    assert_eq!(
+        S::climbs_out(&units),
+        !parsed.root.is_empty() || depths.any(|depth| depth < 0),
+        "{path:?}"
+    );
+
+    let mut stripped = GenericPath::<VecBackend<U>, S>::from(&units);
+    stripped.strip_nt_prefix();
+    assert_eq!(
+        S::without_nt_prefix(&units),
+        match S::has_leading_sep(stripped.as_slice()) {
+            true => &units,
+            false => stripped.as_slice(),
+        },
+        "{path:?}"
+    );
+
+    let dir_units = U::encode(dir);
+    let is_in_both = |above: &&[U]| S::strip_prefix(&dir_units, above).is_some();
+    assert_eq!(
+        S::common_ancestor([&units[..], &dir_units].into_iter()),
+        S::ancestors(&units).find(is_in_both),
+        "{path:?} {dir:?}"
+    );
+
     let root_counts = parsed.is_absolute() || (names.is_empty() && !path.is_empty());
     assert_eq!(
         S::ancestors(&units).count(),
@@ -921,7 +1036,7 @@ macro_rules! for_each_style {
         }
     )*};
 }
-for_each_style!(posix: Posix, windows: Windows, loose_on_posix: LooseOnPosix, loose_on_windows: LooseOnWindows);
+for_each_style!(posix: Posix, windows: Windows, windows_forward_slash: WindowsForwardSlash);
 
 /// Mirrors `RtlDetermineDosPathNameType_U`, plus the `\??\` prefix.
 fn win32_path_type(path: &str) -> &'static str {
@@ -983,14 +1098,17 @@ fn namespace_prefix_round_trips() {
             (r"\\s\h\a", Op::MakeLongPath),
             (r"\\s\h", Op::MakeNtPath),
         ] {
+            let trim = |path: &str| text(Windows::without_trailing_sep(path.as_bytes())).to_owned();
             let joined = actual::<Windows>(base, &Op::Join(rest.clone()));
             let prefixed = actual::<Windows>(&joined, &add);
-            assert_eq!(
-                actual::<Windows>(&actual::<Windows>(base, &add), &Op::Join(rest.clone())),
-                prefixed
-            );
+            let prefixed_first =
+                actual::<Windows>(&actual::<Windows>(base, &add), &Op::Join(rest.clone()));
+            assert_eq!(trim(&prefixed_first), prefixed);
             assert_eq!(actual::<Windows>(&prefixed, &add), prefixed);
-            assert_eq!(actual::<Windows>(&prefixed, &Op::StripNtPrefix), joined);
+            assert_eq!(
+                actual::<Windows>(&prefixed, &Op::StripNtPrefix),
+                trim(&joined)
+            );
         }
     }
 }
@@ -1114,7 +1232,10 @@ fn relative_matches_node() {
 #[test]
 fn long_path_matches_node() {
     for (path, expected) in [
+        ("", ""),
+        ("C:/", r"\\?\C:\"),
         ("C:/foo", r"\\?\C:\foo"),
+        ("C:/foo/", r"\\?\C:\foo"),
         ("//foo//bar/baz", r"\\?\UNC\foo\bar\baz"),
         (r"\\?\foo", r"\\?\foo"),
         (r"\\.\pipe\somepipe", r"\\.\pipe\somepipe"),
@@ -1148,85 +1269,118 @@ fn differs_from_node() {
 #[test]
 fn case_insensitive_only_on_windows() {
     let relative = Op::Relative("c:/a".into(), "C:/b".into());
-    assert_eq!(actual::<LooseOnWindows>("", &relative), "../b");
-    assert_eq!(actual::<LooseOnPosix>("", &relative), "C:/b");
-    assert_eq!(
-        LooseOnWindows::strip_prefix(b"c:/a", b"C:/"),
-        Some(&b"a"[..])
-    );
-    assert_eq!(LooseOnPosix::strip_prefix(b"c:/a", b"C:/"), None);
+    assert_eq!(actual::<WindowsForwardSlash>("", &relative), "../b");
+    assert_eq!(actual::<Posix>("", &relative), "../../C:/b");
+    assert_eq!(Windows::strip_prefix(b"c:/a", b"C:/"), Some(&b"a"[..]));
+    assert_eq!(Posix::strip_prefix(b"c:/a", b"C:/"), None);
 }
 
 #[test]
-fn resolve_any_sep_keeps_backslash_in_known_dir_names() {
-    for (part, expected) in [
-        (r"/x/a\A/y\z", r"/x/a\A/y/z"),
-        (r"/x\y/../a\A\a\z", r"/x/a\A\a/z"),
-        (r"/a\A\..\z", "/z"),
-        (r"/a\Az", "/a/Az"),
-        (r"/z\a\A", "/z/a/A"),
-        (r"a\A", r"/x\y/a/A"),
+fn common_ancestor_ends_at_a_component() {
+    let common = |paths: &[&'static str]| {
+        Posix::common_ancestor(paths.iter().map(|path| path.as_bytes())).map(text)
+    };
+    assert_eq!(common(&["/a/bc/d", "/a/bd/d", "/a/b"]), Some("/a"));
+    assert_eq!(common(&["/a/b/", "/a/b"]), Some("/a/b"));
+    assert_eq!(common(&["/a", "/b"]), Some("/"));
+    assert_eq!(common(&["a", "b"]), None);
+    assert_eq!(common(&[]), None);
+    let drives = [&br"C:\a"[..], br"D:\a"];
+    assert_eq!(Windows::common_ancestor(drives.into_iter()), None);
+}
+
+#[test]
+fn without_leading_dot_slash_removes_one() {
+    for (path, posix, windows) in [
+        ("./a", "a", "a"),
+        ("././a", "./a", "./a"),
+        (r".\a", r".\a", "a"),
+        ("../a", "../a", "../a"),
+        (".", ".", "."),
     ] {
-        let resolve = Op::ResolveAnySep(vec![part.into()]);
-        assert_eq!(actual::<Posix>(r"/x\y", &resolve), expected);
+        let path = path.as_bytes();
+        assert_eq!(text(Posix::without_leading_dot_slash(path)), posix);
+        assert_eq!(text(Windows::without_leading_dot_slash(path)), windows);
     }
 }
 
 #[test]
-fn wide_paths_have_no_known_dir_names() {
-    let path = GenericPath::<VecBackend<u16>, Posix>::resolve_any_sep(&[br"/x/a\A"]);
-    assert_eq!(path.as_slice(), u16::encode("/x/a/A"));
-}
-
-#[test]
-#[cfg(unix)]
-fn resolve_path_join_abs_keeps_trailing_slash() {
-    for (cwd, parts, expected) in [
-        ("/a", &["b/"][..], "/a/b/"),
-        ("/a", &["b/", ""], "/a/b/"),
-        ("/a", &["b/../"], "/a/"),
-        ("/a", &["/b/"], "/b/"),
-        ("/a", &["../"], "/"),
-        ("/a/", &[""], "/a/"),
-        ("/a/", &["."], "/a"),
-        ("/a/", &["b/.."], "/a"),
-        ("/a/", &[r"b\"], "/a/b"),
+fn is_parent_or_equal_compares_components() {
+    use crate::ParentEqual::{Equal, Parent, Unrelated};
+    let ignores_case = cfg!(not(any(target_os = "linux", target_os = "android")));
+    for (parent, child, expected) in [
+        ("/a", "/a", Equal),
+        ("/a/", "/a", Equal),
+        ("/a", "/a/", Equal),
+        ("/a", "/a/b", Parent),
+        ("/a/", "/a/b", Parent),
+        ("/", "/a", Parent),
+        ("/a", "/ab", Unrelated),
+        ("/a/b", "/a", Unrelated),
+        ("/A", "/a/b", if ignores_case { Parent } else { Unrelated }),
+        (
+            "/a",
+            r"/a\b",
+            if cfg!(windows) { Parent } else { Unrelated },
+        ),
     ] {
-        let parts: Vec<&[u8]> = parts.iter().map(|part| part.as_bytes()).collect();
-        let joined = crate::resolve_path::join_abs_string::<Posix>(cwd.as_bytes(), &parts);
-        assert_eq!(text(joined), expected, "{cwd} {parts:?}");
+        let actual = crate::is_parent_or_equal(parent.as_bytes(), child.as_bytes());
+        assert_eq!(actual, expected, "{parent:?} {child:?}");
     }
 }
 
 #[test]
-#[cfg(unix)]
-fn resolve_path_relative_handles_known_dir_names() {
-    for (from, to, expected) in [
-        (r"/x/a\A/q", r"/x/f", "../../f"),
-        (r"/x/a\A/q", r"/x/a/A/q/f", "f"),
-        (r"/x/a/A/q", r"/x/a\A/q/f", "f"),
-        (r"/x/a\A/q", r"/x/a/B", "../../a/B"),
-        (r"/x/a\A/q", r"/x/a/AB", "../../a/AB"),
-        (r"/x/q", r"/x/a\A/f", "../a/A/f"),
-        (r"/x/a\", r"/x/a", "../a"),
-        (r"/x/a\", r"/x/a/", ""),
+fn converters_change_only_separators() {
+    const MIXED: &[u8] = br"c:\a/.\\b/";
+    let (posix, windows) = (r"c:/a/.//b/", r"c:\a\.\\b\");
+    let on_windows = |converted| {
+        if cfg!(windows) {
+            converted
+        } else {
+            text(MIXED)
+        }
+    };
+    assert_eq!(text(&crate::slashes_to_posix(MIXED)), posix);
+    assert_eq!(text(&crate::platform_to_posix(MIXED)), on_windows(posix));
+    assert_eq!(text(&crate::posix_to_platform(MIXED)), on_windows(windows));
+    let mut wide = u16::encode(text(MIXED));
+    crate::slashes_to_windows_in_place(&mut wide);
+    assert_eq!(wide, u16::encode(windows));
+}
+
+#[test]
+fn add_current_drive_completes_only_a_rooted_path() {
+    for path in [
+        "",
+        "a",
+        "C:a",
+        r"C:\a",
+        r"\\s\h\a",
+        r"\\?\C:\a",
+        r"\??\C:\a",
     ] {
-        let relative = crate::resolve_path::relative(from.as_bytes(), to.as_bytes());
-        assert_eq!(text(relative), expected, "{from} {to}");
+        let mut actual = Path::from(path.as_bytes());
+        actual.add_current_drive();
+        assert_eq!(text(&actual), path);
     }
+    let mut rooted = Path::from(b"/a");
+    rooted.add_current_drive();
+    assert!(rooted.ends_with(b"/a") && crate::is_fully_qualified(&rooted));
 }
 
 #[test]
 #[cfg(unix)]
-fn without_trailing_any_sep_keeps_known_backslash() {
-    use crate::string_paths::without_trailing_any_sep as trim;
-    assert_eq!(trim(br"/a\//"), br"/a\");
-    assert_eq!(trim(br"./a\/"), b"./a");
-    assert_eq!(trim(br"/a\\/"), br"/a\");
-    assert_eq!(trim(br"/bc\/\\\"), br"/bc\/\");
-    assert_eq!(trim(br"/bc\\/"), b"/bc");
-    assert_eq!(trim(b"//"), b"/");
-    assert_eq!(trim(b""), b"");
+fn windows_to_platform_keeps_absolute_posix_paths() {
+    for (path, expected) in [
+        (r".\a\b", "./a/b"),
+        (r"a/b\", "a/b/"),
+        (r"\a", "/a"),
+        (r"C:\a", "C:/a"),
+        (r"/home/DOMAIN\user", r"/home/DOMAIN\user"),
+        ("", ""),
+    ] {
+        assert_eq!(text(&crate::windows_to_platform(path.as_bytes())), expected);
+    }
 }
 
 #[test]
@@ -1301,15 +1455,14 @@ fn check_stack<S: PathStyle, U: Unit, const N: usize>(fits: bool) {
     type Edit<S, U, const N: usize> =
         fn(&mut GenericPath<StackBackend<N, U>, S>) -> Result<(), NameTooLong>;
     const LONG: &[u8] = b"a/../b/../c";
-    let edits: [Edit<S, U, N>; 8] = [
+    let edits: [Edit<S, U, N>; 7] = [
         |path| path.set(LONG),
         |path| path.extend_from_slice(LONG),
         |path| write!(path, "{}", text(LONG)),
         |path| path.push(LONG),
-        |path| path.push_any_sep(LONG),
         |path| path.push_fmt(format_args!("{}", text(LONG))),
         |path| path.try_join(&[LONG]),
-        |path| path.resolve_any_sep_in_place(&[LONG]),
+        |path| path.resolve_in_place(&[LONG]),
     ];
     init_cwd();
     let allocations = ALLOCATIONS.get();
@@ -1320,10 +1473,7 @@ fn check_stack<S: PathStyle, U: Unit, const N: usize>(fits: bool) {
         assert!(fits || path.as_slice() == U::lit(b".."));
         assert!(is_terminated(&path));
     }
-    let to = br"/b\a".map(U::from_u8);
     let relative = GenericPath::<StackBackend<N, U>, S>::relative(U::lit(b"//"), U::lit(b".."));
-    assert_eq!(relative.is_ok(), fits);
-    let relative = GenericPath::<StackBackend<N, U>, S>::relative_any_sep(U::lit(b"//"), &to);
     assert_eq!(relative.is_ok(), fits);
     assert_eq!(ALLOCATIONS.get(), allocations);
 }

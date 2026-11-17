@@ -117,13 +117,13 @@ fn name_range_on_disk(source: &bun_ast::Source) -> bun_ast::Range {
 }
 
 /// Returns the path in the form that `dependency::Value::Folder` has in local packages, or `None` if it
-/// is too long.
+/// is too long. `folder` is as the package.json in `pkg_dir` spells it.
 pub(crate) fn folder_relative_to_top_level_dir(
     pkg_dir: &[u8],
     folder: &[u8],
 ) -> Option<ForwardSlashPath> {
     let top_level_dir = FileSystem::get().top_level_dir();
-    let joined = lockfile::resolve_for_lockfile(top_level_dir, &[pkg_dir, folder]).ok()?;
+    let joined = lockfile::join_top_level_dir(&[pkg_dir, &path::windows_to_platform(folder)])?;
     let mut relative = ForwardSlashPath::relative(top_level_dir, &joined);
     // empty when the package depends on itself
     if relative.is_empty() {
@@ -2100,14 +2100,20 @@ impl Package<u64> {
                 | dependency::version::Tag::Folder
                 | dependency::version::Tag::Symlink
                 | dependency::version::Tag::Tarball => {
+                    let to_posix = |path: &mut [u8]| {
+                        path::platform_to_posix_in_place(path);
+                        if let [drive, b':', b'/', ..] = path {
+                            drive.make_ascii_uppercase();
+                        }
+                    };
                     if String::can_inline(version) {
                         let mut copy = string_builder.append::<String>(version);
-                        path::dangerously_convert_path_to_posix_in_place::<u8>(&mut copy.bytes);
+                        to_posix(&mut copy.bytes);
                         break 'brk copy;
                     } else {
                         let str_ = string_builder.append::<String>(version);
                         let ptr = str_.ptr();
-                        path::dangerously_convert_path_to_posix_in_place::<u8>(
+                        to_posix(
                             &mut string_builder.string_bytes
                                 [ptr.off as usize..(ptr.off + ptr.len) as usize],
                         );
@@ -2211,9 +2217,10 @@ impl Package<u64> {
                 if (features.is_main || features.is_workspace || features.is_folder)
                     && (!is_link || dependency::is_link_path(target.slice(buf))) =>
             {
-                let Some(relative) =
-                    folder_relative_to_top_level_dir(source.path.name().dir, target.slice(buf))
-                else {
+                let Some(relative) = folder_relative_to_top_level_dir(
+                    workspace_map::package_json_dir(source),
+                    target.slice(buf),
+                ) else {
                     return Err(unsafe_folder_path(log, buf));
                 };
                 let relative = relative.as_bytes();
@@ -2334,10 +2341,15 @@ impl Package<u64> {
                     {
                         b"*"
                     } else {
+                        let dir = workspace_map::package_json_dir(source);
                         // `.` for `workspace:.` in the root package.json
-                        let Some(path) =
-                            folder_relative_to_top_level_dir(source.path.name().dir, workspace)
-                        else {
+                        let Some(path) = (if tag.is_some() {
+                            // The path of a directory that "workspaces" led to, not a spelling.
+                            let member_dir = path::Path::resolve(&[dir, workspace]);
+                            folder_relative_to_top_level_dir(&member_dir, b".")
+                        } else {
+                            folder_relative_to_top_level_dir(dir, workspace)
+                        }) else {
                             return Err(unsafe_folder_path(log, buf));
                         };
                         relative_path = path;
@@ -3030,7 +3042,7 @@ impl Package<u64> {
         if !resolver.is_void() {
             let has_scripts = self.scripts.has_any()
                 || self.scripts.wants_default_node_gyp(
-                    source.path.name().dir,
+                    workspace_map::package_json_dir(source),
                     Some(scripts::gypfile_from_json(json)),
                 );
             self.meta.set_has_install_script(has_scripts);
@@ -3116,7 +3128,7 @@ impl Package<u64> {
                                     continue;
                                 }
                                 if strings::eql_long(&value.name, &entry.name) {
-                                    let note_abs_path = path::Path::resolve_any_sep(&[
+                                    let note_abs_path = path::Path::resolve(&[
                                         root_dir,
                                         note_path,
                                         b"package.json",
@@ -3147,8 +3159,7 @@ impl Package<u64> {
                             break 'notes notes;
                         };
 
-                        let abs_path =
-                            path::Path::resolve_any_sep(&[root_dir, path_, b"package.json"]);
+                        let abs_path = path::Path::resolve(&[root_dir, path_, b"package.json"]);
 
                         let src = match bun_ast::to_source(&abs_path, Default::default()) {
                             Ok(s) => s,

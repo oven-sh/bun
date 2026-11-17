@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_core::{ZBox, ZStr, strings};
-use bun_paths::resolve_path::{self, Platform, platform};
+use bun_paths::{ForwardSlashPath, Path, VecPath};
 use bun_ptr::{AliasableBox, RefPtr};
 use bun_sys::{E, dir_iterator};
 
@@ -176,40 +176,16 @@ impl Rm {
                             // Check that none of the paths will delete the root.
                             {
                                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
-                                // Operands are unbounded user input, so neither
-                                // step may use the fixed-size thread-local
-                                // buffers behind `join` / `normalize_string`.
-                                // Normalizing never grows a path by more than
-                                // one byte.
-                                let mut join_spill = Vec::new();
-                                let mut normalize_buf = Vec::new();
-
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
-                                    let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
-                                        path
-                                    } else {
-                                        resolve_path::join_spill::<platform::Auto>(
-                                            &mut join_spill,
-                                            &[&cwd, path],
-                                        )
+                                    let resolved = match bun_paths::is_absolute(path) {
+                                        true => Path::from(path),
+                                        false => Path::join(&[&cwd, path]),
                                     };
-                                    if normalize_buf.len() <= resolved.len() {
-                                        normalize_buf.resize(resolved.len() + 1, 0);
-                                    }
-                                    let normalized = resolve_path::normalize_string_buf::<
-                                        false,
-                                        platform::Auto,
-                                        false,
-                                    >(
-                                        resolved, &mut normalize_buf[..]
-                                    );
-                                    let dirname =
-                                        resolve_path::dirname::<platform::Auto>(normalized);
-                                    if dirname.is_empty() {
-                                        // Copy resolved before
-                                        // re-borrowing `interp` mutably.
-                                        let resolved_owned = resolved.to_vec();
+                                    // A root, or what is directly in `/`.
+                                    if (Path::resolve(&[resolved.as_bytes()]).dirname())
+                                        .is_none_or(|parent| parent.len() == 1)
+                                    {
                                         if let Some(safeguard) =
                                             Builtin::of(interp, cmd).stderr.needs_io()
                                         {
@@ -226,7 +202,7 @@ impl Rm {
                                                     Some(Kind::Rm),
                                                     format_args!(
                                                         "\"{}\" may not be removed\n",
-                                                        bstr::BStr::new(&resolved_owned)
+                                                        bstr::BStr::new(resolved.as_bytes())
                                                     ),
                                                     safeguard,
                                                 );
@@ -237,7 +213,7 @@ impl Rm {
                                             Some(Kind::Rm),
                                             format_args!(
                                                 "\"{}\" may not be removed\n",
-                                                bstr::BStr::new(&resolved_owned)
+                                                bstr::BStr::new(resolved.as_bytes())
                                             ),
                                         )
                                         .to_vec();
@@ -729,7 +705,7 @@ impl ShellRmTask {
         }
         // SAFETY: `parent_dir` is live for the duration of its run_from_thread_pool_impl.
         let parent_path = unsafe { (*parent_dir).path.as_bytes() };
-        let new_path = self.join(&[parent_path, path], is_absolute);
+        let new_path = Self::join(parent_path, path, is_absolute);
         self.enqueue_no_join(parent_dir, new_path, kind_hint);
     }
 
@@ -797,53 +773,21 @@ impl ShellRmTask {
         Ok(())
     }
 
-    /// Join into `buf` honoring [`join_style`].
-    fn buf_join<'a>(
-        &self,
-        buf: &'a mut bun_paths::PathBuffer,
-        spill: &'a mut Vec<u8>,
-        parts: &[&[u8]],
-    ) -> &'a ZStr {
-        if self.join_style == JoinStyle::Posix {
-            resolve_path::join_z_buf_spill::<platform::Posix>(buf.as_mut_slice(), spill, parts)
-        } else {
-            resolve_path::join_z_buf_spill::<platform::Windows>(buf.as_mut_slice(), spill, parts)
+    fn join_in_style(&self, parts: &[&[u8]]) -> ZBox {
+        match self.join_style {
+            JoinStyle::Posix => ZBox::from_bytes(ForwardSlashPath::join(parts).as_bytes()),
+            JoinStyle::Windows => VecPath::join(parts).into_zbox(),
         }
     }
 
-    /// Join to an owned ZBox.
-    fn join(&self, parts: &[&[u8]], is_absolute: bool) -> ZBox {
-        if !is_absolute {
-            // If relative paths enabled, stdlib join is preferred over
-            // ResolvePath.joinBuf because it doesn't try to normalize.
-            // Concatenate with the platform separator, collapsing only
-            // adjacent separators. On Windows BOTH `/` and `\` count as
-            // separators when deciding whether to insert/strip one.
-            #[cfg(windows)]
-            let is_sep = |c: u8| c == b'/' || c == b'\\';
-            #[cfg(not(windows))]
-            let is_sep = |c: u8| c == b'/';
-            let mut out: Vec<u8> = Vec::new();
-            for (i, p) in parts.iter().enumerate() {
-                if i == 0 {
-                    out.extend_from_slice(p);
-                } else {
-                    if !matches!(out.last(), Some(&c) if is_sep(c)) {
-                        out.push(bun_paths::SEP);
-                    }
-                    let p = if matches!(p.first(), Some(&c) if is_sep(c)) {
-                        &p[1..]
-                    } else {
-                        p
-                    };
-                    out.extend_from_slice(p);
-                }
-            }
-            return ZBox::from_vec(out);
+    fn join(parent: &[u8], name: &[u8], is_absolute: bool) -> ZBox {
+        if is_absolute {
+            return VecPath::join(&[parent, name]).into_zbox();
         }
-        let mut spill = Vec::new();
-        let joined = resolve_path::join_spill::<platform::Auto>(&mut spill, parts);
-        ZBox::from_bytes(joined)
+        // A relative path is shown as it was typed.
+        let mut path = VecPath::from(parent);
+        path.push(name);
+        path.into_zbox()
     }
 
     #[inline]
@@ -977,7 +921,6 @@ impl ShellRmTask {
         // `delete_after_waiting_for_children` on this dir and the owning
         // `ShellRmTask` would never be freed.
         let mut i: usize = 0;
-        let mut join_spill = Vec::new();
         let loop_result: bun_sys::Maybe<()> = loop {
             let current = match iterator.next() {
                 Err(e) => break Err(self.error_with_path(&e, path.as_bytes())),
@@ -1000,12 +943,7 @@ impl ShellRmTask {
                 }
                 _ => {
                     let name = current.name.slice_u8();
-                    // Copy the join into an owned ZBox so `buf` is free to
-                    // be re-borrowed by the vtable callback.
-                    let file_path = {
-                        let joined = self.buf_join(buf, &mut join_spill, &[path.as_bytes(), name]);
-                        ZBox::from_bytes(joined.as_bytes())
-                    };
+                    let file_path = self.join_in_style(&[path.as_bytes(), name]);
                     if let Err(e) = self.remove_entry_file(
                         dir_task,
                         file_path.as_zstr(),
@@ -1253,7 +1191,7 @@ impl DirTask {
         // the root finishes.
         let (tm_ptr, is_absolute): (*mut ShellRmTask, bool) = unsafe {
             let tm_ptr = (*this).task_manager;
-            let abs = Platform::AUTO.is_absolute((*this).path.as_bytes());
+            let abs = bun_paths::is_absolute((*this).path.as_bytes());
             (*this).is_absolute = abs;
             (tm_ptr, abs)
         };

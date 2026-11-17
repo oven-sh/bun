@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   statSync,
@@ -318,7 +319,7 @@ test.concurrent("a negative workspace pattern does not remove a member listed by
   expect(Object.values(parseLockfile(packageDir).workspace_paths)).toEqual(["packages/pkg1"]);
 });
 
-test.concurrent.skipIf(isWindows)("workspace globs skip directories with a backslash in the name", async () => {
+test.concurrent.skipIf(isWindows)("workspace globs match directories with a backslash in the name", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -329,7 +330,48 @@ test.concurrent.skipIf(isWindows)("workspace globs skip directories with a backs
   ]);
 
   await runBunInstall(env, packageDir);
-  expect(Object.values(parseLockfile(packageDir).workspace_paths)).toEqual(["packages/c"]);
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(Object.keys(Bun.JSONC.parse(lockfile).workspaces)).toEqual(["", "packages/a\\b", "packages/c"]);
+  expect(readlinkSync(join(packageDir, "node_modules", "matched"))).toBe("../packages/a\\b");
+
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
+test.concurrent.each(["packages\\a", "packages\\*", ".\\packages\\a\\"])(
+  'a backslash separates in "workspaces": %s',
+  async entry => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: [entry] })),
+      write(join(packageDir, "packages", "a", "package.json"), JSON.stringify({ name: "a" })),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    expect(Object.keys(Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()).workspaces)).toEqual([
+      "",
+      "packages/a",
+    ]);
+  },
+);
+
+test.concurrent.each([
+  { dependencies: { x: "workspace:packages\\a" } },
+  { dependencies: { x: "1.0.0" }, overrides: { x: "workspace:packages\\a" } },
+  { dependencies: { x: "catalog:" }, catalog: { x: "workspace:packages\\a" } },
+])("a backslash separates behind workspace: in %j", async fields => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"], ...fields })),
+    write(join(packageDir, "packages", "a", "package.json"), JSON.stringify({ name: "a" })),
+  ]);
+
+  await runBunInstall(env, packageDir);
+  expect(Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()).packages.x).toEqual([
+    "a@workspace:packages/a",
+  ]);
 });
 
 // A `/package.json` is only possible with a private root directory: a chroot in a private user and mount namespace.
@@ -350,10 +392,10 @@ done
 mount -o rbind /proc "$NEW_ROOT/proc"
 exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
 
-  async function installIn(newRoot: string, cwd: string) {
+  async function runIn(newRoot: string, cwd: string, args = ["install"]) {
     const bun = realpathSync(bunExe());
     await using proc = spawn({
-      cmd: ["unshare", "-Urm", "/bin/sh", "-c", changeRoot, "sh", cwd, bun, "install"],
+      cmd: ["unshare", "-Urm", "/bin/sh", "-c", changeRoot, "sh", cwd, bun, ...args],
       env: {
         ...baseEnv,
         NEW_ROOT: newRoot,
@@ -378,7 +420,7 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
       "tmp/.keep": "",
     });
     symlinkSync("/home/secret.txt", join(String(dir), "pkg", "secret.txt"));
-    const [stderr, exitCode] = await installIn(String(dir), "/");
+    const [stderr, exitCode] = await runIn(String(dir), "/");
 
     expect(stderr).toContain("warn: skipping link pkg/secret.txt: target is outside the project");
     expect(await readdirSorted(join(String(dir), "node_modules", "pkg"))).toEqual(["package.json"]);
@@ -393,11 +435,56 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
       "proc/.keep": "",
       "tmp/.keep": "",
     });
-    const [stderr, exitCode] = await installIn(String(dir), "/app");
+    const [stderr, exitCode] = await runIn(String(dir), "/app");
 
     expect(stderr).toContain(`error: refusing to install the root of the file system from "file:.."`);
     expect(await readdirSorted(join(String(dir), "app"))).toEqual(["package.json"]);
     expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each([
+    ["hoisted", ".."],
+    ["hoisted", "/"],
+    ["isolated", ".."],
+    ["isolated", "/"],
+  ])("%s linker: a bun.lock row file:%s that resolves to / is refused", async (linker, folder) => {
+    const dependencies = { "fs-root": `file:${folder}` };
+    using dir = tempDir("fs-root-row", {
+      "package.json": JSON.stringify({ name: "fs-root", version: "1.0.0" }),
+      "app/package.json": JSON.stringify({ name: "app", dependencies }),
+      "app/bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies } },
+        packages: { "fs-root": [`fs-root@file:${folder}`, {}] },
+      }),
+      "home/secret.txt": "secret",
+      "proc/.keep": "",
+      "tmp/.keep": "",
+    });
+    const [stderr, exitCode] = await runIn(String(dir), "/app", ["install", "--frozen-lockfile", "--linker", linker]);
+
+    expect(stderr).toContain(`error: refusing to install dependency fs-root with unsafe folder path "${folder}"`);
+    expect([...new Bun.Glob("**/secret.txt").scanSync({ cwd: join(String(dir), "app"), dot: true })]).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("file:. in a project at / is the project", async () => {
+    using dir = tempDir("fs-root-self", {
+      "package.json": JSON.stringify({ name: "fs-root", dependencies: { self: "file:." } }),
+      "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      "home/.keep": "",
+      "proc/.keep": "",
+      "tmp/.keep": "",
+    });
+    const [stderr, exitCode] = await runIn(String(dir), "/", ["add", "./pkg"]);
+
+    expect(stderr).not.toContain("error:");
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain(`"self": ["fs-root@root:", {}]`);
+    expect((await file(join(String(dir), "package.json")).json()).dependencies).toEqual({
+      pkg: "./pkg",
+      self: "file:.",
+    });
+    expect(exitCode).toBe(0);
   });
 
   // Members listed by path: a glob is walked from an open directory and never needed the root's path.
@@ -420,7 +507,7 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
       "proc/.keep": "",
       "tmp/.keep": "",
     });
-    const [stderr, exitCode] = await installIn(String(dir), cwd);
+    const [stderr, exitCode] = await runIn(String(dir), cwd);
 
     expect(stderr).not.toContain("error:");
     expect(stderr).toContain("Saved lockfile");

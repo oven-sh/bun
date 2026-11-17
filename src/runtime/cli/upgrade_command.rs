@@ -864,9 +864,7 @@ impl UpgradeCommand {
                     .expect("oom");
 
                     let mut buf = bun_paths::path_buffer_pool::get();
-                    // Separate fallback buffer — borrowck holds `buf` for the lifetime
-                    // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
-                    let mut buf2 = bun_paths::path_buffer_pool::get();
+                    let hardcoded_system_powershell;
                     let powershell_path: &ZStr = match which(
                         &mut buf,
                         bun_core::env_var::PATH.get().unwrap_or(b""),
@@ -878,15 +876,10 @@ impl UpgradeCommand {
                             let system_root = bun_core::env_var::SYSTEMROOT
                                 .get()
                                 .unwrap_or(b"C:\\Windows");
-                            let hardcoded_system_powershell =
-                                bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
-                                    system_root,
-                                    &mut buf2[..],
-                                    &[
-                                        system_root,
-                                        b"System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-                                    ],
-                                );
+                            hardcoded_system_powershell = bun_paths::Path::resolve(&[
+                                system_root,
+                                b"System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                            ]);
                             if !sys::exists(hardcoded_system_powershell.as_bytes()) {
                                 bun_core::pretty_errorln!(
                                     "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
@@ -894,7 +887,7 @@ impl UpgradeCommand {
                                 );
                                 Global::exit(1);
                             }
-                            hardcoded_system_powershell
+                            &hardcoded_system_powershell
                         }
                     };
 
@@ -1056,7 +1049,7 @@ impl UpgradeCommand {
             let target_filename = ZStr::from_slice_with_nul(bun_paths::basename(
                 destination_executable_z.as_bytes_with_nul(),
             ));
-            let target_dirname = bun_core::dirname(destination_executable)
+            let target_dirname = bun_paths::dirname(destination_executable)
                 .ok_or(crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?;
             let target_dir_it = match sys::Dir::open(target_dirname) {
                 Ok(d) => d,
@@ -1071,11 +1064,7 @@ impl UpgradeCommand {
             };
             let target_dir: sys::Dir = target_dir_it;
 
-            // `move_file_z` wants `&ZStr`; pre-compute a NUL-terminated
-            // copy of `exe`.
-            let mut exe_z_buf = bun_paths::path_buffer_pool::get();
-            exe_z_buf[..exe.len()].copy_from_slice(exe);
-            let exe_z: &ZStr = ZStr::nul_terminate(&mut exe_z_buf, exe.len());
+            let exe_z: &ZStr = &bun_paths::Path::from(exe);
 
             if use_canary {
                 // Check if the versions are the same

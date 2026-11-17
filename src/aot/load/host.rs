@@ -9,9 +9,8 @@ use bun_ast::{Loader, Loc, Log};
 use bun_core::CodeGenerationFromStrings;
 use bun_core::strings::{contains_char, is_all_whitespace};
 use bun_paths::fs::PathName;
-use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_paths::{PathStyle as _, path_buffer_pool};
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
@@ -494,7 +493,7 @@ impl<'a> LoadHost<'a> {
         let working_directory = &self.input.options.code.working_directory;
         match (self.plugins).directory_of_virtual_module(path, working_directory) {
             Some(directory) => Cow::Owned(directory),
-            None => Cow::Borrowed(dirname::<Posix>(path)),
+            None => Cow::Borrowed(Posix::dirname_or_root(path)),
         }
     }
 
@@ -995,7 +994,7 @@ impl Host for LoadHost<'_> {
         let (mut files, directories) = self.disk.entries(path);
         let folder = path.strip_suffix(b"/").unwrap_or(path);
         for product in self.outfile.iter().chain(&self.other_products) {
-            if self.is_same_path(dirname::<Posix>(product), folder) {
+            if self.is_same_path(Posix::dirname_or_root(product), folder) {
                 let name_of_product = &product[folder.len() + 1..];
                 files.retain(|name| !self.is_same_path(name, name_of_product));
             }
@@ -1287,7 +1286,7 @@ impl CodeHost for LoadHost<'_> {
         };
         let path = self.disk.realpath(&path);
         let next_to_vitest = FileSearch {
-            directory: dirname::<Posix>(&path),
+            directory: Posix::dirname_or_root(&path),
             ..*search
         };
         self.input.provider.find_file(self, &next_to_vitest)
@@ -1455,7 +1454,7 @@ impl CodeHost for LoadHost<'_> {
     fn directory_of_dynamic_imports<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         match self.plugins.name_of_entry_text(path) {
             Some(name) if is_url_with_text(name) => {
-                Cow::Owned(dirname::<Posix>(&[b"/", name].concat()).to_vec())
+                Cow::Owned(Posix::dirname_or_root(&[b"/", name].concat()).to_vec())
             }
             Some(_) | None => LoadHost::directory_of(self, path),
         }

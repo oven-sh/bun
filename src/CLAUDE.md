@@ -242,6 +242,7 @@ write!(path, "-{hash:x}");                            // no separator; `push_fmt
 | `StackPath<N>`     | inline array                    | `Err`    | known to be short, or allocating is not allowed                    |
 | `SlicePath`        | the caller's buffer             | `Err`    | returning a `&ZStr` into that buffer (`into_zstr`)                 |
 | `ForwardSlashPath` | like `Path`, always writes `/`  | grows    | output that is printed, hashed or saved                            |
+| `PosixPath`        | like `Path`, POSIX syntax       | grows    | not a host path: URL paths, archive entries                        |
 
 All are aliases of `GenericPath<Backend, Style>`. Types that grow return `T`, the others
 `Result<T, NameTooLong>`. Always handle the `Err`: the path still has its old value, usually the parent
@@ -256,22 +257,26 @@ directory. `NameTooLong` converts into `SystemErrno::ENAMETOOLONG`.
 - Arguments can be `&[u8]` or `&[u16]` and are transcoded (WTF-8/WTF-16), except for `relative` and
   `prepend`.
 
-On POSIX `\` is an ordinary character. For text that may have been written on Windows (package.json,
-lockfiles, bunfig.toml, flags) use the `*_any_sep` methods. They read `\` as a separator, except in a
-component of an absolute path that `$HOME` or a working directory also has (`/home/DOMAIN\user`). Use
-`push` for names from a directory listing and `relative` for symlink targets.
-`strings::without_trailing_slash` also strips `\`; for a real path use `without_trailing_sep`.
-
 To inspect a slice use `bun_paths::{dirname, basename, extension, stem, components, ancestors,
-strip_prefix, without_trailing_sep}`. `strip_prefix(path, dir)` compares whole components: `/ab` is not
-in `/a`. For another platform's syntax, import `PathStyle` and call the same functions on
-`platform::{Posix, Windows, Loose}`.
+strip_prefix, climbs_out, without_trailing_sep}`. `strip_prefix(path, dir)` compares whole components:
+`/ab` is not in `/a`. For another platform's syntax, import `PathStyle` and call the same functions on
+`platform::{Posix, Windows}`.
 
-Do not add callers of `resolve_path::{join*, relative*, normalize*}`. Many return a thread-local buffer
-that the next call overwrites, panic on long input, or turn `\` into `/` on POSIX. `join_abs*` is
-`resolve_any_sep`, but keeps a trailing separator: follow it with `copy_trailing_sep_from(arg)` where
-`x/` must not mean the file `x`. For scratch space use `path_buffer_pool::get()`
-(`os_path_buffer_pool` for `u16` on Windows), not the stack: a `PathBuffer` is 96 KB on Windows.
+On POSIX `\` is part of a name, and nothing above treats it as a separator. What to do depends on where
+the path comes from:
+
+| Source                                                 | Call                                                     |
+| ------------------------------------------------------ | -------------------------------------------------------- |
+| argv, environment, JS APIs, `readdir`, `realpath`      | nothing                                                  |
+| text in package.json, tsconfig.json, bunfig.toml, HTML | `windows_to_platform(text)`, once, where it is read      |
+| either of them: lockfile rows, `--cwd`                 | `bun_sys::existing_spelling(dir, path)`                  |
+| untrusted text that has to stay inside a directory     | reject `climbs_out(text) \|\| Windows::climbs_out(text)` |
+
+`platform_to_posix` and `posix_to_platform` only act on Windows. `slashes_to_posix` acts everywhere, so it
+corrupts a POSIX path. `strings::without_trailing_slash` is for URLs.
+
+For a buffer that the OS fills, use `path_buffer_pool::get()` or `w_path_buffer_pool::get()`, not the
+stack: a `PathBuffer` is 96 KB on Windows.
 
 ## URL Parsing (`bun_url::whatwg`)
 

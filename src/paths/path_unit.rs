@@ -10,7 +10,7 @@ use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer, WStr, ZSt
 use crate::PathChar;
 use crate::path_buffer_pool::PoolStorage;
 
-/// `u8` or `u16`. Not exported, so no other crate can implement it.
+/// `u8` or `u16`.
 pub trait PathUnit: PathChar + Default {
     /// `ZStr` or `WStr`.
     type ZSlice: ?Sized + Deref<Target = [Self]>;

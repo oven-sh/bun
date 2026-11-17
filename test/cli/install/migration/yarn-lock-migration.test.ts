@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, githubTarball, isDebug, nodeModulesPackages, tempDir } from "harness";
+import { bunEnv, bunExe, githubTarball, isDebug, isWindows, nodeModulesPackages, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 import npmMetadata from "./yarn/npm-metadata.json";
@@ -3727,6 +3727,8 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     ["link:./vendor/t", '"t@link:./vendor/t":\n  version "0.0.0"\n  uid ""\n'],
     ["file:./vendor/t", '"t@file:./vendor/t":\n  version "1.0.0"\n'],
     ["./vendor/t", 't@./vendor/t:\n  version "1.0.0"\n'],
+    ["file:vendor\\t", '"t@file:vendor/t":\n  version "1.0.0"\n'],
+    ...(isWindows ? [] : [["file:.\\vendor\\t\\", '"t@file:.\\vendor\\t\\":\n  version "1.0.0"\n']]),
   ])("the bins of %s are linked and recorded", async (range, entry) => {
     using server = await serve([]);
     const project = () =>

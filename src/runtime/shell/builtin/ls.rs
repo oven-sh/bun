@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_core::ZBox;
+use bun_paths::VecPath;
 use bun_ptr::BackRef;
 use bun_sys::{E, O, S, dir_iterator};
 
@@ -367,25 +368,13 @@ impl ShellLsTask {
     }
 
     fn join(&self, child: &[u8]) -> ZBox {
-        if !self.is_absolute {
-            // If relative paths enabled, stdlib join is preferred over
-            // ResolvePath.joinBuf because it doesn't try to normalize the path.
-            // On Windows both '/' and '\' count as separators here, so
-            // `["foo/", "bar"]` → `foo/bar` (no extra sep).
-            let parent = self.path.as_bytes();
-            let mut v = Vec::with_capacity(parent.len() + 1 + child.len());
-            v.extend_from_slice(parent);
-            if parent.last().is_some_and(|&c| !bun_paths::is_sep_native(c)) {
-                v.push(bun_paths::SEP);
-            }
-            v.extend_from_slice(child);
-            return ZBox::from_vec(v);
+        if self.is_absolute {
+            return VecPath::join(&[self.path.as_bytes(), child]).into_zbox();
         }
-        let out = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&[
-            self.path.as_bytes(),
-            child,
-        ]);
-        ZBox::from_bytes(out)
+        // A relative path is shown as it was typed.
+        let mut path = VecPath::from(self.path.as_bytes());
+        path.push(child);
+        path.into_zbox()
     }
 
     fn list(this: &mut ShellLsTask, task: &ShellTask) {

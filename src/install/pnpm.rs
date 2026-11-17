@@ -4,6 +4,7 @@ use bun_ast::{self, self as js_ast, E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::strings;
+use bun_paths::{ForwardSlashPath, PoolPath, windows_to_platform};
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
@@ -11,7 +12,7 @@ use bun_sys::{self as sys, Fd};
 use crate::dependency::{self, Behavior, Dependency, DependencyExt as _, VersionTag};
 use crate::integrity::Integrity;
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile, join_top_level_dir};
+use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::migration::{
     as_str, get_str, parse_manifest_bin, props, push_workspace_dependency, record_workspace, sbuf,
     string_bytes, string_hash, take_appended_dependencies,
@@ -275,7 +276,7 @@ fn resolution_from_package_entry(
             && let Some(dir) = get_str(obj, b"directory")
         {
             return Ok(Resolution::init(TaggedValue::Folder(
-                string_buf.append(dir)?,
+                string_buf.append(&windows_to_platform(dir))?,
             )));
         }
 
@@ -371,6 +372,15 @@ pub(crate) fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
         ExprData::EObject(o) => &mut **o,
         _ => unreachable!("e_object_mut called on non-object"),
     }
+}
+
+/// Resolves `parts`, as pnpm-lock.yaml spells them, against the project root.
+fn join_top_level_dir(parts: &[&[u8]]) -> Option<PoolPath> {
+    let mut path = PoolPath::from_top_level_dir().ok()?;
+    for part in parts {
+        path.resolve_in_place(&[&windows_to_platform(part)]).ok()?;
+    }
+    Some(path)
 }
 
 /// The package.json of the importer at `path`, relative to the project.
@@ -764,7 +774,10 @@ pub(crate) fn migrate_pnpm_lockfile(
             // pnpm's value is relative to the importer, the stored one to the project.
             let (Some(abs_link_path), Some(folder)) = (
                 join_top_level_dir(&[workspace_path, link_path]),
-                lockfile::package::folder_relative_to_top_level_dir(workspace_path, link_path),
+                lockfile::package::folder_relative_to_top_level_dir(
+                    &windows_to_platform(workspace_path),
+                    link_path,
+                ),
             ) else {
                 bail!(
                     log,
@@ -1347,15 +1360,11 @@ fn declare_folder_dependencies_relative_to_their_package(
 
             literal.clear();
             literal.extend_from_slice(b"file:");
-            let relative = bun_paths::resolve_path::relative(
+            let relative = ForwardSlashPath::relative(
                 pkg_dir.slice(string_bytes!(lockfile)),
-                folder.slice(string_bytes!(lockfile)),
+                &windows_to_platform(folder.slice(string_bytes!(lockfile))),
             );
-            literal.extend_from_slice(if relative.is_empty() { b"." } else { relative });
-            #[cfg(windows)]
-            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(
-                &mut literal[b"file:".len()..],
-            );
+            literal.extend_from_slice(if relative.is_empty() { b"." } else { &relative });
 
             let appended = sbuf!(lockfile).append(&literal)?;
             lockfile.buffers.dependencies[dep_id].version.literal = appended;

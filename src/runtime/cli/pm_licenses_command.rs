@@ -370,8 +370,8 @@ fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
             }
             let relative_path = folder.relative_path.as_bytes();
             let alias = dependencies[dep_id as usize].name.slice(buf);
-            let location = [relative_path, &[bun_paths::SEP], alias].concat();
-            out[pkg_id as usize] = Some(location.into_boxed_slice());
+            let location = Path::from_parts(&[relative_path, alias]);
+            out[pkg_id as usize] = Some(location.as_bytes().into());
         }
     }
 

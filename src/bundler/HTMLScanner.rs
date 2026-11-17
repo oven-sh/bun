@@ -6,8 +6,8 @@ use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
+use bun_paths::Path;
 use bun_paths::fs::Path as FsPath;
-use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
 
 /// The single `lol_html::OutputSink` type every Bun `HtmlRewriter` is built
@@ -69,13 +69,19 @@ impl<'a> HTMLScanner<'a> {
 
 impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+        // In the path of a URL `\` is a separator.
+        let with_slashes = match bun_core::strings::contains_char(input_path, b':') {
+            true => Cow::Borrowed(input_path),
+            false => bun_paths::slashes_to_posix(input_path),
+        };
+        let input_path: &[u8] = &with_slashes;
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
+        let mut resolved;
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::get().top_level_dir(),
-                &[&input_path[1..]],
-            )
+            resolved = Path::resolve(&[fs::FileSystem::get().top_level_dir(), &input_path[1..]]);
+            resolved.copy_trailing_sep_from(input_path);
+            &resolved
         }
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
         else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
@@ -89,13 +95,11 @@ impl<'a> HTMLScanner<'a> {
                     break 'blk input_path;
                 }
                 // /foo/bar/index.html -> /foo/bar
-                let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
-                if dirname.is_empty() {
+                let Some(dirname) = bun_paths::dirname(self.source.path.text()) else {
                     break 'blk input_path;
-                }
-                let resolved =
-                    resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
-                if sys::exists_z(resolved) {
+                };
+                resolved = Path::resolve(&[dirname, input_path]);
+                if sys::exists_z(&resolved) {
                     resolved.as_bytes()
                 } else {
                     input_path

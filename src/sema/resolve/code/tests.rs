@@ -23,7 +23,7 @@ fn import_request<'a>(importer: &'a str, specifier: &'a str) -> CodeRequest<'a> 
     CodeRequest {
         specifier: specifier.as_bytes(),
         importer: importer.as_bytes(),
-        directory: dirname::<Posix>(importer.as_bytes()),
+        directory: Posix::dirname_or_root(importer.as_bytes()),
         kind: Import,
         form: CodeImportForm::Static,
     }

@@ -92,10 +92,12 @@ pub fn write_migrated(manager: &mut PackageManager) {
         return;
     }
     for file in &migrated {
+        let top_level_dir = FileSystem::get().top_level_dir();
+        let relative = bun_paths::Path::relative(top_level_dir, &file.target.package_json_path);
         bun_core::pretty_errorln!(
             "<d>{} in <r><green>{}<r>",
             file.edits.join(", "),
-            bstr::BStr::new(FileSystem::get().relative_to(&file.target.package_json_path)),
+            bstr::BStr::new(relative.as_bytes()),
         );
     }
 }

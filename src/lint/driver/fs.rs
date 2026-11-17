@@ -2,8 +2,7 @@
 
 use crate::paths;
 use bun_core::ZStr;
-use bun_paths::resolve_path::z;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, path_buffer_pool};
+use bun_paths::{Path, PathBuffer, SlicePath, path_buffer_pool};
 use bun_sema::util::FxHashSet;
 use bun_sys::{EntryKind, Fd, File, O};
 use bun_threading::Guarded;
@@ -17,10 +16,9 @@ pub(crate) fn describe(error: &bun_sys::Error) -> Vec<u8> {
 /// Returns `path` with a trailing NUL. A path that's too long for any system becomes the empty path, where nothing
 /// exists.
 fn null_terminated<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
-    match path.len() < MAX_PATH_BYTES {
-        true => z(path, buffer),
-        false => ZStr::EMPTY,
-    }
+    let mut terminated = SlicePath::new(buffer);
+    let _ = terminated.set(path);
+    terminated.into_zstr()
 }
 
 /// Same, for the calls that go through libuv on Windows (`stat`, `lstat`, `realpath`, `rename`). libuv passes the path
@@ -233,7 +231,7 @@ impl Listing {
 
     /// Like [`Listing::size_of`], plus [`identity_if_linked`].
     pub(crate) fn size_and_identity_of(&self, name: &[u8]) -> Option<(u64, Option<Identity>)> {
-        let found = bun_sys::fstatat(self.directory.fd(), z(name, &mut path_buffer_pool::get()));
+        let found = bun_sys::fstatat(self.directory.fd(), &Path::from(name));
         let Ok(found) = found else {
             return Some((0, None));
         };

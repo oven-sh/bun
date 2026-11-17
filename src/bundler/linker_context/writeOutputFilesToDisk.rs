@@ -89,9 +89,7 @@ pub(crate) fn write_output_files_to_disk(
             {
                 let source_map_final_rel_path = strings::concat(&[&chunk.final_rel_path, b".map"]);
 
-                let rel_parent = paths::resolve_path::dirname::<paths::platform::Posix>(
-                    &source_map_final_rel_path,
-                );
+                let rel_parent = paths::dirname_or_root(&source_map_final_rel_path);
                 if !rel_parent.is_empty() {
                     if let Err(e) = root_dir.make_path(rel_parent) {
                         log.add_error_fmt(
@@ -110,7 +108,7 @@ pub(crate) fn write_output_files_to_disk(
 
                 if let Err(e) = bun_sys::File::write_file(
                     bun_sys::Fd::from_std_dir(&root_dir),
-                    paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),
+                    &paths::Path::from(&source_map_final_rel_path),
                     &output_source_map,
                 ) {
                     log.add_sys_error(
@@ -185,8 +183,7 @@ pub(crate) fn write_output_files_to_disk(
 
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
 
-        let rel_parent =
-            paths::resolve_path::dirname::<paths::platform::Posix>(&chunk.final_rel_path);
+        let rel_parent = paths::dirname_or_root(&chunk.final_rel_path);
         if !rel_parent.is_empty() {
             if let Err(e) = root_dir.make_path(rel_parent) {
                 log.add_error_fmt(
@@ -300,7 +297,7 @@ pub(crate) fn write_output_files_to_disk(
 
                 match bun_sys::File::write_file(
                     bun_sys::Fd::from_std_dir(&root_dir),
-                    paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),
+                    &paths::Path::from(&source_map_final_rel_path),
                     &output_source_map,
                 ) {
                     Err(e) => {
@@ -362,7 +359,6 @@ pub(crate) fn write_output_files_to_disk(
         let bytecode_output_file: Option<OutputFile> = 'brk: {
             if c.options.generate_bytecode_cache {
                 if c.chunk_gets_bytecode(chunk) {
-                    let mut fdpath = bun_paths::path_buffer_pool::get();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
                         bstr::BStr::new(&chunk.final_rel_path),
@@ -389,10 +385,10 @@ pub(crate) fn write_output_files_to_disk(
                                 }
                             ),
                         );
-                        let frp: &[u8] = &chunk.final_rel_path;
-                        fdpath[..frp.len()].copy_from_slice(frp);
-                        fdpath[frp.len()..frp.len() + BYTECODE_EXTENSION.len()]
-                            .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
+                        let bytecode_path = strings::concat(&[
+                            &chunk.final_rel_path,
+                            BYTECODE_EXTENSION.as_bytes(),
+                        ]);
                         match write_file_with_path_buffer(
                             &mut pathbuf,
                             &WriteFileArgs {
@@ -404,9 +400,7 @@ pub(crate) fn write_output_files_to_disk(
                                     0o644
                                 },
                                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                                file: PathOrFileDescriptor::Path(
-                                    &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
-                                ),
+                                file: PathOrFileDescriptor::Path(&bytecode_path),
                             },
                         ) {
                             Ok(_) => {}
@@ -593,7 +587,7 @@ pub(crate) fn write_output_files_to_disk(
             // `defer src.value.buffer.arena.free(bytes)` — `bytes` is now an
             // owned Box that drops at end of scope.
 
-            let rel_parent = paths::resolve_path::dirname::<paths::platform::Auto>(&src.dest_path);
+            let rel_parent = paths::dirname_or_root(&src.dest_path);
             if !rel_parent.is_empty() {
                 if let Err(e) = root_dir.make_path(rel_parent) {
                     log.add_error_fmt(
@@ -612,7 +606,7 @@ pub(crate) fn write_output_files_to_disk(
 
             match bun_sys::File::write_file(
                 bun_sys::Fd::from_std_dir(&root_dir),
-                paths::resolve_path::z(&src.dest_path, &mut pathbuf),
+                &paths::Path::from(&src.dest_path),
                 &bytes,
             ) {
                 Err(e) => {

@@ -313,22 +313,15 @@ pub mod api {
         pub fn resolve_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
             let home = bun_core::env_var::HOME.get_not_empty();
             if let ([b'~', rest @ ..], Some(home)) = (path, home)
-                && rest
-                    .first()
-                    .is_none_or(|&c| bun_core::path_sep::is_sep_any(c))
+                && rest.first().is_none_or(|&c| bun_paths::is_sep(c))
             {
-                let mut expanded = [home, rest].concat();
-                // `~\a\b` was written on Windows.
-                if cfg!(unix) && rest.starts_with(b"\\") {
-                    bun_paths::slashes_to_posix_in_place(&mut expanded[home.len()..]);
-                }
-                return expanded.into();
+                return [home, rest].concat().into();
             }
             // An empty path means the option is unset, so it must stay empty.
             if path.is_empty() || bun_paths::is_absolute(path) || !bun_paths::is_absolute(dir) {
                 return path.into();
             }
-            let mut resolved = bun_paths::Path::resolve_any_sep(&[dir, path]);
+            let mut resolved = bun_paths::Path::resolve(&[dir, path]);
             // As an import, `./scanner/` is the directory and `./scanner` can be `scanner.ts`.
             resolved.copy_trailing_sep_from(path);
             // A path that is too long could not be opened anyway, so keep `path`.

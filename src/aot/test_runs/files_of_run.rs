@@ -5,8 +5,8 @@ use std::mem::replace;
 use bun_ast::import_record::is_test_module;
 use bun_core::strings;
 use bun_js_parser::Jest;
+use bun_paths::PathStyle as _;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{basename, dirname};
 use bun_sema::atom::{Atom, Interner, InternerPerThread, known};
 use bun_sema::bind::{BindOptions, Binding, Bound, RuntimeBindOptions};
 use bun_sema::file_analysis::{analyze_file, bind_file};
@@ -153,7 +153,7 @@ impl Manifests {
         let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
         for test_file in &options.load.test_files {
             let test_file = from_argument(&options.code.working_directory, test_file);
-            for folder in ancestors(dirname::<Posix>(&test_file)) {
+            for folder in ancestors(Posix::dirname_or_root(&test_file)) {
                 if !seen.insert(folder.to_vec()) {
                     break;
                 }
@@ -504,7 +504,7 @@ fn read_what_file_writes_by(
         takes_from_test_runner: has_test_runner_name,
         ..Written::default()
     };
-    let folder = dirname::<Posix>(path);
+    let folder = Posix::dirname_or_root(path);
     for (specifier, exports_again) in specifiers {
         let specifier = atoms.bytes(specifier);
         written.takes_from_test_runner |= is_test_module(specifier);
@@ -528,8 +528,8 @@ fn read_what_file_writes_by(
 }
 
 fn find_last_word(file: &[u8]) -> &[u8] {
-    match without_extension(basename(file)) {
-        b"index" => basename(dirname::<Posix>(file)),
+    match without_extension(Posix::basename(file)) {
+        b"index" => Posix::basename(Posix::dirname_or_root(file)),
         word => word,
     }
 }
@@ -651,7 +651,7 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
                     writers[word as usize].push(file as u32);
                 }
                 for levels in written.levels_of_index_files {
-                    let mut folders = ancestors(dirname::<Posix>(&unread[file]));
+                    let mut folders = ancestors(Posix::dirname_or_root(&unread[file]));
                     if let Some(folder) = folders.nth(levels as usize) {
                         let writers = writers_of_index_files.entry(inside(folder, b"index"));
                         writers.or_default().push(file as u32);

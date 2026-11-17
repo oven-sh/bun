@@ -3,7 +3,7 @@ use core::ops::Range;
 use crate::{self as sys, Dir, Fd, FdExt, dir_iterator};
 use bun_alloc::AllocError;
 use bun_core::slice_as_bytes;
-use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
+use bun_paths::{GenericPath, OSPathChar, OSPathSlice, OSPathSliceZ, VecBackend};
 use bun_wyhash::Wyhash11;
 
 #[inline]
@@ -13,7 +13,7 @@ fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
 
 type WrappedIterator = dir_iterator::WrappedIterator;
 
-type NameBufferList = Vec<OSPathChar>;
+type NameBufferList = GenericPath<VecBackend<OSPathChar>>;
 
 pub struct Walker {
     stack: Vec<StackItem>,
@@ -84,7 +84,7 @@ impl Walker {
             // Use an index instead of holding `&mut` to the top item: it would
             // be invalidated by appending to `self.stack` below.
             let top_idx = self.stack.len() - 1;
-            let mut dirname_len = self.stack[top_idx].dirname_len;
+            let dirname_len = self.stack[top_idx].dirname_len;
             let dir_fd = self.stack[top_idx].iter.dir();
             match self.stack[top_idx].iter.next() {
                 Err(err) => return Err(err),
@@ -157,11 +157,7 @@ impl Walker {
                         }
 
                         self.name_buffer.truncate(dirname_len);
-                        if !self.name_buffer.is_empty() {
-                            self.name_buffer.push(SEP as OSPathChar);
-                            dirname_len += 1;
-                        }
-                        self.name_buffer.extend_from_slice(base.name.slice());
+                        self.name_buffer.push(base.name.slice());
 
                         let mut dir = dir_fd;
                         if kind == sys::EntryKind::Directory {
@@ -171,12 +167,10 @@ impl Walker {
                                 dirname_len: self.name_buffer.len(),
                             });
                         }
-                        let path_len = self.name_buffer.len();
-                        self.name_buffer.push(0);
-                        let path = OSPathSliceZ::nul_terminate(&mut self.name_buffer, path_len);
+                        let path: &OSPathSliceZ = &self.name_buffer;
                         return Ok(Some(WalkerEntry {
                             dir,
-                            basename: path.substring(dirname_len),
+                            basename: path.substring(dirname_len + usize::from(dirname_len != 0)),
                             path,
                             kind,
                         }));

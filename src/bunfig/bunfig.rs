@@ -15,6 +15,7 @@ use bun_alloc::Arena as Bump;
 use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
 use bun_parsers::json as json_parser;
 use bun_parsers::toml::TOML;
+use bun_paths::windows_to_platform;
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
@@ -37,6 +38,10 @@ pub(crate) struct Bunfig;
 #[inline]
 fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
+}
+
+fn estring_to_path(s: &E::EString, bump: &Bump) -> Box<[u8]> {
+    windows_to_platform(s.string(bump).expect("OOM")).into()
 }
 
 /// Macro-remap parsing (the `PackageJSON.parseMacrosJSON` shape),
@@ -293,7 +298,7 @@ impl<'a> Parser<'a, '_> {
                     self.expect_string(item)?;
                     if let ExprData::EString(s) = &item.data {
                         if s.len() > 0 {
-                            preloads.push(estring_to_owned(s, self.bump));
+                            preloads.push(estring_to_path(s, self.bump));
                         }
                     }
                 }
@@ -301,7 +306,7 @@ impl<'a> Parser<'a, '_> {
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    self.ctx.preloads = vec![estring_to_owned(s, self.bump)];
+                    self.ctx.preloads = vec![estring_to_path(s, self.bump)];
                 }
             }
             ExprData::ENull(_) => {}
@@ -475,7 +480,8 @@ impl<'a> Parser<'a, '_> {
         if cmd == CommandTag::TestCommand {
             if let Some(test) = json.get(b"test") {
                 if let Some(root) = test.get(b"root") {
-                    self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
+                    self.ctx.debug.test_directory =
+                        windows_to_platform(root.as_string(self.bump).unwrap_or(b"")).into();
                 }
 
                 if let Some(expr) = test.get(b"preload") {
@@ -581,7 +587,7 @@ impl<'a> Parser<'a, '_> {
                             if s.len() > 0 {
                                 self.ctx.test_options.reporters.junit = true;
                                 self.ctx.test_options.reporter_outfile =
-                                    Some(estring_to_owned(s, self.bump));
+                                    Some(estring_to_path(s, self.bump));
                             }
                         }
                     }
@@ -635,7 +641,7 @@ impl<'a> Parser<'a, '_> {
 
                 if let Some(expr) = test.get(b"coverageDir") {
                     self.expect_string(&expr)?;
-                    self.ctx.test_options.coverage.reports_directory = estring_to_owned(
+                    self.ctx.test_options.coverage.reports_directory = estring_to_path(
                         expr.data
                             .e_string()
                             .expect("infallible: variant checked")
@@ -1037,7 +1043,7 @@ impl<'a> Parser<'a, '_> {
             {
                 if let Some(dir) = _bun.get(b"outdir") {
                     self.expect_string(&dir)?;
-                    self.ctx.args.output_dir = Some(estring_to_owned(
+                    self.ctx.args.output_dir = Some(estring_to_path(
                         dir.data
                             .e_string()
                             .expect("infallible: variant checked")
@@ -1062,7 +1068,7 @@ impl<'a> Parser<'a, '_> {
                     let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
                         self.expect_string(item)?;
-                        names.push(estring_to_owned(
+                        names.push(estring_to_path(
                             item.data
                                 .e_string()
                                 .expect("infallible: variant checked")
@@ -1453,7 +1459,7 @@ impl<'a> Parser<'a, '_> {
     /// Resolves a relative path in `[install]` against the directory that contains the bunfig.toml.
     fn install_path(&self, path: &[u8]) -> Box<[u8]> {
         let dir = bun_paths::dirname(self.source.path.text).unwrap_or_default();
-        api::BunInstall::resolve_path(dir, path)
+        api::BunInstall::resolve_path(dir, &windows_to_platform(path))
     }
 
     fn parse_install(&mut self, install_obj: &Expr) -> crate::Result<()> {
@@ -1689,11 +1695,12 @@ impl<'a> Parser<'a, '_> {
                     install.security_scanner = scanner.as_string(self.bump).map(|name| {
                         // The scanner process runs in the project directory, so a relative path
                         // from the project's own bunfig.toml already resolves correctly.
-                        if self.is_project_file || bun_paths::is_package_path(name) {
+                        let name = windows_to_platform(name);
+                        if self.is_project_file || bun_paths::is_package_path(&name) {
                             return name.into();
                         }
-                        let mut path = self.install_path(name);
-                        bun_paths::resolve_path::platform_to_posix_in_place(&mut path[..]);
+                        let mut path = self.install_path(&name);
+                        bun_paths::platform_to_posix_in_place(&mut path[..]);
                         path
                     });
                 }
@@ -1803,7 +1810,7 @@ impl<'a> Parser<'a, '_> {
                     let mut plugins: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
                     for p in raw {
                         self.expect_string(p)?;
-                        plugins.push(estring_to_owned(
+                        plugins.push(estring_to_path(
                             p.data
                                 .e_string()
                                 .expect("infallible: variant checked")
@@ -1818,7 +1825,7 @@ impl<'a> Parser<'a, '_> {
                         .data
                         .e_string()
                         .expect("infallible: variant checked");
-                    break 'plugins Some(vec![estring_to_owned(s.get(), self.bump)]);
+                    break 'plugins Some(vec![estring_to_path(s.get(), self.bump)]);
                 }
             };
             // TODO: accept entire config object.

@@ -5,7 +5,8 @@ use crate::output_file::{IndexOptional, Options, OptionsData};
 use bun_aot::Compilation;
 use bun_aot::compile::{EntryPointPaths, ProgramSummary};
 use bun_ast::Loader;
-use bun_paths::is_sep_any;
+use bun_paths::PathStyle as _;
+use bun_paths::platform::Windows;
 use bun_resolver::compiled_program::name_in_plain_executable;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -80,7 +81,7 @@ impl AotEntryPoint {
     /// The path of an entry point has the separators of the host, `C:\a\b.ts`. That of an embedded file is as the compiler writes it, `C:/a/b.ts`.
     pub fn is_source_of(&self, embedded: &OutputFile, is_windows: bool) -> bool {
         let is_same = |(&left, &right): (&u8, &u8)| {
-            left == right || (is_windows && is_sep_any(left) && is_sep_any(right))
+            left == right || (is_windows && Windows::is_sep(left) && Windows::is_sep(right))
         };
         let (entry, copy) = (&self.source_path[..], &*embedded.src_path);
         entry.len() == copy.len() && entry.iter().zip(copy).all(is_same)
@@ -151,7 +152,7 @@ fn collect_output_files(
     // The files of an executable are named with forward slashes on every host.
     let graph_paths = entry_paths.iter().map(|entry| {
         let mut graph_path = entry.public_path.clone();
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut graph_path);
+        bun_paths::platform_to_posix_in_place::<u8>(&mut graph_path);
         graph_path
     });
     let graph_paths: Vec<Vec<u8>> = graph_paths.collect();
@@ -162,7 +163,7 @@ fn collect_output_files(
             !names.module_prefix.is_empty()
                 && file.output_kind == OutputKind::Asset
                 && file.entry_point_index.is_none()
-                && bun_core::strings::remove_leading_dot_slash(&file.dest_path) == &dest_path[..]
+                && bun_paths::without_leading_dot_slash(&file.dest_path) == &dest_path[..]
         };
         match embedded.iter_mut().find(is_copy) {
             Some(copy) => copy.entry_point_index = Some(index as u32),

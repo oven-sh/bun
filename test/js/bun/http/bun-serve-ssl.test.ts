@@ -653,11 +653,11 @@ test.skipIf(isWindows).each(["relative", "absolute"])(
   },
 );
 
-test.skipIf(isWindows)("keyFile and certFile load when the cwd contains a backslash", async () => {
+test.skipIf(isWindows)("a backslash is part of a name in keyFile, certFile and the cwd", async () => {
   using dir = tempDir("bun-serve-ssl-backslash", {
     "a\\b": {
       "key.pem": tlsCert.key,
-      "c/cert.pem": tlsCert.cert,
+      "c\\cert.pem": tlsCert.cert,
       "serve.js": String.raw`
         const tls = { keyFile: import.meta.dir + "/key.pem", certFile: "c\\cert.pem" };
         using server = Bun.serve({ port: 0, tls, fetch: () => new Response("served") });

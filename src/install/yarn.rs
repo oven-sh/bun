@@ -19,7 +19,7 @@ use bun_install::install::{self, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 use bun_install::npm;
 use bun_paths::platform::Posix;
-use bun_paths::{Path, PathStyle as _};
+use bun_paths::{Path, PathStyle as _, windows_to_platform};
 use bun_semver::{self as Semver, String as SemverString};
 
 #[derive(Default)]
@@ -43,10 +43,10 @@ pub struct Entry<'a> {
     pub(crate) dependencies: [Option<StringHashMap<&'a [u8]>>; 4],
     pub(crate) commit: Option<&'a [u8]>,
     pub(crate) workspace: bool,
-    pub(crate) file: Option<&'a [u8]>,
+    pub(crate) file: Option<Box<[u8]>>,
     /// The directory that a `link:` spec points to. yarn writes it relative to yarn.lock, even when
     /// the dependency is declared in a workspace.
-    pub(crate) link: Option<Cow<'a, [u8]>>,
+    pub(crate) link: Option<Box<[u8]>>,
     pub(crate) os: npm::Negatable<npm::OperatingSystem>,
     pub(crate) cpu: npm::Negatable<npm::Architecture>,
     pub(crate) git_repo_name: Option<Box<[u8]>>,
@@ -174,12 +174,12 @@ impl<'a> Entry<'a> {
         }
     }
 
-    pub(crate) fn file_path_from_spec(spec: &[u8]) -> &[u8] {
-        let mut path = spec.strip_prefix(b"file:").unwrap_or(spec);
+    pub(crate) fn file_path_from_spec(spec: &[u8]) -> Box<[u8]> {
+        let mut path: &[u8] = &windows_to_platform(spec.strip_prefix(b"file:").unwrap_or(spec));
         while let Some(rest) = path.strip_prefix(b"./") {
             path = rest;
         }
-        strings::without_trailing_slash(path)
+        bun_paths::without_trailing_sep(path).into()
     }
 
     /// `https://registry.npmjs.org/@scope/name/-/name-1.0.0.tgz` -> `@scope/name`
@@ -296,8 +296,9 @@ impl<'a> YarnLock<'a> {
                     let range = spec.get(name.len() + 1..).unwrap_or(b"");
                     if let Some(path) = range.strip_prefix(b"link:") {
                         // `link:./ui/` and `link:./ui` are the same package.
-                        let path = Posix::without_trailing_sep(path);
-                        new_entry.link = Some(dependency::link_path_for_lockfile(path));
+                        let path = windows_to_platform(path);
+                        let path = Posix::without_trailing_sep(&path);
+                        new_entry.link = Some(dependency::link_path_for_lockfile(path).into());
                         break;
                     }
                     // yarn treats a bare relative path the same as a `file:` path.
@@ -399,7 +400,7 @@ impl<'a> YarnLock<'a> {
             Default::default()
         } else {
             (
-                new_entry.file.unwrap_or_default(),
+                new_entry.file.as_deref().unwrap_or_default(),
                 new_entry.resolved.as_deref().unwrap_or_default(),
                 new_entry.commit.unwrap_or_default(),
             )
@@ -438,7 +439,7 @@ fn append_package_json(
 ) -> Result<LockfilePackage, Error> {
     let mut path = Path::from_top_level_dir();
     if let Some(workspace_path) = &workspace_path {
-        path.push_any_sep(workspace_path.slice(this.buffers.string_bytes.as_slice()));
+        path.push(workspace_path.slice(this.buffers.string_bytes.as_slice()));
     }
     path.push(b"package.json");
     let cache = &mut manager.workspace_package_json_cache;
@@ -647,7 +648,7 @@ pub(crate) fn migrate_yarn_lockfile(
                 break 'blk Resolution::init(ResolutionValue::Workspace(
                     sbuf!(this).append(base_name)?,
                 ));
-            } else if let Some(file) = entry.file {
+            } else if let Some(file) = entry.file.as_deref() {
                 if file.ends_with(b".tgz") || file.ends_with(b".tar.gz") {
                     break 'blk Resolution::init(ResolutionValue::LocalTarball(
                         sbuf!(this).append(file)?,
@@ -796,7 +797,7 @@ pub(crate) fn migrate_yarn_lockfile(
         if matches!(
             resolution.tag,
             crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink
-        ) && let Some(folder) = entry.file.or(entry.link.as_deref())
+        ) && let Some(folder) = entry.file.as_deref().or(entry.link.as_deref())
             && let Some(path) = lockfile::join_top_level_dir(&[folder, b"package.json"])
             && let GetJsonResult::Entry(json) =
                 manager
@@ -820,7 +821,7 @@ pub(crate) fn migrate_yarn_lockfile(
         }
         // yarn.lock spells the path as package.json does, with or without `./`.
         // `bind_importer_dependency` looks it up in normalized form, so that form is added too.
-        if let Some(file) = entry.file {
+        if let Some(file) = entry.file.as_deref() {
             spec_to_package_id.put(&[entry.name, b"@file:", file].concat(), package_id)?;
         } else if let Some(link) = entry.link.as_deref() {
             spec_to_package_id.put(&[entry.name, b"@link:", link].concat(), package_id)?;

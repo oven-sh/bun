@@ -3,8 +3,7 @@
 
 use bun_core::strings;
 use bun_errno::SystemErrno;
-use bun_paths::resolve_path::is_drive_letter;
-use bun_paths::{PathChar, SEP, is_sep_any};
+use bun_paths::{GenericPath, PathUnit, SliceBackend, is_sep};
 use bun_tar::Entry;
 
 const MAX_DEPTH: usize = 1024;
@@ -13,29 +12,22 @@ const SEPARATORS: &[u8] = if cfg!(windows) { ANY_SEPARATOR } else { b"/" };
 
 /// Returns the path in the package where node-tar would extract `entry`. It is empty for an entry
 /// that node-tar skips, and `None` for a name that does not fit in `buf` with a NUL behind it.
-pub fn normalize_npm_entry_path<'a, T: PathChar>(
+pub fn normalize_npm_entry_path<'a, T: PathUnit>(
     entry: &Entry,
     buf: &'a mut [T],
 ) -> Result<Option<&'a mut [T]>, SystemErrno> {
-    let mut len = 0;
+    let mut path = GenericPath::<SliceBackend<'_, T>>::new(buf);
     for name in strings::tokenize_any(strip(entry.path()).unwrap_or_default(), SEPARATORS) {
-        if name == b"." {
-            continue;
-        }
-        let start = len + usize::from(len != 0);
-        if start + name.len() >= buf.len() {
+        if name != b"." && path.push(name).is_err() {
             // node-tar leaves the directories that fit behind, in the way of later files.
-            return if len == 0 {
+            return if path.is_empty() {
                 Ok(None)
             } else {
                 Err(SystemErrno::ENAMETOOLONG)
             };
         }
-        if len != 0 {
-            buf[len] = T::from_u8(SEP);
-        }
-        len = start + T::write_u8_part(&mut buf[start..], name);
     }
+    let len = path.len();
     Ok(Some(&mut buf[..len]))
 }
 
@@ -56,14 +48,13 @@ fn strip(path: &[u8]) -> Option<&[u8]> {
 /// What is a root on Windows is one on every platform.
 // https://github.com/isaacs/node-tar/blob/v7.5.19/src/strip-absolute-path.ts
 fn root_len(path: &[u8]) -> usize {
-    let is_slash = |c: u8| c == b'/' || (cfg!(windows) && c == b'\\');
     match *path {
-        [a, b, b'?', c, ..] if [a, b, c].into_iter().all(is_slash) => share_len(path),
-        [a, ..] if is_slash(a) => 1,
+        [a, b, b'?', c, ..] if [a, b, c].into_iter().all(is_sep) => share_len(path),
+        [a, ..] if is_sep(a) => 1,
         [b'\\', b'/' | b'\\', ..] => share_len(path),
         [b'\\', ..] => 1,
-        [letter, b':', c, ..] if is_drive_letter(letter) && is_sep_any(c) => 3,
-        [letter, b':', ..] if is_drive_letter(letter) => 2,
+        [letter, b':', b'/' | b'\\', ..] if letter.is_ascii_alphabetic() => 3,
+        [letter, b':', ..] if letter.is_ascii_alphabetic() => 2,
         _ => 0,
     }
 }

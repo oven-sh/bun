@@ -4,7 +4,7 @@
 //! A `package.json` that names the script and can't be parsed stops `bun lint` and `bun fmt`, which can write files.
 
 use bun_core::{Global, UnwrapOrOom, env_var};
-use bun_paths::string_paths::without_trailing_any_sep;
+use bun_paths::without_trailing_sep;
 
 use super::check_command::working_directory;
 
@@ -193,19 +193,16 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
 }
 
 /// The directory that `--cwd <given>` names, as `bun run` takes it: `..` is folded before links are followed, and an empty
-/// value is the working directory. Unlike there, a `\` is part of a name on POSIX where there is such a name.
+/// value is the working directory.
 pub(crate) fn directory_of_cwd(given: &[u8]) -> bun_paths::Path {
     // An absolute one needs no working directory, which may be deleted.
     let base = match bun_paths::is_absolute(given) {
         true => b"/".to_vec(),
         false => working_directory(),
     };
-    let as_written = bun_paths::Path::resolve(&[&base, given]);
-    if !bun_paths::has_literal_backslash(given) || bun_sys::exists_z(&as_written) {
-        return as_written;
-    }
-    // `--cwd apps\web`, from a script that was written on Windows. `bun run` takes it on every platform.
-    bun_paths::Path::resolve_any_sep(&[&base, given])
+    // `--cwd apps\web`, from a script that was written on Windows.
+    let given = bun_sys::existing_spelling(bun_core::Fd::cwd(), given);
+    bun_paths::Path::resolve(&[&base, &given])
 }
 
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
@@ -245,7 +242,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
         None => working_directory(),
     };
     let nearest = nearest_package_json(&cwd);
-    let dir = (nearest.as_ref()).map_or_else(|| without_trailing_any_sep(&cwd), |it| it.0);
+    let dir = (nearest.as_ref()).map_or_else(|| without_trailing_sep(&cwd), |it| it.0);
     // In that script, and in what it runs, it is the command: `"lint": "bun lint"`.
     let running = env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get();
     if running
@@ -312,13 +309,9 @@ fn has_script(name: &[u8], path: &[u8], contents: &[u8]) -> Result<bool, Unparsa
 
 /// The path of `name` below `dir`, which is absolute.
 fn below(dir: &[u8], name: &[u8]) -> Vec<u8> {
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string_spill};
-    // On POSIX, that function takes a `\` in a name for a separator.
-    if cfg!(windows) {
-        return join_abs_string_spill::<Auto>(dir, &mut Vec::new(), &[name]).to_vec();
-    }
-    let separator: &[u8] = if dir.ends_with(b"/") { b"" } else { b"/" };
-    [dir, separator, name].concat()
+    let mut path = bun_paths::VecPath::from_parts(&[dir, name]);
+    path.copy_trailing_sep_from(name);
+    path.into_vec()
 }
 
 fn entry_kind(dir: &[u8], parts: &[&[u8]]) -> Option<bun_sys::ExistsAtType> {
@@ -404,7 +397,7 @@ pub(super) fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Ve
     loop {
         let path = below(dir, b"package.json");
         if let Some(contents) = read_package_json(&path) {
-            let dir = without_trailing_any_sep(dir);
+            let dir = without_trailing_sep(dir);
             return Some((dir, path, contents));
         }
         dir = bun_paths::dirname(dir)?;
@@ -452,12 +445,11 @@ fn command_of_script(name: &[u8]) -> Option<&'static [u8]> {
 /// this process in it. npm, pnpm and yarn say which script they run. Not all say of which package:
 /// then it is the one that this process is started in, not each one whose scripts it runs.
 fn package_of_inherited_script(command: &[u8]) -> Option<Vec<u8>> {
-    use bun_paths::{platform::Auto, resolve_path::dirname};
     if env_var::npm_lifecycle_event::get().and_then(command_of_script) != Some(command) {
         return None;
     }
     match env_var::npm_package_json::get() {
-        Some(of) => Some(without_trailing_any_sep(dirname::<Auto>(of)).to_vec()),
+        Some(of) => Some(without_trailing_sep(bun_paths::dirname_or_root(of)).to_vec()),
         None if env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get().is_some() => None,
         None if env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_some() => None,
         None => Some(nearest_package_json(&working_directory())?.0.to_vec()),
@@ -469,7 +461,7 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
     use std::io::Write;
     let key = b"BUN_INTERNAL_SCRIPTS_OF_COMMANDS";
     // As `runs` finds it, wherever in the package the script is started.
-    let dir = nearest_package_json(dir).map_or_else(|| without_trailing_any_sep(dir), |it| it.0);
+    let dir = nearest_package_json(dir).map_or_else(|| without_trailing_sep(dir), |it| it.0);
     let mut running = env.get(key).unwrap_or_default().to_vec();
     let mut note = |command: &[u8], dir: &[u8]| {
         if !running_package_scripts(&running).any(|it| it == (command, dir)) {

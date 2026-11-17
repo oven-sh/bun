@@ -2747,7 +2747,8 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     }
 
     // Percent-decode the path so file:///foo/bar%20baz works.
-    let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
+    let path = bun_paths::windows_to_platform(path);
+    let decoded = bun_url::PercentEncoding::decode_alloc(&path).ok()?;
 
     // Resolve against the markdown file's directory, or cwd when the caller gave no source path.
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
@@ -2760,12 +2761,9 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
         }
     };
     // If the path is too long, the caller falls back to alt text.
-    let mut abs_buf = bun_paths::path_buffer_pool::get();
-    let abs_z = bun_paths::resolve_path::join_abs_string_buf_z_checked::<bun_paths::platform::Auto>(
-        base,
-        &mut abs_buf[..],
-        &[&decoded],
-    )?;
+    let mut abs = bun_paths::PoolPath::resolve(&[base, &decoded]).ok()?;
+    abs.copy_trailing_sep_from(&decoded).ok()?;
+    let abs_z: &bun_core::ZStr = &abs;
     // Stat instead of plain exists() so a directory like `./assets/` gets
     // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
     // for any entry, including directories — and emitKittyImageFile sets

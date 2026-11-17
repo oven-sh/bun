@@ -1320,15 +1320,19 @@ it(".query and .params support names that look like array indices", () => {
   expect(params[0]).toBe("hello");
 });
 
-it.skipIf(isWindows)("ignores names whose backslashes lead to another file or directory", async () => {
+it.skipIf(isWindows)("a backslash is part of a name", async () => {
   using dir = tempDir("fs-router-backslash", {
     "outside.js": "",
-    "pages": { "index.js": "", "a\\..": { "b.js": "" }, "..\\outside.js": "" },
-    "main.js": `
-      const router = new Bun.FileSystemRouter({ dir: "./pages", style: "nextjs" });
+    "pa\\ges": { "index.js": "", "a\\..": { "b.js": "" }, "c\\..\\..\\outside.js": "" },
+    "main.js": String.raw`
+      const router = new Bun.FileSystemRouter({ dir: "./pa\\ges", style: "nextjs" });
       router.reload();
-      console.log(Object.keys(router.routes).join());
+      for (const [route, file] of Object.entries(router.routes).sort()) console.log(route, file.replace(__dirname, ""));
     `,
   });
-  expect(await bunRun(path.join(String(dir), "main.js"))).toSpawn("/");
+  expect(await bunRun(path.join(String(dir), "main.js"))).toSpawn(
+    ["/ /pa\\ges/index.js", "/a\\../b /pa\\ges/a\\../b.js", "/c\\..\\..\\outside /pa\\ges/c\\..\\..\\outside.js"].join(
+      "\n",
+    ),
+  );
 });

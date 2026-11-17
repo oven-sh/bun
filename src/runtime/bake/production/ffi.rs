@@ -113,11 +113,9 @@ extern "C" fn BakeToWindowsPath(input: &BunString) -> BunString {
     }
     #[cfg(not(unix))]
     {
-        let input_utf8 = input.to_utf8();
-        let input_slice = input_utf8.slice();
-        let mut output = bun_paths::w_path_buffer_pool::get();
-        let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
-        BunString::clone_utf16(output_slice.as_slice())
+        let mut path = bun_paths::Path::from(input.to_utf8().slice());
+        path.make_long_path();
+        BunString::clone_utf8(&path)
     }
 }
 
@@ -156,11 +154,8 @@ extern "C" fn BakeProdResolve(
 
     BunString::create_format(format_args!(
         "bake:{}",
-        BStr::new(resolve_path::join_abs::<platform::Posix>(
-            dir,
-            // force posix paths in bake
-            specifier.slice(),
-        ))
+        // force posix paths in bake
+        BStr::new(bun_paths::PosixPath::resolve(&[dir, specifier.slice()]).as_bytes())
     ))
 }
 

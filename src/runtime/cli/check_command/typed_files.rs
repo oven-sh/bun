@@ -1,7 +1,5 @@
 use bstr::BStr;
 use bun_ast::LoaderHashTable;
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_sema::config::{
@@ -175,7 +173,7 @@ fn options_that_types_depend_on(project: &Project) -> CompilerOptions {
 fn options_of_sources(cwd: &[u8], tsconfig: Option<&[u8]>) -> CompilerOptions {
     let session = Session::new();
     let project = tsconfig.and_then(|tsconfig| {
-        let path = from_native(join_abs_string::<Auto>(cwd, &[tsconfig]));
+        let path = from_native(&bun_paths::Path::resolve(&[cwd, tsconfig]));
         let disk = Disk::with_already_read(1, Default::default(), &path);
         load_options_for_build(&disk, &session, &path).ok()
     });

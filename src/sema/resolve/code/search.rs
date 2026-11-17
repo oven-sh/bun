@@ -3,8 +3,7 @@ use super::manifest::{ExportsEntry, ExportsMap, build_exports_entry, non_empty_s
 use super::*;
 use crate::module_format::DeclaredModuleType;
 use crate::program::HostModuleId;
-use bun_paths::MAX_PATH_BYTES;
-use bun_paths::resolve_path::join_string_buf;
+use bun_paths::{MAX_PATH_BYTES, PosixPath, slashes_to_posix};
 use std::cell::OnceCell;
 use std::sync::LazyLock;
 
@@ -185,7 +184,7 @@ impl<'h> Resolver<'h> {
         if !path.starts_with(b"/") {
             return DeclaredModuleType::Unknown;
         }
-        let directory = dirname::<Posix>(path);
+        let directory = Posix::dirname_or_root(path);
         let by_directory = &self.code_state().package_module_types;
         if let Some(&known) = by_directory.get_ref(directory) {
             return known;
@@ -209,7 +208,7 @@ impl<'h> Resolver<'h> {
     }
 
     pub(super) fn find_node_modules(&self, directory: &[u8]) -> Option<Vec<u8>> {
-        if strings::basename_posix(directory) == b"node_modules" {
+        if Posix::basename(directory) == b"node_modules" {
             return None;
         }
         Some(inside(directory, b"node_modules")).filter(|it| self.is_dir(it))
@@ -220,8 +219,8 @@ impl<'h> Resolver<'h> {
         if !self.code_options().preserves_symlinks {
             return real;
         }
-        let real_directory = self.host.realpath(dirname::<Posix>(found));
-        let expected = inside(&real_directory, strings::basename_posix(found));
+        let real_directory = self.host.realpath(Posix::dirname_or_root(found));
+        let expected = inside(&real_directory, Posix::basename(found));
         match is_same_path(&real, &expected, self.host.is_case_sensitive()) {
             true => found.to_vec(),
             false => real,
@@ -353,7 +352,7 @@ fn module_type_from_extension(
     path: &[u8],
     package_module_type: DeclaredModuleType,
 ) -> DeclaredModuleType {
-    let name = strings::basename_posix(path);
+    let name = Posix::basename(path);
     let dot = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
     match &name[dot..] {
         b".mjs" | b".mts" => DeclaredModuleType::Esm,
@@ -536,7 +535,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
     }
 
     fn find_node_modules(&self, directory: &[u8]) -> Option<Vec<u8>> {
-        if strings::basename_posix(directory) == b"node_modules" {
+        if Posix::basename(directory) == b"node_modules" {
             return None;
         }
         Some(inside(directory, b"node_modules")).filter(|it| self.host.is_dir(it))
@@ -613,7 +612,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
     }
 
     fn load_target_file(&self, target: &[u8], kind: TargetKind) -> Result<Vec<u8>, CodeFailure> {
-        let directory = dirname::<Posix>(target);
+        let directory = Posix::dirname_or_root(target);
         if !self.host.is_dir(directory) {
             return Err(CodeFailure::ModuleNotFound);
         }
@@ -664,7 +663,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
         if trimmed.is_empty() || trimmed.ends_with(b"/") {
             return None;
         }
-        if !self.host.is_dir(dirname::<Posix>(trimmed)) {
+        if !self.host.is_dir(Posix::dirname_or_root(trimmed)) {
             return None;
         }
         if self.host.is_file(trimmed) {
@@ -681,7 +680,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
     }
 
     fn find_file_in_another_case(&self, path: &[u8]) -> Option<Vec<u8>> {
-        let directory = dirname::<Posix>(path);
+        let directory = Posix::dirname_or_root(path);
         let name = &path[strings::last_index_of_char(path, b'/')? + 1..];
         let (files, _) = self.host.entries(directory);
         let listed = files.iter().find(|file| file.eq_ignore_ascii_case(name))?;
@@ -911,6 +910,7 @@ fn resolve_target_text(
     if !target.starts_with(b"./") || has_invalid_segment(target) {
         return Err(CodeFailure::InvalidPackageTarget);
     }
+    let (target, subpath) = (&*slashes_to_posix(target), &*slashes_to_posix(subpath));
     let resolved = join_posix(&[PACKAGE_URL, target]);
     if has_invalid_segment(&resolved) {
         return Err(CodeFailure::InvalidModuleSpecifier);
@@ -992,7 +992,7 @@ fn decode_percent(text: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn join_posix(parts: &[&[u8]]) -> Vec<u8> {
-    join_string_buf::<Posix>(&mut path_buffer_pool::get()[..], parts).to_vec()
+    PosixPath::join(parts).to_vec()
 }
 
 #[cfg(test)]

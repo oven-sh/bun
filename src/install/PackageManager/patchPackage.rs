@@ -5,9 +5,10 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::platform;
-use bun_paths::resolve_path;
-use bun_paths::{ForwardSlashPath, OSPath, Path, Platform, VecPath};
+use bun_paths::{
+    ForwardSlashPath, OSPath, ParentEqual, Path, VecPath, dirname_or_root, is_parent_or_equal,
+    windows_to_platform,
+};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bin;
@@ -90,13 +91,14 @@ impl PatchCommitResult {
         if !self.removes_patch || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
             return;
         }
-        let path = ZBox::from_bytes(&self.patchfile_path);
+        let path = Path::from(&windows_to_platform(&self.patchfile_path));
         let lockfile = &manager.lockfile;
-        let real = resolve_links(&self.patchfile_path).ok();
+        let real = resolve_links(&path).ok();
         let own_key = string_hash(&self.patch_key);
         let is_shared = real.is_some()
             && (lockfile.patched_dependencies.iter()).any(|(key, other)| {
-                *key != own_key && resolve_links(lockfile.str(&other.path)).ok() == real
+                *key != own_key
+                    && resolve_links(&windows_to_platform(lockfile.str(&other.path))).ok() == real
             });
         let (outcome, why) = if is_shared {
             ("kept", ", used by another package")
@@ -147,7 +149,7 @@ pub(crate) fn write_pending_patch(
     let Some(patch) = manager.pending_patch_commit.new_patch.take() else {
         return Ok(None);
     };
-    let patches_dir = resolve_path::dirname::<platform::Posix>(patch.path.as_bytes());
+    let patches_dir = dirname_or_root(patch.path.as_bytes());
     if let Err(e) = sys::mkdir_recursive(patches_dir) {
         Output::err(
             e,
@@ -193,7 +195,6 @@ pub(crate) fn remove_stale_folder(manager: &mut PackageManager) {
 /// project. A path that leaves the project through `..`, an absolute path or a symlink doesn't
 /// qualify.
 fn is_file_of_the_project(path: &ZStr) -> bool {
-    use resolve_path::{ParentEqual, is_parent_or_equal};
     if bin::bin_target_escapes_package_dir(path.as_bytes()) {
         return false;
     }
@@ -240,7 +241,7 @@ fn resolve_target(
     // The Windows-backslash arm intentionally uses `has_prefix`, the posix arm `contains`.
     let is_path = strings::contains(argument, b"node_modules/")
         || (cfg!(windows) && strings::has_prefix(argument, b"node_modules\\"));
-    let (pkg, folder, other_folders) = if is_path {
+    let (pkg, mut folder, other_folders) = if is_path {
         let folder = path_argument_from_root(lockfile, workspace_package_id, argument);
         let (name, version) = read_name_and_version(manager, &folder);
         let pkg = match package_for_folder(lockfile, string_hash(&name), &version) {
@@ -279,12 +280,7 @@ fn resolve_target(
         Global::crash();
     }
 
-    #[cfg(windows)]
-    let folder = {
-        let mut folder = folder;
-        resolve_path::slashes_to_posix_in_place(&mut folder[..]);
-        folder
-    };
+    bun_paths::platform_to_posix_in_place(&mut folder[..]);
 
     Target {
         pkg,
@@ -312,15 +308,10 @@ fn path_argument_from_root(
     workspace_package_id: PackageID,
     argument: &[u8],
 ) -> Vec<u8> {
-    if workspace_package_id != 0 && !Platform::AUTO.is_absolute(argument) {
+    if workspace_package_id != 0 && !bun_paths::is_absolute(argument) {
         let workspace =
             *lockfile.packages.items_resolution()[workspace_package_id as usize].workspace();
-        let mut spill = Vec::new();
-        let from_root = resolve_path::join_spill::<platform::Posix>(
-            &mut spill,
-            &[lockfile.str(&workspace), argument],
-        )
-        .to_vec();
+        let from_root = ForwardSlashPath::join(&[lockfile.str(&workspace), argument]).to_vec();
         // The hoisted linker may have put the package in the root's node_modules only.
         if sys::exists(&from_root) || !sys::exists(argument) {
             return from_root;
@@ -330,11 +321,7 @@ fn path_argument_from_root(
 }
 
 fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, Vec<u8>) {
-    // `folder` is user input of any length, so the join can spill to the heap. A path that is too
-    // long then simply fails to open.
-    let mut spill = Vec::new();
-    let package_json_path =
-        resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[folder, b"package.json"]);
+    let package_json_path: &ZStr = &Path::join(&[folder, b"package.json"]);
     let package_json_source: bun_ast::Source =
         match bun_ast::to_source(package_json_path, Default::default()) {
             Ok(s) => s,
@@ -521,8 +508,7 @@ pub fn do_patch_commit(
     let cache_dir = cache_result.cache_dir;
     let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes();
     let cache_path = cache_dir_path(cache_dir);
-    let old_folder =
-        resolve_path::join::<platform::Posix>(&[&cache_path, cache_dir_subpath]).to_vec();
+    let old_folder = ForwardSlashPath::join(&[&cache_path, cache_dir_subpath]).to_vec();
     let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
     make_bins_executable(
         &manager.lockfile,
@@ -632,7 +618,6 @@ pub fn do_patch_commit(
         _ => unreachable!("patch_features must be Commit in doPatchCommit"),
     };
 
-    // Check the length first, because the path functions below need input that fits a path buffer.
     if typed_patches_dir.len() >= bun_paths::MAX_PATH_BYTES {
         Output::err(
             sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::mkdir),
@@ -642,34 +627,21 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    // Paths use `/` from here on. On Windows this replaces each `\`, so that the path written to
-    // package.json also works on other systems.
-    let with_slashes = |path: &[u8]| {
-        let mut path = path.to_vec();
-        resolve_path::platform_to_posix_in_place(&mut path[..]);
-        path
-    };
-    let mut patches_dir = with_slashes(typed_patches_dir);
-
-    // package.json is shared with other machines, so an absolute path to a directory inside the
-    // project is written relative to the project root.
-    let project = with_slashes(FileSystem::get().top_level_dir());
-    if bun_paths::is_absolute(&patches_dir) {
-        let mut abs_patches_dir = ForwardSlashPath::new();
-        abs_patches_dir.push_any_sep(&patches_dir);
-        if resolve_path::is_parent_or_equal(&project, &abs_patches_dir)
-            != resolve_path::ParentEqual::Unrelated
-        {
-            patches_dir = ForwardSlashPath::relative_any_sep(&project, &abs_patches_dir).to_vec();
+    // package.json is shared with other machines, so the path is spelled with `/`.
+    let mut path_in_patches_dir =
+        ForwardSlashPath::join(&[&windows_to_platform(typed_patches_dir), &patch_filename]);
+    // For the same reason, an absolute path into the project is made relative to its root.
+    let project = FileSystem::get().top_level_dir();
+    if is_parent_or_equal(&bun_paths::platform_to_posix(project), &path_in_patches_dir)
+        == ParentEqual::Parent
+    {
+        let relative = ForwardSlashPath::relative(project, &path_in_patches_dir);
+        // In a relative path in package.json, `\` is a separator.
+        if !strings::contains_char(&relative, b'\\') {
+            path_in_patches_dir = relative;
         }
     }
-
-    // Copy the result: `join_spill` usually returns the thread-local buffer that every later join
-    // overwrites.
-    let path_in_patches_dir = ZBox::from_bytes(resolve_path::join_spill::<platform::Posix>(
-        &mut Vec::new(),
-        &[&patches_dir, &patch_filename],
-    ));
+    let path_in_patches_dir = ZBox::from_bytes(path_in_patches_dir.as_bytes());
 
     if manager.options.dry_run {
         bun_core::prettyln!(
@@ -871,7 +843,7 @@ impl HiddenFromDiff {
         };
         // The bundled dependencies, which are part of the package.
         let bundled = match Dir::cwd().open_dir(
-            resolve_path::join::<platform::Auto>(&[cache_entry, b"node_modules"]),
+            &Path::join(&[cache_entry, b"node_modules"]),
             Default::default(),
         ) {
             Ok(dir) => Some(dir),
@@ -1050,15 +1022,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         Global::crash();
     }
 
-    let mut spill = Vec::new();
     let shown_folder: &[u8] = if target.not_in_workspace_root {
-        resolve_path::join_spill::<platform::Posix>(
-            &mut spill,
-            &[
-                FileSystem::get().top_level_dir_without_trailing_slash(),
-                &target.folder,
-            ],
-        )
+        &ForwardSlashPath::join(&[FileSystem::get().top_level_dir(), &target.folder])
     } else {
         &target.folder
     };
@@ -1213,7 +1178,7 @@ fn cache_dir_path(cache_dir: Fd) -> Vec<u8> {
 /// Returns `path` with every symlink resolved. The part that doesn't exist yet is appended
 /// unchanged.
 fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
-    let path = bun_paths::string_paths::without_trailing_any_sep(path);
+    let path = bun_paths::without_trailing_sep(path);
     let mut buf = bun_paths::path_buffer_pool::get();
     let mut existing = path;
     loop {
@@ -1224,12 +1189,10 @@ fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
         });
         match sys::realpath(&existing_z, &mut buf) {
             Ok(real) => {
-                return Ok(
-                    resolve_path::join::<platform::Auto>(&[real, &path[existing.len()..]]).to_vec(),
-                );
+                return Ok(VecPath::join(&[real, &path[existing.len()..]]).into_vec());
             }
             Err(e) if e.get_errno() == sys::E::ENOENT => {
-                let parent = resolve_path::dirname::<platform::Auto>(existing);
+                let parent = dirname_or_root(existing);
                 if parent.len() == existing.len() {
                     return Err(e);
                 }
@@ -1242,14 +1205,13 @@ fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
 
 /// Returns true if `real`, which has its symlinks resolved, is inside the shared global store.
 fn is_in_global_store(cache_path: &[u8], real: &[u8]) -> bool {
-    resolve_path::is_parent_or_equal(cache_path, real) != resolve_path::ParentEqual::Unrelated
+    is_parent_or_equal(cache_path, real) != ParentEqual::Unrelated
 }
 
 /// Returns the part of `folder` before its first `node_modules`. A `..` can lead out of one again,
 /// so it is applied first.
 fn outermost_package(folder: &[u8]) -> Vec<u8> {
-    let mut spill = Vec::new();
-    let folder = resolve_path::join_spill::<platform::Posix>(&mut spill, &[folder]);
+    let folder: &[u8] = &ForwardSlashPath::join(&[folder]);
     let mut start = 0;
     for name in strings::split(folder, b"/") {
         if name == b"node_modules" {
@@ -1268,10 +1230,8 @@ fn is_in_project(lockfile: &Lockfile, folder: &[u8], subfolder: &[u8], real: &[u
         .into_iter()
         .chain(workspaces.map(|path| lockfile.str(path)))
         .any(|package| {
-            let parent = resolve_path::join::<platform::Auto>(&[package, subfolder]).to_vec();
-            resolve_links(&parent).is_ok_and(|parent| {
-                resolve_path::is_parent_or_equal(&parent, real) == resolve_path::ParentEqual::Parent
-            })
+            resolve_links(&Path::join(&[package, subfolder]))
+                .is_ok_and(|parent| is_parent_or_equal(&parent, real) == ParentEqual::Parent)
         })
 }
 
@@ -1354,14 +1314,13 @@ fn is_link(path: &[u8]) -> bool {
 /// Returns true if `folder`, with symlinks resolved, is an entry of a project's `node_modules`
 /// outside `node_modules/.bun`.
 fn is_link_position(folder: &[u8]) -> bool {
-    use resolve_path::{ParentEqual, dirname, is_parent_or_equal};
     let Ok(store) = resolve_links(b"node_modules/.bun") else {
         return false;
     };
-    let project = dirname::<platform::Auto>(dirname::<platform::Auto>(&store));
-    let mut node_modules = dirname::<platform::Auto>(folder);
+    let project = dirname_or_root(dirname_or_root(&store));
+    let mut node_modules = dirname_or_root(folder);
     if strings::starts_with_char(bun_paths::basename(node_modules), b'@') {
-        node_modules = dirname::<platform::Auto>(node_modules);
+        node_modules = dirname_or_root(node_modules);
     }
     bun_paths::basename(node_modules) == b"node_modules"
         && is_parent_or_equal(project, folder) == ParentEqual::Parent
@@ -1518,12 +1477,11 @@ fn link_store_siblings(cache_path: &[u8], link: &[u8], folder: &[u8]) -> sys::Re
     if !is_in_global_store(cache_path, &package) {
         return Ok(());
     }
-    let mut siblings = resolve_path::dirname::<platform::Auto>(&package);
+    let mut siblings = dirname_or_root(&package);
     if strings::starts_with_char(bun_paths::basename(siblings), b'@') {
-        siblings = resolve_path::dirname::<platform::Auto>(siblings);
+        siblings = dirname_or_root(siblings);
     }
-    let node_modules = resolve_path::join::<platform::Auto>(&[folder, b"node_modules"]).to_vec();
-    link_entries(siblings, &node_modules, &package)
+    link_entries(siblings, &Path::join(&[folder, b"node_modules"]), &package)
 }
 
 /// Creates a symlink in `to` for each entry of `from` other than `except`. The entries of an
@@ -1533,8 +1491,8 @@ fn link_entries(from: &[u8], to: &[u8], except: &[u8]) -> sys::Result<()> {
     let mut iter = sys::iterate_dir(dir.fd);
     while let Some(entry) = iter.next()? {
         let name = entry.name.slice_u8();
-        let target = ZBox::from_bytes(resolve_path::join::<platform::Auto>(&[from, name]));
-        let link = ZBox::from_bytes(resolve_path::join::<platform::Auto>(&[to, name]));
+        let target = VecPath::join(&[from, name]);
+        let link = VecPath::join(&[to, name]);
         if target.as_bytes() == except {
             continue;
         }
@@ -1562,10 +1520,7 @@ fn from_cwd(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     if cfg!(windows) {
         return path.to_vec();
     }
-    // Both paths are already absolute and normalized. `relative` would normalize them again, and
-    // that treats a `\` as a separator.
-    let relative = resolve_path::relative_normalized::<platform::Auto, false>(cwd, path);
-    [&b"./"[..], relative].concat()
+    [b"./", Path::relative(cwd, path).as_bytes()].concat()
 }
 
 /// Goes through a new symlink if git would quote the path, which then couldn't be stripped from the diff.
@@ -1616,18 +1571,12 @@ fn copy_cache_entry(
 
 /// The cache entry does not have the packages that the hoisted linker nested under the old folder.
 fn keep_nested_packages(old: &[u8], folder: &[u8]) -> sys::Result<()> {
-    let from = match Dir::cwd().open_dir(
-        resolve_path::join::<platform::Auto>(&[old, b"node_modules"]),
-        ITERATE,
-    ) {
+    let from = match Dir::cwd().open_dir(&Path::join(&[old, b"node_modules"]), ITERATE) {
         Ok(dir) => dir,
         Err(e) if e.get_errno() == sys::E::ENOENT => return Ok(()),
         Err(e) => return Err(e),
     };
-    let to = Fd::cwd().make_open_path(resolve_path::join::<platform::Auto>(&[
-        folder,
-        b"node_modules",
-    ]))?;
+    let to = Fd::cwd().make_open_path(&Path::join(&[folder, b"node_modules"]))?;
     move_entries_absent_from(&from, Some(&to), &to, true)
 }
 
@@ -1682,20 +1631,19 @@ pub(crate) fn isolated_store_folders(
         .collect();
 
     let project_folder = |entry: usize| -> Option<Vec<u8>> {
-        let mut folder = Vec::new();
+        let mut folder = bun_paths::ForwardSlashPath::new();
         write!(
             folder,
             "node_modules/.bun/{}",
             store_entry::fmt_store_path(store_entry::Id::from(entry as u32), &store, lockfile),
-        )
-        .expect("formatting into a Vec is infallible");
+        );
         // It's a link into the global store, so the project has no folder for the package.
         if is_link(&folder) {
             return None;
         }
-        write!(folder, "/node_modules/{}", bstr::BStr::new(name))
-            .expect("formatting into a Vec is infallible");
-        sys::exists(&folder).then_some(folder)
+        folder.push(b"node_modules");
+        folder.push(name);
+        sys::exists_z(&folder).then(|| folder.to_vec())
     };
 
     // Walk breadth-first from the current package, then add the entries that it doesn't load.
@@ -1866,6 +1814,6 @@ fn pkg_info_for_name_and_version(
     }
     (
         pkg_id,
-        resolve_path::join::<platform::Auto>(&[&node_modules, folder_name]).to_vec(),
+        VecPath::join(&[&node_modules, folder_name]).into_vec(),
     )
 }

@@ -7,20 +7,35 @@ use bun_core::strings;
 
 use crate::PathChar;
 use crate::path_unit::PathUnit;
-use crate::platform::{Loose, Posix, Windows};
+
+pub mod platform {
+    pub struct Posix;
+    pub struct Windows;
+    /// Reads like [`Windows`] and writes `/`.
+    pub struct WindowsForwardSlash;
+    /// The host's.
+    #[cfg(not(windows))]
+    pub type Auto = Posix;
+    #[cfg(windows)]
+    pub type Auto = Windows;
+    /// Reads like [`Auto`] and writes `/`, for output that is printed, hashed or saved.
+    #[cfg(not(windows))]
+    pub(crate) type ForwardSlash = Posix;
+    #[cfg(windows)]
+    pub(crate) type ForwardSlash = WindowsForwardSlash;
+}
+use platform::{Posix, Windows, WindowsForwardSlash};
 
 /// Purely lexical. Call it on a [`platform`](crate::platform) type: `Posix::basename(path)`.
 pub trait PathStyle: Sized {
     /// The separator to write.
     const SEP: u8;
-    /// `\` is a separator too, and `X:/` is a root.
-    const BACKSLASH_IS_SEP: bool;
-    /// Recognizes `X:a`, UNC and device prefixes, and ignores ASCII case.
+    /// `\` is a separator too, there are drives, shares and device prefixes, and ASCII case is ignored.
     const WIN32: bool;
 
     #[inline(always)]
     fn is_sep<C: PathChar>(unit: C) -> bool {
-        unit.eq_ascii(b'/') || (Self::BACKSLASH_IS_SEP && unit.eq_ascii(b'\\'))
+        unit.eq_ascii(b'/') || (Self::WIN32 && unit.eq_ascii(b'\\'))
     }
 
     #[inline(always)]
@@ -42,6 +57,15 @@ pub trait PathStyle: Sized {
         path
     }
 
+    /// Removes one `./`.
+    #[inline(always)]
+    fn without_leading_dot_slash<C: PathChar>(path: &[C]) -> &[C] {
+        match path {
+            [dot, sep, rest @ ..] if dot.eq_ascii(b'.') && Self::is_sep(*sep) => rest,
+            _ => path,
+        }
+    }
+
     /// Removes all of them, but a root keeps its separator.
     #[inline]
     fn without_trailing_sep<C: PathUnit>(path: &[C]) -> &[C] {
@@ -57,9 +81,35 @@ pub trait PathStyle: Sized {
         &path[..Root::parse::<Self>(path).len]
     }
 
+    /// The root without its separator: `C:`, `\\server\share`, `\\?\C:`, or empty.
+    #[inline]
+    fn volume<C: PathUnit>(path: &[C]) -> &[C] {
+        &path[..Root::parse::<Self>(path).volume_len]
+    }
+
     #[inline]
     fn is_absolute<C: PathUnit>(path: &[C]) -> bool {
-        Root::parse::<Self>(path).is_absolute()
+        Self::has_leading_sep(path) || (Self::WIN32 && Root::parse::<Self>(path).is_absolute())
+    }
+
+    /// False for `\a` on Windows, which depends on the current drive.
+    #[inline]
+    fn is_fully_qualified<C: PathUnit>(path: &[C]) -> bool {
+        Root::parse::<Self>(path).is_fully_qualified::<Self>()
+    }
+
+    /// `C:\a` for `\\?\C:\a` and `\??\C:\a`. A share needs [`strip_nt_prefix`](crate::GenericPath::strip_nt_prefix).
+    #[inline]
+    fn without_nt_prefix<C: PathUnit>(path: &[C]) -> &[C] {
+        if !Self::WIN32 || !Root::parse::<Self>(path).has_nt_prefix(path) {
+            return path;
+        }
+        let inner = Self::without_leading_sep(&path[3..]);
+        if Self::is_absolute(inner) {
+            inner
+        } else {
+            path
+        }
     }
 
     /// `None` for a root or a single component.
@@ -73,6 +123,12 @@ pub trait PathStyle: Sized {
         } else {
             None
         }
+    }
+
+    /// [`Self::dirname`], but a root is its own parent, and a single component has an empty one.
+    #[inline]
+    fn dirname_or_root<C: PathUnit>(path: &[C]) -> &[C] {
+        Self::dirname(path).unwrap_or_else(|| Self::root(path))
     }
 
     /// Empty for `/` and `C:\`. `share` for `\\server\share`, as in Node.
@@ -136,24 +192,41 @@ pub trait PathStyle: Sized {
             }
         })
     }
+
+    /// Whether `path` has a root, or its `..` lead above the directory it starts in.
+    fn climbs_out<C: PathUnit>(path: &[C]) -> bool {
+        let step = |depth: usize, component: &[C]| match component {
+            [dot] if dot.eq_ascii(b'.') => Some(depth),
+            _ if component == C::lit(b"..") => depth.checked_sub(1),
+            _ => Some(depth + 1),
+        };
+        !Self::root(path).is_empty() || Self::components(path).try_fold(0, step).is_none()
+    }
+
+    /// The longest path that each of `paths` is in or equal to.
+    fn common_ancestor<'a, C: PathUnit>(
+        mut paths: impl Iterator<Item = &'a [C]>,
+    ) -> Option<&'a [C]> {
+        let first = paths.next()?;
+        paths.try_fold(first, |common, path| {
+            Self::ancestors(common).find(|dir| Self::strip_prefix(path, dir).is_some())
+        })
+    }
 }
 
 impl PathStyle for Posix {
     const SEP: u8 = b'/';
-    const BACKSLASH_IS_SEP: bool = false;
     const WIN32: bool = false;
 }
 
 impl PathStyle for Windows {
     const SEP: u8 = b'\\';
-    const BACKSLASH_IS_SEP: bool = true;
     const WIN32: bool = true;
 }
 
-impl PathStyle for Loose {
+impl PathStyle for WindowsForwardSlash {
     const SEP: u8 = b'/';
-    const BACKSLASH_IS_SEP: bool = true;
-    const WIN32: bool = cfg!(windows);
+    const WIN32: bool = true;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -179,7 +252,7 @@ pub(crate) struct Root {
 impl Root {
     #[inline(always)]
     pub(crate) fn parse<S: PathStyle>(path: &[impl PathUnit]) -> Root {
-        if S::BACKSLASH_IS_SEP {
+        if S::WIN32 {
             return Root::parse_windows::<S, _>(path);
         }
         Root::without_volume(S::has_leading_sep(path))
@@ -201,17 +274,16 @@ impl Root {
 
         if !is_sep(0) {
             let volume_len = C::drive_len(path);
-            let has_sep = is_sep(volume_len);
-            if volume_len == 0 || !(S::WIN32 || has_sep) {
+            if volume_len == 0 {
                 return Root::without_volume(false);
             }
             return Root {
                 kind: VolumeKind::Drive,
                 volume_len,
-                len: volume_len + usize::from(has_sep),
+                len: volume_len + usize::from(is_sep(volume_len)),
             };
         }
-        if S::WIN32 && is_sep(1) && path.len() > 2 && !is_sep(2) {
+        if is_sep(1) && path.len() > 2 && !is_sep(2) {
             if (is(2, b'.') || is(2, b'?')) && (path.len() == 3 || is_sep(3)) {
                 return Root::parse_unc_or_device::<S, C>(path, VolumeKind::Device, 3);
             }
@@ -261,10 +333,15 @@ impl Root {
         self.len > self.volume_len || matches!(self.kind, VolumeKind::Unc | VolumeKind::Device)
     }
 
-    /// False for `\a` on Windows, which depends on the current drive.
     #[inline(always)]
     pub(crate) fn is_fully_qualified<S: PathStyle>(self) -> bool {
         self.is_absolute() && (!S::WIN32 || self.kind != VolumeKind::None)
+    }
+
+    /// `\\?\` or `\??\`, but not `\\.\`.
+    #[inline(always)]
+    pub(crate) fn has_nt_prefix(self, path: &[impl PathUnit]) -> bool {
+        self.kind == VolumeKind::Device && path[2].eq_ascii(b'?')
     }
 }
 
@@ -281,8 +358,8 @@ pub(crate) fn len_without_trailing_sep<S: PathStyle>(
 }
 
 #[inline(always)]
-fn last_index_of_sep<S: PathStyle>(path: &[impl PathUnit]) -> Option<usize> {
-    if S::BACKSLASH_IS_SEP {
+pub(crate) fn last_index_of_sep<S: PathStyle>(path: &[impl PathUnit]) -> Option<usize> {
+    if S::WIN32 {
         path.iter().rposition(|&unit| S::is_sep(unit))
     } else {
         PathUnit::last_index_of_slash(path)
@@ -324,26 +401,17 @@ pub(crate) fn eq_ignore_case_and_sep<C: PathChar>(a: &[C], b: &[C]) -> bool {
 #[inline]
 pub(crate) fn common_path_prefix_len<S: PathStyle, C: PathUnit>(a: &[C], b: &[C]) -> usize {
     let identical = C::common_prefix_length(a, b);
-    if !S::BACKSLASH_IS_SEP {
+    if !S::WIN32 {
         return identical;
     }
-    let eq = |a: C, b: C| {
-        if S::WIN32 {
-            fold_case_and_sep(a) == fold_case_and_sep(b)
-        } else {
-            a == b || (S::is_sep(a) && S::is_sep(b))
-        }
-    };
+    let eq = |&(&a, &b): &(&C, &C)| fold_case_and_sep(a) == fold_case_and_sep(b);
     let rest = a[identical..].iter().zip(&b[identical..]);
-    identical + rest.take_while(|&(&a, &b)| eq(a, b)).count()
+    identical + rest.take_while(eq).count()
 }
 
 #[inline]
 pub(crate) fn eq_path<S: PathStyle, C: PathUnit>(a: &[C], b: &[C]) -> bool {
-    a == b
-        || (S::BACKSLASH_IS_SEP
-            && a.len() == b.len()
-            && common_path_prefix_len::<S, C>(a, b) == a.len())
+    a == b || (S::WIN32 && eq_ignore_case_and_sep(a, b))
 }
 
 /// See [`PathStyle::components`].

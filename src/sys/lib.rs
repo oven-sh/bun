@@ -229,7 +229,9 @@ pub mod dir_iterator {
         #[inline]
         pub fn as_zstr(&self) -> &'a ZStr {
             self.utf8.get_or_init(|| {
-                bun_paths::strings::paths::from_w_path(self.scratch.take(), self.native)
+                let mut name = bun_paths::SlicePath::new(self.scratch.take());
+                name.set(self.native).expect("a name fits a path buffer");
+                name.into_zstr()
             })
         }
     }
@@ -692,17 +694,8 @@ pub mod dir_iterator {
 pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) -> Result<Fd> {
     #[cfg(not(windows))]
     {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        // ENAMETOOLONG on
-        // overflow, never silently truncate (would open the wrong directory).
-        if path.len() >= buf.len() {
-            return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
-        }
-        let len = path.len();
-        buf[..len].copy_from_slice(path);
-        let z = ZStr::nul_terminate(&mut buf, len);
         let flags = libc::O_DIRECTORY | libc::O_RDONLY | libc::O_CLOEXEC;
-        openat(dir, z, flags, 0)
+        openat_a(dir, path, flags, 0)
     }
     #[cfg(windows)]
     {
@@ -2284,31 +2277,7 @@ mod posix_impl {
     /// `mkdir_recursive_at` with an explicit `mode` for created directories
     /// (matches `bun.api.node.fs.NodeFS.mkdirRecursive`'s `mode` arg).
     pub fn mkdir_recursive_at_mode(dir: Fd, sub_path: &[u8], mode: Mode) -> Maybe<()> {
-        let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
-        mkdir_recursive_with(sub_path, |p| {
-            if p.len() >= buf.len() {
-                // Tag as `.mkdir`; keep consistent with `mkdirat`.
-                return Err(
-                    Error::from_code_int(E::ENAMETOOLONG as _, Tag::mkdir).with_path(sub_path)
-                );
-            }
-            buf[..p.len()].copy_from_slice(p);
-            mkdirat(dir, ZStr::nul_terminate(&mut buf, p.len()), mode)
-        })
-    }
-    pub(crate) fn mkdir_recursive_with(
-        sub_path: &[u8],
-        mut mkdir: impl FnMut(&[u8]) -> Maybe<()>,
-    ) -> Maybe<()> {
-        use bun_paths::{ComponentIterator, MakePathStep, PathFormat};
-        // POSIX `init` is infallible.
-        let it = ComponentIterator::init(sub_path, PathFormat::Posix).unwrap();
-        bun_paths::make_path_with(it, |p| match mkdir(p) {
-            Ok(()) => Ok(MakePathStep::Created),
-            Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
-            Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
-            Err(e) => Err(e),
-        })
+        mkdir_recursive_with(sub_path, |p| mkdirat(dir, &bun_paths::Path::from(p), mode))
     }
     pub fn unlink(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
@@ -3800,20 +3769,13 @@ mod windows_impl {
         if err.get_errno() != E::ENOENT
             || bytes.len() < 248
             || bytes.len() + 5 > bun_paths::MAX_PATH_BYTES
-            || !bun_paths::is_drive_letter(bytes[0])
-            || bytes[1] != b':'
-            || !bun_paths::is_sep_any(bytes[2])
+            || !bun_paths::is_fully_qualified(bytes)
         {
             return Err(err);
         }
-        let mut long = bun_paths::path_buffer_pool::get();
-        long[..4].copy_from_slice(&w::LONG_PATH_PREFIX_U8);
-        let normalized = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
-            bytes,
-            &mut long[4..],
-        );
-        let len = 4 + normalized.len();
-        sys_uv::readlink(ZStr::nul_terminate(&mut long, len), buf).map(|target| target.len())
+        let mut long = bun_paths::Path::from(bytes);
+        long.make_long_path();
+        sys_uv::readlink(&long, buf).map(|target| target.len())
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)
@@ -3900,8 +3862,7 @@ mod windows_impl {
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let len = w::GetCurrentDirectoryW(&mut wbuf[..])
             .map_err(|err| Error::from_win32(err, Tag::getcwd))?;
-        let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len]);
-        Ok(utf8.len())
+        super::write_path_from_windows(buf, &wbuf[..len], Tag::getcwd)
     }
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
         let dir = dir.as_fd();
@@ -3913,25 +3874,20 @@ mod windows_impl {
             op: super::WindowsOpenDirOp::OnlyCreate,
             ..Default::default()
         };
-        let facts = bun_paths::classify_rel_t(path.as_bytes(), bun_paths::PathFormat::Windows);
         // `NtCreateFile` does not resolve `..` in a name relative to a directory handle.
-        let made = if facts.climbs_above_start {
+        let made = if !bun_paths::is_absolute(path) && bun_paths::climbs_out(path) {
             super::open_dir_at_windows_a(dir, path.as_bytes(), options)
         } else {
-            let mut wbuf = bun_paths::w_path_buffer_pool::get();
-            let wpath = super::to_nt_path_checked(&mut wbuf, path, Tag::mkdir)?;
-            super::open_dir_at_windows_nt_path(dir, wpath, options)
+            super::open_dir_at_windows_nt_path(dir, &super::nt_path(path, Tag::mkdir)?, options)
         };
         made.map(super::File::from_fd).map(drop)
     }
     pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
         let from_dir = from_dir.as_fd();
         let to_dir = to_dir.as_fd();
-        let mut wf = bun_paths::w_path_buffer_pool::get();
-        let mut wt = bun_paths::w_path_buffer_pool::get();
-        let from_w = super::to_nt_path_checked(&mut wf, from, Tag::rename)?;
-        let to_w = super::to_nt_path_checked(&mut wt, to, Tag::rename)?;
-        super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
+        let from_w = super::nt_path(from, Tag::rename)?;
+        let to_w = super::nt_path(to, Tag::rename)?;
+        super::windows::rename_at_w(from_dir, &from_w, to_dir, &to_w, true)
     }
     pub(crate) fn renameat2(
         from_dir: Fd,
@@ -3950,10 +3906,8 @@ mod windows_impl {
         // `remove_dir = flags & AT_REMOVEDIR != 0`.
         // AT_REMOVEDIR on Windows = 0x200.
         const AT_REMOVEDIR: i32 = 0x200;
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = super::to_nt_path_checked(&mut wbuf, path, Tag::unlink)?;
         super::windows::DeleteFileBun(
-            wpath,
+            &super::nt_path(path, Tag::unlink)?,
             super::windows::DeleteFileOptions {
                 dir: if dir.is_valid() {
                     Some(dir.native())
@@ -3976,146 +3930,28 @@ mod windows_impl {
         mkdir_recursive_at_mode(dir, sub, 0o777)
     }
     pub fn mkdir_recursive_at_mode(dir: Fd, sub: &[u8], mode: Mode) -> Maybe<()> {
-        // `bun.makePath`. The component-splitting and
-        // back-then-forward walk live in `bun_paths::{ComponentIterator,
-        // make_path_with}` (`ComponentIterator`
-        // never yields a bare `"C:"` / `"\\server\share"` root, which is what
-        // broke the old forward-split impl for absolute paths fed by
-        // `bin::Linker::create_windows_shim`).
-        //
-        // What stays here is a `.`/`..` *pre-normalize* pass: our `mkdirat` below routes
-        // through bun's `to_nt_path` which only flips slashes, so a literal
-        // `"."`/`".."` ObjectName reaches `NtCreateFile` un-normalized — `.`
-        // → `OBJECT_NAME_NOT_FOUND` (ENOENT, not the EEXIST the walk expects)
-        // and `a\..\b` live-locks the walk. Normalizing here preserves the
-        // expected behavior (compile-outfile-subdirs.test.ts
-        // "works with . and .. in paths", outfile
-        // `./output/../output/./app.exe`).
-        use bun_paths::{ComponentIterator, MakePathStep, PathFormat, is_sep_any as is_sep};
-        if sub.is_empty() {
-            return Ok(());
-        }
-        // Strip leading `./` (`.\`) and a bare `.` (bundler chunk paths are
-        // always `./<name>` — see `linker_context::writeOutputFilesToDisk`).
-        let mut sub = sub;
-        while sub.len() >= 2 && sub[0] == b'.' && is_sep(sub[1]) {
-            sub = &sub[2..];
-            while !sub.is_empty() && is_sep(sub[0]) {
-                sub = &sub[1..];
-            }
-        }
-        if sub.is_empty() || sub == b"." {
-            return Ok(());
-        }
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if sub.len() >= buf.0.len() {
+        // `NtCreateFile` does not take `.` for a name.
+        let Ok(sub) = bun_paths::PoolPath::join(&[sub]) else {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
-        }
-
-        // Disk designator (`C:` / `C:\` / `\\server\share\`) is copied verbatim
-        // and never popped by `..`.
-        let root_end = bun_paths::resolve_path::windows_filesystem_root(sub).len();
-        buf.0[..root_end].copy_from_slice(&sub[..root_end]);
-        let mut w = root_end; // write cursor into buf
-        // Bytes in `buf[root_end..pinned_end]` are leading `..` segments that
-        // had nothing to pop (relative paths only) — a later `..` must not pop
-        // them (`removeDotDirsSanitized` keeps them too).
-        let mut pinned_end = root_end;
-        {
-            let mut i = root_end;
-            loop {
-                while i < sub.len() && is_sep(sub[i]) {
-                    i += 1;
-                }
-                if i >= sub.len() {
-                    break;
-                }
-                let start = i;
-                while i < sub.len() && !is_sep(sub[i]) {
-                    i += 1;
-                }
-                let comp = &sub[start..i];
-                if comp == b"." {
-                    continue;
-                }
-                if comp == b".." {
-                    if w > pinned_end {
-                        // Pop the last written component (single-`\`-separated,
-                        // so a back-scan to the previous `\` is exact).
-                        while w > pinned_end && buf.0[w - 1] != b'\\' {
-                            w -= 1;
-                        }
-                        if w > pinned_end {
-                            w -= 1;
-                        } // drop the separator too
-                        continue;
-                    }
-                    if root_end > 0 {
-                        continue;
-                    } // absolute: `..` at root is root
-                    // Relative with nothing to pop: keep `..` literally so
-                    // `mkdirat(dir, "..\foo")` still targets `dir`'s parent.
-                    if w > root_end {
-                        buf.0[w] = b'\\';
-                        w += 1;
-                    }
-                    buf.0[w] = b'.';
-                    buf.0[w + 1] = b'.';
-                    w += 2;
-                    pinned_end = w;
-                    continue;
-                }
-                if w > root_end {
-                    buf.0[w] = b'\\';
-                    w += 1;
-                }
-                buf.0[w..w + comp.len()].copy_from_slice(comp);
-                w += comp.len();
-            }
-        }
-        if w == root_end {
+        };
+        if bun_paths::components(&sub).all(|name| name == b".") {
             return Ok(());
-        } // fully cancelled (e.g. `a/..`)
-
-        // Walk the normalized result. `ComponentIterator::init(.windows)` only
-        // errors on namespace-prefixed / `\\\x` inputs — pathological for
-        // makePath (NtCreateFile rejects them anyway).
-        let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
-            .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
-        let mut z = bun_paths::path_buffer_pool::get();
-        bun_paths::make_path_with(it, |p| {
-            z.0[..p.len()].copy_from_slice(p);
-            match mkdirat(dir, ZStr::nul_terminate(&mut z, p.len()), mode) {
-                Ok(()) => Ok(MakePathStep::Created),
-                Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
-                Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
-                Err(e) => Err(e),
-            }
+        }
+        super::mkdir_recursive_with(sub.as_bytes(), |p| {
+            mkdirat(dir, &bun_paths::Path::from(p), mode)
         })
     }
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
         // Resolve `dest` against `dirfd`, then symlink via libuv.
-        let mut db = bun_paths::path_buffer_pool::get();
-        let d = super::get_fd_path(dirfd, &mut db)?;
-        let mut dj = bun_paths::path_buffer_pool::get();
-        let d_abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
-            &mut dj.0,
-            &[d, dest.as_bytes()],
-        );
-        sys_uv::symlink_uv(target, d_abs, 0)
+        let dir = super::get_fd_path_owned(dirfd)?;
+        sys_uv::symlink_uv(target, &bun_paths::Path::join(&[&dir, dest]), 0)
     }
     pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
         let fd = fd.as_fd();
         // No `readlinkat` on Windows — resolve and call `readlink`.
-        let mut db = bun_paths::path_buffer_pool::get();
-        let d = super::get_fd_path(fd, &mut db)?;
-        let mut dj = bun_paths::path_buffer_pool::get();
-        let abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
-            &mut dj.0,
-            &[d, path.as_bytes()],
-        );
-        readlink(abs, buf)
+        let dir = super::get_fd_path_owned(fd)?;
+        readlink(&bun_paths::Path::join(&[&dir, path]), buf)
     }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
         let fd = fd.as_fd();
@@ -4129,22 +3965,7 @@ mod windows_impl {
         // `(mode & W_OK) != 0` AND the file is read-only AND it is NOT a
         // directory, return `.err = EPERM`.
         const W_OK: i32 = 2;
-        // Longer than any path NT can address — reject up front instead of
-        // letting the wide conversion below fail-safe to a prefix-only path
-        // (mirrors `PathLikeExt`; see oven-sh/bun#27775,
-        // which handled `access` as one of its call sites). `path` may
-        // already carry a `\\?\` prefix (NodeFS::access routes through
-        // `slice_z`, which prepends it) — check the unprefixed form so the
-        // fit budget doesn't count the prefix twice and over-reject paths
-        // just under the limit.
-        if !bun_paths::string_paths::fits_in_wide_path_buffer(
-            bun_paths::string_paths::without_nt_prefix(path.as_bytes()),
-        ) {
-            return Err(Error::new(E::ENAMETOOLONG, Tag::access).with_path(path.as_bytes()));
-        }
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
-        let attrs = w::GetFileAttributesW(wpath)
+        let attrs = w::GetFileAttributesW(&super::long_path(path, Tag::access)?)
             .map_err(|err| Error::from_win32(err, Tag::access).with_path(path.as_bytes()))?;
         let is_readonly = (attrs & w::FILE_ATTRIBUTE_READONLY) != 0;
         let is_directory = (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -4204,8 +4025,9 @@ mod windows_impl {
         // system security policy and recognizes `.js/.lnk/.pif/.pl/.shs/.url/
         // .vbs/...` in addition to `.exe/.cmd/.bat/.com` . Do NOT hand-roll an extension whitelist —
         // PORTING.md §Forbidden bars re-implementing linked OS API surface.
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, path.as_bytes());
+        let Ok(wpath) = super::win32_path(path, Tag::access) else {
+            return false;
+        };
         // `bFromShellExecute = FALSE` so `.exe` files are included
         // (https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-saferiisexecutablefiletype).
         // SAFETY: FFI; wpath is NUL-terminated and valid for the call.
@@ -4264,11 +4086,9 @@ mod windows_impl {
         lseek(fd, 0, w::FILE_END as i32).map(|new| usize::try_from(new).expect("int cast"))
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
-        // `SetCurrentDirectoryW(toWDirPath(..))`.
-        // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
-        // as the drive root, not the drive's saved cwd.
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
+        let mut wpath = super::win32_path(path, Tag::chdir)?;
+        // So that `C:` is the root of the drive, and not its saved working directory.
+        let _ = wpath.push_trailing_sep();
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
             return Err(
                 Error::from_win32(w::Win32Error::get(), Tag::chdir).with_path(path.as_bytes())
@@ -5566,17 +5386,9 @@ impl DynLib {
     ///
     /// SAFETY: as [`Self::open_with_flags`].
     pub unsafe fn open(path: &[u8]) -> core::result::Result<Self, bun_errno::SystemErrno> {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
-        // dlopen a different library whose path is a prefix of the requested one).
-        if path.len() >= buf.0.len() {
-            return Err(bun_errno::SystemErrno::ENAMETOOLONG);
-        }
-        let len = path.len();
-        buf.0[..len].copy_from_slice(path);
-        let z = ZStr::nul_terminate(&mut buf, len);
+        let path = bun_paths::PoolPath::from(path)?;
         // SAFETY: the caller's contract.
-        unsafe { Self::open_with_flags(z, RTLD::LAZY) }.ok_or(bun_errno::SystemErrno::ENOENT)
+        unsafe { Self::open_with_flags(&path, RTLD::LAZY) }.ok_or(bun_errno::SystemErrno::ENOENT)
     }
     /// `dlopen(filename, flags)`. Windows → `LoadLibraryExW` (UTF-8 → UTF-16).
     ///
@@ -5588,16 +5400,15 @@ impl DynLib {
         #[cfg(windows)]
         let handle = {
             let _ = flags;
-            let mut wbuf = bun_paths::w_path_buffer_pool::get();
-            let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, filename.as_bytes());
+            let wpath = win32_path(filename, Tag::open).ok()?;
             // As `uv_dlopen`: dependent DLLs resolve next to the module. Undefined for a relative path.
             const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
-            let dw_flags = if bun_paths::is_absolute_windows(filename.as_bytes()) {
+            let dw_flags = if bun_paths::is_absolute(filename.as_bytes()) {
                 LOAD_WITH_ALTERED_SEARCH_PATH
             } else {
                 0
             };
-            // SAFETY: `to_w_path` NUL-terminates `wbuf`; `hFile` is reserved (NULL). The caller answers for the library.
+            // SAFETY: `wpath` is NUL-terminated; `hFile` is reserved (NULL). The caller answers for the library.
             unsafe {
                 bun_windows_sys::kernel32::LoadLibraryExW(
                     wpath.as_ptr(),
@@ -5667,13 +5478,10 @@ pub fn open_a(path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
 /// `openatA` — like `openat` but takes a non-NUL-terminated slice.
 pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
     let dir = dir.as_fd();
-    let mut buf = bun_paths::path_buffer_pool::get();
-    if path.len() >= buf.0.len() {
+    let Ok(z) = bun_paths::PoolPath::from(path) else {
         return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(path));
-    }
-    buf.0[..path.len()].copy_from_slice(path);
-    let z = ZStr::nul_terminate(&mut buf, path.len());
-    openat(dir, z, flags, perm)
+    };
+    openat(dir, &z, flags, perm)
 }
 /// `openatOSPath` — `openat` taking a platform-native path
 /// (`OSPathSliceZ` = `ZStr` on POSIX, `WStr` on Windows). On POSIX this is
@@ -5730,7 +5538,7 @@ pub fn symlink_running_executable(target: &ZStr, dest: &ZStr) -> Maybe<()> {
 /// Best-effort recursive delete of an absolute
 /// path. Routes through `Dir::delete_tree` on the parent directory.
 pub fn delete_tree_absolute(path: &[u8]) -> Maybe<()> {
-    let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(path);
+    let parent = bun_paths::dirname_or_root(path);
     let base = bun_paths::basename(path);
     if parent.is_empty() || base.is_empty() {
         // Nothing sensible to do (root or empty); silent success.
@@ -5832,10 +5640,7 @@ impl Default for NormalizePathWindowsOpts {
 fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<(usize, bool)> {
     const SEP: u16 = b'\\' as u16;
     const DEVICE: &[u8] = b"\\Device\\";
-    if vol_rel.first() != Some(&SEP)
-        || vol_rel.len() >= nt.len()
-        || !bun_core::strings::has_suffix_t(nt, vol_rel)
-    {
+    if vol_rel.first() != Some(&SEP) || vol_rel.len() >= nt.len() || !nt.ends_with(vol_rel) {
         return None;
     }
     let device_len = nt.len() - vol_rel.len();
@@ -5903,139 +5708,67 @@ pub fn normalize_path_windows_opts<'a>(
     buf: &'a mut [u16],
     opts: NormalizePathWindowsOpts,
 ) -> Maybe<&'a bun_core::WStr> {
-    use bun_core::WStr;
-    let too_long = || Error::from_code(E::ENAMETOOLONG, Tag::open);
+    use bun_core::w;
+    use bun_paths::platform::{Posix, Windows};
+    use bun_paths::{GenericPath, NameTooLong, PathStyle as _, PoolBackend, SliceBackend};
+    let too_long = |_: NameTooLong| Error::from_code(E::ENAMETOOLONG, Tag::open);
 
-    let mut path = path;
-    if bun_paths::is_absolute_windows_wtf16(path) {
-        // Three special-cases that must run BEFORE
-        // `normalizeStringGenericTZ`, otherwise device paths get mangled:
-        if path.len() >= 4 {
-            // (a) `…\nul` / `…\NUL` → literal NT object path `\??\NUL`.
-            const BS_NUL_LO: [u16; 4] = [b'\\' as u16, b'n' as u16, b'u' as u16, b'l' as u16];
-            const BS_NUL_UP: [u16; 4] = [b'\\' as u16, b'N' as u16, b'U' as u16, b'L' as u16];
-            let tail = &path[path.len() - 4..];
-            if tail == BS_NUL_LO || tail == BS_NUL_UP {
-                const NT_NUL: [u16; 7] = [
-                    b'\\' as u16,
-                    b'?' as u16,
-                    b'?' as u16,
-                    b'\\' as u16,
-                    b'N' as u16,
-                    b'U' as u16,
-                    b'L' as u16,
-                ];
-                if buf.len() <= NT_NUL.len() {
-                    return Err(too_long());
-                }
-                buf[..NT_NUL.len()].copy_from_slice(&NT_NUL);
-                buf[NT_NUL.len()] = 0;
-                return Ok(WStr::from_buf(&buf[..], NT_NUL.len()));
-            }
-            use bun_paths::is_sep_any_t as is_sep;
-            if is_sep(path[1]) && is_sep(path[3]) {
-                // (b) `\\.\…` device path → preserve verbatim so `\\.\pipe\foo`
-                // is not collapsed to `\pipe\foo` by the normalizer.
-                if path[2] == b'.' as u16 {
-                    if path.len() >= buf.len() {
-                        return Err(too_long());
-                    }
-                    buf[0] = b'\\' as u16;
-                    buf[1] = b'\\' as u16;
-                    buf[2] = b'.' as u16;
-                    buf[3] = b'\\' as u16;
-                    let rest = &path[4..];
-                    buf[4..4 + rest.len()].copy_from_slice(rest);
-                    buf[path.len()] = 0;
-                    return Ok(WStr::from_buf(&buf[..], path.len()));
-                }
-                // (c) `\??\…` / `\\?\…` already prefixed → strip the 4-u16
-                // prefix before re-normalizing to avoid a double `\??\`.
-                if path[2] == b'?' as u16 {
-                    path = &path[4..];
-                }
-            }
+    // Room for `\??\UNC\`.
+    if path.len() + 8 > buf.len() {
+        return Err(too_long(NameTooLong));
+    }
+    let mut out = GenericPath::<SliceBackend<'a, u16>>::new(buf);
+
+    if Windows::is_absolute(path) {
+        if path.ends_with(w!("\\nul")) || path.ends_with(w!("\\NUL")) {
+            out.set(w!("\\??\\NUL")).map_err(too_long)?;
+        } else if let [_, second, dot, fourth, rest @ ..] = path
+            && Windows::is_sep(*second)
+            && *dot == u16::from(b'.')
+            && Windows::is_sep(*fourth)
+        {
+            // `NtCreateFile` does not open a device path. The callers know it by this prefix.
+            out.set(w!("\\\\.\\")).map_err(too_long)?;
+            out.extend_from_slice(rest).map_err(too_long)?;
+        } else if opts.add_nt_prefix {
+            out.set(path).map_err(too_long)?;
+            out.make_nt_path().map_err(too_long)?;
+        } else {
+            out.resolve_in_place(&[path]).map_err(too_long)?;
+            out.strip_nt_prefix();
         }
-        if opts.add_nt_prefix {
-            // Absolute → add `\??\` (idempotent if already present), normalize
-            // separators/`.`/`..` and NUL-terminate.
-            // `nt_prefix_headroom = 8`: reject when `path.len >
-            // buf.len - nt_prefix_headroom`.
-            // `normalizeStringGenericTZ` performs no bounds checking of its
-            // own, so reserve room for `\??\` + trailing-`\` growth + NUL
-            // before calling it. NOTE: `to_nt_path16` is NOT a substitute here
-            // — it only normalizes slashes and leaves `.`/`..` segments in
-            // place, which `NtCreateFile` rejects (e.g. `\??\C:\dir\.` →
-            // OBJECT_NAME_NOT_FOUND).
-            if path.len() > buf.len().saturating_sub(8) {
-                return Err(too_long());
-            }
-            let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
-                u16,
-                /*ALLOW_ABOVE_ROOT*/ false,
-                /*PRESERVE_TRAILING_SLASH*/ false,
-                /*ZERO_TERMINATE*/ true,
-                /*ADD_NT_PREFIX*/ true,
-            >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
-            let len = norm.len();
-            return Ok(WStr::from_buf(buf, len));
-        }
-        // `add_nt_prefix = false` — produce a Win32 path
-        // (no `\??\` object prefix) for callers that feed kernel32 APIs
-        // (CreateDirectoryW / CopyFileW). With .add_nt_prefix = false the
-        // normalizer can still grow the input by one u16 (trailing `\` after a
-        // bare UNC volume name) plus the NUL terminator.
-        if path.len() > buf.len().saturating_sub(2) {
-            return Err(too_long());
-        }
-        let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
-            u16,
-            /*ALLOW_ABOVE_ROOT*/ false,
-            /*PRESERVE_TRAILING_SLASH*/ false,
-            /*ZERO_TERMINATE*/ true,
-            /*ADD_NT_PREFIX*/ false,
-        >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
-        let len = norm.len();
-        return Ok(WStr::from_buf(buf, len));
+        return Ok(out.into_zstr());
     }
 
     // Strip a leading drive letter (`C:`) on the relative part; the bypass
     // below still copies the original `path` verbatim.
-    let rel = if path.len() >= 2
-        && bun_paths::resolve_path::is_drive_letter_t::<u16>(path[0])
-        && path[1] == b':' as u16
-    {
-        &path[2..]
-    } else {
-        path
+    let rel = match path {
+        [letter, colon, rest @ ..]
+            if u8::try_from(*letter).is_ok_and(|letter| letter.is_ascii_alphabetic())
+                && *colon == u16::from(b':') =>
+        {
+            rest
+        }
+        _ => path,
     };
-
-    // Routing = any separator or `.`; clamp relevance = `..` resolving above
-    // the dirfd. One pass via the shared classifier.
-    let facts = bun_paths::classify_rel_t(rel, bun_paths::PathFormat::Windows);
-    let saw_sep_or_dot = facts.has_sep || facts.has_dot;
 
     // Relative path with no separators or `.` can be passed straight through
     // to `NtCreateFile` against `RootDirectory`.
-    if !saw_sep_or_dot {
-        if path.len() >= buf.len() {
-            return Err(too_long());
-        }
-        buf[..path.len()].copy_from_slice(path);
-        buf[path.len()] = 0;
-        // SAFETY: NUL written at buf[path.len()].
-        return Ok(WStr::from_buf(&buf[..], path.len()));
+    if !(rel.iter()).any(|&unit| Windows::is_sep(unit) || unit == u16::from(b'.')) {
+        out.set(path).map_err(too_long)?;
+        return Ok(out.into_zstr());
     }
+
+    // `Posix`, because nothing below the device is a drive or a share.
+    let mut below = GenericPath::<PoolBackend<u16>, Posix>::from(b"/").map_err(too_long)?;
+    below.extend_from_slice(rel).map_err(too_long)?;
+    bun_paths::slashes_to_posix_in_place(below.as_mut_slice());
+    let climbs_above_start = Posix::climbs_out(&below[1..]);
 
     // Otherwise: resolve `dir_fd` to its NT device path, join, normalize.
     // Win32 consumers (`add_nt_prefix = false`) get the `\\?\GLOBALROOT`
     // spelling of the same object — no mount manager, valid for kernel32.
     const GLOBALROOT: &[u16] = bun_core::w!("\\\\?\\GLOBALROOT");
-    let g = if opts.add_nt_prefix {
-        0
-    } else {
-        GLOBALROOT.len()
-    };
     let base_fd = if dir_fd.is_valid() {
         dir_fd.native()
     } else {
@@ -6053,7 +5786,9 @@ pub fn normalize_path_windows_opts<'a>(
         &mut base_buf.0[..],
     ) {
         Ok(p) => p,
-        Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
+        Err(windows::GetFinalPathNameByHandleError::NameTooLong) => {
+            return Err(too_long(NameTooLong));
+        }
         // `E.BADFD` (errno 77 'file descriptor in bad state'),
         // not `EBADF` (9).
         Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
@@ -6063,7 +5798,7 @@ pub fn normalize_path_windows_opts<'a>(
     // the base suffix is kernel-normalized (pure depth), so within-tree
     // dotdots cannot reach any floor and any split yields identical output.
     let mut share_rooted = false;
-    let mut prefix_len = if !facts.climbs_above_start {
+    let mut prefix_len = if !climbs_above_start {
         base.len()
     } else {
         // The generic normalizer's `..` clamp knows drive/UNC roots, not
@@ -6078,7 +5813,9 @@ pub fn normalize_path_windows_opts<'a>(
             &mut rel_buf.0[..],
         ) {
             Ok(p) => p,
-            Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
+            Err(windows::GetFinalPathNameByHandleError::NameTooLong) => {
+                return Err(too_long(NameTooLong));
+            }
             Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
         };
         // A mis-placed boundary would resolve `..` to the wrong file; fail
@@ -6099,72 +5836,32 @@ pub fn normalize_path_windows_opts<'a>(
     // Post-trim on purpose: false for volume-root bases (the trim shortened
     // the prefix), whose lone-separator suffix must survive (see below).
     let whole_base = prefix_len == base.len();
-    let mut rest = &base[prefix_len..];
-    // Volume-root handles yield a trailing `\` — trim it so `joined` below
-    // starts with exactly one separator.
-    while rest.last() == Some(&(b'\\' as u16)) {
-        rest = &rest[..rest.len() - 1];
-    }
+    below.prepend(&base[prefix_len..]).map_err(too_long)?;
+    bun_paths::slashes_to_posix_in_place(below.as_mut_slice());
 
     // Unknown devices may multiplex namespaces (many mounts under one device
     // root); a `..` that would touch the clamp floor cannot be clamped safely
     // — fail loud. Allowlisted redirectors keep the silent share-root clamp.
-    if facts.climbs_above_start && !share_rooted {
-        const DOT: u16 = b'.' as u16;
-        let is_sep = |&c: &u16| bun_paths::is_sep_any_t(c);
-        let mut depth = 0isize;
-        for component in rest.split(is_sep).chain(rel.split(is_sep)) {
-            depth += match component {
-                [] | [DOT] => 0,
-                [DOT, DOT] => -1,
-                _ => 1,
-            };
-            if depth < 0 {
-                return Err(Error::from_code(E::EINVAL, Tag::open));
-            }
-        }
+    if climbs_above_start && !share_rooted && Posix::climbs_out(Posix::without_leading_sep(&below))
+    {
+        return Err(Error::from_code(E::EINVAL, Tag::open));
     }
 
-    let mut joined = bun_paths::w_path_buffer_pool::get();
-    let joined_len = rest.len() + 1 + rel.len();
-    // `buf` holds `\\?\GLOBALROOT` (Win32 output only) + the copied prefix +
-    // the normalized remainder (never longer than `joined_len`) + NUL; keep
-    // 8 u16 of headroom to stay conservative.
-    if joined_len > joined.0.len().saturating_sub(8)
-        || g + prefix_len + joined_len > buf.len().saturating_sub(8)
-    {
-        return Err(too_long());
-    }
-    buf[..g].copy_from_slice(&GLOBALROOT[..g]);
-    buf[g..g + prefix_len].copy_from_slice(&base[..prefix_len]);
-    joined.0[..rest.len()].copy_from_slice(rest);
-    joined.0[rest.len()] = b'\\' as u16;
-    joined.0[rest.len() + 1..joined_len].copy_from_slice(rel);
-    // `joined` starts with `\`, flooring the normalizer's `..` clamp right
-    // after the copied prefix. `.`/`..` must be collapsed here — `NtCreateFile`
-    // rejects them (e.g. `…\.` → OBJECT_NAME_NOT_FOUND).
-    let sub_len = bun_paths::resolve_path::normalize_string_generic_tz::<
-        u16,
-        /*ALLOW_ABOVE_ROOT*/ false,
-        /*PRESERVE_TRAILING_SLASH*/ false,
-        /*ZERO_TERMINATE*/ true,
-        /*ADD_NT_PREFIX*/ false,
-    >(
-        &joined.0[..joined_len],
-        &mut buf[g + prefix_len..],
-        b'\\' as u16,
-        bun_paths::is_sep_any_t::<u16>,
-    )
-    .len();
+    // `NtCreateFile` rejects `.` and `..`.
+    below.resolve_in_place::<u16>(&[]).map_err(too_long)?;
+    bun_paths::slashes_to_windows_in_place(below.as_mut_slice());
     // A lone-separator suffix means `rel` collapsed to nothing: drop it for a
     // directory-path prefix, keep it for a bare device name where it selects
     // the root directory over the volume device.
-    if sub_len == 1 && whole_base {
-        buf[g + prefix_len] = 0;
-        return Ok(WStr::from_buf(&buf[..], g + prefix_len));
+    if below.len() == 1 && whole_base {
+        below.clear();
     }
-    // ZERO_TERMINATE wrote NUL at buf[g + prefix_len + sub_len].
-    Ok(WStr::from_buf(&buf[..], g + prefix_len + sub_len))
+    if !opts.add_nt_prefix {
+        out.set(GLOBALROOT).map_err(too_long)?;
+    }
+    (out.extend_from_slice(&base[..prefix_len])).map_err(too_long)?;
+    out.extend_from_slice(&below).map_err(too_long)?;
+    Ok(out.into_zstr())
 }
 
 /// Open a `\\.\…` device path via kernel32 `CreateFileW`
@@ -6342,35 +6039,43 @@ pub(crate) fn open_file_at_windows_nt_path(
     }
 }
 
-/// `normalizePathWindows(u8, …)` length-checks before
-/// `convertUTF8toUTF16InBuffer` because simdutf forwards only `output.ptr`
-/// (no output bounds checking). UTF-16 output length ≤ UTF-8 input byte
-/// length, so use `path.len()` as a cheap upper bound; on overflow compute
-/// the exact post-conversion length to avoid over-rejecting multi-byte
-/// inputs whose UTF-16 representation fits.
+/// `path` in UTF-16, with `\` for `/`.
 #[cfg(windows)]
-#[inline]
-fn convert_path_u8_to_u16<'a>(buf: &'a mut [u16], path: &[u8]) -> Maybe<&'a mut [u16]> {
-    if path.len() > buf.len() && bun_core::strings::element_length_utf8_into_utf16(path) > buf.len()
-    {
-        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open));
-    }
-    Ok(bun_core::convert_utf8_to_utf16_in_buffer(buf, path))
+pub fn win32_path<C: bun_paths::PathUnit>(path: &[C], syscall: Tag) -> Maybe<bun_paths::OSPath> {
+    let mut wide = bun_paths::OSPath::from(path).map_err(|_| name_too_long(path, syscall))?;
+    bun_paths::posix_to_platform_in_place(wide.as_mut_slice());
+    Ok(wide)
 }
 
-/// `to_nt_path` returns an empty name if `path` is too long, which would mean the directory itself.
+/// `path` for kernel32, which may be longer than `MAX_PATH`.
 #[cfg(windows)]
-fn to_nt_path_checked<'a>(
-    buf: &'a mut [u16],
-    path: &ZStr,
-    syscall: Tag,
-) -> Maybe<&'a bun_core::WStr> {
-    use bun_paths::string_paths::{fits_in_wide_path_buffer, to_nt_path, without_nt_prefix};
-    let wpath = to_nt_path(buf, path);
-    if !fits_in_wide_path_buffer(without_nt_prefix(path)) || wpath.is_empty() != path.is_empty() {
-        return Err(Error::from_code(E::ENAMETOOLONG, syscall).with_path(path));
-    }
-    Ok(wpath)
+pub fn long_path<C: bun_paths::PathUnit>(path: &[C], syscall: Tag) -> Maybe<bun_paths::OSPath> {
+    bun_paths::OSPath::from(path)
+        .and_then(|mut wide| wide.make_long_path().map(|()| wide))
+        .map_err(|_| name_too_long(path, syscall))
+}
+
+/// `path` for ntdll. A relative one stays relative.
+#[cfg(windows)]
+pub fn nt_path<C: bun_paths::PathUnit>(path: &[C], syscall: Tag) -> Maybe<bun_paths::OSPath> {
+    bun_paths::OSPath::from(path)
+        .and_then(|mut wide| wide.make_nt_path().map(|()| wide))
+        .map_err(|_| name_too_long(path, syscall))
+}
+
+#[cfg(windows)]
+#[cold]
+fn name_too_long<C: bun_paths::PathUnit>(path: &[C], syscall: Tag) -> Error {
+    Error::from_code(E::ENAMETOOLONG, syscall).with_path(&bun_paths::Path::from(path))
+}
+
+/// Writes `path` to `buf` in UTF-8, without `\\?\`, and returns the length.
+#[cfg(windows)]
+fn write_path_from_windows(buf: &mut [u8], path: &[u16], syscall: Tag) -> Maybe<usize> {
+    let mut utf8 = bun_paths::SlicePath::new(buf);
+    utf8.set(path).map_err(|_| name_too_long(path, syscall))?;
+    utf8.strip_nt_prefix();
+    Ok(utf8.len())
 }
 
 #[cfg(windows)]
@@ -6387,16 +6092,9 @@ pub fn open_dir_at_windows_a(
     options: WindowsOpenDirOptions,
 ) -> Maybe<Fd> {
     let dir_fd = dir_fd.as_fd();
-    // `normalizePathWindows(u8, dirFd, path, wbuf, ..)`
-    // does the UTF-8→UTF-16 conversion internally and THEN
-    // applies the absolute/relative/device-path logic. Do the plain transcode
-    // here (no NT-prefix, no normalization) so relative inputs stay relative
-    // and resolve against `dir_fd`'s `RootDirectory`.
-    let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wide = convert_path_u8_to_u16(&mut wbuf.0[..], path)?;
-    let mut buf2 = bun_paths::w_path_buffer_pool::get();
-    let norm = normalize_path_windows(dir_fd, wide, &mut buf2.0[..])?;
-    open_dir_at_windows_nt_path(dir_fd, norm, options)
+    let wide =
+        bun_paths::OSPath::from(path).map_err(|_| Error::from_code(E::ENAMETOOLONG, Tag::open))?;
+    open_dir_at_windows(dir_fd, &wide, options)
 }
 #[cfg(windows)]
 pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions) -> Maybe<Fd> {
@@ -6499,14 +6197,9 @@ pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd
 #[inline(never)]
 pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
     let dir = dir.as_fd();
-    // `normalizePathWindows` does the
-    // UTF-8→UTF-16 conversion internally; mirror that with a plain transcode
-    // (no NT-prefix) so relative paths stay relative against `dir`.
-    let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wide = convert_path_u8_to_u16(&mut wbuf.0[..], path)?;
-    let mut buf2 = bun_paths::w_path_buffer_pool::get();
-    let norm = normalize_path_windows(dir, wide, &mut buf2.0[..])?;
-    openat_windows_impl(dir, norm, flags, perm)
+    let wide =
+        bun_paths::OSPath::from(path).map_err(|_| Error::from_code(E::ENAMETOOLONG, Tag::open))?;
+    openat_windows(dir, &wide, flags, perm)
 }
 
 // ── existence checks ──
@@ -6528,10 +6221,7 @@ pub struct WindowsFileAttributes {
 #[cfg(windows)]
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
-    let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
-    // Win32 API does file path normalization, so we do not need the valid path assertion here.
-    let dword = windows::GetFileAttributesW(wpath).ok()?;
+    let dword = windows::GetFileAttributesW(&long_path(path, Tag::access).ok()?).ok()?;
     Some(WindowsFileAttributes {
         is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
         is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
@@ -6593,13 +6283,8 @@ pub enum ExistsAtType {
 }
 /// `path` is NT-prefixed. Like `GetFileAttributesW`, does not follow a final reparse point.
 #[cfg(windows)]
-fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
+fn nt_query_attributes_at(dir: Fd, path: &[u16]) -> Maybe<u32> {
     use bun_windows_sys::externs as w;
-    // Trim leading `.\` — NtQueryAttributesFile expects relative paths
-    // without it.
-    if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
-        path = &path[2..];
-    }
     let path_len_bytes = (path.len() * 2) as u16;
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
@@ -6629,8 +6314,7 @@ fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
 #[cfg(windows)]
 pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Maybe<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
-    let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let dword = nt_query_attributes_at(dir, to_nt_path_checked(&mut wbuf, sub, Tag::access)?)?;
+    let dword = nt_query_attributes_at(dir, &nt_path(sub, Tag::access)?)?;
     Ok(WindowsFileAttributes {
         is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
         is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
@@ -6664,18 +6348,13 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     {
         // `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
         // built from the (optionally NT-prefixed) wide path.
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        exists_at_type_nt(dir, to_nt_path_checked(&mut wbuf, sub, Tag::access)?)
+        exists_at_type_nt(dir, &nt_path(sub, Tag::access)?)
     }
 }
-/// Wide-path arm of `exists_at_type`. Takes an already-wide path (Windows
-/// `OSPathSliceZ`) and routes through
-/// `toNTPath16` instead of re-widening from UTF-8.
+/// Wide-path arm of `exists_at_type`.
 #[cfg(windows)]
 pub(crate) fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
-    let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
-    exists_at_type_nt(dir, path)
+    exists_at_type_nt(dir, &nt_path(sub, Tag::access)?)
 }
 /// `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
 pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
@@ -7015,8 +6694,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
             Ok(p) => p,
             Err(_) => return Err(Error::from_code(E::EBADF, Tag::GetFinalPathNameByHandle)),
         };
-        // Trust that Windows gives us valid UTF-16LE.
-        let len = bun_paths::string_paths::from_w_path(&mut out.0[..], wide_slice).len();
+        let len = write_path_from_windows(&mut out.0, wide_slice, Tag::GetFinalPathNameByHandle)?;
         return Ok(&mut out.0[..len]);
     }
     #[cfg(target_os = "freebsd")]
@@ -7163,18 +6841,42 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     }
 }
 
+/// Walks up from `path` until `mkdir` does not say `ENOENT`, then back down. `EEXIST` is success, and a root is never made.
+pub fn mkdir_recursive_with<C: bun_paths::PathUnit>(
+    path: &[C],
+    mut mkdir: impl FnMut(&[C]) -> Maybe<()>,
+) -> Maybe<()> {
+    use bun_paths::{PathStyle as _, platform::Auto};
+    let path = Auto::without_trailing_sep(path);
+    let root_len = Auto::root(path).len();
+    let mut len = path.len();
+    // `ENOENT` again once its parent exists (a dangling symlink) can never succeed.
+    let mut last_not_found = None;
+    while len > root_len {
+        match mkdir(&path[..len]) {
+            Err(err) if err.get_errno() == E::ENOENT => {
+                let parent = Auto::ancestors(&path[..len]).nth(1).unwrap_or_default();
+                if last_not_found.replace(len) == Some(len) || parent.len() <= root_len {
+                    return Err(err);
+                }
+                len = parent.len();
+            }
+            Err(err) if err.get_errno() != E::EEXIST => return Err(err),
+            _ if len == path.len() => break,
+            _ => {
+                let below = Auto::without_leading_sep(&path[len..]);
+                let name_len = below.iter().position(|&unit| Auto::is_sep(unit));
+                len = path.len() - below.len() + name_len.unwrap_or(below.len());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `bun.mkdirRecursive` — `make_path` cwd-relative, taking a slice.
 #[inline]
 pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
     mkdir_recursive_at(Fd::cwd(), sub_path)
-}
-/// Windows-only `makePath` over UTF-16. On POSIX, transcodes
-/// to UTF-8 and delegates to `mkdir_recursive_at`.
-pub(crate) fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
-    // Transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let utf8 = bun_paths::strings::from_w_path(&mut buf.0[..], sub_path);
-    mkdir_recursive_at(dir, utf8.as_bytes())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -8199,39 +7901,19 @@ impl Drop for CloseOnDrop {
 /// `make_path` / `make_open_path` helpers reachable as a module.
 pub mod make_path {
     use super::*;
+    use bun_core::strings::CodeUnits;
     #[inline]
     pub fn make_open_path(dir: &Dir, sub_path: &[u8], opts: OpenDirOptions) -> Maybe<Dir> {
         dir.make_open_path(sub_path, opts)
     }
 
-    /// Dispatch trait for `make_path::<T>` over `u8` (POSIX) / `u16` (Windows).
-    /// `makePath` taking `OSPathSlice`. Extends the
-    /// canonical [`bun_paths::PathChar`] with the one syscall-dispatch hook.
-    pub trait MakePathUnit: bun_paths::PathChar {
-        fn make_path_at(dir: Fd, sub: &[Self]) -> Maybe<()>;
-    }
-    impl MakePathUnit for u8 {
-        #[inline]
-        fn make_path_at(dir: Fd, sub: &[u8]) -> Maybe<()> {
-            mkdir_recursive_at(dir, sub)
-        }
-    }
-    impl MakePathUnit for u16 {
-        #[inline]
-        fn make_path_at(dir: Fd, sub: &[u16]) -> Maybe<()> {
-            make_path_w(dir, sub)
-        }
-    }
-    /// `bun.makePath` — `mkdir -p` relative to `dir`, generic over path-char
-    /// width so callers can pass `OSPathChar` slices unchanged.
+    /// `mkdir -p` relative to `dir`.
     #[inline]
-    pub fn make_path<T: MakePathUnit>(dir: &Dir, sub_path: &[T]) -> Maybe<()> {
-        T::make_path_at(dir.fd, sub_path)
-    }
-    /// Explicit UTF-16 form (Windows). On POSIX transcodes via `make_path_w`.
-    #[inline]
-    pub fn make_path_u16(dir: &Dir, sub_path: &[u16]) -> Maybe<()> {
-        make_path_w(dir.fd, sub_path)
+    pub fn make_path<C: bun_paths::PathUnit>(dir: &Dir, sub_path: &[C]) -> Maybe<()> {
+        match C::units(sub_path) {
+            CodeUnits::U8(path) => mkdir_recursive_at(dir.fd, path),
+            CodeUnits::U16(path) => mkdir_recursive_at(dir.fd, &bun_paths::Path::from(path)),
+        }
     }
 }
 /// `WindowsSymlinkOptions` — Windows-only flag struct
@@ -8341,19 +8023,9 @@ mod win_symlink_impl {
         abs_fallback_junction_target: Option<&ZStr>,
     ) -> Maybe<()> {
         if !WindowsSymlinkOptions::has_failed_to_create_symlink() {
-            let mut sym16 = bun_paths::w_path_buffer_pool::get();
-            let mut target16 = bun_paths::w_path_buffer_pool::get();
-            let sym_path = bun_paths::string_paths::to_w_path_normalize_auto_extend(
-                &mut sym16[..],
-                dest.as_bytes(),
-            );
-            let target_path = bun_paths::string_paths::to_w_path_normalize_auto_extend(
-                &mut target16[..],
-                target.as_bytes(),
-            );
             match symlink_w(
-                sym_path,
-                target_path,
+                &super::long_path(dest, Tag::symlink)?,
+                &super::long_path(target, Tag::symlink)?,
                 WindowsSymlinkOptions { directory: true },
             ) {
                 Ok(()) => return Ok(()),
@@ -8410,10 +8082,6 @@ pub fn rmdir(to: &ZStr) -> Maybe<()> {
     rmdirat(Fd::cwd(), to)
 }
 
-/// Type-style alias so callers can write `bun_sys::MakePath::make_path::<T>(..)`
-/// (the `bun.MakePath` namespace re-export).
-pub use make_path as MakePath;
-
 // ──────────────────────────────────────────────────────────────────────────
 // open helpers (additional)
 // ──────────────────────────────────────────────────────────────────────────
@@ -8460,15 +8128,20 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
 }
 /// `bun.sys.exists`. Non-NUL-terminated convenience over
-/// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then
+/// [`exists_z`]: copies into a pooled buffer, NUL-terminates, then
 /// `access(path, F_OK)` (POSIX) / `GetFileAttributesW` (Windows).
 pub fn exists(path: &[u8]) -> bool {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    if path.len() >= buf.0.len() {
-        return false;
+    bun_paths::PoolPath::from(path).is_ok_and(|path| exists_z(&path))
+}
+/// `path` if `dir` has something of that name, or else `path` as Windows would read it, with `/` for each `\`.
+pub fn existing_spelling(dir: Fd, path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if cfg!(windows)
+        || !bun_core::strings::contains_char(path, b'\\')
+        || exists_at(dir, &bun_paths::Path::join(&[path]))
+    {
+        return path.into();
     }
-    buf.0[..path.len()].copy_from_slice(path);
-    exists_z(ZStr::nul_terminate(&mut buf, path.len()))
+    bun_paths::slashes_to_posix(path)
 }
 /// `moveFileZ`. Routes through
 /// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
@@ -8721,13 +8394,12 @@ pub fn write_file_with_path_buffer(
     let file: &File = match &args.file {
         PathOrFileDescriptor::Fd(fd) => File::borrow(fd),
         PathOrFileDescriptor::Path(bytes) => {
-            if bytes.len() >= path_buf.0.len() {
+            let mut path = bun_paths::SlicePath::new(path_buf);
+            if path.set(bytes).is_err() {
                 return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(bytes));
             }
-            path_buf.0[..bytes.len()].copy_from_slice(bytes);
-            let z = ZStr::nul_terminate(path_buf, bytes.len());
             let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
-            opened = CloseOnDrop::new(openat(args.dirfd, z, flags, args.mode)?);
+            opened = CloseOnDrop::new(openat(args.dirfd, &path, flags, args.mode)?);
             &opened
         }
     };
@@ -8742,10 +8414,10 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
     if let Some(v) = bun_core::getenv_z(bun_core::zstr!("BUN_INSTALL_CACHE_DIR")) {
         return v.to_vec();
     }
-    if let Some(home) = bun_core::getenv_z(bun_core::zstr!("HOME")) {
-        let mut p = home.to_vec();
-        p.extend_from_slice(b"/.bun/install/cache");
-        return p;
+    if let Some(home) = bun_core::getenv_z(bun_core::zstr!("HOME"))
+        && !home.is_empty()
+    {
+        return bun_paths::VecPath::from_parts(&[home, b".bun/install/cache"]).into_vec();
     }
     b".bun-cache".to_vec()
 }
@@ -8815,13 +8487,14 @@ fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
     None
 }
 
-// Backs `bun_core::OutputSink[Sys]` — stderr/mkdir/open/write.
+// Backs `bun_core::OutputSink[Sys]` — stderr/open/write.
 bun_core::link_impl_OutputSink! {
     Sys for extern () => |_this| {
         stderr() => bun_core::output::File(Fd::stderr()),
-        make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(|_| bun_core::Error::Unexpected),
         create_file(cwd, path) =>
-            openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664).map_err(|_| bun_core::Error::Unexpected),
+            File::make_openat(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)
+                .map(File::into_raw)
+                .map_err(|_| bun_core::Error::Unexpected),
         write_all_quiet(fd, bytes) => write_all_to_stdio(fd, bytes).is_ok(),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
@@ -9356,9 +9029,7 @@ mod normalize_path_windows_tests {
         let dir = open_dir_handle(&tree.0);
         let base_len = wide(&normalize(dir.fd(), ".")).len();
         let rel = "a\\b";
-        // `..`-free path: prefix = whole base, `joined` = `\` + rel, and the
-        // function reserves 8 u16 of headroom.
-        let needed = base_len + 1 + rel.len() + 8;
+        let needed = base_len + 1 + rel.len() + 1;
         let mut exact = vec![0u16; needed];
         assert!(normalize_path_windows(dir.fd(), &wide(rel), &mut exact[..]).is_ok());
         let mut small = vec![0u16; needed - 1];

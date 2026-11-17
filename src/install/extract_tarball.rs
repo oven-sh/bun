@@ -2,9 +2,9 @@ use core::cell::RefCell;
 use core::fmt;
 
 use bun_core::fmt::s;
+use bun_core::strings;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, ZStr};
-use bun_paths::strings;
 use bun_paths::{Path, PathBuffer};
 use bun_semver::Version;
 use bun_sys as sys;

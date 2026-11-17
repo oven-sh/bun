@@ -2,8 +2,6 @@ use std::collections::BTreeMap;
 
 use bstr::BStr;
 use bun_bundler::options::TypeChecked;
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::program::FileId;
 use bun_sema_driver::host::{Provided, check_entry_point_dirs, from_native, to_native};
@@ -96,8 +94,8 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     };
     let has_configuration = tsconfig.is_some()
         || entry_paths.iter().any(|path| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
-            tsconfig_of_package(&from_native(path)).is_some()
+            let path = bun_paths::Path::resolve(&[cwd, path]);
+            tsconfig_of_package(&from_native(&path)).is_some()
         });
     let flags = [&b"--declaration"[..], b"--declarationMap", b"false"];
     let libs = if has_configuration {
@@ -148,7 +146,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
 
 pub(super) fn bundler_path(path: &[u8]) -> Vec<u8> {
     let mut path = to_native(path).to_vec();
-    bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut path);
+    bun_paths::posix_to_platform_in_place::<u8>(&mut path);
     path
 }
 

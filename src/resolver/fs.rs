@@ -7,9 +7,9 @@ use std::sync::OnceLock;
 use bun_alloc::{AllocError, allocators};
 use bun_core::Generation;
 use bun_core::MutableString;
+use bun_core::strings;
 use bun_core::vec::{BorrowedBuf, append_with};
 use bun_paths::MAX_PATH_BYTES;
-use bun_paths::strings;
 use bun_ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
@@ -26,7 +26,7 @@ pub use bun_core::strings::BOM;
 
 /// The absolute path of the entry `name` of `dir`. `None` if it is longer than `MAX_PATH_BYTES`.
 pub fn join_dir_entry(dir: &[u8], name: &[u8]) -> Option<bun_paths::Path> {
-    let mut path = bun_paths::Path::resolve_any_sep(&[bun_core::top_level_dir(), dir]);
+    let mut path = bun_paths::Path::resolve(&[bun_core::top_level_dir(), dir]);
     path.push(name);
     // `<=`: the resolver's buffers need no NUL.
     (path.len() <= MAX_PATH_BYTES).then_some(path)
@@ -192,16 +192,10 @@ impl Entry {
         self.dir
     }
 
-    /// `None` if it is too long, or if the name has a `\` that the resolver would read as a separator.
+    /// `None` if it is too long.
     #[inline]
     pub fn build_abs_path(&self) -> Option<bun_paths::Path> {
-        let path = join_dir_entry(self.dir, self.base())?;
-        if bun_paths::has_literal_backslash(self.base())
-            && bun_paths::Path::resolve_any_sep(&[&path]).as_bytes() != path.as_bytes()
-        {
-            return None;
-        }
-        Some(path)
+        join_dir_entry(self.dir, self.base())
     }
 
     /// Returns `Interned::EMPTY` until a fill has been published. Lock-free.

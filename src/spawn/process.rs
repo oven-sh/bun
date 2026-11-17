@@ -1197,8 +1197,9 @@ pub mod waiter_thread_posix {
 
                 let _ = bun_core::poll_once(&mut polls, i32::MAX);
             }
+            // Neither a new process nor an exit wakes this thread here.
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            std::thread::park();
+            std::thread::sleep(core::time::Duration::from_millis(1));
         }
     }
 }
@@ -2924,7 +2925,9 @@ mod spawn_process_body {
             // also reparent to us and fire SIGCHLD here — drain them with
             // waitpid(-1, WNOHANG) and only stop when *our* child is reaped.
             let _blocked = bun_core::signal::block(libc::SIGCHLD);
-            let chld_fd = bun_sys::linux::signalfd(libc::SIGCHLD).map(File::from_fd);
+            let chld_fd = bun_sys::linux::signalfd(libc::SIGCHLD)
+                .map(File::from_fd)
+                .ok();
 
             // Child-exit, take 2: pidfd. signalfd only fires if SIGCHLD stays
             // pending — i.e. is blocked on *every* thread. PackageManager / HTTP

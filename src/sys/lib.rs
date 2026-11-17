@@ -5454,12 +5454,15 @@ pub mod linux {
         super::linux_syscall::sendfile(out_fd, in_fd, offset, count)
     }
     /// A new non-blocking descriptor that is readable while `signal` is pending.
-    pub fn signalfd(signal: c_int) -> Option<super::Fd> {
+    pub fn signalfd(signal: c_int) -> super::Maybe<super::Fd> {
         let set = bun_core::signal::set_of(signal);
         // SAFETY: it reads one `sigset_t`.
         let fd =
             unsafe { libc::signalfd(-1, &raw const set, libc::SFD_CLOEXEC | libc::SFD_NONBLOCK) };
-        (fd >= 0).then(|| super::Fd::from_native(fd))
+        if fd < 0 {
+            return Err(super::err_with(super::Tag::open));
+        }
+        Ok(super::Fd::from_native(fd))
     }
     /// Raw `ppoll(fds, nfds, *timeout, *sigmask)`.
     #[inline]

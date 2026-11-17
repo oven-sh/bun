@@ -353,6 +353,32 @@ describe("css", () => {
           '[["./glob/a.module.css",{"a":"a_KE7_UA"},["a","default"]],["./glob/b.module.css",{"b":"b_okzPrQ"},["b","default"]]]',
       },
     },
+    // entry.js has the first import record of the stylesheet that the bundler meets, and other.js is the
+    // first file that it walks into.
+    DefaultImportAfterImportOfAnotherImporter: {
+      files: {
+        "/entry.js": `
+          import { other } from "./other.js";
+          import styles from "./x.module.css";
+          console.log(styles.foo, other);
+        `,
+        "/other.js": `import styles from "./x.module.css"; export const other = styles.foo;`,
+      },
+      run: { "entry.js": "foo_e7Ht-A foo_e7Ht-A" },
+    },
+    // first.js reads the class names at load, before the barrel has run its import of the stylesheet.
+    ClassNamesReadAtLoadInAnImportCycle: {
+      files: {
+        "/entry.js": `import "./index.js";`,
+        "/index.js": `export * from "./first.js"; export { default as styles } from "./x.module.css";`,
+        "/first.js": `
+          import { styles } from "./index.js";
+          console.log(JSON.stringify(styles), styles.foo);
+          export const first = 1;
+        `,
+      },
+      run: { "entry.js": '{"foo":"foo_e7Ht-A"} foo_e7Ht-A' },
+    },
     // The class names run where the first import of the stylesheet is, also when that import reads no
     // value. m.js reads them before b.js has run its own import of the stylesheet.
     BareImportAheadOfValueImportInACycle: {

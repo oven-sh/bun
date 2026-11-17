@@ -2843,27 +2843,28 @@ describe("bundler", () => {
       run: { file: "/out/entry.js", stdout: "first\nfrom json" },
     });
 
-    // The class names of a stylesheet are a file that holds a value, like data.json above: they go where the
-    // barrel imports the stylesheet, after first.js.
-    itBundled("splitting/BarrelCycleKeepsImportOrderOfCSSModule" + (splitting ? "" : "WithoutSplitting"), {
+    // The class names of a stylesheet run nothing, unlike data.json above: they go ahead of the first part
+    // that names them. first.js reads them at load, before the barrel has run its import of the stylesheet.
+    itBundled("splitting/BarrelCycleReadsCSSModuleAtLoad" + (splitting ? "" : "WithoutSplitting"), {
       files: {
         "/entry.js": `import { read } from "./index.js"; console.log(read());`,
+        "/entry2.js": `import { read } from "./index.js"; console.log("entry2", read());`,
         "/index.js": `export * from "./first.js"; export { default as data } from "./data.module.css";`,
         "/first.js": /* js */ `
           import { data } from "./index.js";
           export function read() { return data.a; }
-          console.log("first");
+          console.log("first", data.a);
         `,
         "/data.module.css": `.a { color: red; }`,
       },
+      entryPoints: ["/entry.js", "/entry2.js"],
       splitting,
       outdir: "/out",
       format: "esm",
-      onAfterBundle(api) {
-        const code = api.readFile("/out/entry.js");
-        expect(code.indexOf(`"first"`)).toBeLessThan(code.indexOf(`"a_tXs_KA"`));
-      },
-      run: { file: "/out/entry.js", stdout: "first\na_tXs_KA" },
+      run: [
+        { file: "/out/entry.js", stdout: "first a_tXs_KA\na_tXs_KA" },
+        { file: "/out/entry2.js", stdout: "first a_tXs_KA\nentry2 a_tXs_KA" },
+      ],
     });
 
     // first.js runs ahead of second.js and holds the namespace object of second.js, which exists before any file runs.

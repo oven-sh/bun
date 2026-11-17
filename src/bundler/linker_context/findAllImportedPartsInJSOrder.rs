@@ -602,6 +602,7 @@ enum Edge {
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
 /// A file runs where it is imported, not where its bindings are used: `part.dependencies` does not order what runs.
+/// The JS stub of a stylesheet runs nothing. It goes ahead of the first part that names its class names.
 fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
@@ -609,6 +610,8 @@ fn for_each_edge(
     mut each: impl FnMut(u32, Edge),
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
+    let css_js_stubs = &c.parse_graph().css_js_stubs;
+    let has_css_js_stubs = css_js_stubs.len() > 0;
     if c.parse_graph().css_asts[source_index as usize].is_some()
         || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
     {
@@ -646,6 +649,15 @@ fn for_each_edge(
                     Edge::LoadLater(other)
                 },
             );
+        }
+        // The part can name the class names through a file that imports the stylesheet later, in an import cycle.
+        if runs_here && has_css_js_stubs {
+            for dependency in part.dependencies.iter() {
+                let other = dependency.source_index.get();
+                if css_js_stubs.stylesheet_of(other).is_some() {
+                    each(part_index, Edge::Import(other));
+                }
+            }
         }
     }
 }

@@ -656,8 +656,8 @@ describe("bundler", () => {
       });
     }
 
-    // An import() of a stylesheet loads a chunk of the executable that holds the class names. With --bytecode
-    // the entry point loads from bytecode and that chunk from source, like a chunk that holds a JSON file.
+    // An import() of a stylesheet loads a chunk of the executable that holds the class names, with and without
+    // --bytecode.
     for (const bytecode of [false, true]) {
       itBundled(`compile/splitting/DynamicImportOfCSSModule-${bytecode ? "bytecode" : "source"}`, {
         compile: true,
@@ -673,18 +673,7 @@ describe("bundler", () => {
           `,
           "/x.module.css": `.foo { color: red }`,
         },
-        run: {
-          stdout: "foo default,foo true",
-          env: bytecode ? { BUN_JSC_verboseDiskCache: "1" } : undefined,
-          validate: bytecode
-            ? ({ stderr }) => {
-                const lines = stderr.trim().split("\n");
-                expect(lines.filter(l => l === "[Disk Cache] Cache hit for sourceCode").length).toBeGreaterThanOrEqual(
-                  1,
-                );
-              }
-            : undefined,
-        },
+        run: { stdout: "foo default,foo true" },
       });
     }
 

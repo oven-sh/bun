@@ -1937,6 +1937,8 @@ pub mod bv2_impl {
         first: IndexInt,
         /// The stylesheet and the target of each stub, in source index order.
         stubs: ArrayHashMap<(IndexInt, Target), ()>,
+        /// Per stub: the walk has left it.
+        walked: Vec<bool>,
         /// (importer, import record, stub): the records that import a stub once it has a row.
         records: Vec<(IndexInt, u32, IndexInt)>,
     }
@@ -1962,6 +1964,13 @@ pub mod bv2_impl {
     pub enum ReachFrame {
         Enter {
             source_index: Index,
+            was_dynamic_import: bool,
+        },
+        /// A record that imports the JS stub of `stylesheet`. The stub has no row yet, so it has no
+        /// bit in `visited`. Its one dependency is the stylesheet.
+        EnterStub {
+            stub: Index,
+            stylesheet: Index,
             was_dynamic_import: bool,
         },
         Leave {
@@ -2004,6 +2013,32 @@ pub mod bv2_impl {
                         if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
                             self.dynamic_import_entry_points
                                 .put(source_index.get(), ())
+                                .expect("unreachable");
+                        }
+                        continue;
+                    }
+                    ReachFrame::EnterStub {
+                        stub,
+                        stylesheet,
+                        was_dynamic_import,
+                    } => {
+                        let Some(allotment) = self.css_js_stubs.as_mut() else {
+                            continue;
+                        };
+                        let walked = &mut allotment.walked[(stub.get() - allotment.first) as usize];
+                        if !core::mem::replace(walked, true) {
+                            // Pushed in reverse: the stylesheet, then the stub leaves.
+                            self.stack.push(ReachFrame::Leave {
+                                source_index: stub,
+                                was_dynamic_import,
+                            });
+                            self.stack.push(ReachFrame::Enter {
+                                source_index: stylesheet,
+                                was_dynamic_import: false,
+                            });
+                        } else if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
+                            self.dynamic_import_entry_points
+                                .put(stub.get(), ())
                                 .expect("unreachable");
                         }
                         continue;
@@ -2163,25 +2198,19 @@ pub mod bv2_impl {
                                 let entry = bun_core::handle_oom(
                                     allotment.stubs.get_or_put((next_source.get(), target)),
                                 );
-                                let stub = allotment.first + entry.index as IndexInt;
-                                let is_new = !entry.found_existing;
+                                let stub = allotment.first
+                                    + IndexInt::try_from(entry.index).expect("int cast");
+                                if !entry.found_existing {
+                                    allotment.walked.push(false);
+                                }
                                 allotment
                                     .records
                                     .push((source_index.get(), ir_idx as u32, stub));
-                                self.stack.push(ReachFrame::Enter {
-                                    source_index: next_source,
-                                    was_dynamic_import: false,
+                                self.stack.push(ReachFrame::EnterStub {
+                                    stub: Index::init(stub),
+                                    stylesheet: next_source,
+                                    was_dynamic_import,
                                 });
-                                if is_new {
-                                    self.stack.push(ReachFrame::Leave {
-                                        source_index: Index::init(stub),
-                                        was_dynamic_import,
-                                    });
-                                } else if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
-                                    self.dynamic_import_entry_points
-                                        .put(stub, ())
-                                        .expect("unreachable");
-                                }
                                 continue;
                             }
                             self.stack.push(ReachFrame::Enter {
@@ -2269,6 +2298,7 @@ pub mod bv2_impl {
                 css_js_stubs: (self.graph.css_file_count > 0).then(|| CssJsStubAllotment {
                     first: self.graph.input_files.len() as IndexInt,
                     stubs: ArrayHashMap::new(),
+                    walked: Vec::new(),
                     records: Vec::new(),
                 }),
                 hmr_parts: (self.transpiler.options.output_format
@@ -2321,7 +2351,7 @@ pub mod bv2_impl {
             }
 
             if let Some(allotment) = css_js_stubs {
-                self.add_css_js_stubs(allotment)?;
+                self.add_css_js_stubs(allotment, &reachable)?;
                 if cfg!(debug_assertions) {
                     self.assert_stylesheet_values_are_stubs(&reachable);
                 }
@@ -2354,16 +2384,31 @@ pub mod bv2_impl {
 
         /// Adds the row of each JS stub that the walk allotted, and points the records that read a
         /// value from a stylesheet at the stub.
-        fn add_css_js_stubs(&mut self, allotment: CssJsStubAllotment) -> Result<(), Error> {
+        fn add_css_js_stubs(
+            &mut self,
+            allotment: CssJsStubAllotment,
+            reachable: &[Index],
+        ) -> Result<(), Error> {
             let CssJsStubAllotment {
                 first,
                 stubs,
+                walked: _,
                 records,
             } = allotment;
             if stubs.is_empty() {
                 return Ok(());
             }
             debug_assert_eq!(first as usize, self.graph.input_files.len());
+            // Each file comes after its dependencies: a stub is ahead of the files that import it.
+            if cfg!(debug_assertions) {
+                let mut position = vec![usize::MAX; first as usize + stubs.count()];
+                for (i, source_index) in reachable.iter().enumerate() {
+                    position[source_index.get() as usize] = i;
+                }
+                for &(importer, _, stub) in &records {
+                    debug_assert!(position[stub as usize] < position[importer as usize]);
+                }
+            }
             for &(stylesheet, target) in stubs.keys() {
                 let (input_file, ast) = self.css_js_stub_row(
                     stylesheet,

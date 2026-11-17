@@ -401,19 +401,21 @@ test("log case 1", async () => {
 
 // The module that holds the class names of a stylesheet is not a module of its own in the count.
 test("log case with the value of a CSS module", async () => {
-  const tmpdir = tmpdirSync();
-  const inputFile = path.join(tmpdir, "input.js");
-
-  writeFileSync(inputFile, 'import styles from "./styles.module.css"; console.log(styles.foo);');
-  writeFileSync(path.join(tmpdir, "styles.module.css"), ".foo { color: red }");
-
-  const { exited, stdout } = Bun.spawn({
-    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile],
-    env: bunEnv,
-    cwd: tmpdir,
+  using dir = tempDir("bun-build-log-css-module", {
+    "input.js": 'import styles from "./styles.module.css"; console.log(styles.foo);',
+    "styles.module.css": ".foo { color: red }",
   });
-  expect(await exited).toBe(0);
-  expect((await stdout.text()).replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--outdir=out", "input.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
     "Bundled 2 modules in {time}ms
 
       input.js   127 bytes  (entry point)
@@ -421,6 +423,7 @@ test("log case with the value of a CSS module", async () => {
 
     "
   `);
+  expect(exitCode).toBe(0);
 });
 
 test("log case 2", async () => {

@@ -36,9 +36,9 @@ namespace WebCore {
 struct IDLUint8Array : IDLTypedArray<JSC::Uint8Array> {
 };
 
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, JSC::ArrayBuffer& buffer)
+inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject*, JSC::ArrayBuffer& buffer)
 {
-    if (auto result = getCachedWrapper(globalObject->world(), buffer))
+    if (auto* result = buffer.m_wrapper.get())
         return result;
 
     // The JSArrayBuffer::create function will register the wrapper in finishCreation.
@@ -50,7 +50,7 @@ inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobal
     return view.wrap(lexicalGlobalObject, globalObject);
 }
 
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, JSC::ArrayBuffer* buffer)
+inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* buffer)
 {
     if (!buffer)
         return JSC::jsNull();

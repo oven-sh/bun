@@ -89,25 +89,20 @@ template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptio
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
+    StructuredSerializeOptions result;
+    if (value.isUndefinedOrNull())
+        return result;
+    auto* object = value.getObject();
+    if (!object) [[unlikely]] {
         throwTypeError(&lexicalGlobalObject, throwScope);
         return {};
     }
-    StructuredSerializeOptions result;
-    JSValue transferValue;
-    if (isNullOrUndefined)
-        transferValue = jsUndefined();
-    else {
-        transferValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
+    JSValue transferValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (!transferValue.isUndefined()) {
         result.transfer = convertTransferList(lexicalGlobalObject, transferValue, "Optional options.transfer argument must be an iterable"_s, BadTransferElement::ThrowTypeError);
         RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.transfer = Converter<IDLSequence<IDLObject>>::ReturnType {};
+    }
     return result;
 }
 

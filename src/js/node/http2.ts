@@ -1879,15 +1879,7 @@ function submitSettings(self, parser, pending: Array<PendingSettings | null>, se
   const connecting = socket?.connecting || socket?.secureConnecting;
   const frame = connecting ? self[bunHTTP2AsyncContextFrame] : $getInternalField($asyncContext, 0);
   const entry: PendingSettings = [callback || undefined, Date.now(), frame];
-  // Queue the entry first. A Duplex transport can deliver the ACK inside flush().
-  pending.push(entry);
-  try {
-    parser.settings(settings);
-  } catch (err) {
-    const index = pending.lastIndexOf(entry);
-    if (index !== -1) pending.splice(index, 1);
-    throw err;
-  }
+  parser.settings(settings, pending, entry);
   // Node schedules a write for every settings() call. A late frame could miss a session that closes at the next response.
   parser.flush();
 }
@@ -4709,14 +4701,9 @@ class ServerHttp2Session extends Http2Session {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
       return false;
     }
-    if (parser.ping(payload || kEmptyPingPayload) === false) {
+    if (parser.ping(payload || kEmptyPingPayload, (this.#pingCallbacks ??= []), [cb, Date.now()]) === false) {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
       return false;
-    }
-    if (this.#pingCallbacks) {
-      this.#pingCallbacks.push([cb, Date.now()]);
-    } else {
-      this.#pingCallbacks = [[cb, Date.now()]];
     }
     return true;
   }
@@ -5636,14 +5623,9 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
       return false;
     }
-    if (parser.ping(payload || kEmptyPingPayload) === false) {
+    if (parser.ping(payload || kEmptyPingPayload, (this.#pingCallbacks ??= []), [cb, Date.now()]) === false) {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
       return false;
-    }
-    if (this.#pingCallbacks) {
-      this.#pingCallbacks.push([cb, Date.now()]);
-    } else {
-      this.#pingCallbacks = [[cb, Date.now()]];
     }
     return true;
   }

@@ -368,6 +368,88 @@ describe.concurrent("what a promise job of the transport's write() sends", () =>
   });
 });
 
+describe("an ACK goes to the callback of the frame it answers", () => {
+  async function connect() {
+    const transport = new Transport();
+    const session = http2.connect("http://localhost", { createConnection: () => transport });
+    await once(session, "connect");
+    const acked = once(session, "localSettings");
+    transport.push(Buffer.concat([encodeFrame(FrameType.SETTINGS, 0, 0), encodeFrame(FrameType.SETTINGS, 0x1, 0)]));
+    await acked;
+    await new Promise(setImmediate);
+    return { transport, session, [Symbol.dispose]: () => session.destroy() };
+  }
+  /** Leaves no room for another frame in the buffer of the turn, so the next one is written at once. */
+  async function fillBuffer(session: http2.ClientHttp2Session) {
+    const req = session.request({ ":method": "POST" }).on("error", () => {});
+    await new Promise(setImmediate);
+    req.write(Buffer.alloc(16374));
+  }
+
+  test.each([
+    ["the transport of another session", ["nested 1", "outer 2"]],
+    ["a getter of the settings", ["nested 1", "outer 2"]],
+    ["the write of the frame", ["outer 2", "nested 1"]],
+  ])("settings() is called again from %s", async (from, expected) => {
+    using mine = await connect();
+    using other = await connect();
+    const acked: string[] = [];
+    const done = Promise.withResolvers<void>();
+    const change = (name: string, settings: http2.Settings) =>
+      mine.session.settings(settings, (_, { maxConcurrentStreams }) => {
+        if (acked.push(`${name} ${maxConcurrentStreams}`) === 2) done.resolve();
+      });
+    let nested = 0;
+    const again = () => void (nested++, change("nested", { maxConcurrentStreams: 1 }));
+    if (from === "a getter of the settings") {
+      const customSettings = {
+        get 100() {
+          if (new Error().stack!.includes("submitSettings")) again();
+          return 1;
+        },
+      };
+      change("outer", { maxConcurrentStreams: 2, customSettings });
+    } else {
+      if (from === "the write of the frame") await fillBuffer(mine.session);
+      else other.session.ping(() => {});
+      (from === "the write of the frame" ? mine : other).transport.onNextWrite = again;
+      change("outer", { maxConcurrentStreams: 2 });
+    }
+    expect(nested).toBe(1);
+    const ack = encodeFrame(FrameType.SETTINGS, 0x1, 0);
+    mine.transport.push(Buffer.concat([ack, ack]));
+    await done.promise;
+    expect(acked).toEqual(expected);
+  });
+
+  test("ping() is called again from the write of the frame", async () => {
+    using mine = await connect();
+    const acked: string[] = [];
+    const done = Promise.withResolvers<void>();
+    const ping = (name: string) =>
+      mine.session.ping(Buffer.alloc(8, name), (_, __, payload) => {
+        if (acked.push(`${name} ${payload}`) === 2) done.resolve();
+      });
+    await fillBuffer(mine.session);
+    mine.transport.onNextWrite = () => ping("b");
+    ping("a");
+    expect(mine.transport.onNextWrite).toBeUndefined();
+    mine.transport.push(Buffer.concat(["a", "b"].map(n => encodeFrame(FrameType.PING, 0x1, 0, Buffer.alloc(8, n)))));
+    await done.promise;
+    expect(acked).toEqual(["a aaaaaaaa", "b bbbbbbbb"]);
+  });
+
+  test("ping() is cancelled when the transport of another session destroys its session", async () => {
+    using mine = await connect();
+    using other = await connect();
+    other.session.ping(() => {});
+    other.transport.onNextWrite = () => mine.session.destroy();
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    expect(mine.session.ping(resolve)).toBe(false);
+    expect((await promise)?.code).toBe("ERR_HTTP2_PING_CANCEL");
+  });
+});
+
 test.each<[string, string[]]>([
   ["request()", ["HEADERS 1", "RST_STREAM 1"]],
   ["a queued request", ["HEADERS 1"]],

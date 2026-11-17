@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 79a5e67c7537052875c1d4196401f103fd9ec2546b53391d291663dac9461470.
+// Written against that file with the SHA-256 c805c7ef06ad1778854f2f2f88ded3c47a4c9c7b25b065e44716a53eb1b03247.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -1960,15 +1960,7 @@ function submitSettings(self, parser, pending: Array<PendingSettings | null>, se
   const connecting = socket?.connecting || socket?.secureConnecting;
   const frame = connecting ? self[bunHTTP2AsyncContextFrame] : $getInternalField($asyncContext, 0);
   const entry: PendingSettings = [callback || undefined, Date.now(), frame];
-  // Queue the entry first. A Duplex transport can deliver the ACK inside flush().
-  pending.push(entry);
-  try {
-    parser.settings(settings);
-  } catch (err) {
-    const index = pending.lastIndexOf(entry);
-    if (index !== -1) pending.splice(index, 1);
-    throw err;
-  }
+  parser.settings(settings, pending, entry);
   // Node schedules a write for every settings() call. A late frame could miss a session that closes at the next response.
   parser.flush();
 }
@@ -4832,14 +4824,9 @@ class ServerHttp2Session extends Http2Session {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
       return false;
     }
-    if (parser.ping(payload || kEmptyPingPayload) === false) {
+    if (parser.ping(payload || kEmptyPingPayload, (this.#pingCallbacks ??= []), [cb, Date.now()]) === false) {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
       return false;
-    }
-    if (this.#pingCallbacks) {
-      this.#pingCallbacks.push([cb, Date.now()]);
-    } else {
-      this.#pingCallbacks = [[cb, Date.now()]];
     }
     return true;
   }
@@ -5760,14 +5747,9 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
       return false;
     }
-    if (parser.ping(payload || kEmptyPingPayload) === false) {
+    if (parser.ping(payload || kEmptyPingPayload, (this.#pingCallbacks ??= []), [cb, Date.now()]) === false) {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
       return false;
-    }
-    if (this.#pingCallbacks) {
-      this.#pingCallbacks.push([cb, Date.now()]);
-    } else {
-      this.#pingCallbacks = [[cb, Date.now()]];
     }
     return true;
   }

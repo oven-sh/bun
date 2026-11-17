@@ -94,7 +94,7 @@ export const H2FrameParser = b.class({
     isStreamClosed: { args: { streamId: b.u32 }, returns: b.bool },
     noTrailers: { args: { streamId: b.u32 }, capability: "js" },
     origin: { ...js, args: { origin: b.any } },
-    ping: { ...js, args: { payload: buffer }, returns: b.bool },
+    ping: { ...js, args: { payload: buffer, pending: b.any, entry: b.any }, returns: b.bool },
     pushPromise: {
       ...js,
       args: { parentId: b.u32, promisedId: b.u32, headers: b.any, sensitiveHeaders: b.any },
@@ -121,7 +121,7 @@ export const H2FrameParser = b.class({
     setNextStreamID: { args: { streamId: b.u32.wrap }, capability: "js" },
     setStreamContext: { args: { streamId: b.u32, context: b.any }, capability: "js" },
     setStreamReading: { args: { streamId: b.u32, reading: b.bool }, capability: "js" },
-    settings: { ...js, args: { settings: b.any } },
+    settings: { ...js, args: { settings: b.any, pending: b.any, entry: b.any } },
     validateRequest: { ...js, args: { headers: b.any } },
     writeStream: {
       ...js,

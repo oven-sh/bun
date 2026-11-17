@@ -1281,8 +1281,8 @@ declare namespace $Node {
     /** Throws what `request()` would throw for these headers. */
     validateRequest(headers: object): undefined;
     setNativeSocket(socket: unknown): undefined;
-    /** `false`: too many pings wait for their acknowledgement. */
-    ping(payload: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): boolean;
+    /** Adds `entry` to `pending` in the order of the frames. `false`: too many pings wait for their acknowledgement, or the session is over. */
+    ping<T>(payload: ArrayBuffer | SharedArrayBuffer | ArrayBufferView, pending: T[], entry: T): boolean;
     altsvc(origin: string, alt: string, streamId: number): undefined;
     origin(origins: string | string[]): undefined;
     goaway(
@@ -1302,7 +1302,8 @@ declare namespace $Node {
       outboundQueueSize: number;
     };
     getFrameCounters(): { framesReceived: number; framesSent: number };
-    settings(settings: object): undefined;
+    /** Adds `entry` to `pending` in the order of the frames. */
+    settings<T>(settings: object, pending: T[], entry: T): undefined;
     setLocalWindowSize(windowSize: number): undefined;
     read(data: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): undefined;
     /** How many bytes still wait. */

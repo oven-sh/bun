@@ -2888,9 +2888,28 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn settings(&self, cx: &mut JsScope<'_>, settings: JsLocal<'_>) -> JsResult<()> {
+    /// Call it corked, right before the frame whose ACK `entry` waits for. ACKs come in the order of the frames, and JS can send one earlier in the call or under the write.
+    fn queue_for_ack(&self, pending: JsLocal<'_>, entry: JsLocal<'_>) -> JsResult<()> {
+        let global = self.global();
+        let pending = pending.to_js();
+        if !pending.is_array() {
+            return Err(global.throw_invalid_argument_type_value(b"pending", b"array", pending));
+        }
+        pending.push(&global, entry.to_js())
+    }
+
+    pub(crate) fn settings(
+        &self,
+        cx: &mut JsScope<'_>,
+        settings: JsLocal<'_>,
+        pending: JsLocal<'_>,
+        entry: JsLocal<'_>,
+    ) -> JsResult<()> {
         self.load_settings_from_js_value(cx.global(), settings.to_js())?;
-        self.send_settings();
+        if self.can_dispatch(js::on_local_settings_get_cached) {
+            self.queue_for_ack(pending, entry)?;
+            self.send_settings();
+        }
         Ok(())
     }
 
@@ -2998,8 +3017,14 @@ impl H2FrameParser {
         self.send_go_away(ErrorCode(code), &opaque_data, last_stream_id, false);
     }
 
-    /// Like node's Http2Session::AddPing, returns false once maxOutstandingPings are unanswered.
-    pub(crate) fn ping<'a>(&self, cx: &mut JsScope<'a>, payload: JsBytes<'a>) -> JsResult<bool> {
+    /// Like node's Http2Session::AddPing, returns false once maxOutstandingPings are unanswered, or the session is over.
+    pub(crate) fn ping<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        payload: JsBytes<'a>,
+        pending: JsLocal<'_>,
+        entry: JsLocal<'_>,
+    ) -> JsResult<bool> {
         let Ok(payload) = <[u8; 8]>::try_from(payload.get(&cx.heap)) else {
             return Err(cx
                 .global()
@@ -3009,9 +3034,13 @@ impl H2FrameParser {
                 )
                 .throw());
         };
-        if self.out_standing_pings.get() >= self.max_outstanding_pings.get() {
+        self.cork();
+        if !self.can_dispatch(js::on_ping_get_cached)
+            || self.out_standing_pings.get() >= self.max_outstanding_pings.get()
+        {
             return Ok(false);
         }
+        self.queue_for_ack(pending, entry)?;
         self.send_ping(&payload);
         Ok(true)
     }

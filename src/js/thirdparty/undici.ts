@@ -181,7 +181,8 @@ function connectTls(connect) {
 function connectInit(init, hop, connect) {
   const out = { ...init };
   const { host, serverName } = hop;
-  if (host !== undefined && init?.proxy === undefined) out.proxy = false;
+  // A Bun.FetchSession carries its own proxy choice; a request `proxy` would override it.
+  if (host !== undefined && init?.proxy === undefined && init?.session == null) out.proxy = false;
   if (hop.https) {
     const fromConnect = connectTls(connect);
     if (fromConnect !== undefined || serverName !== undefined) {
@@ -371,10 +372,13 @@ async function fetchWithConnect(input, init, connect) {
     // A memory or file body becomes a (lazy) Blob again: Content-Length, and replayable on 307/308.
     const source = requestBody.$bunNativePtr;
     const tag = source == null ? "" : ObjectPrototypeToString.$call(source);
-    body =
-      tag === "[object BlobInternalReadableStreamSource]" || tag === "[object FileInternalReadableStreamSource]"
-        ? await input.blob()
-        : requestBody;
+    if (tag === "[object BlobInternalReadableStreamSource]" || tag === "[object FileInternalReadableStreamSource]") {
+      const blob = await input.blob();
+      // A pipe or tty has no size: native fetch would read it to EOF synchronously, so it streams.
+      body = Number.isFinite(blob.size) ? blob : blob.stream();
+    } else {
+      body = requestBody;
+    }
   }
   // Bun's own maxRedirects option bounds the chain as it does natively.
   const maxRedirects = init?.maxRedirects;

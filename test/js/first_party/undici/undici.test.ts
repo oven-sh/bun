@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -16,6 +16,7 @@ import {
 } from "undici";
 
 import { createServer } from "../../../http-test-server";
+import { mkfifo } from "mkfifo";
 
 describe("undici", () => {
   let serverCtl: ReturnType<typeof createServer>;
@@ -1472,6 +1473,55 @@ describe("undici dispatcher connect.lookup", () => {
     expect(res.redirected).toBe(true);
     const { body } = await request(url, { dispatcher: agent, maxRedirections: 1 });
     expect(await body!.text()).toBe("tls-only");
+  });
+
+  it.skipIf(isWindows)(
+    "a pipe-backed Request body streams through the pin instead of being read to EOF first",
+    async () => {
+      using dir = tempDir("undici-fifo-body", {});
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo, 0o666);
+      let received = "";
+      await using server = Bun.serve({
+        port: 0,
+        fetch: async req => {
+          received = `${req.headers.get("transfer-encoding")} ${await req.text()}`;
+          return new Response("ok");
+        },
+      });
+      const { agent } = pinningAgent();
+      const pending = undiciFetch(
+        new Request(`http://fifo.invalid:${server.port}/`, {
+          method: "POST",
+          body: Bun.file(fifo).stream(),
+          // @ts-expect-error duplex is required for stream bodies by the spec
+          duplex: "half",
+        }),
+        { dispatcher: agent },
+      );
+      // The writer blocks until the reader opens the pipe, so a body read to EOF
+      // before the request starts would arrive with a Content-Length instead.
+      await using writer = Bun.spawn({ cmd: ["sh", "-c", `printf piped > "${fifo}"`], stderr: "pipe" });
+      const res = await pending;
+      expect(await res.text()).toBe("ok");
+      expect(received).toBe("chunked piped");
+      expect(await writer.exited).toBe(0);
+    },
+  );
+
+  it("a Bun.FetchSession's own proxy is kept on pinned hops", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("reached") });
+    const { agent } = pinningAgent();
+    const url = `http://session.invalid:${server.port}/`;
+    expect(await (await undiciFetch(url, { dispatcher: agent })).text()).toBe("reached");
+    // Port 1 is closed: a request that honors the session's proxy cannot reach the server.
+    using session = new Bun.FetchSession({ proxy: "http://127.0.0.1:1" });
+    expect(
+      await undiciFetch(url, { dispatcher: agent, session }).then(
+        () => "resolved",
+        (err: TypeError) => err.name,
+      ),
+    ).toBe("TypeError");
   });
 
   it("an Agent without connect options leaves requests untouched", async () => {

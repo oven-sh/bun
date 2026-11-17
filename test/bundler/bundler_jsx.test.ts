@@ -231,26 +231,39 @@ describe("bundler", () => {
     describe.each(["cli", "api"] as const)("pinned imported tags (%s)", backend => {
       describe.each(["method", "static"])("eval in %s", location => {
         describe.each([false, true])("minify=%s", minify => {
-          itBundled(`jsx/PreservePinnedImport-${backend}-${location}-${minify}`, {
-            files: {
-              "/in.jsx":
-                'import { component as Comp } from "./component"; const tag = <Comp />; console.log(tag === Comp, Comp.getSelf() === Comp);',
-              "/component.js":
-                location === "method"
-                  ? 'export class component { static getSelf() { return eval("component"); } }'
-                  : 'export class component { static { this.self = eval("component"); } static getSelf() { return this.self; } }',
-            },
-            backend,
-            jsx: { runtime: "preserve" },
-            minifyIdentifiers: minify,
-            minifySyntax: minify,
-            minifyWhitespace: minify,
-            onAfterBundle(api) {
-              const out = api.readFile("/out.js");
-              const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h" });
-              api.writeFile("/out.js", `const h = type => type;\n${code}`);
-            },
-            run: { stdout: "true true" },
+          describe.each(backend === "cli" ? [false, true] : [true])("bundling=%s", bundling => {
+            itBundled(`jsx/PreservePinnedImport-${backend}-${location}-${minify}-${bundling}`, {
+              files: {
+                "/in.jsx":
+                  'import { component as Comp } from "./component"; const tag = <Comp />; console.log(tag === Comp, Comp.getSelf() === Comp);',
+                "/component.js":
+                  location === "method"
+                    ? 'export class component { static getSelf() { return eval("component"); } }'
+                    : 'export class component { static { this.self = eval("component"); } static getSelf() { return this.self; } }',
+              },
+              backend,
+              bundling,
+              skipOnEsbuild: bundling,
+              jsx: { runtime: "preserve" },
+              minifyIdentifiers: minify,
+              minifySyntax: minify,
+              minifyWhitespace: minify,
+              ...(bundling
+                ? {
+                    bundleErrors: {
+                      "/in.jsx": ["Cannot preserve JSX tag because its linked binding requires an invalid JSX name"],
+                    },
+                  }
+                : {
+                    onAfterBundle(api) {
+                      const out = api.readFile("/out.js");
+                      expect(out).not.toContain("get value");
+                      const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h" });
+                      api.writeFile("/out.js", `const h = type => type;\n${code}`);
+                    },
+                    run: { stdout: "true true" },
+                  }),
+            });
           });
         });
       });
@@ -828,6 +841,7 @@ describe("bundler", () => {
         bundling,
         onAfterBundle(api) {
           const out = api.readFile("/out.js");
+          expect(out).not.toContain("get value");
           const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h" });
           api.writeFile(
             "/out.js",

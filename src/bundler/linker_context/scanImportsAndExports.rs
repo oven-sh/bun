@@ -1329,6 +1329,37 @@ pub(crate) fn scan_imports_and_exports(
         }
     }
 
+    // Checking final links; pinned export names cannot satisfy JSX component-name rules.
+    for (id, imports) in this.graph.ast.items_named_imports().iter().enumerate() {
+        for (&ref_, import) in imports.keys().iter().zip(imports.values()) {
+            let original = this.graph.symbols.get_const(ref_).unwrap();
+            if !original.must_start_with_capital_letter_for_jsx() {
+                continue;
+            }
+            let linked = this.graph.symbols.follow(ref_);
+            let symbol = this.graph.symbols.get_const(linked).unwrap();
+            let invalid = match &symbol.namespace_alias {
+                Some(alias) => !bun_core::identifier::is_identifier(alias.alias.slice()),
+                None => {
+                    symbol.must_not_be_renamed()
+                        && symbol
+                            .original_name
+                            .first()
+                            .is_some_and(u8::is_ascii_lowercase)
+                }
+            };
+            if invalid {
+                log.add_error(
+                    Some(&input_files[id]),
+                    import.alias_loc,
+                    b"Cannot preserve JSX tag because its linked binding requires an invalid JSX name",
+                );
+            }
+        }
+    }
+    if log.errors > 0 {
+        return Err(ScanImportsAndExportsError::ImportResolutionFailed);
+    }
     Ok(())
 }
 

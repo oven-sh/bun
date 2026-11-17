@@ -592,10 +592,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .first()
                                     .is_some_and(u8::is_ascii_lowercase)
                             });
-                            if matches!(root.data, Data::EImportIdentifier(_))
-                                || is_defined_string
-                                || has_lowercase_name
-                            {
+                            let has_string_named_import = p.options.bundle
+                                && match root.data {
+                                    Data::EImportIdentifier(id) => {
+                                        p.string_named_import_items.contains_key(&id.ref_)
+                                    }
+                                    _ => false,
+                                };
+                            if has_string_named_import || is_defined_string || has_lowercase_name {
                                 let (member, initializer, binding) = Self::jsx_tag_member(p, tag);
                                 tag = member;
                                 tag_initializer = Some(initializer);

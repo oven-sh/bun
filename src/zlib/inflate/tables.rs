@@ -209,6 +209,7 @@ pub(super) struct Tables {
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
 pub(super) static FIXED: Tables = {
     let mut tables = Tables::EMPTY;
+    tables.literal_length_mask = u64::MAX;
     let mut symbol = 0;
     while symbol < LITLEN_SYMBOLS {
         let code = static_litlen_codeword(symbol);
@@ -424,6 +425,7 @@ impl<T: Copy + From<Entry>, const ROOT: usize, const SUBTABLES: usize> Table<T, 
 }
 
 impl Tables {
+    /// All zeros, which need not be copied from anywhere.
     pub(super) const EMPTY: Self = Self {
         literal_length: Table {
             root: [Entry(0); _],
@@ -433,7 +435,7 @@ impl Tables {
             root: [DistanceEntry(0); _],
             subtables: [DistanceEntry(0); _],
         },
-        literal_length_mask: u64::MAX,
+        literal_length_mask: 0,
     };
 
     /// The symbol is the first literal.

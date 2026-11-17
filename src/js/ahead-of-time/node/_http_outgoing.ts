@@ -398,7 +398,8 @@ ObjectDefineProperty(OutgoingMessage.prototype, "closed", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableFinished", {
   __proto__: null,
   get(this: $Node.OutgoingMessage) {
-    return this.finished && this.outputSize === 0 && (!this[kSocket] || this[kSocket].writableLength === 0);
+    // The socket stand-ins of serverless adapters have no writableLength.
+    return this.finished && this.outputSize === 0 && (!this[kSocket] || !this[kSocket].writableLength);
   },
 });
 

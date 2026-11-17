@@ -41,6 +41,7 @@ import { constants, tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
+import { finished as streamFinished } from "node:stream/promises";
 import { connect as tlsConnect } from "node:tls";
 import { inspect } from "node:util";
 import { runInNewContext } from "node:vm";
@@ -4261,6 +4262,27 @@ it("standalone ServerResponse flushes the header block before a non-chunked Buff
   // Node emits 'prefinish' when the assigned socket's _httpMessage is the
   // response (OutgoingMessage.end -> _finish()).
   expect(sawPrefinish).toBe(true);
+});
+
+it("writableFinished turns true on a socket stand-in that has no writableLength", async () => {
+  const socket = Object.assign(new EventEmitter(), {
+    _writableState: {},
+    writable: true,
+    cork() {},
+    uncork() {},
+    write(_: unknown, __: unknown, callback?: (() => void) | null) {
+      if (callback) setImmediate(callback);
+      return true;
+    },
+  });
+  const res = new ServerResponse(new IncomingMessage(null as any));
+  res.assignSocket(socket as any);
+  expect(res.writableFinished).toBe(false);
+  await once(res.end("body"), "finish");
+  expect(res.writableFinished).toBe(true);
+  const settled = streamFinished(res);
+  socket.emit("close");
+  expect(await settled).toBeUndefined();
 });
 
 it("assignSocket() accepts serverless-http's socket stand-in, which has on() but no once()", async () => {

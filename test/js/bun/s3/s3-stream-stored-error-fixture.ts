@@ -65,12 +65,8 @@ async function stored() {
       return new Response("", { headers: { ETag: '"etag"' } });
     },
   });
-  const client = new Bun.S3Client({
-    endpoint: `http://127.0.0.1:${bucket.port}`,
-    accessKeyId: "id",
-    secretAccessKey: "secret",
-    bucket: "bucket",
-  });
+  const credentials = { endpoint: `http://127.0.0.1:${bucket.port}`, accessKeyId: "id", secretAccessKey: "secret" };
+  const client = new Bun.S3Client({ ...credentials, bucket: "bucket" });
   results["client.write(key, new Response(stream))"] = await outcome(
     client.write("copy", new Response(failed())),
     bytes => `resolved ${bytes} bytes`,
@@ -79,6 +75,24 @@ async function stored() {
     Bun.write(client.file("copy"), new Response(failed())),
     bytes => `resolved ${bytes} bytes`,
   );
+  // The first write took the failure. The stream used to stay unlocked and read as complete.
+  const writers: Record<string, (stream: Body) => Promise<number>> = {
+    "client.write(key, stream) twice": async stream => client.write("copy", stream),
+    "Bun.write(s3file, stream) twice": async stream => Bun.write(client.file("copy"), stream),
+    "Bun.write(path, stream) twice": async stream => Bun.write(path.resolve("out.bin"), stream),
+  };
+  for (const [name, write] of Object.entries(writers)) {
+    const stream = failed();
+    const attempt = () => outcome(write(stream), bytes => `resolved ${bytes} bytes`);
+    results[name] = [await attempt(), await attempt()];
+  }
+  // fetch() also leaves the failure as an unhandled rejection.
+  const ignore = () => {};
+  process.on("unhandledRejection", ignore);
+  const put = fetch("s3://bucket/copy", { method: "PUT", body: failed(), s3: credentials });
+  await new Promise(resolve => setImmediate(resolve));
+  process.off("unhandledRejection", ignore);
+  results["fetch('s3://', { body: stream }) settled"] = Bun.peek.status(put) !== "pending";
   // Waits for requests in flight, so a PUT that went out is counted.
   await bucket.stop();
   results["requests the bucket got"] = puts;

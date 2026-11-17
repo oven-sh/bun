@@ -83,6 +83,18 @@ describe("fs.glob", () => {
       // @ts-expect-error
       expect(() => fs.glob("*.txt", { cwd: tmp }, undefined)).toThrow(TypeError);
     });
+
+    // Node checks the callback with makeCallback(), which names the argument "cb".
+    it("names the callback as node does", () => {
+      // @ts-expect-error
+      expect(() => fs.glob("*.txt", { cwd: tmp }, 5)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "cb" argument must be of type function. Received type number (5)',
+        }),
+      );
+    });
   });
 
   it("matches directories", () => {
@@ -160,6 +172,31 @@ describe("fs.globSync", () => {
   it("supports arrays of patterns", () => {
     const expected = isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"];
     expect(fs.globSync(["a/bar.txt", "a/baz.js"], { cwd: tmp })).toStrictEqual(expected);
+  });
+
+  // Node gathers the matches with its own copies of both functions (primordials), so a program that stores over one
+  // of them sees no call of it and gets the matches.
+  const replaced: Array<[string, any, string, unknown]> = [
+    ["Array.from", Array, "from", ["replaced"]],
+    ["Function.prototype.bind", Function.prototype, "bind", () => "replaced"],
+  ];
+  it.each(replaced)("makes no call of a replaced %s", (_name, holder, key, result) => {
+    const original = holder[key];
+    let calls = 0;
+    let paths: string[];
+    let dirents: fs.Dirent[];
+    holder[key] = () => (calls++, result);
+    try {
+      paths = fs.globSync("a/*", { cwd: tmp });
+      dirents = fs.globSync("a/*", { cwd: tmp, withFileTypes: true });
+    } finally {
+      holder[key] = original;
+    }
+    expect({ paths: paths.sort(), names: dirents.map(dirent => dirent?.name).sort(), calls }).toEqual({
+      paths: isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"],
+      names: ["bar.txt", "baz.js"],
+      calls: 0,
+    });
   });
 }); // </fs.globSync>
 

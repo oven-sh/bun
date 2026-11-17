@@ -71,7 +71,7 @@ async function talk(
 
   const said: string[] = [];
   const heap = JSON.parse((await send("Heap.snapshot")).snapshotData);
-  const names = ["glob", "globSync", "Glob"].map(name => heap.edgeNames.indexOf(name));
+  const names = ["globAll", "globSync", "Glob"].map(name => heap.edgeNames.indexOf(name));
   const property = heap.edgeTypes.indexOf("Property");
   const held = new Map<number, Set<number>>();
   for (let at = 0; at < heap.edges.length; at += 4) {
@@ -84,7 +84,7 @@ async function talk(
     const { objectId } = (await send("Heap.getRemoteObject", { heapObjectId })).result;
     const call = async (functionDeclaration: string) =>
       shown(await send("Runtime.callFunctionOn", { objectId, functionDeclaration }));
-    if ((await call("function () { return Object.keys(this).join(); }")) !== "glob,globSync,Glob") continue;
+    if ((await call("function () { return Object.keys(this).join(); }")) !== "globAll,globSync,Glob") continue;
     said.push("the record: frozen " + (await call("function () { return Object.isFrozen(this); }")));
     said.push(
       "a strict store: " +

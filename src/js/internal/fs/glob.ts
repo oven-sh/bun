@@ -58,6 +58,9 @@ function makeMatchersExclude(matchers: Minimatch[]) {
 function statForFileTypes(cache: Cache, root: string, path: string) {
   return cache.statSync(isAbsolute(path) ? path : join(root, path));
 }
+function pushMatch(this: Array<Dirent | string | null>, path: string) {
+  $arrayPush(this, path);
+}
 
 const kStats = Symbol("stats");
 let _DirentFromStats: (new (name: string, stats: Stats, path: string) => Dirent) | undefined;
@@ -451,10 +454,15 @@ class Glob {
       }
       this.#subpatterns.clear();
     }
-    return Array.from<string, Dirent | string | null>(
-      this.#results,
-      this.#withFileTypes ? statForFileTypes.bind(null, this.#cache, this.#root) : undefined!,
-    );
+    // $forEach and no bound mapper: user code can replace Array.from, Function.prototype.bind and the iterator of Set.
+    const matches: Array<Dirent | string | null> = [];
+    this.#results.$forEach(pushMatch, matches);
+    if (this.#withFileTypes) {
+      const cache = this.#cache;
+      const root = this.#root;
+      for (let i = 0; i < matches.length; i++) matches[i] = statForFileTypes(cache, root, matches[i] as string);
+    }
+    return matches;
   }
   #isDirectorySync(path: string, stat: Dirent | null, pattern: Pattern) {
     if (stat?.isDirectory()) {
@@ -760,6 +768,12 @@ class Glob {
       this.#subpatterns.clear();
     }
   }
+  // What fs.glob() calls back with, as Glob#globAll() on Node's main branch. A program can replace Array.fromAsync.
+  async globAll() {
+    const matches: Array<Dirent | string | null> = [];
+    for await (const match of this.glob()) $arrayPush(matches, match);
+    return matches;
+  }
   async *#iterateSubpatterns(path: string, pattern: Pattern): AsyncGenerator<Dirent | string | null, void, unknown> {
     const seen = this.#cache.add(path, pattern);
     if (seen) {
@@ -1001,15 +1015,16 @@ function setDirentName(dirent: Dirent, name: string) {
   }
 }
 
-function glob(pattern: string | string[], options?: GlobOptions) {
-  return new Glob(pattern, options).glob();
+// Not async: the constructor throws the errors of the arguments to the caller of fs.glob().
+function globAll(pattern: string | string[], options?: GlobOptions) {
+  return new Glob(pattern, options).globAll();
 }
 
 function globSync(pattern: string | string[], options?: GlobOptions) {
   return new Glob(pattern, options).globSync();
 }
 
-export default { glob, globSync, Glob };
+export default { globAll, globSync, Glob };
 
 interface MinimatchOptions {
   __proto__?: null;

@@ -361,7 +361,10 @@ impl S3HttpSimpleTask {
                 let id = xml_response::parse_upload_id(&this.response_buffer.list);
                 NetworkSink::on_reply(&sink, Request::Create, Ok(&id.unwrap_or_default()))
             }
-            (Callback::Sink(sink, Request::Create), 404) => {
+            (Callback::Sink(sink, Request::Create), 404)
+                if xml_response::parse_error(&this.response_buffer.list)
+                    .is_none_or(|error| error.code.is_none()) =>
+            {
                 NetworkSink::on_reply(&sink, Request::Create, Ok(b""))
             }
             (Callback::Sink(sink, request @ (Request::Part(..) | Request::Commit(..))), status) => {

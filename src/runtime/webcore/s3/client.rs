@@ -461,13 +461,6 @@ pub(crate) fn upload_stream(
         .to_js());
     }
 
-    if let Some(stream) = readable_stream.ptr.bytes()
-        && let Some(err) = stream.take_pending_error()
-    {
-        let js_err = err.to_js(cx.global());
-        return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
-    }
-
     let target = Target {
         credentials,
         path: path.into(),
@@ -537,9 +530,13 @@ pub(crate) fn upload_stream(
         return Ok(end_promise_value);
     }
     let Some(promise) = pump.as_any_promise() else {
-        // A direct stream closed inside `pull()`.
-        sink.finish_input();
-        sink.on_pump_done();
+        if pump.is_termination_exception() {
+            NetworkSink::on_pump_terminated(&sink);
+        } else {
+            // A direct stream closed inside `pull()`.
+            sink.finish_input();
+            sink.on_pump_done();
+        }
         return Ok(end_promise_value);
     };
     match promise.status() {

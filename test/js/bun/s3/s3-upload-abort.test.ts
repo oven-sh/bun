@@ -31,6 +31,7 @@ function fixture(opts: {
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
+        if (req.method === "HEAD") return new Response("");
         if (req.method === "POST" && url.searchParams.has("uploads")) {
           reqs.create++;
           ${opts.gateCreate ? "await createGate.promise;" : ""}
@@ -422,6 +423,95 @@ test.concurrent.each([
   `;
   expect(await run({ body, waitFor: `returned`, answer: { put } })).toEqual({
     stdout: `{"create":0,"part":0,"complete":0,"abort":0,"put":1}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+// The HEAD request starts after the refusal was sent, so the writer has handled it when HEAD is answered.
+const refused = {
+  create: { waitFor: `reqs.create === 1`, reqs: `{"create":1,"part":0,"complete":0,"abort":0,"put":0}` },
+  part: { waitFor: `reqs.abort === 1`, reqs: `{"create":1,"part":1,"complete":0,"abort":1,"put":0}` },
+};
+test.concurrent.each([
+  ["create", "end"],
+  ["create", "flush"],
+  ["part", "end"],
+  ["part", "flush"],
+] as const)("a writer() whose %s request failed with nothing pending rejects the next %s()", async (kind, method) => {
+  const then = `
+    await client.exists("key");
+    const show = p => Promise.resolve(p).then(String, e => [e.name, e.code, e.message, e.path].join());
+    console.log(w.write("hello"), await show(w.${method}()), await show(w.flush()), await show(w.end()));
+  `;
+  expect(
+    await run({
+      body: `const w = client.file("key").writer(opts); w.write(new Uint8Array(partSize));`,
+      waitFor: refused[kind].waitFor,
+      then,
+      answer: { [kind]: `error(403, "AccessDenied")` },
+    }),
+  ).toEqual({
+    stdout: `0 S3Error,AccessDenied,message,key 0 0\n${refused[kind].reqs}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+test.concurrent("a writer()'s failure is not reported once its graph is disposed", async () => {
+  const body = `
+    const graph = new Bun.ModuleGraph();
+    const w = graph.run(() => client.file("key").writer(opts));
+    w.write(new Uint8Array(partSize));
+  `;
+  expect(
+    await run({
+      body,
+      waitFor: refused.part.waitFor,
+      then: `graph.dispose(); console.log(w.end());`,
+      answer: { part: `error(403, "AccessDenied")` },
+    }),
+  ).toEqual({ stdout: `0\n${refused.part.reqs}\n`, stderr: "", exited: 0 });
+});
+
+test.concurrent.each([
+  ["its code", `error(404, "NoSuchBucket")`, "NoSuchBucket message"],
+  ["no body", `new Response("", { status: 404 })`, "UnknownError Failed to initiate multipart upload"],
+])("CreateMultipartUpload answered 404 with %s", async (_, create, expected) => {
+  const body = `
+    const w = client.file("key").writer(opts);
+    w.write(new Uint8Array(partSize));
+    console.log(await w.end().then(String, e => e.code + " " + e.message));
+  `;
+  expect(await run({ body, waitFor: `true`, answer: { create } })).toEqual({
+    stdout: `${expected}\n{"create":1,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+// What the stream wrote before its script was terminated is not the whole object.
+test.concurrent.each([
+  ["a direct stream", `new ReadableStream({ type: "direct", pull(c) { c.write("hello"); for (;;); } })`],
+  ["a part of a direct stream", `new ReadableStream({ type: "direct", pull(c) { c.write(part); for (;;); } })`],
+  ["an async iterator", `new Response({ async *[Symbol.asyncIterator]() { for (;;); } })`],
+])("a node:vm timeout while %s is read stores nothing", async (_, source) => {
+  const body = `
+    const part = new Uint8Array(partSize + 1);
+    globalThis.upload = () => client.write("key", ${source});
+    try {
+      require("node:vm").runInThisContext("upload()", { timeout: 100 });
+    } catch (e) {
+      console.log(e.code);
+    }
+  `;
+  const { stdout, stderr, exited } = await run({ body, waitFor: `true` });
+  const [code, reqs] = stdout.trim().split("\n");
+  const { create, abort, ...stored } = JSON.parse(reqs);
+  expect({ code, stored, leftOpen: create - abort, stderr, exited }).toEqual({
+    code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+    stored: { part: 0, complete: 0, put: 0 },
+    leftOpen: 0,
     stderr: "",
     exited: 0,
   });

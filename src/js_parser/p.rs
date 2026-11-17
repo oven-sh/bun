@@ -4890,8 +4890,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle && self.options.output_format.is_esm()
     }
 
-    /// After the parse pass: true if the file has what only an ES module has. That is an `import` statement or
-    /// `import.meta`, an `export`, or the `await` operator at the top level.
+    /// After the parse pass: an `import` statement, `import.meta`, an `export`, or the `await` operator at the top level.
     pub(crate) fn parsed_es_module_syntax(&self) -> bool {
         self.has_es_module_syntax
             || self.esm_import_keyword.len > 0
@@ -4899,18 +4898,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.top_level_await_keyword.len > 0
     }
 
-    /// True if the file may be a script, where `await` at the top level is a name: the file is named `.cjs`. The
-    /// parser of `bun --aot` reads a second time for that same name (`may_name_await` in `bun_sema_parser`).
-    /// `options.module_type` does not tell on every path: for a file that an `import` loads off the main thread
-    /// it is the `"type"` of the package alone (`TranspilerJob::run`).
-    ///
-    /// Only for the module loader of the runtime, as for `has_with_scope`. A bundle and a transform of text do
-    /// not take a file for CommonJS because of what it holds.
+    /// A file named `.cjs` that the module loader of the runtime reads: `await` at its top level may be a name.
     pub(crate) fn may_be_script(&self) -> bool {
         let path = &self.source.path;
+        // Not `options.module_type`: for a file that an `import` loads, it is the `"type"` of the package alone.
+        let is_named_cjs = path.name().ext == b".cjs";
         // A `data:` URL has no file name. What follows its last "." is part of the module's text.
         self.options.features.commonjs_at_runtime
-            && path.name().ext == b".cjs"
+            && is_named_cjs
             && !path.text.starts_with(b"data:")
     }
 

@@ -907,8 +907,7 @@ fn lower_one_date_time_literal<'a>(
 impl<'a> Parser<'a> {
     #[inline(always)]
     fn prepare_for_parse_pass<const TS: bool>(p: &mut P<'a, TS, false>) {
-        // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
-        // Let's enable this flag file-wide
+        // File-wide, so that no use has to test "should_fold_typescript_constant_expressions or features.minify_syntax".
         if p.options.features.minify_syntax || p.options.features.inlining {
             p.should_fold_typescript_constant_expressions = true;
         }
@@ -918,36 +917,7 @@ impl<'a> Parser<'a> {
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
     }
 
-    #[inline(always)]
-    fn parse_pass<const TS: bool>(
-        p: &mut P<'a, TS, false>,
-        orig_error_count: u32,
-    ) -> Result<&'a mut [Stmt], Error> {
-        let mut opts = ParseStatementOptions {
-            scope: StatementScope::Module,
-            allow_directive_prologue: true,
-            ..Default::default()
-        };
-        let stmts = p
-            .parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?
-            .into_bump_slice_mut();
-
-        // Halt parsing right here if there were any errors
-        // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
-        // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
-        //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
-        //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
-        if p.log().errors > orig_error_count {
-            return Err(crate::Error::SyntaxError);
-        }
-
-        Ok(stmts)
-    }
-
-    /// `p` read the file as a module reads it, with `await` at the top level as the operator, and `failure` ended
-    /// that. A script reads that `await` as a name, as in `var await`, so this reads the file again that way. If
-    /// that fails too, or finds what only an ES module has, the file is not a script: `failure` comes back with
-    /// the messages of the first reading.
+    /// The reading as a module failed. Reads a file that may be a script again as one, or gives `failure` back.
     #[cold]
     #[inline(never)]
     fn read_as_script<const TS: bool>(
@@ -955,6 +925,9 @@ impl<'a> Parser<'a> {
         log_start: LogStart,
         failure: Error,
     ) -> Result<&'a mut [Stmt], Error> {
+        if !p.may_be_script() {
+            return Err(failure);
+        }
         let mut module_messages = log_start.take_since(p.log());
         if let Ok(stmts) = Self::script_parse_pass(p, log_start.errors)
             && !p.parsed_es_module_syntax()
@@ -966,8 +939,7 @@ impl<'a> Parser<'a> {
         Err(failure)
     }
 
-    /// Puts a new parser on the first token of the file in `p`, and parses the file with `await` at the top level
-    /// as a name.
+    /// Starts a new parser in `p` and parses the file with `await` at the top level as a name.
     fn script_parse_pass<const TS: bool>(
         p: &mut P<'a, TS, false>,
         orig_error_count: u32,
@@ -985,7 +957,16 @@ impl<'a> Parser<'a> {
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
         }
-        Self::parse_pass(p, orig_error_count)
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            allow_directive_prologue: true,
+            ..Default::default()
+        };
+        let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
+        if p.log().errors > orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        Ok(stmts.into_bump_slice_mut())
     }
 
     fn _parse<const TS: bool>(
@@ -1064,29 +1045,25 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // The file is read as a script: `await` at its top level is a name. Used for forcing CommonJS.
+        let mut is_script = false;
+
         // Parse the file in the first pass, but do not bind symbols
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            allow_directive_prologue: true,
+            ..Default::default()
+        };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
-        let mut parsed = Self::parse_pass(p, orig_error_count);
-        // The file is read as a script: `await` at its top level is a name. Used for forcing CommonJS.
-        let mut is_script = false;
-        // The message for a stack overflow needs the lexer of the reading that ran out of stack.
-        if let Err(failure) = parsed
-            && failure != crate::Error::StackOverflow
-            && p.may_be_script()
-        {
-            parsed = Self::read_as_script(p, log_start, failure);
-            is_script = parsed.is_ok();
-        }
-        parse_tracer.end();
-
-        let stmts: &'a mut [Stmt] = match parsed {
-            Ok(stmts) => stmts,
+        let mut stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
+            Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
+                parse_tracer.end();
                 if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
@@ -1099,9 +1076,22 @@ impl<'a> Parser<'a> {
                     return Err(crate::Error::SyntaxError);
                 }
 
-                return Err(e);
+                is_script = true;
+                Self::read_as_script(p, log_start, e)?
             }
         };
+
+        parse_tracer.end();
+
+        // Halt parsing right here if there were any errors
+        // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
+        // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
+        //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
+        //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
+        if p.log().errors > orig_error_count {
+            is_script = true;
+            stmts = Self::read_as_script(p, log_start, crate::Error::SyntaxError)?;
+        }
 
         // `keep_directives` leaves each directive where it is written.
         let (directives, stmts): (&'a [Stmt], &'a mut [Stmt]) = if p.options.keep_directives {
@@ -2670,13 +2660,13 @@ impl<'a> Parser<'a> {
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(parsed) = parsed_for_cache {
-                // The name of a file is not in the key of the cache, and the name is what makes a script of this file.
-                *parsed =
-                    (!p.depends_on_more_than_source() && !is_script).then_some(ParsedForCache {
-                        exports_kind,
-                        uses_test_api,
-                        imports_vitest,
-                    });
+                // The key of the cache does not hold the name of a file, and the name makes a script of this file.
+                let can_save = !is_script && !p.depends_on_more_than_source();
+                *parsed = can_save.then_some(ParsedForCache {
+                    exports_kind,
+                    uses_test_api,
+                    imports_vitest,
+                });
             }
         }
         // A test entry point gets its own cache key.

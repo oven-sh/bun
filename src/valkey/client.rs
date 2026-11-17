@@ -621,8 +621,8 @@ impl<P> Client<P> {
     fn on_reply(&mut self, value: RESPValue) -> Event<P> {
         let value = match value {
             RESPValue::Push(push) => return self.on_push(push),
+            // The request it answers stays in flight: `fail` rejects it first.
             RESPValue::Error(message) if self.is_subscriber => {
-                self.in_flight.pop_front();
                 return Event::Broken {
                     message,
                     error: RedisError::ServerError,

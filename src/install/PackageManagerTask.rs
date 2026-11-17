@@ -198,26 +198,25 @@ impl Task {
             } => {
                 // Taken, so that the multi-MB buffer is freed here and not when the slot is reused.
                 let mut body = core::mem::take(&mut network.response_buffer);
-                let (
-                    Some(metadata),
-                    &crate::network_task::Callback::PackageManifest {
-                        is_extended_manifest,
+                *manifest = match (&network.response.metadata, &network.callback) {
+                    (
+                        Some(metadata),
+                        &crate::network_task::Callback::PackageManifest {
+                            is_extended_manifest,
+                            registry,
+                            ..
+                        },
+                    ) => npm::Registry::get_package_metadata(
                         registry,
-                        ..
-                    },
-                ) = (&network.response.metadata, &network.callback)
-                else {
-                    unreachable!("`run_tasks` looked at the response to a manifest request");
+                        metadata,
+                        body.slice(),
+                        &mut this.log,
+                        name.slice(),
+                        *temp_dir,
+                        is_extended_manifest,
+                    ),
+                    _ => Err((network.response.fail).map_or(crate::Error::HTTPError, Into::into)),
                 };
-                *manifest = npm::Registry::get_package_metadata(
-                    registry,
-                    metadata,
-                    body.slice(),
-                    &mut this.log,
-                    name.slice(),
-                    *temp_dir,
-                    is_extended_manifest,
-                );
             }
             // The buffered path. `TarballStream` completes a streamed download by itself.
             Job::Extract {

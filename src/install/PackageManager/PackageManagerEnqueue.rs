@@ -232,7 +232,7 @@ pub(crate) fn enqueue_install_task(
 }
 
 /// Returns false if the caller has to start the task.
-fn joins_running_task(
+fn joins_task(
     this: &mut PackageManager,
     task_id: Task::Id,
     dependency_id: DependencyID,
@@ -243,6 +243,8 @@ fn joins_running_task(
     match this.fetches.join(task_id, linker) {
         Join::Running => Ok(true),
         Join::Start => Ok(false),
+        // The isolated linker would wait forever. The others go on without the package (#45623).
+        Join::Ended => Ok(!matches!(linker, Some(Waiter::Isolated(_)))),
         Join::Failed { is_required } => {
             if is_linker && !is_required {
                 report_failed_download_as_required(this, task_id, dependency_id, package_id);
@@ -275,13 +277,13 @@ fn enqueue_download(
         offline_miss(this, task_id, "", name, is_required);
         return Err(ForTarballError::Offline);
     }
-    if joins_running_task(this, task_id, dependency_id, package_id, &mut linker)? {
+    if joins_task(this, task_id, dependency_id, package_id, &mut linker)? {
         return Ok(());
     }
 
     let is_required = this.is_package_required(dependency_id, package_id);
     let package = *this.lockfile.packages.get(package_id as usize);
-    let task = run_tasks::generate_network_task_for_tarball(
+    if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
         github_url.as_deref(),
@@ -289,10 +291,11 @@ fn enqueue_download(
         dependency_id,
         &package,
         linker,
-    )?;
-    let request = task.take_request();
-    this.network_tarball_batch.push(request);
-    let _ = run_tasks::schedule_tasks(this);
+    )? {
+        let request = task.take_request();
+        this.network_tarball_batch.push(request);
+        let _ = run_tasks::schedule_tasks(this);
+    }
     Ok(())
 }
 
@@ -304,13 +307,14 @@ fn enqueue_tarball_for_reading(
 ) -> Result<(), ForTarballError> {
     let resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     let task_id = Task::Id::for_tarball(this.lockfile.str(resolution.local_tarball()));
-    if joins_running_task(this, task_id, dependency_id, package_id, &mut linker)? {
+    // `bun pm fetch` fails for an optional file that is gone. A linker decides when the task fails.
+    let is_required = true;
+    if joins_task(this, task_id, dependency_id, package_id, &mut linker)?
+        || !this.fetches.start(task_id, is_required, linker)
+    {
         return Ok(());
     }
 
-    // A linker works that out again when the task has failed.
-    let is_required = true;
-    this.fetches.start(task_id, is_required, linker);
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
     let alias = this.lockfile.buffers.dependencies[dependency_id as usize].name;
     enqueue_local_tarball(
@@ -344,28 +348,23 @@ fn enqueue_git_for_checkout(
     {
         return Err(ForTarballError::Offline);
     }
-    if joins_running_task(this, checkout_id, dependency_id, package_id, &mut linker)? {
+    if joins_task(this, checkout_id, dependency_id, package_id, &mut linker)?
+        || !this.fetches.start(checkout_id, is_required, linker)
+    {
         return Ok(());
     }
-    this.fetches.start(checkout_id, is_required, linker);
 
     if let Some(repo_fd) = repo_fd {
         let patch = patch_name_and_version_hash;
         check_out_locked_package(this, repo_fd, dependency_id, package_id, patch);
         return Ok(());
     }
-    let mut checkout = Some(Waiter::Checkout {
+    let checkout = Waiter::Checkout {
         dependency_id,
         package_id,
-    });
-    match this.fetches.join(clone_id, &mut checkout) {
-        // Only an `--offline` miss is `Failed`, and the repository is in the cache now.
-        Join::Start | Join::Failed { .. } => {
-            this.fetches.start(clone_id, is_required, checkout);
-            enqueue_git_clone(this, clone_id, alias, &repository);
-        }
-        Join::Running if is_required => this.fetches.require(clone_id),
-        Join::Running => {}
+    };
+    if this.fetches.start(clone_id, is_required, Some(checkout)) {
+        enqueue_git_clone(this, clone_id, alias, &repository);
     }
     Ok(())
 }
@@ -411,7 +410,7 @@ fn report_failed_download_as_required(
     if !this.is_package_required(dependency_id, package_id) {
         return;
     }
-    this.fetches.require(task_id);
+    this.fetches.require_failed(task_id);
     if this.options.log_level.is_silent() {
         return;
     }
@@ -480,6 +479,7 @@ fn offline_git_miss(
 /// slot for the duration of the enqueued resolve task.
 pub(crate) unsafe fn enqueue_parse_npm_package(
     this: &mut PackageManager,
+    name: StringOrTinyString,
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
     // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
@@ -487,7 +487,7 @@ pub(crate) unsafe fn enqueue_parse_npm_package(
     let network = unsafe { &mut *network_task };
     let task_id = network.task_id;
     let job = Task::Job::PackageManifest {
-        name: *network.manifest_name(),
+        name,
         network,
         temp_dir: this.manifest_cache_temporary_directory(),
         manifest: Err(crate::Error::Failed),
@@ -2078,8 +2078,8 @@ fn bind_row_without_manifest(this: &mut PackageManager, asked: &Asked<'_>) -> cr
             let Some(&repo_fd) = this.git_repositories.get(&clone_id) else {
                 if starts_remote_task(this, clone_id, asked, waiting)?
                     && !offline_git_miss(this, clone_id, alias, is_required)
+                    && this.fetches.start(clone_id, is_required, None)
                 {
-                    this.fetches.start(clone_id, is_required, None);
                     enqueue_git_clone(this, clone_id, alias, &dep);
                 }
                 return Ok(());
@@ -2087,8 +2087,9 @@ fn bind_row_without_manifest(this: &mut PackageManager, asked: &Asked<'_>) -> cr
 
             let commit_id = Task::Id::for_git_commit(url, this.lockfile.str(&dep.committish));
             let Some(resolved) = this.git_commits.get(&commit_id) else {
-                if starts_remote_task(this, commit_id, asked, waiting)? {
-                    this.fetches.start(commit_id, is_required, None);
+                if starts_remote_task(this, commit_id, asked, waiting)?
+                    && this.fetches.start(commit_id, is_required, None)
+                {
                     enqueue_git_commit(this, commit_id, clone_id, alias, dep.committish);
                 }
                 return Ok(());
@@ -2100,8 +2101,9 @@ fn bind_row_without_manifest(this: &mut PackageManager, asked: &Asked<'_>) -> cr
             if waits && binds_to_appended_package(this, checkout_id, id) {
                 return Ok(());
             }
-            if starts_remote_task(this, checkout_id, asked, waiting.filter(|_| waits))? {
-                this.fetches.start(checkout_id, is_required, None);
+            if starts_remote_task(this, checkout_id, asked, waiting.filter(|_| waits))?
+                && this.fetches.start(checkout_id, is_required, None)
+            {
                 let resolved = stored_string(&resolved);
                 enqueue_git_checkout(this, checkout_id, repo_fd, id, alias, &res, resolved, None);
             }
@@ -2211,10 +2213,10 @@ fn bind_row_without_manifest(this: &mut PackageManager, asked: &Asked<'_>) -> cr
 
             if res.tag == ResolutionTag::LocalTarball {
                 match try_get_temporary_directory(this) {
-                    Ok(_) => {
-                        this.fetches.start(task_id, is_required, None);
+                    Ok(_) if this.fetches.start(task_id, is_required, None) => {
                         enqueue_local_tarball(this, task_id, id, dependency.name, &res, None);
                     }
+                    Ok(_) => {}
                     Err(why) => this.exit_or_log(&why),
                 }
                 return Ok(());
@@ -2234,13 +2236,13 @@ fn bind_row_without_manifest(this: &mut PackageManager, asked: &Asked<'_>) -> cr
                 },
                 None,
             ) {
-                Ok(network_task) => {
+                Ok(Some(network_task)) => {
                     let network_task: *mut NetworkTask = network_task;
                     enqueue_network_task(this, network_task);
                     Ok(())
                 }
-                // It was reported if required, and is skipped if optional.
-                Err(ForTarballError::Offline) => Ok(()),
+                // An offline miss was reported if required, and is skipped if optional.
+                Ok(None) | Err(ForTarballError::Offline) => Ok(()),
                 Err(err) => Err(err.into()),
             }
         }
@@ -2266,7 +2268,9 @@ fn report_manifest_failure(
     };
     let is_of_project = this.lockfile.is_workspace_dependency(id);
     let can_hold = this.held_messages.is_some();
-    let failure = this.manifest_requests.run_into_failure(task_id, row);
+    let Some(failure) = this.manifest_requests.run_into_failure(task_id, row) else {
+        return;
+    };
     // A peer that finds the failure already reported stays unbound, which is not an error.
     let fails_install = !failure.spares_optional
         || (dependency.behavior.is_required()
@@ -3099,7 +3103,7 @@ fn get_or_put_resolved_package_with_find_result(
                     &package,
                     None,
                 )?;
-                Some(ResolvedPackageTask::NetworkTask(task))
+                task.map(|task| ResolvedPackageTask::NetworkTask(task))
             }
             install::PreinstallState::CalcPatchHash => Some(ResolvedPackageTask::PatchTask(
                 PatchTask::new_calc_patch_hash(

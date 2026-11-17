@@ -128,13 +128,13 @@ impl Finalize {
             (Finalize::PublishCheckout(staging, tree), Job::GitCheckout { request, data }) => {
                 *data = finish_checkout(request, log, staging, &tree);
             }
-            (Finalize::Failed { staging, err }, job) => {
+            (Finalize::Failed { staging, err }, Job::GitClone { repo, .. }) => {
                 drop(staging);
-                match job {
-                    Job::GitClone { repo, .. } => *repo = Err(err),
-                    Job::GitCheckout { data, .. } => *data = Err(err),
-                    _ => unreachable!("only these two have a finalize step"),
-                }
+                *repo = Err(err);
+            }
+            (Finalize::Failed { staging, err }, Job::GitCheckout { data, .. }) => {
+                drop(staging);
+                *data = Err(err);
             }
             _ => unreachable!("the finalize step is for another kind of task"),
         }

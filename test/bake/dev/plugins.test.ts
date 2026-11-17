@@ -689,6 +689,25 @@ devTest("the build error of a plugin module is not an error of the file that has
     expect(await statuses()).toEqual({ healthy: 200, broken: 500 });
   },
 });
+devTest("an asset of a plugin and the file that has the same path are two assets", {
+  files: {
+    ...wrappedFiles(`() => ({ contents: "WRAPPED-BYTES", loader: "file" })`),
+    "index.html": emptyHtmlFile({ scripts: ["./entry.ts"] }),
+    "entry.ts": `
+      import real from "./logo.png";
+      import wrapped from "wrapped:logo.png";
+      console.log(real, wrapped);
+    `,
+    "logo.png": `REAL-BYTES`,
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const script = await dev.fetch(html.match(/\/_bun\/client\/[^"]+\.js/)![0]).text();
+    const urls = [...new Set(script.match(/\/_bun\/asset\/[0-9a-f]+\.png/g))];
+    // previously: the second asset took the place of the first, whose URL then answered 404
+    expect((await Promise.all(urls.map(url => dev.fetch(url).text()))).sort()).toEqual(["REAL-BYTES", "WRAPPED-BYTES"]);
+  },
+});
 devTest("a stylesheet of a plugin is not a script of the page when a script has the same path", {
   files: {
     ...wrappedFiles(`async () => ({

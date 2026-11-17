@@ -70,6 +70,8 @@ fn with_sink(
     result
 }
 
+// The copies for the targets look alike.
+#[cfg_attr(mordant, allow(reimplemented_helper))]
 #[bun_simd::foreach_target(sse4 + "bmi2", sse4, neon, portable)]
 mod simd {
     /// In a function of its own, the loop has all registers to itself.

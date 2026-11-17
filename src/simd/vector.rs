@@ -2,7 +2,7 @@
 use crate::swizzle::{As, DeinterleaveInBlocks, InterleaveInBlocks, Repeat, ShiftRight};
 use crate::swizzle::{Shuffle, SwapPairs};
 use crate::{Isa, Mask};
-use bun_simd_trusted::{from_array, from_slice, opaque16, to_array};
+use bun_simd_trusted::{from_array, opaque16};
 use core::array;
 use core::marker::PhantomData;
 use core::ops::{
@@ -10,6 +10,18 @@ use core::ops::{
     Not, RangeInclusive, Shl, Shr, Sub, SubAssign,
 };
 use core::simd::{self, SimdCast, SimdElement, Swizzle, ToBytes, prelude::*};
+
+/// By value, or LLVM takes the vector of `store_pieces_shared` apart.
+#[inline(always)]
+pub(crate) fn to_array<T: SimdElement, const N: usize>(lanes: Simd<T, N>) -> [T; N] {
+    *lanes.as_array()
+}
+
+/// Panics if `lanes` is too short.
+#[inline(always)]
+pub(crate) fn from_slice<T: SimdElement, const N: usize>(lanes: &[T]) -> Simd<T, N> {
+    from_array(*lanes.first_chunk().unwrap())
+}
 
 /// The type of a lane.
 pub trait Lane: SimdElement + SimdCast + Default {}
@@ -98,7 +110,7 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
     /// Panics if `lanes` is too short.
     #[inline(always)]
     pub fn from_slice(lanes: &[T]) -> Self {
-        Self::from_array(*lanes.first_chunk().unwrap())
+        Self::new(from_slice(lanes))
     }
 
     /// Panics if `lanes` is too short.

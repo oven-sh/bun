@@ -432,7 +432,7 @@ pub(crate) mod simd {
                 if has_paid {
                     cost += if is_early { 0 } else { COST_OF_CALL };
                 } else if misses.left > 0 {
-                    plan.pair.swap(0, 1);
+                    plan.pair = [plan.pair[1], plan.pair[0]];
                     // Close to the end, a ranking would not pay.
                     cost += stretch.min(starts - seen) / SCANNED_PER_STEP;
                     stretch = stretch.saturating_mul(4);

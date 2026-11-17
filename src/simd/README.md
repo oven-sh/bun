@@ -94,7 +94,7 @@ Call ops in `for` loops and in the closures that you pass to `algo.rs`. LLVM may
 
 Make a table with `const`. At run time, `from_fn` can stay a loop.
 
-Hardened, debug and ASan builds check preconditions. There, `copy_from_slice` and the conversions of `Simd` from and to memory keep a vector on the stack. Assign arrays, and convert with `Vector`.
+Hardened, debug and ASan builds check preconditions. There, `copy_from_slice`, `extend_from_slice` and the conversions of `Simd` from and to memory keep a vector on the stack. Assign arrays, and convert with `Vector`.
 
 How LLVM unrolls a loop depends on the CPU that the build is tuned for. `#[rustc_unroll(never)]` and `#[rustc_unroll(4)]` settle it. If each turn of a loop waits for the one before, `opaque` keeps LLVM from reordering the sum or from moving it to vectors.
 

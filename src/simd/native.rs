@@ -1,7 +1,7 @@
 //! Shared by x86-64 and AArch64.
-use crate::{SharedOutU8, SharedU8, portable};
+use crate::{SharedOutU8, SharedU8, portable, vector::to_array};
+use bun_simd_trusted::from_array;
 use bun_simd_trusted::shared::{load4, load8, load16, store4, store8, store16};
-use bun_simd_trusted::{from_array, to_array};
 use core::simd::{Simd, u8x64};
 
 /// Panics unless `bytes` has `K * N` bytes.

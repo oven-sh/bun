@@ -1,8 +1,9 @@
 //! Slices that are shorter than a vector.
 use crate::source::Memory;
 use crate::swizzle::Repeat;
+use crate::vector::to_array;
 use crate::{Int, Isa, Lane, Mask, Out, SharedOutU8, Source, Vector};
-use bun_simd_trusted::{from_array, load_or_default, quarters, to_array};
+use bun_simd_trusted::{from_array, load_or_default, quarters};
 use core::array::{from_fn, from_ref};
 use core::hint::cold_path;
 use core::simd::{Simd, Swizzle, ToBytes, u8x32, u8x64};
@@ -414,11 +415,18 @@ mod simd {
         /// One to the start and one to the end.
         #[inline(always)]
         pub(crate) fn store_halves(self, to: Out<'_, u8>) -> &mut [u8] {
-            let (len, mut to) = (to.len(), to.into_writer());
-            to.extend_from_slice(&self.to_array()[..N / 2]);
-            to.truncate(len - N / 2);
-            to.extend_from_slice(&self.to_array()[N / 2..]);
-            to.finish()
+            (self.store_ends::<32>(to))
+                .or_else(|to| self.store_ends::<16>(to))
+                .or_else(|to| self.store_ends::<8>(to))
+                .unwrap_or_default()
+        }
+
+        #[inline(always)]
+        fn store_ends<const HALF: usize>(self, to: Out<'_, u8>) -> Filled<'_, u8> {
+            match *self.to_array().as_chunks::<HALF>().0 {
+                [first, last] => fill_ends(to, first, last),
+                _ => Err(to),
+            }
         }
 
         #[inline(always)]

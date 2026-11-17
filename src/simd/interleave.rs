@@ -1,7 +1,8 @@
 //! For NEON, LLVM makes `st2`, `ld4` and `st4` of a wide access next to a shuffle.
 use crate::swizzle::{EveryFourth, Interleave, Repeat};
+use crate::vector::{from_slice, to_array};
 use crate::{Int, Isa, Vector};
-use bun_simd_trusted::{from_slice, keep16, to_array};
+use bun_simd_trusted::keep16;
 use core::simd::{Swizzle, u8x16, u8x32, u8x64};
 
 impl<const N: usize, I: Isa> Vector<u8, N, I>

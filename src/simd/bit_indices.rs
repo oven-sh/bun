@@ -1,5 +1,5 @@
-use crate::Writer;
-use bun_simd_trusted::{from_array, to_array};
+use crate::{Writer, vector::to_array};
+use bun_simd_trusted::from_array;
 use core::simd::prelude::{Simd, SimdUint};
 
 static IN_BYTE: [[u8; 8]; 256] = core::array::from_fn(const |mut bits| {

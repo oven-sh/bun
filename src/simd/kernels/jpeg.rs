@@ -1,6 +1,7 @@
 //! The transforms of JPEG, in the arithmetic of libjpeg-turbo (LICENSE.md).
 use bun_simd::{Isa, Shuffle, opaque};
 use core::array::from_fn;
+use core::iter::zip;
 
 /// Rows 0 and 4 interleaved, then 2 and 6, 1 and 3, 5 and 7. Columns go 0 2 4 6 1 3 5 7.
 #[derive(Clone, Copy)]
@@ -380,7 +381,10 @@ pub(crate) mod simd {
         for block in blocks {
             let window = out.get_mut(..span)?;
             let mut store = |y: usize, bytes: &[u8]| {
-                window[y * stride..y * stride + ROW_SLACK][..piece].copy_from_slice(bytes);
+                let to = &mut window[y * stride..y * stride + ROW_SLACK][..piece];
+                for (to, from) in zip(to.as_chunks_mut::<8>().0, bytes.as_chunks().0) {
+                    *to = *from;
+                }
             };
             // For small sizes, the check costs as much as the transform.
             if N > 4 && has_only_dc(block) {

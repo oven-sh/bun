@@ -147,6 +147,15 @@ const EDGES: &[u16] = &[
     0xD800, 0xDBFF, 0xDC00, 0xDFFF, 0xFF01, 0xFF60, 0xFFFE,
 ];
 
+/// To add to a length: 0 or `count`, and always 0 for a slice that ends with its room.
+#[optimize(size)]
+fn surplus(random: &mut Random, offset: usize, count: usize) -> usize {
+    match offset {
+        usize::MAX => 0,
+        _ => random.one_of(&[0, count]),
+    }
+}
+
 impl Round<'_> {
     #[optimize(size)]
     fn some_byte(&mut self) -> u8 {
@@ -326,6 +335,9 @@ impl Round<'_> {
             [self.text, &needle].map(|it| Vec::from_iter(it.iter().map(|byte| byte ^ to_zero)));
         let zeros = &[0; 3][self.random.below(3)..];
         let past_the_end = [&text[text.len() - len..], zeros].concat();
+        let around_a_block = (self.random.below(96) | 31) + self.random.below(4) - 1;
+        let some = &copies[..around_a_block.min(copies.len())];
+        let [at_start, at_end] = [[&original, some].concat(), [some, &original].concat()];
         let ([a, b, c, d, e, f], at) = (&mut *self.rooms, self.offset);
         let pair = |byte: &u8| [byte >> 1 ^ low, byte & 1 ^ high];
         let pairs = |it: &[u8]| -> Vec<_> { it.iter().map(pair).collect() };
@@ -334,6 +346,8 @@ impl Round<'_> {
             (&text, &needle),
             (&text, &past_the_end),
             (&copies, &original),
+            (&at_start, &original),
+            (&at_end, &original),
         ] {
             let (x, y) = (a.copy_of(text, at), b.copy_of(needle, at));
             let (text, needle) = (pairs(text), pairs(needle));
@@ -379,9 +393,13 @@ impl Round<'_> {
             text.push(random.next() as u8);
             text.extend(random.bytes(len, b"[00a\x07"));
         }
-        let text = self.rooms[0].copy_of(&text[random.below(2)..], self.offset);
-        let width = visible_latin1_width_exclude_ansi(text).number();
-        self.digests.add("visible_latin1_width_exclude_ansi", width);
+        // 1 has no width and starts no sequence.
+        let short = [1, self.digests.round.to_le_bytes()[0]];
+        for text in [&text[random.below(2)..], &short] {
+            let text = self.rooms[0].copy_of(text, self.offset);
+            let width = visible_latin1_width_exclude_ansi(text).number();
+            self.digests.add("visible_latin1_width_exclude_ansi", width);
+        }
     }
 
     #[optimize(size)]
@@ -398,7 +416,8 @@ impl Round<'_> {
     #[optimize(size)]
     fn hashes(&mut self) {
         let any = self.random.next();
-        let (seed, digests) = (self.random.one_of(&[0, any]), &mut *self.digests);
+        let seed = self.random.one_of(&[0, 0, 0, 0, 1, any, any, any]);
+        let digests = &mut *self.digests;
         let text = self.rooms[0].copy_of(self.text, self.offset);
         digests.add("xxhash3_64_shared", xxhash3_64_shared(seed, shared(text)));
         digests.add("xxhash32", xxhash32(seed as u32, text).into());
@@ -450,9 +469,11 @@ impl Round<'_> {
     #[optimize(size)]
     fn byte_set(&mut self) {
         // Each byte that is left out takes up to one pattern, and the full rows take one.
-        let mut left_out: Vec<_> = (0..self.random.below(8))
-            .map(|_| self.some_byte())
-            .collect();
+        let (count, diagonal) = (self.random.below(8), self.random.next() as u8);
+        let mut left_out: Vec<_> = match count {
+            7 => (0..7).map(|i| diagonal.wrapping_add(0x11 * i)).collect(),
+            _ => (0..count).map(|_| self.some_byte()).collect(),
+        };
         left_out.retain(|byte| !self.text[..self.text.len() / 2].contains(byte));
         let members = (0..=255).filter(|byte| !left_out.contains(byte));
         let set = ByteSet::new(&Vec::from_iter(members.map(|byte| byte..=byte)));
@@ -595,10 +616,14 @@ impl Round<'_> {
         let groups = self.text.len() / 4;
         let words = self.random.words_of_all_sizes(groups);
         let exact = [groups, 16 * groups, groups];
-        for rooms in [exact, exact.map(|len| self.random.below(len + 70))] {
+        let other = exact.map(|len| self.random.below(len + 70));
+        let bits = self.random.one_of(&[0, u32::MAX]);
+        let group = |_| from_fn(|_| self.random.next() as u32 & bits);
+        let of_one_size = Vec::from_iter((0..groups).map(group));
+        for (words, rooms) in [(&words, exact), (&words, other), (&of_one_size, exact)] {
             let [a, b, c, d, ..] = &mut *self.rooms;
             let (controls, data) = pack_words(
-                a.copy_of(&words, self.offset),
+                a.copy_of(words, self.offset),
                 b.uninit(rooms[0], self.offset).into(),
                 c.uninit(rooms[1], self.offset).into(),
             );
@@ -676,12 +701,16 @@ impl Round<'_> {
 
         let longest = self.random.one_of(&[10, 10, 10, 70]);
         let (a, b) = (self.text.len() % 200, self.random.below(longest));
-        let (width, height) = self.random.one_of(&[(1 + a, b), (1 + a, b), (1 + b, a)]);
-        let image = self.random.bytes(4 * width * height, b"");
-        let image = image.as_chunks().0;
-        for (name, kernel) in lists::MOVES {
-            let moved = self.from_to(image, image.len(), |from, to| kernel(from, width, to));
-            self.digests.add(name, moved);
+        let any = self.random.one_of(&[(1 + a, b), (1 + a, b), (1 + b, a)]);
+        let round = self.digests.round as usize;
+        for (width, height) in [any, (1 + round % 7, round / 7 % 7)] {
+            let image = self.random.bytes(4 * width * height, b"");
+            let image = image.as_chunks().0;
+            let room = image.len() + surplus(&mut self.random, self.offset, 9);
+            for (name, kernel) in lists::MOVES {
+                let moved = self.from_to(image, room, |from, to| kernel(from, width, to));
+                self.digests.add(name, moved);
+            }
         }
     }
 
@@ -729,6 +758,7 @@ impl Round<'_> {
         let [quant, x, y] = [15 - shift / 2, 0, shift].map(|shift| block(1, shift, i16::MAX));
         let blocks = a.copy_of(&blocks, at);
         for block in &mut *blocks {
+            block.0[0] *= i16::from(random.below(3) != 0);
             block.0[random.below(64)] |= random.below(2) as i16;
         }
         for size in [2, 3, 4, 5, 6, 7, 8, 10, 12, 14] {
@@ -765,8 +795,10 @@ impl Round<'_> {
         let y = f.copy_of(&random.bytes(padded, alphabet), at);
         for kind in 0..3 {
             let len = if kind == 0 { padded } else { padded / 2 + 4 };
-            let [cb, cr, far_cb, far_cr] = [&mut *a, &mut *b, &mut *c, &mut *d]
-                .map(|room| &*room.copy_of(&random.bytes(len, alphabet), at));
+            let [cb, cr, far_cb, far_cr] = [&mut *a, &mut *b, &mut *c, &mut *d].map(|room| {
+                let len = len + surplus(random, at, 40);
+                &*room.copy_of(&random.bytes(len, alphabet), at)
+            });
             let chroma = match kind {
                 0 => JpegChroma::Full { cb, cr },
                 1 => JpegChroma::HalfWidth { cb, cr },
@@ -795,6 +827,36 @@ impl Round<'_> {
         let pixels = e.copy_of(pixels.as_chunks().0, at);
         let fits = jpeg_rgba_to_ycc420(pixels, from, padded, pairs, into, to).is_some();
         let planes = planes.map(|plane| hash(plane));
+        self.digests.fails_unless(fits, "jpeg_rgba_to_ycc420");
+        self.digests.add("jpeg_rgba_to_ycc420", hash(&planes));
+    }
+
+    /// Each color is in one of the first 8192 rounds.
+    #[optimize(size)]
+    fn jpeg_many_colors(&mut self) {
+        const COUNT: usize = (1 << 24) / 8192;
+        let round @ ..8192 = self.digests.round as usize else {
+            return;
+        };
+        // Neither step maps two numbers to one.
+        let colors = Vec::from_iter((COUNT * round..).take(COUNT).map(|i| {
+            let product = (i * 0x9E_3779 % (1 << 24)) as u32;
+            (product ^ product >> 12).to_le_bytes()
+        }));
+        let ([a, b, c, d, e, _], at) = (&mut *self.rooms, self.offset);
+        let [y, cb, cr] = [(a, 0), (b, 1), (c, 2)]
+            .map(|(room, i)| room.copy_of(&Vec::from_iter(colors.iter().map(|it| it[i])), at));
+        let mut pixels = Vec::with_capacity(COUNT);
+        let fits = jpeg_ycc_to_rgba(y, JpegChroma::Full { cb, cr }, COUNT, &mut pixels).is_some();
+        self.digests.fails_unless(fits, "jpeg_ycc_to_rgba");
+        self.digests.add("jpeg_ycc_to_rgba", hash(&pixels));
+
+        // The four pixels that are averaged have the same color.
+        let row = d.copy_of(&Vec::from_iter(colors.iter().flat_map(|&it| [it; 2])), at);
+        let y = e.copy_of(&vec![7; 4 * COUNT], at);
+        let into = [&mut *y, &mut *cb, &mut *cr];
+        let fits = jpeg_rgba_to_ycc420(row, 0, 2 * COUNT, 1, into, COUNT).is_some();
+        let planes = [hash(y), hash(cb), hash(cr)];
         self.digests.fails_unless(fits, "jpeg_rgba_to_ycc420");
         self.digests.add("jpeg_rgba_to_ycc420", hash(&planes));
     }
@@ -1059,10 +1121,12 @@ impl Round<'_> {
             name_idx,
             ..Default::default()
         };
+        let mut more = [surplus(&mut self.random, self.offset, 20); 4];
+        more[self.random.below(3 + usize::from(has_names))] = 0;
         let ([a, b, c, d, e, _], at, mut rows) = (&mut *self.rooms, self.offset, Vec::new());
         let mut parse = |text: &[u8], cap: usize| {
-            let pairs = &mut [&mut *b, &mut *c].map(|room| room.uninit(cap, at));
-            let indices = &mut [&mut *d, &mut *e].map(|room| room.uninit(cap, at));
+            let pairs = &mut [b.uninit(cap + more[0], at), c.uninit(cap + more[1], at)];
+            let indices = &mut [d.uninit(cap + more[2], at), e.uninit(cap + more[3], at)];
             let into = columns(pairs, indices, has_names);
             let (got, used) = parse_mappings(a.copy_of(text, at), into, sources, &mut state);
             for (i, &source) in got.src_idx.iter().enumerate() {
@@ -1125,12 +1189,14 @@ impl Round<'_> {
     /// The seams between bands of rows.
     #[optimize(size)]
     fn resize_rows(&mut self) {
-        if !self.digests.round.is_multiple_of(3) {
-            return;
-        }
         let [src_w, dst_h] = [(); 2].map(|()| 1 + self.random.below(5));
-        let (dst_w, filter) = (40 + self.random.below(25), self.random.one_of(&Filter::ALL));
-        let src = self.random.bytes(4 * src_w * (1 + self.text.len()), b"");
+        let (dst_w, src_h) = match self.digests.round {
+            round if round.is_multiple_of(3) => (40 + self.random.below(25), 1 + self.text.len()),
+            round if round % 48 == 2 => (800 + self.random.below(500), 9 + self.text.len() % 20),
+            _ => return,
+        };
+        let filter = self.random.one_of(&Filter::ALL);
+        let src = self.random.bytes(4 * src_w * src_h, b"");
         let resized = self.from_to(src.as_chunks().0, dst_w * dst_h, |from, to| {
             resize(filter, from, src_w, to, dst_w).unwrap()
         });
@@ -1206,6 +1272,7 @@ pub(crate) fn run(rounds: u64, only: &[u8], traced: Vec<u8>) -> bool {
             ("webp_encoder", Round::webp_encoder),
             ("uniform", Round::uniform),
             ("resize_rows", Round::resize_rows),
+            ("jpeg_many_colors", Round::jpeg_many_colors),
         ];
         for (name, part) in parts
             .into_iter()

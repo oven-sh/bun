@@ -207,6 +207,10 @@ impl<P> Client<P> {
         matches!(self.state, State::Ready)
     }
 
+    pub fn is_dialing(&self) -> bool {
+        matches!(self.state, State::Dialing)
+    }
+
     pub fn is_ending(&self) -> bool {
         matches!(self.state, State::Ending(_))
     }

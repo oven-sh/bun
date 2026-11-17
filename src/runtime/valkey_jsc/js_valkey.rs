@@ -10,7 +10,7 @@ use bun_boringssl as boringssl;
 use bun_core::{Utf8Bytes, strings};
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_io::JsKeepAlive;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue,
@@ -25,6 +25,7 @@ use super::protocol_jsc::{
 };
 use super::valkey;
 use bun_jsc::url::Parsed;
+use bun_sql_jsc::shared::server_identity;
 use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Sent};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
@@ -341,20 +342,27 @@ impl JSValkeyClient {
         })
     }
 
-    pub(crate) fn constructor(
-        cx: &mut JsScope<'_>,
+    pub(crate) fn constructor<'a>(
+        cx: &mut JsScope<'a>,
+        structure: JsStructure<'a, Self>,
         url: JsLocal<'_>,
         options: JsLocal<'_>,
-    ) -> JsResult<RefPtr<Self>> {
-        Self::create_no_js_no_pubsub(&cx.js_thread(), url.to_js(), options.to_js())
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        let (client, check_server_identity) =
+            Self::create_no_js_no_pubsub(&cx.js_thread(), url.to_js(), options.to_js())?;
+        let this = structure.create(&cx.heap, client);
+        if let Some(callback) = check_server_identity {
+            js::check_server_identity_set_cached(this.to_js(), cx.global(), callback);
+        }
+        Ok(this)
     }
 
-    /// Create a Valkey client that does not have an associated JS object.
+    /// Create a Valkey client that does not have an associated JS object, and `tls.checkServerIdentity` for that object to hold.
     pub(crate) fn create_no_js_no_pubsub(
         cx: &bun_jsc::JsThread<'_>,
         url: JSValue,
         options: JSValue,
-    ) -> JsResult<RefPtr<JSValkeyClient>> {
+    ) -> JsResult<(RefPtr<JSValkeyClient>, Option<JSValue>)> {
         let vm_ref = cx.global().bun_vm();
 
         let url_slice = if !url.is_undefined_or_null() {
@@ -496,7 +504,11 @@ impl JSValkeyClient {
             }
         };
 
-        let Options { mut config, tls } = if options.is_object() {
+        let Options {
+            mut config,
+            tls,
+            check_server_identity,
+        } = if options.is_object() {
             Options::from_js(cx.global(), options)?
         } else {
             Options::default()
@@ -542,7 +554,7 @@ impl JSValkeyClient {
             valkey::TLS::None if uri.is_tls() => valkey::TLS::Enabled,
             tls => tls,
         };
-        Ok(Self::new(cx, config, address, tls))
+        Ok((Self::new(cx, config, address, tls), check_server_identity))
     }
 
     pub(crate) fn clone_without_connecting(&self, cx: &bun_jsc::JsThread<'_>) -> RefPtr<Self> {
@@ -1133,8 +1145,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &JSValkeyClient,
         ssl: &mut boringssl::c::SSL,
     ) -> boringssl::ServerIdentity {
-        let rejects = this.tls.reject_unauthorized(this.vm);
-        let hostname = rejects.then(|| Self::configured_hostname(this));
+        let has_callback = this.dial.hold().is_some_and(|hold| {
+            js::check_server_identity_get_cached(hold.object().to_js()).is_some()
+        });
+        let matches_name = this.tls.reject_unauthorized(this.vm) && !has_callback;
+        let hostname = matches_name.then(|| Self::configured_hostname(this));
         boringssl::server_identity(ssl, hostname)
     }
 
@@ -1205,6 +1220,25 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // Certificate chain is valid; verify the hostname matches the
                 // certificate.
                 let hostname = Self::configured_hostname(this);
+                if let Some(callback) = js::check_server_identity_get_cached(hold.object().to_js())
+                {
+                    // A renegotiation can't change the certificate.
+                    if !this.client.get().is_dialing() {
+                        return Ok(());
+                    }
+                    let global = &this.global_object;
+                    let verdict =
+                        server_identity::check(global, callback, &Self::socket(socket), hostname);
+                    // It can close the client, and `onclose` can dial again.
+                    if !this.dial.hold().is_some_and(|it| Rc::ptr_eq(&it, &hold)) {
+                        return Ok(());
+                    }
+                    if let Err(reason) = verdict {
+                        return Self::fail_handshake(this, reason);
+                    }
+                    this.start();
+                    return Ok(());
+                }
                 // With no `SSL*` there is no certificate to match: fail closed.
                 let identity_ok = hostname.is_empty()
                     || (!ssl_ptr.is_null()
@@ -1310,6 +1344,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options {
     config: Config,
     tls: valkey::TLS,
+    check_server_identity: Option<JSValue>,
 }
 
 impl Options {
@@ -1364,11 +1399,28 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
+                this.check_server_identity = tls
+                    .get(global_object, "checkServerIdentity")?
+                    .filter(|callback| !callback.is_null());
+                if let Some(callback) = this.check_server_identity
+                    && !callback.is_callable()
+                {
+                    return Err(global_object.throw_invalid_property_type_value(
+                        b"tls.checkServerIdentity",
+                        b"function",
+                        callback,
+                    ));
+                }
                 let options = TLSOptions::from_js(global_object, tls)?;
-                let Some(given) = ParsedTls::given(global_object, &options, false)? else {
-                    return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
+                this.tls = match ParsedTls::given(global_object, &options, false)? {
+                    Some(given) => valkey::TLS::Custom(Box::new(given)),
+                    None if this.check_server_identity.is_some() => valkey::TLS::Enabled,
+                    None => {
+                        return Err(
+                            global_object.throw_invalid_argument_type("tls", "tls", "object")
+                        );
+                    }
                 };
-                this.tls = valkey::TLS::Custom(Box::new(given));
             } else {
                 return Err(global_object.throw_invalid_argument_type(
                     "tls",

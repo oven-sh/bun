@@ -207,6 +207,30 @@ it("keeps tarball entry paths within the destination when checking for conflicti
   expect(exitCode).toBe(0);
 });
 
+it.each([
+  ["cut short", (gz: Buffer) => gz.subarray(0, -1)],
+  ["damaged", (gz: Buffer) => gz.fill(0, gz.length - 8)],
+])("extracts nothing from a template tarball that is %s", async (_, spoil) => {
+  const gz = spoil(gzipSync(Buffer.concat([tarEntry("pkg/file.txt", Buffer.from("template")), Buffer.alloc(1024)])));
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch: () => new Response(gz, { headers: { "content-type": "application/x-gzip" } }),
+  });
+  const { out, err, exitCode } = await create(
+    x_dir,
+    ["github.com/owner/template", "dest", "--no-install", "--no-git"],
+    {
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    },
+  );
+  expect(err).toContain("Decompressing owner/template");
+  expect(out).not.toContain("Success!");
+  expect(readdirSync(x_dir)).toEqual([]);
+  expect(exitCode).toBe(1);
+});
+
 // `\` separates as well, so this entry is `nested.txt` in `sub`.
 it("sees a link in the destination behind a `\\` in the name of a tarball entry", async () => {
   const gz = gzipSync(Buffer.concat([tarEntry("pkg/sub\\nested.txt", Buffer.from("template")), Buffer.alloc(1024)]));

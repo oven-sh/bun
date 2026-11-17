@@ -830,6 +830,65 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   });
 });
 
+describe("where a stream of the zlib formats ends", () => {
+  const text = "hello hello hello";
+  const streams = {
+    "deflate": zlib.deflateSync(text),
+    "deflate-raw": zlib.deflateRawSync(text),
+    "gzip": zlib.gzipSync(text),
+  };
+  const formats = Object.keys(streams) as (keyof typeof streams)[];
+
+  async function outcome(format: keyof typeof streams, ...chunks: Uint8Array[]) {
+    const source = new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    return new Response(source.pipeThrough(new DecompressionStream(format))).text().catch(error => error);
+  }
+  const failure = (message: string) => expect.objectContaining({ name: "TypeError", message });
+  const junk = expect.objectContaining({ name: "TypeError", code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" });
+
+  test.each(formats)("%s: not before its last byte", async format => {
+    const whole = streams[format];
+    expect(await outcome(format, whole.subarray(0, -1), whole.subarray(-1))).toBe(text);
+    expect(await outcome(format, whole.subarray(0, -1))).toEqual(failure("unexpected end of file"));
+    expect(await outcome(format, whole.subarray(0, 1))).toEqual(failure("unexpected end of file"));
+    expect(await outcome(format)).toEqual(failure("unexpected end of file"));
+  });
+
+  test.each(["deflate", "deflate-raw"] as const)("%s: nothing may follow, not even another stream", async format => {
+    const whole = streams[format];
+    for (const more of [whole, Buffer.alloc(1)]) {
+      expect(await outcome(format, Buffer.concat([whole, more]))).toEqual(junk);
+      expect(await outcome(format, whole, more)).toEqual(junk);
+    }
+    expect(await outcome(format, whole, new Uint8Array())).toBe(text);
+  });
+
+  test("gzip: only a whole member may follow, in the same chunk or a later one", async () => {
+    const member = streams.gzip;
+    expect(await outcome("gzip", member, member)).toBe(text + text);
+    expect(await outcome("gzip", member, member.subarray(0, -1))).toEqual(failure("unexpected end of file"));
+    expect(await outcome("gzip", Buffer.concat([member, member.subarray(0, 1)]))).toEqual(
+      failure("unexpected end of file"),
+    );
+    expect(await outcome("gzip", member, Buffer.from("junk"))).toBeInstanceOf(TypeError);
+    expect(await outcome("gzip", Buffer.concat([member, Buffer.from("junk")]))).toBeInstanceOf(TypeError);
+  });
+
+  test.each(formats)("%s: at damage", async format => {
+    expect(await outcome(format, Buffer.from([0xff, 0xff]))).toEqual(failure("inflate failed"));
+  });
+
+  test("deflate: where it asks for a dictionary", async () => {
+    const asks = zlib.deflateSync(text, { dictionary: Buffer.from("hello") });
+    expect(await outcome("deflate", asks)).toEqual(failure("Missing dictionary"));
+  });
+});
+
 // One input chunk can expand enormously (a few hundred bytes of brotli or zstd
 // decode to gigabytes), so the coder emits its output in steps of at most the
 // stream's highWaterMark (64 KiB unless passed to the constructor), or the

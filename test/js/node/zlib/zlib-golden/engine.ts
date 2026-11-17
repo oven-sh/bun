@@ -50,8 +50,8 @@ export class Engine {
   }
 
   /** Where a stream stops if nobody reads from it. The output is dropped. */
-  writeUntilFull(input: Uint8Array) {
-    this.#stream._handle.writeSync(Z_NO_FLUSH, input, 0, input.length, Buffer.alloc(64), 0, 64);
+  writeUntilFull(input: Uint8Array, room = 64) {
+    this.#stream._handle.writeSync(Z_NO_FLUSH, input, 0, input.length, Buffer.alloc(room), 0, room);
   }
 
   reset() {

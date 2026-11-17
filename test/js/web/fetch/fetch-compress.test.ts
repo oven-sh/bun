@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
+import { brotliDecompressSync, deflateSync, gunzipSync, gzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 
 const payload = JSON.stringify({
   msg: Buffer.alloc(1024, "abcdefghij").toString(),
@@ -192,6 +192,26 @@ describe("fetch compress option", () => {
     const json: any = await res.json();
     expect(json.encoding).toBe("deflate");
     expect(json.decoded).toBe(big);
+  });
+
+  // libdeflate has levels up to 12, and writes other bytes.
+  test.concurrent.each([
+    ["gzip", 1],
+    ["gzip", 3],
+    ["gzip", 12],
+    ["deflate", 0],
+    ["deflate", 9],
+  ] as const)("%s level %d applies to a body larger than the shared buffer", async (encoding, level) => {
+    const big = Buffer.alloc(600 * 1024, "abcdefghij");
+    using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.bytes()) });
+    const res = await fetch(server.url, { method: "POST", body: big, compress: { encoding, level } });
+    const sent = Buffer.from(await res.arrayBuffer());
+    if (level === 0) {
+      expect(sent.length).toBeGreaterThan(big.length);
+      expect(inflateSync(sent).equals(big)).toBe(true);
+    } else {
+      expect(sent).toEqual((encoding === "gzip" ? gzipSync : deflateSync)(big, { level: Math.min(level, 9) }));
+    }
   });
 
   // gzip bound on 600 KiB of random bytes is > 512 KiB so compress_into spills

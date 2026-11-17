@@ -28,6 +28,7 @@ const repeatA = (count: number) => Buffer.alloc(count, "a");
 
 // Peer options for a server that accepts permessage-deflate.
 const withDeflate: PeerOptions = { headers: ["Sec-WebSocket-Extensions: permessage-deflate"] };
+const withoutTakeover: PeerOptions = { headers: [`${withDeflate.headers}; server_no_context_takeover`] };
 
 // @types/ws is missing "blob" and `autoPong`.
 const blob = "blob" as any;
@@ -518,6 +519,13 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       expect(events).toEqual([...openEvents, message, message, message]);
     });
 
+    test("accepts a compressed message of exactly maxPayload bytes without context takeover", async () => {
+      await using client = await openClient(implementation, { maxPayload: 100 }, withoutTakeover);
+      client.conn.binary(deflate(repeatA(100)), { rsv1: true });
+      expect(await client.conn.roundTrip()).toEqual([]);
+      expect(client.events).toEqual([...openEvents, "message Buffer(100 bytes) binary rs=1"]);
+    });
+
     test("doesn't apply to control frames", async () => {
       await using client = await openClient(implementation, { maxPayload: 2 });
       client.conn.ping("hello");
@@ -685,6 +693,13 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
         sent: [binary(deflate(repeatA(200)), { rsv1: true })],
         options: max100,
         peer: withDeflate,
+        ...payloadTooBig,
+      },
+      {
+        label: "a compressed message of maxPayload + 1 bytes, without context takeover",
+        sent: [binary(deflate(repeatA(101)), { rsv1: true })],
+        options: max100,
+        peer: withoutTakeover,
         ...payloadTooBig,
       },
       // The default maxPayload is 100 MiB.

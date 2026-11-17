@@ -885,8 +885,7 @@ impl EntryWalk {
                 if other == Index::RUNTIME.value() {
                     return;
                 }
-                // A stylesheet is in no JS chunk. Its class names are in its JS stub, which runs where the first
-                // `import` of the stylesheet is, also when that one reads no value.
+                // A stylesheet is in no JS chunk. Its JS stub goes where the first `import` of the stylesheet is, also a bare one.
                 let other = if css[other as usize].is_some() {
                     match css_js_stubs.stub_of(other, targets[source_index as usize]) {
                         Some(stub) => stub,

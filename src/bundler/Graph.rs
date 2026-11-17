@@ -119,17 +119,12 @@ impl<'a> core::ops::Index<usize> for CssAsts<'a> {
     }
 }
 
-/// The JS modules that export the class names of stylesheets (esbuild's "JavaScript stub" of a CSS
-/// file). JavaScript that reads a value from a stylesheet imports its stub, so the row of a
-/// stylesheet has no JS parts. `find_reachable_files` adds them as the last rows of the graph.
+/// The JS modules that export the class names of stylesheets: the last rows of the graph (esbuild's "JavaScript stub").
 #[derive(Default)]
 pub(crate) struct CssJsStubs {
     /// The source index of the first stub. Stub `first + i` has the key `stubs.keys()[i]`.
     first: IndexInt,
-    /// The stylesheet and the target of each stub. esbuild has one stub for a stylesheet.
-    /// `bun build --app` gives its graphs one stylesheet row when an `onResolve` plugin declines
-    /// the import (`share_stylesheet_source_index_across_graphs`), and the JavaScript of each
-    /// graph needs a stub of its own target.
+    /// The stylesheet and the importer's target of each stub: the graphs of `bun build --app` can share one stylesheet row.
     stubs: ArrayHashMap<(IndexInt, options::Target), ()>,
 }
 

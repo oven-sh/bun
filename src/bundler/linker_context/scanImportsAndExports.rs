@@ -95,9 +95,7 @@ pub(crate) fn scan_imports_and_exports(
                     input_files,
                 );
 
-                // `DependencyWrapper::wrap` stops at a stylesheet, as at the runtime: a stylesheet has no JS
-                // parts to wrap, and its records are not JS imports. A wrapped file can have a bare `import`
-                // of one.
+                // `DependencyWrapper::wrap` stops at a stylesheet: no JS parts. A wrapped file can have a bare `import` of one.
                 meta.flags[id].did_wrap_dependencies = true;
 
                 continue;

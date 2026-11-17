@@ -1922,16 +1922,13 @@ pub mod bv2_impl {
 
         /// `None`: the graph has no stylesheet.
         pub(crate) css_js_stubs: Option<CssJsStubAllotment>,
-        /// With HMR lowering, the `import` statements of one path share the record of the first
-        /// one, so `WAS_ORIGINALLY_BARE_IMPORT` does not say whether the statement reads a value.
-        /// Then these are the parts of each file, for the statement itself.
+        /// With HMR lowering, the parts of each file: the `import` statements of one path share a record there.
         pub(crate) hmr_parts: Option<&'a [bun_ast::part::List<'bump>]>,
 
         pub(crate) stack: Vec<ReachFrame>,
     }
 
-    /// The JS stubs that the walk allots (see `CssJsStubs`), one for each stylesheet and target
-    /// whose JavaScript reads a value from the stylesheet.
+    /// The JS stubs that the walk allots (see `CssJsStubs`), and the records that import them.
     pub(crate) struct CssJsStubAllotment {
         /// The source index of the first stub: the row count of the graph during the walk.
         first: IndexInt,
@@ -1966,8 +1963,7 @@ pub mod bv2_impl {
             source_index: Index,
             was_dynamic_import: bool,
         },
-        /// A record that imports the JS stub of `stylesheet`. The stub has no row yet, so it has no
-        /// bit in `visited`. Its one dependency is the stylesheet.
+        /// A record that imports the JS stub of `stylesheet`. The stub has no row and no bit in `visited` yet.
         EnterStub {
             stub: Index,
             stylesheet: Index,
@@ -2170,10 +2166,7 @@ pub mod bv2_impl {
                                         .insert(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE);
                                 }
                             }
-                            // JavaScript that reads a value from a stylesheet imports the JS stub of the
-                            // stylesheet. esbuild gives a bare `import "./a.css"` the stub too. Here it
-                            // keeps the stylesheet: it reads no value, and a stub would be one more row
-                            // for each stylesheet of a build that reads none.
+                            // A record that reads a value imports the JS stub. A bare import keeps the stylesheet (not in esbuild).
                             if let Some(allotment) = self.css_js_stubs.as_mut()
                                 && next_source.is_valid()
                                 && self.all_loaders[next_source.get() as usize].is_css()
@@ -2382,8 +2375,7 @@ pub mod bv2_impl {
             Ok(reachable.into_boxed_slice())
         }
 
-        /// Adds the row of each JS stub that the walk allotted, and points the records that read a
-        /// value from a stylesheet at the stub.
+        /// Adds the row of each allotted JS stub, and points the records that read a value at it.
         fn add_css_js_stubs(
             &mut self,
             allotment: CssJsStubAllotment,
@@ -2427,8 +2419,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// What the linker relies on: JavaScript that reads a value from a stylesheet has a record
-        /// of a JS stub. Only a statement with no binding still has a record of the stylesheet.
+        /// The linker relies on this: only a statement with no binding still has a record of a stylesheet.
         fn assert_stylesheet_values_are_stubs(&self, reachable: &[Index]) {
             let loaders = self.graph.input_files.items_loader();
             let all_import_records = self.graph.ast.items_import_records();
@@ -2463,8 +2454,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// The row of the JS stub `source_index` of `stylesheet`: a lazy export with the path of
-        /// the stylesheet and no text. The linker fills it with the class names.
+        /// The row of a JS stub: a lazy export with the path of its stylesheet and no text. The linker fills it.
         fn css_js_stub_row(
             &mut self,
             stylesheet: IndexInt,
@@ -2479,8 +2469,7 @@ pub mod bv2_impl {
             });
             let side_effects = self.graph.input_files.items_side_effects()[stylesheet as usize];
             let module_type = self.graph.ast.items_module_type()[stylesheet as usize];
-            // The names that `--minify` gives depend on the text of the files of a chunk. The text
-            // of a stylesheet counts once, for the module that holds its class names.
+            // `--minify` picks names by the text of the files of a chunk. The text of the stylesheet counts for this row.
             let char_freq = self.graph.ast.items_char_freq()[stylesheet as usize]
                 .as_deref()
                 .copied();
@@ -2507,10 +2496,7 @@ pub mod bv2_impl {
             ast.module_type = module_type;
             ast.char_freq = char_freq.map(bun_alloc::ast_box);
 
-            // The default loader, as for the server module of an HTML import: a stub is not a
-            // source file of its own. Not the loader of the stylesheet, which esbuild copies: a
-            // `Loader::Css` row is a stylesheet to `find_imported_css_files_in_js_order` and to
-            // `convert_stmts_for_chunk_for_dev_server`.
+            // The default loader, not `Loader::Css` as in esbuild: the linker takes a row with that loader for a stylesheet.
             let input_file = crate::Graph::InputFile {
                 source: source.clone(),
                 side_effects,
@@ -3539,9 +3525,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// The reachable files and the graph that the linker works on. `find_reachable_files` adds
-        /// rows (the JS stubs of stylesheets), and the linker graph has a copy of every row, so the
-        /// copy is made last.
+        /// The reachable files and the linker graph, a copy of every row: it is made after the walk has added the JS stubs.
         pub(crate) fn reachable_files_and_linker_graph(
             &mut self,
         ) -> Result<(Box<[Index]>, LinkerGraph<'a>), Error> {
@@ -4077,8 +4061,7 @@ pub mod bv2_impl {
             this.process_server_component_manifest_files()?;
 
             let (reachable_files, linker_graph) = this.reachable_files_and_linker_graph()?;
-            // - 1 for the runtime. The count is of the rows that the metafile lists as `inputs`: a
-            // JS stub is not one, its stylesheet is.
+            // - 1 for the runtime. A JS stub does not count: its stylesheet does, as in the `inputs` of the metafile.
             *reachable_files_count = reachable_files
                 .len()
                 .saturating_sub(1 + this.graph.css_js_stubs.len());
@@ -7084,8 +7067,7 @@ pub mod bv2_impl {
             Ok(JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
-                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler /
-                    // BACKREF set in `BundleV2::init`).
+                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler, a BACKREF set in `BundleV2::init`).
                     unsafe { &mut *define_ptr },
                     js_parser_options,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).

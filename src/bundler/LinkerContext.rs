@@ -507,9 +507,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         }
     }
 
-    /// The loader of the file that `chunk` is made from: `BuildArtifact.loader`. The CSS chunk of a JavaScript entry
-    /// point has that entry point's loader. The JS stub of a stylesheet has the loader of the stylesheet, as the
-    /// value of a JSON file has the JSON loader.
+    /// `BuildArtifact.loader`: the loader of the chunk's entry point. For the JS stub of a stylesheet, the stylesheet's.
     pub(crate) fn chunk_input_loader(&self, chunk: &Chunk) -> Loader {
         if !chunk.entry_point.is_entry_point() {
             return Loader::Js;
@@ -526,6 +524,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     /// Whether `chunk` is one that bytecode (and, in an executable, module info) is made for. The output file list
     /// counts those files with this before they are made (`OutputFileList::calculate_output_file_list_capacity`).
     pub(crate) fn chunk_gets_bytecode(&self, chunk: &Chunk) -> bool {
+        // The CSS chunk of a JavaScript entry point has that entry point's loader.
         chunk.content.is_javascript() && self.chunk_input_loader(chunk).is_javascript_like()
     }
 

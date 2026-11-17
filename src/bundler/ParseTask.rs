@@ -632,8 +632,7 @@ pub mod parse_worker {
     // `(*transpiler).resolver`; materializing `&mut Transpiler` here would assert
     // exclusive access to the whole struct and invalidate that sibling pointer.
     // We only touch the disjoint `options.define` field.
-    /// Sets the parser options that the options of a target decide. `run_with_source_code` adds
-    /// what the file decides. The JS stub of a stylesheet has no file of its own and gets these.
+    /// The parser options that the options of a target decide: for a `ParseTask`, and for the JS stub of a stylesheet.
     pub(crate) fn set_bundle_parser_options(
         opts: &mut ParserOptions<'_>,
         topts: &options::BundleOptions,
@@ -649,8 +648,7 @@ pub mod parse_worker {
         opts.features.top_level_await = output_format == options::Format::Esm
             || output_format == options::Format::InternalBakeDev;
         opts.features.inlining = topts.minify_syntax;
-        // `bun_options_types::Format` and `bun_js_parser::options::Format` are
-        // distinct enums; map explicitly.
+        // `bun_options_types::Format` and `bun_js_parser::options::Format` are distinct enums; map explicitly.
         opts.output_format = match output_format {
             options::Format::Esm => js_parser::options::Format::Esm,
             options::Format::Cjs => js_parser::options::Format::Cjs,
@@ -664,8 +662,7 @@ pub mod parse_worker {
         opts.features.minify_whitespace = topts.minify_whitespace;
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
         opts.features.no_macros = topts.no_macros;
-        // JavaScriptCore implements `using` / `await using` natively, so when
-        // targeting Bun there is no need to lower them.
+        // JavaScriptCore implements `using` / `await using` natively, so a Bun target does not lower them.
         opts.features.lower_using = !target.is_bun();
         opts.features.ascii_only = target.is_bun();
         opts.features.hot_module_reloading =
@@ -696,8 +693,7 @@ pub mod parse_worker {
         )))
     }
 
-    /// The row of a stylesheet exports nothing to JavaScript: its JS stub does
-    /// (`Graph::css_js_stubs`). The row keeps what the linker reads of every row.
+    /// The row of a stylesheet exports nothing to JavaScript: its JS stub does (`Graph::css_js_stubs`).
     fn stylesheet_row_ast(mut ast: ast::Ast<'static>) -> ast::Ast<'static> {
         ast.has_lazy_export = false;
         ast.parts.as_mut_slice()[1] = Part {

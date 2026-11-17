@@ -35,8 +35,7 @@ impl<'bump> ComposesGraph<'bump> for CssModuleGraph<'_, 'bump> {
     }
 }
 
-/// Reports what is wrong with the `composes` of the stylesheet `source_index`. A JS stub of the
-/// stylesheet walks the same names to export them, and reports nothing.
+/// Reports what is wrong with the `composes` of a stylesheet. Its JS stubs walk the same names and report nothing.
 pub(crate) fn report_composes_errors(
     this: &LinkerContext,
     log: &mut bun_ast::Log,
@@ -60,8 +59,7 @@ pub(crate) fn report_composes_errors(
     }
 }
 
-/// The object that JavaScript gets for the CSS module `stylesheet`: each local name with the class
-/// names it stands for. `None`: the stylesheet has no local name.
+/// The object that JavaScript gets for a CSS module: each local name with its class names. `None`: no local name.
 pub(crate) fn css_module_exports(
     this: &LinkerContext,
     stylesheet: IndexInt,
@@ -106,8 +104,7 @@ pub(crate) fn css_module_exports(
         let value = if let [name] = names {
             name_expr(name)
         } else {
-            // Move the parts into the linker arena
-            // (freed when the linker arena drops).
+            // Move the parts into the linker arena (freed when the linker arena drops).
             let parts_slice = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(
                 names.iter().enumerate().map(|(i, name)| {
                     let tail: &[u8] = if i + 1 == names.len() { b"" } else { b" " };
@@ -160,8 +157,7 @@ pub(crate) fn generate_code_for_lazy_export(
     }
     if exports_kind != bun_ast::ExportsKind::Cjs {
         part.stmts = bun_ast::StoreSlice::EMPTY;
-        // The emptied part of a stub is in no chunk, as when the stylesheet had these parts: a chunk keeps the
-        // part ranges that its hash is made of. The other lazy exports keep the part in their chunk.
+        // The emptied part of a stub is in no chunk, as it was on the row of the stylesheet. Other lazy exports keep theirs.
         if stylesheet.is_some() {
             part.can_be_removed_if_unused = true;
         }

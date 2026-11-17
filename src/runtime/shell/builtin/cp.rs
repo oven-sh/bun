@@ -492,7 +492,7 @@ impl ShellTaskCtx for ShellCpTask {
         };
         #[cfg(windows)]
         let Some(task) = batch.ebusy.get_or_insert_default().admit(task) else {
-            let running = &batch.running;
+            let running = &Builtin::of(interp, cmd).running;
             running.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
             return Batch::settle(interp, cmd).run(interp);
         };

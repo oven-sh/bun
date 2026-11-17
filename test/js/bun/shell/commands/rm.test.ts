@@ -160,9 +160,8 @@ foo/
     });
   });
 
-  // The DirTask parent/child hand-off had a lost-wakeup window between
-  // `subtask_count.load() > 1` and `need_to_wait.store(true)`: the last
-  // child could decrement and read `need_to_wait == false` in between,
+  // The DirTask parent/child hand-off had a lost-wakeup window: the last
+  // child could finish before the parent had said that it was waiting,
   // stranding the parent DirTask forever. A directory with exactly one
   // subdirectory is the minimal trigger; the window is a few instructions
   // so this is a stress probe rather than a deterministic repro.

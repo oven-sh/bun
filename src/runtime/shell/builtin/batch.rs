@@ -1,6 +1,6 @@
 //! What touch, mkdir, ls, cp and rm share: pool tasks that each come back with something to print.
 
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 use std::collections::VecDeque;
 
 use crate::shell::ExitCode;
@@ -10,10 +10,6 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub(crate) struct Batch {
-    /// Reports still to come. A task adds the ones it causes before it reports.
-    pub(crate) running: AtomicUsize,
-    /// Tells the tasks of `rm` that one of them has failed.
-    pub(crate) stop: AtomicBool,
     failed: bool,
     /// An entry per write in flight. Any completion takes the oldest, and prints it if it is `Some`.
     writes: VecDeque<Option<Vec<u8>>>,
@@ -22,17 +18,10 @@ pub(crate) struct Batch {
 }
 
 impl Batch {
-    /// Stays in place until every task has reported.
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId, tasks: usize) -> &Batch {
-        let state = &mut Builtin::of_mut(interp, cmd).state;
-        *state = State::Batch(Batch {
-            running: AtomicUsize::new(tasks),
-            ..Default::default()
-        });
-        match state {
-            State::Batch(batch) => batch,
-            _ => unreachable!(),
-        }
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId, tasks: usize) {
+        let me = Builtin::of_mut(interp, cmd);
+        *me.running.get_mut() = tasks;
+        me.state = State::Batch(Batch::default());
     }
 
     pub(crate) fn of(interp: &Interpreter, cmd: NodeId) -> Option<&mut Batch> {
@@ -48,8 +37,9 @@ impl Batch {
         err: Option<Vec<u8>>,
         out: Vec<u8>,
     ) -> Yield {
-        if let Some(batch) = Self::of(interp, cmd) {
-            batch.running.fetch_sub(1, Ordering::SeqCst);
+        let me = Builtin::of_mut(interp, cmd);
+        if let State::Batch(batch) = &mut me.state {
+            me.running.fetch_sub(1, Ordering::SeqCst);
             batch.failed |= err.is_some();
         }
         Self::print(interp, cmd, err, out)
@@ -92,10 +82,11 @@ impl Batch {
     }
 
     pub(crate) fn settle(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let Some(batch) = Self::of(interp, cmd) else {
+        let me = Builtin::of_mut(interp, cmd);
+        let State::Batch(batch) = &mut me.state else {
             return Yield::suspended();
         };
-        if batch.running.load(Ordering::SeqCst) > 0 || !batch.writes.is_empty() {
+        if me.running.load(Ordering::SeqCst) > 0 || !batch.writes.is_empty() {
             return Yield::suspended();
         }
         // These errors do not change the exit code.

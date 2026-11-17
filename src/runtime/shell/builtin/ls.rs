@@ -18,7 +18,8 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     if let Err(flag) = flags.iter().try_for_each(|flag| opts.parse(flag)) {
         return Builtin::fail_flag(interp, cmd, flag);
     }
-    let running = BackRef::new(&Batch::start(interp, cmd, paths.len().max(1)).running);
+    Batch::start(interp, cmd, paths.len().max(1));
+    let running = BackRef::new(&Builtin::of(interp, cmd).running);
     let cwd = Builtin::cwd(interp, cmd);
     let schedule = |path: &[u8]| {
         let path = ZBox::from_bytes(path);
@@ -40,7 +41,7 @@ pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
     pub print_directory: bool,
-    /// [`Batch::running`]
+    /// [`Builtin::running`]
     pub running: BackRef<AtomicUsize>,
     pub cwd: bun_sys::Fd,
     pub path: ZBox,

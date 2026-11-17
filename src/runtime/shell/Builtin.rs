@@ -5,6 +5,7 @@ use bun_collections::VecExt;
 use bun_jsc::PinnedArrayBuffer;
 use bun_ptr::BackRef;
 use core::fmt;
+use core::sync::atomic::{AtomicBool, AtomicUsize};
 use std::rc::Rc;
 
 use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand, refuse_shell_redirect};
@@ -33,6 +34,10 @@ pub(crate) struct Builtin {
     stdout: BuiltinIO,
     stderr: BuiltinIO,
     pub(crate) state: State,
+    /// Reports a [`Batch`] still waits for. A pool task adds the ones it causes before it reports.
+    pub(crate) running: AtomicUsize,
+    /// Tells the pool tasks of `rm` and `mv` that one of them has failed.
+    pub(crate) stop: AtomicBool,
 }
 
 /// What a builtin keeps between events.
@@ -328,6 +333,8 @@ impl Builtin {
             stdout: BuiltinIO::from_out_kind(&me.io.stdout, IoKind::Stdout),
             stderr: BuiltinIO::from_out_kind(&me.io.stderr, IoKind::Stderr),
             state: State::Idle,
+            running: AtomicUsize::new(0),
+            stop: AtomicBool::new(false),
         });
         interp.as_cmd_mut(cmd).exec = Exec::Builtin(builtin);
 
@@ -682,7 +689,7 @@ impl Builtin {
         }))
     }
 
-    /// The last write. It drops the state, which must not own `buf` or have tasks pointing at it.
+    /// The last write. It drops the state, which must not own `buf` or what a task still uses.
     pub(crate) fn finish(
         interp: &Interpreter,
         cmd: NodeId,

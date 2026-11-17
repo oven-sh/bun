@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use bun_core::ZBox;
+use bun_core::ZStr;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{BadFlag, Builtin, BuiltinInput, IoKind, Kind, Sink, State};
@@ -63,11 +63,12 @@ impl Cat {
     fn open(interp: &Interpreter, cmd: NodeId, idx: usize) -> Yield {
         // Closes the previous file first.
         Builtin::of_mut(interp, cmd).state = State::Idle;
-        let Some(path) = Builtin::of(interp, cmd).args().get(idx) else {
+        // The `args` of the Cmd still have the NUL, and argv[0].
+        let arg = interp.as_cmd(cmd).args.get(idx + 1);
+        let Some(path) = arg.and_then(|arg| ZStr::from_slice_until_nul(arg)) else {
             return Builtin::done(interp, cmd, 0);
         };
-        let path = ZBox::from_bytes(path.get());
-        match shell_openat(Builtin::cwd(interp, cmd), &path, bun_sys::O::RDONLY, 0) {
+        match shell_openat(Builtin::cwd(interp, cmd), path, bun_sys::O::RDONLY, 0) {
             Ok(fd) => Self::read(interp, cmd, &IOReader::init(fd, interp.event_loop), idx + 1),
             Err(e) => Builtin::finish(interp, cmd, IoKind::Stderr, &Kind::Cat.task_error(&e), 1),
         }

@@ -21,7 +21,6 @@ pub(crate) struct Mv {
     /// Open for the tasks.
     _target_fd: Option<OwnedFd>,
     running: usize,
-    error_signal: AtomicBool,
     /// The first one reported.
     err: Option<bun_sys::Error>,
 }
@@ -100,17 +99,12 @@ impl ShellWork for ShellMvCheckTargetTask {
         let batches = sources.chunks(ShellMvBatchedTask::BATCH_SIZE);
         let cwd = Builtin::cwd(interp, cmd);
         let fd = target_fd.as_ref().map(OwnedFd::fd);
-        let state = &mut Builtin::of_mut(interp, cmd).state;
-        *state = State::Mv(Mv {
+        Builtin::of_mut(interp, cmd).state = State::Mv(Mv {
             _target_fd: target_fd,
             running: batches.len(),
-            error_signal: AtomicBool::new(false),
             err: None,
         });
-        let State::Mv(mv) = state else {
-            return Yield::suspended();
-        };
-        let error_signal = BackRef::new(&mv.error_signal);
+        let error_signal = BackRef::new(&Builtin::of(interp, cmd).stop);
         // `was_on_disk` is read before anything moves.
         let mut tasks = Vec::with_capacity(batches.len());
         for batch in batches {
@@ -143,7 +137,7 @@ pub(crate) struct ShellMvBatchedTask {
     pub(crate) target_fd: Option<bun_sys::Fd>,
     pub(crate) no_clobber: bool,
     pub(crate) cwd: bun_sys::Fd,
-    /// [`Mv::error_signal`]
+    /// [`Builtin::stop`]
     pub(crate) error_signal: BackRef<AtomicBool>,
     pub(crate) err: Option<bun_sys::Error>,
 }
@@ -189,12 +183,13 @@ impl ShellWork for ShellMvBatchedTask {
 
     fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
         let cmd = self.cmd;
-        let State::Mv(mv) = &mut Builtin::of_mut(interp, cmd).state else {
+        let bltn = Builtin::of_mut(interp, cmd);
+        let State::Mv(mv) = &mut bltn.state else {
             return Yield::suspended();
         };
         mv.running = mv.running.saturating_sub(1);
         if let Some(e) = self.err.take() {
-            mv.error_signal.store(true, Ordering::SeqCst);
+            bltn.stop.store(true, Ordering::SeqCst);
             mv.err.get_or_insert(e);
         }
         self.note_moved(Builtin::shell(interp, cmd).cwd());

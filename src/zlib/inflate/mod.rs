@@ -219,7 +219,8 @@ impl Inflater {
     /// The same, if that is going to take a while.
     pub fn reset_and_wait(&mut self) {
         self.reset();
-        self.save_memory();
+        self.window.clear_and_free_memory();
+        self.dynamic.free_memory();
     }
 
     /// After [`Status::NeedsDictionary`], or in front of a raw stream.
@@ -282,15 +283,6 @@ impl Inflater {
         self.history.min(self.max_distance)
     }
 
-    /// Whoever asks for a small window has many streams that wait between blocks.
-    #[inline]
-    fn save_memory(&mut self) {
-        if self.window_bits < MAX_WINDOW_BITS {
-            self.window.shrink(self.reach());
-            self.dynamic.free_memory();
-        }
-    }
-
     /// If the output is full, the next step may copy from `kept_if_full` bytes in front of its own.
     fn step(
         &mut self,
@@ -313,8 +305,10 @@ impl Inflater {
             if !matches!(self.state, State::Checksum | State::Length | State::Done) {
                 self.record(&mut out, kept)?;
             }
+            // A server has many streams that wait between blocks.
             if let (Status::NeedsInput, State::BlockHeader) = (status, self.state) {
-                self.save_memory();
+                self.window.shrink(self.reach());
+                self.dynamic.free_memory();
             }
             Ok(status)
         });

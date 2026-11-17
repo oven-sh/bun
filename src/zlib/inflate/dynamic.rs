@@ -61,8 +61,11 @@ pub(super) struct DynamicCodes {
 
 impl DynamicCodes {
     /// Between blocks.
+    #[inline]
     pub(super) fn free_memory(&mut self) {
-        (self.tables, self.coded) = (None, Vec::new());
+        if self.tables.take().is_some() {
+            self.coded = Vec::new();
+        }
     }
 
     pub(super) fn tables(&self) -> Option<&Tables> {

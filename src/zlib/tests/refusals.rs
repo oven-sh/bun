@@ -198,8 +198,8 @@ fn messages(window_bits: u8) -> (Vec<u8>, Vec<Vec<u8>>) {
 }
 
 #[test]
-fn a_small_window_takes_little_memory_between_messages() {
-    for (window_bits, piece) in (8..15).flat_map(|bits| [(bits, usize::MAX), (bits, 50)]) {
+fn little_more_than_the_window_is_kept_between_messages() {
+    for (window_bits, piece) in (8..16).flat_map(|bits| [(bits, usize::MAX), (bits, 50)]) {
         let (input, messages) = messages(window_bits.max(9));
         let mut out = Vec::with_capacity(input.len() + 1);
         let before = BYTES_IN_USE.get();
@@ -243,19 +243,15 @@ fn short_or_stored_messages_do_not_take_the_memory_for_long_ones() {
 }
 
 #[test]
-fn the_largest_window_keeps_its_memory() {
-    let (_, messages) = messages(15);
-    let (mut inflater, mut out) = (Inflater::new(Container::Raw), Vec::with_capacity(150_001));
+fn reset_keeps_the_memory_for_the_next_stream() {
+    let stream = raw(&Random::new(6).mixed(50_000, 512), 6, 8);
+    let (mut inflater, mut out) = (Inflater::new(Container::Raw), Vec::with_capacity(100_001));
     for grants in [None, Some((0, usize::MAX))] {
         GRANTS.set(grants);
-        let is_done = messages.iter().all(|message| {
-            inflater.inflate_to_vec(&mut &message[..], &mut out, usize::MAX)
-                == Ok(Status::NeedsInput)
-        });
+        let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
         GRANTS.set(None);
-        assert!(is_done);
-        inflater.reset_and_wait();
-        out.clear();
+        assert_eq!(status, Ok(Status::StreamEnd));
+        inflater.reset();
     }
 }
 

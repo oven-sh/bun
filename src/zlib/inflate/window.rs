@@ -49,6 +49,11 @@ impl Window {
         self.handed_out = 0;
     }
 
+    pub(super) fn clear_and_free_memory(&mut self) {
+        self.clear();
+        self.bytes = Vec::new();
+    }
+
     #[inline]
     pub(super) fn pending(&self) -> usize {
         self.end - self.handed_out
@@ -143,11 +148,10 @@ impl Window {
     }
 
     /// Gives back what a long message has taken, but for the last `reach` bytes. Nothing is pending.
+    #[inline]
     pub(super) fn shrink(&mut self, reach: usize) {
         debug_assert_eq!(self.pending(), 0);
-        if self.end == 0 {
-            self.bytes = Vec::new();
-        } else if self.bytes.capacity() > self.usual_capacity
+        if self.bytes.capacity() > self.usual_capacity
             && let Ok(mut kept) = vec::with_room(self.usual_capacity)
         {
             let in_last_lap = LAP - reach.saturating_sub(self.end)..LAP;

@@ -485,10 +485,10 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     result
 }
 
-/// A mitigation: callees need not write the home slots of their arguments, where the collector finds what a job left.
+/// A mitigation: callees need not write their arguments' home slots, where the collector finds what a completion spilled.
 #[inline(never)]
 fn clear_stack_below_caller() {
-    // The native frames of an immediate end 1.2 KB below the task queue's.
+    // a-failed-stream-is-collected.test.ts had it in `JSC::profiledCall`. `vmEntryToJavaScript` is 0x4a0 below the queue.
     core::hint::black_box(&mut [0u64; 256]);
 }
 

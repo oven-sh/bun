@@ -24,6 +24,7 @@
 #include <errno.h>
 #ifndef WIN32
 #include <fcntl.h>
+#include <poll.h>
 #endif
 
 int us_socket_local_port(struct us_socket_t *s) {
@@ -98,6 +99,10 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
+    /* A deferred close has a deadline of its own, which its owner does not put off. */
+    if (s->ssl && s->ssl_close_after_spill) {
+        return;
+    }
     if (seconds) {
         s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
     } else {
@@ -236,7 +241,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     if (c->pending_resolve_callback) {
         // The DNS callback has not been drained. Try to remove c from the
         // request's notify list so it never fires. Returns 0 if the result is
-        // already set (the callback has fired or is about to), in which case
+        // already set (the callback has fired), in which case
         // after_resolve will see c->closed and finish teardown.
         if (c->addrinfo_req && Bun__addrinfo_cancel(c->addrinfo_req, c)) {
 #ifdef _WIN32
@@ -343,7 +348,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
         /* A candidate of a us_connecting_socket_t is held through that, which hears
          * on_connecting_error once every candidate has failed. */
 
-        us_internal_ssl_detach(s);
+        if (s->group->loop->data.ssl_data) us_internal_ssl_detach(s);
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = loop->data.closed_head;
@@ -359,7 +364,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
 /* Bypasses the SSL layer entirely — the public us_socket_close() routes through
  * us_internal_ssl_close() first so a client-initiated close sends close_notify and (with
  * code==0) waits for the peer's, instead of slamming the fd shut and racing the peer's
- * handshake/secureConnection event. openssl.c re-enters here once that graceful path is done. */
+ * handshake/secureConnection event. openssl.cpp re-enters here once that graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
     /* Not an error a connect can fail with, so the holder can tell the two apart. */
     return us_internal_socket_close_and_notify(s, code, reason, LIBUS_ECANCELED);
@@ -381,6 +386,22 @@ struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
     us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
     return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
 }
+
+#ifndef WIN32
+void us_socket_read_now(struct us_socket_t *s) {
+    if (us_socket_is_closed(s)) {
+        return;
+    }
+    struct pollfd pollfd = { .fd = us_poll_fd(&s->p), .events = POLLIN };
+    int hangup = poll(&pollfd, 1, 0) == 1 && (pollfd.revents & POLLHUP);
+
+    /* A callback can tick the loop, which must not free the socket that this dispatch still reads. */
+    struct us_loop_t *loop = s->group->loop;
+    loop->data.tick_depth++;
+    us_internal_dispatch_ready_poll(&s->p, 0, hangup ? LIBUS_POLL_HANGUP : 0, LIBUS_SOCKET_READABLE);
+    loop->data.tick_depth--;
+}
+#endif
 
 struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
@@ -663,7 +684,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
 }
 
 int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int length, int *fatal_send_error) {
-    /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
+    /* Bypass-TLS path: openssl.cpp uses this to flush close_notify *after*
      * SSL_shutdown() has marked the SSL layer shut down, so checking
      * us_socket_is_shut_down() here would deadlock the alert in userspace.
      * Gate only on fd close and TCP-level FIN. */

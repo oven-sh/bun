@@ -84,12 +84,12 @@ const {
 
 const kCreateDisconnected = Symbol("kCreateDisconnected");
 
-let assertIsQuicEndpointStats;
-let assertIsQuicSessionStats;
-let assertIsQuicStreamStats;
-let isQuicEndpointStats;
-let isQuicSessionStats;
-let isQuicStreamStats;
+let assertIsQuicEndpointStats: (val: unknown) => asserts val is QuicEndpointStats;
+let assertIsQuicSessionStats: (val: unknown) => asserts val is QuicSessionStats;
+let assertIsQuicStreamStats: (val: unknown) => asserts val is QuicStreamStats;
+let isQuicEndpointStats: (val: unknown) => val is QuicEndpointStats;
+let isQuicSessionStats: (val: unknown) => val is QuicSessionStats;
+let isQuicStreamStats: (val: unknown) => val is QuicStreamStats;
 
 function assertIsPrivateConstructor(privateSymbol) {
   if (privateSymbol !== kPrivateConstructor) {
@@ -104,11 +104,11 @@ class QuicEndpointStats {
   #disconnected = false;
 
   static {
-    isQuicEndpointStats = function (val) {
+    isQuicEndpointStats = function (val): val is QuicEndpointStats {
       return val != null && typeof val === "object" && #handle in val;
     };
 
-    assertIsQuicEndpointStats = function (val) {
+    assertIsQuicEndpointStats = function (val): asserts val is QuicEndpointStats {
       if (!isQuicEndpointStats(val)) {
         throw $ERR_INVALID_THIS("QuicEndpointStats");
       }
@@ -373,11 +373,11 @@ class QuicSessionStats {
   #offset = 0;
 
   static {
-    isQuicSessionStats = function (val) {
+    isQuicSessionStats = function (val): val is QuicSessionStats {
       return val != null && typeof val === "object" && #handle in val;
     };
 
-    assertIsQuicSessionStats = function (val) {
+    assertIsQuicSessionStats = function (val): asserts val is QuicSessionStats {
       if (!isQuicSessionStats(val)) {
         throw $ERR_INVALID_THIS("QuicSessionStats");
       }
@@ -763,11 +763,11 @@ class QuicStreamStats {
   #disconnected = false;
 
   static {
-    isQuicStreamStats = function (val) {
+    isQuicStreamStats = function (val): val is QuicStreamStats {
       return val != null && typeof val === "object" && #handle in val;
     };
 
-    assertIsQuicStreamStats = function (val) {
+    assertIsQuicStreamStats = function (val): asserts val is QuicStreamStats {
       if (!isQuicStreamStats(val)) {
         throw $ERR_INVALID_THIS("QuicStreamStats");
       }

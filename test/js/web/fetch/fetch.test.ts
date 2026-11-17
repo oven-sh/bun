@@ -2772,7 +2772,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";
@@ -2801,7 +2801,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";
@@ -4232,6 +4232,22 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
   });
   expect(authorizationLines).toEqual(["Bearer [redacted]"]);
   expect(stderr).not.toContain("sekret-token");
+  expect(exitCode).toBe(0);
+});
+
+it("verbose fetch logging keeps the quotes of a header value in the curl command", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response() });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `await fetch(process.env.SERVER_URL, { verbose: "curl", headers: { "If-Match": '"a"' } });`],
+    env: { ...bunEnv, SERVER_URL: server.url.href },
+    stdout: "inherit",
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(String.raw`-H "If-Match: \"a\""`);
   expect(exitCode).toBe(0);
 });
 

@@ -52,7 +52,7 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
             childDepth = jsNumber(d - 1);
         }
     }
-    opts->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
+    Bun::putDirectNamed(vm, opts, "depth"_s, childDepth);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSFunction* utilInspect = globalObject->utilInspectFunction();

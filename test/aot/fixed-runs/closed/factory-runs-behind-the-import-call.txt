@@ -1,0 +1,15 @@
+Nothing of a load happens inside the import() call: the text of the module is read first, so the factory of a mock below it runs behind whatever follows the call. A compiled run walked the graph for waiting mocks inside the call and ran the factory there.
+#### behind.test.js
+import { test, vi } from "bun:test";
+test("behind the call", async () => {
+  vi.doMock("./k.js", () => { console.log("| CASE the factory runs"); return { x: "mock" }; });
+  const user = import("./user.js");
+  console.log("| CASE the call has returned");
+  console.log("| CASE", (await user).seen);
+});
+#### k.js
+console.log("| CASE k runs");
+export const x = "real";
+#### user.js
+import { x } from "./k.js";
+export const seen = x;

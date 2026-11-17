@@ -127,18 +127,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
 
 // ──────────────────────── safe codegen-thunk entry points ────────────────────────
 //
-// The thunks of `generate-host-exports.ts` and `generate-jssink.ts` call these.
-
-/// `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>`.
-#[track_caller]
-#[inline]
-pub fn host_fn_static(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>,
-) -> JSValue {
-    to_js_host_call(global, || f(global, callframe))
-}
+// The thunks of `generate-host-exports.ts` call these.
 
 /// Lazy property creator, no exception scope (bare-`JSValue` impls).
 #[inline]
@@ -149,30 +138,13 @@ pub fn host_fn_lazy_passthrough(
     f(global)
 }
 
-/// Finalizer for a `refCounted: true` class: the wrapper held one ref on an
-/// intrusively refcounted payload. Runs the type's `&self` hook (clear a
-/// `this_value`, mark finalized, …) and drops that ref.
-///
-/// # Safety
-/// `this` is the live pointer the wrapper holds a ref on.
-#[inline]
-pub unsafe fn host_fn_finalize_ref_counted<T: bun_ptr::AnyRefCounted>(
-    this: *mut T,
-    f: impl FnOnce(&T),
-) {
-    // SAFETY: fn contract; other refs may exist, so only `&T` is formed.
-    f(unsafe { &*this });
-    // SAFETY: fn contract — releases the wrapper's ref.
-    unsafe { T::rc_deref(this) };
-}
-
 /// Convert the return value of a function returning an error union into a maybe-empty `JSValue`.
 ///
 /// The caller (the proc-macro expansion) passes a closure that performs the call, so this only
 /// handles the result mapping + exception-scope assertion.
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
-/// `ExceptionValidationScope::init`.
+/// `ExceptionValidationScope::init_guard`.
 #[track_caller]
 #[inline]
 pub fn to_js_host_call(
@@ -197,7 +169,7 @@ pub fn to_js_host_call(
 /// `TopExceptionScope`.
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
-/// `ExceptionValidationScope::init`.
+/// `ExceptionValidationScope::init_guard`.
 #[track_caller]
 #[inline]
 pub fn from_js_host_call(
@@ -213,7 +185,7 @@ pub fn from_js_host_call(
 /// whether an exception was thrown.
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
-/// `TopExceptionScope::init`.
+/// `TopExceptionScope::init_guard_at`.
 #[track_caller]
 #[inline]
 pub fn from_js_host_call_generic<R>(

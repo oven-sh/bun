@@ -381,6 +381,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       ],
       env: {
         ...bunEnv,
+        WebKitMallocForceEnabled: "1",
         // detect_leaks=0: LeakSanitizer cannot see through JSC cells to the natives they own.
         ASAN_OPTIONS: [
           bunEnv.ASAN_OPTIONS,
@@ -739,8 +740,7 @@ describe("sync compression argument handling", () => {
     }
   });
 
-  // libdeflate is one-shot, so Bun retries with a doubling output buffer; the
-  // retry cap must not be tighter than the zlib backend's (ArrayBuffer max).
+  // The output buffer doubles as it fills; its cap must not be tighter than the zlib backend's (ArrayBuffer max).
   // Spawned so the multi-GB buffer is released with the child.
   it("gunzipSync({library:'libdeflate'}) decompresses output larger than 1 GiB", async () => {
     const MiB = 1024 * 1024;

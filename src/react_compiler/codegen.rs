@@ -290,9 +290,12 @@ pub(crate) fn codegen_function(
         // Fast Refresh hash invalidation block — see `fast_refresh_state` above.
         let _ = fast_refresh_state;
 
-        let mut new_body = preface;
-        new_body.append(&mut compiled.body);
-        compiled.body = new_body;
+        // The body starts with the directives of the function. A directive only counts
+        // while it comes first, so the memo cache is declared after them.
+        let directive_count = leading_directive_count(&compiled.body);
+        compiled
+            .body
+            .splice(directive_count..directive_count, preface);
     }
 
     // Instrument forget: emit instrumentation call at the top of the function body
@@ -353,7 +356,8 @@ pub(crate) fn codegen_function(
                 },
                 Loc::EMPTY,
             );
-            compiled.body.insert(0, instrument_call);
+            let directive_count = leading_directive_count(&compiled.body);
+            compiled.body.insert(directive_count, instrument_call);
         }
     }
 
@@ -1348,6 +1352,12 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
         let mut declarators: G::DeclList = AstAlloc::vec();
         let mut kind = S::Kind::KConst;
         for instr in body {
+            // `for (;;)`: what is left of the `undefined` that lowering puts in place of an initializer. Upstream refuses it.
+            match instr.data {
+                StmtData::SEmpty(_) => continue,
+                StmtData::SExpr(it) if matches!(it.value.data, ExprData::EUndefined(_)) => continue,
+                _ => {}
+            }
             if let StmtData::SExpr(expr_stmt) = instr.data {
                 if let ExprData::EBinary(assign) = expr_stmt.value.data {
                     if assign.op == OpCode::BinAssign {
@@ -1389,10 +1399,7 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
             }
         }
         if declarators.is_empty() {
-            return Err(invariant_err(
-                "Expected a variable declaration in for-init",
-                None,
-            ));
+            return Ok(None);
         }
         Ok(Some(Stmt::alloc(
             S::Local {
@@ -3245,6 +3252,12 @@ fn estring_utf8(s: &str) -> E::EString {
         let units: AstVec<u16> = AstAlloc::vec_from_iter(s.encode_utf16());
         E::EString::init_utf16(units.leak())
     }
+}
+
+fn leading_directive_count(body: &[Stmt]) -> usize {
+    body.iter()
+        .take_while(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
+        .count()
 }
 
 #[inline]

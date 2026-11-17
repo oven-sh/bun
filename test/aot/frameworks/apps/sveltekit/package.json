@@ -1,0 +1,17 @@
+{
+  "name": "site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@sveltejs/adapter-node": "6.0.0",
+    "@sveltejs/kit": "3.1.0",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/node": "26.6.5",
+    "svelte": "5.57.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.4"
+  }
+}

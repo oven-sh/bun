@@ -1,11 +1,17 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
+    // The code generators import from scripts/build, which `composite` would have listed here file by file.
+    "composite": false,
     // baseUrl needed until resolver fix propagates to system Bun used during build
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     // bun-types comes in through `include` below, by path: see src/js/tsconfig.json.
-    "types": []
+    "types": [],
+    "paths": {
+      // What codegen/builtins/load-declaration-files.ts registers under this name.
+      "bun-builtins-table": ["./codegen/builtins/lib.ts"]
+    }
   },
   "include": ["**/*.ts", "**/*.tsx", "../packages/bun-types/index.d.ts"],
   // js and runtime/bake are projects of their own, with settings that only apply there. The `bun init` and

@@ -295,10 +295,10 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
 }
 
 /// The absolute directory that the `workspaces` of `source` are relative to.
-pub(crate) fn package_json_dir(source: &bun_ast::Source) -> &[u8] {
+pub(crate) fn package_json_dir<'a>(source: &bun_ast::Source<'a>) -> &'a [u8] {
     let dir = keeping_root(source.path.name().dir, source.path.text);
     if dir.is_empty() {
-        return bun_resolver::fs::FileSystem::instance().top_level_dir();
+        return bun_resolver::fs::FileSystem::get().top_level_dir();
     }
     dir
 }

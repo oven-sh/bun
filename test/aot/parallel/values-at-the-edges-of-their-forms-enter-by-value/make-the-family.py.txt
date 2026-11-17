@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+# The family for the entry written by hand: one program a kind of type that the writer may call simple x a value at each edge of the forms of values.
+# Each program: a callback (an arrow, a plain function, a method handed on) whose parameter Link types by the list that native code walks (map, forEach, sort, reduce, call, apply, bind); every value is right: the answer is plain's.
+import os, sys
+out = sys.argv[1]
+edges = {
+ 'small-integers': '[0, 1, -1, 7]',
+ 'int32-edges': '[2147483647, -2147483648, 2147483646, -2147483647]',
+ 'past-int32': '[2147483648, -2147483649, 4294967295, 4294967296, 3000000000, 1700000000000]',
+ 'past-2-53': '[9007199254740991, 9007199254740992, -9007199254740991, -9007199254740992, 1e21, -1e21]',
+ 'minus-zero': '[0, -0, 1, -1]',
+ 'not-a-number-and-infinities': '[NaN, Infinity, -Infinity, 1]',
+ 'fractions': '[0.5, -0.5, 1.5, 2147483647.5, 1e-7]',
+ 'integers-and-fractions': '[1, 2.5, 3, 4294967296.5]',
+ 'whole-doubles-made-by-arithmetic': '[4 / 2, 9 / 3, 2 ** 31, 2 ** 32, 2 ** 53, 1e3]',
+ 'a-hole': '[1, , 3]',
+ 'undefined-and-integers': '[undefined, 1, 2147483648]',
+ 'null-and-integers': '[null, 1, 2147483648]',
+ 'booleans': '[true, false, true]',
+ 'one-boolean': '[true, true]',
+ 'booleans-and-undefined': '[true, undefined, false]',
+ 'texts': '["", "a", "\\u00e9", "a".repeat(3), String(12), `x${1}`]',
+ 'texts-and-undefined': '["a", undefined, ""]',
+ 'texts-and-numbers': '["a", 1, 2147483648, 0.5, -0]',
+ 'symbols': '[Symbol.iterator, Symbol("a"), Symbol.for("b")]',
+ 'big-integers': '[0n, 1n, -1n, 2n ** 64n, BigInt(7)]',
+ 'big-integers-and-numbers': '[1n, 1, 2147483648]',
+ 'lists': '[[1], [], [1, 2], new Array(3), Array.from("ab")]',
+ 'lists-and-null': '[[1], null, []]',
+ 'maps-and-sets': '[new Map(), new Set(), new Map([[1, 2]])]',
+ 'dates-and-patterns': '[new Date(0), /a/g, new Date(1e12)]',
+ 'promises': '[Promise.resolve(1), new Promise(() => {})]',
+ 'one-class': '[new Box(1), new Box(2147483648), new Box("a")]',
+ 'one-class-and-undefined': '[new Box(1), undefined, new Box(2)]',
+ 'one-class-and-null': '[new Box(1), null, new Box(2)]',
+ 'one-class-with-a-field-added-later': '[new Box(1), grown(new Box(2)), new Box(3)]',
+ 'one-class-with-a-field-deleted': '[new Box(1), shrunk(new Box(2)), new Box(3)]',
+ 'one-class-frozen': '[new Box(1), Object.freeze(new Box(2))]',
+ 'one-class-with-another-prototype': '[new Box(1), Object.setPrototypeOf(new Box(2), Other.prototype)]',
+ 'a-class-and-the-one-below-it': '[new Box(1), new Crate(2), new Box(3)]',
+ 'two-classes': '[new Box(1), new Other(2)]',
+ 'literals-of-one-shape': '[{ value: 1 }, { value: 2147483648 }, { value: "a" }]',
+ 'objects-of-any-kind': '[{}, [], () => 1, new Box(1), Object.create(null), new Map()]',
+ 'functions': '[() => 1, function () { return 2; }, Math.abs, class {}, Box]',
+}
+head = '''class Box { value; constructor(value) { this.value = value; } describe() { return "box " + show(this.value); } }
+class Crate extends Box { describe() { return "crate " + show(this.value); } }
+class Other { value; constructor(value) { this.value = value; } describe() { return "other " + show(this.value); } }
+function grown(box) { box.extra = 1; return box; }
+function shrunk(box) { delete box.value; return box; }
+function show(x) {
+  if (typeof x === "number") return Object.is(x, -0) ? "-0" : String(x);
+  if (typeof x === "bigint") return x + "n";
+  if (typeof x === "symbol") return x.toString();
+  if (typeof x === "function") return "function " + x.length;
+  if (x === null || typeof x !== "object") return String(x);
+  if (Array.isArray(x)) return "[" + x.length + "]";
+  if (typeof x.describe === "function") return x.describe();
+  return Object.prototype.toString.call(x) + Object.keys(x).join();
+}
+'''
+roads = {
+ 'map-an-arrow': 'console.log(values.map((x) => show(x)).join(" | "));',
+ 'for-each-a-plain-function': 'const said = []; values.forEach(function (x) { said.push(show(x)); }); console.log(said.join(" | "));',
+ 'reduce-two-parameters': 'console.log(values.reduce((all, x) => all + " | " + show(x), ""));',
+ 'this-by-call': 'function tell() { "use strict"; return show(this); } console.log(Array.from(values, (x) => tell.call(x)).join(" | "));',
+ 'a-method-taken-off-its-class': 'const take = Box.prototype.describe; console.log(Array.from(values, (x) => (x instanceof Box ? take.call(x) : "no box")).join(" | "));',
+ 'a-method-handed-to-native-code': 'const boxes = values.filter((x) => x instanceof Box); console.log(boxes.map(Function.prototype.call, Box.prototype.describe).join(" | "), boxes.length);',
+ 'apply-and-bind': 'function tell(x, y) { return show(x) + "," + show(y); } console.log(Array.from(values, (x) => tell.apply(null, [x, x]) + ";" + tell.bind(null, x)(x)).join(" | "));',
+}
+n = 0
+for e, values in edges.items():
+    for r, road in roads.items():
+        folder = os.path.join(out, e + '--' + r)
+        os.makedirs(folder, exist_ok=True)
+        open(os.path.join(folder, 'main.js'), 'w').write(head + 'const values = ' + values + ';\n' + road + '\n')
+        n += 1
+print(n, 'programs')

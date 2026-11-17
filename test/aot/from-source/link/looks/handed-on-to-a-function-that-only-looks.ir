@@ -1,0 +1,18 @@
+# `outer` reads what arrives and hands it on to `inner`, which only reads it; `round` hands it on to itself. All three only look. `inner` is asked because `outer` hands on to it: no caller hands it a cell of its own making.
+# f1 = inner, f2 = outer, f3 = round, f4 = caller
+# -- source: handed-on-to-a-function-that-only-looks.ts
+# declare function sink(...values: unknown[]): void;
+# function inner(p: { a: number }): number { let t = 0; for (let i = 0; i < 2; i++) t += p.a; return t; }
+# function outer(o: { a: number }): number { return inner(o) + o.a; }
+# function round(o: { a: number }, n: number): number { return n ? round(o, n - 1) + o.a : 0; }
+# function caller(x: number) { return outer({ a: x }) + round({ a: x }, 3); }
+# sink(caller(1), caller(2));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK: parameter 0 {{*}}only-looked-at
+# CHECK-LABEL: function f2
+# CHECK: parameter 0 {{*}}only-looked-at
+# CHECK-LABEL: function f3
+# CHECK: parameter 0 {{*}}only-looked-at
+# CHECK-LABEL: function f4

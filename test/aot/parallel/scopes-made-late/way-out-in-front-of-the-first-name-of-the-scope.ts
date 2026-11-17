@@ -1,0 +1,2 @@
+function pick(list: number[], plain: boolean): number[] { if (plain) { let result: number[] | undefined; list.forEach(n => { (result ??= []).push(n); }); return result ?? []; } if (list.length === 0) return []; let odd: number[] | undefined; list.forEach(n => { if (n & 1) odd = [...(odd ?? []), n]; }); let even: number[] | undefined; list.forEach(n => { if (!(n & 1)) even = [...(even ?? []), n]; }); return [...(odd ?? []), ...(even ?? [])]; }
+console.log(pick([1, 2, 3], true).join(), pick([], false).join(), pick([1, 2, 3, 4], false).join());

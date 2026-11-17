@@ -6,10 +6,10 @@ use bun_lint::rule::Plugin;
 /// Enforce font-display behavior with Google Fonts.
 pub struct GoogleFontDisplay;
 
-const FONT_DISPLAY_PARAMETER_MISSING: Message =
-    Message::new("", "A font-display parameter is missing (adding `&display=optional` is recommended).");
-const NOT_RECOMMENDED_FONT_DISPLAY_VALUE: Message =
-    Message::new("", "`{{font_display_value}}` is not a recommended font-display value.");
+const FONT_DISPLAY_PARAMETER_MISSING: &Message =
+    &Message::new("", "A font-display parameter is missing (adding `&display=optional` is recommended).");
+const NOT_RECOMMENDED_FONT_DISPLAY_VALUE: &Message =
+    &Message::new("", "`{{font_display_value}}` is not a recommended font-display value.");
 
 impl Rule for GoogleFontDisplay {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "google-font-display", Kind::Problem);

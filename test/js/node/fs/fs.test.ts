@@ -4,13 +4,17 @@ import {
   bunExe,
   gc,
   getMaxFD,
+  isASAN,
   isBroken,
   isDebug,
+  isFreeBSD,
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
+  MAX_PATH_BYTES,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -1641,6 +1645,37 @@ it("mkdtempSync() non-exist dir #2568", () => {
   }
 });
 
+it("only mkdtempSync() names the template in its error where libc has changed it", async () => {
+  using dir = tempDir("mkdtemp-error-path", {});
+  const prefix = join(String(dir), "missing", "a-");
+  expect(() => mkdtempSync(prefix)).toThrow(
+    expect.objectContaining({
+      code: "ENOENT",
+      path: prefix + "XXXXXX",
+      message: `ENOENT: no such file or directory, mkdtemp '${prefix}XXXXXX'`,
+    }),
+  );
+  for (const mkdtempAsync of [promisify(mkdtemp), promises.mkdtemp]) {
+    const { code, syscall, path } = await mkdtempAsync(prefix).catch(e => e);
+    expect({ code, syscall, prefix: path.slice(0, -6) }).toEqual({ code: "ENOENT", syscall: "mkdtemp", prefix });
+    if (isGlibc) expect(path).not.toEndWith("XXXXXX");
+  }
+});
+
+// Windows refuses a path long before it has that many bytes.
+it.skipIf(isWindows)("mkdtemp does not cut a prefix that is too long", async () => {
+  using dir = tempDir("mkdtemp-long-prefix", {});
+  const base = String(dir) + "/";
+  const prefixOf = (bytes: number) => base + Buffer.alloc(bytes - Buffer.byteLength(base), "a/").toString();
+  const longest = MAX_PATH_BYTES - "XXXXXX\0".length;
+  expect(() => mkdtempSync(prefixOf(longest))).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  for (const prefix of [prefixOf(longest + 1), prefixOf(MAX_PATH_BYTES - 1)]) {
+    const tooLong = { code: "ENAMETOOLONG", syscall: "mkdtemp" };
+    expect(() => mkdtempSync(prefix)).toThrow(expect.objectContaining({ ...tooLong, path: prefix + "XXXXXX" }));
+    await expect(promises.mkdtemp(prefix)).rejects.toMatchObject(tooLong);
+  }
+});
+
 it("mkdtemp() non-exist dir #2568", done => {
   const path = join(tmpdirSync(), "does", "not", "exist");
   mkdtemp(path, (err, folder) => {
@@ -1754,6 +1789,18 @@ it("readdirSync works on directories with under 32 files", () => {
   const results = readdirSync(path);
   expect(results.length).toBe(1);
   expect(results[0]).toBe("a");
+});
+
+// NTFS counts UTF-16 units, so a name can be three times as long in UTF-8.
+it.if(isWindows).each([180, 255])("lists and removes a name of %d three-byte characters", async length => {
+  const name = Buffer.alloc(3 * length, "あ").toString();
+  using dir = tempDir("long-name", { tree: { [name]: { [name]: "" } } });
+  const tree = join(String(dir), "tree");
+  expect(readdirSync(tree, { recursive: true })).toEqual([name, join(name, name)]);
+  expect((await promises.readdir(tree, { recursive: true })).sort()).toEqual([name, join(name, name)]);
+  expect(readdirSync(tree, { encoding: "buffer" })).toEqual([Buffer.from(name)]);
+  rmSync(tree, { recursive: true });
+  expect(existsSync(tree)).toBe(false);
 });
 
 it("readdirSync throws when given a file path", () => {
@@ -3257,6 +3304,158 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   unlinkSync(path);
 });
 
+const realpathVariants = {
+  "realpathSync": fs.realpathSync,
+  "realpath": promisify(fs.realpath),
+  "realpathSync.native": fs.realpathSync.native,
+  "realpath.native": promisify(fs.realpath.native),
+  "promises.realpath": fs.promises.realpath,
+};
+/** What each variant answers for each path: a path relative to `root`, or an error code. */
+async function resolveWithEveryVariant(root: string, paths: string[]) {
+  const results: Record<string, string[]> = {};
+  for (const [variant, realpath] of Object.entries(realpathVariants)) {
+    results[variant] = [];
+    for (const path of paths) {
+      try {
+        results[variant].push(relative(root, await realpath(path)));
+      } catch (e: any) {
+        results[variant].push(e.code);
+      }
+    }
+  }
+  return results;
+}
+const forEveryVariant = (expected: string[]) =>
+  Object.fromEntries(Object.keys(realpathVariants).map(variant => [variant, expected]));
+
+// FreeBSD's realpath still opens the path.
+it.if(isPosix && !isFreeBSD)("realpath does not open what its path leads to", async () => {
+  using dir = tempDir("realpath", { "file": "", "dir/inside": "" });
+  const root = String(dir);
+  using server = Bun.listen({ unix: join(root, "socket"), socket: { data() {} } });
+  const names = ["file", "dir", "socket"];
+  for (const name of names) symlinkSync(name, join(root, "to-" + name));
+  fs.chmodSync(join(root, "file"), 0);
+  fs.chmodSync(join(root, "dir"), 0o100);
+  try {
+    const refusals: Record<string, string> = {
+      "file": "EACCES",
+      "dir": "EACCES",
+      "socket": isMacOS ? "EOPNOTSUPP" : "ENXIO",
+    };
+    // Root can open the file and the directory.
+    for (const name of process.getuid!() === 0 ? ["socket"] : names) {
+      expect(() => closeSync(openSync(join(root, name), "r"))).toThrow(
+        expect.objectContaining({ code: refusals[name] }),
+      );
+    }
+    const paths = [...names.flatMap(name => [name, "to-" + name]), "dir/inside", "to-dir/inside"];
+    expect(
+      await resolveWithEveryVariant(
+        root,
+        paths.map(path => join(root, path)),
+      ),
+    ).toEqual(forEveryVariant(["file", "file", "dir", "dir", "socket", "socket", "dir/inside", "dir/inside"]));
+  } finally {
+    fs.chmodSync(join(root, "dir"), 0o755);
+  }
+});
+
+// Linux needs one for `O_PATH`.
+it.if(isMacOS)("realpath needs no file descriptor", async () => {
+  using dir = tempDir("realpath", { "file": "" });
+  symlinkSync("loop", join(String(dir), "loop"));
+  const script = `
+    const fs = require("node:fs");
+    const { relative } = require("node:path");
+    // getcwd() needs a descriptor on macOS.
+    const cwd = process.cwd();
+    try {
+      for (;;) fs.openSync("/dev/null", "r");
+    } catch (e) {
+      console.log(e.code);
+    }
+    for (const path of ["file", "missing", "file/below", "loop"]) {
+      for (const realpath of [fs.realpathSync, fs.realpathSync.native]) {
+        try {
+          console.log(path, relative(cwd, realpath(path)));
+        } catch (e) {
+          console.log(path, e.code);
+        }
+      }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 128 && exec "$@"', "sh", bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([
+    "EMFILE",
+    "file file",
+    "file file",
+    "missing ENOENT",
+    "missing ENOENT",
+    "file/below ENOTDIR",
+    "file/below ENOTDIR",
+    "loop ELOOP",
+    "loop ELOOP",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+// FreeBSD only has /dev/fd/0 to 2 unless fdescfs is mounted.
+it.if(isPosix && !isFreeBSD)("realpath leads from /dev/fd to the open file", async () => {
+  using dir = tempDir("realpath", { "file": "" });
+  const fd = openSync(join(String(dir), "file"), "r");
+  try {
+    expect(await resolveWithEveryVariant(String(dir), ["/dev/fd/" + fd])).toEqual(forEveryVariant(["file"]));
+  } finally {
+    closeSync(fd);
+  }
+});
+
+it.if(isMacOS)("realpath resolves what macOS only resolves for open()", async () => {
+  using dir = tempDir("realpath", { "file": "", "forked": "", "denied": "" });
+  const root = String(dir);
+  writeFileSync(join(root, "forked/..namedfork/rsrc"), "fork");
+  const deny = Bun.spawnSync(["/bin/chmod", "+a", "everyone deny readattr", join(root, "denied")]);
+  expect(deny.stderr.toString()).toBe("");
+  expect(deny.exitCode).toBe(0);
+  try {
+    const cases = [
+      [join(root, "forked/..namedfork/rsrc"), "forked/..namedfork/rsrc"],
+      [join(root, "denied"), "denied"],
+    ];
+    // macOS 15.4 is the first with these prefixes.
+    if (existsSync("/.nofollow" + root)) {
+      // 1,020 bytes fit in PATH_MAX, and no longer do after a prefix.
+      let deep = root;
+      while (deep.length < 1020) deep += "/" + Buffer.alloc(Math.min(200, 1019 - deep.length), "d").toString();
+      mkdirSync(deep, { recursive: true });
+      symlinkSync(deep, join(root, "to-deep"));
+      cases.push(
+        ["/.nofollow" + join(root, "file"), "file"],
+        ["/.resolve/1" + join(root, "file"), "file"],
+        ["/.resolve/0" + join(root, "to-deep"), relative(root, deep)],
+      );
+    }
+    expect(
+      await resolveWithEveryVariant(
+        root,
+        cases.map(([path]) => path),
+      ),
+    ).toEqual(forEveryVariant(cases.map(([, expected]) => expected)));
+  } finally {
+    Bun.spawnSync(["/bin/chmod", "-N", join(root, "denied")]);
+  }
+});
+
 // Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
 // a /dev/fd fallback for environments where /proc is broken (FreeBSD
 // Linuxulator) or absent (minimal containers).
@@ -3740,6 +3939,25 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  it.skipIf(isWindows)("closes a directory that got the number of a closed standard stream", async () => {
+    using dir = tempDir("rm-closed-stdin", { "tree/nested/file.txt": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         fs.closeSync(0);
+         fs.rmSync("tree", { recursive: true });
+         console.log(fs.existsSync("tree"), fs.openSync(".", "r"));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false 0\n", stderr: "", exitCode: 0 });
+  });
+
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/
   // statSync/unlinkSync all do this; recursive rmSync must agree
@@ -3937,6 +4155,56 @@ describe("rmdirSync", () => {
     expect(readdirSync(String(dir))).toEqual(["e"]);
     expect(() => (rmdirSync as any)(a, { recursive: true })).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
+});
+
+it("streams, cp, glob and watchFile take a URL of another implementation", async () => {
+  using dir = tempDir("fs-foreign-url", { "a.txt": "a" });
+  function foreignURL(name: string) {
+    const { href, protocol, hostname, pathname } = Bun.pathToFileURL(join(String(dir), name));
+    return { href, protocol, hostname, pathname } as URL;
+  }
+  expect(Buffer.concat(await createReadStream(foreignURL("a.txt")).toArray()).toString()).toBe("a");
+  await new Promise<void>(resolve => createWriteStream(foreignURL("b.txt")).end("b", resolve));
+  fs.cpSync(foreignURL("a.txt"), foreignURL("c.txt"));
+  expect(fs.globSync("*.txt", { cwd: foreignURL("") }).sort()).toEqual(["a.txt", "b.txt", "c.txt"]);
+  expect(readFileSync(join(String(dir), "b.txt"), "utf8")).toBe("b");
+  expect(readFileSync(join(String(dir), "c.txt"), "utf8")).toBe("a");
+  fs.watchFile(foreignURL("a.txt"), () => {});
+  fs.unwatchFile(foreignURL("a.txt"));
+});
+
+it("streams and cp do not take a URL of another implementation whose pathname is not a string", async () => {
+  using dir = tempDir("fs-foreign-url-pathname", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("node:fs");
+      const url = { href: "file:///5", protocol: "file:", hostname: "", pathname: 5 };
+      const uses = {
+        createWriteStream: () => fs.createWriteStream(url).on("error", () => {}).end("written"),
+        createReadStream: () => fs.createReadStream(url).on("error", () => {}),
+        cpSync: () => fs.cpSync(url, "copy"),
+      };
+      for (const name in uses) {
+        try {
+          uses[name]();
+          console.log(name, "took it");
+        } catch (error) {
+          console.log(name, error.code);
+        }
+      }
+      process.on("exit", () => console.log(fs.readdirSync(".")));`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const code = isWindows ? "ERR_INVALID_FILE_URL_PATH" : "ERR_INVALID_ARG_TYPE";
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`createWriteStream ${code}\ncreateReadStream ${code}\ncpSync ${code}\n[]\n`);
+  expect(exitCode).toBe(0);
 });
 
 describe("createReadStream", () => {
@@ -4959,6 +5227,8 @@ describe("fs/promises", () => {
   for (let withFileTypes of [false, true] as const) {
     const warmup = 1;
     const iterCount = isDebug ? 4 : 200;
+    // Sorting the 200 lists of some 7,000 names takes 12 of 14 seconds where ASAN sees the allocations of strings.
+    const timeout = isASAN ? 30_000 : 10_000;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -4992,9 +5262,9 @@ describe("fs/promises", () => {
     };
 
     if (withFileTypes) {
-      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, timeout);
     } else {
-      it("readdirSync(path, {recursive: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true} should work x 100", doIt, timeout);
     }
   }
 
@@ -6235,6 +6505,12 @@ it("lchown succeeds on every platform", async () => {
   }
 });
 
+it("an id beyond 2 ** 32 is printed as in Node.js", () => {
+  expect(() => fs.fchownSync(0, 2 ** 53, 0)).toThrow(
+    RangeError(`The value of "uid" is out of range. It must be >= -1 && <= 4294967295. Received 9_007_199_254_740_992`),
+  );
+});
+
 it("open flags verification", async () => {
   const invalid = 4_294_967_296;
   expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
@@ -6415,6 +6691,106 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
   // If bsize isn't the sentinel, the shim didn't interpose: fail loudly, don't skip.
   expect(result).toEqual({ type: TYPE, bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
   expect(proc.exitCode).toBe(0);
+});
+
+// FUSE and network file systems return EINTR from any call that a signal interrupts. libuv calls again.
+it.skipIf(!isGlibc || !cc)("calls that change files are made again after EINTR", async () => {
+  using dir = tempDir("fs-eintr", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+// Every other call on a file of the test fails.
+static int is_interrupted(const char *name, const char *path, int *calls) {
+  if ((path && !strstr(path, "eintr-")) || (*calls)++ % 2) return 0;
+  dprintf(2, "%s\\n", name);
+  errno = EINTR;
+  return 1;
+}
+
+#define INTERRUPT(name, path, parameters, arguments) \\
+  int name parameters { \\
+    static int calls; \\
+    if (is_interrupted(#name, path, &calls)) return -1; \\
+    return ((int (*) parameters) dlsym(RTLD_NEXT, #name)) arguments; \\
+  }
+
+INTERRUPT(fsync, NULL, (int file), (file))
+INTERRUPT(fdatasync, NULL, (int file), (file))
+INTERRUPT(truncate, path, (const char *path, off_t length), (path, length))
+INTERRUPT(link, to, (const char *from, const char *to), (from, to))
+INTERRUPT(unlink, path, (const char *path), (path))
+INTERRUPT(rmdir, path, (const char *path), (path))
+INTERRUPT(unlinkat, path, (int folder, const char *path, int flags), (folder, path, flags))
+
+char *mkdtemp(char *name) {
+  static int calls;
+  if (!is_interrupted("mkdtemp", name, &calls)) return ((char *(*)(char *)) dlsym(RTLD_NEXT, "mkdtemp"))(name);
+  // As libc leaves it.
+  memcpy(name + strlen(name) - 6, "abc123", 6);
+  return NULL;
+}
+`,
+    "index.js": `
+import fs from "node:fs";
+import { promisify } from "node:util";
+const flavors = {
+  sync: name => fs[name + "Sync"],
+  callback: name => promisify(fs[name]),
+  promises: name => fs.promises[name] ?? promisify(fs[name]),
+};
+for (const [flavor, functionNamed] of Object.entries(flavors)) {
+  const call = async (name, ...args) => {
+    try {
+      return await functionNamed(name)(...args);
+    } catch (error) {
+      console.log(flavor, name, error.code);
+    }
+  };
+  fs.writeFileSync("eintr-file", "hello");
+  fs.mkdirSync("eintr-folder-" + flavor);
+  const fd = fs.openSync("eintr-file", "r+");
+  await call("fsync", fd);
+  await call("fdatasync", fd);
+  await call("truncate", "eintr-file", 2);
+  await call("link", "eintr-file", "eintr-link-" + flavor);
+  await call("unlink", "eintr-file");
+  await call("rmdir", "eintr-folder-" + flavor);
+  const made = await call("mkdtemp", "eintr-temp-");
+  console.log(flavor, fs.statSync(made).isDirectory(), fs.readFileSync("eintr-link-" + flavor, "utf8"));
+  await call("rm", "eintr-link-" + flavor, { recursive: true });
+}
+console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder|link)/.test(name)));
+`,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build the EINTR shim:\n${compile.stderr.toString()}`);
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${soPath}:${bunEnv.LD_PRELOAD}` : soPath },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const interrupted = "fsync\nfdatasync\ntruncate\nlink\nunlink\nrmdir\nmkdtemp\nunlinkat\n";
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "sync true he\ncallback true he\npromises true he\n[]\n",
+    stderr: interrupted + interrupted + interrupted,
+    exitCode: 0,
+  });
 });
 
 // A subdirectory can be removed between the moment the recursive walk lists it
@@ -7320,7 +7696,7 @@ it.if(isPosix)("realpath reports ENAMETOOLONG when cwd plus the path exceeds the
 
   // Each relative path is within the per-argument limit and only its absolute
   // form is too long. `longPath` does not exist. `deep` does, so the native
-  // variants open it and find out when they ask for the path of the descriptor.
+  // variants find out when the system has resolved it and cannot say where it is.
   const script = `
     const fs = require("node:fs");
     const longPath = "a".repeat(4090);
@@ -7392,6 +7768,15 @@ it("fs.writeFile (callback) keeps the source buffer attached while the write is 
   expect(buf.buffer.detached).toBe(true);
 
   expect(readFileSync(file, "latin1")).toBe("FFFFFFFF");
+});
+
+it("fs.promises.readdir({ recursive: true }) is done with a buffer path argument when it returns", async () => {
+  using dir = tempDir("fs-readdir-path-unpinned", { "a/b.txt": "" });
+  const path = new TextEncoder().encode(String(dir)).slice();
+  const promise = fs.promises.readdir(path as any, { recursive: true });
+  new Uint8Array(path.buffer.transfer()).fill(0);
+  expect(path.buffer.detached).toBe(true);
+  expect((await promise).sort()).toEqual(["a", join("a", "b.txt")]);
 });
 
 it("fs.promises.writeFile keeps a buffer path argument attached while options are read", async () => {

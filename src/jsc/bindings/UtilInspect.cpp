@@ -6,6 +6,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ZigGlobalObject.h"
+#include "JSBuffer.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
@@ -52,16 +53,20 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSFunction* inspectFn = globalObject->utilInspectFunction();
-    RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
-    arguments.append(options);
-    arguments.append(inspectFn);
+    if (WebCore::isInspectFunctionOfBuffer(functionToCall)) {
+        // Of its operands it reads `showHidden` of the second.
+        arguments.append(constructEmptyObject(globalObject));
+    } else {
+        JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSFunction* inspectFn = globalObject->utilInspectFunction();
+        RETURN_IF_EXCEPTION(scope, {});
+        arguments.append(options);
+        arguments.append(inspectFn);
+    }
 
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});

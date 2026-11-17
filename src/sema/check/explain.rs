@@ -1,6 +1,7 @@
 //! Diagnostics formatted for display.
 
 use super::Checker;
+use super::aot::{DiagnosticClass, DiagnosticSubject};
 use super::sink::{Args, Reported};
 use crate::messages::{self, Category};
 use crate::program::FileId;
@@ -91,6 +92,8 @@ pub struct Explained {
     pub args: Args,
     pub message_chain: Vec<MessageChain>,
     pub related: Vec<RelatedExplained>,
+    pub class: DiagnosticClass,
+    pub subject: DiagnosticSubject,
 }
 
 impl Checker<'_, '_> {
@@ -137,6 +140,7 @@ impl Explained {
             (category, super::print::to_valid_utf8(text), message_chain)
         }
         let mut d = d;
+        let (class, subject) = (d.class, d.subject);
         let (category, text, message_chain) = reported(&mut d, Category::Error);
         Explained {
             start: d.start,
@@ -168,6 +172,8 @@ impl Explained {
                     }
                 })
                 .collect(),
+            class,
+            subject,
         }
     }
 }

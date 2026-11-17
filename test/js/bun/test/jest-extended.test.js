@@ -190,6 +190,73 @@ describe("jest-extended", () => {
     ).toThrow("Bun!");
   });
 
+  test("expect.toSatisfy()", () => {
+    const isOdd = value => value % 2 === 1;
+
+    expect(3).toEqual(expect.toSatisfy(isOdd));
+    expect(2).not.toEqual(expect.toSatisfy(isOdd));
+    expect({ a: 3 }).toEqual({ a: expect.toSatisfy(isOdd) });
+    expect({ a: 2 }).not.toEqual({ a: expect.toSatisfy(isOdd) });
+    expect({ a: 2 }).toEqual({ a: expect.not.toSatisfy(isOdd) });
+    expect({ a: 3 }).not.toEqual({ a: expect.not.toSatisfy(isOdd) });
+    expect([1, 2]).toStrictEqual([expect.toSatisfy(isOdd), expect.not.toSatisfy(isOdd)]);
+    expect({ a: 3, b: 1 }).toMatchObject({ a: expect.toSatisfy(isOdd) });
+    expect([2, 3]).toContainEqual(expect.toSatisfy(isOdd));
+    expect([2, 4]).not.toContainEqual(expect.toSatisfy(isOdd));
+
+    const called = jest.fn();
+    called(3);
+    expect(called).toHaveBeenCalledWith(expect.toSatisfy(isOdd));
+    expect(called).not.toHaveBeenCalledWith(expect.not.toSatisfy(isOdd));
+
+    // The predicate gets the received value alone, and any truthy result counts.
+    const predicate = jest.fn(() => "truthy");
+    expect(7).toEqual(expect.toSatisfy(predicate, "message"));
+    expect(predicate.mock.calls).toEqual([[7]]);
+    expect(7).not.toEqual(expect.toSatisfy(() => 0));
+    expect(7).not.toEqual(expect.toSatisfy(() => undefined));
+    expect(7).toEqual(expect.not.toSatisfy(() => undefined));
+
+    expect(() =>
+      expect(1).toEqual(
+        expect.toSatisfy(() => {
+          throw new Error("Bun!");
+        }),
+      ),
+    ).toThrow("Bun!");
+  });
+
+  if (isBun) {
+    test("expect.toSatisfy() prints its arguments on one line", () => {
+      const isOdd = value => value % 2 === 1;
+      const messageOf = fn => {
+        try {
+          fn();
+        } catch (e) {
+          return Bun.stripANSI(e.message);
+        }
+      };
+
+      expect(inspect(expect.toSatisfy(isOdd))).toBe("toSatisfy<[Function isOdd]>");
+      expect(inspect(expect.toSatisfy(isOdd, "is odd"))).toBe('toSatisfy<[Function isOdd], "is odd">');
+      expect(inspect(expect.not.toSatisfy(() => true))).toBe("not.toSatisfy<[Function anonymous]>");
+      expect(messageOf(() => expect({ a: 2 }).toEqual({ a: expect.toSatisfy(isOdd, "is odd") }))).toContain(
+        '-   "a": toSatisfy<[Function isOdd], "is odd">,\n+   "a": 2,\n',
+      );
+      expect({ a: expect.toSatisfy(isOdd) }).toMatchInlineSnapshot(`
+        {
+          "a": toSatisfy<[Function isOdd]>,
+        }
+      `);
+    });
+
+    test("expect.toSatisfy() needs a function", () => {
+      for (const make of [() => expect.toSatisfy(), () => expect.toSatisfy(5), () => expect.not.toSatisfy("isOdd")]) {
+        expect(make).toThrow("Expected a function");
+      }
+    });
+  }
+
   // Array
 
   test("toBeArray()", () => {

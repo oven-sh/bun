@@ -1,0 +1,25 @@
+# -- source: each-parent-that-a-class-may-have-stores-in-line-into-its-instances.js
+# class Node { #raw = 1; shown = 2; read() { return this.#raw; } }
+# class Leaf { #only = "only"; read() { return this.#only; } }
+# const parents = [Node, Leaf];
+# class Either extends parents[sink() ? 1 : 0] { extra = 3; }
+# class Below extends Either {}
+# sink(new Either().read(), new Below().read(), new Node().read(), new Leaf().read());
+# -- end of source
+# `class Either extends parents[n] {}`: the parent is one of two classes. The front end names both as supertypes of Either, and the reader gives Either a field for each field of either,
+# inherited from the parent's own field and not required: Link keeps one cell for both, so what it proves of Node's #raw it proves of the room for it in Either.
+# Either and what lies below it are expected below each parent: the constructor of each tests for its own layout and for those, and stores in line. Where the places differ the offset goes by the shape.
+# Two classes that one class may have as its parent stand in one family with all below them.
+# f1 = the constructor of Node, f3 = the constructor of Leaf
+# RUN(LAYOUTS): print
+# LAYOUTS: layout L2 {{*}}name="Either"{{*}}key=#"#raw"@L0 {{*}}IsInherited] originLayout=L0 originField=1}{{*}}key=#"#only"@L1 {{*}}IsInherited] originLayout=L1 originField=1}{{*}}supertypes=[L0, L1]
+# RUN(LINK): link fields families mechanisms=all
+# LINK: field L2.{{*}} #"#raw"@L0 proven=int[0, 2147483647] writers-known
+# LINK: field L2.{{*}} #"#only"@L1 proven=string writers-known
+# LINK: family F{{*}} [L0, L1, L2, L3]
+# RUN(WALK): walk f1 f3 mechanisms=all
+# WALK: ShapeTest {{*}}layouts=[L0, L2, L3]
+# WALK: PutSlotOrAdd {{*}}key=#"#raw"@L0 receivers=[L0, L2, L3]
+# WALK: PutSlotOrAdd {{*}}key="shown" receivers=[L0, L2, L3]
+# WALK: ShapeTest {{*}}layouts=[L1, L2, L3]
+# WALK: PutSlotOrAdd {{*}}key=#"#only"@L1 receivers=[L1, L2, L3]

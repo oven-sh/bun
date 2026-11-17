@@ -1,0 +1,23 @@
+# -- source: main.ts
+# type Row = { id: number; price: number; stock: number };
+# const make = (): any[] => { const r: any[] = JSON.parse("[]"); for (let i = 0; i < 6; i++) r.push({ id: i, price: i * 2, stock: i + 1 }); return r; };
+# const log: string[] = []; let asked = 0;
+# function raise(rows: Row[], key: "price" | "stock", by: number): number { "use strict"; for (let i = 0; i < rows.length; i++) rows[i]![key] = (rows[i]![key] + by) & 1023; return rows[3]![key]; }
+# (globalThis as any).kept = raise;
+# const out: string[] = [];
+# const say = (r: any[], k: any) => { try { out.push(String(raise(r, k, 3)) + ":" + r.map((x) => x && x[k]).join()); } catch (e: any) { out.push(e.constructor.name + ":" + r.map((x) => x && x.price).join()); } };
+# for (const k of ["price", "stock", "id", "none", 0, null, { toString() { asked++; return "price"; } }, "pri" + JSON.parse('"ce"')]) say(make(), k);
+# { const r = make(); Object.freeze(r[2]); say(r, "price"); }
+# { const r = make(); let v = 1; Object.defineProperty(r[2], "price", { get() { log.push("g"); return v; }, set(x) { log.push("s" + x); v = x; } }); say(r, "price"); }
+# { const r = make(); r[2] = Object.create({ set price(x: number) { log.push("up" + x); }, get price() { return 7; } }); say(r, "price"); }
+# { const r = make(); r[2] = { stock: 1, price: 200, id: 2, more: 3 }; say(r, "price"); }
+# { const r = make(); delete r[2].price; say(r, "price"); }
+# { const r = make(); r[2].price = "7"; say(r, "price"); }
+# { const r = make(); r[2] = null; say(r, "price"); }
+# print(out.join("|"), asked, log.join());
+# -- end of source
+# A written type is a guess. Whatever comes for the key of a store, and whatever row stands in the list, is stored into as plain does: a third name, a new name, a number, null, an object whose toString is counted (twice a
+# turn: the read and the store), a rope; a frozen row throws at its own turn with the rows before it stored; a setter on the row or above it is called; a row of another shape, a row without the field, a text in the field.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 9:3,5,7,9,11,13|7:4,5,6,7,8,9|6:3,4,5,6,7,8|0:0,0,0,0,0,0|0:0,0,0,0,0,0|0:0,0,0,0,0,0|9:3,5,7,9,11,13|9:3,5,7,9,11,13|TypeError:3,5,4,6,8,10|9:3,5,4,9,11,13|9:3,5,7,9,11,13|9:3,5,203,9,11,13|9:3,5,0,9,11,13|9:3,5,73,9,11,13|TypeError:3,5,,6,8,10 19 g,s4,g,up10
+# CHECK-NEXT: exited with 0

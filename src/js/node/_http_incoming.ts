@@ -96,7 +96,7 @@ function IncomingMessage(socket) {
     Readable.$call(this, arguments[7] ? { highWaterMark: arguments[7].readableHighWaterMark } : undefined);
   } else {
     // Node.js-style construction from a net.Socket (used by the HTTP client
-    // and anything driving the llhttp parser through node:_http_common).
+    // and anything driving the parser through node:_http_common).
     let streamOptions;
 
     if (socket) {
@@ -165,7 +165,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
 });
 
 // Materializes on first read from the bytes captured on the native handle
-// (takeRawHeaders). Assignment (the llhttp client path, or user code)
+// (takeRawHeaders). Assignment (the client path, or user code)
 // short-circuits materialization through the setter.
 function getRawHeaders(this: any) {
   let raw = this[kRawHeaders];

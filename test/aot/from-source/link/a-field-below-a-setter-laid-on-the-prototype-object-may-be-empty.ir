@@ -1,0 +1,21 @@
+# The layout lists `name` as a field because the constructor stores it. With a setter above, the store runs the setter and the slot stays empty; and the setter sees the object while the fields behind that store are still empty. So no field of that layout is filled by its constructions, and none is of the birth. The second function has an accessor under a name that its constructor never looks up: its fields stay filled.
+# -- source: main.js
+# function User(name) { this.age = 1; this.name = name; this.more = 2; }
+# Object.defineProperty(User.prototype, "name", { get() { return this._name; }, set(v) { this._name = v.trim(); }, configurable: true });
+# function Plain(name) { this.age = 1; this.name = name; }
+# Object.defineProperty(Plain.prototype, "other", { get() { return this.name; }, configurable: true });
+# const u = new User(" a "), p = new Plain("b");
+# print(u.name, Object.keys(u).join(), u.age + u.more, p.other, p.age);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "age"
+# CHECK-NOT: filled
+# CHECK-NOT: of-birth
+# CHECK: field L1.0 "age" {{*}}filled
+# CHECK: field L1.1 "name" {{*}}filled
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: a age,_name,more 3 b 1
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: a age,_name,more 3 b 1
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: a age,_name,more 3 b 1

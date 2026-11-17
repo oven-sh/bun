@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Require generator functions to contain `yield`.
 pub struct RequireYield;
 
-const MISSING_YIELD: Message =
-    Message::new("missingYield", "This generator function does not have 'yield'.");
+const MISSING_YIELD: &Message =
+    &Message::new("missingYield", "This generator function does not have 'yield'.");
 
 impl Rule for RequireYield {
     const META: Meta = Meta::eslint("require-yield", Kind::Suggestion).recommended().reports_on_exit();

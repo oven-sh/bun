@@ -6,9 +6,7 @@ const chainable = { returns: b.self, passThis: true } as const;
 
 export const CronJob = b.class({
   rustPath: "crate::api::cron::CronJob",
-  refCounted: true,
-  finalize: true,
-  internalFields: ["callback", "pendingPromise", "cron"],
+  internalFields: ["callback", "pendingTick", "cron"],
   proto: {
     cron: { internalField: "cron" },
     ref: chainable,
@@ -18,10 +16,10 @@ export const CronJob = b.class({
   },
 });
 
-const reaction = {
-  args: { value: b.any, context: b.nativePromiseContext("crate::api::cron::CronJob") },
-  capability: "js",
-} as const;
+/** A tick whose promise is pending. `job` is emptied when the job stops. */
+export const CronTick = b.class({ rustPath: "crate::api::cron::CronTick", internalFields: ["job", "promise"] });
+
+const reaction = { args: { value: b.any, context: CronTick.withValue }, capability: "js" } as const;
 
 /** The reactions to the promise a job's callback returned. */
 export const onPromiseResolve = b.fn({ ...reaction, export: "Bun__CronJob__onPromiseResolve" });
@@ -32,7 +30,7 @@ export const CronOptions = b.dictionary(
   { allowArray: true, reportedAs: "Bun.cron: options" },
 );
 
-const signature = { export: "Bun__Cron__cron", capability: "js", throws: true } as const;
+const signature = { export: "Bun__Cron__cron", feature: "Cron", capability: "js", throws: true } as const;
 
 export const cron = b.overloads(
   /** An OS-level job. */
@@ -45,7 +43,7 @@ export const cron = b.overloads(
       title: "Bun.cron() expects a string title as the third argument",
     },
     returns: b.any,
-    rustPath: "crate::api::cron::register_os_job",
+    rustPath: "crate::api::cron_os::register",
   },
   /** An in-process job, whose `cron` is the `schedule` it was given. */
   {
@@ -62,15 +60,18 @@ export const cron = b.overloads(
 
 export const remove = b.fn({
   export: "Bun__Cron__remove",
+  feature: "Cron",
   args: { title: b.string.utf8 },
   expected: { title: "Bun.cron.remove() expects a string title" },
   returns: b.any,
+  rustPath: "crate::api::cron_os::remove",
   capability: "js",
   throws: true,
 });
 
 export const parse = b.fn({
   export: "Bun__Cron__parse",
+  feature: "Cron",
   args: { expression: b.string.utf8, relativeDate: b.f64.allowDate.nullable, options: CronOptions.nullable },
   expected: {
     expression: "Bun.cron.parse() expects a string cron expression as the first argument",

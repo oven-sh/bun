@@ -24,6 +24,19 @@ type Result<T> = crate::CrateResult<T>;
 
 // The 25+ per-token `t_*` helpers are private; only `parse_stmt` is surfaced.
 
+/// The basename of `path` as an identifier, for the namespace of an `export * from`.
+fn export_star_name<'a>(arena: &'a bun_alloc::Arena, path: &[u8]) -> &'a [u8] {
+    use std::io::Write as _;
+    let base = fs::PathName::init(path).non_unique_name_string_base();
+    let mut buf: Vec<u8> = Vec::new();
+    write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
+    // Strict code cannot declare these. esbuild has this suffix on every such name.
+    if crate::parser::is_eval_or_arguments(&buf) {
+        buf.extend_from_slice(b"_star");
+    }
+    arena.alloc_slice_copy(&buf)
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Note on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
     // `parse_stmt` is invoked once per leading statement token; profiling showed its
@@ -89,15 +102,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             //   "@decorator declare abstract class Foo {}"
             //   "@decorator export declare class Foo {}"
             //   "@decorator export declare abstract class Foo {}"
-            //
-            // spec stores the Vec<Expr> directly into `opts.ts_decorators.values`.
-            // `DeferredTsDecorators::values` is currently typed `&'a [Expr]` (parser.rs), so until
-            // that field is widened to `ExprNodeList` we copy into the arena (Expr is `Copy`) and
-            // let `ts_decorators` drop normally — no `mem::forget` / `from_raw_parts` lifetime
-            // laundering (forbidden per PORTING.md §Forbidden patterns).
-            let ts_decorators_slice: &'a [Expr] = p.arena.alloc_slice_copy(ts_decorators.slice());
             opts.ts_decorators = Some(DeferredTsDecorators {
-                values: ts_decorators_slice,
+                values: ts_decorators,
                 scope_index,
             });
 
@@ -1238,15 +1244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "export * from 'path'"
                     p.lexer.expect_contextual_keyword(b"from")?;
                     path = p.parse_path()?;
-                    // Sanitize the basename into an identifier and copy into the arena.
-                    let name: &'a [u8] = {
-                        use std::io::Write as _;
-                        let base = fs::PathName::init(path.text).non_unique_name_string_base();
-                        let mut buf: Vec<u8> = Vec::new();
-                        write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base))
-                            .expect("unreachable");
-                        p.arena.alloc_slice_copy(&buf)
-                    };
+                    let name = export_star_name(p.arena, path.text);
                     namespace_ref = p.store_name_in_ref(name);
                 }
 

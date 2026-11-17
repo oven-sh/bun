@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const rounds: number = JSON.parse("9");
+# const ring: any[] = [null, null, null, null];
+# async function make(start: number, flag: Promise<string>) { let at = start; return { first: () => ++at, second: () => at + 1, third: () => at + 2, fourth: () => at + 3, fifth: () => at + 4, sixth: () => at + 5, step: 1, mode: await flag }; }
+# async function fill() { for (let t = 0; t < rounds; t++) ring[t & 3] = await make(t, Promise.resolve((t & 1) === 0 ? "even" : "odd")); }
+# fill().then(() => {
+#   const made = ring[(rounds - 1) & 3];
+#   print(made.first(), made.first(), made.sixth(), made.first === made.first, made.third === made.third, made.first === ring[0].first, made.step, made.mode, ring[1].mode, Object.keys(made).join());
+# });
+# -- end of source
+# The function waits between the closures and the birth of the object that takes them.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 9 10 15 true true true 1 even odd first,second,third,fourth,fifth,sixth,step,mode
+# ANSWERS-NEXT: exited with 0

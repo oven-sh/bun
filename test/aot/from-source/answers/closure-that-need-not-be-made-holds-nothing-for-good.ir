@@ -1,0 +1,33 @@
+# -- source: main.js
+# const kept = [];
+# function always() {
+#     const helper = (k) => (k + 2) | 0;
+#     helper.table = { size: 5 };
+#     const Cat = function Cat(k) { this.n = (helper(k) + helper.table.size) | 0; };
+#     Cat.prototype.read = function () { return this.n; };
+#     kept.push(Cat);
+#     const use = () => (helper(1) + helper.table.size) | 0;
+#     return (use() + new Cat(1).read()) | 0;
+# }
+# function maybe(withClass) {
+#     const helper = (k) => (k + 2) | 0;
+#     helper.table = { size: 5 };
+#     const Dog = withClass ? function Dog(k) { this.n = (helper(k) + helper.table.size) | 0; } : null;
+#     if (Dog !== null) { Dog.prototype.read = function () { return this.n; }; kept.push(Dog, new Dog(1).read()); }
+#     const use = () => (helper(1) + helper.table.size) | 0;
+#     return use();
+# }
+# print(always(), maybe(JSON.parse("false")), kept.length);
+# -- end of source
+# What a closure that never dies has captured never dies. That the closure is written does not say that it is made.
+# always() makes Cat on every way to its return: the helper and its table are held for good in any build, so the helper lies in a word, and Cat and use capture nothing.
+# maybe() makes Dog in one arm. Where the arm is not taken nothing but use holds the helper, and it is let go with use: it stays a capture of both.
+# RUN(UNITS): plan units mechanisms=all
+# UNITS: unit f4:Body (Void
+# UNITS: unit f6:Body (Void
+# UNITS-NOT: unit f8:Body (Void
+# UNITS-NOT: unit f10:Body (Void
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 16 8 1
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 16 8 1

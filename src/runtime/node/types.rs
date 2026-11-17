@@ -13,7 +13,7 @@ pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
-use bun_sys::{self, Fd, Mode, O};
+use bun_sys::{self, Fd, IoVec, IoVecMut, Mode, O};
 
 use crate::node::util::validators;
 use crate::webcore::{Blob, Request, Response};
@@ -60,8 +60,6 @@ impl FdArgExt for Fd {}
 // `system_error.to_error_instance(ctx)` resolves via the canonical impl.
 pub(crate) use bun_sys_jsc::SystemErrorJsc;
 
-pub(crate) use bun_sys::PlatformIoVec;
-
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Whether a call is serviced on the JS thread before it returns (`Sync`) or
@@ -105,16 +103,9 @@ pub(crate) enum BlobOrStringOrBuffer {
     StringOrBuffer(StringOrBuffer<'static>),
 }
 
-impl Drop for BlobOrStringOrBuffer {
-    fn drop(&mut self) {
-        match self {
-            Self::Blob(blob) => {
-                let _ = blob.store.with_mut(|s| s.take());
-            }
-            Self::StringOrBuffer(_) => {
-                // StringOrBuffer's own Drop handles cleanup.
-            }
-        }
+impl AsRef<[u8]> for BlobOrStringOrBuffer {
+    fn as_ref(&self) -> &[u8] {
+        self.slice()
     }
 }
 
@@ -124,10 +115,6 @@ impl BlobOrStringOrBuffer {
             Self::Blob(blob) => blob.shared_view(),
             Self::StringOrBuffer(str) => str.slice(),
         }
-    }
-
-    pub(crate) fn byte_length(&self) -> usize {
-        self.slice().len()
     }
 
     pub(crate) fn from_js_maybe_file(
@@ -165,9 +152,6 @@ impl BlobOrStringOrBuffer {
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         match value.js_type() {
             jsc::JSType::DOMWrapper => {
-                // `as_class_ref` is the safe shared-borrow downcast (centralised
-                // deref proof in `JSValue`); the JS wrapper roots the payload
-                // while `value` is on the stack.
                 if let Some(blob) = value.as_class_ref::<Blob>() {
                     return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
                 }
@@ -177,9 +161,7 @@ impl BlobOrStringOrBuffer {
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
+                            return Ok(Some(Self::Blob(Box::new(any_blob.to_blob(global)))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -192,9 +174,7 @@ impl BlobOrStringOrBuffer {
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
+                            return Ok(Some(Self::Blob(Box::new(any_blob.to_blob(global)))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -589,6 +569,7 @@ bun_core::comptime_string_map! {
         b"latin1" => Encoding::Latin1,
         b"buffer" => Encoding::Buffer,
         b"utf16le" => Encoding::Utf16le,
+        b"utf-16le" => Encoding::Utf16le,
         b"utf16-le" => Encoding::Utf16le,
         b"base64url" => Encoding::Base64url,
     };
@@ -768,24 +749,19 @@ pub(crate) struct NameTooLong;
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
 pub(crate) trait PathLikeExt {
-    fn slice_z_with_force_copy<'a, const FORCE: bool>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> &'a ZStr
-    where
-        Self: Sized;
-    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
+    /// Writes the path to the start of `buf`, or "" if it does not fit.
+    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
     #[cfg(windows)]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
+    fn slice_w<'a>(&self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
+    fn os_path<'a>(&self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
     fn os_path_kernel32<'a>(
-        &'a self,
+        &self,
         buf: &'a mut PathBuffer,
     ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
@@ -821,6 +797,23 @@ pub(crate) trait PathLikeExt {
     ) -> JsResult<Option<PathLike<'static>>>
     where
         Self: Sized;
+
+    /// For a path that is stored rather than opened, like the target of a symlink: a relative one stays relative.
+    fn from_js_as_written(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        name: &str,
+    ) -> JsResult<PathLike<'static>>
+    where
+        Self: Sized;
+
+    fn from_js_resolved_by(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        relative_paths: RelativePaths,
+    ) -> JsResult<Option<PathLike<'static>>>
+    where
+        Self: Sized;
     /// Throws ENAMETOOLONG too; [`Self::from_js`] defers it for async bindings instead.
     fn from_bun_string(
         global: &JSGlobalObject,
@@ -842,13 +835,7 @@ pub(crate) trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike<'_> {
-    // Const-generics can't change return mutability, so this always returns
-    // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
-    // separate method.
-    fn slice_z_with_force_copy<'a, const FORCE: bool>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> &'a ZStr {
+    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr {
         let sliced = self.slice();
 
         #[cfg(windows)]
@@ -879,42 +866,18 @@ impl PathLikeExt for PathLike<'_> {
                         &mut buf[4..],
                     )
                     .len();
-                    buf[4 + n] = 0;
-                    // SAFETY: buf[4+n] == 0 written above.
-                    return ZStr::from_buf(&buf[..], 4 + n);
+                    return ZStr::nul_terminate(buf, 4 + n);
                 }
-                // reshaped for borrowck — capture the length so
-                // the `Ok` borrow ends at the match, then re-derive.
-                let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
-                    Ok(res) => Some(res.len()),
+                match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
+                    buf, sliced,
+                ) {
+                    Ok(res) => return res,
                     // The cwd root + path don't fit `buf` (UNC cwds can push
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
-                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => {}
                     Err(e) => panic!("Error while resolving path: {e:?}"),
-                };
-                if let Some(len) = resolved_len {
-                    // SAFETY: `resolve_cwd_with_external_buf_z` wrote the NUL
-                    // at `buf[len]`.
-                    return ZStr::from_buf(&buf[..], len);
                 }
-            }
-        }
-
-        if sliced.is_empty() {
-            if !FORCE {
-                return ZStr::EMPTY;
-            }
-
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
-        }
-
-        if !FORCE {
-            if sliced[sliced.len() - 1] == 0 {
-                // SAFETY: last byte is NUL.
-                return ZStr::from_slice_with_nul(sliced);
             }
         }
 
@@ -924,29 +887,16 @@ impl PathLikeExt for PathLike<'_> {
                 sliced.len(),
                 buf.len()
             );
-            if !FORCE {
-                return ZStr::EMPTY;
-            }
-
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
+            return ZStr::nul_terminate(buf, 0);
         }
 
         buf[..sliced.len()].copy_from_slice(sliced);
-        buf[sliced.len()] = 0;
-        // SAFETY: buf[sliced.len()] == 0 written above.
-        ZStr::from_buf(&buf[..], sliced.len())
-    }
-
-    #[inline]
-    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
-        self.slice_z_with_force_copy::<false>(buf)
+        ZStr::nul_terminate(buf, sliced.len())
     }
 
     #[cfg(windows)]
     #[inline]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
+    fn slice_w<'a>(&self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
         let sliced = self.slice();
         if !strings::fits_in_wide_path_buffer(sliced) {
             return Err(NameTooLong);
@@ -955,20 +905,20 @@ impl PathLikeExt for PathLike<'_> {
     }
 
     #[inline]
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
+    fn os_path<'a>(&self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
             return self.slice_w(buf);
         }
         #[cfg(not(windows))]
         {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
+            Ok(self.slice_z(buf))
         }
     }
 
     #[inline]
     fn os_path_kernel32<'a>(
-        &'a self,
+        &self,
         buf: &'a mut PathBuffer,
     ) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
@@ -988,11 +938,8 @@ impl PathLikeExt for PathLike<'_> {
                 if !strings::fits_in_wide_path_buffer(s) {
                     return Err(NameTooLong);
                 }
-                // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte
-                // alignment is runtime-asserted inside `bytes_as_slice_mut`;
-                // see PathBuffer doc comment for
-                // why the buffer is always sufficiently aligned in practice.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                // The PathBuffer doc comment says why the buffer is aligned in practice.
+                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
                 return Ok(strings::to_kernel32_path(buf_u16, s));
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
@@ -1024,14 +971,12 @@ impl PathLikeExt for PathLike<'_> {
                     return Err(NameTooLong);
                 }
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
-                // SAFETY: same alignment note as above.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
                 return Ok(strings::to_kernel32_path(buf_u16, normal));
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
-                // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
                 return Ok(strings::to_kernel32_path(buf_u16, b"."));
             }
             let normal = bun_paths::resolve_path::normalize_string_buf::<
@@ -1042,14 +987,13 @@ impl PathLikeExt for PathLike<'_> {
             if !strings::fits_in_wide_path_buffer(normal) {
                 return Err(NameTooLong);
             }
-            // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-            let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+            let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
             return Ok(strings::to_kernel32_path(buf_u16, normal));
         }
 
         #[cfg(not(windows))]
         {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
+            Ok(self.slice_z(buf))
         }
     }
 
@@ -1064,6 +1008,40 @@ impl PathLikeExt for PathLike<'_> {
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Option<PathLike<'static>>> {
+        // The common road: a string, and no folder of an executable to start from.
+        let Some(arg) = arguments.next() else {
+            return Ok(None);
+        };
+        if arg.js_type() == jsc::JSType::String
+            && bun_core::working_directory_in_executable().is_none()
+            && !bun_standalone_graph::has_written_files()
+        {
+            let str = arg.to_bun_string(ctx)?;
+            arguments.eat();
+            let path = path_like_from_string(ctx, str, arguments.will_be_async)?;
+            return Valid::path_length(path, ctx, arguments).map(Some);
+        }
+        Self::from_js_resolved_by(ctx, arguments, RelativePaths::StartAtWorkingDirectory)
+    }
+
+    fn from_js_as_written(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        name: &str,
+    ) -> JsResult<PathLike<'static>> {
+        Self::from_js_resolved_by(ctx, arguments, RelativePaths::StayAsWritten)?.ok_or_else(|| {
+            ctx.throw_invalid_arguments(format_args!("{name} must be a string or TypedArray"))
+        })
+    }
+
+    fn from_js_resolved_by(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        relative_paths: RelativePaths,
+    ) -> JsResult<Option<PathLike<'static>>> {
+        let will_be_async = arguments.will_be_async;
+        let from_string =
+            |str: bun_core::String| path_like_resolved_by(ctx, str, relative_paths, will_be_async);
         let Some(arg) = arguments.next() else {
             return Ok(None);
         };
@@ -1084,16 +1062,19 @@ impl PathLikeExt for PathLike<'_> {
                 Valid::path_buffer(buffer.slice(), ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
                 arguments.eat();
-                PathLike::Buffer(buffer)
+                match find_path_meant(buffer.slice(), relative_paths) {
+                    Some(path) => path,
+                    None => PathLike::Buffer(buffer),
+                }
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
                 let str = arg.to_bun_string(ctx)?;
                 arguments.eat();
-                path_like_from_string(ctx, str, arguments.will_be_async)?
+                from_string(str)?
             }
             _ => {
-                if let Some(domurl) = jsc::DOMURL::cast(arg) {
+                if let Some(domurl) = jsc::DOMURL::cast(&arg) {
                     use jsc::dom_url::ToFileSystemPathError;
                     let str = match domurl.file_system_path() {
                         Ok(s) => s,
@@ -1131,7 +1112,7 @@ impl PathLikeExt for PathLike<'_> {
                             .throw());
                     }
                     arguments.eat();
-                    path_like_from_string(ctx, str, arguments.will_be_async)?
+                    from_string(str)?
                 } else {
                     return Ok(None);
                 }
@@ -1146,12 +1127,63 @@ impl PathLikeExt for PathLike<'_> {
         str: bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike<'static>> {
-        let path = path_like_from_string(global, str, will_be_async)?;
+        let relative_paths = RelativePaths::StartAtWorkingDirectory;
+        let path = path_like_resolved_by(global, str, relative_paths, will_be_async)?;
         match Valid::path_too_long(path.slice()) {
             Some(err) => Err(global.throw_value(err.to_error_instance(global))),
             None => Ok(path),
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelativePaths {
+    StartAtWorkingDirectory,
+    StayAsWritten,
+}
+
+/// The system resolves a relative path against its own working directory, which is never a folder of the executable.
+fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<Vec<u8>> {
+    use bun_paths::resolve_path::{self, platform};
+    let directory = bun_core::working_directory_in_executable()?;
+    if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
+        return None;
+    }
+    Some(resolve_path::join_abs_string::<platform::Auto>(directory, &[path]).to_vec())
+}
+
+/// Whether `find_path_meant` may find another path than the one that is written.
+fn may_mean_another_path() -> bool {
+    bun_standalone_graph::has_written_files()
+        || bun_core::working_directory_in_executable().is_some()
+}
+
+/// The path that `path` means, where the system would take it for another: a relative one starts at the working directory of the program, and a file of the executable that the program has written is on the disk.
+fn find_path_meant(path: &[u8], relative_paths: RelativePaths) -> Option<PathLike<'static>> {
+    let joined = match relative_paths {
+        RelativePaths::StartAtWorkingDirectory => join_onto_working_directory_in_executable(path),
+        RelativePaths::StayAsWritten => None,
+    };
+    let on_disk = bun_standalone_graph::find_written_file(joined.as_deref().unwrap_or(path));
+    let joined = on_disk.map(<[u8]>::into_vec).or(joined)?;
+    Some(PathLike::Joined(Box::new(bun_jsc::node_path::JoinedPath {
+        joined,
+        written: path.to_vec(),
+    })))
+}
+
+fn path_like_resolved_by(
+    global: &JSGlobalObject,
+    str: bun_core::String,
+    relative_paths: RelativePaths,
+    will_be_async: bool,
+) -> JsResult<PathLike<'static>> {
+    if may_mean_another_path()
+        && let Some(path) = find_path_meant(str.to_utf8().slice(), relative_paths)
+    {
+        return Ok(path);
+    }
+    path_like_from_string(global, str, will_be_async)
 }
 
 /// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).
@@ -1270,7 +1302,8 @@ impl Valid {
 
 pub(crate) struct VectorArrayBuffer {
     pub value: JSValue,
-    pub(crate) buffers: Vec<PlatformIoVec>,
+    /// Initialized bytes, which live as long as `self`.
+    buffers: Vec<IoVecMut<'static>>,
     /// The collected elements, in order. Rooted (and their backing stores
     /// pinned), along with `value`, from `from_js(.., pin: true)` until drop.
     pub(crate) views: Vec<JSValue>,
@@ -1329,12 +1362,10 @@ unsafe extern "C" fn append_buffer_span(
     // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
     // duration of the call.
     let out = unsafe { &mut *ctx.cast::<VectorArrayBuffer>() };
-    let slice: &mut [u8] = if data.is_null() || byte_len == 0 {
-        &mut []
+    let (data, byte_len) = if data.is_null() || byte_len == 0 {
+        (core::ptr::dangling_mut(), 0)
     } else {
-        // SAFETY: `data..data + byte_len` is the byte range of `element`'s
-        // backing store, valid and unaliased for the duration of the callback.
-        unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
+        (data, byte_len)
     };
     if is_wasm_memory {
         out.wasm.push(WasmElement {
@@ -1343,7 +1374,9 @@ unsafe extern "C" fn append_buffer_span(
             native: None,
         });
     }
-    out.buffers.push(bun_sys::platform_iovec_create(slice));
+    // SAFETY: the backing store of `element`. It is pinned, or no JS runs before the I/O. See `from_js`.
+    out.buffers
+        .push(unsafe { IoVecMut::from_raw(data, byte_len) });
     out.views.push(element);
 }
 
@@ -1410,8 +1443,10 @@ impl VectorArrayBuffer {
                         return Err(global_object.throw_out_of_memory());
                     };
                     let mut bytes: jsc::ArrayBuffer = *pinned;
+                    let bytes = bytes.byte_slice_mut();
+                    // SAFETY: `pinned` keeps the bytes until `write_back`, which clears `buffers`.
                     out.buffers[element.index] =
-                        bun_sys::platform_iovec_create(bytes.byte_slice_mut());
+                        unsafe { IoVecMut::from_raw(bytes.as_mut_ptr(), bytes.len()) };
                     element.native = Some(pinned);
                 }
                 Ok(out)
@@ -1425,20 +1460,30 @@ impl VectorArrayBuffer {
         }
     }
 
+    pub(crate) fn writable(&self) -> &[IoVecMut<'_>] {
+        &self.buffers
+    }
+
+    pub(crate) fn readable(&self) -> &[IoVec<'_>] {
+        // SAFETY: see `buffers`.
+        unsafe { IoVecMut::assume_init(&self.buffers) }
+    }
+
     /// Runs on the JS thread after a read of `bytes_read` bytes, which filled the spans in order.
     /// See [`PinnedArrayBuffer::write_back`].
     pub(crate) fn write_back(&mut self, bytes_read: usize) {
         let (mut start, mut counted) = (0, 0);
-        for element in &mut self.wasm {
+        for mut element in self.wasm.drain(..) {
             start += self.buffers[counted..element.index]
                 .iter()
-                .map(bun_sys::platform_iovec_len)
+                .map(IoVecMut::size)
                 .sum::<usize>();
             counted = element.index;
             if let Some(pinned) = &mut element.native {
                 pinned.write_back(bytes_read.saturating_sub(start));
             }
         }
+        self.buffers.clear();
     }
 }
 

@@ -1,0 +1,10 @@
+# the method has a row: its call brings the class
+# -- source: a-method-that-is-taken-off-the-prototype-and-called-uses-its-class.ts
+# try {
+#   TextDecoder.prototype.decode.call({} as TextDecoder);
+# } catch (error) {
+#   console.log((error as Error).name);
+# }
+# -- end of source
+# RUN: features
+# CHECK: by TextDecoder

@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 
 use crate::collections::FxHashMap as HashMap;
 
-use crate::hir::environment::Environment;
+use crate::hir::environment::{Environment, OutputMode};
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
 use super::expr::lower_reorderable_expression;
@@ -929,15 +929,18 @@ fn lower_statement(
                     continuation_block,
                 );
             } else {
-                builder.record_error(CompilerErrorDetail {
-                    category: ErrorCategory::Todo,
-                    reason: "(BuildHIR::lowerStatement) Handle empty test in ForStatement"
-                        .to_string(),
-                    description: None,
-                    loc,
-                    suggestions: None,
-                })?;
-                // Treat `for(;;)` as `while(true)` to keep the builder state consistent
+                // The parser drops a test that is always true, so this may have been `for (let i = 0; true; i++)`, which
+                // upstream compiles. `bun lint` sees the source as written, and reports what upstream reports.
+                if builder.environment().output_mode == OutputMode::Lint {
+                    builder.record_error(CompilerErrorDetail {
+                        category: ErrorCategory::Todo,
+                        reason: "(BuildHIR::lowerStatement) Handle empty test in ForStatement"
+                            .to_string(),
+                        description: None,
+                        loc,
+                        suggestions: None,
+                    })?;
+                }
                 let true_val = InstructionValue::Primitive {
                     value: PrimitiveValue::Boolean(true),
                     loc,

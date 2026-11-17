@@ -13,22 +13,22 @@ pub struct NoUnknownProperty {
     require_data_lowercase: bool,
 }
 
-const INVALID_PROP_ON_TAG: Message = Message::new(
+const INVALID_PROP_ON_TAG: &Message = &Message::new(
     "invalidPropOnTag",
     "Invalid property '{{name}}' found on tag '{{tagName}}', but it is only allowed on: {{allowedTags}}",
 );
-const UNKNOWN_PROP_WITH_STANDARD_NAME: Message =
-    Message::new("unknownPropWithStandardName", "Unknown property '{{name}}' found, use '{{standardName}}' instead");
-const UNKNOWN_PROP: Message = Message::new("unknownProp", "Unknown property '{{name}}' found");
-const DATA_LOWERCASE_REQUIRED: Message = Message::new(
+const UNKNOWN_PROP_WITH_STANDARD_NAME: &Message =
+    &Message::new("unknownPropWithStandardName", "Unknown property '{{name}}' found, use '{{standardName}}' instead");
+const UNKNOWN_PROP: &Message = &Message::new("unknownProp", "Unknown property '{{name}}' found");
+const DATA_LOWERCASE_REQUIRED: &Message = &Message::new(
     "dataLowercaseRequired",
     "React does not recognize data-* props with uppercase characters on a DOM element. Found '{{name}}', use '{{lowerCaseName}}' instead",
 );
-const OXLINT_INVALID_PROP_ON_TAG: Message = Message::new("", "Invalid property found");
-const OXLINT_DATA_LOWERCASE_REQUIRED: Message =
-    Message::new("", "React does not recognize data-* props with uppercase characters on a DOM element");
-const OXLINT_UNKNOWN_PROP: Message = Message::new("", "Unknown property found");
-const USE_STANDARD_NAME: Message = Message::new("", "Use '{{x1}}' instead");
+const OXLINT_INVALID_PROP_ON_TAG: &Message = &Message::new("", "Invalid property found");
+const OXLINT_DATA_LOWERCASE_REQUIRED: &Message =
+    &Message::new("", "React does not recognize data-* props with uppercase characters on a DOM element");
+const OXLINT_UNKNOWN_PROP: &Message = &Message::new("", "Unknown property found");
+const USE_STANDARD_NAME: &Message = &Message::new("", "Use '{{x1}}' instead");
 
 /// The elements each attribute is valid on, in the order oxlint lists them. Sorted by attribute.
 static ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 70] = [

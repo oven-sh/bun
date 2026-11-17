@@ -93,10 +93,12 @@ namespace uWS {
 }
 
 #include <zlib.h>
+#include <memory>
 #include <string>
 #include <string_view>
-#include "libdeflate.h"
 #include "ReceiveBuffer.h"
+
+extern "C" ptrdiff_t Bun__inflateWebSocketMessage(const char *input, size_t inputLength, char *output, size_t outputLength);
 
 namespace uWS {
 
@@ -108,21 +110,9 @@ struct ZlibContext {
      * by many deflations without modifying the inflation */
     std::string dynamicDeflationBuffer;
     ReceiveBuffer dynamicInflationBuffer;
-    char *deflationBuffer;
-    char *inflationBuffer;
-    libdeflate_decompressor *decompressor;
-
-    ZlibContext() {
-        deflationBuffer = (char *) malloc(LARGE_BUFFER_SIZE);
-        inflationBuffer = (char *) malloc(LARGE_BUFFER_SIZE);
-        decompressor = libdeflate_alloc_decompressor();
-    }
-
-    ~ZlibContext() {
-        free(deflationBuffer);
-        free(inflationBuffer);
-        libdeflate_free_decompressor(decompressor);
-    }
+    const std::unique_ptr<char[]> deflationBuffer = std::make_unique_for_overwrite<char[]>(LARGE_BUFFER_SIZE);
+    /* Rust takes it as a slice, which has to be initialized */
+    const std::unique_ptr<char[]> inflationBuffer = std::make_unique<char[]>(LARGE_BUFFER_SIZE);
 };
 
 struct DeflationStream {
@@ -154,12 +144,12 @@ struct DeflationStream {
 
         int err;
         do {
-            deflationStream.next_out = (Bytef *) zlibContext->deflationBuffer;
+            deflationStream.next_out = (Bytef *) zlibContext->deflationBuffer.get();
             deflationStream.avail_out = DEFLATE_OUTPUT_CHUNK;
 
             err = ::deflate(&deflationStream, Z_SYNC_FLUSH);
             if (Z_OK == err && deflationStream.avail_out == 0) {
-                zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
+                zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer.get(), DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
                 continue;
             } else {
                 break;
@@ -172,7 +162,7 @@ struct DeflationStream {
         }
 
         if (zlibContext->dynamicDeflationBuffer.length()) {
-            zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
+            zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer.get(), DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
 
             return std::string_view((char *) zlibContext->dynamicDeflationBuffer.data(), zlibContext->dynamicDeflationBuffer.length() - 4);
         }
@@ -180,7 +170,7 @@ struct DeflationStream {
         /* Note: We will get an interger overflow resulting in heap buffer overflow if Z_BUF_ERROR is returned
          * from passing 0 as avail_in. Therefore we must not deflate an empty string */
         return {
-            zlibContext->deflationBuffer,
+            zlibContext->deflationBuffer.get(),
             DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out - 4
         };
     }
@@ -210,26 +200,19 @@ struct InflationStream {
 
     /* Zero length inflates are possible and valid */
     InflateResult inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
-        /* The libdeflate fast path is stateless: it cannot resolve back-references into a
+        /* The fast path is stateless: it cannot resolve back-references into a
          * previous message's sliding window, and whatever it inflates never reaches the zlib
          * stream's window. Both are only correct without context takeover, i.e. when reset is set. */
         if (reset) {
             /* Try fast path first */
-            size_t written = 0;
+            ptrdiff_t written = Bun__inflateWebSocketMessage(compressed.data(), compressed.length(), zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE);
 
-            /* We have to pad 9 bytes and restore those bytes when done since 9 is more than 6 of next WebSocket message */
-            char tmp[9];
-            memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
-            memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
-            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor, compressed.data(), compressed.length() + 9, zlibContext->inflationBuffer, LARGE_BUFFER_SIZE, &written);
-            memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
-
-            if (res == 0) {
+            if (written >= 0) {
                 /* Fast path wins */
-                if (written > maxPayloadLength) {
+                if ((size_t) written > maxPayloadLength) {
                     return {{}, 1009};
                 }
-                return {{zlibContext->inflationBuffer, written}, 0};
+                return {{zlibContext->inflationBuffer.get(), (size_t) written}, 0};
             }
         }
 
@@ -252,7 +235,7 @@ struct InflationStream {
         int err;
         bool outOfMemory = false;
         do {
-            inflationStream.next_out = (Bytef *) zlibContext->inflationBuffer;
+            inflationStream.next_out = (Bytef *) zlibContext->inflationBuffer.get();
             inflationStream.avail_out = LARGE_BUFFER_SIZE;
 
             err = ::inflate(&inflationStream, Z_SYNC_FLUSH);
@@ -267,7 +250,7 @@ struct InflationStream {
             }
 
             /* Don't return here. The shared stream still has to be reset below. */
-            if (!zlibContext->dynamicInflationBuffer.tryAppend(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out)) {
+            if (!zlibContext->dynamicInflationBuffer.tryAppend(zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE - inflationStream.avail_out)) {
                 outOfMemory = true;
                 break;
             }
@@ -295,7 +278,7 @@ struct InflationStream {
             return {{}, 1009};
         }
 
-        std::string_view inflated(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out);
+        std::string_view inflated(zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE - inflationStream.avail_out);
         if (zlibContext->dynamicInflationBuffer.length()) {
             if (!zlibContext->dynamicInflationBuffer.tryAppend(inflated.data(), inflated.length())) {
                 zlibContext->dynamicInflationBuffer.release();

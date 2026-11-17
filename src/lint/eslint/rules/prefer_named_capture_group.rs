@@ -8,9 +8,9 @@ use std::cell::OnceCell;
 /// Enforce using named capture group in regular expression.
 pub struct PreferNamedCaptureGroup;
 
-const ADD_GROUP_NAME: Message = Message::new("addGroupName", "Add name to capture group.");
-const ADD_NON_CAPTURE: Message = Message::new("addNonCapture", "Convert group to non-capturing.");
-const REQUIRED: Message = Message::new(
+const ADD_GROUP_NAME: &Message = &Message::new("addGroupName", "Add name to capture group.");
+const ADD_NON_CAPTURE: &Message = &Message::new("addNonCapture", "Convert group to non-capturing.");
+const REQUIRED: &Message = &Message::new(
     "required",
     "Capture group '{{group}}' should be converted to a named or non-capturing group.",
 );

@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
       JSC::Options::useSourceProviderCache() = true;
       // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
       JSC::Options::exposeInternalModuleLoader() = true;
-      JSC::Options::useSharedArrayBuffer() = true;
+      JSC::Options::alwaysUseSharedArrayBuffer() = true;
       JSC::Options::useJIT() = true;
       JSC::Options::useBBQJIT() = true;
       JSC::Options::useJITCage() = false;

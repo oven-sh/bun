@@ -1,13 +1,11 @@
-type Inspect = typeof import("util").inspect;
-
 // This is passed to [util.inspect.custom](..., { stylize }) to help users colorize parts.
-export function getStylizeWithColor(inspect: Inspect) {
+export function getStylizeWithColor(inspect: $BunModules["internal/util/inspect"]["inspect"]) {
   return function stylizeWithColor(str: string, styleType: string) {
-    const style = inspect.styles[styleType];
+    const style: string | ((text: string) => string) | undefined = inspect.styles[styleType];
     if (style !== undefined) {
       // inspect.styles.regexp is a function (highlightRegExp), not a color name.
       if (typeof style === "function") return style(str);
-      const color = inspect.colors[style];
+      const color: [number, number] | undefined = inspect.colors[style];
       if (color !== undefined) return `\u001b[${color[0]}m${str}\u001b[${color[1]}m`;
     }
     return str;

@@ -2508,6 +2508,40 @@ fn colorfgbg_light() -> Option<bool> {
     None
 }
 
+/// Unlike `RawModeGuard`, puts back the mode it found: the parent (a TUI, a tmux pane) may have had raw mode on.
+#[cfg(unix)]
+struct RawStdin {
+    saved: bun_sys::posix::Termios,
+    state: bun_core::tty::State,
+}
+
+#[cfg(unix)]
+impl RawStdin {
+    fn enter() -> Option<Self> {
+        let saved = bun_sys::posix::tcgetattr(0).ok()?;
+        let mut state = bun_core::tty::State::new();
+        let _ = state.set_mode(
+            0,
+            bun_core::tty::Mode::Raw,
+            bun_core::tty::SetAttrWhen::Drain,
+        );
+        Some(Self { saved, state })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RawStdin {
+    fn drop(&mut self) {
+        if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &self.saved).is_err() {
+            let _ = self.state.set_mode(
+                0,
+                bun_core::tty::Mode::Normal,
+                bun_core::tty::SetAttrWhen::Drain,
+            );
+        }
+    }
+}
+
 /// OSC 11 (`ESC ] 11 ; ? BEL`): the terminal answers with its background as `rgb:RRRR/GGGG/BBBB`. xterm, iTerm2,
 /// Terminal.app, GNOME/VTE, Konsole, kitty, WezTerm, Alacritty, Ghostty, Windows Terminal and tmux (3.4+) all
 /// answer; anything else stays silent and we give up after a short wait. Returns relative luminance in 0..=1.
@@ -2534,22 +2568,7 @@ fn probe_background_luminance() -> Option<f32> {
                 return None;
             }
         }
-        let saved_termios = bun_sys::posix::tcgetattr(0).ok()?;
-        let mut tty_state = bun_core::tty::State::new();
-        let _ = tty_state.set_mode(
-            0,
-            bun_core::tty::Mode::Raw,
-            bun_core::tty::SetAttrWhen::Drain,
-        );
-        let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
-            if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
-                let _ = state.set_mode(
-                    0,
-                    bun_core::tty::Mode::Normal,
-                    bun_core::tty::SetAttrWhen::Drain,
-                );
-            }
-        });
+        let _raw = RawStdin::enter()?;
         bun_sys::write(out, b"\x1b]11;?\x07").ok()?;
         let mut buf = [0u8; 64];
         let mut len = 0usize;
@@ -2654,30 +2673,9 @@ fn probe_kitty_graphics() -> bool {
             return false;
         }
 
-        // Save the parent's termios before flipping stdin to raw. If the
-        // parent (a TUI, tmux/Zellij pane, etc.) already had raw mode on,
-        // restoring to a fixed .normal would corrupt it — instead reapply
-        // exactly what we read. tcgetattr failing means stdin isn't a real
-        // TTY in a way we can snapshot; skip probing entirely.
-        let saved_termios = match bun_sys::posix::tcgetattr(0) {
-            Ok(t) => t,
-            Err(_) => return false,
+        let Some(_raw) = RawStdin::enter() else {
+            return false;
         };
-        let mut tty_state = bun_core::tty::State::new();
-        let _ = tty_state.set_mode(
-            0,
-            bun_core::tty::Mode::Raw,
-            bun_core::tty::SetAttrWhen::Drain,
-        );
-        let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
-            if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
-                let _ = state.set_mode(
-                    0,
-                    bun_core::tty::Mode::Normal,
-                    bun_core::tty::SetAttrWhen::Drain,
-                );
-            }
-        });
 
         // Query: transmit a 1×1 RGB image (3 zero bytes = "AAAA" b64),
         // id=31. The terminal replies with `\x1b_Gi=31;OK\x1b\\`

@@ -86,12 +86,15 @@ pub enum Error {
 bun_core::impl_tag_error!(Error);
 bun_core::oom_from_alloc!(Error);
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum StringLiteralRawFormat {
-    #[default]
-    Ascii,
-    Utf16,
-    NeedsDecode,
+/// The current string literal, before `to_e_string`.
+#[derive(Clone, Copy)]
+pub enum StringLiteralRaw<'a> {
+    /// ASCII source text without escapes.
+    Ascii(&'a [u8]),
+    /// Already decoded into the arena.
+    Utf16(&'a [u16]),
+    /// Source text with escapes (ie '\n') still to be converted to their values (ie 0x0A).
+    NeedsDecode(&'a [u8]),
 }
 
 /// `packed struct(u8) { suffix_len: u2, needs_decode: bool, _padding: u5 = 0 }`
@@ -164,9 +167,8 @@ pub struct LexerSnapshot<'a> {
     pub(crate) prev_token_was_await_keyword: bool,
     pub(crate) fn_or_arrow_start_loc: Loc,
     pub(crate) regex_flags_start: Option<u16>,
-    pub(crate) string_literal_raw_content: &'a [u8],
+    pub(crate) string_literal_raw: StringLiteralRaw<'a>,
     pub(crate) string_literal_start: usize,
-    pub(crate) string_literal_raw_format: StringLiteralRawFormat,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
     // Vec buffer lengths — restore() truncates back to these.
@@ -175,7 +177,7 @@ pub struct LexerSnapshot<'a> {
 }
 
 /// `'a` is the lifetime of the source contents (arena/source-owned slices like
-/// `identifier` and `string_literal_raw_content` borrow from the source or from
+/// `identifier` and `string_literal_raw` borrow from the source or from
 /// the parser arena). The `Log` is *not* tied to `'a`; see the `log` field doc.
 pub struct Lexer<'a> {
     /// Raw pointer to the caller-owned `Log`. The parser holds a second
@@ -186,9 +188,9 @@ pub struct Lexer<'a> {
     /// caller must keep the pointee alive for the lexer's lifetime — see
     /// `init_without_reading`.
     pub(crate) log: core::ptr::NonNull<Log>,
-    pub(crate) source: &'a Source,
+    pub(crate) source: &'a Source<'a>,
     /// Cached `source.contents()` slice. With `source: &'a Source` plus
-    /// `Source.contents: Cow<'static,[u8]>`, every inlined `step()` was a
+    /// `Source.contents: Cow<'a,[u8]>`, every inlined `step()` was a
     /// 3-load dependent chain (`self.source` → Cow tag/ptr → Cow len) that
     /// LLVM could not hoist (perf-annotate showed `mov 0x70(%rbx),%rax` at
     /// ~8% of `next()` cycles). Caching the deref'd `&'a [u8]` here collapses
@@ -235,9 +237,8 @@ pub struct Lexer<'a> {
     pub(crate) fn_or_arrow_start_loc: Loc,
     pub(crate) regex_flags_start: Option<u16>,
     pub(crate) arena: &'a Arena,
-    pub(crate) string_literal_raw_content: &'a [u8],
+    pub(crate) string_literal_raw: StringLiteralRaw<'a>,
     pub(crate) string_literal_start: usize,
-    pub(crate) string_literal_raw_format: StringLiteralRawFormat,
     pub(crate) temp_buffer_u16: Vec<u16>,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
@@ -258,7 +259,7 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
         unsafe { self.log.as_mut() }
     }
     #[inline]
-    fn source(&self) -> &'a Source {
+    fn source(&self) -> &'a Source<'a> {
         self.source
     }
     #[inline]
@@ -351,9 +352,8 @@ impl<'a> Lexer<'a> {
             prev_token_was_await_keyword: self.prev_token_was_await_keyword,
             fn_or_arrow_start_loc: self.fn_or_arrow_start_loc,
             regex_flags_start: self.regex_flags_start,
-            string_literal_raw_content: self.string_literal_raw_content,
+            string_literal_raw: self.string_literal_raw,
             string_literal_start: self.string_literal_start,
-            string_literal_raw_format: self.string_literal_raw_format,
             track_comments: self.track_comments,
             track_react_suppressions: self.track_react_suppressions,
             all_comments_len: self.all_comments.len(),
@@ -389,9 +389,8 @@ impl<'a> Lexer<'a> {
         self.prev_token_was_await_keyword = original.prev_token_was_await_keyword;
         self.fn_or_arrow_start_loc = original.fn_or_arrow_start_loc;
         self.regex_flags_start = original.regex_flags_start;
-        self.string_literal_raw_content = original.string_literal_raw_content;
+        self.string_literal_raw = original.string_literal_raw;
         self.string_literal_start = original.string_literal_start;
-        self.string_literal_raw_format = original.string_literal_raw_format;
         self.track_comments = original.track_comments;
         self.track_react_suppressions = original.track_react_suppressions;
 
@@ -883,11 +882,11 @@ impl<'a> Lexer<'a> {
             self.end
         };
         let slice_end = contents.len().min(base.max(end_pos));
-        self.string_literal_raw_content = &contents[base..slice_end];
-        self.string_literal_raw_format = if string_literal_details.needs_decode() {
-            StringLiteralRawFormat::NeedsDecode
+        let raw = &contents[base..slice_end];
+        self.string_literal_raw = if string_literal_details.needs_decode() {
+            StringLiteralRaw::NeedsDecode(raw)
         } else {
-            StringLiteralRawFormat::Ascii
+            StringLiteralRaw::Ascii(raw)
         };
         self.string_literal_start = self.start;
         Ok(())
@@ -2246,7 +2245,7 @@ impl<'a> Lexer<'a> {
     /// the `log` field doc) and the caller must keep the pointee alive for the
     /// lexer's lifetime. The looser bound lets `'a` (which `Ast<'a>` borrows
     /// through `arena`) outlive a stack-local scratch log.
-    pub fn init_without_reading(log: &mut Log, source: &'a Source, arena: &'a Arena) -> Self {
+    pub fn init_without_reading(log: &mut Log, source: &'a Source<'a>, arena: &'a Arena) -> Self {
         // Deref `Cow<'static,[u8]>` once; the resulting `&[u8]` borrows
         // `*source` (lifetime `'a`) regardless of Cow arm, so it is sound to
         // cache for the lexer's lifetime.
@@ -2280,9 +2279,8 @@ impl<'a> Lexer<'a> {
             fn_or_arrow_start_loc: Loc::EMPTY,
             regex_flags_start: None,
             arena,
-            string_literal_raw_content: b"",
+            string_literal_raw: StringLiteralRaw::Ascii(b""),
             string_literal_start: 0,
-            string_literal_raw_format: StringLiteralRawFormat::Ascii,
             temp_buffer_u16: Vec::new(),
             track_comments: false,
             track_react_suppressions: false,
@@ -2292,35 +2290,20 @@ impl<'a> Lexer<'a> {
     }
 
     pub(crate) fn to_e_string(&mut self) -> Result<js_ast::E::String, Error> {
-        match self.string_literal_raw_format {
-            StringLiteralRawFormat::Ascii => {
-                // string_literal_raw_content contains ascii without escapes
-                Ok(js_ast::E::String::init(self.string_literal_raw_content))
-            }
-            StringLiteralRawFormat::Utf16 => {
-                // string_literal_raw_content is already parsed, duplicated, and utf-16.
-                // It was created via `cast_slice::<u16, u8>` from an arena `[u16]` dupe,
-                // so the pointer is u16-aligned and `cast_slice` back is sound (panics
-                // if that invariant is ever broken — strictly safer than the raw cast).
-                let utf16: &[u16] =
-                    bytemuck::cast_slice::<u8, u16>(self.string_literal_raw_content);
-                Ok(js_ast::E::String::init_utf16(utf16))
-            }
-            StringLiteralRawFormat::NeedsDecode => {
-                // string_literal_raw_content contains escapes (ie '\n') that need to be converted to their values (ie 0x0A).
+        match self.string_literal_raw {
+            StringLiteralRaw::Ascii(raw) => Ok(js_ast::E::String::init(raw)),
+            StringLiteralRaw::Utf16(utf16) => Ok(js_ast::E::String::init_utf16(utf16)),
+            StringLiteralRaw::NeedsDecode(raw) => {
                 // escape parsing may cause a syntax error.
                 debug_assert!(self.temp_buffer_u16.is_empty());
                 let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
-                tmp.reserve(self.string_literal_raw_content.len());
-                // `string_literal_raw_content` starts one byte after the opening
+                tmp.reserve(raw.len());
+                // `raw` starts one byte after the opening
                 // quote/backtick (see `base` in `parse_string_literal`); pass the
                 // content-start offset so `start + iter.i` inside the decoder
                 // lines up with absolute positions in the source.
-                let res = self.decode_escape_sequences(
-                    self.string_literal_start + 1,
-                    self.string_literal_raw_content,
-                    &mut tmp,
-                );
+                let res =
+                    self.decode_escape_sequences(self.string_literal_start + 1, raw, &mut tmp);
                 if let Err(e) = res {
                     tmp.clear();
                     self.temp_buffer_u16 = tmp;
@@ -2670,15 +2653,11 @@ impl<'a> Lexer<'a> {
                 return Err(e);
             }
 
-            let dup = self.arena.alloc_slice_copy(&tmp);
-            // Reinterpret &[u16] as &[u8] — `u16: Pod`, so `cast_slice` is safe.
-            self.string_literal_raw_content = bytemuck::cast_slice::<u16, u8>(dup);
-            self.string_literal_raw_format = StringLiteralRawFormat::Utf16;
+            self.string_literal_raw = StringLiteralRaw::Utf16(self.arena.alloc_slice_copy(&tmp));
             tmp.clear();
             self.temp_buffer_u16 = tmp;
         } else {
-            self.string_literal_raw_content = raw_content_slice;
-            self.string_literal_raw_format = StringLiteralRawFormat::Ascii;
+            self.string_literal_raw = StringLiteralRaw::Ascii(raw_content_slice);
         }
         Ok(())
     }
@@ -2748,10 +2727,8 @@ impl<'a> Lexer<'a> {
                             self.temp_buffer_u16 = tmp;
                             return Err(e);
                         }
-                        let dup = self.arena.alloc_slice_copy(&tmp);
-                        // Reinterpret arena-owned &[u16] as &[u8] — `u16: Pod`.
-                        self.string_literal_raw_content = bytemuck::cast_slice::<u16, u8>(dup);
-                        self.string_literal_raw_format = StringLiteralRawFormat::Utf16;
+                        self.string_literal_raw =
+                            StringLiteralRaw::Utf16(self.arena.alloc_slice_copy(&tmp));
 
                         let was_empty = tmp.is_empty();
                         tmp.clear();
@@ -2762,8 +2739,7 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
                     } else {
-                        self.string_literal_raw_content = raw_content_slice;
-                        self.string_literal_raw_format = StringLiteralRawFormat::Ascii;
+                        self.string_literal_raw = StringLiteralRaw::Ascii(raw_content_slice);
                     }
                 }
             }
@@ -2986,7 +2962,7 @@ impl<'a> Lexer<'a> {
         }
 
         if strings::index_of_char(text, b'\r').is_none() {
-            // `text` already borrows `self.source: &'a Source` → `&'a [u8]`.
+            // `text` already borrows `self.source: &'a Source<'a>` → `&'a [u8]`.
             return text;
         }
 

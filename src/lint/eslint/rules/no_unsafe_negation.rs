@@ -5,15 +5,15 @@ pub struct NoUnsafeNegation {
     enforce_for_ordering_relations: bool,
 }
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new(
     "unexpected",
     "Unexpected negating the left operand of '{{operator}}' operator.",
 );
-const SUGGEST_NEGATED_EXPRESSION: Message = Message::new(
+const SUGGEST_NEGATED_EXPRESSION: &Message = &Message::new(
     "suggestNegatedExpression",
     "Negate '{{operator}}' expression instead of its left operand. This changes the current behavior.",
 );
-const SUGGEST_PARENTHESISED_NEGATION: Message = Message::new(
+const SUGGEST_PARENTHESISED_NEGATION: &Message = &Message::new(
     "suggestParenthesisedNegation",
     "Wrap negation in '()' to make the intention explicit. This preserves the current behavior.",
 );

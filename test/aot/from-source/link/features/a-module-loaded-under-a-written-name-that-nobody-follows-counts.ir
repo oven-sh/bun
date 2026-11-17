@@ -1,0 +1,10 @@
+# process.getBuiltinModule("bun:sqlite"): the name is written and the engine does not follow it: it is no name from run time, and what the module leads to counts
+# -- source: a-module-loaded-under-a-written-name-that-nobody-follows-counts.ts
+# const { Database } = (process as any).getBuiltinModule("bun:sqlite");
+# new Database(":memory:");
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by NativeCppJSSQLStatementCppCreateJSSQLStatementConstructor named
+# RUN(NEVER): features
+# NEVER-NOT: by NativeCppJSSQLStatementCppCreateJSSQLStatementConstructor named-at-run-time

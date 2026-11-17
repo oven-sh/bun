@@ -1,0 +1,17 @@
+exports.size = function (text) { return text.length; };
+exports.code = function (text) { return text.charCodeAt(1); };
+exports.first = function (text) { return text[0]; };
+exports.part = function (text) { return text.slice(1); };
+exports.found = function (text) { return text.indexOf("b"); };
+exports.upper = function (text) { return text.toUpperCase(); };
+exports.glued = function (text) { return text + "!"; };
+exports.inATemplate = function (text) { return "<" + `${text}` + ">"; };
+exports.isTheSame = function (text) { return text === "abc"; };
+exports.isLooselyTheSame = function (text) { return text == "abc"; };
+exports.isBefore = function (text) { return text < "b"; };
+exports.walked = function (text) { var seen = []; for (var piece of text) seen.push(piece); return seen.length; };
+exports.pieces = function (text) { return text.split(""); };
+exports.chosen = function (text) { switch (text) { case "abc": return "the case abc"; default: return "the default"; } };
+exports.asAKey = function (text) { return { abc: "found under abc" }[text]; };
+exports.written = function (text) { return JSON.stringify(text); };
+exports.kind = function (text) { return typeof text; };

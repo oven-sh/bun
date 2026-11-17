@@ -2,7 +2,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::api::js_source_map" });
 
-const find = { returns: b.any, capability: "js", throws: true } as const;
+const find = { returns: b.any.returning("object"), capability: "js", throws: true } as const;
 
 export const SourceMap = b.class({
   rustPath: "crate::api::js_source_map::JSSourceMap",

@@ -9,7 +9,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // `body` runs with `client` in scope and must leave the upload abandoned.
 // The child then waits for `waitFor` before it runs `then`. With `gateCreate`,
 // the stub holds the CreateMultipartUpload response until `then` ran. The stub answers
-// AbortMultipartUpload with `abortStatus` (204, as S3 does, by default).
+// AbortMultipartUpload with `abortStatus` (204, as S3 does, by default). `answer` has, for a kind
+// of request, an expression for the response that replaces the usual one.
 function fixture(opts: {
   body: string;
   waitFor: string;
@@ -17,8 +18,13 @@ function fixture(opts: {
   gateCreate?: boolean;
   retry?: number;
   abortStatus?: number;
+  answer?: { create?: string; part?: string; complete?: string; put?: string };
 }) {
+  const answer = (kind: keyof NonNullable<typeof opts.answer>) =>
+    opts.answer?.[kind] ? `return ${opts.answer[kind]};` : "";
   return `
+    const error = (status, code) =>
+      new Response("<Error><Code>" + code + "</Code><Message>message</Message></Error>", { status });
     const reqs = { create: 0, part: 0, complete: 0, abort: 0, put: 0 };
     const createGate = Promise.withResolvers();
     const server = Bun.serve({
@@ -28,6 +34,7 @@ function fixture(opts: {
         if (req.method === "POST" && url.searchParams.has("uploads")) {
           reqs.create++;
           ${opts.gateCreate ? "await createGate.promise;" : ""}
+          ${answer("create")}
           return new Response(
             "<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
             { headers: { "content-type": "application/xml" } },
@@ -37,9 +44,11 @@ function fixture(opts: {
           await req.arrayBuffer();
           if (url.searchParams.has("uploadId")) {
             reqs.part++;
+            ${answer("part")}
             return new Response("", { headers: { ETag: '"etag"' } });
           }
           reqs.put++;
+          ${answer("put")}
           return new Response("");
         }
         if (req.method === "DELETE") {
@@ -48,6 +57,7 @@ function fixture(opts: {
         }
         await req.text();
         reqs.complete++;
+        ${answer("complete")}
         return new Response('<CompleteMultipartUploadResult><ETag>"etag"</ETag></CompleteMultipartUploadResult>');
       },
     });
@@ -84,11 +94,11 @@ const env = {
   AWS_BUCKET: undefined,
 };
 
-async function run(opts: Parameters<typeof fixture>[0]) {
+async function run(opts: Parameters<typeof fixture>[0], extraEnv: Record<string, string> = {}) {
   using dir = tempDir("s3-upload-abort", {});
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture(opts)],
-    env,
+    env: { ...env, ...extraEnv },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -318,6 +328,31 @@ test.concurrent("fetch() releases its promise when the body is cancelled before 
   `;
   expect(await run({ body, waitFor: `rejections === 20`, then: `console.log(held() - before < 5);` })).toEqual({
     stdout: `true\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+// What settles in a disposed graph calls nobody, so the stream's pump never lets go of the upload.
+test.concurrent("a stream upload whose graph is disposed during the commit lets the process exit", async () => {
+  const body = `
+    const graph = new Bun.ModuleGraph();
+    graph.run(() => {
+      client.write("key", new ReadableStream({ start(c) { c.enqueue(new Uint8Array(partSize)); c.close(); } }), opts);
+    });
+  `;
+  expect(
+    await run(
+      {
+        body,
+        waitFor: `reqs.complete === 1`,
+        then: `graph.dispose(); while (Date.now() < deadline && reqs.abort === 0) await Bun.sleep(10);`,
+        answer: { complete: `createGate.promise.then(() => new Response(""))` },
+      },
+      { BUN_JSC_useGC: "0" },
+    ),
+  ).toEqual({
+    stdout: `{"create":1,"part":1,"complete":1,"abort":1,"put":0}\n`,
     stderr: "",
     exited: 0,
   });

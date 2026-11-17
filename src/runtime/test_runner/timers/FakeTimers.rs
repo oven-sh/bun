@@ -744,10 +744,7 @@ impl FakeTimers {
                     EventLoopTimerTag::AbortSignalTimeout => {
                         AbortSignalTimeout::discard(AbortSignalTimeout::from_timer_ptr(timer));
                     }
-                    EventLoopTimerTag::CronJob => {
-                        let job = bun_ptr::ThisPtr::new(CronJob::from_timer_ptr(timer));
-                        CronJob::stop_dropped_from_fake_heap(job);
-                    }
+                    EventLoopTimerTag::CronJob => (*CronJob::from_timer_ptr(timer)).stop_now(),
                     tag => debug_assert!(
                         false,
                         "{} timer in the fake heap has no release path",

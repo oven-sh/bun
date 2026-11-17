@@ -31,7 +31,7 @@ for (const timeout of [0, 1, 2]) {
     resolver.resolve4('nodejs.org', common.mustCall((err) => {
       assert.throws(() => { throw err; }, {
         code: 'ETIMEOUT',
-        name: /^(DNSException|Error)$/,
+        name: 'Error',
       });
       server.close();
     }));
@@ -46,7 +46,7 @@ for (const timeout of [0, 1, 2]) {
     resolver.resolve4('nodejs.org').catch(common.mustCall((err) => {
       assert.throws(() => { throw err; }, {
         code: 'ETIMEOUT',
-        name: /^(DNSException|Error)$/,
+        name: 'Error',
       });
       server.close();
     }));

@@ -24,16 +24,23 @@ sign root-key-usage-only "$tmp/root.key" /CN=trust-anchor-root self 'keyUsage=cr
 sign intermediate "$tmp/intermediate.key" /CN=trust-anchor-intermediate root "${ca}authorityKeyIdentifier=keyid\n"
 sign leaf leaf.key /CN=localhost intermediate 'basicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost\n'
 sign self-signed-client-eku leaf.key /CN=localhost self 'extendedKeyUsage=clientAuth\nsubjectAltName=DNS:localhost\n'
-# crl <name> <issuer> <extensions> [revoked certificate]
+sign self-signed leaf.key /CN=localhost self 'subjectAltName=DNS:localhost\n'
+cp leaf.key "$tmp/self-signed.key"
+# crl <name> <issuer> <extensions> [revoked certificate] [arguments of -gencrl]
 crl() {
   : > "$tmp/index.txt"
   printf "[ca]\ndefault_ca=d\n[d]\ndatabase=$tmp/index.txt\ndefault_md=sha256\ndefault_crl_days=36500\ncrl_extensions=e\n[e]\nauthorityKeyIdentifier=keyid\n$3" > "$tmp/cnf"
   signer=(-config "$tmp/cnf" -keyfile "$tmp/$2.key" -cert "$2.pem")
   if [ -n "$4" ]; then openssl ca "${signer[@]}" -revoke "$4.pem" 2> /dev/null; fi
-  openssl ca "${signer[@]}" -gencrl -out "$1.crl" 2> /dev/null
+  openssl ca "${signer[@]}" -gencrl "${@:5}" -out "$1.crl" 2> /dev/null
 }
 crl root-empty root
 crl root-revokes-intermediate root '' intermediate
+crl root-revokes-itself root '' root
+crl self-signed-empty self-signed
+crl self-signed-revokes-itself self-signed '' self-signed
+crl self-signed-expired self-signed '' '' -crl_lastupdate 20200101000000Z -crl_nextupdate 20200102000000Z
+crl self-signed-not-yet-valid self-signed '' '' -crl_lastupdate 21000101000000Z -crl_nextupdate 21000102000000Z
 crl intermediate-empty intermediate
 crl intermediate-revokes-leaf intermediate '' leaf
 # Newer than the one above, so that it wins if it is taken for a CRL of the same scope.

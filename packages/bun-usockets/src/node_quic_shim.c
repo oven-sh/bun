@@ -189,6 +189,7 @@ _Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, 
     "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 
 _Static_assert(ssl_compliance_policy_fips_202205 == 1 && ssl_compliance_policy_wpa3_192_202304 == 3 &&
+    ssl_early_data_unknown == 0 && ssl_early_data_disabled == 1 && ssl_early_data_no_session_offered == 5 &&
     X509_V_FLAG_CRL_CHECK == 0x4 && X509_V_FLAG_CRL_CHECK_ALL == 0x8 &&
     X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS == 0x40000000,
     "update the constants in src/runtime/node/quic/tls.rs");

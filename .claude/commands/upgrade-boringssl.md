@@ -26,7 +26,7 @@ Resolve conflicts **preserving the fork's additions**. Most conflicts are upstre
 ```sh
 cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release
 ninja -C build crypto_test ssl_test decrepit_test
-for t in crypto_test ssl_test decrepit_test; do build/$t; done
+build/crypto_test && build/ssl_test && build/decrepit_test
 ```
 
 This catches mis-resolved conflicts before they reach Bun's CI.
@@ -95,7 +95,7 @@ Then `bun run ci:watch` and fix anything that turns up.
 - **`BORINGSSL_PEM_FAST_PUBLIC_BASE64`** — `crypto/pem/pem_lib.cc`, `include/openssl/pem.h`
 - **`X509_LAZY_CERT_SET`, `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS`** — `crypto/x509/{x509_lu,x509_vfy,x_name}.cc`, `include/openssl/x509.h`
 - **`X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE`** (upstream no longer reports it; Node does) — `check_lone_untrusted_leaf` in `crypto/x509/x509_vfy.cc`
-- **OpenSSL's verdicts in the path builder** (attribute-certificate CRLs, partial chains, `keyUsage`-only anchors, auto-chaining) — `crypto/x509/{x509_vfy,v3_purp}.cc`, `ssl/ssl_x509.cc`
+- **OpenSSL's verdicts in the path builder** (attribute-certificate CRLs, revocation of trust anchors, partial chains, `keyUsage`-only anchors, auto-chaining) — `crypto/x509/{x509_vfy,v3_purp}.cc`, `ssl/ssl_x509.cc`
 
 If upstream upstreams any of these (check `git grep` on `upstream/main` before re-applying), drop the fork's copy.
 

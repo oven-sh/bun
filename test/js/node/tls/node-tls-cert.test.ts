@@ -1044,18 +1044,30 @@ describe("trust anchors", () => {
   it.each([
     [["root"], ["root-empty", "intermediate-empty"], false, "authorized"],
     [["root"], ["root-empty", "intermediate-revokes-leaf"], false, "CERT_REVOKED"],
+    [["root"], ["root-revokes-itself", "intermediate-empty"], false, "CERT_REVOKED"],
     [
       ["root"],
       ["root-empty", "intermediate-revokes-leaf", "intermediate-attribute-certificates"],
       false,
       "CERT_REVOKED",
     ],
-    [["root", "intermediate", "leaf"], ["root-empty", "intermediate-revokes-leaf"], true, "CERT_REVOKED"],
+    [["root", "intermediate", "leaf"], ["root-empty", "intermediate-revokes-leaf"], true, "UNABLE_TO_GET_CRL"],
     [["root", "intermediate"], ["root-revokes-intermediate", "intermediate-empty"], true, "UNABLE_TO_GET_CRL"],
     [["leaf"], ["intermediate-revokes-leaf"], true, "UNABLE_TO_GET_CRL"],
   ])("ca: %p, crl: %p, allowPartialTrustChain: %p", async (ca, crl, allowPartialTrustChain, expected) => {
     const options = { ca: pem(ca), crl: crls(crl), allowPartialTrustChain };
     expect(await connect(["leaf", "intermediate"], options)).toBe(expected);
+  });
+
+  // OpenSSL 3.6 stopped checking a self-signed anchor. Node.js bundles 3.5.
+  it.each([
+    ["self-signed-empty", "authorized"],
+    ["root-empty", "UNABLE_TO_GET_CRL"],
+    ["self-signed-revokes-itself", "CERT_REVOKED"],
+    ["self-signed-expired", "CRL_HAS_EXPIRED"],
+    ["self-signed-not-yet-valid", "CRL_NOT_YET_VALID"],
+  ])("a pinned self-signed certificate with crl: %s", async (crl, expected) => {
+    expect(await connect(["self-signed"], { ca: pem(["self-signed"]), crl: crls([crl]) })).toBe(expected);
   });
 
   it("allowPartialTrustChain does not shorten the chain a server completes from its `ca`", async () => {

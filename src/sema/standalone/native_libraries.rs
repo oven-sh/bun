@@ -122,12 +122,6 @@ fn finish(context: &mut SHA256_CTX) -> [u8; 32] {
     digest
 }
 
-pub fn sha256(bytes: &[u8]) -> [u8; 32] {
-    let mut context = INITIAL_CONTEXT;
-    absorb(&mut context, bytes);
-    finish(&mut context)
-}
-
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn SHA256_Init(sha: *mut SHA256_CTX) -> c_int {
@@ -427,6 +421,12 @@ mod tests {
     use crate::TYPESCRIPT_LIBS;
     use core::mem::MaybeUninit;
     use core::ptr::{null, null_mut};
+
+    fn sha256(bytes: &[u8]) -> [u8; 32] {
+        let mut context = INITIAL_CONTEXT;
+        absorb(&mut context, bytes);
+        finish(&mut context)
+    }
 
     fn hex(digest: [u8; 32]) -> String {
         use core::fmt::Write;

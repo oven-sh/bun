@@ -57,7 +57,8 @@ const TLS13_AES_128_GCM_SHA256: &[u8] = b"TLS_AES_128_GCM_SHA256";
 const TLS13_AES_256_GCM_SHA384: &[u8] = b"TLS_AES_256_GCM_SHA384";
 const TLS13_CHACHA20_POLY1305_SHA256: &[u8] = b"TLS_CHACHA20_POLY1305_SHA256";
 
-// `node_quic_shim.c` asserts these, and the `X509_V_FLAG_*` values below, against BoringSSL's headers.
+// `node_quic_shim.c` asserts these, and the `SSL_EARLY_DATA_*` and `X509_V_FLAG_*` values below, against BoringSSL's
+// headers.
 const SSL_COMPLIANCE_POLICY_FIPS_202205: c_int = 1;
 const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 3;
 

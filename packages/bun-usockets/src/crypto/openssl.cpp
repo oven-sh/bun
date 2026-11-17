@@ -989,7 +989,6 @@ static int us_ssl_ctx_auto_chain(SSL_CTX *ctx) {
       !X509_STORE_CTX_init(walk.get(), SSL_CTX_get_cert_store(ctx), SSL_CTX_get0_certificate(ctx), NULL)) {
     return 0;
   }
-  X509_VERIFY_PARAM_clear_flags(X509_STORE_CTX_get0_param(walk.get()), X509_V_FLAG_PARTIAL_CHAIN);
   X509_verify_cert(walk.get());
   ERR_clear_error();
   us_x509_stack_ptr chain{X509_STORE_CTX_get1_chain(walk.get())};
@@ -1181,30 +1180,13 @@ static int us_x509_store_ctx_common_name_error(X509_STORE_CTX *ctx) {
   return error;
 }
 
-/* BoringSSL never looks for the CRL of a trust anchor. OpenSSL only exempts a self-signed one: any other has an issuer
- * that may have revoked it, which the chain stops short of. */
-static int us_x509_store_ctx_anchor_crl_error(X509_STORE_CTX *ctx) {
-  if (!(X509_VERIFY_PARAM_get_flags(X509_STORE_CTX_get0_param(ctx)) & X509_V_FLAG_CRL_CHECK_ALL)) return X509_V_OK;
-  X509 *anchor = sk_X509_last(X509_STORE_CTX_get0_chain(ctx));
-  uint32_t flags = X509_get_extension_flags(anchor);
-  if (flags & EXFLAG_SS) return X509_V_OK;
-  /* EXFLAG_SS also takes keyCertSign, see us_x509_verify_cert. */
-  int self_signed = (flags & EXFLAG_SI) && X509_verify(anchor, X509_get0_pubkey(anchor)) == 1;
-  if (!self_signed) ERR_clear_error();
-  return self_signed ? X509_V_OK : X509_V_ERR_UNABLE_TO_GET_CRL;
-}
-
-/* What X509_verify_cert does not look for, a blocked public key outside of the chain it built (blocked_spkis.cpp),
- * us_x509_store_ctx_common_name_error and us_x509_store_ctx_anchor_crl_error, is reported the way it reports its own
- * errors: to the SSL's verify callback, which says whether to go on. Without one, as in quic.cpp and node:quic, this
- * returns 0 as it would. */
+/* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and
+ * us_x509_store_ctx_common_name_error, is reported the way it reports its own errors: to the SSL's verify callback,
+ * which says whether to go on. Without one, as in quic.cpp and node:quic, this returns 0 as it would. */
 static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   int ok = X509_verify_cert(ctx);
   int error = us_x509_store_ctx_blocked_key_error(ctx);
   if (error == X509_V_OK && ok) error = us_x509_store_ctx_common_name_error(ctx);
-  if (error == X509_V_OK && ok && X509_STORE_CTX_get_error(ctx) == X509_V_OK) {
-    error = us_x509_store_ctx_anchor_crl_error(ctx);
-  }
   if (error == X509_V_OK) return ok;
   X509_STORE_CTX_set_error(ctx, error);
   SSL *ssl = (SSL *)X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());

@@ -67,7 +67,7 @@ impl<T: HeapNode> Intrusive<T> {
         })
     }
 
-    /// Depth first, without recursion: a heap can degenerate into a single chain.
+    /// Depth first, without recursion: a heap can degenerate into a single chain. One copy serves every walk.
     #[inline(never)]
     unsafe fn visited_after(mut node: *mut T) -> Option<*mut T> {
         let child = (*node).heap().child.get();

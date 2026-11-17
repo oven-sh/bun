@@ -23,7 +23,7 @@ pub struct EventLoopTimer {
     /// A `setTimeout()` without a delay in `bun test`. Its deadline is 1 ms away, as in Node, so its place among the
     /// timers is Node's. An event loop that would sleep until then runs it at once.
     pub is_due_when_idle: Cell<bool>,
-    /// Counts the links into a thread's heaps, and wraps.
+    /// Set by every insert. Orders JS timers that are due in the same millisecond.
     pub epoch: Cell<u32>,
 }
 
@@ -52,6 +52,7 @@ impl HeapNode for EventLoopTimer {
         if (self.tag == Tag::ImmediateObject) != (other.tag == Tag::ImmediateObject) {
             return self.tag == Tag::ImmediateObject;
         }
+        // The epoch wraps: the earlier one is less than half the range behind.
         a_is_js && b_is_js && other.epoch.get().wrapping_sub(self.epoch.get()) < u32::MAX / 2
     }
 }
@@ -205,9 +206,9 @@ impl Tag {
 /// a field of a field (`timers.timer`).
 ///
 /// ```ignore
-/// bun_event_loop::impl_timer_owner!(JSValkeyClient;
-///     from_timer_ptr => timer,
-///     from_reconnect_timer_ptr => reconnect_timer,
+/// bun_event_loop::impl_timer_owner!(JSMySQLConnection;
+///     from_timer_ptr => timers.timer,
+///     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 /// );
 /// ```
 #[macro_export]
@@ -254,48 +255,85 @@ mod tests {
     use super::*;
     use bun_io::heap::Intrusive;
 
-    fn node(tag: Tag, sec: i64, nsec: i64, epoch: u32) -> EventLoopTimer {
-        let node = EventLoopTimer::init_paused(tag);
-        node.next.set(Timespec { sec, nsec });
-        node.epoch.set(epoch);
-        node
+    const NS_PER_S: i64 = 1000 * NS_PER_MS;
+
+    impl EventLoopTimer {
+        fn due_at_ns(self, ns: i64) -> Self {
+            let (sec, nsec) = (ns / NS_PER_S, ns % NS_PER_S);
+            self.next.set(Timespec { sec, nsec });
+            self
+        }
+
+        fn in_epoch(self, epoch: u32) -> Self {
+            self.epoch.set(epoch);
+            self
+        }
+    }
+
+    fn armed_first(tag: Tag) -> EventLoopTimer {
+        EventLoopTimer::init_paused(tag).in_epoch(1)
+    }
+
+    fn armed_second(tag: Tag) -> EventLoopTimer {
+        EventLoopTimer::init_paused(tag).in_epoch(2)
     }
 
     #[track_caller]
-    fn assert_before(first: &EventLoopTimer, second: &EventLoopTimer) {
+    fn assert_fires_in_order(first: &EventLoopTimer, second: &EventLoopTimer) {
         assert_eq!((first.less(second), second.less(first)), (true, false));
     }
 
     #[test]
-    fn deadline_comes_first() {
-        let (js, other) = (Tag::TimeoutObject, Tag::BunTest);
-        assert_before(&node(js, 0, 999_999_999, 2), &node(js, 1, 0, 1));
-        assert_before(&node(js, 0, 999_999, 2), &node(js, 0, 1_000_000, 1));
-        assert_before(&node(other, 0, 1, 2), &node(other, 0, 2, 1));
-        assert_before(&node(js, 0, 999_999, 2), &node(other, 0, 1, 1));
-        assert_before(
-            &node(js, 0, 0, 2),
-            &node(Tag::ImmediateObject, 0, NS_PER_MS, 1),
+    fn the_earlier_deadline_is_first() {
+        for tag in [Tag::TimeoutObject, Tag::BunTest] {
+            for boundary in [NS_PER_MS, NS_PER_S] {
+                assert_fires_in_order(
+                    &armed_second(tag).due_at_ns(boundary - 1),
+                    &armed_first(tag).due_at_ns(boundary),
+                );
+            }
+        }
+        assert_fires_in_order(
+            &armed_second(Tag::TimeoutObject).due_at_ns(0),
+            &armed_first(Tag::ImmediateObject).due_at_ns(NS_PER_MS),
         );
     }
 
     #[test]
-    fn ties() {
+    fn only_js_deadlines_are_cut_to_the_millisecond() {
+        assert_fires_in_order(
+            &armed_second(Tag::BunTest).due_at_ns(1),
+            &armed_first(Tag::BunTest).due_at_ns(2),
+        );
+        assert_fires_in_order(
+            &armed_second(Tag::TimeoutObject).due_at_ns(NS_PER_MS - 1),
+            &armed_first(Tag::BunTest).due_at_ns(1),
+        );
+    }
+
+    #[test]
+    fn an_immediate_wins_a_tie() {
         for tag in [Tag::TimeoutObject, Tag::AbortSignalTimeout, Tag::CronJob] {
-            assert_before(&node(Tag::ImmediateObject, 0, 5, 2), &node(tag, 0, 0, 1));
+            assert_fires_in_order(&armed_second(Tag::ImmediateObject), &armed_first(tag));
         }
+    }
+
+    #[test]
+    fn js_timers_tie_in_the_order_of_arming() {
         for epoch in [0, u32::MAX] {
-            for distance in [1, 1 << 23, 1 << 24, (1 << 31) - 2] {
-                assert_before(
-                    &node(Tag::TimeoutObject, 0, 5, epoch),
-                    &node(Tag::AbortSignalTimeout, 0, 0, epoch.wrapping_add(distance)),
+            for armed_between in [1, 1 << 23, 1 << 24, (1 << 31) - 2] {
+                assert_fires_in_order(
+                    &armed_first(Tag::TimeoutObject).due_at_ns(5).in_epoch(epoch),
+                    &armed_second(Tag::AbortSignalTimeout)
+                        .in_epoch(epoch.wrapping_add(armed_between)),
                 );
             }
         }
-        let (js, other) = (
-            node(Tag::TimeoutObject, 0, 5, 1),
-            node(Tag::CronJob, 0, 0, 2),
-        );
+    }
+
+    #[test]
+    fn a_js_timer_and_another_timer_tie_in_no_order() {
+        let (js, other) = (armed_first(Tag::TimeoutObject), armed_second(Tag::CronJob));
         assert_eq!((js.less(&other), other.less(&js)), (false, false));
     }
 
@@ -307,7 +345,8 @@ mod tests {
             (seed >> 8) as usize % below
         };
         let nodes: Vec<_> = (0..40)
-            .map(|i| node(Tag::TimeoutObject, random(4) as i64, 0, i))
+            .map(|i| armed_first(Tag::TimeoutObject).in_epoch(i))
+            .map(|node| node.due_at_ns(random(4) as i64 * NS_PER_S))
             .collect();
         let heap = Intrusive::<EventLoopTimer>::default();
         // SAFETY: `nodes` outlives `heap`, and `state` says which of them are linked.

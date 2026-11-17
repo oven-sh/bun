@@ -409,11 +409,6 @@ pub(crate) fn run_task(
             [Test],
             |run: crate::test_runner::bun_test::RunTestsTask| -> JsResult<()> { run.call() }
         )?,
-        task_tag::ValkeyDeferredFailure => boxed_arm!(
-            task,
-            [Valkey],
-            |failure: crate::valkey_jsc::valkey::DeferredFailure| -> JsResult<()> { failure.run() }
-        )?,
         task_tag::DnsErrorDeferred => boxed_arm!(
             task,
             [Dns],
@@ -814,7 +809,7 @@ fn run_task_cold(task: &Task) {
         task_tag::ShellTouchTask => shell_dispatch!(PoolTask<ShellTouchTask>),
         task_tag::ShellMkdirTask => shell_dispatch!(PoolTask<ShellMkdirTask>),
         task_tag::ShellLsTask => shell_dispatch!(PoolTask<ShellLsTask>),
-        task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
+        task_tag::ShellMvBatchedTask => shell_dispatch!(PoolTask<ShellMvBatchedTask>),
         task_tag::ShellMvCheckTargetTask => shell_dispatch!(PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
         task_tag::ShellRmDirTask => {
@@ -823,10 +818,8 @@ fn run_task_cold(task: &Task) {
         }
         task_tag::ShellGlobTask => shell_dispatch!(PoolTask<ShellGlobTask>),
         task_tag::ShellYesTask => {
-            // SAFETY: §Dispatch — tag identifies pointee; enqueued by
-            // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
-            // interpreter arena and is stable until the builtin deinits.
-            ShellYesTask::run_from_main_thread(unsafe { &*cast_ptr!(ShellYesTask) });
+            // SAFETY: §Dispatch — tag identifies pointee; enqueued by `YesTask::enqueue`.
+            unsafe { ShellYesTask::run_from_main_thread(cast_ptr!(ShellYesTask)) };
         }
 
         // Any tag the hot path mis-routed: producer bug.
@@ -838,7 +831,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 82,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -944,8 +937,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 readable: bool = event.flags.contains(PollFlag::Readable),
                 writable: bool = event.flags.contains(PollFlag::Writable),
             ) {
-                // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
-                // `Channel::process` re-enters the resolver via c-ares callbacks.
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
                 let resolver = unsafe { &*resolver };
                 resolver.on_dns_poll(fd, readable, writable);
@@ -1216,7 +1207,7 @@ unsafe fn __bun_cancel_pending_immediate(task: *mut ()) {
     // SAFETY: per fn contract — the only producer (`ImmediateObject::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
-    crate::timer::ImmediateObject::release_unrun(queued);
+    queued.release_unrun();
 }
 
 /// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
@@ -1257,7 +1248,7 @@ pub(crate) unsafe fn fire_timer(
     now: &Timespec,
     vm: &VirtualMachine,
 ) -> bun_event_loop::JsResult<()> {
-    use crate::timer::{TimeoutObject, WTFTimer};
+    use crate::timer::{ImmediateObject, TimeoutObject, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
     macro_rules! owner {
@@ -1309,7 +1300,8 @@ pub(crate) unsafe fn fire_timer(
             Ok(())
         }
         EventLoopTimerTag::ImmediateObject => {
-            debug_assert!(false, "`FakeTimers::pop_and_fire` fires it");
+            // SAFETY: per fn contract.
+            unsafe { ImmediateObject::fire(t, vm, None) };
             Ok(())
         }
         EventLoopTimerTag::WTFTimer => {
@@ -1379,7 +1371,7 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
+        // R-2: shared deref — `check_timeouts` runs script, which re-enters the resolver.
         EventLoopTimerTag::DNSResolver => {
             feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
                 (&*c.cast_const()).check_timeouts(now, vm)
@@ -1449,7 +1441,8 @@ pub(crate) unsafe fn fire_timer(
             [Valkey],
             (container: *mut Valkey = owner!(Valkey, reconnect_timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_reconnect_timer() }
+                unsafe { (*container).on_reconnect_timer() };
+                Ok(())
             }
         ),
         EventLoopTimerTag::SubprocessTimeout => {
@@ -1693,9 +1686,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::RunTestsTask => {
             release_boxed_in!([Test], crate::test_runner::bun_test::RunTestsTask)
         }
-        task_tag::ValkeyDeferredFailure => {
-            release_boxed_in!([Valkey], crate::valkey_jsc::valkey::DeferredFailure)
-        }
         task_tag::DnsErrorDeferred => {
             release_boxed_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)
         }
@@ -1763,7 +1753,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellGlobTask => release_in!([Shell], PoolTask<ShellGlobTask>),
         task_tag::ShellLsTask => release_in!([Shell], PoolTask<ShellLsTask>),
         task_tag::ShellMkdirTask => release_in!([Shell], PoolTask<ShellMkdirTask>),
-        task_tag::ShellMvBatchedTask => release_in!([Shell], ShellMvBatchedTask),
+        task_tag::ShellMvBatchedTask => release_in!([Shell], PoolTask<ShellMvBatchedTask>),
         task_tag::ShellMvCheckTargetTask => release_in!([Shell], PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmDirTask => release_in!([Shell], ShellRmDirTask),
         task_tag::ShellRmTask => release_in!([Shell], ShellRmTask),

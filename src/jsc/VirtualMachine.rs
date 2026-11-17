@@ -2358,8 +2358,8 @@ impl VirtualMachine {
         }
         if let Some(hooks) = hooks {
             (hooks.stop_watches_for_vm_teardown)(vm);
-            // Drop every TimeoutObject/ImmediateObject's heap node and JS pin
-            // while runtime state and the JSC heap are alive. The heap itself
+            // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
+            // loop ref while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.

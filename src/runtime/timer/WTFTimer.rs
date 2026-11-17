@@ -227,15 +227,13 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
         return ptr::null_mut();
     };
 
-    let event_loop_timer = EventLoopTimer::init_paused(EventLoopTimerTag::WTFTimer);
-
     // SAFETY: `run_loop_timer` is non-null per caller contract.
     let this = unsafe {
         let el = vm.event_loop();
         Box::new(WTFTimer {
             vm: NonNull::from(vm),
             imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),
-            event_loop_timer,
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WTFTimer),
             run_loop_timer: NonNull::new_unchecked(run_loop_timer),
             script_execution_context_id: ScriptExecutionContextIdentifier(
                 vm.initial_script_execution_context_identifier as u32,

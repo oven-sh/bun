@@ -2,7 +2,7 @@
 
 use bun_jsc::Debugger::{self, AsyncCallType::DOMTimer};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsThread, ScriptExecutionStatus, ScriptTimer};
+use bun_jsc::{JSGlobalObject, JSValue, JsThread, ScriptExecutionStatus, ScriptTimer, Strong};
 
 use crate::jsc_hooks::timer_all_of;
 
@@ -23,13 +23,49 @@ pub(super) enum WaitsIn {
     ImmediateQueue,
 }
 
+/// What a timer owns for as long as it can fire.
+pub(super) struct Armed {
+    root: Strong,
+    hold: Option<LoopHold>,
+}
+
+impl Armed {
+    #[inline]
+    pub(super) fn new(this: JSValue, vm: &VirtualMachine) -> Self {
+        Self {
+            root: Strong::create(this, vm.global()),
+            hold: None,
+        }
+    }
+
+    #[inline]
+    pub(super) fn this(&self) -> JSValue {
+        self.root.get()
+    }
+
+    /// After the insert: on Windows the first one into the real heap creates the handle to ref.
+    #[inline]
+    pub(super) fn hold_loop(&mut self, vm: &VirtualMachine, waits_in: WaitsIn) {
+        self.hold.get_or_insert_with(|| LoopHold::new(vm, waits_in));
+    }
+
+    #[inline]
+    pub(super) fn release_loop(&mut self) {
+        self.hold = None;
+    }
+
+    #[inline]
+    pub(super) fn holds_loop(&self) -> bool {
+        self.hold.is_some()
+    }
+}
+
 /// Keeps the event loop alive until dropped.
-pub(super) struct LoopHold(WaitsIn);
+struct LoopHold(WaitsIn);
 
 impl LoopHold {
-    /// For the heap, after the insert: on Windows that creates the handle to ref.
     #[inline]
-    pub(super) fn new(vm: &VirtualMachine, waits_in: WaitsIn) -> Self {
+    fn new(vm: &VirtualMachine, waits_in: WaitsIn) -> Self {
         Self::count(vm, waits_in, 1);
         Self(waits_in)
     }
@@ -77,10 +113,11 @@ pub(super) fn call(
     id: u64,
     this: JSValue,
     callback: JSValue,
-    arguments: JSValue,
+    arguments: Option<JSValue>,
     thrown: Option<&mut JSValue>,
 ) -> bool {
     let global = vm.global();
+    let arguments = arguments.unwrap_or(JSValue::UNDEFINED);
     if vm.is_inspector_enabled() {
         Debugger::will_dispatch_async_call(global, DOMTimer, id);
     }

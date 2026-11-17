@@ -736,11 +736,18 @@ impl FakeTimers {
             // of. The owner may be freed by the call that releases it.
             unsafe {
                 match (*timer).tag {
+                    tag if tag.is_js_timer() => {
+                        discard_js_timer(timer);
+                    }
                     EventLoopTimerTag::CronJob => {
                         let job = bun_ptr::ThisPtr::new(CronJob::from_timer_ptr(timer));
                         CronJob::stop_dropped_from_fake_heap(job);
                     }
-                    _ => discard_js_timer(timer),
+                    tag => debug_assert!(
+                        false,
+                        "{} timer in the fake heap has no release path",
+                        <&'static str>::from(tag),
+                    ),
                 }
             }
         }
@@ -936,7 +943,7 @@ impl FakeTimers {
         unsafe {
             match tag {
                 EventLoopTimerTag::TimeoutObject => TimeoutObject::fire(timer, vm, Some(&mut thrown)),
-                EventLoopTimerTag::ImmediateObject => ImmediateObject::fire(timer, vm, &mut thrown),
+                EventLoopTimerTag::ImmediateObject => ImmediateObject::fire(timer, vm, Some(&mut thrown)),
                 // An abort listener or cron job that throws is reported as uncaught, same as in the real drain.
                 _ => {
                     if let Err(err) = crate::dispatch::fire_timer(timer, &at, vm) {

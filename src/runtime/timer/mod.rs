@@ -100,7 +100,8 @@ impl TimerHeap {
     }
 
     pub(crate) fn has_immediate(&self) -> bool {
-        self.first_immediate().is_some()
+        self.iter()
+            .any(|node| node.tag == EventLoopTimerTag::ImmediateObject)
     }
 
     pub(crate) fn delete_first_immediate(&self) -> Option<*mut EventLoopTimer> {
@@ -117,18 +118,12 @@ impl TimerHeap {
     fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
         // SAFETY: a node is live while it is linked, and this links none.
         unsafe {
-            let mut immediates =
-                (self.0.iter()).filter(|&node| (*node).tag == EventLoopTimerTag::ImmediateObject);
-            let found = immediates.next()?;
-            if found == self.0.peek() {
-                return Some(found);
-            }
-            Some(immediates.fold(
-                found,
-                |first, node| {
-                    if (*node).less(&*first) { node } else { first }
-                },
-            ))
+            let is_immediate =
+                |&node: &*mut EventLoopTimer| (*node).tag == EventLoopTimerTag::ImmediateObject;
+            self.peek().filter(is_immediate).or_else(|| {
+                let immediates = self.0.iter().filter(is_immediate);
+                immediates.reduce(|first, node| if (*node).less(&*first) { node } else { first })
+            })
         }
     }
 
@@ -483,12 +478,13 @@ impl All {
         all.ensure_uv_timer();
     }
 
-    /// `timer` is linked.
     pub(crate) fn remove(&self, timer: &EventLoopTimer) {
         self.assert_js_thread();
-        debug_assert!(timer.state.get() == EventLoopTimerState::ACTIVE);
+        if timer.state.get() != EventLoopTimerState::ACTIVE {
+            return;
+        }
         match timer.clock.get() {
-            // SAFETY: linked (fn doc), in the heap of its clock.
+            // SAFETY: linked, in the heap of its clock.
             Clock::Real => unsafe { self.timers.remove(timer) },
             // SAFETY: as above.
             Clock::Fake => unsafe { self.fake_timers.timers.remove(timer) },
@@ -503,9 +499,7 @@ impl All {
         self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let node = unsafe { &*timer };
-        if node.state.get() == EventLoopTimerState::ACTIVE {
-            self.remove(node);
-        }
+        self.remove(node);
         node.next.set(*time);
         self.insert(timer);
     }
@@ -548,7 +542,7 @@ impl All {
         vm: &VirtualMachine,
     ) -> Option<Timespec> {
         loop {
-            let min = {
+            let (min, now) = {
                 let wtf = self.wtf_timers.lock();
                 let min = wtf.peek()?;
                 // SAFETY: `peek` returned a live heap node.
@@ -558,9 +552,8 @@ impl All {
                 if min_next.greater(&now) {
                     return Some(min_next);
                 }
-                wtf.delete_min().expect("peek succeeded")
+                (wtf.delete_min()?, now)
             };
-            let now = maybe_now.expect("set before the pop");
             // SAFETY: `min` is live; the guard is not held here.
             let fired = unsafe { crate::dispatch::fire_timer(min, &now, vm) };
             // WTF timers run JSC-internal work, not user JS; a stop found here
@@ -778,7 +771,7 @@ impl All {
         real.into_iter().chain(fake)
     }
 
-    /// VM teardown and the `--isolate` file swap. Releases `Strong`s, so it runs while the JSC heap is alive.
+    /// Every timer that script set, at VM teardown and at the `--isolate` file swap. Releases `Strong`s, so it runs while the JSC heap is alive.
     pub(crate) fn cancel_all_timeout_objects(&self) {
         for node in self.linked_nodes() {
             // SAFETY: linked when collected, and a discard frees no node but its own.

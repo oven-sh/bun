@@ -271,6 +271,10 @@ unsafe extern "C" {
         masks: *mut u64,
         bit_planes: bool,
     );
+
+    fn highway_crc32(crc: u32, bytes: *const u8, len: usize) -> u32;
+
+    fn highway_adler32(bytes: *const u8, len: usize) -> u32;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -1719,6 +1723,60 @@ pub unsafe fn parse_mappings(
             err_at,
         )
     }
+}
+
+/// Continues gzip's CRC-32 over `bytes`. It starts as 0.
+#[inline(always)]
+pub fn crc32(crc: u32, bytes: &[u8]) -> u32 {
+    // SAFETY: the kernel reads `bytes.len()` bytes.
+    unsafe { highway_crc32(crc, bytes.as_ptr(), bytes.len()) }
+}
+
+/// zlib's Adler-32 of `bytes`.
+#[inline(always)]
+pub fn adler32(bytes: &[u8]) -> u32 {
+    if bytes.len() < SCALAR_CUTOFF {
+        // Neither sum reaches the modulus.
+        const { assert!(128 * SCALAR_CUTOFF * SCALAR_CUTOFF < 65521) };
+        let (mut low, mut high) = (1, 0);
+        for &byte in bytes {
+            low += u32::from(byte);
+            high += low;
+        }
+        return (high << 16) | low;
+    }
+    // SAFETY: the kernel reads `bytes.len()` bytes.
+    unsafe { highway_adler32(bytes.as_ptr(), bytes.len()) }
+}
+
+/// Compiles a function, and what is inlined into it, a second time for CPUs that have BMI2.
+#[macro_export]
+macro_rules! with_bmi2 {
+    ($(#[$meta:meta])* fn $name:ident($($arg:ident: $type:ty),* $(,)?) -> $result:ty $body:block) => {
+        $(#[$meta])*
+        #[inline(always)]
+        fn $name($($arg: $type),*) -> $result {
+            #[inline(always)]
+            fn body($($arg: $type),*) -> $result $body
+
+            #[inline(never)]
+            fn baseline($($arg: $type),*) -> $result {
+                body($($arg),*)
+            }
+
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            if ::std::is_x86_feature_detected!("bmi2") {
+                #[target_feature(enable = "bmi2")]
+                #[inline(never)]
+                fn bmi2($($arg: $type),*) -> $result {
+                    body($($arg),*)
+                }
+                // SAFETY: the CPU has BMI2.
+                return unsafe { bmi2($($arg),*) };
+            }
+            baseline($($arg),*)
+        }
+    };
 }
 
 #[cfg(test)]

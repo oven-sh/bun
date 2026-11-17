@@ -6167,7 +6167,11 @@ it("http2 server sends each session's frames to its own peer under interleaved r
   }
 });
 
-it("fails the whole session when an outbound header block cannot be encoded", async () => {
+it.each([
+  ["string", value => ({ "test-header": value })],
+  ["array", value => ({ "test-header": ["short", value] })],
+  ["raw list", value => ["test-header", value]],
+])("fails the whole session when an outbound header block cannot be encoded (%s)", async (_, headers) => {
   // A header block the HPACK encoder cannot emit is a COMPRESSION_ERROR (9) against the
   // session in node, so the session and the in-flight request both see
   // ERR_HTTP2_SESSION_ERROR rather than a per-stream error.
@@ -6177,7 +6181,7 @@ it("fails the whole session when an outbound header block cannot be encoded", as
     const client = http2.connect(`http://localhost:${port}`, { maxSendHeaderBlockLength: 100000 });
     const sessionError = new Promise(resolve => client.on("error", resolve));
     const requestError = new Promise(resolve => {
-      const req = client.request({ "test-header": Buffer.alloc(90000, "A").toString() });
+      const req = client.request(headers(Buffer.alloc(90000, "A").toString()));
       req.on("error", resolve);
       req.end();
     });

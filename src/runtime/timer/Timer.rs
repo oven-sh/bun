@@ -339,7 +339,7 @@ impl DateHeaderTimer {
 // ════════════════════════════════════════════════════════════════════════════
 
 // `generate-host-exports.ts`
-// scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
+// scrapes the `// HOST_EXPORT` markers below and emits the thunks into
 // `generated_host_exports.rs`, each routing through `host_fn::to_js_host_call`.
 //
 // C++ callers (`src/jsc/bindings/node/NodeTimers.cpp`, `BunObject.cpp`) declare
@@ -511,8 +511,10 @@ pub(crate) fn read_hrtime_export(vm: &VirtualMachine) -> u64 {
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)
-pub(crate) fn clear_immediate_export(_global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
+pub(crate) fn clear_immediate_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    if id.is_number() || id.is_string_literal() {
+        return All::clear_timeout(global, id);
+    }
     if let Some(immediate) = id.as_class_ref::<ImmediateObject>() {
         immediate.cancel();
     }

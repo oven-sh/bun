@@ -120,9 +120,7 @@ function headersFromRequestOptions(inputHeaders) {
   return new Headers(inputHeaders || kEmptyObject);
 }
 
-// One hop's connector work, or undefined when there is none: `url` pinned to
-// the lookup's address, `host` (pinned hops) for the Host header, `serverName`
-// (pinned HTTPS hops) for SNI and certificate verification.
+// One hop's connector work: the pinned `url`, `host` for the Host header, `serverName` for SNI.
 async function applyConnect(url, connect, signal) {
   const { protocol } = url;
   // data:, blob: and file: never open a socket, so the connector does not apply.
@@ -179,8 +177,7 @@ function connectTls(connect) {
   return out;
 }
 
-// Per-hop init: connector TLS options, then the request's tls, then the pinned
-// serverName. A pinned hop is direct, like undici's Agent, so proxy is off.
+// Per-hop init: connector TLS, then the request's tls, then the pinned serverName; pinned hops are direct.
 function connectInit(init, hop, connect) {
   const out = { ...init };
   const { host, serverName } = hop;
@@ -188,16 +185,30 @@ function connectInit(init, hop, connect) {
   if (hop.https) {
     const fromConnect = connectTls(connect);
     if (fromConnect !== undefined || serverName !== undefined) {
-      if (init?.session != null && init?.tls == null) {
-        throw new NotSupportedError(
-          "a Bun.FetchSession cannot be combined with a connect.lookup hook over HTTPS; pass the TLS options as the request's tls option instead",
-        );
-      }
-      const tls = fromConnect === undefined ? init?.tls : { ...fromConnect, ...init?.tls };
+      const tls = mergeConnectTls(init, fromConnect);
       out.tls = serverName === undefined ? tls : pinnedTls(tls, serverName);
     }
   }
   return out;
+}
+
+// A request `tls` replaces a Bun.FetchSession's TLS wholesale, so the
+// connector's options cannot be layered onto a session.
+function mergeConnectTls(init, fromConnect) {
+  if (init?.session != null && init?.tls == null) {
+    throw new NotSupportedError(
+      "a Bun.FetchSession cannot be combined with an Agent's connect options over HTTPS; pass the TLS options as the request's tls option instead",
+    );
+  }
+  return fromConnect === undefined ? init?.tls : { ...fromConnect, ...init?.tls };
+}
+
+// An Agent with TLS options but no lookup hook stays on the native path, which
+// keeps `tls` across its own redirect following.
+function withConnectTls(init, connect) {
+  const fromConnect = connectTls(connect);
+  if (fromConnect === undefined) return init;
+  return { ...init, tls: mergeConnectTls(init, fromConnect) };
 }
 
 // Bodies that cannot be sent twice: a web or node stream, or any other
@@ -331,9 +342,7 @@ async function fetchWithConnect(input, init, connect) {
   const redirectMode = init?.redirect ?? (isRequest ? input.redirect : undefined) ?? "follow";
   const signal = init?.signal ?? (isRequest ? input.signal : undefined);
   if (redirectMode !== "follow") {
-    // "manual" returns the 3xx and "error" rejects natively; neither follows
-    // a redirect, so only the first hop needs pinning. Headers are copied
-    // before the await so a change during the lookup does not reach the request.
+    // Neither mode follows a redirect, so only the first hop is pinned. Headers are copied before the await.
     const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
     let pin;
     try {
@@ -361,8 +370,7 @@ async function fetchWithConnect(input, init, connect) {
   let body = init?.body;
   const requestBody = body === undefined && isRequest ? input.body : null;
   if (requestBody != null) {
-    // A body held in memory or in a file is taken back as a (lazy) Blob, so it
-    // has a Content-Length and a 307/308 can replay it. Other streams are sent once.
+    // A memory or file body becomes a (lazy) Blob again: Content-Length, and replayable on 307/308.
     const source = requestBody.$bunNativePtr;
     const tag = source == null ? "" : ObjectPrototypeToString.$call(source);
     body =
@@ -397,10 +405,10 @@ function fetch(input, init) {
       dispatcher = input.dispatcher;
     }
     const connect = resolveConnect(dispatcher);
-    // Take over only when there is connect behaviour to apply (a lookup hook,
-    // or a custom connector to reject); otherwise stay on the native path.
-    if (connect == null || (typeof connect !== "function" && typeof connect.lookup !== "function")) {
-      return nativeFetch(input, init);
+    if (connect == null) return nativeFetch(input, init);
+    // Per-hop work is needed only for a lookup hook (or a custom connector to reject).
+    if (typeof connect !== "function" && typeof connect.lookup !== "function") {
+      return nativeFetch(input, withConnectTls(init, connect));
     }
     return fetchWithConnect(input, init, connect);
   } catch (e) {
@@ -636,6 +644,8 @@ async function request(
         if (host !== undefined && !headers.has("host")) headers.set("host", host);
         init = connectInit(init, pin, connect);
       }
+    } else if (connect != null) {
+      init = withConnectTls(init, connect);
     }
     resp = await nativeFetch(url, init);
   }

@@ -1452,6 +1452,28 @@ describe("undici dispatcher connect.lookup", () => {
     expect(await body!.text()).toBe("token-A");
   });
 
+  it("https: an Agent's connect TLS options apply without a lookup hook, across native redirects", async () => {
+    await using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("tls-only") });
+    await using origin = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () => Response.redirect(`https://localhost:${target.port}/`, 302),
+    });
+    const url = `https://localhost:${origin.port}/`;
+    expect(
+      await undiciFetch(url, { dispatcher: new Agent({ connect: { timeout: 5000 } }) }).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+    ).toBe("rejected");
+    const agent = new Agent({ connect: { ca: tlsCert.cert } });
+    const res = await undiciFetch(url, { dispatcher: agent });
+    expect(await res.text()).toBe("tls-only");
+    expect(res.redirected).toBe(true);
+    const { body } = await request(url, { dispatcher: agent, maxRedirections: 1 });
+    expect(await body!.text()).toBe("tls-only");
+  });
+
   it("an Agent without connect options leaves requests untouched", async () => {
     await using server = Bun.serve({ port: 0, fetch: () => new Response("plain") });
     const res = await undiciFetch(`http://127.0.0.1:${server.port}/`, { dispatcher: new Agent() });

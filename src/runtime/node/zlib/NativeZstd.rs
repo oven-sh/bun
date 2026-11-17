@@ -286,6 +286,7 @@ mod _impl {
             const MAGIC_LEN: usize = 4;
             /// `ZSTD_NO_FORWARD_PROGRESS_MAX`
             const IDLE_STEPS_MAX: u32 = 16;
+            let had_input = !input.is_empty();
             loop {
                 let (consumed, result) = self.decoder.step(input, out);
                 *input = &input[consumed..];
@@ -301,7 +302,7 @@ mod _impl {
                     break;
                 }
             }
-            if self.decoder.idle_steps() >= IDLE_STEPS_MAX {
+            if self.decoder.idle_steps() >= IDLE_STEPS_MAX && (out.room() == 0 || !had_input) {
                 return Err(codec_error(match out.room() {
                     0 => bun_zstd::Error::NoForwardProgressDestFull,
                     _ => bun_zstd::Error::NoForwardProgressInputEmpty,

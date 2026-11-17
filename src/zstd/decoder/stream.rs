@@ -215,6 +215,7 @@ impl Decoder {
     fn try_step(&mut self, input: &[u8], out: &mut Output<'_>) -> Result<(usize, Status)> {
         let (mut rest, written) = (input, out.written());
         if let Stage::Idle = self.stage {
+            self.idle_steps = 0;
             self.stage = Stage::Header {
                 bytes: [0; _],
                 len: 0,

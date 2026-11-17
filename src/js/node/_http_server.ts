@@ -43,7 +43,7 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
 const {
-  kEndCalled,
+  kSharesWrites,
   kForeignListener,
   kHandleClosed,
   kListenersRemoved,
@@ -105,7 +105,7 @@ const kListenerGeneration = Symbol("http.server.listenerGeneration");
 const kClusterHandle = Symbol("http.server.clusterHandle");
 // listen() and close() bump it, so a reply from the cluster primary to an earlier listen() is dropped.
 const kClusterListeningId = Symbol("http.server.clusterListeningId");
-// The id of the listen() whose bind waits for the primary to let go of an address.
+// The id of the listen() that waits for the primary.
 const kClusterPendingBind = Symbol("http.server.clusterPendingBind");
 // Under `bun --hot`, maps a reused native server to the http.Server it dispatches to, or to null once another http.Server stopped it.
 let nativeServerOwners: WeakMap<WeakKey, Server | null> | undefined;
@@ -951,7 +951,7 @@ Server.prototype.listen = function () {
 
 // net.Server's listenInCluster, always `sharedOnly` like its TLS servers: Bun.serve can't take connections the primary accepted.
 function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
-  const listeningId = ++server[kClusterListeningId];
+  const listeningId = (server[kClusterPendingBind] = ++server[kClusterListeningId]);
   function query(address, queryPort, addressType) {
     const flags = ipv6Only ? 1 : 0;
     const serverQuery = { address, port: queryPort, addressType, fd, flags, sharedOnly: true, isHttp: true };
@@ -960,6 +960,7 @@ function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
         handle?.close();
         return;
       }
+      server[kClusterPendingBind] = -1;
       if (errno) {
         const ex = new ExceptionWithHostPort(errno, "bind", address, queryPort);
         if (typeof reply?.bunHint === "string") ex.message += `\n  note: ${reply.bunHint}`;
@@ -991,8 +992,9 @@ function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
   // https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2434-L2452
   require("node:dns").lookup(address, (err, ip, family) => {
     if (listeningId !== server[kClusterListeningId]) return;
-    if (err) server.emit("error", err);
-    else query(ip, port, family === 6 ? 6 : 4);
+    if (!err) return query(ip, port, family === 6 ? 6 : 4);
+    server[kClusterPendingBind] = -1;
+    server.emit("error", err);
   });
 }
 
@@ -1628,6 +1630,7 @@ function leaveHttp(socket) {
 }
 function leftHttp(socket) {
   socket[kHandle] = undefined;
+  socket[kSharesWrites] = false;
   delete socket._final;
 }
 // ws.handleUpgrade() while uWS still owns the connection: from a 'request' listener, or before the body of the Upgrade request has ended.
@@ -2124,13 +2127,23 @@ function waitForSocket(res, socket, state) {
   startNextResponse(socket);
 }
 
+// A close over unread bytes is a reset, which drops what the peer has yet to read. Its FIN or the idle timeout closes then.
+function closeWithoutReset(socket, lastResponse) {
+  if (lastResponse?.req.complete && !socket._paused) return void socket.destroySoon();
+  socket[kHandle].detachParser(false);
+  socket._paused = false;
+  socket.resume();
+  socket.setTimeout(keepAliveIdleTimeout(socket.server), destroyNow.bind(undefined, socket));
+}
+
 function startNextResponse(socket) {
   const state = socket?.[kConnectionState];
   if (state === undefined || socket._httpMessage != null || socket.destroyed) return;
   if (socket[kHandle] === undefined) return;
   if (socket.writableEnded) {
     // No response can follow the FIN. The close aborts those that wait.
-    if (state.outgoing.length !== 0 && !socket[kHandedOff]) socket.destroySoon();
+    if (state.outgoing.length !== 0 && !socket[kHandedOff])
+      closeWithoutReset(socket, state.outgoing[state.outgoing.length - 1]);
     return;
   }
   const res = state.outgoing[0];
@@ -2367,6 +2380,7 @@ function attachSecureConnection(server: Server, socket) {
   if (socket[kHandle] === undefined) return;
   // What the peer's FIN ends is uWS's decision while it parses the connection, as on a plain one.
   socket.allowHalfOpen = true;
+  socket[kSharesWrites] = true;
   nativeConnectionListener(server, socket);
 }
 
@@ -2458,12 +2472,6 @@ function nativeSocketOnResume(this: any) {
 function onSocketPause(this: any) {
   this._handle?.pause();
 }
-
-// _final() waits for the callback of the last write, which TLS defers by a tick. uWS has those bytes already.
-Server.prototype[kEndCalled] = function (socket) {
-  if (socket._final !== nativeSocketFinal || socket[kHandedOff]) return;
-  if (socket._writableState.bufferedRequestCount === 0) socket._handle?.shutdown();
-};
 
 // Without net.Socket's tick: what the response writes after socket.end() is dropped, as in Node, where both share the socket's Writable.
 function nativeSocketFinal(this: any, callback) {

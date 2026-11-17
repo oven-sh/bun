@@ -267,6 +267,44 @@ describe.skipIf(isWindows).each(["http", "https"] as const)(
       expect(order).toEqual(["finish", "close"]);
     });
 
+    test.concurrent("end(): an unread upload that waits behind the response doesn't reset it", async () => {
+      using exchange = await respond(async (req, client) => {
+        client.write(`POST /2 HTTP/1.1\r\nHost: x\r\nContent-Length: ${size}\r\n\r\n`);
+        client.write(Buffer.alloc(size));
+        await once((req.socket as any).server, "request");
+        req.socket.end();
+      });
+      expect(await exchange.read()).toBeGreaterThan(size);
+      await exchange.socketClosed;
+    });
+
+    test.concurrent.each([
+      ["write(), end()", "end", "<a><b>"],
+      ["write(), write()", "write", "<a><b><late>"],
+    ] as const)("%s on the socket go out ahead of a later response", async (_name, second, expected) => {
+      const server = (protocol === "https" ? https.createServer(tlsCert) : http.createServer()).on(
+        "request",
+        (req, res) => {
+          req.socket.write("<a>");
+          req.socket[second]("<b>");
+          res.end("<late>");
+        },
+      );
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" };
+      const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+      try {
+        let received = "";
+        client.on("data", chunk => (received += chunk));
+        client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await once(client, "close");
+        expect(received.match(/<[^>]*>/g)!.join("")).toBe(expected);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
     test.concurrent("end(): the connection closes on the responses that wait behind it", async () => {
       using exchange = await respond(async (req, client) => {
         client.write("GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");

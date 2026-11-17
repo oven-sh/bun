@@ -2466,9 +2466,11 @@ test.concurrent.each(["http", "net"])(
   },
 );
 
-test.concurrent("an http worker whose bind waits for the primary listens once", async () => {
-  using dir = tempDir("cluster-http-pending-bind", {
-    "fixture.js": `
+test.concurrent.each(["port", "0"])(
+  "an http worker whose listen(%s) waits for the primary listens once",
+  async port => {
+    using dir = tempDir("cluster-http-pending-bind", {
+      "fixture.js": `
       const cluster = require("node:cluster");
       if (cluster.isPrimary) {
         const worker = cluster.fork();
@@ -2484,9 +2486,9 @@ test.concurrent("an http worker whose bind waits for the primary listens once", 
             process.send("begin");
             const { port } = probe.address();
             probe.close();
-            const server = require("node:http").createServer().listen(port, "127.0.0.1");
+            const server = require("node:http").createServer().listen(${port}, "127.0.0.1");
             try {
-              server.listen(port, "127.0.0.1");
+              server.listen(${port}, "127.0.0.1");
             } catch (error) {
               process.send(error.code);
             }
@@ -2496,21 +2498,22 @@ test.concurrent("an http worker whose bind waits for the primary listens once", 
         });
       }
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "ERR_SERVER_ALREADY_LISTEN\nlistening 1\n",
-    stderr: "",
-    exitCode: 0,
-  });
-});
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ERR_SERVER_ALREADY_LISTEN\nlistening 1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 test.skipIf(isWindows).concurrent.each([
   ["net, SCHED_RR", "SCHED_RR", `require("node:net").createServer().listen(0, "127.0.0.1", onListening)`],

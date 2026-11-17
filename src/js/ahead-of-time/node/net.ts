@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e9fd242f3cba3f895329304b74f2eca92095d540815187f05b4ba406c6737c31.
+// Written against that file with the SHA-256 868b187eaff993c4de9844416ec0e13b0bd7f2f1c73d67e4439cea289669658d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -53,7 +53,7 @@ const kArmHandshakeTimeout: typeof netSymbols.kArmHandshakeTimeout = netSymbols.
 const kDestroyOnRead: typeof netSymbols.kDestroyOnRead = netSymbols.kDestroyOnRead;
 const kForeignListener: typeof netSymbols.kForeignListener = netSymbols.kForeignListener;
 const kHandleClosed: typeof netSymbols.kHandleClosed = netSymbols.kHandleClosed;
-const kEndCalled: typeof netSymbols.kEndCalled = netSymbols.kEndCalled;
+const kSharesWrites: typeof netSymbols.kSharesWrites = netSymbols.kSharesWrites;
 const kListenersRemoved: typeof netSymbols.kListenersRemoved = netSymbols.kListenersRemoved;
 const kPreHandshakeWrite: typeof netSymbols.kPreHandshakeWrite = netSymbols.kPreHandshakeWrite;
 const readInProgress = netSymbols.readInProgress;
@@ -294,6 +294,7 @@ declare global {
 
       [kTimeout]: Timer | null;
       [kDestroyOnRead]: boolean;
+      [kSharesWrites]: boolean;
       [kupgraded]: Socket | null;
       [kOnUpgradedClose]: (() => void) | undefined;
       [kOwesRawClose]: boolean;
@@ -2031,6 +2032,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
 
   this[khandlers] = SocketHandlers;
   this[kDestroyOnRead] = false;
+  this[kSharesWrites] = false;
   this[kBytesRead] = 0;
   this[kBytesWritten] = undefined;
   this[kLastBytesSent] = 0;
@@ -2497,9 +2499,7 @@ Socket.prototype[kReinitializeHandle] = function reinitializeHandle(this: $Node.
 // The arguments go on to Duplex.prototype.end as they are.
 Socket.prototype.end = function end(this: $Node.Socket, data?, encoding?, callback?) {
   $debug("Socket.prototype.end");
-  const ret = Duplex.prototype.end.$call(this, data, encoding, callback);
-  if (this.encrypted) (this.server as any)?.[kEndCalled]?.(this);
-  return ret;
+  return Duplex.prototype.end.$call(this, data, encoding, callback);
 };
 
 // `scheduleClose` is node:http's, for a connection of its server.
@@ -3083,7 +3083,7 @@ Socket.prototype._write = function _write(
     const err = new ErrnoException(this[kHungUp] && status === uv().UV_EBADF ? uv().UV_EPIPE : status, "write");
     if (endsWithoutError(this)) process.nextTick(callback, err);
     else callback(err);
-  } else if (this.encrypted) {
+  } else if (this.encrypted && !this[kSharesWrites]) {
     // A TLS write is never done in the same call in Node, so writableLength counts it until the next tick (test-tls-buffersize.js).
     process.nextTick(callback);
   } else {

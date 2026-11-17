@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/net/symbols.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0bd672d8ef42862fe541c87ef4a00ae717a0c2268b5c88f691ee3958654b55a2.
+// Written against that file with the SHA-256 6d8cb3b6df9850f61c6b32a3fe370d0f2f1155ae1419bff1078d9adc79b5567a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 export default {
@@ -9,8 +9,8 @@ export default {
   // Set while a socket must receive nothing (an idle socket in an http.Agent
   // pool): the read path destroys the socket instead of delivering the bytes.
   kDestroyOnRead: Symbol("kDestroyOnRead"),
-  // http.Server.prototype method. net.Socket calls it on its server behind end().
-  kEndCalled: Symbol("kEndCalled"),
+  // True on a TLSSocket whose connection node:http's responses write to as well. They would overtake a write that waits in the stream's buffer.
+  kSharesWrites: Symbol("kSharesWrites"),
   // net.Server.prototype method. node:http calls it on its own server, whose connections uWS accepts.
   kForeignListener: Symbol("kForeignListener"),
   // A function that node:http puts on a socket it handed to 'connect' or 'upgrade'. net.Socket calls it when the connection has closed.
@@ -52,7 +52,7 @@ export default {
   readonly kAcceptedTLS: unique symbol;
   readonly kArmHandshakeTimeout: unique symbol;
   readonly kDestroyOnRead: unique symbol;
-  readonly kEndCalled: unique symbol;
+  readonly kSharesWrites: unique symbol;
   readonly kForeignListener: unique symbol;
   readonly kHandleClosed: unique symbol;
   readonly kListenersRemoved: unique symbol;

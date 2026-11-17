@@ -48,7 +48,7 @@ const {
   kAcceptedTLS,
   kArmHandshakeTimeout,
   kDestroyOnRead,
-  kEndCalled,
+  kSharesWrites,
   kForeignListener,
   kHandleClosed,
   kListenersRemoved,
@@ -1654,6 +1654,7 @@ function Socket(options?): void {
 
   this[khandlers] = SocketHandlers;
   this[kDestroyOnRead] = false;
+  this[kSharesWrites] = false;
   this[kBytesRead] = 0;
   this[kBytesWritten] = undefined;
   this[kLastBytesSent] = 0;
@@ -2108,9 +2109,7 @@ Socket.prototype[kReinitializeHandle] = function reinitializeHandle(handle) {
 
 Socket.prototype.end = function end(data, encoding, callback) {
   $debug("Socket.prototype.end");
-  const ret = Duplex.prototype.end.$call(this, data, encoding, callback);
-  if (this.encrypted) this.server?.[kEndCalled]?.(this);
-  return ret;
+  return Duplex.prototype.end.$call(this, data, encoding, callback);
 };
 
 // `scheduleClose` is node:http's, for a connection of its server.
@@ -2677,7 +2676,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     const err = new ErrnoException(this[kHungUp] && status === uv().UV_EBADF ? uv().UV_EPIPE : status, "write");
     if (endsWithoutError(this)) process.nextTick(callback, err);
     else callback(err);
-  } else if (this.encrypted) {
+  } else if (this.encrypted && !this[kSharesWrites]) {
     // A TLS write is never done in the same call in Node, so writableLength counts it until the next tick (test-tls-buffersize.js).
     process.nextTick(callback);
   } else {

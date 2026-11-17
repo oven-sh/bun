@@ -473,3 +473,19 @@ test.concurrent("a writer()'s failure is not reported once its graph is disposed
     }),
   ).toEqual({ stdout: `0\n${refused.part.reqs}\n`, stderr: "", exited: 0 });
 });
+
+test.concurrent.each([
+  ["its code", `error(404, "NoSuchBucket")`, "NoSuchBucket message"],
+  ["no body", `new Response("", { status: 404 })`, "UnknownError Failed to initiate multipart upload"],
+])("CreateMultipartUpload answered 404 with %s", async (_, create, expected) => {
+  const body = `
+    const w = client.file("key").writer(opts);
+    w.write(new Uint8Array(partSize));
+    console.log(await w.end().then(String, e => e.code + " " + e.message));
+  `;
+  expect(await run({ body, waitFor: `true`, answer: { create } })).toEqual({
+    stdout: `${expected}\n{"create":1,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});

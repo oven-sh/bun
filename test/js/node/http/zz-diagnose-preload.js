@@ -158,18 +158,23 @@ function diagnose() {
   out("unrooted cells that reach the request:", candidates.length);
   for (const n of candidates) if (!n.from.length) out("    no incoming edge:", show(n));
   for (const n of candidates.slice(0, 60)) out("    ", show(n), "in:", n.from.length);
+  const orphans = [...nodes.values()].filter(n => n.id && !parent.has(n.id) && !n.from.length && n.cls === "Immediate");
+  for (const n of orphans) {
+    out("orphan", show(n));
+    for (const [b, name] of n.to) out("     ->", name, show(nodes.get(b)));
+  }
   if (!win) return;
 
   const found = scanProcess(candidates);
   rsp = ctx.view.getBigUint64(0x98, true);
   out("stack", hex(low), hex(high), "rsp", hex(rsp), "depth", hex(high - rsp));
   const words = new BigUint64Array(copy.bytes, copy.pad, Number((high - low) / 8n));
-  const cells = candidates.map(n => [BigInt(n.cell), BigInt(Math.min(n.size, 512)), n]);
+  const cells = [...candidates, ...orphans].map(n => [BigInt(n.cell), BigInt(Math.min(n.size, 512)), n]);
   const hits = [];
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (w < 0x10000n || w > 0x7fffffffffffn) continue;
-    for (const [at, size, n] of cells) if (w >= at && w < at + (n.cls === "Timeout" ? 80n : size)) hits.push([low + BigInt(i) * 8n, w - at, n]);
+    for (const [at, size, n] of cells) if (w >= at && w < at + (n.cls === "Timeout" ? 80n : n.cls === "Immediate" ? 65n : size)) hits.push([low + BigInt(i) * 8n, w - at, n]);
   }
   const chain = n => {
     let s = "";
@@ -242,6 +247,7 @@ function diagnose() {
     const inCell = owner && at < cell + BigInt(owner.size);
     if (inCell && reach.has(owner.id)) continue;
     if (!inCell && near.some(b => reach.has(b[1].id))) continue;
+    if (!inCell) continue;
     if (++shown > 120) break;
     out("WORD", hex(at), "->", n.cls, n.label.slice(0, 20), "#" + n.id, "region", hex(allocation), hex(size), hex(type));
     if (inCell) out("       in", show(owner), "+" + (at - cell), pathTo(owner));
@@ -250,7 +256,7 @@ function diagnose() {
     if (!inCell) out("       around", read(at - 48n, 13).map(w => (w > base && w < base + imageSize ? `<${symbol(w).slice(0, 90)}>` : hex(w))).join(" "));
   }
   out("--- cells that nothing reported reaches, without an incoming edge");
-  for (const n of nodes.values()) if (n.id && !parent.has(n.id) && !n.from.length) out("    ", show(n), "out:", n.to.length);
+  for (const n of nodes.values()) if (n.id && !parent.has(n.id) && !n.from.length && n.cls !== "string") out("    ", show(n), "out:", n.to.length);
 
   const c = buf(1232);
   const reg = (n, v) => (v === undefined ? c.view.getBigUint64(0x78 + 8 * n, true) : c.view.setBigUint64(0x78 + 8 * n, v, true));
@@ -300,7 +306,7 @@ function diagnose() {
   }
 
   if (mode !== "zero" || !frames) return;
-  const native = hits.filter(([at]) => at >= frames[0].sp);
+  const native = hits.filter(([at, , n]) => at >= frames[5].end && n.cls === "Immediate");
   out("--- zeroing", native.length, "words in live native frames");
   for (const [at] of native) k.RtlMoveMemory(at, zero.at, 8n);
   hits.length = cells.length = 0;

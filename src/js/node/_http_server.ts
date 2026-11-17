@@ -2145,8 +2145,8 @@ function startNextResponse(socket) {
   if (socket[kHandle] === undefined) return;
   if (socket.writableEnded) {
     // No response can follow the FIN. The close aborts those that wait.
-    if (state.outgoing.length !== 0 && !socket[kHandedOff])
-      closeWithoutReset(socket, state.outgoing[state.outgoing.length - 1]);
+    const { length } = state.outgoing;
+    if (length !== 0 && !socket[kHandedOff]) closeWithoutReset(socket, state.outgoing[length - 1]);
     return;
   }
   const res = state.outgoing[0];

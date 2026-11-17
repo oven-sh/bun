@@ -34,7 +34,7 @@ use bun_sys::{self as sys, Fd, File};
 #[cfg(windows)]
 use bun_sys::windows;
 #[cfg(windows)]
-use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, IntoRawHandle as _, OwnedHandle};
+use std::os::windows::io::{IntoRawHandle as _, OwnedHandle};
 
 bun_output::declare_scope!(Terminal, hidden);
 
@@ -61,7 +61,7 @@ pub(crate) struct Terminal {
     /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
     /// uv_process_options_t.pseudoconsole.
     #[cfg(windows)]
-    hpcon: Cell<Option<windows::HPCON>>,
+    hpcon: JsCell<Option<windows::PseudoConsole>>,
 
     /// Current terminal size
     cols: Cell<u16>,
@@ -313,7 +313,7 @@ impl Terminal {
             #[cfg(unix)]
             slave: JsCell::new(Some(pty_result.slave)),
             #[cfg(windows)]
-            hpcon: Cell::new(Some(pty_result.hpcon)),
+            hpcon: JsCell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
                 u16::try_from(clamp_to_coord(options.cols)).expect("int cast")
             } else {
@@ -527,7 +527,10 @@ impl Terminal {
     /// uv_process_options_t.pseudoconsole.
     #[cfg(windows)]
     pub(crate) fn get_pseudoconsole(&self) -> Option<windows::HPCON> {
-        self.hpcon.get()
+        self.hpcon
+            .get()
+            .as_ref()
+            .map(windows::PseudoConsole::as_raw)
     }
 
     /// Mark a terminal created inline by `Bun.spawn` so it cannot be reused
@@ -598,26 +601,11 @@ impl Terminal {
     /// once the last attached client disconnects: the output pipe then breaks
     /// and our reader observes EOF without `on_process_exit` having to tear
     /// ConPTY down (which races conhost's render thread on older builds and can
-    /// drop the child's last write). Equivalent to kernel32's
-    /// `ReleasePseudoConsole` (Windows 11 24H2+) / conpty.dll's
-    /// `ConptyReleasePseudoConsole`; neither is exported from the inbox
-    /// kernel32 on older builds so we reach into the struct directly. Further
-    /// spawns against this pseudoconsole are impossible afterwards.
+    /// drop the child's last write). No further spawn against it is possible afterwards.
     #[cfg(windows)]
     pub(crate) fn release_pseudoconsole_reference(&self) {
-        let Some(hpcon) = self.hpcon.get() else {
-            return;
-        };
-        // SAFETY: `hpcon` was returned from inbox `CreatePseudoConsole`, which
-        // heap-allocates a `PseudoConsole` and returns it as HPCON.
-        // `ClosePseudoConsole` later skips the field when it reads null.
-        let pc = hpcon.cast::<PseudoConsole>();
-        unsafe {
-            let r#ref = (*pc).h_pty_reference;
-            if !r#ref.is_null() && r#ref != windows::INVALID_HANDLE_VALUE {
-                let _ = windows::CloseHandle(r#ref);
-                (*pc).h_pty_reference = core::ptr::null_mut();
-            }
+        if let Some(hpcon) = self.hpcon.get() {
+            hpcon.release();
         }
     }
 
@@ -628,15 +616,10 @@ impl Terminal {
     /// hpcon is passed to the thread by value so the Terminal struct may be freed
     /// before the thread completes.
     #[cfg(windows)]
-    fn close_pseudoconsole_off_thread(&self, hpcon: windows::HPCON) {
+    fn close_pseudoconsole_off_thread(&self, hpcon: windows::PseudoConsole) {
         // PORTING.md bans std::process but not std::thread; a raw detached OS
         // thread is intentional here (no event-loop integration needed).
-        let hpcon_addr = hpcon as usize;
-        match std::thread::Builder::new().spawn(move || {
-            // SAFETY: hpcon was a valid HPCON when taken; ClosePseudoConsole is
-            // safe to call from any thread per Win32 docs.
-            unsafe { windows::ClosePseudoConsole(hpcon_addr as windows::HPCON) };
-        }) {
+        match std::thread::Builder::new().spawn(move || hpcon.close()) {
             Ok(_t) => {
                 // detached: JoinHandle dropped without join → thread runs to completion.
             }
@@ -666,7 +649,7 @@ pub(crate) struct PtyResult {
     #[cfg(unix)]
     pub(crate) slave: File,
     #[cfg(windows)]
-    pub(crate) hpcon: windows::HPCON,
+    pub(crate) hpcon: windows::PseudoConsole,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -923,17 +906,6 @@ struct PipePair {
     pub client: OwnedHandle,
 }
 
-/// Inbox kernel32's HPCON layout. Stable ABI since build 17763: documented as
-/// "part of an ABI shared with the rest of the operating system" in
-/// microsoft/terminal `src/winconpty/winconpty.h`.
-#[cfg(windows)]
-#[repr(C)]
-struct PseudoConsole {
-    h_signal: windows::HANDLE,
-    h_pty_reference: windows::HANDLE,
-    h_conpty_process: windows::HANDLE,
-}
-
 /// Create one end of a pipe pair as an overlapped named pipe (server) and the
 /// other as a synchronous client. The "server" end is suitable for libuv (uv_pipe_open) and
 /// the "client" end is suitable for ConPTY (which uses synchronous I/O).
@@ -943,9 +915,6 @@ fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_OUTBOUND: server writes, client reads.
     server_access: u32,
 ) -> Result<PipePair, CreatePtyError> {
-    use windows::kernel32 as k32;
-    const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
-
     let pid: u32 = windows::GetCurrentProcessId();
     let counter = PIPE_SERIAL.fetch_add(1, Ordering::Relaxed);
     let mut name_utf8_buf = [0u8; 96];
@@ -972,20 +941,9 @@ fn create_overlapped_pipe_pair(
     // SAFETY: name_w_buf[name_w_len] == 0 written above.
     let name_w = bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
 
-    // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let server = unsafe {
-        HandleOrInvalid::from_raw_handle(k32::CreateNamedPipeW(
-            name_w.as_ptr(),
-            server_access | windows::FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
-            windows::PIPE_TYPE_BYTE | windows::PIPE_READMODE_BYTE | windows::PIPE_WAIT,
-            1,
-            65536,
-            65536,
-            0,
-            core::ptr::null_mut(),
-        ))
-    };
-    let server = OwnedHandle::try_from(server).map_err(|_| CreatePtyError::OpenPtyFailed)?;
+    let server =
+        windows::CreateNamedPipeW(name_w, server_access | windows::FILE_FLAG_OVERLAPPED, 65536)
+            .map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
     let client_access: u32 = if server_access == windows::PIPE_ACCESS_INBOUND {
         windows::GENERIC_WRITE
@@ -1016,12 +974,8 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         X: clamp_to_coord(cols),
         Y: clamp_to_coord(rows),
     };
-    let (read_from, write_to) = (input.client.as_raw_handle(), output.client.as_raw_handle());
-    let mut hpcon: windows::HPCON = core::ptr::null_mut();
-    // SAFETY: both are open HANDLEs, which ConPTY duplicates; `hpcon` is a valid out-ptr.
-    if unsafe { windows::CreatePseudoConsole(size, read_from, write_to, 0, &raw mut hpcon) } < 0 {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
+    let hpcon = windows::PseudoConsole::new(size, &input.client, &output.client)
+        .ok_or(CreatePtyError::OpenPtyFailed)?;
 
     Ok(PtyResult {
         read: output.server,
@@ -1283,8 +1237,7 @@ impl Terminal {
                     X: clamp_to_coord(new_cols),
                     Y: clamp_to_coord(new_rows),
                 };
-                // SAFETY: hpcon is a valid open HPCON.
-                let hr = unsafe { windows::ResizePseudoConsole(hpcon, size) };
+                let hr = hpcon.resize(size);
                 if hr < 0 && hr != HR_NO_DATA && hr != HR_BROKEN_PIPE {
                     return Err(heap.error(format_args!("Failed to resize terminal")));
                 }

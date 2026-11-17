@@ -1953,7 +1953,6 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_sys",
- "bun_windows_sys",
  "enumset",
  "libc",
  "strum",

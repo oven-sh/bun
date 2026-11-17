@@ -1,7 +1,7 @@
 //! For NEON, LLVM makes `st2`, `ld4` and `st4` of a wide access next to a shuffle.
 use crate::swizzle::{EveryFourth, Interleave, Repeat};
 use crate::{Int, Isa, Vector};
-use bun_simd_trusted::keep16;
+use bun_simd_trusted::{from_slice, keep16, to_array};
 use core::simd::{Swizzle, u8x16, u8x32, u8x64};
 
 impl<const N: usize, I: Isa> Vector<u8, N, I>
@@ -16,7 +16,7 @@ where
         let to = pairs.as_flattened_mut();
         if Self::IS_ONE_ACCESS {
             let both: u8x32 = Interleave::<2>::concat_swizzle(a.0.resize::<16>(0), b.0.resize(0));
-            both.copy_to_slice(to);
+            *to.first_chunk_mut().unwrap() = to_array(both);
         } else {
             let (first, second) = a.interleave(b);
             first.copy_to_slice(to);
@@ -29,7 +29,7 @@ where
     pub fn load_interleaved4(from: &[[u8; 4]; N]) -> [Self; 4] {
         let from = from.as_flattened();
         if Self::IS_ONE_ACCESS {
-            let all = u8x64::from_slice(from);
+            let all: u8x64 = from_slice(from);
             let planes: [u8x16; 4] = [
                 EveryFourth::<0>::swizzle(all),
                 EveryFourth::<1>::swizzle(all),
@@ -58,7 +58,7 @@ where
             let ab: u8x32 = Repeat::<32>::concat_swizzle(a, b);
             let cd: u8x32 = Repeat::<32>::concat_swizzle(c, d);
             let all: u8x64 = Interleave::<4>::concat_swizzle(ab, cd);
-            all.copy_to_slice(to);
+            *to.first_chunk_mut().unwrap() = to_array(all);
             return quads;
         }
         let (ac_first, ac_second) = a.interleave_in_blocks(c);
@@ -67,7 +67,7 @@ where
         let (third, fourth) = ac_second.interleave_in_blocks(bd_second);
         for (i, to) in to.as_chunks_mut::<16>().0.iter_mut().enumerate() {
             let from = [first, second, third, fourth][i % 4];
-            to.copy_from_slice(&from.0[i / 4 * 16..][..16]);
+            *to = *from.0[i / 4 * 16..].first_chunk().unwrap();
         }
         quads
     }

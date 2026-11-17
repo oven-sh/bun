@@ -3,6 +3,7 @@ pub(crate) use crate::native::{load_shared, store_shared};
 pub(crate) use crate::portable::masked::*;
 pub use crate::portable::{bit_indices, prefix_xor};
 use crate::{Int, opaque};
+use bun_simd_trusted::{from_slice, opaque16, to_array};
 use core::arch::aarch64::*;
 use core::array::from_fn;
 use core::simd::{ToBytes, prelude::*};
@@ -36,7 +37,7 @@ fn select_indices<T: Int<N>, const N: usize, I: crate::Isa>(
     static INDICES: [u8; 65] = core::array::from_fn(const |i| i as u8);
     masks.fold(u8x16::splat(none), |others, (mask, start)| {
         let is_set = mask.to_vector().first_bytes::<16>();
-        let indices = u8x16::from_slice(&INDICES[offset + start * size_of::<T>()..]);
+        let indices = from_slice(&INDICES[offset + start * size_of::<T>()..]);
         is_set & indices | !is_set & others
     })
 }
@@ -54,7 +55,7 @@ impl<const S: bool> crate::Isa for Neon<S> {
             return (mask.to_bitmask(), 1);
         }
         let nibbles = (u16x8::from_ne_bytes(mask.to_vector().first_bytes()) >> 4).cast::<u8>();
-        (u64::from_ne_bytes(nibbles.to_array()), 4 * size_of::<T>())
+        (u64::from_ne_bytes(to_array(nibbles)), 4 * size_of::<T>())
     }
 
     #[inline(always)]
@@ -90,9 +91,9 @@ impl<const S: bool> crate::Isa for Neon<S> {
             return (mask.to_bitmask() & !u64::MAX.unbounded_shl(lane as u32)).count_ones()
                 as usize;
         }
-        let ones = u8x16::from_slice(&STEP[16 - lane * size_of::<T>()..]);
+        let ones: u8x16 = from_slice(&STEP[16 - lane * size_of::<T>()..]);
         // LLVM would widen the lanes first.
-        let is_set = bun_simd_trusted::opaque16(mask.to_vector().first_bytes());
+        let is_set = opaque16(mask.to_vector().first_bytes());
         usize::from((is_set & ones).reduce_sum()) / size_of::<T>()
     }
 

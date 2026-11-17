@@ -2,7 +2,7 @@
 use crate::swizzle::{As, DeinterleaveInBlocks, InterleaveInBlocks, Repeat, ShiftRight};
 use crate::swizzle::{Shuffle, SwapPairs};
 use crate::{Isa, Mask};
-use bun_simd_trusted::opaque16;
+use bun_simd_trusted::{from_array, from_slice, opaque16, to_array};
 use core::array;
 use core::marker::PhantomData;
 use core::ops::{
@@ -74,7 +74,7 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
     #[inline(always)]
     pub fn iota() -> Self {
         let indices = const { array::from_fn(const |i| i as u8) };
-        Self::new(Simd::from_array(indices).cast())
+        Self::new(from_array(indices).cast())
     }
 
     /// `lane` followed by zeros.
@@ -87,12 +87,12 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
 
     #[inline(always)]
     pub const fn from_array(lanes: [T; N]) -> Self {
-        Self(Simd::from_array(lanes), PhantomData)
+        Self(from_array(lanes), PhantomData)
     }
 
     #[inline(always)]
     pub fn to_array(self) -> [T; N] {
-        self.0.to_array()
+        to_array(self.0)
     }
 
     /// Panics if `lanes` is too short.
@@ -231,9 +231,9 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
         // LLVM does not merge a `splat` of wider lanes with the shuffles after it.
         let lanes = Vector::<T, K, I>::from_array(lanes);
         Self::from_first_bytes(match size_of_val(&lanes) {
-            2 => u16x32::splat(u16::from_le_bytes(lanes.first_bytes().into())).to_le_bytes(),
-            4 => u32x16::splat(u32::from_le_bytes(lanes.first_bytes().into())).to_le_bytes(),
-            8 => u64x8::splat(u64::from_le_bytes(lanes.first_bytes().into())).to_le_bytes(),
+            2 => u16x32::splat(u16::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
+            4 => u32x16::splat(u32::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
+            8 => u64x8::splat(u64::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
             _ => Repeat::<16>::swizzle(lanes.first_bytes::<16>()),
         })
     }
@@ -241,7 +241,7 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
     /// Panics if the vector has fewer than `BYTES` bytes.
     #[inline(always)]
     pub(crate) fn first_bytes<const BYTES: usize>(self) -> Simd<u8, BYTES> {
-        Simd::from_slice(self.0.to_le_bytes().as_ref())
+        from_slice(self.0.to_le_bytes().as_ref())
     }
 
     /// `a0 b0 a1 b1 ..`, split into two halves.

@@ -1,9 +1,10 @@
 //! Output to memory that may be uninitialized.
-use crate::{SharedOutU8, SharedU8, copy_to_shared};
+use crate::{SharedOutU8, SharedU8, copy_to_shared, lanes::lanes_before};
 use alloc::vec::Vec;
 use core::cell::Cell;
 use core::mem::MaybeUninit;
-use core::simd::{Simd, SimdElement, cmp::SimdPartialOrd};
+use core::simd::{Simd, SimdElement};
+use core::slice;
 
 /// A slice that can only be written to. A `&mut [T]` comes back for the part that was written.
 pub struct Out<'a, T>(&'a mut [MaybeUninit<T>]);
@@ -24,8 +25,14 @@ impl<'a, T: Copy> From<&'a mut [MaybeUninit<T>]> for Out<'a, T> {
 }
 
 #[inline(always)]
+fn transposed<T, const N: usize>(chunks: &mut [[MaybeUninit<T>; N]]) -> &mut [MaybeUninit<[T; N]>] {
+    // SAFETY: the layout is the same.
+    unsafe { &mut *(&raw mut *chunks as *mut [MaybeUninit<[T; N]>]) }
+}
+
+#[inline(always)]
 fn write<T: Copy, const N: usize>(to: &mut [MaybeUninit<T>; N], values: [T; N]) -> &mut [T] {
-    to.write_copy_of_slice(&values)
+    transposed(slice::from_mut(to))[0].write(values)
 }
 
 /// Where four pieces start that cover `piece..=4 * piece` elements.
@@ -84,9 +91,7 @@ impl<'a, T: Copy> Out<'a, T> {
     /// Without what is left over.
     #[inline(always)]
     pub fn into_chunks<const N: usize>(self) -> Out<'a, [T; N]> {
-        let chunks: *mut [[MaybeUninit<T>; N]] = self.0.as_chunks_mut().0;
-        // SAFETY: the layout is the same.
-        Out(unsafe { &mut *(chunks as *mut [MaybeUninit<[T; N]>]) })
+        Out(transposed(self.0.as_chunks_mut().0))
     }
 
     /// Its bytes, for what also writes to shared memory.
@@ -152,10 +157,8 @@ impl<'a, T: Copy> Out<'a, T> {
     where
         T: SimdElement,
     {
-        const { assert!(N < 256) };
         let len = self.len().min(N);
-        let index = Simd::from_array(core::array::from_fn(|i| i as u8));
-        let enable = index.simd_lt(Simd::splat(len as u8)).cast();
+        let enable = lanes_before::<T, N>(len);
         // SAFETY: the first `len` lanes are enabled, and `self` has that many.
         unsafe { lanes.store_select_ptr(self.0.as_mut_ptr().cast(), enable) };
         Writer { all: self.0, len }.finish()

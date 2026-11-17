@@ -925,7 +925,8 @@ impl<'a> Parser<'a> {
         log_start: LogStart,
         failure: Error,
     ) -> Result<&'a mut [Stmt], Error> {
-        if !p.may_be_script() {
+        // Memory exhaustion is not a property of the reading.
+        if matches!(failure, Error::Alloc(_)) || !p.may_name_top_level_await() {
             return Err(failure);
         }
         let mut module_messages = log_start.take_since(p.log());

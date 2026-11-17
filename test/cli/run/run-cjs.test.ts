@@ -306,6 +306,7 @@ describe.concurrent("run-cjs", () => {
         ["var await = 1; if (await) { module.exports = await; }", 1],
         ["var await = 1; switch (await) { case 1: module.exports = 'one'; }", "one"],
         ["var \\u0061wait = 1; module.exports = \\u0061wait + await;", 2],
+        ["var \\u0061wait = 5; module.exports = \\u0061wait;", 5],
         ["'use strict'; var await = 1; module.exports = await;", 1],
         ["var await = 1; var f = async () => await 2; module.exports = f().constructor.name + await;", "Promise1"],
         ["var await = 1; return void (module.exports = await);", 1],

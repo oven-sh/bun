@@ -4898,15 +4898,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.top_level_await_keyword.len > 0
     }
 
-    /// A file named `.cjs` that the module loader of the runtime reads: `await` at its top level may be a name.
-    pub(crate) fn may_be_script(&self) -> bool {
+    /// True if a reading as a script may differ: the runtime loads a file named `.cjs` that has the word `await`.
+    pub(crate) fn may_name_top_level_await(&self) -> bool {
         let path = &self.source.path;
         // Not `options.module_type`: for a file that an `import` loads, it is the `"type"` of the package alone.
         let is_named_cjs = path.name().ext == b".cjs";
         // A `data:` URL has no file name. What follows its last "." is part of the module's text.
-        self.options.features.commonjs_at_runtime
-            && is_named_cjs
-            && !path.text.starts_with(b"data:")
+        let is_file = !path.text.starts_with(b"data:");
+        let text = self.source.contents();
+        // `\u` is for the word written with an escape.
+        (self.options.features.commonjs_at_runtime && is_named_cjs && is_file)
+            && (strings::contains(text, b"await") || strings::contains(text, b"\\u"))
     }
 
     /// Declare an ambient symbol resolvable BY NAME via [`Self::find_symbol`]

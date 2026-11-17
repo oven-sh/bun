@@ -39,7 +39,7 @@ mod unix {
     ))]
     impl_zeroable!(libc::statfs);
     #[cfg(target_os = "macos")]
-    impl_zeroable!(libc::kevent64_s, libc::rusage_info_v4);
+    impl_zeroable!(libc::kevent64_s, libc::proc_bsdinfo, libc::rusage_info_v4);
     #[cfg(target_os = "freebsd")]
     impl_zeroable!(libc::_umtx_time);
 

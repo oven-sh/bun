@@ -259,16 +259,13 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
 #[cfg(unix)]
 #[inline]
 pub fn c_environ() -> *const *const core::ffi::c_char {
-    // `AtomicPtr<T>` is `#[repr(C)]` over `*mut T`, so this has the same
-    // layout as libc's `char **environ`; a Relaxed word load is sound under
-    // concurrent `setenv` and compiles to the same single load as a plain
-    // `static` read.
+    // `bun_sys::set_environ` replaces it while other threads read it.
     unsafe extern "C" {
         // `safe static` (Rust 2024 `unsafe extern`) discharges the link-time
         // existence proof; `AtomicPtr::load` itself is already safe.
         safe static environ: core::sync::atomic::AtomicPtr<*const core::ffi::c_char>;
     }
-    environ.load(core::sync::atomic::Ordering::Relaxed)
+    environ.load(core::sync::atomic::Ordering::Acquire)
 }
 
 /// `bun.getenvZAnyCase` — case-insensitive env lookup (used on POSIX for
@@ -4800,18 +4797,21 @@ impl Timespec {
         Self::now(TimespecMockMode::AllowMockedTime)
     }
 
+    #[cfg(unix)]
+    #[inline]
+    pub fn of_clock(clock: libc::clockid_t) -> Timespec {
+        let mut ts: libc::timespec = crate::ffi::zeroed();
+        clock_gettime(clock, &mut ts);
+        Timespec {
+            sec: ts.tv_sec,
+            nsec: ts.tv_nsec,
+        }
+    }
+
     fn now_real() -> Timespec {
         #[cfg(unix)]
         {
-            let mut ts = libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            };
-            clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
-            Timespec {
-                sec: ts.tv_sec,
-                nsec: ts.tv_nsec,
-            }
+            Self::of_clock(libc::CLOCK_MONOTONIC)
         }
         #[cfg(windows)]
         {

@@ -688,37 +688,6 @@ mod write_execute {
     }
 
     #[cfg(bun_hardened)]
-    fn executable_segments() -> Vec<core::ops::Range<u64>> {
-        unsafe extern "C" fn collect(
-            info: *mut libc::dl_phdr_info,
-            _size: libc::size_t,
-            found: *mut libc::c_void,
-        ) -> libc::c_int {
-            // SAFETY: the loader hands over a valid record, and `found` is the vector below.
-            let (info, found) =
-                unsafe { (&*info, &mut *found.cast::<Vec<core::ops::Range<u64>>>()) };
-            if info.dlpi_phdr.is_null() {
-                return 0;
-            }
-            // SAFETY: the record says how many program headers lie there.
-            let headers = unsafe {
-                core::slice::from_raw_parts(info.dlpi_phdr, usize::from(info.dlpi_phnum))
-            };
-            for header in headers {
-                if header.p_type == libc::PT_LOAD && header.p_flags & libc::PF_X != 0 {
-                    let start = info.dlpi_addr.wrapping_add(header.p_vaddr);
-                    found.push(start..start.wrapping_add(header.p_memsz));
-                }
-            }
-            0
-        }
-        let mut found: Vec<core::ops::Range<u64>> = Vec::new();
-        // SAFETY: `collect` only reads what it is given and writes `found`, which outlives the call.
-        unsafe { libc::dl_iterate_phdr(Some(collect), (&raw mut found).cast()) };
-        found
-    }
-
-    #[cfg(bun_hardened)]
     fn gain_no_new_privileges() -> Result<(), Failure> {
         let call = "prctl(PR_SET_NO_NEW_PRIVS)";
         let set = prctl(PrctlOp::SET_NO_NEW_PRIVS, 1);
@@ -734,38 +703,18 @@ mod write_execute {
     fn install(
         program: &[bun_exe_format::executable_memory_filter::Instruction],
     ) -> Result<(), Failure> {
-        const SET_MODE_FILTER: libc::c_ulong = 1;
-        const ALL_THREADS: libc::c_ulong = 1;
-        let filter = libc::sock_fprog {
-            len: program.len() as libc::c_ushort,
-            filter: program.as_ptr().cast_mut().cast(),
-        };
-        // SAFETY: the kernel copies the program, which has the layout of `sock_filter`, before the call returns.
-        let answer = unsafe {
-            libc::syscall(
-                libc::SYS_seccomp,
-                SET_MODE_FILTER,
-                ALL_THREADS,
-                &raw const filter,
-            )
-        };
-        let errno = match answer {
-            0 => return Ok(()),
-            -1 => last_errno(),
-            // The id of a thread that could not take the filter.
-            _ => bun_errno::SystemErrno::ESRCH,
-        };
+        let program: Vec<_> = (program.iter())
+            .map(|instruction| libc::sock_filter {
+                code: instruction.code,
+                jt: instruction.jump_if_true,
+                jf: instruction.jump_if_false,
+                k: instruction.value,
+            })
+            .collect();
         let call = "seccomp(SECCOMP_SET_MODE_FILTER)";
-        Err(Failure::Failed { call, errno })
-    }
-
-    /// A started program inherits the filter. Without address randomization its loader runs where this process's own does.
-    #[cfg(bun_hardened)]
-    fn has_fixed_addresses() -> bool {
-        const ASKS_FOR_THE_PERSONALITY: libc::c_ulong = 0xffff_ffff;
-        // SAFETY: the request takes and returns integers only.
-        let personality = unsafe { libc::personality(ASKS_FOR_THE_PERSONALITY) };
-        personality != -1 && personality & libc::ADDR_NO_RANDOMIZE != 0
+        // SAFETY: it allows a call, or fails it with `EACCES` or `ENOSYS`.
+        unsafe { bun_sys::process::filter_system_calls_of_all_threads(&program) }
+            .map_err(|errno| Failure::Failed { call, errno })
     }
 
     /// What is loaded at its first use, which the filter would refuse.
@@ -777,9 +726,7 @@ mod write_execute {
             // SAFETY: `name` ends with a NUL and outlives the call.
             unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW) };
         };
-        // SAFETY: it returns a string that ends with a NUL and lives as long as the process.
-        let version = unsafe { core::ffi::CStr::from_ptr(libc::gnu_get_libc_version()) };
-        let mut version = bun_core::strings::split(version.to_bytes(), b".")
+        let mut version = bun_core::strings::split(bun_sys::process::glibc_version(), b".")
             .map(|part| core::str::from_utf8(part).ok()?.parse::<u32>().ok());
         let version = (version.next().flatten(), version.next().flatten());
         // glibc 2.34 moved libutil, librt and the services `files` and `dns` into libc.so.6.
@@ -822,7 +769,8 @@ mod write_execute {
         ]
         .into_iter()
         .all(is_removed);
-        let libraries = match loads_no_library && !has_fixed_addresses() {
+        // A started program inherits the filter. Without address randomization its loader runs where this process's own does.
+        let libraries = match loads_no_library && !bun_sys::process::has_fixed_addresses() {
             true => Libraries::AreNeverLoaded,
             false => Libraries::MayBeLoaded,
         };
@@ -830,7 +778,7 @@ mod write_execute {
         if libraries == Libraries::AreNeverLoaded {
             load_libraries_early();
         }
-        let mut code_of_this_process = executable_segments();
+        let mut code_of_this_process = bun_sys::elf::executable_segments();
         code_of_this_process.push(image_code);
         let program = program(&code_of_this_process, libraries);
         install(&program)?;
@@ -933,8 +881,7 @@ fn sentence_of_variables_never_read(names: &[&[u8]]) -> Option<String> {
 /// A setting that would be ignored is not lost without a word. By its name alone: so is one with an empty value.
 #[cfg(bun_locked_environment)]
 pub fn refuse_variables_that_are_never_read() {
-    // SAFETY: at startup, and nothing here changes the environment.
-    let names: Vec<&[u8]> = unsafe { bun_sys::environ() }
+    let names: Vec<&[u8]> = bun_sys::environ()
         .iter()
         .filter_map(|entry| {
             let entry = entry.to_cstr();

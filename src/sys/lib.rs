@@ -821,6 +821,8 @@ pub mod signal_code;
 pub use signal_code::SignalCode;
 #[cfg(unix)]
 pub mod beneath;
+#[cfg(unix)]
+pub mod process;
 pub mod tmp;
 pub use tmp::Tmpfile;
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
@@ -4995,19 +4997,11 @@ pub mod c {
     #[cfg(unix)]
     unsafe extern "C" {
         pub safe fn getuid() -> libc::uid_t;
+        pub safe fn geteuid() -> libc::uid_t;
         pub safe fn getgid() -> libc::gid_t;
     }
     #[cfg(unix)]
     pub use super::UTIME_NOW;
-    #[cfg(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "freebsd",
-        target_os = "dragonfly",
-        target_os = "netbsd",
-        target_os = "openbsd"
-    ))]
-    pub use libc::{getloadavg, sysctlbyname};
 
     /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
     #[cfg(unix)]
@@ -5030,63 +5024,17 @@ pub mod c {
     // single `bun_sys::c::*` import path matching the `bun.c` namespacing.
     #[cfg(target_os = "macos")]
     pub use libc::{
-        _NSGetEnviron,
         COPYFILE_ACL,
-        COPYFILE_CHECK,
-        COPYFILE_CLONE,
-        COPYFILE_CLONE_FORCE,
         COPYFILE_DATA,
         COPYFILE_EXCL,
-        COPYFILE_METADATA,
-        COPYFILE_MOVE,
-        COPYFILE_NOFOLLOW,
-        COPYFILE_NOFOLLOW_DST,
         COPYFILE_NOFOLLOW_SRC,
-        COPYFILE_RECURSIVE,
-        COPYFILE_SECURITY,
-        COPYFILE_STAT,
-        COPYFILE_UNLINK,
-        COPYFILE_XATTR,
-        CPU_STATE_IDLE,
-        CPU_STATE_MAX,
-        CPU_STATE_NICE,
-        CPU_STATE_SYSTEM,
-        CPU_STATE_USER,
-        HOST_VM_INFO64,
-        HOST_VM_INFO64_COUNT,
-        PROCESSOR_CPU_LOAD_INFO,
-        // <copyfile.h> / <sys/clonefile.h>
-        clonefile,
-        clonefileat,
-        copyfile,
-        copyfile_flags_t,
-        copyfile_state_t,
-        fclonefileat,
-        fcopyfile,
-        host_processor_info,
-        host_statistics64,
-        integer_t,
-        mach_msg_type_number_t,
-        mach_port_t,
         // <string.h> Apple extensions
         memset_pattern4,
         memset_pattern8,
         memset_pattern16,
-        // <mach/*.h> — host/processor/vm primitives for `os.cpus()` & memory stats
-        natural_t,
-        processor_cpu_load_info,
-        processor_cpu_load_info_data_t,
-        processor_flavor_t,
-        processor_info_array_t,
-        // <sys/sysctl.h> — `sysctlbyname` already re-exported above for all BSDs.
-        sysctl,
-        sysctlnametomib,
         // misc libc
         truncate,
         vm_deallocate,
-        vm_size_t,
-        vm_statistics64,
-        vm_statistics64_data_t,
     };
 
     /// Safe rc-returning `clonefile(2)` — callers that want their own
@@ -5110,12 +5058,6 @@ pub mod c {
         // may be null per copyfile(3).
         unsafe { libc::copyfile(src.as_ptr(), dst.as_ptr(), core::ptr::null_mut(), flags) }
     }
-    /// `PROCESSOR_CPU_LOAD_INFO_COUNT` — sizeof(processor_cpu_load_info)/sizeof(natural_t).
-    /// Not bound by `libc`; <mach/processor_info.h>.
-    #[cfg(target_os = "macos")]
-    pub const PROCESSOR_CPU_LOAD_INFO_COUNT: u32 =
-        (core::mem::size_of::<libc::processor_cpu_load_info>()
-            / core::mem::size_of::<libc::natural_t>()) as u32;
     /// `<sys/sysctl.h> struct loadavg` — used by `os.loadavg()` via
     /// `vm.loadavg` sysctl. Not bound by `libc`.
     #[cfg(target_os = "macos")]
@@ -5141,7 +5083,7 @@ pub mod c {
         /// `safe static` (no read precondition).
         safe static mach_task_self_: libc::mach_port_t;
         /// `mach_port_t mach_host_self(void)` — host privileged port.
-        pub safe fn mach_host_self() -> libc::mach_port_t;
+        pub(crate) safe fn mach_host_self() -> libc::mach_port_t;
         /// `uint32_t _dyld_image_count(void)`
         pub safe fn _dyld_image_count() -> u32;
         /// `intptr_t _dyld_get_image_vmaddr_slide(uint32_t image_index)`
@@ -5149,7 +5091,22 @@ pub mod c {
         /// `const struct mach_header* _dyld_get_image_header(uint32_t)` — by-value
         /// index; out-of-range returns null (no precondition).
         #[link_name = "_dyld_get_image_header"]
-        safe fn dyld_get_image_header_raw(image_index: u32) -> *const core::ffi::c_void;
+        safe fn dyld_get_image_header_raw(image_index: u32) -> *const c_void;
+        safe fn _dyld_get_image_name(image_index: u32) -> *const core::ffi::c_char;
+        fn getsegbyname(name: *const core::ffi::c_char) -> *const super::macho::segment_command_64;
+    }
+    /// The path from which dyld loaded the executable.
+    #[cfg(target_os = "macos")]
+    pub fn path_of_executable() -> &'static bun_core::ZStr {
+        // SAFETY: image 0 is the executable, whose path dyld keeps for the life of the process.
+        unsafe { bun_core::ZStr::from_c_ptr(_dyld_get_image_name(0)) }
+    }
+    #[cfg(target_os = "macos")]
+    pub fn segment_of_executable(
+        name: &core::ffi::CStr,
+    ) -> Option<&'static super::macho::segment_command_64> {
+        // SAFETY: it returns null or a load command of the executable, which stays mapped.
+        unsafe { getsegbyname(name.as_ptr()).as_ref() }
     }
     /// `mach_task_self()` — C macro `#define mach_task_self() mach_task_self_`.
     #[cfg(target_os = "macos")]
@@ -5187,53 +5144,6 @@ pub mod c {
     ) -> c_int {
         // SAFETY: `sbytes` is live, and a null `hdtr` is allowed.
         unsafe { libc::sendfile(fd, s, off, nbytes, core::ptr::null_mut(), sbytes, flags) }
-    }
-
-    // ── Darwin libproc — process introspection (`<libproc.h>`). ──
-    /// `struct proc_bsdinfo` (PROC_PIDTBSDINFO flavour). Fields match the SDK
-    /// header; only `pbi_ppid` is currently consumed.
-    #[cfg(target_os = "macos")]
-    #[repr(C)]
-    pub struct struct_proc_bsdinfo {
-        pub pbi_flags: u32,
-        pub pbi_status: u32,
-        pub pbi_xstatus: u32,
-        pub pbi_pid: u32,
-        pub pbi_ppid: u32,
-        pub pbi_uid: u32,
-        pub pbi_gid: u32,
-        pub pbi_ruid: u32,
-        pub pbi_rgid: u32,
-        pub pbi_svuid: u32,
-        pub pbi_svgid: u32,
-        pub rfu_1: u32,
-        pub pbi_comm: [u8; 16],
-        pub pbi_name: [u8; 32],
-        pub pbi_nfiles: u32,
-        pub pbi_pgid: u32,
-        pub pbi_pjobc: u32,
-        pub e_tdev: u32,
-        pub e_tpgid: u32,
-        pub pbi_nice: i32,
-        pub pbi_start_tvsec: u64,
-        pub pbi_start_tvusec: u64,
-    }
-    #[cfg(target_os = "macos")]
-    bun_core::impl_zeroable!(struct_proc_bsdinfo);
-    #[cfg(target_os = "macos")]
-    pub const PROC_PIDTBSDINFO: c_int = 3;
-    #[cfg(target_os = "macos")]
-    unsafe extern "C" {
-        /// `proc_pidinfo(pid, flavor, arg, buffer, buffersize)` — bytes written or ≤0.
-        pub fn proc_pidinfo(
-            pid: c_int,
-            flavor: c_int,
-            arg: u64,
-            buffer: *mut c_void,
-            buffersize: c_int,
-        ) -> c_int;
-        /// `proc_listchildpids(ppid, buffer, buffersize)` — count of pids written.
-        pub fn proc_listchildpids(ppid: c_int, buffer: *mut c_void, buffersize: c_int) -> c_int;
     }
 }
 
@@ -7524,14 +7434,11 @@ pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
 
 // ── environ ──
 
-/// Borrowed slice of the process's `KEY=VALUE\0` C strings.
-///
-/// # Safety
-/// On POSIX, nothing changes the environment (`setenv`, `putenv`) during `'a`.
-pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
+/// The `KEY=VALUE\0` C strings of the process.
+pub fn environ() -> &'static [bun_core::CStrRef<'static>] {
     #[cfg(unix)]
     {
-        // SAFETY: `environ` is a NULL-terminated array of C strings, live for `'a` by fn contract.
+        // SAFETY: a NULL-terminated array of C strings. Bun only replaces it by `set_environ`, which neither changes nor frees it.
         unsafe {
             let mut n = 0usize;
             let base: *const *const c_char = bun_core::c_environ();
@@ -7550,6 +7457,37 @@ pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
         // SAFETY: each entry is `Some` by the contract of `set_environ`, so it has the bytes of a `CStrRef`.
         unsafe { core::slice::from_raw_parts(entries.as_ptr().cast(), entries.len()) }
     }
+}
+
+/// A thread that reads the environment at this moment goes on with the block that it has.
+#[cfg(unix)]
+pub fn set_environ(entries: &[bun_core::CStrRef<'static>]) {
+    use core::sync::atomic::{AtomicPtr, Ordering};
+    unsafe extern "C" {
+        #[link_name = "environ"]
+        safe static BLOCK: AtomicPtr<Option<bun_core::CStrRef<'static>>>;
+    }
+    let block: Vec<_> = entries.iter().copied().map(Some).chain([None]).collect();
+    let block = block.leak().as_mut_ptr();
+    bun_core::asan::ignore_object(block.cast());
+    BLOCK.store(block, Ordering::Release);
+}
+
+/// Unlike `setenv(3)`, it frees nothing that another thread may be reading.
+#[cfg(unix)]
+pub fn setenv(name: &[u8], value: &[u8]) {
+    let entry = bun_core::ZBox::from_vec([name, b"=", value].concat());
+    let entry = Box::leak(entry.into_boxed_slice_with_nul());
+    let (start, entry) = (
+        &entry[..=name.len()],
+        bun_core::CStrRef::from_slice_with_nul(entry),
+    );
+    let mut entries = environ().to_vec();
+    match (entries.iter_mut()).find(|it| it.to_cstr().to_bytes().starts_with(start)) {
+        Some(old) => *old = entry,
+        None => entries.push(entry),
+    }
+    set_environ(&entries);
 }
 
 // ── moveFileZWithHandle ──
@@ -7928,6 +7866,10 @@ pub mod posix {
         NOFILE = libc::RLIMIT_NOFILE as _,
         STACK = libc::RLIMIT_STACK as _,
         CORE = libc::RLIMIT_CORE as _,
+        #[cfg(bun_fuzzilli)]
+        CPU = libc::RLIMIT_CPU as _,
+        #[cfg(bun_fuzzilli)]
+        FSIZE = libc::RLIMIT_FSIZE as _,
     }
     #[cfg(unix)]
     pub fn getrlimit(res: RlimitResource) -> core::result::Result<Rlimit, super::Error> {
@@ -8363,6 +8305,9 @@ pub mod net {
 
 /// `std.elf` constants (just what `bun_exe_format`/`bun_crash` need).
 pub mod elf {
+    #[cfg(not(any(windows, target_os = "macos")))]
+    use core::ops::ControlFlow;
+
     pub const PT_LOAD: u32 = 1;
     pub const PT_INTERP: u32 = 3;
 
@@ -8384,77 +8329,95 @@ pub mod elf {
         pub program_header_count: usize,
     }
 
-    /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
-    /// `PT_LOAD` segment contains `address` (matched by address, so it does not
-    /// depend on how a libc names or orders the main program).
+    /// The object whose `PT_LOAD` segment contains `address`: it does not depend on how a libc names or orders the main program.
     #[cfg(not(any(windows, target_os = "macos")))]
     pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {
+        let mut found = None;
+        visit_loaded_modules(&mut |base_address, name, headers| {
+            if address < base_address {
+                return ControlFlow::Continue(());
+            }
+            for header in headers.iter().filter(|header| header.p_type == PT_LOAD) {
+                // The `p_vaddr` of a vDSO can be 0xffffffffff700000.
+                let start = base_address.wrapping_add(header.p_vaddr as usize);
+                let segment_end = start + header.p_memsz as usize;
+                if (start..segment_end).contains(&address) {
+                    found = Some(LoadedModule {
+                        base_address,
+                        name: name.into(),
+                        segment_end,
+                        program_headers: headers.as_ptr(),
+                        program_header_count: headers.len(),
+                    });
+                    return ControlFlow::Break(());
+                }
+            }
+            ControlFlow::Continue(())
+        });
+        found
+    }
+
+    /// Of every loaded object.
+    #[cfg(all(bun_hardened, target_os = "linux"))]
+    pub fn executable_segments() -> Vec<core::ops::Range<u64>> {
+        let mut found = Vec::new();
+        visit_loaded_modules(&mut |base_address, _, headers| {
+            for header in headers {
+                if header.p_type == PT_LOAD && header.p_flags & libc::PF_X != 0 {
+                    let start = (base_address as u64).wrapping_add(header.p_vaddr);
+                    found.push(start..start.wrapping_add(header.p_memsz));
+                }
+            }
+            ControlFlow::Continue(())
+        });
+        found
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    type Visit<'a> = &'a mut dyn FnMut(usize, &[u8], &[libc::Elf64_Phdr]) -> ControlFlow<()>;
+
+    /// `visit` gets the base address, the name and the program headers of each object. It must not unload one.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    fn visit_loaded_modules(mut visit: Visit<'_>) {
         use core::ffi::{c_int, c_void};
-
-        struct Ctx {
-            address: usize,
-            result: Option<LoadedModule>,
-        }
-        let mut ctx = Ctx {
-            address,
-            result: None,
-        };
-
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type `dl_iterate_phdr` expects — never callable by name
-        // from safe Rust. Body wraps its raw-ptr ops explicitly.
-        extern "C" fn callback(
+        unsafe extern "C" fn callback(
             info: *mut libc::dl_phdr_info,
             _size: libc::size_t,
-            data: *mut c_void,
+            visit: *mut c_void,
         ) -> c_int {
-            // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
-            let context = unsafe { bun_core::callback_ctx::<Ctx>(data) };
-            // SAFETY: dl_iterate_phdr passes a valid info pointer.
-            let info = unsafe { &*info };
-            // The base address is too high
-            if context.address < info.dlpi_addr as usize {
-                return 0;
+            // SAFETY: the record is valid during the call, and `visit` points to the argument above.
+            unsafe {
+                let info = &*info;
+                // Android has no name for the main program.
+                let name = match info.dlpi_name.is_null() {
+                    true => &[],
+                    false => bun_core::ffi::cstr(info.dlpi_name).to_bytes(),
+                };
+                let headers = match info.dlpi_phdr.is_null() {
+                    true => &[],
+                    false => core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum.into()),
+                };
+                let visit = &mut *visit.cast::<Visit<'_>>();
+                visit(info.dlpi_addr as usize, name, headers)
+                    .is_break()
+                    .into()
             }
-            // SAFETY: dlpi_phdr points to dlpi_phnum entries.
-            let phdrs =
-                unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
-            for phdr in phdrs {
-                if phdr.p_type != PT_LOAD {
-                    continue;
-                }
-                // Overflowing addition is used to handle the case of VSDOs
-                // having a p_vaddr = 0xffffffffff700000
-                let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
-                let seg_end = seg_start + phdr.p_memsz as usize;
-                if context.address >= seg_start && context.address < seg_end {
-                    // Android libc uses NULL instead of an empty string to mark
-                    // the main program.
-                    let name = if info.dlpi_name.is_null() {
-                        Box::default()
-                    } else {
-                        // SAFETY: dlpi_name is a valid NUL-terminated C string.
-                        unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
-                            .to_bytes()
-                            .to_vec()
-                            .into_boxed_slice()
-                    };
-                    context.result = Some(LoadedModule {
-                        base_address: info.dlpi_addr as usize,
-                        name,
-                        segment_end: seg_end,
-                        program_headers: info.dlpi_phdr,
-                        program_header_count: info.dlpi_phnum as usize,
-                    });
-                    return 1; // error.Found → stop iteration
-                }
-            }
-            0
         }
+        // SAFETY: `visit` outlives the call.
+        unsafe { libc::dl_iterate_phdr(Some(callback), (&raw mut visit).cast()) };
+    }
 
-        // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
-        unsafe { libc::dl_iterate_phdr(Some(callback), (&raw mut ctx).cast::<c_void>()) };
-        ctx.result
+    /// Allocates nothing.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn program_headers_of_executable() -> &'static [libc::Elf64_Phdr] {
+        // SAFETY: the kernel mapped that many headers there. A missing entry reads as 0.
+        unsafe {
+            let first = libc::getauxval(libc::AT_PHDR) as *const libc::Elf64_Phdr;
+            match first.is_null() {
+                true => &[],
+                false => core::slice::from_raw_parts(first, libc::getauxval(libc::AT_PHNUM) as _),
+            }
+        }
     }
 }
 

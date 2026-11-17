@@ -356,21 +356,9 @@ pub(crate) fn log_largest_worker(reported_mb: u32, exited_mb: u32) {
 pub(crate) fn log_account_of_process(who: core::fmt::Arguments<'_>) {
     #[cfg(unix)]
     if env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
-        let usage_of = |who: libc::c_int| {
-            let mut usage = core::mem::MaybeUninit::<libc::rusage>::zeroed();
-            // SAFETY: all zeroes is a valid `rusage`, and the kernel writes one.
-            unsafe {
-                libc::getrusage(who, usage.as_mut_ptr());
-                usage.assume_init()
-            }
-        };
-        let (own, children) = (usage_of(libc::RUSAGE_SELF), usage_of(libc::RUSAGE_CHILDREN));
-        let mut main_thread = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        };
-        // SAFETY: the kernel writes the time into it.
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut main_thread) };
+        let [own, children] =
+            [libc::RUSAGE_SELF, libc::RUSAGE_CHILDREN].map(bun_sys::process::getrusage);
+        let main_thread = bun_core::Timespec::of_clock(libc::CLOCK_THREAD_CPUTIME_ID);
         let ms = |time: libc::timeval| time.tv_sec as i64 * 1000 + time.tv_usec as i64 / 1000;
         bun_core::print_errorln!(
             "AOT account | {} | wall {} ms | user {} ms | system {} ms | main thread {} ms | waited for: user {} ms | system {} ms | minor faults {} | major faults {} | switches of its own will {} | against it {} | peak {} MB",
@@ -378,7 +366,7 @@ pub(crate) fn log_account_of_process(who: core::fmt::Arguments<'_>) {
             (bun_core::time::nano_timestamp() - bun_core::start_time()) / 1_000_000,
             ms(own.ru_utime),
             ms(own.ru_stime),
-            main_thread.tv_sec as i64 * 1000 + main_thread.tv_nsec as i64 / 1_000_000,
+            main_thread.ms(),
             ms(children.ru_utime),
             ms(children.ru_stime),
             own.ru_minflt,
@@ -1193,21 +1181,9 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
     // The program finds the environment that the launcher found.
     #[cfg(unix)]
     if has_launcher {
-        let is_of_launcher =
-            |variable: &[u8]| variable == b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=launcher";
-        let mut from = bun_core::c_environ().cast_mut();
-        let mut to = from;
-        // SAFETY: the block ends with a null pointer, its texts end with NUL, and no other thread has started.
-        unsafe {
-            while !(*from).is_null() {
-                if !is_of_launcher(bun_core::ffi::cstr(*from).to_bytes()) {
-                    *to = *from;
-                    to = to.add(1);
-                }
-                from = from.add(1);
-            }
-            *to = core::ptr::null();
-        }
+        let mut entries = bun_sys::environ().to_vec();
+        entries.retain(|it| it.to_cstr() != c"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=launcher");
+        bun_sys::set_environ(&entries);
     }
     let _ = FILE_IN_PLACE_OF_EXECUTABLE.set(FileInPlaceOfExecutable {
         path: file.into_boxed_slice(),
@@ -1656,36 +1632,20 @@ pub(crate) fn hand_on_environment(map: &bun_dotenv::Map) {
 /// What is set stays. One new block, since `setenv` looks through the whole block for each name.
 #[cfg(unix)]
 fn add_to_environment(map: &bun_dotenv::Map) {
-    use core::ffi::{CStr, c_char};
-    unsafe extern "C" {
-        safe static environ: core::sync::atomic::AtomicPtr<*const c_char>;
-    }
-    let mut block: Vec<*const c_char> = Vec::new();
-    let mut names: std::collections::BTreeSet<&[u8]> = std::collections::BTreeSet::new();
-    let mut entry = environ.load(Ordering::Relaxed);
-    // SAFETY: the block ends with a null pointer and each of its entries with a NUL, and nothing frees them.
-    while let Some(text) = unsafe { entry.as_ref().filter(|text| !text.is_null()) } {
-        // SAFETY: see above.
-        let bytes = unsafe { CStr::from_ptr(*text) }.to_bytes();
-        let end = bun_core::strings::index_of_char_usize(bytes, b'=').unwrap_or(bytes.len());
-        names.insert(&bytes[..end]);
-        block.push(*text);
-        // SAFETY: the null pointer has not been met.
-        entry = unsafe { entry.add(1) };
-    }
+    let mut entries = bun_sys::environ().to_vec();
+    let names: std::collections::BTreeSet<&[u8]> = (entries.iter())
+        .map(|entry| entry.to_cstr().to_bytes())
+        .map(|entry| bun_core::strings::split_once_char(entry, b'=').map_or(entry, |it| it.0))
+        .collect();
     for (name, value) in map.map.iter() {
         if names.contains(&**name) {
             continue;
         }
         if let Ok(text) = std::ffi::CString::new([&**name, b"=", &*value.value].concat()) {
-            block.push(text.into_raw());
+            entries.push((&*Box::leak(text.into_boxed_c_str())).into());
         }
     }
-    block.push(core::ptr::null());
-    environ.store(
-        Box::leak(block.into_boxed_slice()).as_mut_ptr(),
-        Ordering::Relaxed,
-    );
+    bun_sys::set_environ(&entries);
 }
 
 #[cold]

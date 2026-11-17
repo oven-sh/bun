@@ -42,6 +42,8 @@ pub use bun_spawn_sys::ffi;
 pub use bun_spawn_sys::RusageFields;
 #[cfg(unix)]
 pub use bun_spawn_sys::posix_spawn::posix_spawn::LARGEST_REAPED_CHILD;
+#[cfg(all(bun_fuzzilli, unix))]
+pub use bun_spawn_sys::posix_spawn::posix_spawn::wait4;
 pub use process::{
     Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnOptions,
     SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_z,

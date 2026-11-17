@@ -8,6 +8,9 @@ use std::sync::Arc;
 
 use bun_core::{Global, Output, ZBox, zstr};
 use bun_options_types::aot_options::Preload;
+use bun_spawn::wait4;
+use bun_sys::linux::{PrctlOp, prctl};
+use bun_sys::posix::{Rlimit, RlimitResource, getrlimit, setrlimit};
 use bun_sys::{Fd, File};
 
 use super::compile_command::{CompileProduct, compile_from_context, print_log};
@@ -175,8 +178,7 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
         }
         .compare_with_plain_bun(),
     };
-    // SAFETY: no preconditions.
-    unsafe { libc::_exit(i32::from(exit_code)) }
+    Global::_exit(i32::from(exit_code))
 }
 
 fn write_to_unnamed_file(bytes: &[u8]) -> Fd {
@@ -308,21 +310,16 @@ impl Channel {
             // SAFETY: the threads that the new process lacks hold no lock: they wait for work.
             let child = unsafe { libc::fork() };
             if child == 0 {
-                #[cfg(target_os = "linux")]
-                // SAFETY: takes integers.
-                unsafe {
-                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                }
+                prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as _);
                 limit_cpu_time(self.cpu_seconds);
                 RESIDENT_BYTES_AT_START.store(resident_bytes().max(1), Ordering::Relaxed);
                 watch_memory(self.memory_bytes);
                 return;
             }
-            let mut ended = 0;
-            // SAFETY: the kernel writes one integer.
-            if child < 0 || unsafe { libc::waitpid(child, &raw mut ended, 0) } != child {
+            let Some(Ok(ended)) = (child > 0).then(|| wait4(child, 0, None)) else {
                 stop("The process for a program could not be started");
-            }
+            };
+            let ended = ended.status.cast_signed();
             // The low byte is a signal, the next one an exit code.
             let exit_code = libc::WEXITSTATUS(ended).cast_unsigned();
             let status = match libc::WIFSIGNALED(ended) {
@@ -351,10 +348,10 @@ impl Channel {
 
 /// Fuzzilli gives stderr a file and rewinds it in front of each program. Empty where stderr is something else.
 fn read_stderr_of_this_program() -> Vec<u8> {
-    // SAFETY: takes integers.
-    let length = unsafe { libc::lseek(libc::STDERR_FILENO, 0, libc::SEEK_CUR) };
-    let mut bytes = vec![0u8; usize::try_from(length).unwrap_or(0)];
-    match File::borrow(&Fd::stderr()).pread_all(&mut bytes, 0) {
+    let stderr = Fd::stderr();
+    let stderr = File::borrow(&stderr);
+    let mut bytes = vec![0u8; stderr.get_pos().unwrap_or(0) as usize];
+    match stderr.pread_all(&mut bytes, 0) {
         Ok(count) => bytes.truncate(count),
         Err(_) => bytes.clear(),
     }
@@ -393,17 +390,12 @@ fn add_prefix(path: &[u8], prefix: &[u8]) -> Box<[u8]> {
 
 /// The threads that compile in other builds of Bun have this much.
 fn grow_stack_to(bytes: u32) {
-    let mut limit = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: the kernel writes one `rlimit`.
-    unsafe { libc::getrlimit(libc::RLIMIT_STACK, &raw mut limit) };
-    let bytes = libc::rlim_t::from(bytes);
-    if limit.rlim_cur < bytes {
-        limit.rlim_cur = bytes.min(limit.rlim_max);
-        // SAFETY: the kernel reads one `rlimit`.
-        unsafe { libc::setrlimit(libc::RLIMIT_STACK, &raw const limit) };
+    let bytes = u64::from(bytes);
+    if let Ok(Rlimit { cur, max }) = getrlimit(RlimitResource::STACK)
+        && cur < bytes
+    {
+        let cur = bytes.min(max);
+        let _ = setrlimit(RlimitResource::STACK, Rlimit { cur, max });
     }
 }
 
@@ -417,25 +409,17 @@ fn read_limit(name: &bun_core::ZStr, default: u32) -> u32 {
 fn stop(reason: &str) -> ! {
     Output::flush();
     let _ = bun_sys::write(Fd::stderr(), format!("fuzzilli: {reason}\n").as_bytes());
-    // SAFETY: no preconditions.
-    unsafe { libc::abort() }
+    std::process::abort()
 }
 
 /// A build that takes more processor time ends by SIGXCPU.
 fn limit_cpu_time(seconds: u32) {
-    let mut used = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
+    let used = bun_core::Timespec::of_clock(libc::CLOCK_PROCESS_CPUTIME_ID);
+    let limit = Rlimit {
+        cur: used.sec.cast_unsigned() + 1 + u64::from(seconds),
+        max: libc::RLIM_INFINITY,
     };
-    // SAFETY: the kernel writes one `timespec`.
-    unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut used) };
-    let used_seconds = libc::rlim_t::try_from(used.tv_sec).unwrap_or(0);
-    let limit = libc::rlimit {
-        rlim_cur: used_seconds + 1 + libc::rlim_t::from(seconds),
-        rlim_max: libc::RLIM_INFINITY,
-    };
-    // SAFETY: the kernel reads one `rlimit`.
-    unsafe { libc::setrlimit(libc::RLIMIT_CPU, &raw const limit) };
+    let _ = setrlimit(RlimitResource::CPU, limit);
 }
 
 fn resident_bytes() -> u64 {

@@ -121,28 +121,76 @@ fn add(step: FileStep, instructions: u64, times: u64) {
     total_times.fetch_add(times, Relaxed);
 }
 
+/// Counts the instructions that a thread runs outside the kernel.
+#[cfg(target_os = "linux")]
+pub struct InstructionCounter(core::ffi::c_int);
+
+/// Whose instructions count too.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+#[repr(u64)]
+pub enum Inherit {
+    Nobody = 0,
+    NewThreadsAndProcesses = 1 << 1,
+    NewThreads = 1 << 1 | 1 << 35,
+}
+
+#[cfg(target_os = "linux")]
+impl InstructionCounter {
+    /// `thread` is 0 for the calling one.
+    pub fn open(thread: libc::pid_t, inherit: Inherit) -> Option<Self> {
+        use core::ffi::c_long;
+        const HARDWARE: u64 = 0;
+        const SIZE: u64 = 64;
+        const INSTRUCTIONS: u64 = 1;
+        const EXCLUDE_KERNEL: u64 = 1 << 5;
+        const EXCLUDE_HYPERVISOR: u64 = 1 << 6;
+        const CLOSE_ON_EXEC: c_long = 8;
+        let flags = inherit as u64 | EXCLUDE_KERNEL | EXCLUDE_HYPERVISOR;
+        let attributes: [u64; 8] = [HARDWARE | SIZE << 32, INSTRUCTIONS, 0, 0, 0, flags, 0, 0];
+        // SAFETY: the kernel reads the 64 bytes that the size names and keeps no pointer.
+        let file = unsafe {
+            libc::syscall(
+                libc::SYS_perf_event_open,
+                attributes.as_ptr(),
+                c_long::from(thread),
+                -1 as c_long,
+                -1 as c_long,
+                CLOSE_ON_EXEC,
+            )
+        };
+        (file >= 0).then(|| Self(file as _))
+    }
+
+    pub fn read(&self) -> Option<u64> {
+        let mut count = 0u64;
+        // SAFETY: it writes at most the eight bytes of `count`.
+        let size = unsafe { libc::read(self.0, (&raw mut count).cast(), size_of::<u64>()) };
+        (size == size_of::<u64>() as isize).then_some(count)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for InstructionCounter {
+    fn drop(&mut self) {
+        // SAFETY: `open` opened it, and nothing else has it.
+        unsafe { libc::close(self.0) };
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod counter {
-    use super::{CountedStep, FileStep, add};
+    use super::{CountedStep, FileStep, Inherit, InstructionCounter, add};
     use core::cell::Cell;
-    use core::ffi::{c_int, c_void};
+    use core::ffi::c_void;
     use std::sync::OnceLock;
 
     pub(super) const COUNTS: bool = true;
 
     struct ThreadCounter {
-        file: Option<c_int>,
+        file: Option<InstructionCounter>,
         /// The innermost step, and the thread's instruction count when it started or resumed.
         current: Cell<(Option<FileStep>, u64)>,
-    }
-
-    impl Drop for ThreadCounter {
-        fn drop(&mut self) {
-            if let Some(file) = self.file {
-                // SAFETY: `open` opened it, and nothing else has it.
-                unsafe { libc::close(file) };
-            }
-        }
     }
 
     /// Not `thread_local!`, which would add its size to every thread.
@@ -166,7 +214,7 @@ mod counter {
         let mut counter = unsafe { libc::pthread_getspecific(key) }.cast::<ThreadCounter>();
         if counter.is_null() {
             counter = Box::into_raw(Box::new(ThreadCounter {
-                file: open(),
+                file: InstructionCounter::open(0, Inherit::Nobody),
                 current: Cell::new((None, 0)),
             }));
             // SAFETY: `free` takes the box back.
@@ -180,34 +228,8 @@ mod counter {
         use_counter(unsafe { &*counter })
     }
 
-    fn open() -> Option<c_int> {
-        const HARDWARE: u64 = 0;
-        const SIZE: u64 = 64;
-        const INSTRUCTIONS: u64 = 1;
-        const EXCLUDE_KERNEL: u64 = 1 << 5;
-        const EXCLUDE_HYPERVISOR: u64 = 1 << 6;
-        const CLOSE_ON_EXEC: core::ffi::c_long = 8;
-        let flags = EXCLUDE_KERNEL | EXCLUDE_HYPERVISOR;
-        let attributes: [u64; 8] = [HARDWARE | SIZE << 32, INSTRUCTIONS, 0, 0, 0, flags, 0, 0];
-        // SAFETY: the kernel reads the 64 bytes that the size names and keeps no pointer.
-        let file = unsafe {
-            libc::syscall(
-                libc::SYS_perf_event_open,
-                attributes.as_ptr(),
-                0 as core::ffi::c_long,
-                -1 as core::ffi::c_long,
-                -1 as core::ffi::c_long,
-                CLOSE_ON_EXEC,
-            )
-        };
-        (file >= 0).then_some(file as c_int)
-    }
-
     fn read_of(counter: &ThreadCounter) -> Option<u64> {
-        let mut count = 0u64;
-        // SAFETY: it writes at most the eight bytes of `count`.
-        let size = unsafe { libc::read(counter.file?, (&raw mut count).cast(), size_of::<u64>()) };
-        (size == size_of::<u64>() as isize).then_some(count)
+        counter.file.as_ref()?.read()
     }
 
     pub(super) fn read() -> Option<u64> {

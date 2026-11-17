@@ -1,5 +1,5 @@
 #[cfg(not(windows))]
-use core::ffi::{c_char, c_int, c_uint};
+use core::ffi::{c_int, c_uint};
 
 use bun_core::String as BunString;
 use bun_jsc::bindgen::JsScope;
@@ -371,38 +371,7 @@ mod _impl {
 
     #[cfg(target_os = "macos")]
     fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
-        /// What `host_processor_info` maps into this task.
-        struct LoadInfo(*mut c::processor_cpu_load_info, c::mach_msg_type_number_t);
-        impl Drop for LoadInfo {
-            fn drop(&mut self) {
-                // SAFETY: nothing borrows the mapping any more.
-                unsafe { c::vm_deallocate(c::mach_task_self(), self.0 as usize, self.1 as usize) };
-            }
-        }
-
-        // Fetch the CPU info structure
-        let mut num_cpus: c::natural_t = 0;
-        let mut info: *mut c::processor_cpu_load_info = core::ptr::null_mut();
-        let mut info_size: c::mach_msg_type_number_t = 0;
-        // SAFETY: FFI call with valid out-pointers
-        if unsafe {
-            c::host_processor_info(
-                c::mach_host_self(),
-                c::PROCESSOR_CPU_LOAD_INFO,
-                &raw mut num_cpus,
-                (&raw mut info).cast::<c::processor_info_array_t>(),
-                &raw mut info_size,
-            )
-        } != 0
-        {
-            return Err(OsError::Any);
-        }
-        let info = LoadInfo(info, info_size);
-
-        // Ensure we got the amount of data we expected to guard against buffer overruns
-        if info_size != c::PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus {
-            return Err(OsError::Any);
-        }
+        let load = bun_sys::process::processor_load().ok_or(OsError::Any)?;
 
         // Get CPU model name
         let mut model_name_buf = [0u8; 512];
@@ -439,12 +408,9 @@ mod _impl {
         let multiplier: u64 = 1000 / u64::try_from(ticks).expect("int cast");
 
         // Set up each CPU value in the return
-        let values = JSValue::create_empty_array(global_this, num_cpus as usize)?;
-        let mut cpu_index: u32 = 0;
-        // SAFETY: info points to num_cpus entries per host_processor_info contract
-        let info_slice = unsafe { bun_core::ffi::slice(info.0, num_cpus as usize) };
-        while cpu_index < num_cpus {
-            let ticks = &info_slice[cpu_index as usize].cpu_ticks;
+        let values = JSValue::create_empty_array(global_this, load.len())?;
+        for (cpu_index, processor) in (0..).zip(&load) {
+            let ticks = &processor.cpu_ticks;
             let times = CPUTimes {
                 user: ticks[0] as u64 * multiplier,
                 nice: ticks[3] as u64 * multiplier,
@@ -463,7 +429,6 @@ mod _impl {
             cpu.put(global_this, b"times", times.to_value(global_this));
 
             values.put_index(global_this, cpu_index, cpu)?;
-            cpu_index += 1;
         }
         Ok(values)
     }
@@ -550,81 +515,19 @@ mod _impl {
                 }
             }
 
-            // From libuv:
-            // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
-            // > is frequently 1024 or 4096, so we can just use that directly. The pwent
-            // > will not usually be large.
-            // Instead of always using an allocation, first try a stack allocation
-            // of 4096, then fallback to heap.
-            let mut stack_string_bytes = [0u8; 4096];
-            let mut heap_bytes: Vec<u8>;
-            let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
-            let mut using_heap = false;
-
-            let mut pw: libc::passwd = bun_core::ffi::zeroed();
-            let mut result: *mut libc::passwd = core::ptr::null_mut();
-
-            let ret: c_int = loop {
-                // SAFETY: valid buffers and out-pointer
-                let ret = unsafe {
-                    libc::getpwuid_r(
-                        libc::geteuid(),
-                        &raw mut pw,
-                        string_bytes.as_mut_ptr().cast::<c_char>(),
-                        string_bytes.len(),
-                        &raw mut result,
-                    )
-                };
-
-                if ret == bun_sys::E::EINTR as c_int {
-                    continue;
-                }
-
-                // If the system call wants more memory, double it.
-                if ret == bun_sys::E::ERANGE as c_int {
-                    let len = string_bytes.len();
-                    heap_bytes = vec![0u8; len * 2];
-                    string_bytes = &mut heap_bytes[..];
-                    using_heap = true;
-                    continue;
-                }
-
-                break ret;
-            };
-            let _ = using_heap;
-
-            if ret != 0 {
-                return Err(global.throw_value(
-                    bun_sys::Error::from_code(
-                        // `ret` is a libc errno; a code outside the table is `EUNKNOWN`.
-                        bun_sys::E::from_raw(ret as u16),
-                        bun_sys::Tag::uv_os_homedir,
-                    )
-                    .to_js(global),
-                ));
-            }
-
-            if result.is_null() {
-                // bionic has no passwd entries for app uids; with HOME also unset
-                // (zygote/run-as), return a usable default rather than throwing.
-                #[cfg(target_os = "android")]
-                {
+            let error = match bun_sys::process::home_directory_of(c::geteuid()) {
+                Ok(Some(home)) => return Ok(BunString::clone_utf8(&home)),
+                // bionic has no passwd entries for app uids, and zygote and run-as set no HOME.
+                Ok(None) if cfg!(target_os = "android") => {
                     return Ok(BunString::static_("/data/local/tmp"));
                 }
-                // in uv__getpwuid_r, null result throws UV_ENOENT.
-                #[cfg(not(target_os = "android"))]
-                return Err(global.throw_value(
+                // As `uv__getpwuid_r`.
+                Ok(None) => {
                     bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
-                        .to_js(global),
-                ));
-            }
-
-            return Ok(if !pw.pw_dir.is_null() {
-                // SAFETY: pw_dir is a NUL-terminated C string from getpwuid_r
-                BunString::clone_utf8(unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
-            } else {
-                BunString::EMPTY
-            });
+                }
+                Err(error) => error,
+            };
+            Err(global.throw_value(error.to_js(global)))
         }
     }
 
@@ -692,14 +595,7 @@ mod _impl {
             [0.0, 0.0, 0.0]
         };
         #[cfg(target_os = "freebsd")]
-        let result: [f64; 3] = 'loadavg: {
-            let mut avg: [f64; 3] = [0.0, 0.0, 0.0];
-            // SAFETY: valid buffer
-            if unsafe { c::getloadavg(avg.as_mut_ptr(), 3) } != 3 {
-                break 'loadavg [0.0, 0.0, 0.0];
-            }
-            avg
-        };
+        let result = bun_sys::process::getloadavg().unwrap_or_default();
         #[cfg(windows)]
         let result: [f64; 3] = [0.0, 0.0, 0.0];
 

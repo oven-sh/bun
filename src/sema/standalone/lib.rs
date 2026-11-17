@@ -59,45 +59,26 @@ pub fn terminal_width() -> usize {
 /// has been released but not yet reclaimed, which `getrusage` counts.
 pub fn peak_memory() -> u64 {
     #[cfg(target_os = "macos")]
-    {
-        let mut info: libc::rusage_info_v4 = bun_core::ffi::zeroed();
-        // SAFETY: `info` has the type that `RUSAGE_INFO_V4` fills in, and it outlives the call.
-        let failed = unsafe {
-            libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
-        };
-        if failed == 0 {
-            return info.ri_lifetime_max_phys_footprint;
-        }
+    if let Some(bytes) = bun_sys::process::peak_footprint() {
+        return bytes;
     }
     peak_rss()
 }
 
 /// Returns the process's peak resident memory in bytes.
 fn peak_rss() -> u64 {
-    #[repr(C)]
-    struct Rusage {
-        times: [i64; 4],
-        max_rss: i64,
-        rest: [i64; 13],
+    #[cfg(unix)]
+    {
+        let peak = bun_sys::process::getrusage(libc::RUSAGE_SELF).ru_maxrss as u64;
+        // In bytes on macOS and in kilobytes on Linux.
+        if cfg!(target_os = "macos") {
+            peak
+        } else {
+            peak * 1024
+        }
     }
-    unsafe extern "C" {
-        fn getrusage(who: i32, usage: *mut Rusage) -> i32;
-    }
-    let mut usage = Rusage {
-        times: [0; 4],
-        max_rss: 0,
-        rest: [0; 13],
-    };
-    // SAFETY: `usage` has the layout of `struct rusage` on 64-bit macOS and Linux, and outlives the call.
-    if unsafe { getrusage(0, &raw mut usage) } != 0 {
-        return 0;
-    }
-    // `ru_maxrss` is in bytes on macOS and in kilobytes on Linux.
-    if cfg!(target_os = "macos") {
-        usage.max_rss as u64
-    } else {
-        usage.max_rss as u64 * 1024
-    }
+    #[cfg(not(unix))]
+    0
 }
 
 // These tests aren't next to the code they test because only this crate has what a test binary

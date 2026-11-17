@@ -503,10 +503,9 @@ pub fn initialize(options: InitializeOptions) {
     if options.runs_compiled_code {
         bindgen::hold_results_to_declared_types();
     }
-    // SAFETY: nothing changes the environment during the call, which is made once at startup;
-    // `on_jsc_invalid_env_var` only reads the (ptr,len) it is handed.
+    let env = bun_sys::environ();
+    // SAFETY: it is called once, at startup; `on_jsc_invalid_env_var` only reads the (ptr,len) it is handed.
     unsafe {
-        let env = bun_sys::environ();
         JSCInitialize(
             env.as_ptr().cast(),
             env.len(),
@@ -524,11 +523,9 @@ pub fn initialize(options: InitializeOptions) {
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
 /// first VM, which freezes JSC's options.
 pub fn expect_vm_per_thread() {
-    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
-    unsafe {
-        let env = bun_sys::environ();
-        JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len());
-    }
+    let env = bun_sys::environ();
+    // SAFETY: it reads `env.len()` C strings.
+    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len()) };
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /

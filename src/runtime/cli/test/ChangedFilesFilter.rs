@@ -339,16 +339,9 @@ pub(crate) fn init_watch_trigger() -> Option<ZBox> {
                 )
                 .expect("unreachable");
             }
-            let fresh = ZBox::from_vec(fresh);
-            // Export once so every exec()'d descendant inherits the same
-            // path. Adding (not removing) an env var is safe w.r.t.
-            // the environ snapshot; it simply won't be visible to code that
-            // iterates the startup-captured slice in this process.
-            // SAFETY: both strings are NUL-terminated; setenv copies into libc env storage.
-            unsafe {
-                libc::setenv(TRIGGER_FILE_ENV_VAR_Z.as_ptr(), fresh.as_ptr(), 1);
-            }
-            fresh
+            // So that every exec()'d descendant inherits the same path.
+            sys::setenv(TRIGGER_FILE_ENV_VAR_Z.as_bytes(), &fresh);
+            ZBox::from_vec(fresh)
         };
 
         Some(path)

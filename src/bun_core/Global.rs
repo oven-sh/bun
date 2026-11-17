@@ -675,8 +675,9 @@ unsafe extern "C" {
     #[cfg(unix)]
     #[link_name = "exit"]
     safe fn libc_exit(code: c_int) -> !;
+    /// Runs no exit callback and flushes nothing. Async-signal-safe.
     #[cfg(not(windows))]
-    safe fn _exit(code: c_int) -> !;
+    pub safe fn _exit(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
 }

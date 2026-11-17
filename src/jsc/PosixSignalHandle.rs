@@ -56,8 +56,7 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0
             && WATCH_SIGINT_LISTENERS.load(Ordering::Acquire) == 0
         {
-            // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
-            unsafe { libc::_exit(0) };
+            bun_core::Global::_exit(0);
         }
         if END_SIGNALS.contains(&number) {
             UNSEEN_SIGNALS.fetch_or(1 << number, Ordering::SeqCst);

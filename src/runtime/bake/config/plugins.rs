@@ -41,8 +41,7 @@ pub(crate) fn mark_restart() {
         if bun_core::getenv_z(RESTART_ENV_VAR).is_some() {
             RESTARTED.store(true, core::sync::atomic::Ordering::Relaxed);
         } else {
-            // SAFETY: both strings are NUL-terminated; setenv copies them into libc env storage.
-            unsafe { libc::setenv(RESTART_ENV_VAR.as_ptr().cast(), c"1".as_ptr(), 1) };
+            bun_sys::setenv(RESTART_ENV_VAR.as_bytes(), b"1");
         }
     }
 }

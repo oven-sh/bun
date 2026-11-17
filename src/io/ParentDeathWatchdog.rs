@@ -32,14 +32,14 @@
 //! watchdog closes both gaps from Bun's side without requiring the shim to
 //! cooperate.
 
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::ZStr;
 use bun_core::env_var;
 use bun_spawn_sys::ffi::kill;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_spawn_sys::posix_spawn::posix_spawn::wait4;
 #[cfg(target_os = "macos")]
 use bun_sys::Fd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -146,16 +146,12 @@ unsafe extern "C" {
     safe fn Bun__noOrphans_killTracked();
 }
 
-unsafe extern "C" {
-    // safe: no args; read process IDs — no preconditions, never fail.
-    safe fn getpid() -> libc::pid_t;
-    #[cfg(target_os = "macos")]
-    safe fn getppid() -> libc::pid_t;
-    // safe: out-param is `&mut c_int` (non-null, valid for write); kernel only
-    // writes the slot and reports failure via the return value — bad pid →
-    // `ECHILD`, never UB. Async-signal-safe.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    safe fn waitpid(pid: libc::pid_t, status: &mut c_int, options: c_int) -> libc::pid_t;
+fn getpid() -> libc::pid_t {
+    std::process::id().cast_signed()
+}
+
+fn getppid() -> libc::pid_t {
+    std::os::unix::process::parent_id().cast_signed()
 }
 
 // `should_default_spawn_pdeathsig` moved down to `bun_spawn_sys::pdeathsig::
@@ -193,61 +189,36 @@ pub fn install() {
 #[cold]
 #[inline(never)]
 pub fn enable() {
-    // SAFETY: called only on the main thread during startup, before any
-    // concurrent reader exists; idempotent guard prevents double-init.
-    unsafe {
-        if ENABLED.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        // Let `bun_spawn_sys::spawn_process_posix` default `linux_pdeathsig`
-        // for children spawned from this thread. Storage lives in spawn_sys
-        // (lowest tier that reads it); we just flip the flag.
-        bun_spawn_sys::pdeathsig::set_default(true);
-        // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
-        // nested bun) inherits no-orphans mode without the parent having to thread
-        // the flag through. No-op if we got here via the env var.
-        let _ = libc::setenv(c"BUN_FEATURE_FLAG_NO_ORPHANS".as_ptr(), c"1".as_ptr(), 1);
-
-        // PR_SET_CHILD_SUBREAPER is NOT armed here — it's process-wide and would
-        // make every orphaned grandchild reparent to us, but only the spawnSync
-        // wait loop has a `wait4(-1, WNOHANG)` to reap them. `bun foo.js` /
-        // `--filter` / `bun test` would accumulate zombies. Subreaper is armed
-        // per-script in `spawnPosix` (just before the spawn) and cleared on return.
-        // Descendant cleanup runs on every clean exit regardless of whether we end
-        // up watching a parent (Bun may have been spawned directly by launchd/init).
-        bun_core::add_exit_callback(on_process_exit);
-
-        let ppid = libc::getppid();
-        ORIGINAL_PPID.store(ppid, Ordering::Relaxed);
-        // Already orphaned (parent died before we got here, or launchd/init
-        // spawned us directly) — nothing to watch.
-        if ppid <= 1 {
-            return;
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // PR_SET_PDEATHSIG: kernel sends SIGKILL when the thread that forked
-            // us exits. Persists across exec; cleared on fork (Bun's own children
-            // do not inherit it). SIGKILL is uncatchable so user code can't
-            // swallow it. The macOS path goes through Global.exit instead and so
-            // also runs the descendant reaper; on Linux the SIGKILL case relies on
-            // env-var inheritance — Bun-spawning-Bun chains self-reap because each
-            // link sets its own PDEATHSIG.
-            if prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as _) != 0 {
-                return;
-            }
-            // Race: parent may have died between getppid() above and prctl()
-            // taking effect. If so we've already been reparented and the kernel
-            // will never deliver the signal — exit now.
-            if libc::getppid() != ppid {
-                kill_descendants();
-                libc::_exit(EXIT_CODE as c_int);
-            }
-        }
-        // macOS: parent watch installs lazily via install_on_event_loop() once the
-        // event loop's kqueue exists.
+    if ENABLED.swap(true, Ordering::Relaxed) {
+        return;
     }
+    bun_spawn_sys::pdeathsig::set_default(true);
+    // For each Bun among the descendants.
+    bun_sys::setenv(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
+
+    // No PR_SET_CHILD_SUBREAPER yet: only the wait loop of spawnSync reaps what it adopts, so `spawnPosix` arms it for each script.
+    bun_core::add_exit_callback(on_process_exit);
+
+    let ppid = getppid();
+    ORIGINAL_PPID.store(ppid, Ordering::Relaxed);
+    // An orphan already, or a child of init or launchd.
+    if ppid <= 1 {
+        return;
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // Sent when the thread that forked this process ends. It leaves no time for the reaper: each Bun below asks for its own.
+        if prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as _) != 0 {
+            return;
+        }
+        // The kernel sends nothing for a parent that died before the call.
+        if getppid() != ppid {
+            kill_descendants();
+            bun_core::Global::_exit(EXIT_CODE.into());
+        }
+    }
+    // macOS: `install_on_event_loop` watches the parent once there is a kqueue.
 }
 
 /// Windows-only primitive; POSIX cleanup is the exit-time tree walk above.
@@ -438,12 +409,7 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
             killed_any = true;
         }
         // Reap what we just killed so their children (if any raced) reparent.
-        loop {
-            let mut st: c_int = 0;
-            if waitpid(-1, &mut st, libc::WNOHANG) <= 0 {
-                break;
-            }
-        }
+        while wait4(-1, libc::WNOHANG as u32, None).is_ok_and(|reaped| reaped.pid > 0) {}
         if !killed_any {
             return;
         }
@@ -517,24 +483,7 @@ fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
 fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: info is fully written by proc_pidinfo on success (rc == size).
-        unsafe {
-            let mut info: bun_sys::c::struct_proc_bsdinfo = bun_core::ffi::zeroed();
-            let size: c_int =
-                c_int::try_from(core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>())
-                    .expect("int cast");
-            let rc = bun_sys::c::proc_pidinfo(
-                pid,
-                bun_sys::c::PROC_PIDTBSDINFO,
-                0,
-                core::ptr::from_mut::<bun_sys::c::struct_proc_bsdinfo>(&mut info).cast(),
-                size,
-            );
-            if rc != size {
-                return 0;
-            }
-            return libc::pid_t::try_from(info.pbi_ppid).expect("int cast");
-        }
+        return bun_sys::process::parent_of(pid).unwrap_or(0);
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
@@ -574,21 +523,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
 fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
     #[cfg(target_os = "macos")]
     {
-        // proc_listchildpids returns the *count* of pids written (libproc.c
-        // already divides the kernel's byte count by sizeof(int)); buffersize
-        // is in bytes.
-        // SAFETY: out is a valid buffer of out.len() pid_t's.
-        let rc = unsafe {
-            bun_sys::c::proc_listchildpids(
-                parent,
-                out.as_mut_ptr().cast(),
-                c_int::try_from(std::mem::size_of_val(out)).expect("int cast"),
-            )
-        };
-        if rc <= 0 {
-            return None;
-        }
-        return Some((usize::try_from(rc).expect("int cast")).min(out.len()));
+        return bun_sys::process::children_of(parent, out);
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {

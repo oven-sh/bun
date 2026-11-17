@@ -150,19 +150,21 @@ fn run(args: &[String]) {
         Some("each") => {
             use bun_core::Fd;
             use bun_sema_baselines::write_debug_file;
+            use bun_spawn_sys::posix_spawn::posix_spawn::wait4;
             let option = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
             let out = option("--out=").expect("--out=");
             let jobs: usize = option("--jobs=").map_or(8, |n| n.parse().expect("--jobs="));
             let limit: u32 = option("--limit=").map_or(60, |n| n.parse().expect("--limit="));
             let mut running: Vec<(libc::pid_t, usize)> = Vec::new();
             let wait_for_one = |running: &mut Vec<(libc::pid_t, usize)>| {
-                let mut status = 0;
-                // SAFETY: `status` is valid for the call to write the result to.
-                let pid = unsafe { libc::wait(&raw mut status) };
-                let Some(at) = running.iter().position(|it| it.0 == pid) else {
+                let Ok(ended) = wait4(-1, 0, None) else {
+                    return;
+                };
+                let Some(at) = running.iter().position(|it| it.0 == ended.pid) else {
                     return;
                 };
                 let (_, number) = running.swap_remove(at);
+                let status = ended.status.cast_signed();
                 let status = if libc::WIFEXITED(status) {
                     libc::WEXITSTATUS(status).to_string()
                 } else {

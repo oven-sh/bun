@@ -3,6 +3,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  compileFixture,
   forEachLine,
   isASAN,
   isLinux,
@@ -676,4 +677,45 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     proc.kill();
     reader.releaseLock();
   }, 60_000);
+
+  // setenv(3) can free the block that getenv(3) is reading on another thread.
+  test.skipIf(!isLinux || !Bun.which("cc"))("does not call setenv while other threads run", async () => {
+    using dir = tempDir("test-changed-watch-setenv", {
+      "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+int setenv(const char *name, const char *value, int overwrite) {
+  struct stat threads;
+  if (!strncmp(name, "BUN_", 4) && !stat("/proc/self/task", &threads) && threads.st_nlink > 3) {
+    dprintf(2, "setenv(%s) beside other threads\\n", name);
+    _exit(1);
+  }
+  return ((int (*)(const char *, const char *, int)) dlsym(RTLD_NEXT, "setenv"))(name, value, overwrite);
+}
+`,
+      "project/a.test.ts": `import { test } from "bun:test";\ntest("a", () => {});\n`,
+    });
+    const cwd = join(String(dir), "project");
+    initRepo(cwd);
+    const shim = compileFixture(join(String(dir), "shim.c"), { flags: ["-ldl"] });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd,
+      env: { ...gitEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim },
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    let last = "";
+    for await (last of forEachLine(proc.stderr)) {
+      if (last.startsWith("Ran ")) break;
+    }
+    expect(last).toStartWith("Ran 0 tests");
+  });
 });

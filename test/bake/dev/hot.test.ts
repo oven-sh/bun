@@ -714,6 +714,140 @@ devTest("a save of a CommonJS module reaches the ES modules that import it", {
   },
 });
 
+// A save of one file reaches modules that are not saved: the module that
+// accepts the update, and the modules between the two. The next four tests pin
+// which body runs first, and which object a module that does not run again
+// reads from. Each of them fails with one of the changes to the reload order
+// that were tried for #48871.
+devTest("a save of a module in an import cycle with the module that accepts it runs the saved module first", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["view.ts"] }),
+    "view.ts": `
+      import { label } from "./util";
+      export const name = "view";
+      console.log("view sees " + label);
+      import.meta.hot.accept();
+    `,
+    "util.ts": `
+      import { name } from "./view";
+      export const label = "label 1";
+      export const owner = () => name;
+      console.log("util ran");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("util ran", "view sees label 1");
+    for (const n of [2, 3]) {
+      await dev.patch("util.ts", { find: "label " + (n - 1), replace: "label " + n });
+      // view.ts is stale only at its own turn, so the load of util.ts does not
+      // pull it in through the cycle and run it against the previous util.ts.
+      await c.expectMessage("util ran", "view sees label " + n);
+    }
+  },
+});
+
+// What tsc 6.0.2 prints with `module: commonjs`.
+const tscOutput = {
+  /** `export const helper = "<value>";` */
+  helper: (value: string) => `
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.helper = void 0;
+    exports.helper = "${value}";
+  `,
+  /** `export { helper } from "./helper";` */
+  namedReexport: `
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.helper = void 0;
+    var helper_1 = require("./helper");
+    Object.defineProperty(exports, "helper", { enumerable: true, get: function () { return helper_1.helper; } });
+  `,
+  /** `export * from "./helper";` */
+  exportStar: `
+    "use strict";
+    var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+        if (k2 === undefined) k2 = k;
+        var desc = Object.getOwnPropertyDescriptor(m, k);
+        if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+          desc = { enumerable: true, get: function() { return m[k]; } };
+        }
+        Object.defineProperty(o, k2, desc);
+    }) : (function(o, m, k, k2) {
+        if (k2 === undefined) k2 = k;
+        o[k2] = m[k];
+    }));
+    var __exportStar = (this && this.__exportStar) || function(m, exports) {
+        for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+    };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    __exportStar(require("./helper"), exports);
+  `,
+};
+// The barrel does not run again. It reads the saved file through the `exports`
+// object that `require()` gave it, so the saved file must write to that same
+// object when it runs again.
+for (const [name, barrel] of [
+  ["a named re-export", tscOutput.namedReexport],
+  ["`export *`", tscOutput.exportStar],
+] as const) {
+  devTest(`a save of the file behind ${name} in tsc CommonJS output reaches the importer of the barrel`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": `
+        import * as dep from "./lib/dep.js";
+        console.log("helper=" + dep.helper);
+        import.meta.hot.accept();
+      `,
+      "lib/dep.js": barrel,
+      "lib/helper.js": tscOutput.helper("h1"),
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("helper=h1");
+      for (const n of [2, 3]) {
+        await dev.write("lib/helper.js", tscOutput.helper("h" + n));
+        await c.expectMessage("helper=h" + n);
+      }
+    },
+  });
+}
+
+devTest("a save below two accepting modules that a barrel joins runs the lower one first", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["Page.ts"] }),
+    "Page.ts": `
+      import { Button, theme } from "./lib/index";
+      console.log("Page sees " + Button + " theme " + theme);
+      globalThis.readPage = () => Button + " theme " + theme;
+      import.meta.hot.accept();
+    `,
+    // Not saved, and does not accept. Page.ts reaches Button.ts only through
+    // it, so no import edge joins the two accepting modules directly.
+    "lib/index.ts": `
+      export { Button } from "./Button";
+      export { theme } from "./theme";
+    `,
+    "lib/Button.ts": `
+      import { theme } from "./theme";
+      export const Button = "Button(theme " + theme + ")";
+      console.log("Button ran");
+      import.meta.hot.accept();
+    `,
+    "lib/theme.ts": `export const theme = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("Button ran", "Page sees Button(theme 1) theme 1");
+    for (const n of [2, 3]) {
+      await dev.patch("lib/theme.ts", { find: "theme = " + (n - 1), replace: "theme = " + n });
+      await c.expectMessage("Button ran", `Page sees Button(theme ${n}) theme ${n}`);
+      expect(await c.js<string>`readPage()`).toBe(`Button(theme ${n}) theme ${n}`);
+    }
+  },
+});
+
 // The server cannot reload a page to get a value that an update missed.
 for (const [file, text] of [
   ["data.json", (n: number) => `{ "value": ${n} }`],

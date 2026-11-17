@@ -21,7 +21,7 @@ use crate::format::{
     ZLIB_PRESET_DICTIONARY,
 };
 use bits::{BitReader, HeldBits};
-use codes::{FAST_INPUT, FAST_ROOM, LongestMatch, NoMatch, Reach, Step, Stop};
+use codes::{FAST_INPUT, FAST_ROOM, Goal, LongestMatch, NoMatch, Reach, Step, Stop};
 use dynamic::{Counts, DynamicCodes};
 use tables::Tables;
 use window::{MAX_DISTANCE, Window};
@@ -688,8 +688,13 @@ impl Inflater {
             let (full, limit) = (window.end.saturating_add(room), window.limit());
             let fast_limit = limit.min(full.saturating_sub(FAST_ROOM - 1));
             if window.end < fast_limit && bits.rest.len() >= FAST_INPUT {
+                let filled = out.buf.filled().as_ptr_range().end.addr();
+                let goal = Goal {
+                    limit: fast_limit,
+                    output_offset: filled.wrapping_sub(window.pending_address()),
+                };
                 let distance = Cell::from_mut(&mut self.pending_distance);
-                let stop = codes::decode_fast(tables, bits, window, fast_limit, reach, distance)?;
+                let stop = codes::decode_fast(tables, bits, window, &goal, reach, distance)?;
                 if let Stop::EndOfBlock = stop {
                     return Ok(Status::BlockEnd);
                 }

@@ -1,7 +1,7 @@
 //! The literals and matches of a compressed block.
 
 use core::cell::Cell;
-use core::hint::cold_path;
+use core::hint::{Locality, cold_path, prefetch_write};
 
 use bun_deflate::format::MAX_MATCH_LEN;
 use bun_highway::with_bmi2;
@@ -27,6 +27,13 @@ impl Reach {
     fn available_at(self, position: usize) -> usize {
         self.available + (position - self.from)
     }
+}
+
+/// How far `decode_fast()` goes, and what for.
+pub(super) struct Goal {
+    pub(super) limit: usize,
+    /// From an address in the window to where that byte will be handed out.
+    pub(super) output_offset: usize,
 }
 
 pub(super) enum Stop {
@@ -61,10 +68,26 @@ fn match_source(window: &[Cell<u8>], at: usize, distance: usize) -> Option<&Span
     part(window, from as usize)
 }
 
+impl Goal {
+    /// With long matches, handing out would wait for memory.
+    #[inline(always)]
+    fn prefetch_output(&self, span: &Span) {
+        const CACHE_LINE: usize = 64;
+        let output = span[0].as_ptr().wrapping_add(self.output_offset);
+        for line in 0..MAX_MATCH_LEN / CACHE_LINE {
+            prefetch_write(output.wrapping_add(CACHE_LINE * line), Locality::L1);
+        }
+    }
+}
+
 /// May write up to `CHUNK - 1` bytes too many.
 #[inline(always)]
-fn copy_match(from: &Span, to: &Span, distance: usize, len: usize) {
+fn copy_match(from: &Span, to: &Span, distance: usize, len: usize, goal: Option<&Goal>) {
+    const LONG: usize = 3 * CHUNK;
     if distance < len.min(CHUNK) {
+        if let Some(goal) = goal.filter(|_| len > LONG) {
+            goal.prefetch_output(to);
+        }
         return repeat(from, to, distance, len);
     }
     let copy_chunk = |at| {
@@ -78,24 +101,27 @@ fn copy_match(from: &Span, to: &Span, distance: usize, len: usize) {
         if at >= len {
             break;
         }
+        if let Some(goal) = goal.filter(|_| at == LONG) {
+            goal.prefetch_output(to);
+        }
         copy_chunk(at);
     }
 }
 
-/// Goes on for as long as the window ends below `limit` and enough input is left for any symbol.
+/// Goes on for as long as the window ends below the limit and enough input is left for any symbol.
 #[inline(always)]
 pub(super) fn decode_fast(
     tables: &Tables,
     bits: &mut BitReader<'_>,
     window: &mut Window,
-    limit: usize,
+    goal: &Goal,
     reach: Reach,
     last_distance: &Cell<usize>,
 ) -> Result<Stop> {
     if tables.literal_length_mask == u64::MAX {
-        decode_unmasked(tables, bits, window, limit, reach, last_distance)
+        decode_unmasked(tables, bits, window, goal, reach, last_distance)
     } else {
-        decode_masked(tables, bits, window, limit, reach, last_distance)
+        decode_masked(tables, bits, window, goal, reach, last_distance)
     }
 }
 
@@ -105,11 +131,11 @@ with_bmi2! {
         tables: &Tables,
         bits: &mut BitReader<'_>,
         window: &mut Window,
-        limit: usize,
+        goal: &Goal,
         reach: Reach,
         last_distance: &Cell<usize>,
     ) -> Result<Stop> {
-        decode_fast_with::<false>(tables, bits, window, limit, reach, last_distance)
+        decode_fast_with::<false>(tables, bits, window, goal, reach, last_distance)
     }
 }
 
@@ -118,11 +144,11 @@ with_bmi2! {
         tables: &Tables,
         bits: &mut BitReader<'_>,
         window: &mut Window,
-        limit: usize,
+        goal: &Goal,
         reach: Reach,
         last_distance: &Cell<usize>,
     ) -> Result<Stop> {
-        decode_fast_with::<true>(tables, bits, window, limit, reach, last_distance)
+        decode_fast_with::<true>(tables, bits, window, goal, reach, last_distance)
     }
 }
 
@@ -138,13 +164,13 @@ fn decode_fast_with<const MASK: bool>(
     tables: &Tables,
     bits: &mut BitReader<'_>,
     window: &mut Window,
-    limit: usize,
+    goal: &Goal,
     reach: Reach,
     last_distance: &Cell<usize>,
 ) -> Result<Stop> {
     let position = &mut window.end;
     let window = Cell::from_mut(window.bytes.as_mut_slice()).as_slice_of_cells();
-    let writable_end = limit + SLACK - 1;
+    let writable_end = goal.limit + SLACK - 1;
     let mut writable = window.get(*position..writable_end).ok_or(Error::Internal)?;
     let (mut input, mut buffer) = (bits.rest, bits.buffer);
     // Only the lowest 6 bits are right.
@@ -282,7 +308,7 @@ fn decode_fast_with<const MASK: bool>(
         let Some(to) = writable.first_chunk() else {
             stop!(Exit::Internal);
         };
-        copy_match(from, to, distance, len);
+        copy_match(from, to, distance, len, Some(goal));
         writable = writable.get(len..).unwrap_or_default();
     };
 
@@ -392,7 +418,7 @@ pub(super) fn decode_one(
             let cells = Cell::from_mut(window.bytes.as_mut_slice()).as_slice_of_cells();
             let from = match_source(cells, window.end, distance).ok_or(Error::Internal)?;
             let to = part(cells, window.end).ok_or(Error::Internal)?;
-            copy_match(from, to, distance, len);
+            copy_match(from, to, distance, len, None);
             window.end += len;
             Ok(Step::Match(distance))
         }

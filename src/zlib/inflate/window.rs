@@ -37,6 +37,11 @@ impl Window {
         self.end - self.handed_out
     }
 
+    /// Of what is handed out next.
+    pub(super) fn pending_address(&self) -> usize {
+        self.bytes.as_ptr().addr() + self.handed_out
+    }
+
     pub(super) fn drop_pending(&mut self) {
         self.end = self.handed_out;
     }

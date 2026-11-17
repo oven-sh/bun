@@ -202,6 +202,32 @@ describe("bundler", () => {
   });
 
   describe("jsx preserve", () => {
+    describe.each(["cli", "api", "bunfig"] as const)("tsconfig preserve precedence (%s)", source => {
+      describe.each(["react", "react-jsx", "react-jsxdev"])("tsconfig jsx=%s", jsx => {
+        itBundled(`jsx/PreserveOverridesTsconfig-${source}-${jsx}`, {
+          files: {
+            "/in.tsx": 'import { nested } from "./dep/in"; export const el = <div>{nested}</div>;',
+            "/tsconfig.json": JSON.stringify({ compilerOptions: { jsx } }),
+            "/dep/in.tsx": "export const nested = <span />;",
+            "/dep/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: jsx === "react" ? "react-jsx" : "react" } }),
+            ...(source === "bunfig" ? { "/bunfig.toml": 'jsx = "preserve"' } : {}),
+          },
+          backend: source === "api" ? "api" : "cli",
+          ...(source === "bunfig" ? {} : { jsx: { runtime: "preserve" } }),
+          external: ["react", "react/*"],
+          // esbuild does not read `bunfig.toml`.
+          skipOnEsbuild: source === "bunfig",
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            expect(out).toContain("<div>");
+            expect(out).toMatch(/<span\b/);
+            expect(out).not.toContain("createElement");
+            expect(out).not.toContain("jsx-runtime");
+          },
+        });
+      });
+    });
+
     describe.each(["cli", "api"] as const)("pinned imported tags (%s)", backend => {
       describe.each(["method", "static"])("eval in %s", location => {
         describe.each([false, true])("minify=%s", minify => {

@@ -291,7 +291,9 @@ impl TSConfigJSON {
             out.import_source = self.jsx.import_source.clone();
         }
 
-        if self.jsx_flags.contains(JsxField::Runtime) {
+        if self.jsx_flags.contains(JsxField::Runtime)
+            && out.runtime != options::jsx::Runtime::Preserve
+        {
             out.runtime = self.jsx.runtime;
         }
 

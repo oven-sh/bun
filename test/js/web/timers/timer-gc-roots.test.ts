@@ -65,6 +65,31 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a timer that will not fire again is not rooted", async () => {
+    const shapes = [
+      ["setInterval", "this._repeat = null"],
+      ["setInterval", "this._idleTimeout = -1"],
+      ["setTimeout", "this._repeat = -1"],
+      ["setTimeout", "this._idleTimeout = -1; this.refresh()"],
+      ["setTimeout", "queueMicrotask(() => { this._idleTimeout = -1; this.refresh(); })"],
+    ];
+    const src = `
+      const { heapStats } = require("bun:jsc");
+      const rooted = () => heapStats().protectedObjectTypeCounts.Timeout || 0;
+      const left = [];
+      for (const [set, body] of ${JSON.stringify(shapes)}) {
+        const before = rooted();
+        const callback = new Function("done", body + "; setImmediate(done);");
+        await new Promise(done => globalThis[set](callback, 1, done));
+        left.push(rooted() - before);
+      }
+      console.log(left.join());
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0,0,0,0,0\n", stderr: "", exitCode: 0 });
+  });
+
   for (const kind of ["setTimeout", "setInterval", "setImmediate"] as const) {
     test(`${kind}: callback stays reachable across GC while armed`, async () => {
       const body =

@@ -278,6 +278,83 @@ describe("clear", () => {
   });
 });
 
+/** What `script` printed by the time its process ended by itself. */
+async function runToExit(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A test that times out does not end its child.
+    timeout: 20_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+const printed = (stdout: string) => ({ stdout: stdout + "\n", stderr: "", exitCode: 0, signalCode: null });
+
+/** How often each timer fires. `first` is the body of its first callback; the second one clears it. */
+async function countFires(set: "setTimeout" | "setInterval", setup: string, first: string[]) {
+  const { stdout, ...rest } = await runToExit(`
+    const fires = {};
+    for (const body of ${JSON.stringify(first)}) {
+      const first = new Function("t", "id", "callback", body);
+      const callback = () => (++fires[body] === 1 ? first(t, id, callback) : clearTimeout(t));
+      const t = ${set}(callback, 1);
+      const id = +t;
+      fires[body] = 0;
+      ${setup}
+    }
+    process.on("exit", () => console.log(JSON.stringify(fires)));
+  `);
+  expect(rest).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+  return JSON.parse(stdout);
+}
+const each = (keys: string[], value: number) => Object.fromEntries(keys.map(key => [key, value]));
+
+describe.concurrent("Immediate.ref() holds the event loop only while the immediate is queued", () => {
+  it.each([
+    "globalThis.i = setImmediate(() => { i.unref(); i.ref(); console.log(i.hasRef()); });",
+    "globalThis.i = setImmediate(() => { process.unref(i); process.ref(i); console.log(i.hasRef()); });",
+    "globalThis.i = setImmediate(function () { console.log(this.ref().hasRef()); }).unref(); setImmediate(() => {});",
+    // Node keeps this one queued and runs it.
+    `globalThis.i = setImmediate(() => console.log("ran")).unref();
+     process.once("beforeExit", () => console.log(i.ref().hasRef()));`,
+  ])("%s", async script => {
+    expect(await runToExit(script)).toEqual(printed("false"));
+  });
+
+  it("unref() and ref() in the queue", async () => {
+    const script = `const i = setImmediate(() => console.log("ran")); console.log(i.unref().hasRef(), i.ref().hasRef());`;
+    expect(await runToExit(script)).toEqual(printed("false true\nran"));
+  });
+});
+
+describe.concurrent("_repeat", () => {
+  it("does not arm a timeout again that its callback cleared", async () => {
+    const clears = [
+      "clearTimeout(t)",
+      "clearInterval(t)",
+      "clearTimeout(id)",
+      "clearTimeout(String(id))",
+      "t.close()",
+      "t[Symbol.dispose]()",
+      // In Node these two undo the clear.
+      "t._onTimeout = null; clearTimeout(t); t._onTimeout = callback",
+      "clearTimeout(t); t._onTimeout = callback; t._idleTimeout = 5",
+    ];
+    expect(await countFires("setTimeout", "t._repeat = 1;", [...clears, ""])).toEqual({ ...each(clears, 1), "": 2 });
+  });
+
+  it.each(["t._repeat = null", "t._idleTimeout = -1"])(
+    "an interval holds the event loop for the round that refresh() armed before %s",
+    async stop => {
+      const body = `t.refresh(); ${stop}`;
+      expect(await countFires("setInterval", "", [body])).toEqual({ [body]: 2 });
+    },
+  );
+});
+
 describe("_idleStart", () => {
   // https://github.com/oven-sh/bun/issues/26508
   // Next.js 16 Cache Components writes `t2._idleStart = t1._idleStart` so two

@@ -31,7 +31,7 @@ bun_output::declare_scope!(bun_test, hidden);
 
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov, text,
+        ByteRangeMapping, Counts, Fraction, Report as CodeCoverageReport, lcov, text,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -57,7 +57,7 @@ mod coverage {
             .any(|pattern| pattern.r#match(relative_path).matches())
     }
 }
-use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
+use coverage::{ByteRangeMapping, CodeCoverageReport, Counts, Fraction};
 
 fn end_of_string(text: &[u8], mut at: usize, quote: u8) -> usize {
     while at < text.len()
@@ -2436,12 +2436,21 @@ fn print_coverage_reports_<const COLORS: bool>(
     let relative_dir = FileSystem::get().top_level_dir();
     let thresholds = opts.fractions;
 
-    let fractions: Vec<Fraction> = reports.iter().map(|r| r.fraction(&thresholds)).collect();
+    let counts: Vec<Counts> = reports.iter().map(CodeCoverageReport::counts).collect();
+    let fractions: Vec<Fraction> = counts.iter().map(|c| c.fraction(&thresholds)).collect();
     let failing = fractions.iter().any(|f| f.failing);
     opts.fractions.failing = failing;
 
     if opts.reporters.text {
-        print_coverage_table::<COLORS>(relative_dir, &thresholds, reports, &fractions, failing);
+        let total: Counts = counts.iter().copied().sum();
+        print_coverage_table::<COLORS>(
+            relative_dir,
+            &thresholds,
+            reports,
+            &fractions,
+            total,
+            failing,
+        );
     }
     if opts.reporters.lcov {
         write_lcov_report(opts, relative_dir, reports)?;
@@ -2454,6 +2463,7 @@ fn print_coverage_table<const COLORS: bool>(
     thresholds: &Fraction,
     reports: &[CodeCoverageReport<'_>],
     fractions: &[Fraction],
+    total: Counts,
     failing: bool,
 ) {
     use coverage::text;
@@ -2463,26 +2473,18 @@ fn print_coverage_table<const COLORS: bool>(
         .map(|r| resolve_path::relative(relative_dir, &r.source_url).len())
         .fold(b"All files".len(), usize::max);
 
+    // The `All files` row sums the counts of every file, so a file weighs by
+    // its size. It is not the mean of the rows.
     let zero = Fraction {
         functions: 0.0,
         lines: 0.0,
         stmts: 0.0,
         failing: false,
     };
-    let mut avg = zero;
-    for f in fractions {
-        avg.functions += f.functions;
-        avg.lines += f.lines;
-        avg.stmts += f.stmts;
-    }
-    let avg_thresholds = if fractions.is_empty() {
-        zero
+    let (avg, avg_thresholds) = if fractions.is_empty() {
+        (zero, zero)
     } else {
-        let n = fractions.len() as f64;
-        avg.functions /= n;
-        avg.lines /= n;
-        avg.stmts /= n;
-        thresholds
+        (total.fraction(&thresholds), thresholds)
     };
 
     // Writes below target a Vec and cannot fail.

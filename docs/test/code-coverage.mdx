@@ -15,7 +15,7 @@ bun test --coverage
 -------------|---------|---------|-------------------
 File         | % Funcs | % Lines | Uncovered Line #s
 -------------|---------|---------|-------------------
-All files    |   38.89 |   42.11 |
+All files    |   35.29 |   37.74 |
  index-0.ts  |   33.33 |   36.84 | 10-15,19-24
  index-1.ts  |   33.33 |   36.84 | 10-15,19-24
  index-10.ts |   33.33 |   36.84 | 10-15,19-24
@@ -68,7 +68,7 @@ coverageThreshold = 0.9
 coverageThreshold = { lines = 0.9, functions = 0.9 }
 ```
 
-Setting either key makes `bun test --coverage` exit with a non-zero exit code when line or function coverage is below its threshold; a key you omit keeps the `0.9` default. Bun accepts a `statements` key but does not currently enforce it. Outside `--parallel`, the check only runs when the `text` reporter is enabled (the default); a run with only `--coverage-reporter=lcov` currently exits 0 regardless of the threshold.
+Setting either key makes `bun test --coverage` exit with a non-zero exit code when line or function coverage of any file is below its threshold. The check applies to each file, not to the `All files` row. A key you omit keeps the `0.9` default. Bun accepts a `statements` key but does not currently enforce it. Outside `--parallel`, the check only runs when the `text` reporter is enabled (the default); a run with only `--coverage-reporter=lcov` currently exits 0 regardless of the threshold.
 
 ## Coverage Reporters
 
@@ -293,20 +293,20 @@ test:coverage:
 ### Text Output Explanation
 
 ```
--------------|---------|---------|-------------------
-File         | % Funcs | % Lines | Uncovered Line #s
--------------|---------|---------|-------------------
-All files    |   85.71 |   90.48 |
- src/        |   85.71 |   90.48 |
-  utils.ts   |  100.00 |  100.00 |
-  api.ts     |   75.00 |   85.71 | 15-18,25
-  main.ts    |   80.00 |   88.89 | 42,50-52
--------------|---------|---------|-------------------
+---------------|---------|---------|-------------------
+File           | % Funcs | % Lines | Uncovered Line #s
+---------------|---------|---------|-------------------
+All files      |   85.71 |   90.11 |
+ src/utils.ts  |  100.00 |  100.00 |
+ src/api.ts    |   75.00 |   85.71 | 15-18,25
+ src/main.ts   |   80.00 |   88.89 | 42,50-52
+---------------|---------|---------|-------------------
 ```
 
 - **% Funcs**: Percentage of functions called during tests
 - **% Lines**: Percentage of executable lines run during tests
 - **Uncovered Line #s**: Line numbers that were never executed
+- **All files**: The share of all functions and all executable lines, summed over every listed file, that ran. A file with more lines weighs more. The row is not the mean of the per-file percentages. It has the same value as the sum of `FNH` over the sum of `FNF`, and the sum of `LH` over the sum of `LF`, of every file record in `lcov.info`. In the table above, 12 of 14 functions and 82 of 91 lines ran.
 
 ### What to Aim For
 

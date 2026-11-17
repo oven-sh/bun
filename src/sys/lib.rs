@@ -2964,20 +2964,20 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         use libc::realpath as _realpath;
-        let len = loop {
+        let p = loop {
             // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
             // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
             let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
             if !p.is_null() {
-                // SAFETY: on success `realpath` returned `buf`'s pointer with a
-                // NUL-terminated absolute path written into it.
-                break unsafe { libc::strlen(p) };
+                break p;
             }
-            match last_errno() {
-                libc::EINTR => continue,
-                e => return Err(Error::from_code_int(e, Tag::realpath).with_path(path.as_bytes())),
+            if last_errno() != libc::EINTR {
+                return Err(err_with_path(Tag::realpath, path));
             }
         };
+        // SAFETY: on success `realpath` returned `buf`'s pointer with a
+        // NUL-terminated absolute path written into it.
+        let len = unsafe { libc::strlen(p) };
         Ok(&buf.0[..len])
     }
     /// The canonical path of `path`, as `open` followed by `get_fd_path` reports it, but normally in one system call that opens nothing.

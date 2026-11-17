@@ -74,6 +74,8 @@ protected:
 private:
     virtual URL fullURL() const = 0;
     virtual void setFullURL(const URL&) = 0;
+    // For the URL that setFullURL would make from the same text: an override can keep it without a second parse.
+    virtual void adoptFullURL(URL&& fullURL) { setFullURL(fullURL); }
 };
 
 } // namespace WebCore

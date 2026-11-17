@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolveObjectURL } from "node:buffer";
+import { totalmem } from "node:os";
 import util from "node:util";
 
 describe("url", () => {
@@ -391,6 +392,195 @@ describe("url", () => {
     }
   });
 
+  // The host and hostname setters parse the value alone, from the host state of the URL Standard
+  // (https://url.spec.whatwg.org/#host-state with a state override). Each expected href is the value that
+  // whatwg-url 17.3.0, the reference implementation of the standard, and Node.js v26.3.0 give.
+  describe("host and hostname setters", () => {
+    const cases: [
+      input: string | [reference: string, base: string],
+      setter: "host" | "hostname",
+      value: string | null | undefined,
+      expected: string,
+    ][] = [
+      // The host is set and the port state fails: the port stays.
+      ["http://x:8080", "host", "newhost:99999", "http://newhost:8080/"],
+      ["http://x:8080/p", "host", "a:b:80", "http://a:8080/p"],
+      ["http://x:8080/", "host", "a:", "http://a:8080/"],
+      ["http://x:8080/", "host", "[::1]:", "http://[::1]:8080/"],
+      // The port is the digits up to the first other code point. The default port of the scheme gives no port
+      // (https://github.com/oven-sh/bun/issues/28661).
+      ["http://example.net:8080/p", "host", "[::1]:9000:80", "http://[::1]:9000/p"],
+      ["http://localhost:3000/foo", "host", "some-domain:80", "http://some-domain/foo"],
+      ["https://localhost:3000/foo", "host", "some-domain:80", "https://some-domain:80/foo"],
+      ["http://x:8080/", "host", "a:00080", "http://a/"],
+      ["http://x:8080/", "host", "a:81y", "http://a:81/"],
+      ["http://x:8080/", "host", "a:80@b", "http://a/"],
+      ["http://example.net/p", "host", "[::1]:81/b:c", "http://[::1]:81/p"],
+      // The parser removes tab and newline first.
+      ["http://a:1/", "host", "x:\t8", "http://x:8/"],
+      ["http://a:1/", "host", "x:8\t1", "http://x:81/"],
+      ["http://x/", "host", "\t[::1]", "http://[::1]/"],
+      ["http://x/", "hostname", "\t[::1]", "http://[::1]/"],
+      ["https://h/evil.example/p", "host", "\t", "https://h/evil.example/p"],
+      ["https://h/evil.example/p", "hostname", "\n", "https://h/evil.example/p"],
+      ["foo://x/", "host", "\t:", "foo://x/"],
+      // An empty host fails in a special URL. The first path segment does not become the host.
+      ["https://h/evil.example/p", "host", "/", "https://h/evil.example/p"],
+      ["https://h/evil.example/p", "hostname", "/", "https://h/evil.example/p"],
+      ["https://h/evil.example/p", "host", "?", "https://h/evil.example/p"],
+      ["https://h/evil.example/p", "host", "\\", "https://h/evil.example/p"],
+      ["ws://x:80/a/b/c", "host", "#z", "ws://x/a/b/c"],
+      // A host that ends in a number and is not an IPv4 address fails.
+      ["http://x/", "host", "09", "http://x/"],
+      ["http://x:8080/", "hostname", "a.09", "http://x:8080/"],
+      ["http://x/", "host", "0x7f", "http://0.0.0.127/"],
+      // The hostname setter fails at ':' outside of '[...]'.
+      ["http://example.net/", "hostname", "[::1]:81", "http://example.net/"],
+      ["http://x:8080/", "hostname", "a:81", "http://x:8080/"],
+      ["http://x:8080/", "hostname", "a:", "http://x:8080/"],
+      ["http://x:8080/", "hostname", "[::1]", "http://[::1]:8080/"],
+      ["http://x:8080/", "hostname", "a/b:81", "http://a:8080/"],
+      // A file URL has no port, and no Windows drive letter in place of a host.
+      ["file:///a/b", "host", "h2:x", "file:///a/b"],
+      ["file:///a/b", "host", "[::1]", "file://[::1]/a/b"],
+      ["file:///a/b", "host", "[::1]:81", "file:///a/b"],
+      ["file://h/a/b", "host", "\t[::1]:x", "file://h/a/b"],
+      ["file:///a/b", "host", "c:", "file:///a/b"],
+      ["file:///a/b", "hostname", "C|", "file:///a/b"],
+      ["file://h/a/b", "host", "localhost", "file:///a/b"],
+      ["file://h/a/b", "hostname", "", "file:///a/b"],
+      ["file://C:", "hostname", "server", "file://server/C:"],
+      // A URL that is not special can have the empty host, but not with credentials or a port.
+      ["foo://x/p", "host", "", "foo:///p"],
+      ["foo://x:8080/p", "host", "", "foo://x:8080/p"],
+      ["foo://u@x/p", "hostname", "", "foo://u@x/p"],
+      ["foo://x", "host", "a\u0001", "foo://a%01"],
+      ["foo://x", "hostname", "a ", "foo://x"],
+      // A URL without a host gets one. "/." in front of its path is not part of the path.
+      ["foo:/p", "host", "h:81", "foo://h:81/p"],
+      ["foo:/.//p", "host", "h", "foo://h//p"],
+      ["foo:/.p", "host", "h:81", "foo://h:81/.p"],
+      ["mailto:a@b.c", "host", "h", "mailto:a@b.c"],
+      // A URL that the parser makes from a reference and a base URL. An opaque path has no host.
+      [["#x", "about:blank"], "host", "h", "about:blank#x"],
+      [["#x", "mailto:a@b.c"], "hostname", "h", "mailto:a@b.c#x"],
+      [["#x", "foo:a/b"], "host", "h:81", "foo:a/b#x"],
+      [["?z", "foo://u@h"], "host", "", "foo://u@h?z"],
+      [["?z", "foo://h:9"], "host", "h2", "foo://h2:9?z"],
+      [["../x", "foo://h/a/b?q#f"], "host", "h2:81", "foo://h2:81/x"],
+      [["/.//x", "foo:/a/b"], "hostname", "h", "foo://h//x"],
+      [["?z", "http://h/a/b?q#f"], "hostname", "h2", "http://h2/a/b?z"],
+      // IDNA maps these code points to '/', '@' and ':'. They do not become URL structure.
+      ["https://base.test/p", "hostname", "bad.c\u2100.good.com", "https://base.test/p"],
+      ["https://base.test/p", "host", "a\uFF20b", "https://base.test/p"],
+      ["https://base.test/p", "host", "a\uFF1A81", "https://base.test/p"],
+      ["https://base.test/p", "hostname", "\u00DF%41.de", "https://xn--a-pfa.de/p"],
+      // The cases of LayoutTests/fast/dom/DOMURL/set-href-attribute-host.html and set-href-attribute-hostname.html in
+      // WebKit, with the results that their -expected.txt files record.
+      ["https://www.mydomain.com:8080/path/", "host", "www.otherdomain.com:0", "https://www.otherdomain.com:0/path/"],
+      [
+        "https://www.mydomain.com:8080/path/?key=value",
+        "host",
+        "www.other?domain.com:8080",
+        "https://www.other:8080/path/?key=value",
+      ],
+      ["https://www.mydomain.com:8080/path/", "host", "www.otherdomain.com:80", "https://www.otherdomain.com:80/path/"],
+      ["https://www.mydomain.com:8080/path/", "host", "www.otherdomain.com:443", "https://www.otherdomain.com/path/"],
+      [
+        "https://www.mydomain.com:8080/path/",
+        "host",
+        "www.otherdomain.com:44a5",
+        "https://www.otherdomain.com:44/path/",
+      ],
+      [
+        "https://www.mydomain.com:8080/path/",
+        "host",
+        "www.otherdomain.com: 443",
+        "https://www.otherdomain.com:8080/path/",
+      ],
+      ["https://www.mydomain.com:8080/path/", "host", "www.otherdomain.com:", "https://www.otherdomain.com:8080/path/"],
+      ["https://www.mydomain.com:8080/path/", "host", null, "https://null:8080/path/"],
+      ["https://www.mydomain.com:8080/path/", "host", "", "https://www.mydomain.com:8080/path/"],
+      ["file:///path/", "host", "mydomain.com", "file://mydomain.com/path/"],
+      ["https://www.mydomain.com:8080/path/", "host", "www.otherdom/ain.com", "https://www.otherdom:8080/path/"],
+      ["https://domain.com:8080/path/", "host", ":www.otherdomain.com:15", "https://domain.com:8080/path/"],
+      [
+        "https://rwwmy@domain.com:8080/pa..th/",
+        "host",
+        "www.other!domain.com:25",
+        "https://rwwmy@www.other!domain.com:25/pa..th/",
+      ],
+      ["tel:+1-816-555-1212", "host", "+1-800-555-1212", "tel:+1-816-555-1212"],
+      [
+        "https://www.mydomain.com:8080/path/",
+        "hostname",
+        "www.otherdomain.com",
+        "https://www.otherdomain.com:8080/path/",
+      ],
+      [
+        "https://www.mydomain.com:8080/path/",
+        "hostname",
+        "//www.otherdomain.com",
+        "https://www.mydomain.com:8080/path/",
+      ],
+      ["foo://www.mydomain.com/path/", "hostname", "www.otherdomain.com", "foo://www.otherdomain.com/path/"],
+      ["https://www.mydomain.com:8080/path/", "hostname", null, "https://null:8080/path/"],
+      ["https://www.mydomain.com:8080/path/", "hostname", "", "https://www.mydomain.com:8080/path/"],
+      ["really:bad:url", "hostname", "mydomain.com", "really:bad:url"],
+      ["really:bad:url", "hostname", "www.other domain.com", "really:bad:url"],
+      ["c:/path/testurl.html", "hostname", "a", "c://a/path/testurl.html"],
+      ["https://www.mydomain.com:8080/path/", "hostname", undefined, "https://undefined:8080/path/"],
+    ];
+
+    for (const [input, setter, value, expected] of cases) {
+      const args = typeof input === "string" ? [input] : input;
+      it(`new URL(${args.map(arg => JSON.stringify(arg)).join(", ")}).${setter} = ${JSON.stringify(value)}`, () => {
+        const url = new URL(args[0], args[1]);
+        url[setter] = value as string;
+        expect(url.href).toBe(expected);
+      });
+    }
+
+    it("no setter changes a URL made from a fragment and a base URL with an opaque path", () => {
+      const url = new URL("#x", "mailto:a@b.c");
+      url.pathname = "/p";
+      url.host = "h:81";
+      url.hostname = "h";
+      url.port = "81";
+      url.username = "u";
+      expect(url.href).toBe("mailto:a@b.c#x");
+    });
+
+    // A Vector<char16_t> holds 2^30 - 1 code units, and the setter aborted the process when its buffer was one.
+    // The child takes about 5 seconds in a debug ASAN build, so this one test carries its own ceiling.
+    test.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 8 * 1024 ** 3)(
+      "a host of 2^30 code units does not set the host",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const host = "a".repeat(2 ** 30);
+            const url = new URL("http://x/p");
+            url.host = host;
+            console.log(JSON.stringify({ host: host.length, href: url.href }));`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: { host: 2 ** 30, href: "http://x/p" },
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+      30_000,
+    );
+  });
+
   describe("URL.canParse", () => {
     (
       [
@@ -554,6 +744,37 @@ describe("url.searchParams lazy href sync", () => {
     sp.append("a", "2");
     sp.sort();
     expect(u.search).toBe("?a=2&z=1");
+  });
+
+  it("the host and hostname setters keep searchParams and a pending mutation", () => {
+    const u = new URL("http://user:pw@host:81/path?a=1#frag");
+    const sp = u.searchParams;
+    sp.append("b", "2");
+    u.host = "h2:82";
+    expect({ href: u.href, entries: [...sp] }).toEqual({
+      href: "http://user:pw@h2:82/path?a=1&b=2#frag",
+      entries: [
+        ["a", "1"],
+        ["b", "2"],
+      ],
+    });
+    sp.append("c", "3");
+    u.hostname = "h3";
+    expect({ href: u.href, entries: [...sp] }).toEqual({
+      href: "http://user:pw@h3:82/path?a=1&b=2&c=3#frag",
+      entries: [
+        ["a", "1"],
+        ["b", "2"],
+        ["c", "3"],
+      ],
+    });
+    // A value that does not set the host keeps them too.
+    sp.append("d", "4");
+    u.host = "/";
+    expect({ href: u.href, size: sp.size }).toEqual({
+      href: "http://user:pw@h3:82/path?a=1&b=2&c=3&d=4#frag",
+      size: 4,
+    });
   });
 
   // N appends through a URL-bound URLSearchParams used to re-serialize and

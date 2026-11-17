@@ -131,11 +131,11 @@ ExceptionOr<String> canonicalizeHostname(StringView value, BaseURLStringType val
     if (valueType == BaseURLStringType::Pattern)
         return value.toString();
 
-    URL dummyURL(dummyURLCharacters);
-    if (!dummyURL.setHost(value))
+    auto host = WTF::URLParser::maybeCanonicalizeHostname(value, "https"_s);
+    if (!host)
         return Exception { ExceptionCode::TypeError, "Invalid input to canonicalize a URL host string."_s };
 
-    return dummyURL.host().toString();
+    return WTF::move(*host);
 }
 
 // https://urlpattern.spec.whatwg.org/#canonicalize-an-ipv6-hostname

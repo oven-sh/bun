@@ -65,6 +65,19 @@ describe("url.pathToFileURL", () => {
     }
   });
 
+  // The server name goes to the hostname setter, which parses it alone. Node.js v26.3.0 gives the same hrefs.
+  test("UNC server names with { windows: true }", () => {
+    const href = server => url.pathToFileURL(`\\\\${server}\\share\\f`, { windows: true }).href;
+    assert.deepStrictEqual(["srv", "[::1]", "\t[::1]", "a\tb", "b\u00FCcher", "localhost"].map(href), [
+      "file://srv/share/f",
+      "file://[::1]/share/f",
+      "file://[::1]/share/f",
+      "file://ab/share/f",
+      "file://xn--bcher-kva/share/f",
+      "file:///share/f",
+    ]);
+  });
+
   test("general", () => {
     let testCases;
     if (isWindows) {

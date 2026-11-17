@@ -73,7 +73,8 @@ describe("transpiler cache", () => {
     using dir = tempDir("jsx-preserve-cache", {
       "main.ts": 'import value from "dep"; console.log(value);',
       "node_modules/dep/index.js":
-        "const React = { createElement: type => type }; export default <div/>;\n//" + "padding".repeat(1024),
+        "const React = { createElement: type => type }; export default <div/>;\n//" +
+        Buffer.alloc(5 * 1024, "p").toString(),
     });
     const cache = join(String(dir), "cache");
     const childEnv = {

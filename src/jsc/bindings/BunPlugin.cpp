@@ -7624,6 +7624,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         mock->abandon(globalObject);
 #if ENABLE(AOT)
         bool wasCalledByLoad = plugins.compiledMockFactories.removeAllMatching([&](const auto& factory) { return factory.mock.get() == mock; });
+        plugins.patchesOfRequiredMocks.removeAllMatching([&](const auto& patch) {
+            if (patch.mock.get() != mock)
+                return false;
+            mock->unevaluatedCompiledModule = patch.module;
+            wasCalledByLoad = true;
+            return true;
+        });
         if (wasCalledByLoad && mock->unevaluatedCompiledModule && isRegisteredModuleMock(globalObject, mock, mock->specifier->tryGetValue().data))
             deferMockToNextLoad(globalObject, mock, mock->importsOriginal ? JSC::AOT::FactoryFailurePolicy::RetryFactory : JSC::AOT::FactoryFailurePolicy::CacheError);
         if (scope.exception()) [[unlikely]]

@@ -10,6 +10,7 @@ use super::input_block::InputBlock;
 use super::params::LARGE_INPUT_SIZE;
 use super::prepared_dictionary::PreparedDictionary;
 use super::ring_buffer::SLACK;
+use super::switches::{self, SC_GENERAL, SC_PLAIN_FOUR, SC_RUST};
 use super::zopfli;
 use crate::format::{MAX_WINDOW_BITS, SHORT_CODE_BASES, SHORT_CODE_DELTAS};
 use crate::memory::Result;
@@ -223,14 +224,25 @@ impl Greedy<'_, '_> {
         searched: Option<&PreparedDictionary>,
         is_enough: impl Fn(&H, usize) -> bool,
     ) {
-        let (end, skip_after) = add_greedily(
-            hasher,
-            &self.block.without_first(self.covered),
-            self.skip_after,
-            searched,
-            is_enough,
-            self.commands,
-        );
+        let block = &self.block.without_first(self.covered);
+        macro_rules! with {
+            ($switches:expr) => {
+                add_greedily::<H, $switches>(
+                    hasher,
+                    block,
+                    self.skip_after,
+                    searched,
+                    is_enough,
+                    self.commands,
+                )
+            };
+        }
+        let (end, skip_after) = match switches::all() & (SC_RUST | SC_GENERAL | SC_PLAIN_FOUR) {
+            SC_RUST if H::HAS_SWITCHES => with!(SC_RUST),
+            SC_GENERAL if H::HAS_SWITCHES => with!(SC_GENERAL),
+            SC_PLAIN_FOUR if H::HAS_SWITCHES => with!(SC_PLAIN_FOUR),
+            _ => with!(0),
+        };
         (self.covered, self.skip_after) = (end - self.block.position, Some(skip_after));
     }
 }
@@ -308,7 +320,7 @@ fn find<H: Hasher>(
 /// Takes the best match at a position, unless the next position has a much better one. Returns where it stopped, and `skip_after`.
 #[inline(never)]
 #[cfg_attr(mordant, allow(generic_body_not_generic))] // The locals of the loop, which stay in registers.
-fn add_greedily<H: Hasher>(
+fn add_greedily<H: Hasher, const M: u32>(
     hasher: &mut H,
     block: &InputBlock<'_>,
     skip_after: Option<usize>,
@@ -337,7 +349,10 @@ fn add_greedily<H: Hasher>(
             }
             let jumps = position >= skip_after;
             prefetch(hasher, padded, if jumps { SIXTH_SEARCH } else { 1 });
-            let search = block.search_at(position, padded);
+            let search = Search {
+                switches: M,
+                ..block.search_at(position, padded)
+            };
             let best = find(hasher, &search, searched, &recent, 0);
             if best.score != MIN_SCORE {
                 break best;
@@ -362,6 +377,7 @@ fn add_greedily<H: Hasher>(
             let to_beat = best.score + LAZY_MARGIN - 1;
             let search = Search {
                 to_beat: if may_prune { to_beat } else { 0 },
+                switches: M,
                 ..block.search_at(position + 1, after)
             };
             let next = find(hasher, &search, searched, &recent, best.length - 1);

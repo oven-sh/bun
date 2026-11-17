@@ -64,6 +64,7 @@ impl<S: Slots, const SWEEP: usize, const HASHED: u32, const USE_WORDS: bool> Has
     for Quick<S, SWEEP, HASHED, USE_WORDS>
 {
     const LOOKAHEAD: usize = 8;
+    const HAS_SWITCHES: bool = false;
 
     fn recent_count(&self) -> usize {
         1

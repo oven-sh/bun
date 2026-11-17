@@ -339,7 +339,7 @@ impl<const LONG: bool, const BUCKETS: usize, const SIZE: usize> Hasher
         // From `newest` on, going around.
         let mut candidates = (equal | (equal << SIZE)) & (((1 << used) - 1) << newest);
         let mut best = Match::NONE;
-        let length = search.try_recent(recent, 4, &mut best);
+        let length = search.try_recent(recent, 0, &mut best);
         let first_of = |candidates: u64| positions[candidates.trailing_zeros() as usize % SIZE];
         let nearest = match candidates {
             0 => 0,

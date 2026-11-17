@@ -6,6 +6,7 @@ use bun_highway::{BROTLI_LEAF_SLACK, brotli_sort_leaves};
 
 use super::bit_writer::{BitWriter, Code};
 use super::matching::put_bytes;
+use super::switches;
 use super::symbol_set::SymbolSet;
 use crate::format::{
     Alphabet, CODE_LENGTH_CODE_LENGTH_CODES, CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES,
@@ -381,7 +382,15 @@ fn sort(unsorted: &[u64], count: usize, ties: Ties, sorted: &mut [u64]) {
     /// Without gaps, the kernel compares each leaf with each.
     const MAX_FOR_KERNEL: usize = 128;
     let has_gaps = matches!(ties, Ties::Unordered) && count >= MIN_FOR_GAPS;
-    if (has_gaps || count <= MAX_FOR_KERNEL)
+    let on = switches::all();
+    let max_for_kernel = match on & (switches::SL_MAX_0 | switches::SL_MAX_64) {
+        0 => MAX_FOR_KERNEL,
+        switches::SL_MAX_64 => 64,
+        _ => 0,
+    };
+    if on & switches::SL_RUST == 0
+        && (on & switches::SL_MIN_8 == 0 || count >= 8)
+        && (has_gaps || count <= max_for_kernel)
         && brotli_sort_leaves(unsorted, count, has_gaps, sorted)
     {
         return;

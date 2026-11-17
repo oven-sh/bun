@@ -313,6 +313,38 @@ impl Longer<'_> {
 /// Matches of two and three bytes, which have no hash, at distances below `range`.
 #[inline(always)]
 fn find_nearby(search: &Search<'_>, range: usize, longer: &mut Longer<'_>) {
+    if search.switches & crate::encoder::switches::PB_KERNEL != 0 {
+        const GROUP: usize = 16;
+        let [first, second] = crate::encoder::matching::bytes_at(search.padded, 0);
+        let end = range.min(search.position);
+        for nearest in (1..end).step_by(GROUP) {
+            let farthest = nearest + GROUP - 1;
+            let start = search.window.index(search.position.wrapping_sub(farthest));
+            let mut pairs = match search.window.bytes.get(start..start + GROUP + 1) {
+                Some(bytes) => {
+                    let mut pairs = 0;
+                    for i in 0..GROUP {
+                        pairs |= u16::from((bytes[i] == first) & (bytes[i + 1] == second)) << i;
+                    }
+                    pairs
+                }
+                None => u16::MAX,
+            };
+            while pairs != 0 {
+                let distance = nearest + pairs.leading_zeros() as usize;
+                if distance >= end {
+                    return;
+                }
+                pairs ^= 1 << (farthest - distance);
+                let earlier = search.window.index(search.position - distance);
+                longer.add(distance, search.match_length_at(earlier));
+                if longer.than > 2 {
+                    return;
+                }
+            }
+        }
+        return;
+    }
     let at = search.window.index(search.position);
     let mut pairs = brotli_pairs_before(search.window.bytes, at, range).unwrap_or(u64::MAX);
     pairs &= !(u64::MAX >> range.min(search.position).saturating_sub(1));

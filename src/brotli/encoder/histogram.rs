@@ -3,6 +3,7 @@
 use bun_highway::{BROTLI_SPARE_LOGARITHMS, brotli_estimate_costs};
 
 use super::log2::{FRACTION_BITS, fast_log2, fixed_point_log2};
+use super::switches;
 use super::symbol_set::SymbolSet;
 use crate::format::{
     CODE_LENGTH_CODES, COMMAND_SYMBOLS, DistanceParams, LITERAL_SYMBOLS, MAX_DIRECT_CODES,
@@ -148,6 +149,8 @@ impl IndexedList {
 /// Estimates the bits for a prefix code and for its symbols.
 pub(super) struct Estimator {
     logarithms: Vec<[f64; 2]>,
+    in_rust: bool,
+    little_below: usize,
 }
 
 impl Estimator {
@@ -158,7 +161,15 @@ impl Estimator {
         logarithms.push([1e6, 0.0]);
         logarithms.extend((1..known).map(|count| [fast_log2(count), count as f64]));
         memory::resize(&mut logarithms, known + BROTLI_SPARE_LOGARITHMS, [0.0; 2]);
-        Ok(Self { logarithms })
+        Ok(Self {
+            logarithms,
+            in_rust: switches::begin_meta_block(symbols),
+            little_below: if switches::is_on(switches::NO_LITTLE) {
+                0
+            } else {
+                256
+            },
+        })
     }
 
     pub(super) fn cost(&mut self, histogram: &Indexed<'_>) -> f64 {
@@ -171,8 +182,12 @@ impl Estimator {
         if used.len() <= 4 {
             return cost_of_few(&used, total, counts, nothing);
         }
-        if let Ok(total) = total.try_into() {
-            return cost_of_little(&used, total, counts, nothing);
+        if total < self.little_below {
+            return cost_of_little(&used, total as u8, counts, nothing);
+        }
+        if self.in_rust {
+            let known = &self.logarithms[..self.logarithms.len() - BROTLI_SPARE_LOGARITHMS];
+            return switches::cost(&used, total, counts, nothing, known);
         }
         let (totals, gaps) = ([total as u32; 4], used.gaps().map(|gaps| [gaps; 4]));
         let logarithms = &mut self.logarithms;
@@ -197,6 +212,11 @@ impl Estimator {
     ) {
         /// With more symbols, four estimates at a time are faster.
         const MAX_ONE_BY_ONE: usize = 96;
+        let max_one_by_one = if switches::is_on(switches::LITTLE_ALWAYS) {
+            256
+        } else {
+            MAX_ONE_BY_ONE
+        };
         // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/bit_cost_inc.h#L13
         let (mut waiting, mut counts) = ([0; 4], [common.counts; 4]);
         let (mut totals, mut gaps) = ([0; 4], [[0; 4]; 2]);
@@ -206,8 +226,13 @@ impl Estimator {
             let (total, used) = (common.total + other.total, common.used.union(&other.used));
             if used.len() <= 4 {
                 costs[id as usize] = cost_of_few(&used, total, common.counts, other.counts);
-            } else if let (..=MAX_ONE_BY_ONE, Ok(total)) = (used.len(), total.try_into()) {
-                costs[id as usize] = cost_of_little(&used, total, common.counts, other.counts);
+            } else if total < self.little_below && used.len() <= max_one_by_one {
+                costs[id as usize] =
+                    cost_of_little(&used, total as u8, common.counts, other.counts);
+            } else if self.in_rust {
+                let known = &self.logarithms[..self.logarithms.len() - BROTLI_SPARE_LOGARITHMS];
+                costs[id as usize] =
+                    switches::cost(&used, total, common.counts, other.counts, known);
             } else {
                 all_used = all_used.union(&used);
                 (waiting[count], counts[count], totals[count]) = (id, other.counts, total as u32);

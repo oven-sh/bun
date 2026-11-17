@@ -24,6 +24,7 @@ use super::input_block::InputBlock;
 use super::log2::log2_floor;
 use super::matching::{bytes_at, load32, load64};
 use super::ring_buffer::{SLACK, Window};
+use super::switches;
 use super::words::QuickWordSearch;
 use crate::memory::Result;
 
@@ -95,6 +96,7 @@ pub(super) struct Search<'a> {
     pub(super) block: &'a InputBlock<'a>,
     /// A match that scores no higher is of no use. Only if [`InputBlock::is_contiguous`].
     pub(super) to_beat: usize,
+    pub(super) switches: u32,
 }
 
 /// Whether the distance is in `1..=max_backward`.
@@ -159,9 +161,17 @@ impl<'a> Search<'a> {
     /// A bit for each of the first `count` that may match for two bytes.
     #[inline(always)]
     fn promising(&self, recent: &RecentDistances, count: usize) -> u32 {
+        let (is_four, count) = (count == 0, if count == 0 { 4 } else { count });
         let place = (self.window).place(self.position, 0, bytes_at(self.padded, 0));
         let last = recent.first_chunk().unwrap_or(&[0; 4]);
-        brotli_short_codes(place, last) & ((1 << count) - 1)
+        match self.switches {
+            switches::SC_RUST => switches::first_short_codes(place, last, count),
+            switches::SC_PLAIN_FOUR if is_four => switches::first_short_codes(place, last, 4),
+            switches::SC_GENERAL => {
+                bun_highway::brotli_short_codes2(place, last) & ((1 << count) - 1)
+            }
+            _ => brotli_short_codes(place, last) & ((1 << count) - 1),
+        }
     }
 
     /// Returns the length that further matches have to exceed.
@@ -339,6 +349,7 @@ impl<'a> Filter<'a> {
 pub(super) trait Hasher: Sized {
     /// How many bytes have to follow a position.
     const LOOKAHEAD: usize;
+    const HAS_SWITCHES: bool = true;
 
     /// How many of the [`RecentDistances`] it looks at.
     fn recent_count(&self) -> usize;

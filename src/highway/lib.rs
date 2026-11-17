@@ -336,6 +336,48 @@ unsafe extern "C" {
         others: &mut u64,
     ) -> u32;
 
+    fn highway_brotli_try_lengths_at_cost(
+        costs: *mut f32,
+        nodes: *mut u32,
+        stride: usize,
+        length: usize,
+        end: usize,
+        cost: f32,
+        distance: u32,
+        insert: u32,
+    ) -> usize;
+
+    safe fn highway_brotli_set_switches(switches: u32);
+
+    fn highway_brotli_keep_pairs(
+        columns: *mut u32,
+        stride: usize,
+        count: usize,
+        a: u32,
+        b: u32,
+    ) -> usize;
+
+    fn highway_brotli_short_codes2(
+        bytes: *const u8,
+        last_start: u32,
+        ring_mask: u32,
+        position: u32,
+        pair: u16,
+        distances: &[i32; 4],
+    ) -> u32;
+
+    fn highway_brotli_short_codes_of_five2(
+        bytes: *const u8,
+        last_start: u32,
+        ring_mask: u32,
+        position: u32,
+        pair: u16,
+        distances: &[[i32; 4]; 8],
+        ranked: &[u64; 5],
+        hopeless: f32,
+        others: &mut u64,
+    ) -> u32;
+
     fn highway_brotli_try_lengths(
         costs: *mut f32,
         nodes: *mut u32,
@@ -348,17 +390,6 @@ unsafe extern "C" {
         distance: u32,
         insert: u32,
     );
-
-    fn highway_brotli_try_lengths_at_cost(
-        costs: *mut f32,
-        nodes: *mut u32,
-        stride: usize,
-        length: usize,
-        end: usize,
-        cost: f32,
-        distance: u32,
-        insert: u32,
-    ) -> usize;
 
     fn highway_brotli_try_matches(
         costs: *mut f32,
@@ -1937,6 +1968,64 @@ pub fn brotli_short_codes_of_five(
     // SAFETY: the kernel reads 8 bytes from `last_start` at most.
     let first = unsafe {
         highway_brotli_short_codes_of_five(
+            place.ring.as_ptr(),
+            last_start,
+            place.ring_mask,
+            place.position,
+            u16::from_le_bytes(place.pair),
+            last_distances,
+            ranked,
+            hopeless,
+            &mut others,
+        )
+    };
+    (first, others)
+}
+
+pub fn brotli_set_switches(switches: u32) {
+    highway_brotli_set_switches(switches);
+}
+
+#[inline(always)]
+pub fn brotli_keep_pairs(columns: &mut [u32], count: usize, [a, b]: [u32; 2]) -> usize {
+    let stride = columns.len() / 4;
+    assert!(count < stride.saturating_sub(8));
+    // SAFETY: the kernel touches up to 8 values from up to `count` in each column.
+    unsafe { highway_brotli_keep_pairs(columns.as_mut_ptr(), stride, count, a, b) }
+}
+
+#[inline(always)]
+pub fn brotli_short_codes2(place: BrotliPlace<'_>, last_distances: &[i32; 4]) -> u32 {
+    let Some(last_start) = place.last_start() else {
+        return 0xFFFF;
+    };
+    // SAFETY: the kernel reads 8 bytes from `last_start` at most.
+    unsafe {
+        highway_brotli_short_codes2(
+            place.ring.as_ptr(),
+            last_start,
+            place.ring_mask,
+            place.position,
+            u16::from_le_bytes(place.pair),
+            last_distances,
+        )
+    }
+}
+
+#[inline(always)]
+pub fn brotli_short_codes_of_five2(
+    place: BrotliPlace<'_>,
+    last_distances: &[[i32; 4]; 8],
+    ranked: &[u64; 5],
+    hopeless: f32,
+) -> (u32, u64) {
+    let Some(last_start) = place.last_start() else {
+        return (0xFFFF, u64::MAX);
+    };
+    let mut others = 0;
+    // SAFETY: the kernel reads 8 bytes from `last_start` at most.
+    let first = unsafe {
+        highway_brotli_short_codes_of_five2(
             place.ring.as_ptr(),
             last_start,
             place.ring_mask,

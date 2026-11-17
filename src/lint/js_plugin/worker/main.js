@@ -98,6 +98,7 @@ const SETTINGS = 2;
 const CONFIGURED = 3;
 const SELECTORS = 4;
 const LOADED = 10;
+const PRINTED = 19;
 
 // What `evaluate-eslint.js` has written for a `RegExp`, and `write_option` for `NaN`.
 const revive = (_, value) =>
@@ -1073,7 +1074,35 @@ function reportLoading() {
   loadingTime = 0;
 }
 
+// A plugin says once that an option is deprecated, and remembers that in a variable, which each realm has.
+function warnOnce(name) {
+  const print = console[name];
+  // Whether it was held back
+  const printed = new Map();
+  console[name] = {
+    [name](text) {
+      if (arguments.length === 1 && typeof text === "string" && /deprecat|warn/i.test(text)) {
+        const wasHeldBack = printed.get(text);
+        if (wasHeldBack) {
+          // It isn't said once after all.
+          printed.set(text, false);
+          Reflect.apply(print, this, arguments);
+        } else if (wasHeldBack === undefined && printed.size < 64) {
+          let holdsBack = false;
+          try {
+            holdsBack = native.askText(PRINTED, name + text) === "1";
+          } catch {}
+          printed.set(text, holdsBack);
+          if (holdsBack) return;
+        }
+      }
+      return Reflect.apply(print, this, arguments);
+    },
+  }[name];
+}
+
 function start() {
+  ["log", "warn", "error"].forEach(warnOnce);
   const { cwd: directory, measures } = askForJson(START);
   cwd = directory;
   measuresLoading = measures;

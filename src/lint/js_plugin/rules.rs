@@ -161,6 +161,12 @@ pub struct FileSettings {
     pub(super) sources: Option<Box<[u8]>>,
 }
 
+impl FileSettings {
+    pub fn need_config_file(&self) -> bool {
+        self.sources.is_some()
+    }
+}
+
 /// True if `json` contains a value from the config file that JSON can't represent.
 pub(crate) fn has_non_json_value(json: &Json) -> bool {
     match json {

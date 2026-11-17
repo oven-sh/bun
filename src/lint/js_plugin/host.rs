@@ -123,6 +123,10 @@ struct Loaded {
 struct State {
     plugins: Vec<Loaded>,
     rules: u32,
+    /// See [`ask::PRINTED`]
+    printed: FxHashSet<Box<[u8]>>,
+    /// See [`Engine::allow_extra_realm`]
+    has_extra_realm: bool,
     /// The selectors that rules have listened for, indexed by number. `None` if it can't be parsed.
     selectors: Vec<Option<Arc<Selector>>>,
     /// Keyed by selector text.
@@ -243,6 +247,12 @@ impl<'e> Host<'e> {
                 schema::write_start(&self.cwd, self.measures, out);
             }
             ask::LAYOUTS => layouts::write(out),
+            ask::PRINTED => {
+                let mut state = self.state.lock();
+                if state.has_extra_realm && !state.printed.insert(details.into()) {
+                    out.push(b'1');
+                }
+            }
             ask::LOADED => {
                 let parts = crate::json::parse(details);
                 if let Some(
@@ -269,10 +279,16 @@ impl<'e> Host<'e> {
         self.engine.expect(files, size, most);
     }
 
-    /// Announces rules that are going to run.
-    pub fn expect_rules<'r>(&self, rules: impl Iterator<Item = &'r Rule>) {
-        let state = self.state.lock();
+    /// Announces rules that are going to run. Returns true if their modules leave memory to spare.
+    /// `loads_more`: a realm also needs a parser, a processor or a config file.
+    pub fn expect_rules<'r>(
+        &self,
+        rules: impl Iterator<Item = &'r Rule>,
+        loads_more: bool,
+    ) -> bool {
+        let mut state = self.state.lock();
         let (mut seen, mut paths) = (FxHashSet::default(), Vec::new());
+        let (mut are_all_known, mut saves) = (!loads_more, FxHashSet::default());
         for rule in rules {
             let of_plugin = || Some(&state.plugins.get(rule.plugin as usize)?.location[..]);
             let location = rule.location().or_else(of_plugin);
@@ -284,10 +300,20 @@ impl<'e> Host<'e> {
             let location = location.map(|it| it.as_array().and_then(<[_]>::first).unwrap_or(it));
             let path =
                 location.and_then(|it| it.get(b"module").or_else(|| it.get(b"config"))?.as_str());
+            let known = path.and_then(saves_memory);
+            are_all_known &= known.is_some();
+            saves.extend(known.flatten());
             paths.extend(path.map(<[u8]>::to_vec));
         }
+        let has_extra_realm = are_all_known && !saves.is_empty();
+        state.has_extra_realm = has_extra_realm;
         drop(state);
-        self.engine.expect_modules(paths);
+        if has_extra_realm {
+            self.engine.allow_extra_realm();
+        }
+        self.engine
+            .expect_modules(paths, are_all_known && saves.len() > 1);
+        has_extra_realm
     }
 
     /// [`Engine::may_need_realm`]
@@ -843,6 +869,40 @@ fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
         [.., b'.', b't', b's'] | [.., b'.', b'c' | b'm', b't', b's']
     );
     source_type | (u32::from(has_no_jsx) << 2)
+}
+
+/// `Some` if the module at `path` is of a package whose rules don't compare a file with those that were linted before, and take
+/// little memory. It has the name if the package requires more that isn't used than a realm takes.
+fn saves_memory(path: &[u8]) -> Option<Option<&'static [u8]>> {
+    const PACKAGES: &[(&[u8], bool)] = &[
+        (b"@eslint-community/eslint-plugin-eslint-comments", false),
+        (b"@next/eslint-plugin-next", true),
+        (b"@tanstack/eslint-plugin-query", true),
+        (b"@typescript-eslint/eslint-plugin", true),
+        (b"@vitest/eslint-plugin", true),
+        (b"eslint", false),
+        (b"eslint-plugin-ava", false),
+        (b"eslint-plugin-es-x", true),
+        (b"eslint-plugin-flowtype", false),
+        (b"eslint-plugin-i18next", false),
+        (b"eslint-plugin-jest", true),
+        (b"eslint-plugin-jsx-a11y", true),
+        (b"eslint-plugin-no-only-tests", false),
+        (b"eslint-plugin-playwright", false),
+        (b"eslint-plugin-promise", false),
+        (b"eslint-plugin-react", true),
+        (b"eslint-plugin-react-hooks", true),
+        (b"eslint-plugin-react-refresh", false),
+        (b"eslint-plugin-regexp", true),
+        (b"eslint-plugin-simple-import-sort", false),
+        (b"eslint-plugin-storybook", false),
+        (b"eslint-plugin-testing-library", true),
+        (b"eslint-plugin-unicorn", true),
+        (b"eslint-plugin-unused-imports", true),
+    ];
+    let package = bun_paths::package_of(path)?;
+    let (name, saves) = *PACKAGES.iter().find(|it| it.0 == package)?;
+    Some(saves.then_some(name))
 }
 
 /// `it` is an entry of the `rules` of [`plugin_from_description`].

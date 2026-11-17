@@ -150,7 +150,7 @@ fn run(
     let large = entries.iter().find(|it| it.0 == b"large");
     let large = large.and_then(|it| it.1.as_array()).unwrap_or_default();
     let large = large.iter().filter_map(Json::as_str).map(<[u8]>::to_vec);
-    environment.js_engine.expect_modules(large.collect());
+    environment.js_engine.expect_modules(large.collect(), false);
     let config = entries.into_iter().find(|it| it.0 == b"config");
     Ok(config.map_or(Json::Null, |mut it| {
         restore_nan(&mut it.1);

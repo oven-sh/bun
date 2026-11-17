@@ -569,6 +569,15 @@ extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc, b
     letEnvironmentDecideAboutJIT(envp, envc);
 }
 
+// The last tier takes tens of megabytes to compile rules that are done before it pays. When to call it: as above.
+extern "C" void JSC__useOptionsForFewLintVMs(const char* envp[], size_t envc)
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    JSC::Options::thresholdForFTLOptimizeAfterWarmUp() *= 8;
+    JSC::Options::thresholdForFTLOptimizeSoon() *= 8;
+    letEnvironmentDecideAboutJIT(envp, envc);
+}
+
 // A configuration runs once, and most of it is done before compiled code would pay. When to call it: as above.
 extern "C" void JSC__useOptionsForConfiguration(const char* envp[], size_t envc)
 {

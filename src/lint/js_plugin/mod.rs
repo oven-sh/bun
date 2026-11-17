@@ -34,7 +34,10 @@ mod scopes;
 mod tokens;
 pub(crate) mod wire;
 
-pub use engine::{Demand, Engine, HEAVY, Serve, Vm, Work};
+pub use engine::{
+    Demand, Engine, HEAVY, Serve, Vm, Work, can_be_answered_ahead, has_long_answer, is_last_call,
+    realms_for, rules_in_message,
+};
 pub use eslint::{Configuration, EslintFailure, Linted, Text};
 pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};
 pub use prettier::Unformatted;

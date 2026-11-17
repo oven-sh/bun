@@ -6366,3 +6366,148 @@ function isA(it) { return it === 1; }
     timeout,
   );
 });
+
+test(
+  "what a known plugin warns about once is printed once, however many engines there are",
+  async () => {
+    const warning = "The option that this rule has been given is deprecated.";
+    const files: Record<string, string> = {
+      "node_modules/eslint-plugin-jest/package.json": `{ "name": "eslint-plugin-jest", "main": "index.mjs" }`,
+      "node_modules/eslint-plugin-jest/index.mjs": `import { readdirSync, writeFileSync } from "node:fs";
+        let hasWarned = false;
+        export default { rules: { warns: { create() {
+          if (!hasWarned) {
+            hasWarned = true;
+            console.warn("${warning}");
+            console.error("${warning}");
+            writeFileSync("engines/" + crypto.randomUUID(), "");
+            const end = Date.now() + 20_000;
+            while (readdirSync("engines").length < 3 && Date.now() < end) Bun.sleepSync(2);
+          }
+          return {};
+        } } } };`,
+      "eslint.config.mjs": `import own from "eslint-plugin-jest";
+        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/warns": "error" } }];`,
+      "engines/first": "",
+    };
+    for (let i = 0; i < 4; i++) files[`src/${i}.js`] = `/*${Buffer.alloc(100_000, "x")}*/\n`;
+    const variables = { BUN_LINT_MEMORY: String(64 * 2 ** 30) };
+    const { stderr, exitCode } = await lint(files, ["--timing", "src"], [], variables);
+    expect(stderr).toContain("JavaScript: 2 engines");
+    expect(stderr.split(warning)).toHaveLength(3);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+test(
+  "a rule of the project's own that compares files finds all of them in a project of medium size",
+  async () => {
+    const files: Record<string, string> = {
+      "plugin.mjs": `let count = 0;
+        export default { rules: { counts: { create: context => ({ Program(node) {
+          if (++count === 16) context.report({ node, message: "all" });
+        } }) } } };`,
+      "eslint.config.mjs": `import own from "./plugin.mjs";
+        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/counts": "error" } }];`,
+    };
+    for (let i = 0; i < 16; i++) files[`src/${i}.js`] = `/*${Buffer.alloc(50_000, "x")}*/\n`;
+    const { stdout, exitCode } = await lint(files, ["-f", "unix", "--threads", "8", "src"]);
+    expect(stdout).toContain("all [Error/own/counts]");
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
+describe.concurrent("with threads that parse for the engine", () => {
+  // From 1 MB on.
+  function project(rule: string, rules = `"own/it": "error"`) {
+    const files: Record<string, string> = {
+      "plugin.mjs": `let seen = []; export default { rules: { it: { meta: { fixable: "code" }, create: ${rule} } } };`,
+      "eslint.config.mjs": `import own from "./plugin.mjs";
+        export default [
+          { files: ["src/*"], plugins: { own }, rules: { ${rules} } },
+          { files: ["src/*5.js"], rules: { "own/it": "warn", "no-undef": "error" } },
+        ];`,
+    };
+    for (let i = 10; i < 50; i++) files[`src/${i}.js`] = `let a${i} = b;\n/*${Buffer.alloc(30_000 + i, "x")}*/\n`;
+    return files;
+  }
+  async function withAndWithout(files: Record<string, string>, args: string[] = []) {
+    const run = async (threads: string) => {
+      const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "--threads", threads, ...args, "src"]);
+      return { stdout, stderr, exitCode };
+    };
+    const [without, helped] = await Promise.all([run("1"), run("8")]);
+    expect(helped).toEqual(without);
+    return helped;
+  }
+
+  test(
+    "rules see the files in the same order",
+    async () => {
+      const rule = `context => ({ Program: node => context.report({ node, message: String(seen.push(0)) }) })`;
+      const { stdout, exitCode } = await withAndWithout(project(rule));
+      expect(stdout).toContain("49.js:1:1: 1 [Error/own/it]");
+      expect(stdout).toContain("10.js:1:1: 40 [Error/own/it]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "rules can ask for something else in each file",
+    async () => {
+      const rule = `context => {
+        const { sourceCode } = context, say = (node, it) => context.report({ node, message: String(it) });
+        return [
+          { Identifier: node => say(node, sourceCode.getTokenAfter(node).value) },
+          { "VariableDeclarator > Identifier.init": node => say(node, sourceCode.getScope(node).type) },
+          { onCodePathEnd: (path, node) => say(node, path.id) },
+          { "Program:exit": node => say(node, sourceCode.getAllComments().length) },
+          { VariableDeclarator: node => sourceCode.markVariableAsUsed(node.id.name, node) },
+          {},
+        ][seen.push(0) % 7 % 6];
+      }`;
+      const { stdout, exitCode } = await withAndWithout(project(rule, `"own/it": "error", "no-unused-vars": "error"`));
+      expect(stdout).toContain("49.js:1:11: module [Error/own/it]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "the first rule that throws is reported",
+    async () => {
+      const rule = `context => ({ Program() { if (seen.push(0) > 3) throw new Error("in " + seen.length); } })`;
+      const { stderr, exitCode } = await withAndWithout(project(rule));
+      expect(stderr).toContain("in 4");
+      expect(exitCode).toBe(2);
+    },
+    timeout,
+  );
+});
+
+test(
+  "with many engines, large files are shared between some of them",
+  async () => {
+    const files: Record<string, string> = {
+      "plugin.mjs": `const realm = String(Math.random());
+        export default { rules: { realm: { create: context => ({ Program(node) {
+          if (context.filename.includes("heavy")) Bun.sleepSync(20), context.report({ node, message: realm });
+        } }) } } };`,
+      "eslint.config.mjs": `import own from "./plugin.mjs";
+        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/realm": "error" } }];`,
+    };
+    const text = (size: number) => `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
+    for (let i = 0; i < 60; i++) files[`src/heavy${i}.js`] = text(270_000);
+    for (let i = 0; i < 130; i++) files[`src/light${i}.js`] = text(250_000);
+    const variables = { BUN_LINT_MEMORY: String(64 * 2 ** 30) };
+    const { raw, exitCode } = await lint(files, ["-f", "unix", "--threads", "8", "src"], [], variables);
+    const realms = Array.from(raw.matchAll(/:1:1: (\S+) \[Error\/own\/realm\]/g), it => it[1]);
+    expect(realms).toHaveLength(60);
+    expect(new Set(realms).size).toBeGreaterThan(1);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);

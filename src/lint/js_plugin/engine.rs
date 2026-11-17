@@ -1,5 +1,6 @@
 //! The realms that run the JavaScript.
 
+use super::wire::{ask, call, result};
 use bun_threading::Guarded;
 
 /// Answers the program's requests during a call. It gets the request kind (one of [`wire::ask`](super::wire::ask)) and
@@ -11,6 +12,38 @@ pub trait Vm {
     /// Calls the program with a message: its kind (one of [`wire::call`](super::wire::call)) and its content. Returns
     /// the program's result, or what it resolves to if it's a promise. After an `Err` the realm can't be used anymore.
     fn call(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>>;
+}
+
+/// If the message is about linting a file, the part of it that says with which rules.
+pub fn rules_in_message(kind: u32, content: &[u8]) -> Option<[&[u8]; 2]> {
+    let word = |at: usize| Some(u32::from_le_bytes(*content.as_chunks().0.get(at)?) as usize);
+    let ids = content.get(24..24 + 4 * (word(1)? + word(3)?))?;
+    (kind == call::LINT).then_some([&content[..16], ids])
+}
+
+/// True if the answer only depends on the file and the details, and to give it changes nothing.
+pub fn can_be_answered_ahead(request: u32) -> bool {
+    matches!(
+        request,
+        ask::LISTEN
+            | ask::TOKENS
+            | ask::COMMENTS
+            | ask::CONFIG_COMMENTS
+            | ask::SCOPES
+            | ask::CODE_PATHS
+            | ask::LIB_VARIABLES
+            | ask::LIB_VARIABLE
+    )
+}
+
+/// True if the answer can have the tree in it.
+pub fn has_long_answer(request: u32) -> bool {
+    request == ask::LISTEN
+}
+
+/// True if a file is linted, so no call that belongs to this one follows.
+pub fn is_last_call(kind: u32, returned: &[u8]) -> bool {
+    kind == call::LINT && returned.first() == Some(&result::DONE)
 }
 
 /// The work that [`Engine::work_off`] hands to the threads that have a realm. Each call handles one file, so a thread
@@ -29,6 +62,11 @@ pub trait Work: Sync {
 
     /// True if one of the other files that needs a realm hasn't been taken yet.
     fn needs_realms(&self) -> bool;
+
+    /// True if the calls for one file may alternate with those for the next, so other threads can do what isn't JavaScript.
+    fn can_have_helpers(&self) -> bool {
+        false
+    }
 
     /// Does all the remaining work on the calling thread.
     fn finish_here(&self) {
@@ -67,8 +105,12 @@ pub trait Engine: Sync {
     /// if finding that out takes a realm.
     fn expect(&self, _files: usize, _size: u64, _most: usize) {}
 
-    /// Announces the files that realms are going to import.
-    fn expect_modules(&self, _paths: Vec<Vec<u8>>) {}
+    /// Announces the files that realms are going to import. `has_room_for_bytecode`: there's memory to spare for that.
+    fn expect_modules(&self, _paths: Vec<Vec<u8>>, _has_room_for_bytecode: bool) {}
+
+    /// Announces that what the rules report doesn't depend on which files share a realm, and that the modules that aren't
+    /// loaded leave memory for another. Call it before [`Engine::expect`].
+    fn allow_extra_realm(&self) {}
 
     /// Announces that further files, `size` bytes in total, might need a realm. Whether each one does is only known
     /// when it's linted. Call it after [`Engine::expect`].
@@ -109,6 +151,9 @@ const MIN_SAVED_FRACTION: f64 = 0.5;
 /// predict its cost either: it ranges from 0.06 to 2.7 seconds per MB of source.
 const REALM_COST_IN_BYTES: f64 = 1e6;
 
+/// See [`Engine::allow_extra_realm`]
+const BYTES_FOR_EXTRA_REALM: f64 = 128e3;
+
 #[derive(Default)]
 struct Remaining {
     /// The total size of the files still to come.
@@ -121,6 +166,15 @@ struct Remaining {
     settled: (u64, u64),
     /// The maximum number of realms. 0 means it wasn't announced, and there's one realm.
     most: usize,
+    has_extra_realm: bool,
+}
+
+/// How many realms files of `size` bytes in all get, if there can be `most`.
+pub fn realms_for(size: u64, most: usize) -> usize {
+    let demand = Demand::default();
+    demand.expect(size, most);
+    let is_enough = |&realms: &usize| !demand.is_worth_another(realms, 0);
+    (1..most).find(is_enough).unwrap_or(most)
 }
 
 /// Decides how many realms a run has.
@@ -130,12 +184,19 @@ pub struct Demand(Guarded<Remaining>);
 impl Demand {
     /// [`Engine::expect`]
     pub fn expect(&self, size: u64, most: usize) {
-        *self.0.lock() = Remaining {
+        let mut left = self.0.lock();
+        *left = Remaining {
             bytes: size,
             announced: size,
             most,
+            has_extra_realm: left.has_extra_realm,
             ..Remaining::default()
         };
+    }
+
+    /// [`Engine::allow_extra_realm`]
+    pub fn allow_extra_realm(&self) {
+        self.0.lock().has_extra_realm = true;
     }
 
     /// [`Engine::may_need_realm`]
@@ -185,8 +246,12 @@ impl Demand {
             return true;
         }
         // The existing realms keep working until the new one is ready. After that there's one more.
-        let (all, realms) = (left.all() / REALM_COST_IN_BYTES, realms as f64);
-        (all / realms - 1.0) / (realms + 1.0) >= MIN_SAVED_FRACTION
+        let all = left.all() / REALM_COST_IN_BYTES;
+        let pays = |realms: f64| (all / realms - 1.0) / (realms + 1.0) >= MIN_SAVED_FRACTION;
+        let paying = (1..left.most).take_while(|&it| pays(it as f64)).count() + 1;
+        // Collecting garbage between files saves a fifth of what a realm takes.
+        let extra = left.has_extra_realm && left.all() >= BYTES_FOR_EXTRA_REALM;
+        realms < paying + paying / 5 + usize::from(extra)
     }
 }
 

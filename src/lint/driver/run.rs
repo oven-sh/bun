@@ -16,7 +16,7 @@ use bun_collections::index_sort;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
-use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route, Work};
+use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route, Work, realms_for};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
     FileConfig, LintMessage, Registry, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
@@ -207,9 +207,10 @@ enum Needs {
     Engine,
     /// A rule or processor for which the engine has to run the config file and everything it imports.
     Configuration,
-    /// Something that makes an engine's memory grow: a file of at least [`HEAVY`] bytes, or ESLint's own `Linter` with
-    /// a parser that builds a TypeScript program, which takes gigabytes.
+    /// A file of at least [`HEAVY`] bytes, which makes an engine's memory grow.
     Heavy,
+    /// ESLint's own `Linter` with a parser that builds a TypeScript program, which takes gigabytes.
+    Program,
 }
 
 /// The files that are linted without types, as a work queue for the threads that have a VM.
@@ -224,6 +225,7 @@ struct Files<'f> {
     handed_out: AtomicUsize,
     ends: [AtomicUsize; 2],
     next_plain: AtomicUsize,
+    can_have_helpers: bool,
     lint: &'f (dyn Fn(&Target) + Sync),
 }
 
@@ -264,6 +266,10 @@ impl Work for Files<'_> {
     fn needs_realms(&self) -> bool {
         self.handed_out.load(Ordering::Relaxed) < self.with_engine.len()
     }
+
+    fn can_have_helpers(&self) -> bool {
+        self.can_have_helpers
+    }
 }
 
 fn needs(target: &Target) -> Needs {
@@ -276,7 +282,7 @@ fn needs(target: &Target) -> Needs {
         return Needs::Nothing;
     }
     if route != Route::Native && config.language.wants_types {
-        return Needs::Heavy;
+        return Needs::Program;
     }
     let processor = config
         .processor_location
@@ -294,6 +300,21 @@ fn needs(target: &Target) -> Needs {
     } else {
         Needs::Nothing
     }
+}
+
+/// How many of the `heavy` files, largest first, go to the first realm. With many realms it would still be busy with them long
+/// after the others have linted their `light` bytes, so it gets its share of the work, and the rest is linted like other files.
+fn count_for_one_realm(heavy: &[&Target], light: u64, realms: usize) -> usize {
+    if realms < 5 {
+        return heavy.len();
+    }
+    let mut left = (light + heavy.iter().map(|it| it.size).sum::<u64>()) / realms as u64;
+    let mut fits = |it: &&&Target| {
+        let has_room = left > 0;
+        left = left.saturating_sub(it.size);
+        has_room
+    };
+    heavy.iter().take_while(&mut fits).count()
 }
 
 /// True if a rule that's on for the file can hand the file back to its package's JavaScript version.
@@ -947,7 +968,7 @@ impl Run<'_> {
             loader.warn(&[b"Skipped ", &count, rules, remedy, them]);
         }
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
-        let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
+        let shared = with_engine.clone().filter(|it| needs(it) < Needs::Heavy);
         let size: u64 = shared.map(|it| it.size).sum();
         // Files that a rule may hand back to its package's JavaScript version.
         let may_need_realm =
@@ -957,8 +978,13 @@ impl Run<'_> {
             Status::Matched(config) => announced.insert(Arc::as_ptr(config)).then_some(config),
             _ => None,
         });
-        let on = (configs.flat_map(|it| &it.js_rules)).filter(|it| it.severity != Severity::Off);
-        (context.js_plugins).expect_rules(on.map(|it| &*it.configured.rule));
+        let configs: Vec<_> = configs.collect();
+        let loads_more = with_engine.clone().any(|it| it.route() != Route::Native)
+            || (configs.iter().flat_map(|it| &it.js_settings)).any(|it| it.need_config_file());
+        let on = (configs.iter().flat_map(|it| &it.js_rules))
+            .filter(|it| it.severity != Severity::Off)
+            .map(|it| &*it.configured.rule);
+        let has_memory_to_spare = (context.js_plugins).expect_rules(on, loads_more);
         let count = with_engine.count() + may_need_realm.clone().count();
         (context.js_plugins).expect(count, size, pool.threads());
         (context.js_plugins).may_need_realm(may_need_realm.map(|it| it.size).sum());
@@ -986,13 +1012,28 @@ impl Run<'_> {
         });
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
-        let (heavy, with_engine) = with_engine.split_at(count(Needs::Heavy));
+        let (programs, heavy) = (count(Needs::Program), count(Needs::Heavy));
+        let realms = realms_for(size, pool.threads());
+        let heavy = programs + count_for_one_realm(&with_engine[programs..heavy], size, realms);
+        let is_linted_once = |it: &&Target| it.route() == Route::Native && it.framework().is_none();
+        let with_extra = realms + usize::from(heavy > 0) + usize::from(has_memory_to_spare);
+        // They take a few megabytes.
+        let can_have_helpers = (has_memory_to_spare || size >= 1 << 20)
+            && realms < 5
+            && 3 * with_extra <= pool.threads()
+            && !(self.options.fix || self.options.fix_dry_run)
+            && with_engine.iter().all(is_linted_once);
+        let (heavy, with_engine) = with_engine.split_at(heavy);
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),
             Ok(None) => {}
             Err(error) => {
-                failure.lock().get_or_insert(error);
+                let at = (without_types.iter()).position(|it| std::ptr::eq(*it, target));
+                let mut first = failure.lock();
+                if first.as_ref().is_none_or(|(before, _)| at < *before) {
+                    *first = Some((at, error));
+                }
             }
         };
         let files = Files {
@@ -1003,6 +1044,7 @@ impl Run<'_> {
             handed_out: AtomicUsize::new(0),
             ends: Default::default(),
             next_plain: AtomicUsize::new(0),
+            can_have_helpers,
             lint: &lint,
         };
         let workers = match heavy.is_empty() && with_engine.is_empty() {
@@ -1034,7 +1076,7 @@ impl Run<'_> {
             false => {}
         }
         phases.linting = started.elapsed().as_secs_f64();
-        if let Some(error) = failure.get_mut().take() {
+        if let Some((_, error)) = failure.get_mut().take() {
             return Err(error);
         }
         // A comment in a file can turn on a rule that needs `eslint`, which is only discovered when the file is read.

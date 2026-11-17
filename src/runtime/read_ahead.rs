@@ -5,6 +5,7 @@
 use core::cell::{Cell, RefCell};
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,7 @@ use bun_bundler::options::{ImportPathFormat, ModuleType};
 use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, Transpiler};
 use bun_collections::HashMap;
 use bun_core::{MutableString, String, strings};
-use bun_js_parser::lower::defer_requires::{LOADS, is_in_known_package};
+use bun_js_parser::lower::defer_requires::{LOADS, has_react_compiler, is_in_known_package};
 use bun_js_printer::{BufferPrinter, BufferWriter};
 use bun_jsc::resolved_source::{Bytecode, PrintedAst, Tag};
 use bun_jsc::runtime_transpiler_cache::{ModuleType as CacheModuleType, RuntimeTranspilerCache};
@@ -69,7 +70,7 @@ extern "C" fn Bun__Lint__setWantsWhole(value: bool) {
 
 /// Of a file up to this size all functions are compiled. Of a larger one few are ever called.
 const SMALL: usize = 4 << 10;
-/// To compile a larger one takes more memory than it saves time.
+/// To compile a larger one takes more memory than it saves time, unless it leaves tens of megabytes unloaded.
 const LARGE: usize = 64 << 10;
 /// Per byte of code: what a VM takes to start a module without bytecode, and what it takes to make the bytecode
 const NANOSECONDS_TO_PARSE: u64 = 20;
@@ -129,6 +130,8 @@ struct State {
     guesses: VecDeque<Job>,
     /// The directory of the module that a VM has last had to make itself, and how many in a row were from there
     missed: (Arc<[u8]>, usize),
+    /// The VM has loaded what a stand-in is for, which needs the others.
+    has_loaded_large: bool,
     threads: usize,
     idle: usize,
 }
@@ -231,6 +234,9 @@ fn start(vm: &VirtualMachine, reads_configuration: bool) {
     vm.transpiler
         .with_mut(|it| it.options.defers_requires = true);
     vm.transpiler_store.enabled.set(false);
+    if reads_configuration {
+        make_bytecode();
+    }
     if READ_AHEAD.get().is_none() {
         let Some(template) = Template::new(vm) else {
             return;
@@ -241,11 +247,20 @@ fn start(vm: &VirtualMachine, reads_configuration: bool) {
             state: Guarded::default(),
             has_jobs: Condition::default(),
             is_made: Condition::default(),
-            max_threads: cores.saturating_sub(1).min(MAX_THREADS),
+            max_threads: cores
+                .saturating_sub(1)
+                .min(MAX_THREADS + usize::from(reads_configuration)),
             reads_configuration,
         });
     }
     expect(core::iter::empty());
+}
+
+/// While rules run, it's memory on top of what they take.
+static MAKES_BYTECODE: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn make_bytecode() {
+    MAKES_BYTECODE.store(true, Ordering::Relaxed);
 }
 
 /// A VM is going to load the files at `paths`, in this order.
@@ -378,9 +393,9 @@ impl ReadAhead {
         })
     }
 
-    /// While rules run, bytecode would be memory on top of what they take.
-    fn compiles(&self, module: &Module) -> bool {
-        self.reads_configuration && module.code.length() <= LARGE
+    fn compiles(&self, path: &[u8], module: &Module) -> bool {
+        MAKES_BYTECODE.load(Ordering::Relaxed)
+            && (module.code.length() <= LARGE || has_react_compiler(path))
     }
 
     /// The caller has put [`Slot::InTheMaking`] at `key`.
@@ -404,10 +419,11 @@ impl ReadAhead {
         let mut state = self.state.lock();
         if let Some(module) = &module {
             let directory: Arc<[u8]> = path.name().dir_with_trailing_slash().into();
-            if by != By::Vm && self.compiles(module) {
+            if by != By::Vm && self.compiles(path.text, module) {
                 module.announce_bytecode();
             }
             if by == By::Vm {
+                state.has_loaded_large |= has_stand_in(path.text);
                 if state.missed.0 != directory {
                     state.missed = (Arc::clone(&directory), 0);
                 }
@@ -469,6 +485,7 @@ impl ReadAhead {
                 if has_waited.is_err() {
                     drop(state);
                     self.with_tools(|it| it.printer = BufferPrinter::init(BufferWriter::init()));
+                    bun_jsc::cached_bytecode::destroy_bytecode_cache_vm();
                     bun_core::Global::mimalloc_cleanup(true);
                     state = self.state.lock();
                     if state.jobs.is_empty() && state.guesses.is_empty() {
@@ -530,11 +547,12 @@ impl ReadAhead {
         }
         let path = Path::init(shared().get().filter(|_| kind != b'f')?);
         let loader = crate::jsc_hooks::loader_for_path(&path, &tools.transpiler.options.loaders)?;
-        if !loader.is_java_script_like() || self.reads_configuration && has_stand_in(path.text) {
+        if !loader.is_java_script_like() {
             return None;
         }
         let mut state = self.state.lock();
-        if state.slots.contains_key(path.text) {
+        let is_unlikely = self.reads_configuration && !state.has_loaded_large;
+        if state.slots.contains_key(path.text) || is_unlikely && has_stand_in(path.text) {
             return None;
         }
         state.slots.insert(path.text.into(), Slot::InTheMaking);
@@ -544,7 +562,7 @@ impl ReadAhead {
             .and_then(|it| it.package_json().or(it.enclosing_package_json));
         let module_type = crate::jsc_hooks::module_type_of(&path, package_json);
         let module = self.make(tools, path.text, &path, loader, module_type, by)?;
-        if self.compiles(&module) {
+        if self.compiles(path.text, &module) {
             module.compile(path.text);
         }
         Some(())

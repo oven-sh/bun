@@ -79,14 +79,7 @@ struct Offsets {
 }
 
 unsafe extern "C" {
-    // Written once by C++ before any Rust read. C++ mutates these bytes, so a
-    // plain non-`mut` extern static would assert immutability to the optimizer
-    // (UB). `RacyCell<T>` is `#[repr(transparent)]` over `UnsafeCell<T>`, so
-    // the extern layout is identical to `Offsets`.
-    #[link_name = "Bun__FFI__offsets"]
-    static BUN_FFI_OFFSETS: bun_core::RacyCell<Offsets>;
-    #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
-    fn bun_ffi_ensure_offsets_are_loaded();
+    safe fn Bun__FFI__offsets() -> Offsets;
 }
 
 // ─── Local extern thin-wrappers (codegen / `bun_jsc` surface not yet wired) ──
@@ -204,24 +197,11 @@ fn new_runtime_function(
     }
 }
 
-impl Offsets {
-    fn load_once() {
-        // SAFETY: extern "C" fn populating a static
-        unsafe { bun_ffi_ensure_offsets_are_loaded() };
-    }
-    pub(crate) fn get() -> &'static Offsets {
-        static ONCE: Once = Once::new();
-        ONCE.call_once(Self::load_once);
-        // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
-        unsafe { &*BUN_FFI_OFFSETS.get() }
-    }
-}
-
 pub(crate) struct FFI {
-    pub dylib: JsCell<Option<bun_sys::DynLib>>,
     /// Leaked when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
+    pub dylib: ManuallyDrop<Cell<Option<bun_sys::DynLib>>>,
+    /// Leaked like `dylib`.
     pub functions: ManuallyDrop<JsCell<StringArrayHashMap<Function>>>,
-    pub closed: Cell<bool>,
     /// Leaked like `functions`, which call into it.
     pub shared_state: ManuallyDrop<Cell<Option<TCC::OwnedState>>>,
 }
@@ -229,9 +209,8 @@ pub(crate) struct FFI {
 impl Default for FFI {
     fn default() -> Self {
         Self {
-            dylib: JsCell::new(None),
+            dylib: ManuallyDrop::new(Cell::new(None)),
             functions: ManuallyDrop::new(JsCell::new(StringArrayHashMap::default())),
-            closed: Cell::new(false),
             shared_state: ManuallyDrop::new(Cell::new(None)),
         }
     }
@@ -387,13 +366,8 @@ mod stdarg {
         name: &core::ffi::CStr,
         linked: *const c_void,
     ) -> *const c_void {
-        // SAFETY: `name` is NUL-terminated.
-        let shared = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
-        if shared.is_null() {
-            linked
-        } else {
-            shared.cast_const()
-        }
+        let shared = bun_sys::DynLib::GLOBAL.lookup(bun_core::ZStr::from_cstr(name));
+        shared.map_or(linked, <*mut c_void>::cast_const)
     }
     #[cfg(not(unix))]
     fn find_shared_allocator_function(_: &core::ffi::CStr, linked: *const c_void) -> *const c_void {
@@ -1272,10 +1246,9 @@ impl FFI {
         }
 
         let lib = FFI {
-            dylib: JsCell::new(None),
+            dylib: ManuallyDrop::new(Cell::new(None)),
             shared_state: ManuallyDrop::new(Cell::new(Some(tcc_state))),
             functions: ManuallyDrop::new(JsCell::new(core::mem::take(&mut compile_c.symbols.map))),
-            closed: Cell::new(false),
         };
 
         let js_object = lib.to_js(global_this);
@@ -1361,10 +1334,7 @@ impl FFI {
         // that `cc` filled from 0 to its length, which JS never sees.
         let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
         if is_running {
-            // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
-            if let Some(state) = self.shared_state.take() {
-                state.leak();
-            }
+            // The running call returns into the compiled code, so leak it.
             self.functions.with_mut(|functions| {
                 let states = functions.values_mut().iter_mut();
                 states
@@ -1372,17 +1342,7 @@ impl FFI {
                     .for_each(TCC::OwnedState::leak);
             });
         }
-        self.do_close();
-    }
-
-    fn do_close(&self) {
-        if self.closed.get() {
-            return;
-        }
-        self.closed.set(true);
-        if let Some(dylib) = self.dylib.replace(None) {
-            dylib.close();
-        }
+        self.dylib.set(None);
         // C code with a `napi_env` can register callbacks into itself that are never unregistered, so leak it.
         let has_napi_env = self
             .functions
@@ -1390,8 +1350,10 @@ impl FFI {
             .values()
             .iter()
             .any(Function::needs_napi_env);
-        if !has_napi_env {
-            self.shared_state.set(None);
+        if let Some(state) = self.shared_state.take()
+            && (is_running || has_napi_env)
+        {
+            state.leak();
         }
         self.functions.set(StringArrayHashMap::default());
     }
@@ -1592,15 +1554,17 @@ impl FFI {
 
         throw_if_disabled(global)?;
         let dylib: bun_sys::DynLib = 'brk: {
+            // SAFETY: none to give. Whoever calls `dlopen` of `bun:ffi` answers for the library.
+            let open = |path: &[u8]| unsafe { bun_sys::DynLib::open(path) };
             // First try using the name directly
-            match bun_sys::DynLib::open(name) {
+            match open(name) {
                 Ok(d) => break 'brk d,
                 Err(_) => {
                     // if that fails, try resolving the filepath relative to the current working directory
                     let mut backup_buf = bun_paths::path_buffer_pool::get();
                     let backup_name =
                         Fs::FileSystem::get().abs_buf_checked(&[name], &mut backup_buf[..]);
-                    match backup_name.map(bun_sys::DynLib::open) {
+                    match backup_name.map(open) {
                         Some(Ok(d)) => break 'brk d,
                         Some(Err(_)) | None => {
                             // Then, if that fails, report an error with the library name and system error
@@ -1638,8 +1602,6 @@ impl FFI {
         let _js_object_guard = js_object.protected();
         // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
         let lib = unsafe { this_value.payload_ptr().as_ref() };
-        lib.dylib.set(Some(dylib));
-        let dylib = lib.dylib.get().as_ref().expect("just set");
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1647,13 +1609,12 @@ impl FFI {
 
             // optional if the user passed "ptr"
             if function.symbol_from_dynamic_library.is_none() {
-                let Some(resolved_symbol) = dylib.lookup::<*mut c_void>(&function_name) else {
+                let Some(resolved_symbol) = dylib.lookup(&function_name) else {
                     let ret = global.to_invalid_arguments(format_args!(
                         "Symbol \"{}\" not found in \"{}\"",
                         BStr::new(function_name.as_bytes()),
                         BStr::new(name)
                     ));
-                    lib.do_close();
                     return Ok(ret);
                 };
 
@@ -1662,7 +1623,6 @@ impl FFI {
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
-                lib.do_close();
                 return Ok(err);
             }
             let target = function
@@ -1681,18 +1641,15 @@ impl FFI {
                                 BStr::new(name)
                             ))
                         });
-                        lib.do_close();
                         return ret;
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
             let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
-            if let Err(err) = obj.put_may_be_index(global, &key, cb) {
-                lib.do_close();
-                return Err(err);
-            }
+            obj.put_may_be_index(global, &key, cb)?;
         }
 
+        lib.dylib.set(Some(dylib));
         lib.functions.set(symbols);
         js::symbols_value_set_cached(js_object, global, obj);
         Ok(js_object)
@@ -1741,12 +1698,10 @@ impl FFI {
                     "Symbol \"{}\" is missing a \"ptr\" field. When using linkSymbols() or CFunction(), you must provide a \"ptr\" field with the memory address of the native function.",
                     BStr::new(function_name.as_bytes())
                 ));
-                lib.do_close();
                 return Ok(ret);
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
-                lib.do_close();
                 return Ok(err);
             }
             let target = function.symbol_from_dynamic_library.expect("checked above");
@@ -1762,16 +1717,12 @@ impl FFI {
                                 BStr::new(function_name.as_bytes())
                             ))
                         });
-                        lib.do_close();
                         return err;
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
             let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
-            if let Err(err) = obj.put_may_be_index(global, &key, cb) {
-                lib.do_close();
-                return Err(err);
-            }
+            obj.put_may_be_index(global, &key, cb)?;
         }
 
         lib.functions.set(symbols);
@@ -2110,7 +2061,6 @@ impl Function {
 
         CompilerRT::define(&mut state);
 
-        // SAFETY: source_code was NUL-terminated above
         if state
             .compile_string(ZStr::from_slice_with_nul(&source_code[..]))
             .is_err()
@@ -2611,7 +2561,7 @@ impl CompilerRT {
             }
         }
 
-        let offsets = Offsets::get();
+        let offsets = Bun__FFI__offsets();
         state.define_symbols(&[
             (
                 "Bun_FFI_PointerOffsetToArgumentsList",

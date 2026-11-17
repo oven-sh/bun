@@ -180,7 +180,6 @@ public:
     IsoSubspace* m_subspaceForJSPrivateKeyObject { nullptr };
 
     IsoSubspace* m_subspaceForJSConnectionsList { nullptr };
-    IsoSubspace* m_subspaceForJSHTTPParser { nullptr };
 };
 } // namespace WebCore
 

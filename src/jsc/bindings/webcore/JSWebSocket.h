@@ -20,83 +20,35 @@
 
 #pragma once
 
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "JSEventTarget.h"
 #include "WebSocket.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-class JSWebSocket : public JSEventTarget {
+class JSWebSocket final : public JSDOMInterface<JSWebSocket, WebSocket, JSEventTarget> {
 public:
-    using Base = JSEventTarget;
-    static JSWebSocket* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<WebSocket>&& impl)
-    {
-        JSWebSocket* ptr = new (NotNull, JSC::allocateCell<JSWebSocket>(globalObject->vm())) JSWebSocket(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static WebSocket* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell* cell) { static_cast<JSWebSocket*>(cell)->JSWebSocket::~JSWebSocket(); }
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForWebSocket, m_subspaceForWebSocket);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    DECLARE_VISIT_CHILDREN;
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    static size_t estimatedSize(JSCell*, JSC::VM&);
-    WebSocket& wrapped() const
-    {
-        return static_cast<WebSocket&>(Base::wrapped());
-    }
+    using Base::isReachableFromOpaqueRoots;
 
+    DECLARE_VISIT_CHILDREN;
+    static size_t estimatedSize(JSCell*, JSC::VM&);
     // Only set for sockets created by the `ws` module. m_owner is the module's WebSocket object, passed as `this` to every handler.
     // m_handlers is the module's table of handler functions, shared by all of its sockets.
     JSC::WriteBarrier<JSC::JSObject> m_owner;
     JSC::WriteBarrier<JSC::JSObject> m_handlers;
-
-protected:
-    JSWebSocket(JSC::Structure*, JSDOMGlobalObject&, Ref<WebSocket>&&);
-
-    void finishCreation(JSC::VM&);
 };
-
-class JSWebSocketOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, WebSocket*)
-{
-    static NeverDestroyed<JSWebSocketOwner> owner;
-    return &owner.get();
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, WebSocket&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebSocket* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<WebSocket>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<WebSocket>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<WebSocket> {
     using WrapperClass = JSWebSocket;
-    using ToWrappedReturnType = WebSocket*;
 };
+template<> JSC::JSValue toJS<WebSocket>(JSC::JSGlobalObject*, JSDOMGlobalObject*, WebSocket&);
 
 JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject);
 // Native binding for the built-in `ws` module:

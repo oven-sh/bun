@@ -2,7 +2,7 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::packet_reader::PacketReader;
 
 pub struct ErrorPacket<'a> {
-    pub header: u8,
+    pub(crate) header: u8,
     pub error_code: u16,
     pub sql_state: Option<[u8; 5]>,
     pub error_message: &'a [u8],
@@ -30,7 +30,10 @@ pub struct MySQLErrorOptions {
 // `createMySQLError` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
 
 impl<'a> ErrorPacket<'a> {
-    pub fn decode_internal(&mut self, reader: PacketReader<'a>) -> Result<(), AnyMySQLError> {
+    pub(crate) fn decode_internal(
+        &mut self,
+        reader: PacketReader<'a>,
+    ) -> Result<(), AnyMySQLError> {
         self.header = reader.int::<u8>()?;
         if self.header != 0xff {
             return Err(AnyMySQLError::InvalidErrorPacket);

@@ -2411,15 +2411,14 @@ impl<'a> Injected<'a> {
         cwd: &[u8],
         temp_path_buf: &'a mut PathBuffer,
     ) -> Injected<'a> {
-        let len = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+        let temp_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             cwd,
             &mut temp_path_buf[..],
             &[copy.name.as_bytes()],
-        )
-        .len();
+        );
         Injected {
             file: copy.file.take().expect("taken once"),
-            temp_path: ZStr::from_buf(&temp_path_buf[..], len),
+            temp_path,
         }
     }
 }
@@ -3148,7 +3147,6 @@ pub fn target_executable(
         let mut version_str: Vec<u8> = Vec::new();
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
-        // SAFETY: trailing 0 byte appended above.
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
@@ -3375,33 +3373,21 @@ pub fn to_executable(
         // Convert paths to Windows UTF-16
         let mut temp_buf_w = bun_paths::os_path_buffer_pool::get();
         let mut dest_buf_w = bun_paths::os_path_buffer_pool::get();
-        let temp_w_len = strings::paths::to_w_path_normalized(&mut temp_buf_w, temp_path).len();
-        let dest_w_len = strings::paths::to_w_path_normalized(&mut dest_buf_w, dest_path).len();
-
-        // `to_w_path_normalized` already NUL-terminates (`buf[len] = 0`); the
-        // explicit re-slice below is just to derive the wide-string pointers.
-        let temp_buf_u16: &mut [u16] = &mut temp_buf_w;
-        let dest_buf_u16: &mut [u16] = &mut dest_buf_w;
-        temp_buf_u16[temp_w_len] = 0;
-        dest_buf_u16[dest_w_len] = 0;
+        let temp_w = strings::paths::to_w_path_normalized(&mut temp_buf_w, temp_path);
+        let dest_w = strings::paths::to_w_path_normalized(&mut dest_buf_w, dest_path);
 
         // Close the file handle before moving (Windows requires this)
         drop(injected.file);
 
-        use bun_sys::windows;
-        // Move the file using MoveFileExW
-        // SAFETY: NUL-terminated wide strings constructed above.
-        if unsafe {
-            windows::kernel32::MoveFileExW(
-                temp_buf_u16.as_ptr(),
-                dest_buf_u16.as_ptr(),
-                windows::MOVEFILE_COPY_ALLOWED
-                    | windows::MOVEFILE_REPLACE_EXISTING
-                    | windows::MOVEFILE_WRITE_THROUGH,
-            )
-        } == windows::FALSE
-        {
-            let err = windows::last_system_errno();
+        use bun_sys::windows::{self, Win32ErrorExt as _};
+        if let Err(err) = windows::MoveFileExW(
+            temp_w,
+            dest_w,
+            windows::MOVEFILE_COPY_ALLOWED
+                | windows::MOVEFILE_REPLACE_EXISTING
+                | windows::MOVEFILE_WRITE_THROUGH,
+        ) {
+            let err = err.to_system_errno();
             let _ = Syscall::unlink(injected.temp_path);
             if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
@@ -3426,7 +3412,7 @@ pub fn to_executable(
         {
             // The file has been moved to dest_path
             if let Err(e) = windows::rescle::set_windows_metadata(
-                bun_core::WStr::from_buf(dest_buf_u16, dest_w_len),
+                dest_w,
                 windows_options.icon.as_deref(),
                 windows_options.title.as_deref(),
                 windows_options.publisher.as_deref(),

@@ -11,16 +11,17 @@ use crate::generated_bindgen::sink::{
 use crate::webcore::SinkHandle;
 use crate::webcore::fetch::FetchRequestBodySink;
 use crate::webcore::file_sink::FileSink;
+use crate::webcore::s3::multipart::NetworkSink;
 use crate::webcore::streams::{
-    self, HTTPResponseSink, HTTPSResponseSink, NetworkSink, Result::Temporary, SourceHandle,
+    self, HTTPResponseSink, HTTPSResponseSink, Result::Temporary, SourceHandle,
 };
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload, JsScope, JsWrapper};
 use bun_jsc::{
     ErrorCode, JSGlobalObject, JSValue, JsCell, JsClass, JsError, JsResult, JsThread,
     SysErrorJsc as _,
 };
-use bun_ptr::{AliasableBox, BackRef, RawSlice};
-use bun_removable_features::removable_body_behind_value;
+use bun_ptr::{AliasableBox, BackRef};
+use bun_removable_features::{removable_body, removable_body_behind_value};
 use bun_sys::{self as sys, Error as SysError};
 
 pub(crate) use crate::webcore::array_buffer_sink::ArrayBufferSink;
@@ -66,7 +67,7 @@ macro_rules! impl_js_sink_forwarders {
         }
         fn write_bytes(
             this: &mut Self::Entered<'_>,
-            data: &$crate::webcore::streams::Result,
+            data: &$crate::webcore::streams::Result<'_>,
         ) -> $crate::webcore::streams::result::Writable {
             Self::write(this, data)
         }
@@ -78,7 +79,7 @@ macro_rules! impl_js_sink_forwarders {
         }
         fn write_latin1(
             this: &mut Self::Entered<'_>,
-            data: &$crate::webcore::streams::Result,
+            data: &$crate::webcore::streams::Result<'_>,
         ) -> $crate::webcore::streams::result::Writable {
             Self::write_latin1(this, data)
         }
@@ -119,12 +120,12 @@ pub(crate) trait JsSinkType: Sized + 'static {
     fn memory_cost(&self) -> usize;
     fn write_bytes(
         this: &mut Self::Entered<'_>,
-        data: &streams::Result,
+        data: &streams::Result<'_>,
     ) -> streams::result::Writable;
     fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16]) -> streams::result::Writable;
     fn write_latin1(
         this: &mut Self::Entered<'_>,
-        data: &streams::Result,
+        data: &streams::Result<'_>,
     ) -> streams::result::Writable;
     fn end(this: &mut Self::Entered<'_>, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(this: &mut Self::Entered<'_>, cx: &JsThread<'_>) -> sys::Result<JSValue>;
@@ -245,13 +246,11 @@ fn write_chunk<'a, T: JsSinkType>(
             if bytes.is_empty() {
                 return streams::Writable::Owned(0);
             }
-            T::write_bytes(&mut sink, &Temporary(RawSlice::new(bytes)))
+            T::write_bytes(&mut sink, &Temporary(bytes))
         }),
         SinkChunk::Text(text) if text.is_empty() => return Ok(JSValue::js_number(0.0)),
         SinkChunk::Text(text) if text.is_utf16() => T::write_utf16(&mut sink, text.utf16()),
-        SinkChunk::Text(text) => {
-            T::write_latin1(&mut sink, &Temporary(RawSlice::new(text.latin1())))
-        }
+        SinkChunk::Text(text) => T::write_latin1(&mut sink, &Temporary(text.latin1())),
         SinkChunk::Other(value) => return Err(throw_invalid_chunk(cx.global(), value.to_js())),
     };
     Ok(written.to_js(&cx.js_thread()))
@@ -556,9 +555,7 @@ impl AnyControlledSink {
                 Self::HTTPSResponseSink(sink) => {
                     SinkHandle::HttpsResponse(BackRef::from_raw_mut(sink.as_ptr()))
                 }
-                Self::NetworkSink(sink) => {
-                    SinkHandle::S3Upload(BackRef::from_raw_mut(sink.as_ptr()))
-                }
+                Self::NetworkSink(sink) => SinkHandle::S3Upload(BackRef::from_raw(sink.as_ptr())),
                 Self::FetchRequestBodySink(sink) => {
                     SinkHandle::FetchRequestBody(BackRef::from_raw_mut(sink.as_ptr()))
                 }
@@ -936,7 +933,7 @@ impl ReadableSinkController {
         }
     }
 
-    /// `write` of bytes that are not in a JS object.
+    /// `write` for C++: the output of a codec, or the bytes of a JS view.
     pub(crate) fn write_bytes(&self, cx: &mut JsScope<'_>, bytes: &[u8]) -> JsResult<JSValue> {
         let Some(sink) = self.sink_or_throw(cx.global())? else {
             return Ok(JSValue::js_number(0.0));
@@ -945,7 +942,12 @@ impl ReadableSinkController {
             return Ok(JSValue::js_number(0.0));
         }
         // SAFETY: the controller is attached, so the sink is live.
-        let written = unsafe { sink.to_sink_handle() }.write(&Temporary(RawSlice::new(bytes)));
+        let written = match unsafe { sink.to_sink_handle() } {
+            SinkHandle::HTMLRewriter(pipe) => {
+                removable_body!(HtmlRewriter, Abort, { pipe.write_copy(bytes) })
+            }
+            sink => sink.write(&Temporary(bytes)),
+        };
         Ok(written.to_js(&cx.js_thread()))
     }
 

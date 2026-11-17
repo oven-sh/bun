@@ -554,6 +554,35 @@ devTest("error report endpoint tolerates a browser url whose normalized origin i
   },
 });
 
+devTest("saving a route that forms an import circle with a module of another route", {
+  framework: minimalFramework,
+  files: {
+    "nav.ts": `
+      import { title } from './routes/index';
+      export const nav = () => 'nav ' + title;
+    `,
+    "routes/index.ts": `
+      import { nav } from '../nav';
+      export const title = 'v1';
+      export default () => new Response('one ' + nav());
+    `,
+    "routes/two.ts": `
+      import { nav } from '../nav';
+      export default () => new Response('two ' + nav());
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("one nav v1");
+    await dev.fetch("/two").equals("two nav v1");
+    await dev.patch("routes/index.ts", {
+      find: "v1",
+      replace: "v2",
+    });
+    await dev.fetch("/").equals("one nav v2");
+    await dev.fetch("/two").equals("two nav v2");
+  },
+});
+
 devTest("html routes reject requests whose host header does not match the dev server", {
   files: {
     "index.html": emptyHtmlFile({

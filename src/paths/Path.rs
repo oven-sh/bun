@@ -189,11 +189,8 @@ pub trait PathUnit: crate::PathChar {
     /// `[:0]const u8` → `ZStr`, `[:0]const u16` → `WStr` (length-carrying NUL-terminated slice).
     type ZSlice: ?Sized;
 
-    /// Construct a borrowed NUL-terminated slice (`ZStr` / `WStr`) from a raw pointer + len.
-    ///
-    /// # Safety
-    /// `ptr[..=len]` must be valid for reads for `'a`, and `ptr[len]` must be `0`.
-    unsafe fn zslice_from_raw<'a>(ptr: *const Self, len: usize) -> &'a Self::ZSlice;
+    /// [`ZStr::nul_terminate`] / [`WStr::nul_terminate`].
+    fn nul_terminate(buf: &mut [Self], len: usize) -> &Self::ZSlice;
 
     /// `bun.path_buffer_pool.get()` / `bun.w_path_buffer_pool.get()`
     // LIFETIMES.tsv classifies `Buf.pooled` as OWNED → Box<PathBuffer>; the
@@ -260,10 +257,8 @@ impl PathUnit for u8 {
     const LONG_PATH_PREFIX: &'static [u8] = &crate::windows::LONG_PATH_PREFIX_U8;
 
     #[inline]
-    unsafe fn zslice_from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
-        // SAFETY: caller of this `unsafe fn` upholds the trait contract that
-        // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
-        unsafe { ZStr::from_raw(ptr, len) }
+    fn nul_terminate(buf: &mut [u8], len: usize) -> &ZStr {
+        ZStr::nul_terminate(buf, len)
     }
     fn pool_get() -> Box<PathBuffer> {
         crate::path_buffer_pool::get().into_box()
@@ -309,10 +304,8 @@ impl PathUnit for u16 {
     const LONG_PATH_PREFIX: &'static [u16] = &crate::windows::LONG_PATH_PREFIX;
 
     #[inline]
-    unsafe fn zslice_from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
-        // SAFETY: caller of this `unsafe fn` upholds the trait contract that
-        // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
-        unsafe { WStr::from_raw(ptr, len) }
+    fn nul_terminate(buf: &mut [u16], len: usize) -> &WStr {
+        WStr::nul_terminate(buf, len)
     }
     fn pool_get() -> Box<WPathBuffer> {
         crate::w_path_buffer_pool::get().into_box()
@@ -702,8 +695,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
             #[cfg(not(windows))]
             {
-                // SAFETY: buf is valid for buf.len() writable bytes.
-                let n = unsafe { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
+                let n = bun_core::fd_path_raw(fd, buf);
                 // `fd_path_raw` returns 0 on misc failure — do not swallow as
                 // an empty path; propagate an error.
                 if n <= 0 {
@@ -836,11 +828,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
     pub fn slice_z(&mut self) -> &U::ZSlice {
         // match BufType::Pool
-        let len = self._buf.len;
         let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
-        buf[len] = U::from_u8(0);
-        // SAFETY: buf[len] == 0 written above; buf outlives the returned borrow.
-        unsafe { U::zslice_from_raw(buf.as_ptr(), len) }
+        U::nul_terminate(buf, self._buf.len)
     }
 
     pub fn buf(&mut self) -> &mut [U] {

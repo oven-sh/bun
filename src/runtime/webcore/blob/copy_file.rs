@@ -13,7 +13,6 @@ use bun_io::{self as aio, IntrusiveUvFs as _};
 #[cfg(not(windows))]
 use bun_jsc::JSGlobalObject;
 use bun_jsc::{self as jsc, JSPromise, JSValue};
-#[cfg(not(windows))]
 use bun_paths::PathBuffer;
 use bun_ptr::RefPtr;
 #[cfg(not(windows))]
@@ -204,21 +203,17 @@ impl CopyFile {
 
     fn open_destination(&mut self, path_buf: &mut PathBuffer) -> Option<File> {
         loop {
-            // Not `slice_z`: `dest` must not borrow `self`.
-            let dest_len = {
-                let s = self.destination_file_store.pathlike.path().slice();
-                let n = s.len().min(path_buf.len() - 1);
-                path_buf[..n].copy_from_slice(&s[..n]);
-                path_buf[n] = 0;
-                n
-            };
-            let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf[..], dest_len);
+            // Not `slice_z`, which makes "" of a path that does not fit.
+            let path = self.destination_file_store.pathlike.path().slice();
+            let len = path.len().min(path_buf.len() - 1);
+            path_buf[..len].copy_from_slice(&path[..len]);
+            let dest = bun_core::ZStr::nul_terminate(path_buf, len);
             let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
             let errno = match File::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                 Ok(file) => return Some(file),
                 Err(errno) => errno,
             };
-            match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes()) {
+            match blob::mkdir_if_not_exists(self, &errno, dest) {
                 Retry::Continue => continue,
                 Retry::Fail => return None,
                 Retry::No => {}
@@ -315,19 +310,7 @@ impl CopyFile {
                 TryWith::Sendfile => {
                     linux::sendfile(dest_fd.native(), src_fd.native(), None, remain)
                 }
-                TryWith::Splice => {
-                    // SAFETY: raw splice(2); both fds owned by caller, null offsets.
-                    unsafe {
-                        libc::splice(
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            dest_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                            0,
-                        )
-                    }
-                }
+                TryWith::Splice => linux::splice(src_fd.native(), dest_fd.native(), remain),
             };
 
             match bun_sys::get_errno(written) {
@@ -489,19 +472,11 @@ impl CopyFile {
         let mut dest_buf = bun_paths::path_buffer_pool::get();
 
         loop {
-            // reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
-            // ties the returned `&ZStr` to `self`, which would conflict with
-            // the `&mut self` borrow `mkdir_if_not_exists` needs below. The
-            // bytes live in `dest_buf`, so capture the length and re-borrow
-            // from the buffer (not `self`) after dropping the first borrow.
-            let dest_len = self
+            let dest = self
                 .destination_file_store
                 .pathlike
                 .path()
-                .slice_z(&mut dest_buf)
-                .len();
-            // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
-            let dest = bun_core::ZStr::from_buf(&dest_buf[..], dest_len);
+                .slice_z(&mut dest_buf);
             match bun_sys::clonefile(
                 self.source_file_store
                     .pathlike
@@ -510,8 +485,7 @@ impl CopyFile {
                 dest,
             ) {
                 bun_sys::Result::Err(errno) => {
-                    let err_path = self.destination_file_store.pathlike.path().slice().to_vec();
-                    match blob::mkdir_if_not_exists(self, &errno, dest, &err_path) {
+                    match blob::mkdir_if_not_exists(self, &errno, dest) {
                         Retry::Continue => continue,
                         Retry::Fail => {}
                         Retry::No => {}
@@ -587,17 +561,13 @@ impl CopyFile {
                             && self.max_length < SizeType::try_from(stat_size).expect("int cast")
                         {
                             // If this fails...well, there's not much we can do about it.
-                            // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
-                            let _ = unsafe {
-                                bun_sys::c::truncate(
-                                    self.destination_file_store
-                                        .pathlike
-                                        .path()
-                                        .slice_z(&mut path_buf)
-                                        .as_ptr(),
-                                    i64::try_from(self.max_length).expect("int cast"),
-                                )
-                            };
+                            let _ = bun_sys::truncate(
+                                self.destination_file_store
+                                    .pathlike
+                                    .path()
+                                    .slice_z(&mut path_buf),
+                                i64::try_from(self.max_length).expect("int cast"),
+                            );
                             self.read_len = SizeType::try_from(self.max_length).expect("int cast");
                         } else {
                             self.read_len = SizeType::try_from(stat_size).expect("int cast");
@@ -1110,7 +1080,8 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
             return;
         }
 
-        let prev = this.read_write_loop.uv_buf.slice();
+        let prev_start = buf_len - this.read_write_loop.uv_buf.len as usize;
+        let prev = &this.read_write_loop.read_buf[prev_start..];
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
         this.read_write_loop_write();
         return;
@@ -1231,6 +1202,43 @@ impl CopyFileWindows {
         self.read_write_loop_read();
     }
 
+    /// `None` if the descriptor has no path: the NUL device, or a pipe (`cat foo.txt | bun bar.ts`).
+    fn copyfile_path<'b>(
+        store: &Store,
+        buf: &'b mut PathBuffer,
+    ) -> bun_sys::Result<Option<&'b bun_core::ZStr>> {
+        let fd = match &store.data.as_file().pathlike {
+            PathOrFileDescriptor::Path(path) => return Ok(Some(path.slice_z(buf))),
+            PathOrFileDescriptor::Fd(fd) => *fd,
+        };
+        match bun_sys::File::borrow(&fd).kind()? {
+            bun_sys::FileKind::Directory => Err(bun_sys::Error::from_code(
+                bun_sys::E::EISDIR,
+                bun_sys::Tag::open,
+            )),
+            bun_sys::FileKind::CharacterDevice => Ok(None),
+            _ => {
+                let Ok(path) = bun_sys::get_fd_path(fd, buf) else {
+                    return Ok(None);
+                };
+                let len = path.len();
+                Ok(Some(bun_core::ZStr::nul_terminate(buf, len)))
+            }
+        }
+    }
+
+    fn copyfile_paths<'b>(
+        &self,
+        old_buf: &'b mut PathBuffer,
+        new_buf: &'b mut PathBuffer,
+    ) -> bun_sys::Result<Option<(&'b bun_core::ZStr, &'b bun_core::ZStr)>> {
+        let Some(new_path) = Self::copyfile_path(&self.destination_file_store, new_buf)? else {
+            return Ok(None);
+        };
+        let old_path = Self::copyfile_path(&self.source_file_store, old_buf)?;
+        Ok(old_path.map(|old_path| (old_path, new_path)))
+    }
+
     fn copyfile(self: Box<Self>) {
         // This is for making it easier for us to test this code path
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
@@ -1243,105 +1251,11 @@ impl CopyFileWindows {
 
         let mut pathbuf1 = bun_paths::path_buffer_pool::get();
         let mut pathbuf2 = bun_paths::path_buffer_pool::get();
-        let destination_file_store = &mut self.destination_file_store.data.as_file();
-        let source_file_store = &mut self.source_file_store.data.as_file();
-
-        let new_path: &bun_core::ZStr = 'brk: {
-            match &destination_file_store.pathlike {
-                PathOrFileDescriptor::Path(_) => {
-                    break 'brk destination_file_store
-                        .pathlike
-                        .path()
-                        .slice_z(&mut pathbuf1);
-                }
-                PathOrFileDescriptor::Fd(fd) => {
-                    let fd = *fd;
-                    match bun_sys::File::borrow(&fd).kind() {
-                        bun_sys::Result::Err(err) => {
-                            self.throw(err);
-                            return;
-                        }
-                        bun_sys::Result::Ok(kind) => match kind {
-                            bun_sys::FileKind::Directory => {
-                                self.throw(bun_sys::Error::from_code(
-                                    bun_sys::E::EISDIR,
-                                    bun_sys::Tag::open,
-                                ));
-                                return;
-                            }
-                            bun_sys::FileKind::CharacterDevice => {
-                                self.prepare_read_write_loop();
-                                return;
-                            }
-                            _ => {
-                                let out = match bun_sys::get_fd_path(fd, &mut pathbuf1) {
-                                    Ok(out) => out,
-                                    Err(_) => {
-                                        // This case can happen when either:
-                                        // - NUL device
-                                        // - Pipe. `cat foo.txt | bun bar.ts`
-                                        self.prepare_read_write_loop();
-                                        return;
-                                    }
-                                };
-                                let len = out.len();
-                                pathbuf1[len] = 0;
-                                // SAFETY: pathbuf1[len] == 0 written above
-                                break 'brk bun_core::ZStr::from_buf(&pathbuf1[..], len);
-                            }
-                        },
-                    }
-                }
-            }
+        let (old_path, new_path) = match self.copyfile_paths(&mut pathbuf2, &mut pathbuf1) {
+            Ok(Some(paths)) => paths,
+            Ok(None) => return self.prepare_read_write_loop(),
+            Err(err) => return self.throw(err),
         };
-        let old_path: &bun_core::ZStr = 'brk: {
-            match &source_file_store.pathlike {
-                PathOrFileDescriptor::Path(path) => {
-                    // In the buffer: it is read again after `self` is given up.
-                    let len = path.slice_z_with_force_copy::<true>(&mut pathbuf2).len();
-                    break 'brk bun_core::ZStr::from_buf(&pathbuf2[..], len);
-                }
-                PathOrFileDescriptor::Fd(fd) => {
-                    let fd = *fd;
-                    match bun_sys::File::borrow(&fd).kind() {
-                        bun_sys::Result::Err(err) => {
-                            self.throw(err);
-                            return;
-                        }
-                        bun_sys::Result::Ok(kind) => match kind {
-                            bun_sys::FileKind::Directory => {
-                                self.throw(bun_sys::Error::from_code(
-                                    bun_sys::E::EISDIR,
-                                    bun_sys::Tag::open,
-                                ));
-                                return;
-                            }
-                            bun_sys::FileKind::CharacterDevice => {
-                                self.prepare_read_write_loop();
-                                return;
-                            }
-                            _ => {
-                                let out = match bun_sys::get_fd_path(fd, &mut pathbuf2) {
-                                    Ok(out) => out,
-                                    Err(_) => {
-                                        // This case can happen when either:
-                                        // - NUL device
-                                        // - Pipe. `cat foo.txt | bun bar.ts`
-                                        self.prepare_read_write_loop();
-                                        return;
-                                    }
-                                };
-                                let len = out.len();
-                                pathbuf2[len] = 0;
-                                // SAFETY: pathbuf2[len] == 0 written above
-                                break 'brk bun_core::ZStr::from_buf(&pathbuf2[..], len);
-                            }
-                        },
-                    }
-                }
-            }
-        };
-        let new_path = new_path.as_ptr();
         let event_loop = self.event_loop;
         let this = bun_core::heap::into_raw(self);
         // SAFETY: the VM's loop outlives the request, libuv copies the NUL-terminated paths before
@@ -1351,7 +1265,7 @@ impl CopyFileWindows {
                 event_loop.uv_loop(),
                 &raw mut (*this).io_request,
                 old_path.as_ptr(),
-                new_path,
+                new_path.as_ptr(),
                 0,
                 Some(on_copy_file),
             )

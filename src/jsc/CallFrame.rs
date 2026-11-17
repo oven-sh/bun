@@ -24,11 +24,7 @@ impl CallFrame {
     #[cfg(debug_assertions)]
     pub(crate) fn describe_frame(&self) -> &ZStr {
         // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
-        unsafe {
-            let p = Bun__CallFrame__describeFrame(self);
-            let len = bun_core::ffi::cstr(p).to_bytes().len();
-            ZStr::from_raw(p.cast::<u8>(), len)
-        }
+        unsafe { ZStr::from_c_ptr(Bun__CallFrame__describeFrame(self)) }
     }
 }
 

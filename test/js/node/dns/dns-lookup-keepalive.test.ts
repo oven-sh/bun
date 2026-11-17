@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { join } from "path";
 
 test.concurrent("expect dns.lookup to keep the process alive", async () => {
@@ -285,3 +285,21 @@ test.concurrent.each(["beforeExit", "exit"])(
     expect(await bunRun(["-e", script])).toSpawn("[]");
   },
 );
+
+test.concurrent("a query that c-ares answers inside the call runs no microtask of a test body", async () => {
+  using dir = tempDir("dns-test-body", {
+    "body.test.js": `
+      test("queries after an await", async () => {
+        await 1;
+        const ran = [];
+        process.nextTick(() => ran.push("tick"));
+        queueMicrotask(() => ran.push("microtask"));
+        Bun.dns.lookup("127.0.0.1", { backend: "c-ares" });
+        console.log(JSON.stringify(ran));
+      });
+    `,
+  });
+  const { stdout, exitCode } = await bunRun(["test", join(String(dir), "body.test.js")]);
+  expect(stdout.split("\n").at(-1)).toBe("[]");
+  expect(exitCode).toBe(0);
+});

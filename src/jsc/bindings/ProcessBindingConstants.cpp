@@ -7,7 +7,7 @@
 // Most of the constants are defined with #if checks on existing #defines, instead of platform-checks
 #include <openssl/ec.h>
 #include <openssl/ssl.h>
-#include <zlib.h>
+#include <node/zlib.h>
 #include <brotli/encode.h>
 #include <brotli/decode.h>
 #include <zstd.h>

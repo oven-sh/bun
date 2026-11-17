@@ -7,6 +7,7 @@ const _: () = assert!(SCALAR_CUTOFF >= 16);
 unsafe extern "C" {
     fn highway_crc32(state: u32, bytes: *const u8, len: usize) -> u64;
     fn highway_adler32(adler: u32, bytes: *const u8, len: usize) -> u32;
+    fn highway_subtract_saturating(values: *mut [u16; 64], groups: usize, amount: u16);
 }
 
 static CRC_TABLE: [u32; 256] = {
@@ -56,4 +57,10 @@ pub fn adler32(adler: u32, bytes: &[u8]) -> u32 {
         }
         (a % MODULUS) | (b % MODULUS) << 16
     })
+}
+
+#[inline]
+pub fn subtract_saturating(values: &mut [[u16; 64]], amount: u16) {
+    // SAFETY: the kernel reads and writes so many groups.
+    unsafe { highway_subtract_saturating(values.as_mut_ptr(), values.len(), amount) }
 }

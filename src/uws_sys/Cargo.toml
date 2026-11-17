@@ -23,6 +23,7 @@ bun_core.workspace = true
 bun_errno.workspace = true
 bun_hpack.workspace = true
 bun_http_types.workspace = true
+bun_zlib.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true

@@ -770,7 +770,6 @@ it("process.versions", async () => {
   const deps = {
     boringssl: "boringssl",
     mimalloc: "mimalloc",
-    zlib: "zlib",
     tinycc: "tinycc",
     lolhtml: "lolhtml",
     ares: "cares",
@@ -781,7 +780,7 @@ it("process.versions", async () => {
   const expectedVersions = {};
   for (const [key, file] of Object.entries(deps)) {
     const src = await Bun.file(join(depsDir, `${file}.ts`)).text();
-    // No $ anchor: some pins carry a trailing comment (zlib.ts: `"; // 2.3.3`)
+    // No $ anchor: a pin can carry a trailing comment
     const match = src.match(/^const [A-Z_]+_COMMIT = "([0-9a-f]{40})";/m);
     expect(match, `failed to extract commit from ${file}.ts`).not.toBeNull();
     expectedVersions[key] = match[1];
@@ -791,6 +790,10 @@ it("process.versions", async () => {
     expect(process.versions).toHaveProperty(name);
     expect(process.versions[name]).toBe(expectedHash);
   }
+
+  // One hexadecimal digit for each part of the version.
+  const { ZLIB_VERNUM } = require("node:zlib").constants;
+  expect(process.versions.zlib).toStartWith([...ZLIB_VERNUM.toString(16)].slice(0, 3).join("."));
 
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");

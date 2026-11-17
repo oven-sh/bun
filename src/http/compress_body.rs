@@ -133,8 +133,7 @@ fn compress_libdeflate_fast(
 }
 
 /// Slow path for gzip/deflate when the libdeflate one-shot bound exceeds the
-/// shared buffer: streaming zlib `deflate(Z_FINISH)` into a Vec that grows in
-/// 64 KiB steps so the allocation tracks the actual compressed size, not the
+/// shared buffer: streaming deflate into a Vec that grows as needed, so the allocation tracks the actual compressed size, not the
 /// worst-case bound.
 fn compress_zlib_streaming(
     input: &[u8],
@@ -142,47 +141,30 @@ fn compress_zlib_streaming(
     level: Option<i32>,
     out: &mut Vec<u8>,
 ) -> crate::Result<()> {
-    use bun_zlib::{DeflateEncoder, FlushValue, ReturnCode};
+    use bun_zlib::deflate::{Container, Deflater, Flush, Options};
 
-    // gzip wrapper: +16; HTTP "deflate" is the zlib-wrapped stream
-    // (RFC 9110 §8.4.1.2): plain 15.
-    let window_bits = if gzip { 15 + 16 } else { 15 };
+    // HTTP "deflate" is the zlib-wrapped stream (RFC 9110 §8.4.1.2).
+    let container = if gzip {
+        Container::Gzip
+    } else {
+        Container::Zlib
+    };
     // libdeflate accepts 0..=12; zlib only 0..=9.
     let level = level.unwrap_or(DEFAULT_DEFLATE_LEVEL).min(9);
-    let mut encoder = DeflateEncoder::new(level, window_bits, 8, 0).map_err(|err| match err {
-        bun_zlib::ZlibError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-        _ => crate::Error::CompressionFailed,
-    })?;
-
-    // `avail_in` is `c_uint`; `step()` clamps to u32::MAX per call so a
-    // ≥4 GiB body isn't truncated — we loop until `remaining` is empty.
-    let mut remaining = input;
-    loop {
-        let flush = if remaining.len() <= u32::MAX as usize {
-            FlushValue::Finish
-        } else {
-            FlushValue::NoFlush
+    let result = level.try_into().and_then(|level| {
+        let options = Options {
+            level,
+            ..Default::default()
         };
-        let reserve = if out.capacity() == out.len() {
-            64 * 1024
-        } else {
-            0
-        };
-        let (consumed, rc) = encoder.step(remaining, out, reserve, flush);
-        remaining = &remaining[consumed..];
-        match rc {
-            ReturnCode::StreamEnd => return Ok(()),
-            ReturnCode::Ok => continue,
-            ReturnCode::MemError => {
-                out.clear();
-                return Err(crate::Error::Alloc(bun_alloc::AllocError));
-            }
-            _ => {
-                out.clear();
-                return Err(crate::Error::CompressionFailed);
-            }
+        Deflater::new(container, options)?.deflate_to_vec(input, out, Flush::Finish)
+    });
+    result.map_err(|error| {
+        out.clear();
+        match error {
+            bun_zlib::Error::Alloc(error) => crate::Error::Alloc(error),
+            _ => crate::Error::CompressionFailed,
         }
-    }
+    })
 }
 
 fn compress_brotli(

@@ -1,6 +1,9 @@
 use core::ffi::c_int;
 
 use bun_brotli::{Allocator, InitError, OwnedDecoder, OwnedEncoder, c};
+
+use crate::node::node_zlib_binding::{NodeMode, Z_BUF_ERROR};
+
 type Op = c::BrotliEncoderOperation;
 
 // ─── type defs (real) ─────────────────────────────────────────────────────
@@ -11,7 +14,7 @@ enum State {
 }
 
 pub(crate) struct Context {
-    mode: bun_zlib::NodeMode,
+    mode: NodeMode,
     state: Option<State>,
 
     avail_in: usize,
@@ -52,7 +55,7 @@ mod _impl {
 
     impl NativeBrotli {
         pub(crate) fn constructor(mode: u8) -> Self {
-            let mode = bun_zlib::NodeMode::from_int(mode);
+            let mode = NodeMode::from_int(mode);
             Self {
                 stream: Cell::new(Some(Stream::new(Context::new(mode)))),
                 pending_close: Cell::new(false),
@@ -62,12 +65,12 @@ mod _impl {
         }
 
         /// Per-mode external-allocation footprint, fixed at construction.
-        fn external_size_for(mode: bun_zlib::NodeMode) -> usize {
+        fn external_size_for(mode: NodeMode) -> usize {
             const ENCODER_STATE_SIZE: usize = 5143; // sizeof(BrotliEncoderStateStruct)
             const DECODER_STATE_SIZE: usize = 855; // sizeof(BrotliDecoderStateStruct)
             match mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
-                bun_zlib::NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
+                NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
+                NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
                 _ => 0,
             }
         }
@@ -90,7 +93,7 @@ mod _impl {
             let global_this = cx.global();
             let this_value = this_value.to_js();
             let mode = self.borrow_idle_stream(global_this)?.context.mode;
-            let feature = if mode == bun_zlib::NodeMode::BROTLI_ENCODE {
+            let feature = if mode == NodeMode::BROTLI_ENCODE {
                 bun_removable_features::Feature::BrotliEncoder
             } else {
                 bun_removable_features::Feature::BrotliDecoder
@@ -214,7 +217,7 @@ mod _impl {
     }
 
     impl Context {
-        fn new(mode: bun_zlib::NodeMode) -> Self {
+        fn new(mode: NodeMode) -> Self {
             Self {
                 mode,
                 state: None,
@@ -232,10 +235,10 @@ mod _impl {
             // handle, and ResetStream() lands here with no dictionary.
             self.state = None;
             let state = match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
+                NodeMode::BROTLI_ENCODE => {
                     OwnedEncoder::with_dictionary(Allocator::Bun, dictionary).map(State::Encoder)
                 }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
+                NodeMode::BROTLI_DECODE => {
                     OwnedDecoder::with_dictionary(Allocator::Bun, dictionary).map(State::Decoder)
                 }
                 _ => unreachable!(),
@@ -319,7 +322,7 @@ mod _impl {
 
         fn write_result(&self) -> Result<[u32; 2], Error> {
             match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
+                NodeMode::BROTLI_ENCODE => {
                     if self.last_result == 0 {
                         return Err(Error::init(
                             c"Compression failed",
@@ -328,7 +331,7 @@ mod _impl {
                         ));
                     }
                 }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
+                NodeMode::BROTLI_DECODE => {
                     if self.error != c::BrotliDecoderErrorCode2::NO_ERROR {
                         return Err(Error::init(
                             c"Decompression failed",
@@ -340,7 +343,7 @@ mod _impl {
                     {
                         return Err(Error::init(
                             c"unexpected end of file",
-                            bun_zlib::ReturnCode::BufError as i32,
+                            Z_BUF_ERROR,
                             c"Z_BUF_ERROR",
                         ));
                     }

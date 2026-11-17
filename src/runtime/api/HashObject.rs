@@ -18,12 +18,11 @@ pub(crate) fn wyhash(data: &[u8], seed: JsLocal<'_>) -> u64 {
 }
 
 pub(crate) fn adler32(data: &[u8]) -> u32 {
-    bun_hash::Adler32::hash(data)
+    bun_zlib::adler32(data)
 }
 
-/// Hardware-accelerated, from zlib.
 pub(crate) fn crc32(data: &[u8], seed: JsLocal<'_>) -> u32 {
-    bun_zlib::crc32_bytes(seed_of(seed) as u32, data)
+    bun_zlib::crc32(seed_of(seed) as u32, data)
 }
 
 pub(crate) fn city_hash32(data: &[u8]) -> u32 {

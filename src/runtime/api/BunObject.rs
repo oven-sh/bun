@@ -74,7 +74,7 @@ use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd};
-use bun_zlib as zlib;
+use bun_zlib::{Inflater, deflate, inflate};
 
 use crate::node;
 use crate::valkey_jsc::js_valkey::{SubscriptionCtx, js as js_RedisClient};
@@ -1619,26 +1619,26 @@ pub(crate) mod JSZlib {
         }
     }
 
-    fn init_error<'a>(heap: &JsHeap<'a>, err: zlib::ZlibError) -> bindgen::Error<'a> {
-        match err {
-            zlib::ZlibError::OutOfMemory => bun_alloc::AllocError.into(),
-            zlib::ZlibError::InvalidArgument => {
-                heap.error(format_args!("Zlib error: Invalid argument"))
-            }
-            err => heap.error(format_args!("{} Zlib error", <&'static str>::from(err))),
-        }
+    const ZLIB_ERROR: &str = "Zlib returned an error";
+
+    fn zlib_error<'a>(heap: &JsHeap<'a>, err: bun_zlib::Error) -> bindgen::Error<'a> {
+        let message = match err {
+            bun_zlib::Error::Alloc(err) => return err.into(),
+            bun_zlib::Error::InvalidParameter => "Zlib error: Invalid argument",
+            bun_zlib::Error::Damaged(damage) => damage.message(),
+            _ => ZLIB_ERROR,
+        };
+        heap.error(format_args!("{message}"))
     }
 
-    fn read_error<'a>(
-        heap: &JsHeap<'a>,
-        err: zlib::ZlibError,
-        message: Option<&[u8]>,
-    ) -> bindgen::Error<'a> {
-        if err == zlib::ZlibError::OutOfMemory {
-            return bun_alloc::AllocError.into();
-        }
-        let message = message.unwrap_or(b"Zlib returned an error");
-        heap.error(format_args!("{}", bstr::BStr::new(message)))
+    fn too_large_error<'a>(heap: &JsHeap<'a>) -> bindgen::Error<'a> {
+        heap.error_with_code(
+            jsc::ErrorCode::BUFFER_TOO_LARGE,
+            format_args!(
+                "Cannot create a Buffer larger than {} bytes",
+                ArrayBuffer::MAX_SIZE
+            ),
+        )
     }
 
     pub(crate) fn gzip_sync<'a>(
@@ -1707,25 +1707,24 @@ pub(crate) mod JSZlib {
             .map_err(|_| bun_alloc::AllocError)?;
         }
 
+        let max_output = ArrayBuffer::MAX_SIZE as usize;
         match library {
             Library::Zlib => {
-                let mut reader = zlib::ZlibReaderArrayList::init_with_options(
-                    compressed,
-                    &mut list,
-                    zlib::Options {
-                        window_bits: options
-                            .window_bits
-                            .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32),
-                        ..Default::default()
-                    },
-                )
-                .map_err(|err| init_error(heap, err))?;
-
-                if let Err(err) = reader.read_all(true) {
-                    return Err(read_error(heap, err, reader.error_message()));
+                let window_bits = options
+                    .window_bits
+                    .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32);
+                let status = Inflater::from_zlib_window_bits(window_bits)
+                    .and_then(|mut inflater| {
+                        inflater.inflate_to_vec(&mut { compressed }, &mut list, max_output)
+                    })
+                    .map_err(|err| zlib_error(heap, err))?;
+                match status {
+                    inflate::Status::StreamEnd => {
+                        heap.create_uint8_array_from_box(list.into_boxed_slice())
+                    }
+                    inflate::Status::NeedsOutput => Err(too_large_error(heap)),
+                    _ => Err(heap.error(format_args!("{ZLIB_ERROR}"))),
                 }
-                drop(reader);
-                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
                 let Some(decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
@@ -1736,17 +1735,13 @@ pub(crate) mod JSZlib {
                 } else {
                     bun_libdeflate::Encoding::Deflate
                 };
-                let max_output = ArrayBuffer::MAX_SIZE as usize;
                 let result = decompressor
                     .decompress_to_vec_grow(compressed, &mut list, encoding, max_output)
                     .map_err(|_| bun_alloc::AllocError)?;
                 match result.status {
                     bun_libdeflate::Status::Success if list.len() <= max_output => {}
                     bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
-                        return Err(heap.error_with_code(
-                            jsc::ErrorCode::BUFFER_TOO_LARGE,
-                            format_args!("Cannot create a Buffer larger than {max_output} bytes"),
-                        ));
+                        return Err(too_large_error(heap));
                     }
                     _ => {
                         return Err(heap.error(format_args!(
@@ -1770,26 +1765,22 @@ pub(crate) mod JSZlib {
 
         match Library::from_option(heap, options.library)? {
             Library::Zlib => {
-                // `init` reserves `deflateBound` of the input.
+                let container = if is_gzip {
+                    deflate::Container::Gzip
+                } else {
+                    deflate::Container::Raw
+                };
                 let mut list: Vec<u8> = Vec::new();
-
-                let mut reader = zlib::ZlibCompressorArrayList::init(
-                    data,
-                    &mut list,
-                    zlib::Options {
-                        window_bits: 15,
-                        gzip: is_gzip,
-                        level,
-                        mem_level: options.mem_level,
-                        strategy: options.strategy,
-                    },
-                )
-                .map_err(|err| init_error(heap, err))?;
-
-                if let Err(err) = reader.read_all() {
-                    return Err(read_error(heap, err, reader.error_message()));
-                }
-                drop(reader);
+                let mut compress = || {
+                    let options = deflate::Options {
+                        level: level.try_into()?,
+                        strategy: options.strategy.try_into()?,
+                        memory_level: options.mem_level as u8,
+                        ..Default::default()
+                    };
+                    deflate::compress(data, &mut list, container, options)
+                };
+                compress().map_err(|err| zlib_error(heap, err))?;
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {

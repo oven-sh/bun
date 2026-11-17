@@ -1,4 +1,4 @@
-// The checksums of src/zlib, runtime-dispatched via Google Highway. src/highway/zlib.rs says what each takes.
+// The kernels of src/zlib, runtime-dispatched via Google Highway. src/highway/zlib.rs says what each takes.
 //
 // No load leaves the `len` bytes of the input.
 
@@ -257,6 +257,16 @@ uint32_t Adler32(uint32_t adler, const uint8_t* HWY_RESTRICT bytes, size_t len)
     return AddUp(d, adler, bytes, len);
 }
 
+void SubtractSaturating(uint16_t* HWY_RESTRICT values, size_t groups, uint16_t amount)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const auto subtrahend = hn::Set(d, amount);
+    for (; groups != 0; groups--, values += 64) {
+        for (size_t i = 0; i < 64; i += hn::MaxLanes(d))
+            hn::StoreU(hn::SaturatedSub(hn::LoadU(d, values + i), subtrahend), d, values + i);
+    }
+}
+
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 } // namespace HWY_NAMESPACE
 } // namespace bun
@@ -266,6 +276,7 @@ HWY_AFTER_NAMESPACE();
 namespace bun {
 HWY_EXPORT(Crc32);
 HWY_EXPORT(Adler32);
+HWY_EXPORT(SubtractSaturating);
 
 // `len` is at least 16. Returns more than 32 bits if the CPU has no instruction for it.
 extern "C" uint64_t highway_crc32(uint32_t state, const uint8_t* bytes, size_t len)
@@ -277,6 +288,12 @@ extern "C" uint64_t highway_crc32(uint32_t state, const uint8_t* bytes, size_t l
 extern "C" uint32_t highway_adler32(uint32_t adler, const uint8_t* bytes, size_t len)
 {
     return BUN_HWY_DISPATCH(Adler32)(adler, bytes, len);
+}
+
+// A group has 64 values.
+extern "C" void highway_subtract_saturating(uint16_t* values, size_t groups, uint16_t amount)
+{
+    BUN_HWY_DISPATCH(SubtractSaturating)(values, groups, amount);
 }
 } // namespace bun
 #endif

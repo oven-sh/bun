@@ -1,23 +1,15 @@
-//! The gzip container (RFC 1952). DEFLATE itself is zlib's.
+//! The gzip container (RFC 1952). DEFLATE itself is in `bun_zlib`.
 
 use crate::error::{Error, Result};
 use crate::output::Output;
 use crate::reader::Dialect;
-use bun_alloc::AllocError;
 use bun_core::strings;
-use bun_zlib::{InflateDecoder, ReturnCode, crc32_bytes};
+use bun_zlib::{
+    DEFLATE_METHOD, Deflater, GZIP_ID, Inflater, crc32, deflate, gzip_flag as flag, inflate,
+};
 
-mod flag {
-    pub(super) const HEADER_CRC: u8 = 2;
-    pub(super) const EXTRA: u8 = 4;
-    pub(super) const NAME: u8 = 8;
-    pub(super) const COMMENT: u8 = 16;
-    pub(super) const RESERVED: u8 = 0xe0;
-}
-
-const RAW_DEFLATE: core::ffi::c_int = -15;
 /// The two identification bytes, and the compression method, which is always DEFLATE.
-const MAGIC: [u8; 3] = [0x1f, 0x8b, 8];
+const MAGIC: [u8; 3] = [GZIP_ID[0], GZIP_ID[1], DEFLATE_METHOD];
 const FLAGS: usize = MAGIC.len();
 const FIXED_HEADER_SIZE: usize = 10;
 /// The length of the extra field, and the CRC-16 of the header.
@@ -32,7 +24,7 @@ fn fixed_header_flags(fixed: &[u8; FIXED_HEADER_SIZE]) -> Option<u8> {
 
 /// All that npm looks at.
 pub(crate) fn starts_with_id(data: &[u8]) -> bool {
-    data.starts_with(&MAGIC[..2])
+    data.starts_with(&GZIP_ID)
 }
 
 /// Whether `data` starts like a gzip header. The optional fields are not looked at.
@@ -88,7 +80,7 @@ pub enum Progress {
 /// Decompresses a sequence of gzip members, checking the CRC-32 and the size of each.
 pub struct Decoder {
     state: State,
-    inflate: InflateDecoder,
+    inflater: Inflater,
     flags: u8,
     small: [u8; FIXED_HEADER_SIZE],
     small_len: usize,
@@ -105,10 +97,10 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    pub fn new(dialect: Dialect) -> Result<Self> {
-        Ok(Self {
+    pub fn new(dialect: Dialect) -> Self {
+        Self {
             state: State::Fixed,
-            inflate: InflateDecoder::new(RAW_DEFLATE).map_err(|_| Error::Alloc(AllocError))?,
+            inflater: Inflater::new(inflate::Container::Raw),
             flags: 0,
             small: [0; FIXED_HEADER_SIZE],
             small_len: 0,
@@ -118,7 +110,7 @@ impl Decoder {
             left_data: false,
             crc: 0,
             size: 0,
-        })
+        }
     }
 
     /// After [`Progress::Done`]: npm may find more to decompress. Always `false` in the other dialect.
@@ -312,23 +304,22 @@ impl Decoder {
                     }
                     return Ok(Some(Progress::NeedInput));
                 }
-                let start = out.len();
-                let (consumed, code) = self.inflate.step_limited(input, out, room);
-                *used = consumed;
+                out.try_reserve(room)?;
+                let (start, mut rest) = (out.len(), input);
+                let status = self.inflater.inflate_to_vec(&mut rest, out, room);
+                *used = input.len().saturating_sub(rest.len());
                 let produced = out.get(start..).unwrap_or_default();
-                self.crc = crc32_bytes(self.crc, produced);
+                self.crc = crc32(self.crc, produced);
                 self.size = self.size.wrapping_add(produced.len() as u32);
-                match code {
-                    ReturnCode::Ok => Ok(None),
-                    ReturnCode::StreamEnd => {
-                        if self.inflate.reset() != ReturnCode::Ok {
-                            return Err(Error::GzipDecompressionFailed);
-                        }
+                match status {
+                    Ok(inflate::Status::StreamEnd) => {
+                        self.inflater.reset();
                         self.state = State::Trailer;
                         Ok(None)
                     }
-                    ReturnCode::MemError => Err(Error::Alloc(AllocError)),
-                    _ => Err(Error::GzipDecompressionFailed),
+                    Ok(_) => Ok(None),
+                    Err(bun_zlib::Error::Alloc(error)) => Err(Error::Alloc(error)),
+                    Err(_) => Err(Error::GzipDecompressionFailed),
                 }
             }
             State::Trailer => {
@@ -366,7 +357,7 @@ impl Decoder {
 /// One gzip member with no name and no time, so the same input always gives the same bytes.
 pub struct Encoder<O: Output> {
     out: O,
-    deflate: bun_zlib::DeflateEncoder,
+    deflater: Box<Deflater>,
     buffer: Vec<u8>,
     crc: u32,
     size: u32,
@@ -377,9 +368,20 @@ pub struct Encoder<O: Output> {
 const ENCODER_BUFFER: usize = 61440;
 const OS_UNKNOWN: u8 = 255;
 
+fn compression_error(error: bun_zlib::Error) -> Error {
+    match error {
+        bun_zlib::Error::Alloc(error) => Error::Alloc(error),
+        _ => Error::GzipCompressionFailed,
+    }
+}
+
 impl<O: Output> Encoder<O> {
     /// `level` is 0 to 9.
     pub fn new(out: O, level: u8) -> Result<Self> {
+        let options = deflate::Options {
+            level: i32::from(level).try_into().map_err(compression_error)?,
+            ..Default::default()
+        };
         let mut buffer = Vec::new();
         buffer.try_reserve_exact(ENCODER_BUFFER)?;
         let extra_flags = match level {
@@ -391,8 +393,7 @@ impl<O: Output> Encoder<O> {
         buffer.extend_from_slice(&[0, 0, 0, 0, 0, extra_flags, OS_UNKNOWN]);
         Ok(Self {
             out,
-            deflate: bun_zlib::DeflateEncoder::new(i32::from(level), RAW_DEFLATE, 8, 0)
-                .map_err(|_| Error::Alloc(AllocError))?,
+            deflater: Deflater::new(deflate::Container::Raw, options).map_err(compression_error)?,
             buffer,
             crc: 0,
             size: 0,
@@ -409,22 +410,17 @@ impl<O: Output> Encoder<O> {
                 return Ok(());
             }
             let room = ENCODER_BUFFER.saturating_sub(self.buffer.len());
-            let (used, code) = self.deflate.step_limited(
-                input,
-                &mut self.buffer,
-                room,
-                if finishing {
-                    bun_zlib::FlushValue::Finish
-                } else {
-                    bun_zlib::FlushValue::NoFlush
-                },
-            );
-            input = input.get(used..).unwrap_or_default();
-            match code {
-                ReturnCode::Ok => {}
-                ReturnCode::StreamEnd => return Ok(()),
-                ReturnCode::MemError => return Err(Error::Alloc(AllocError)),
-                _ => return Err(Error::GzipCompressionFailed),
+            let flush = if finishing {
+                deflate::Flush::Finish
+            } else {
+                deflate::Flush::None
+            };
+            let status = self
+                .deflater
+                .deflate_limited(&mut input, &mut self.buffer, room, flush)
+                .map_err(compression_error)?;
+            if status == deflate::Status::StreamEnd {
+                return Ok(());
             }
         }
     }
@@ -442,7 +438,7 @@ impl<O: Output> Encoder<O> {
 
 impl<O: Output> Output for Encoder<O> {
     fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.crc = crc32_bytes(self.crc, bytes);
+        self.crc = crc32(self.crc, bytes);
         self.size = self.size.wrapping_add(bytes.len() as u32);
         self.drive(bytes, false)
     }

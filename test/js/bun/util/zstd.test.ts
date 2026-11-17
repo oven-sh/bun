@@ -570,6 +570,24 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
   });
 });
 
+it.each([
+  [
+    "zstdCompress",
+    (bytes: Uint8Array) => bytes,
+    async (input: Uint8Array) => zstdDecompressSync(await zstdCompress(input)),
+  ],
+  ["zstdDecompress", zstdCompressSync, zstdDecompress],
+] as const)("%s keeps an input with no ArrayBuffer yet attached while it is pending", async (_, encode, run) => {
+  const original = crypto.getRandomValues(new Uint8Array(4096));
+  const input = new Uint8Array(encode(original));
+  const pending = run(input);
+  input.buffer.transfer();
+  expect(input.buffer.detached).toBe(false);
+  expect(await pending).toEqual(Buffer.from(original));
+  input.buffer.transfer();
+  expect(input.buffer.detached).toBe(true);
+});
+
 describe("sync compression argument handling", () => {
   it("zstdCompressSync evaluates the options object before capturing the input", () => {
     const input = new Uint8Array(64).fill(97);

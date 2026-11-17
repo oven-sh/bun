@@ -420,6 +420,25 @@ describe("CompressionStream and DecompressionStream", () => {
       expect(Buffer.compare(decompressed, Buffer.from(big.buffer))).toBe(0);
     });
 
+    test("a chunk with no ArrayBuffer yet stays attached while it is compressed", async () => {
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const compressed = new Response(cs.readable).bytes();
+      // The readable side has pulled by then, so write() starts the work before it returns.
+      await new Promise(setImmediate);
+
+      const chunk = new Uint8Array(256 * 1024).fill(97);
+      const pending = writer.write(chunk);
+      chunk.buffer.transfer();
+      expect(chunk.buffer.detached).toBe(false);
+      await pending;
+      chunk.buffer.transfer();
+      expect(chunk.buffer.detached).toBe(true);
+
+      await writer.close();
+      expect(zlib.gunzipSync(await compressed)).toEqual(Buffer.alloc(256 * 1024, 97));
+    });
+
     test("DecompressionStream('gzip') handles a single >128KB compressed chunk", async () => {
       const big = randomBytes(2 * 1024 * 1024);
       // Incompressible input so the gzipped output itself exceeds the 128KB

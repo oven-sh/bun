@@ -136,10 +136,12 @@ fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<Pinne
     let StringOrBuffer::Buffer(buffer) = input else {
         return Ok(None);
     };
-    match PinnedArrayBuffer::pin(global, buffer.buffer.value) {
-        Some(pinned) => Ok(Some(pinned)),
-        None => Err(global.throw_out_of_memory()),
+    if let Some(mut pinned) = PinnedArrayBuffer::pin(global, buffer.buffer.value)
+        && pinned.copy_if_freeable_while_pinned(global)
+    {
+        return Ok(Some(pinned));
     }
+    Err(global.throw_out_of_memory())
 }
 
 /// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:

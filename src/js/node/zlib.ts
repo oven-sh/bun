@@ -420,10 +420,7 @@ ZlibBase.prototype._processChunk = function (this: $Node.ZlibBase, chunk: View, 
   else return processChunkSync(this, chunk, flushFlag);
 };
 
-// Takes `have` bytes at `offset` out of an output chunk, without `slice` where possible. A slice gives
-// the chunk an ArrayBuffer. JSC then counts the chunk as allocated a second time, and only a full
-// collection takes it out of the heap size again, so full collections come often. A slice also keeps
-// the whole chunk alive with the result. nativeDecodePullResult in BunStreamSource.cpp has the same rule.
+// Takes `have` bytes at `offset` out of an output chunk, without `slice` where possible: a slice keeps the whole chunk alive with the result.
 function takeOutput(buffer: Buffer, offset: number, have: number): Buffer {
   // A full chunk: hand it over. The caller replaces an exhausted chunk.
   if (offset === 0 && have === buffer.byteLength) return buffer;

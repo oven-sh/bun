@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 const Markdown = Bun.markdown;
 
@@ -409,8 +410,11 @@ describe("Bun.markdown.render", () => {
 });
 
 describe("Bun.markdown buffer input", () => {
-  test("the input buffer stays attached while a callback runs and is released after", () => {
-    const input = new TextEncoder().encode("# Hello\n\nworld\n");
+  test.each([
+    ["over an ArrayBuffer", () => new TextEncoder().encode("# Hello\n\nworld\n")],
+    ["with no ArrayBuffer yet", () => new Uint8Array(Buffer.from("# Hello\n\nworld".padEnd(4096, "\n")))],
+  ])("an input %s stays attached while a callback runs and is released after", (_, makeInput) => {
+    const input = makeInput();
     let detachedDuringRender = null as boolean | null;
     const result = Markdown.render(input, {
       heading: (children: string) => {
@@ -425,6 +429,35 @@ describe("Bun.markdown buffer input", () => {
 
     input.buffer.transfer();
     expect((input.buffer as ArrayBuffer).detached).toBe(true);
+  });
+
+  test("renders the bytes the caller passed when a callback grows their WebAssembly.Memory", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const memory = new WebAssembly.Memory({ initial: 1 });
+        const { written } = new TextEncoder().encodeInto("# Hello\\n\\nworld\\n", new Uint8Array(memory.buffer));
+        const input = new Uint8Array(memory.buffer, 0, written);
+        const output = Bun.markdown.render(input, {
+          heading: children => (memory.grow(1), "<h1>" + children + "</h1>"),
+          paragraph: children => "<p>" + children + "</p>",
+        });
+        console.log(JSON.stringify({ detached: input.byteLength === 0, output }));
+      `,
+      ],
+      // Without fast memory, `grow()` moves the block on every platform. With system malloc, the old block is unmapped.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ detached: true, output: "<h1>Hello</h1><p>world</p>" }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // A pin prevents a detach but not a shrink, and `resize()` unmaps the trimmed pages.

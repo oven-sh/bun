@@ -1234,24 +1234,67 @@ describe("hostile option objects", () => {
     await expect(img.png().bytes()).rejects.toThrow(/detached/);
   });
 
-  test("OversizeTypedArray input survives `.buffer` → transfer() while worker decodes (pin-after-adopt)", async () => {
-    // Fresh Uint8Array > fastSizeLimit elements with no .buffer touched yet =
-    // OversizeTypedArray. The borrow helper adopts its storage into a real
-    // ArrayBuffer (createAdopted — wraps in place, no byte copy) and pins.
-    // `transfer()` on a pinned buffer falls back to copyTo (JSC ArrayBuffer
-    // .cpp:500), so the call SUCCEEDS but the original storage is untouched
-    // — the worker keeps reading the same pointer.
-    const a = new Uint8Array(tinyPng.length + 4096);
+  test.each<[string, number, (a: Uint8Array<ArrayBuffer>) => Uint8Array | DataView | ArrayBuffer]>([
+    // These two have no ArrayBuffer until something reads `.buffer`.
+    ["FastTypedArray", 0, a => a],
+    ["OversizeTypedArray", 4096, a => a],
+    ["subarray", 4096, a => a.subarray(0, tinyPng.length)],
+    ["DataView", 4096, a => new DataView(a.buffer)],
+    ["ArrayBuffer", 4096, a => a.buffer],
+  ])("%s input survives `.buffer` → transfer() while worker decodes", async (_, padding, input) => {
+    const a = new Uint8Array(tinyPng.length + padding);
     a.set(tinyPng);
-    const p = new Bun.Image(a.subarray(0, tinyPng.length)).png().bytes();
+    const p = new Bun.Image(input(a)).png().bytes();
     const moved = a.buffer.transfer();
     // While pinned: transfer() returned a COPY; `a` is NOT detached.
-    expect(moved.byteLength).toBe(tinyPng.length + 4096);
-    expect(a.byteLength).toBe(tinyPng.length + 4096);
-    expect((await p)[0]).toBe(0x89);
+    expect(moved.byteLength).toBe(tinyPng.length + padding);
+    expect(a.byteLength).toBe(tinyPng.length + padding);
+    expect(await p).toEqual(await new Bun.Image(tinyPng).png().bytes());
     // After resolve the pin is released; now transfer() actually detaches.
     a.buffer.transfer();
     expect(a.byteLength).toBe(0);
+  });
+
+  test("decodes the bytes the caller passed when their WebAssembly.Memory grows after the call", async () => {
+    using dir = tempDir("image-wasm-grow", {
+      "in.png": Buffer.from(makePng(256, 256, (x, y) => [(x * y) & 255, x ^ y, (x * 31 + y * 17) & 255, 255])),
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const file = await Bun.file("in.png").bytes();
+        const run = input => new Bun.Image(input).png().toBase64();
+        const expected = await run(file);
+        const results = await Promise.all(
+          ["view", "buffer"].map(async kind => {
+            const memory = new WebAssembly.Memory({ initial: (file.length >> 16) + 1 });
+            const view = new Uint8Array(memory.buffer, 0, file.length);
+            view.set(file);
+            const pending = run(kind === "view" ? view : memory.buffer);
+            memory.grow(1);
+            return { detached: view.byteLength === 0, same: (await pending) === expected };
+          }),
+        );
+        console.log(JSON.stringify(results));
+      `,
+      ],
+      cwd: String(dir),
+      // Without fast memory, `grow()` moves the block on every platform. With system malloc, the old block is unmapped.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify([
+        { detached: true, same: true },
+        { detached: true, same: true },
+      ]),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("SharedArrayBuffer input is refused (cross-thread mutation surface)", () => {

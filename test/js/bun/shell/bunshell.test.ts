@@ -3358,7 +3358,12 @@ describe("interpolated values in reserved-word position", () => {
     .runAsTest("interpolated reserved words in argument position pass through");
 });
 
-test("redirect target buffer stays attached while a builtin command is running", async () => {
+const redirectTargets: [string, () => Uint8Array<ArrayBuffer>][] = [
+  ["over an ArrayBuffer", () => new Uint8Array(new ArrayBuffer(1 << 16))],
+  ["with no ArrayBuffer yet", () => new Uint8Array(1 << 16)],
+];
+
+test.each(redirectTargets)("redirect target %s stays attached while a builtin command is running", async (_, make) => {
   // A builtin with `> ${buf}` caches the buffer's raw pointer and length for
   // the whole (asynchronous) lifetime of the command. The backing store must
   // stay alive and attached until the command finishes so the output lands in
@@ -3371,7 +3376,7 @@ test("redirect target buffer stays attached while a builtin command is running",
   // the command is guaranteed to still be in flight when the detach is
   // attempted below.
   using dir = tempDir("shell-redirect-pin", { "pin.txt": "x" });
-  const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+  const buffer = make();
   const promise = $`ls ${String(dir)} > ${buffer}`.env(bunEnv).nothrow();
   // Calling .then() starts the interpreter synchronously, so the redirect slot
   // now holds the buffer while the directory-listing task is still pending.
@@ -3624,14 +3629,14 @@ describe.skipIf(isWindows)("stdin redirect whose pipe outlives the command's pro
   });
 });
 
-test("output redirect buffer for an external command stays attached until the command finishes", async () => {
+test.each(redirectTargets)("redirect target %s stays attached until an external command finishes", async (_, make) => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and
   // copies the child's stdout into it as chunks arrive across event-loop
   // turns. The backing store must therefore stay attached for the whole
   // duration of the command so those writes land in memory the caller still
   // owns. (The builtin equivalent of this test is directly above; this one
   // spawns a real subprocess so it goes through the subprocess output path.)
-  const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+  const buffer = make();
   const childCode = "console.log('external-redirect-output')";
   const promise = $`${BUN} -e ${childCode} > ${buffer}`.env(bunEnv).nothrow();
   // Calling .then() starts the interpreter synchronously, so the redirect

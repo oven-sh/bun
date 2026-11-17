@@ -16,7 +16,7 @@ fn canonical_codes(lengths: &[u8]) -> Vec<(usize, u32)> {
     for bits in 1..16 {
         for symbol in (0..lengths.len()).filter(|&it| u32::from(lengths[it]) == bits) {
             codes[symbol] = (usize::from(next.reverse_bits() >> (16 - bits)), bits);
-            next += 1;
+            next = next.wrapping_add(1);
         }
         next <<= 1;
     }

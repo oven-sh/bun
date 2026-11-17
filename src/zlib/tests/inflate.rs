@@ -186,6 +186,41 @@ fn any_code_is_read_as_by_a_plain_decoder() {
 }
 
 #[test]
+fn only_a_code_for_one_symbol_or_none_may_be_incomplete() {
+    let with = |lengths: &[u8], first: usize, alphabet: usize| {
+        let mut all = vec![0; alphabet];
+        all[first..][..lengths.len()].copy_from_slice(lengths);
+        all
+    };
+    let lengths: [&[u8]; _] = [
+        &[],
+        &[1],
+        &[2],
+        &[1, 1],
+        &[1, 2],
+        &[1, 1, 1],
+        &[1, 2, 2],
+        &[2, 1, 2, 15],
+        &[0, 1],
+    ];
+    let mut random = Random::new(1);
+    let mut calls = 0;
+    for literals in lengths {
+        for distances in lengths {
+            for (first, noise) in [(255, 1), (255, 40), (256, 1), (256, 40)] {
+                let mut stream = Writer::default();
+                let earlier = [(286, 286), (30, 30)].map(|it| any_code(&mut random, it.0, it.1));
+                stream.dynamic(false, &earlier[0], &earlier[1]).end_block();
+                stream.dynamic(false, &with(literals, first, 260), &with(distances, 3, 9));
+                let stream = [stream.finish(), random.bytes(noise)].concat();
+                calls ^= check(&stream, b"abcdefghijklmnopqrstuvwxyz", &mut random);
+            }
+        }
+    }
+    assert_eq!(calls, 0x55b6_292c, "zlib-ng 2.3.3 stops elsewhere");
+}
+
+#[test]
 fn there_is_room_for_the_largest_tables() {
     // For 9 to 12 bits in the first table, and 7 to 10.
     let literals = [
@@ -337,6 +372,29 @@ fn a_small_window_is_all_that_is_kept_between_calls() {
 }
 
 #[test]
+fn a_match_that_is_out_of_reach_fails_when_there_is_room_for_it() {
+    // One never was within reach, and the other is not any more.
+    for (distance, room) in [(400, 300), (290, 301)] {
+        let mut stream = Writer::default();
+        let stream = stream
+            .stored(false, &[7; 300])
+            .fixed(true)
+            .copy(9, distance)
+            .finish();
+        let mut inflater = Inflater::with_window_bits(Container::Raw, 8).unwrap();
+        let mut input = &stream[..];
+        for room in [room, 0, 0] {
+            assert_eq!(
+                step(&mut inflater, &mut input, room, false).1,
+                Ok(Status::NeedsOutput)
+            );
+        }
+        let error = Err(Damage::DistanceTooFarBack.into());
+        assert_eq!(step(&mut inflater, &mut input, 1, false), (vec![], error));
+    }
+}
+
+#[test]
 fn a_small_window_is_all_that_is_kept_in_a_long_period() {
     let mut stream = Writer::default();
     stream.stored(false, &Random::new(1).bytes(600)).fixed(true);
@@ -350,6 +408,20 @@ fn a_small_window_is_all_that_is_kept_in_a_long_period() {
             _ => (600 + 200 * 258, End::Stream(stream.len())),
         };
         assert_eq!((result.bytes.len(), result.end), expected);
+    }
+}
+
+#[test]
+fn a_period_is_not_taken_for_longer_than_it_is() {
+    for odd in 500..1000 {
+        let mut start = vec![7; 1001];
+        start[odd] = 8;
+        let mut stream = Writer::default();
+        stream.stored(false, &start).fixed(true);
+        (0..130).for_each(|_| _ = stream.copy(258, 1));
+        let stream = stream.copy(258, WINDOW_SIZE).end_block().finish();
+        let result = run(&mut raw_with(&[]), &stream, false, || (9999, 99_999));
+        assert!(result.bytes == plain::inflate(&stream, &[]).bytes, "{odd}");
     }
 }
 
@@ -403,7 +475,7 @@ fn nothing_is_left_after_reset() {
         .literals(b"ab")
         .copy(3, 3)
         .finish();
-    let input = random.mixed(900, 512);
+    let input = random.mixed(34_000, 512);
     let whole = crate::deflate::raw(&input, 6, 8);
     let mut inflater = Inflater::new(Container::Raw);
     for cut in (0..200)
@@ -515,7 +587,7 @@ fn a_zlib_stream_keeps_to_the_window_in_its_header() {
     for (matches, trailing) in [(0, 0), (0, 40), (127, 40), (128, 40), (129, 40), (130, 40)] {
         for (distance, is_within) in [(256, true), (257, false), (258, false)] {
             let mut raw = Writer::default();
-            raw.stored(false, &[7; 300]).fixed(true);
+            raw.fixed(true).literals(&[7; 300]);
             (0..matches).for_each(|_| _ = raw.copy(258, 1));
             let raw = raw
                 .copy(258, distance)
@@ -654,6 +726,10 @@ fn window_bits_tell_the_container() {
         };
         let inflater = Inflater::from_zlib_window_bits(window_bits);
         assert_eq!(inflater.map(|it| it.container()), expected, "{window_bits}");
+    }
+    for window_bits in 0..=u8::MAX {
+        let inflater = Inflater::with_window_bits(Container::Raw, window_bits);
+        assert_eq!(inflater.is_ok(), (8..=15).contains(&window_bits));
     }
 }
 

@@ -333,6 +333,14 @@ fn a_dictionary_comes_first_and_once() {
     for container in [Container::Raw, Container::Zlib] {
         let mut deflater = new(container);
         assert_eq!(deflater.set_dictionary(b""), Ok(()));
+        let (mut with_empty, mut without) = (Vec::new(), Vec::new());
+        deflater
+            .deflate_to_vec(b"abc", &mut with_empty, Flush::Finish)
+            .unwrap();
+        compress(b"abc", &mut without, container, Options::default()).unwrap();
+        assert_eq!(with_empty, without);
+        deflater.reset();
+        assert_eq!(deflater.set_dictionary(b""), Ok(()));
         assert_eq!(deflater.set_dictionary(b"abc"), Ok(()));
         assert_eq!(deflater.set_dictionary(b"abc"), Err(Error::InvalidState));
         deflater.reset();
@@ -388,19 +396,34 @@ fn nothing_follows_the_last_block() {
 
 #[test]
 fn a_vec_grows_as_needed() {
-    let input = Random::new(1).bytes(200_000);
+    let input = Random::new(1).bytes(600_000);
     for level in [0, 1, 6] {
         let mut deflater = Deflater::new(Container::Gzip, options(level, 0, 15, 8)).unwrap();
-        let mut out = b"ab".to_vec();
+        let mut stream = Vec::new();
         for (piece, flush) in input
-            .chunks(70_000)
+            .chunks(200_000)
             .zip([Flush::None, Flush::Sync, Flush::Finish])
         {
-            out.shrink_to_fit();
+            let mut out = b"ab".to_vec();
             deflater.deflate_to_vec(piece, &mut out, flush).unwrap();
+            stream.extend(out.strip_prefix(b"ab").unwrap());
         }
-        assert_eq!(out[..2], *b"ab");
-        check_stream(Container::Gzip, &mut out[2..], &[], &input);
+        check_stream(Container::Gzip, &mut stream, &[], &input);
+    }
+}
+
+#[test]
+fn a_flush_into_a_vec_writes_one_marker() {
+    let mut random = Random::new(1);
+    for len in 1..40 {
+        let input: Vec<_> = (0..len).map(|_| 144 + random.below(112) as u8).collect();
+        for level in [0, 1, 6] {
+            let new = || Deflater::new(Container::Raw, options(level, 4, 15, 8)).unwrap();
+            let (mut expected, mut out) = (Vec::new(), Vec::new());
+            step(&mut new(), &mut &input[..], &mut expected, 99, Flush::Sync).unwrap();
+            new().deflate_to_vec(&input, &mut out, Flush::Sync).unwrap();
+            assert_eq!(out, expected);
+        }
     }
 }
 
@@ -409,12 +432,32 @@ fn a_whole_stream_fits_in_what_is_reserved_at_first() {
     let mut random = Random::new(1);
     for len in (0..40).chain([999, 65_535, 65_536, 200_000]) {
         let input: Vec<_> = (0..len).map(|_| 144 + random.below(112) as u8).collect();
-        for level in [0, 1, 2, 6, 9] {
-            let mut out = Vec::new();
-            compress(&input, &mut out, Container::Gzip, options(level, 4, 15, 8)).unwrap();
-            let block = if len < 9 { 5 } else { 3 };
-            assert_eq!(out.capacity(), len + usize::div_ceil(len, 8) + block + 18);
-            check_stream(Container::Gzip, &mut out, &[], &input);
+        for (container, around) in [
+            (Container::Raw, 0),
+            (Container::Zlib, 6),
+            (Container::Gzip, 18),
+        ] {
+            for level in [0, 1, 2, 6, 9] {
+                let mut out = Vec::new();
+                compress(&input, &mut out, container, options(level, 4, 15, 8)).unwrap();
+                let block = if len < 9 { 5 } else { 3 };
+                let reserved = len + usize::div_ceil(len, 8) + block + around;
+                // If nothing is left over, it takes another call to tell that the stream has ended.
+                assert!(out.capacity() == reserved || out.len() == reserved);
+                check_stream(container, &mut out, &[], &input);
+            }
         }
     }
+}
+
+#[test]
+fn the_defaults_are_those_of_zlib() {
+    let input = Random::new(1).mixed(200_000, 1 << 15);
+    let with = |options| {
+        let mut out = Vec::new();
+        compress(&input, &mut out, Container::Zlib, options).unwrap();
+        out
+    };
+    assert!(with(Options::default()) == with(options(6, 0, 15, 8)));
+    assert!(with(options(6, 0, 8, 8)) == with(options(6, 0, 9, 8)));
 }

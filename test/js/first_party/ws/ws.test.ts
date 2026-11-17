@@ -1956,6 +1956,26 @@ describe("client TLS options", () => {
       }).toEqual({ inherited: anonymous, getter: anonymous });
     });
 
+    it("runs the `tls` option's getters on that object", async () => {
+      using server = await serve(agent1);
+      class Options {
+        #ca = ca1;
+        #serverName = "agent1";
+        get ca() {
+          return this.#ca;
+        }
+        get serverName() {
+          return this.#serverName;
+        }
+      }
+      const connect = (own: object) => dial(server.url, { tls: Object.assign(new Options(), own) });
+      expect({
+        checkServerIdentity: await connect({ checkServerIdentity: () => undefined }),
+        pfx: await connect({ pfx, passphrase: "sample" }),
+        both: await connect({ pfx, passphrase: "sample", checkServerIdentity: () => new Error("pinned") }),
+      }).toEqual({ checkServerIdentity: anonymous, pfx: identified, both: "refused" });
+    });
+
     it("an own `pfx` in the `tls` option keeps the inherited options", async () => {
       using server = await serve(agent1);
       const connect = (inherited: object, own: object) =>

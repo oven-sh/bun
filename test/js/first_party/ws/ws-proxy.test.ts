@@ -1123,6 +1123,21 @@ describe("TLS options with an HttpsProxyAgent", () => {
     });
   });
 
+  test("the getters of the `proxy` option run on that object", async () => {
+    class Options {
+      #url: string;
+      tls = { ca: proxyCa, checkServerIdentity: () => undefined };
+      constructor(url: string) {
+        this.#url = url;
+      }
+      get url() {
+        return this.#url;
+      }
+    }
+    const { events, transport } = await connect("https", "ws", url => ({ proxy: new Options(url) }));
+    expect({ events, transport }).toEqual({ events: echoed("hello"), transport: "native" });
+  });
+
   test("an agent's `servername` and `checkServerIdentity` apply to the proxy", async () => {
     const checked: string[] = [];
     const pinned = Object.assign(new Error("pinned"), { code: "PINNED" });

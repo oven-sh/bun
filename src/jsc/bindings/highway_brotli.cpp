@@ -317,6 +317,8 @@ static void BrotliEstimateCosts(const uint32_t* HWY_RESTRICT common, const uint3
     }
 }
 
+#if HWY_MAX_BYTES >= 32
+
 static size_t BrotliRemovePairs(double* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT pairs, size_t count, uint32_t a, uint32_t b)
 {
     const DF64 d;
@@ -359,6 +361,81 @@ static size_t BrotliRemovePairs(double* HWY_RESTRICT costs, uint32_t* HWY_RESTRI
     pairs[1] = hn::ExtractLane(best_pair, 1);
     return kept;
 }
+
+#else
+
+// For each set of four elements of 8 bytes to leave out, the bytes of the others.
+struct Remainders {
+    alignas(16) uint8_t bytes[16][32];
+    uint8_t counts[16];
+};
+
+static constexpr Remainders kRemainders = [] {
+    Remainders all {};
+    for (size_t gone = 0; gone < 16; gone++) {
+        for (size_t byte = 0; byte < 32; byte++) {
+            if (gone >> (byte / 8) & 1)
+                continue;
+            all.bytes[gone][8 * all.counts[gone] + byte % 8] = byte;
+            all.counts[gone] += byte % 8 == 7;
+        }
+    }
+    return all;
+}();
+
+// `BROTLI_PAIR_GROUP` in src/highway/lib.rs at a time, since getting bits out of a mask takes long.
+static size_t BrotliRemovePairs(double* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT pairs, size_t count, uint32_t a, uint32_t b)
+{
+    const DF64 d;
+    const hn::Repartition<uint32_t, DF64> du;
+    const hn::Repartition<int32_t, DF64> di;
+    const hn::Repartition<uint8_t, DF64> d8;
+    double best_cost = 1e99;
+    uint32_t best_first = ~uint32_t { 0 }, best_second = best_first;
+    const auto apart = [](uint32_t first, uint32_t second) { return static_cast<int32_t>(second - first); };
+    const auto narrowed = [&](MF64 low, MF64 high) HWY_ATTR {
+        return hn::MaskFromVec(hn::ConcatEven(du, hn::BitCast(du, hn::VecFromMask(d, high)), hn::BitCast(du, hn::VecFromMask(d, low))));
+    };
+    const auto keep = [&](const void* from, uint64_t gone, void* to) HWY_ATTR {
+        const auto low = hn::LoadU(d8, static_cast<const uint8_t*>(from)), high = hn::LoadU(d8, static_cast<const uint8_t*>(from) + 16);
+        for (size_t at = 0; at < 32; at += 16) {
+            const auto bytes = hn::IndicesFromVec(d8, hn::Load(d8, kRemainders.bytes[gone] + at));
+            hn::StoreU(hn::TwoTablesLookupLanes(d8, low, high, bytes), d8, static_cast<uint8_t*>(to) + at);
+        }
+    };
+    size_t kept = 0;
+    for (size_t at = 0; at + 4 <= count; at += 4) {
+        const auto low_costs = hn::LoadU(d, costs + at), high_costs = hn::LoadU(d, costs + at + 2), best_costs = hn::Set(d, best_cost);
+        const auto low_pairs = hn::LoadU(du, pairs + 2 * at), high_pairs = hn::LoadU(du, pairs + 2 * at + 4);
+        const auto firsts = hn::ConcatEven(du, high_pairs, low_pairs), seconds = hn::ConcatOdd(du, high_pairs, low_pairs);
+        const auto have = [&](uint32_t id) HWY_ATTR { return hn::Or(hn::Eq(firsts, hn::Set(du, id)), hn::Eq(seconds, hn::Set(du, id))); };
+        const auto is_gone = hn::Or(have(a), have(b));
+        const auto is_cheaper = narrowed(hn::Lt(low_costs, best_costs), hn::Lt(high_costs, best_costs));
+        const auto is_equal = narrowed(hn::Eq(low_costs, best_costs), hn::Eq(high_costs, best_costs));
+        const auto is_nearer = hn::RebindMask(du, hn::Lt(hn::BitCast(di, hn::Sub(seconds, firsts)), hn::Set(di, apart(best_first, best_second))));
+        const uint64_t gone = hn::BitsFromMask(du, is_gone);
+        if (HWY_UNLIKELY(!hn::AllFalse(du, hn::AndNot(is_gone, hn::Or(is_cheaper, hn::And(is_equal, is_nearer)))))) {
+            for (size_t i = at; i < at + 4; i++) {
+                uint32_t &first = pairs[2 * i], &second = pairs[2 * i + 1];
+                const bool is_better = costs[i] < best_cost || (costs[i] == best_cost && apart(first, second) < apart(best_first, best_second));
+                if (is_better && !(gone >> (i - at) & 1)) {
+                    std::swap(costs[i], best_cost);
+                    std::swap(first, best_first);
+                    std::swap(second, best_second);
+                }
+            }
+        }
+        keep(costs + at, gone, costs + kept);
+        keep(pairs + 2 * at, gone, pairs + 2 * kept);
+        kept += kRemainders.counts[gone];
+    }
+    costs[0] = best_cost;
+    pairs[0] = best_first;
+    pairs[1] = best_second;
+    return kept;
+}
+
+#endif
 
 // `BROTLI_LEAF_SLACK` in src/highway/lib.rs.
 static constexpr size_t kLeafGroup = 16;

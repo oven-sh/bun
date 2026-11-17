@@ -1203,6 +1203,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     .map_or(b"no code" as &[u8], |c| c.to_bytes())
             ),
         );
+        // uSockets reports a handshake that our own close cut short.
+        if this.client.get().is_ending() {
+            return Ok(());
+        }
         let handshake_success = success == 1;
         let _guard = this.ref_guard();
         let _update = UpdatePollRefOnDrop(this);

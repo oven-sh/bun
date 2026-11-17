@@ -534,6 +534,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   );
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
   expect(() => b.fn({ capability: "heap", passVm: true })).toThrow("passVm: a capability has the VM");
+  // @ts-expect-error
+  expect(() => b.class({ rustPath: "T", construct: { passVm: true } })).toThrow("construct has no passVm");
+  for (const where of ["proto", "static"]) {
+    expect(() => b.class({ rustPath: "T", construct: {}, [where]: { f: { passVm: true } } })).toThrow(
+      "f: a method has no passVm",
+    );
+  }
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.

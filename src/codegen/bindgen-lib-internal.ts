@@ -3193,7 +3193,7 @@ export class FunctionDefinition {
 // ───────────────────────────── classes ─────────────────────────────
 
 /** A native function. */
-export interface FunctionField extends Omit<SignatureOptions, "rustPath" | "cppSymbol" | "cppInlineBody"> {
+export interface FunctionField extends Omit<SignatureOptions, "rustPath" | "cppSymbol" | "cppInlineBody" | "passVm"> {
   /** `&mut self` instead of `&self`. No member of such a class has `capability: "js"`, and the class is not an argument type. */
   mutates?: boolean;
   /** Also pass the wrapper, `this_value: JsWrapper<'a, Self>`. */
@@ -3300,7 +3300,7 @@ export type StaticField =
     >
   | Omit<GetterField, "cache" | "writable" | "passThis">;
 
-export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
+export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns" | "passVm"> {
   /** The constructor creates the object itself, with `structure.create(..)`, and returns it: it can then set internal fields. */
   passStructure?: boolean;
 }
@@ -3408,6 +3408,7 @@ export class Method extends Signature {
   readonly isProperty: boolean;
   constructor(name: string, options: FunctionField, isStatic = false, sharedThis = false, isProperty = true) {
     super(options, !isStatic && !!options.passThis, isProperty);
+    assert(!this.passVm, `${name}: a method has no passVm`);
     this.name = name;
     this.isProperty = isProperty;
     this.calledFromCpp = !!options.calledFromCpp;
@@ -3745,6 +3746,7 @@ export class ClassType extends NamedType {
     this.construct = options.construct
       ? new Signature(options.construct === "illegal" ? {} : resolve(options.construct))
       : null;
+    assert(!this.construct?.passVm, "construct has no passVm");
     this.passStructure = typeof options.construct === "object" && !!options.construct.passStructure;
     assert(
       !this.passStructure || this.construct!.capability !== "none",

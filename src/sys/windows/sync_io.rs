@@ -21,7 +21,17 @@ pub(crate) fn complete(
         Information: 0,
     };
     let io = &raw mut io;
-    let mut status = start(io);
+    let status = start(io);
+    // SAFETY: `io` is live until this function returns.
+    unsafe { wait(handle, io, status) }
+}
+
+/// SAFETY: `io` is the live status block of the request on `handle` that answered `status`.
+unsafe fn wait(
+    handle: HANDLE,
+    io: *const IO_STATUS_BLOCK,
+    mut status: NTSTATUS,
+) -> (NTSTATUS, usize) {
     while status == NTSTATUS::PENDING {
         // Every request on the handle resets its signal when it starts and sets it when it ends.
         let waited = WaitForSingleObject(handle, 100);

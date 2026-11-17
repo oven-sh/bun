@@ -318,28 +318,28 @@ pub(crate) fn writev(fd: Fd, vecs: &[IoVec<'_>]) -> Result<usize, i32> {
     sys_retry(|| unsafe { libc::syscall(libc::SYS_writev, fd.native(), raw, n) })
 }
 
-/// glibc's `LO_HI_LONG`. On LP64 the kernel's `pos_from_hilo` shifts `hi` out.
+/// As in glibc's `LO_HI_LONG`. On LP64 the kernel's `pos_from_hilo` shifts it out.
 #[inline(always)]
-fn lo_hi(off: i64) -> (libc::c_long, libc::c_long) {
-    (off as libc::c_long, ((off as u64) >> 32) as libc::c_long)
+fn high_half(off: i64) -> libc::c_long {
+    ((off as u64) >> 32) as libc::c_long
 }
 
 /// Raw `preadv(2)`.
 #[inline]
 pub(crate) fn preadv(fd: Fd, vecs: &[IoVecMut<'_>], off: i64) -> Result<usize, i32> {
     let (raw, n) = (IoVecMut::as_raw(vecs), vecs.len());
-    let (lo, hi) = lo_hi(off);
+    let hi = high_half(off);
     // SAFETY: `n` buffers, which may be written.
-    sys_retry(|| unsafe { libc::syscall(libc::SYS_preadv, fd.native(), raw, n, lo, hi) })
+    sys_retry(|| unsafe { libc::syscall(libc::SYS_preadv, fd.native(), raw, n, off, hi) })
 }
 
 /// Raw `pwritev(2)`.
 #[inline]
 pub(crate) fn pwritev(fd: Fd, vecs: &[IoVec<'_>], off: i64) -> Result<usize, i32> {
     let (raw, n) = (IoVec::as_raw(vecs), vecs.len());
-    let (lo, hi) = lo_hi(off);
+    let hi = high_half(off);
     // SAFETY: `n` buffers, which may be read.
-    sys_retry(|| unsafe { libc::syscall(libc::SYS_pwritev, fd.native(), raw, n, lo, hi) })
+    sys_retry(|| unsafe { libc::syscall(libc::SYS_pwritev, fd.native(), raw, n, off, hi) })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

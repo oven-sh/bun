@@ -20,6 +20,7 @@ pub(in crate::encoder) struct TwoPass {
     table: Table,
     items: Vec<Item>,
     runs: Vec<LongRun>,
+    run_literals: Vec<u8>,
 }
 
 /// Literals that are not among the items.
@@ -54,6 +55,8 @@ impl Histograms {
 struct Block {
     items: Vec<Item>,
     runs: Vec<LongRun>,
+    /// Those of all runs, so that what is written is what was counted.
+    run_literals: Vec<u8>,
     histograms: Histograms,
     /// How much of the whole input is in the output. Blocks to store wait for one that is compressed.
     written: usize,
@@ -116,6 +119,7 @@ impl TwoPass {
         let mut block = Block {
             items: core::mem::take(&mut self.items),
             runs: core::mem::take(&mut self.runs),
+            run_literals: core::mem::take(&mut self.run_literals),
             histograms: Histograms([[0; _]; 2]),
             written: 0,
         };
@@ -124,7 +128,7 @@ impl TwoPass {
             block.begin(end - start)?;
             let (ControlFlow::Continue(next_literal) | ControlFlow::Break(next_literal)) =
                 find_matches::<_, MIN_MATCH>(input, start, end, start, table, &mut block);
-            block.end(&input[..end], start, next_literal, trees, writer);
+            block.end(&input[..end], start, next_literal, trees, writer)?;
         }
         block.finish(input, writer);
         self.keep_memory_of(block);
@@ -133,6 +137,7 @@ impl TwoPass {
 
     fn keep_memory_of(&mut self, block: Block) {
         (self.items, self.runs) = (block.items, block.runs);
+        self.run_literals = block.run_literals;
     }
 }
 
@@ -140,6 +145,7 @@ impl Block {
     fn begin(&mut self, size: usize) -> Result<()> {
         self.items.clear();
         self.runs.clear();
+        self.run_literals.clear();
         self.histograms = Histograms([[0; _]; 2]);
         memory::try_reserve(&mut self.items, size)?;
         memory::try_reserve(&mut self.runs, size / MAX_LITERAL_ITEMS + 1)
@@ -169,7 +175,7 @@ impl Block {
         next_literal: usize,
         trees: &mut TreeBuilder,
         writer: &mut BitWriter,
-    ) {
+    ) -> Result<()> {
         if next_literal < input.len() {
             insert_last(input, next_literal..input.len(), self);
         }
@@ -177,14 +183,16 @@ impl Block {
         let in_items: u32 = counts.iter().sum();
         let in_runs: usize = self.runs.iter().map(|run| run.end - run.start).sum();
         if !is_worth_compressing(&input[start..], in_items as usize + in_runs) {
-            return;
+            return Ok(());
         }
+        memory::try_reserve(&mut self.run_literals, in_runs)?;
         self.store_rest_of(&input[..start], writer);
         self.written = input.len();
         write_plain_header(writer, MetaBlockKind::Compressed, input.len() - start);
         for run in &self.runs {
-            self.histograms.add(&input[run.start..run.end], usize::from);
+            (self.run_literals).extend_from_slice(&input[run.start..run.end]);
         }
+        self.histograms.add(&self.run_literals, usize::from);
         let literal_counts: [u32; LITERAL_SYMBOLS] = self.histograms.counts_from(0);
         let mut codes = ItemCodes([Code::EMPTY; _]);
         trees.build_and_write_fast(
@@ -200,13 +208,15 @@ impl Block {
         }
         build_and_write_codes(histogram, 0, codes.symbols(), trees, writer);
 
-        let mut written = 0;
+        let (mut written, mut unwritten) = (0, self.run_literals.as_slice());
         for run in &self.runs {
+            let (literals, rest) = unwritten.split_at(run.end - run.start);
             write_items(&self.items[written..run.items_before], &codes, writer);
-            write_literals(&input[run.start..run.end], &codes, writer);
-            written = run.items_before;
+            write_literals(literals, &codes, writer);
+            (written, unwritten) = (run.items_before, rest);
         }
         write_items(&self.items[written..], &codes, writer);
+        Ok(())
     }
 }
 

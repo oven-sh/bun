@@ -3,5 +3,11 @@
 namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeEventTargetAddListener);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeEventTargetAssert);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeEventTargetListenerCount);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeEventTargetEventNames);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeEventTargetRemoveAllListeners);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeEventTargetEmit);
 
 }

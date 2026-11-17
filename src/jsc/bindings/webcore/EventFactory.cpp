@@ -33,6 +33,12 @@
 
 namespace WebCore {
 
+// Out of line: inlined, it gives every case of the switch below a larger frame.
+static NEVER_INLINE JSC::JSValue createCustomEventWrapper(JSDOMGlobalObject* globalObject, Ref<Event>&& impl)
+{
+    return createWrapper<CustomEvent>(globalObject, WTF::move(impl));
+}
+
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Event>&& impl)
 {
     switch (impl->eventInterface()) {
@@ -41,6 +47,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     }
     case CloseEventInterfaceType: {
         return createWrapper<CloseEvent>(globalObject, WTF::move(impl));
+    }
+    case CustomEventInterfaceType: {
+        return createCustomEventWrapper(globalObject, WTF::move(impl));
     }
     case ErrorEventInterfaceType: {
         return createWrapper<ErrorEvent>(globalObject, WTF::move(impl));

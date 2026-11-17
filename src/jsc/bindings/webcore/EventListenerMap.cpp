@@ -69,6 +69,7 @@ void EventListenerMap::clear()
     m_entries.clear();
 }
 
+// In the order in which each type got its first listener. MessagePort's eventNames() returns this order, as node does.
 Vector<AtomString> EventListenerMap::eventTypes() const
 {
     return m_entries.map([](auto& entry) {

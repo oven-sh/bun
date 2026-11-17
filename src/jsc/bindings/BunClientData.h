@@ -50,6 +50,7 @@ namespace WebCore {
 class ExtendedDOMClientIsoSubspaces;
 class ExtendedDOMIsoSubspaces;
 class JSBuiltinFunctions;
+class NodeStyleEventValue;
 
 class DOMWrapperWorld;
 }
@@ -268,6 +269,9 @@ public:
     std::atomic<unsigned> idleCollectionsPending { 0 };
     // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
     RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
+
+    // The innermost NodeStyleEventValue (JSEventListener.h) on this VM's stack.
+    NodeStyleEventValue* nodeStyleEventValue { nullptr };
 
     void* bunVM;
     // A count on the Rust VmHandle for this VM: what any *other* thread uses to post work / ref the loop (never bunVM).

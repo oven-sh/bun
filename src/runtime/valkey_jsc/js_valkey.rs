@@ -8,13 +8,15 @@ use bun_boringssl as boringssl;
 use bun_core::{Utf8Bytes, strings};
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_io::JsKeepAlive;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue,
-    JsCell, JsResult, Strong,
+    self as jsc, GlobalRef, JSArray, JSFunction, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong,
+    JSValue, JsCell, JsResult, Strong,
 };
 use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_sql_jsc::shared::server_identity;
+use bun_url::PercentEncoding;
 use bun_uws as uws;
 
 use super::hold::{Dial, Hold, Object, SocketDial};
@@ -31,7 +33,26 @@ bun_output::define_scoped_log!(debug, RedisJS, visible);
 
 type Socket = uws::AnySocket;
 
+use crate::generated_bindgen::valkey::Bun__Valkey__callOnconnect;
 pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
+
+fn is_handler(value: JSValue) -> bool {
+    value.without_async_context().is_callable()
+}
+
+/// A microtask, which would give the handler no `this`.
+pub(crate) fn call_onconnect<'a>(
+    cx: &mut JsScope<'a>,
+    handler: JsLocal<'a>,
+    client: JsLocal<'a>,
+) -> JsResult<()> {
+    let client = client.to_js();
+    let hello = js::hello_get_cached(client).unwrap_or(JSValue::UNDEFINED);
+    handler
+        .to_js()
+        .call(cx.global(), client, &[client, hello])?;
+    Ok(())
+}
 
 impl<'a> Object<'a> {
     /// `None` until the first `subscribe()`.
@@ -42,6 +63,13 @@ impl<'a> Object<'a> {
 
     fn subscription_count(self) -> u32 {
         self.subscription_callback_map().map_or(0, JSMap::size)
+    }
+
+    #[cold]
+    fn has_handler(self) -> bool {
+        (js::onconnect_get_cached(self.to_js()).iter())
+            .chain(&js::onclose_get_cached(self.to_js()))
+            .any(|&it| is_handler(it))
     }
 
     fn take_connection_promise(self, global: &JSGlobalObject) -> Option<&'a mut JSPromise> {
@@ -339,29 +367,35 @@ impl JSValkeyClient {
         })
     }
 
-    pub(crate) fn constructor(
-        cx: &mut JsScope<'_>,
-        url: JsLocal<'_>,
-        options: JsLocal<'_>,
-    ) -> JsResult<RefPtr<Self>> {
-        Self::create_no_js_no_pubsub(&cx.js_thread(), url.to_js(), options.to_js())
+    pub(crate) fn constructor<'a>(
+        cx: &mut JsScope<'a>,
+        structure: JsStructure<'a, Self>,
+        url: JsLocal<'a>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        let (client, check_server_identity) =
+            Self::create_no_js_no_pubsub(&cx.js_thread(), url.to_js(), options.to_js())?;
+        let this = structure.create(&cx.heap, client);
+        if let Some(callback) = check_server_identity {
+            js::check_server_identity_set_cached(this.to_js(), cx.global(), callback);
+        }
+        Ok(this)
     }
 
-    /// Create a Valkey client that does not have an associated JS object.
+    /// Create a Valkey client that does not have an associated JS object, and find `tls.checkServerIdentity` for one.
     pub(crate) fn create_no_js_no_pubsub(
         cx: &bun_jsc::JsThread<'_>,
         url: JSValue,
         options: JSValue,
-    ) -> JsResult<RefPtr<JSValkeyClient>> {
-        let vm_ref = cx.global().bun_vm();
-
+    ) -> JsResult<(RefPtr<JSValkeyClient>, Option<JSValue>)> {
         let url_slice = if !url.is_undefined_or_null() {
             url.to_utf8(cx.global())?
         } else {
-            let env = vm_ref.env_loader();
+            let env = cx.global().bun_vm().env_loader();
+            let get = |name: &[u8]| env.get(name).filter(|it| !it.is_empty());
             Utf8Bytes::Borrowed(
-                env.get(b"REDIS_URL")
-                    .or_else(|| env.get(b"VALKEY_URL"))
+                get(b"REDIS_URL")
+                    .or_else(|| get(b"VALKEY_URL"))
                     .unwrap_or(b"valkey://localhost:6379"),
             )
         };
@@ -434,7 +468,7 @@ impl JSValkeyClient {
             match valkey::Protocol::MAP.get(protocol_slice) {
                 Some(v) => *v,
                 None => return Err(cx.global().throw(format_args!(
-                    "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, redis+unix, redis+tls+unix",
+                    "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, valkey+tls, redis+unix, valkey+unix, redis+tls+unix, valkey+tls+unix",
                 ))),
             }
         } else {
@@ -494,14 +528,18 @@ impl JSValkeyClient {
             }
         };
 
-        let Options { mut config, tls } = if options.is_object() {
+        let Options {
+            mut config,
+            tls,
+            check_server_identity,
+        } = if options.is_object() {
             Options::from_js(cx.global(), options)?
         } else {
             Options::default()
         };
 
-        config.username = username_utf8.slice().into();
-        config.password = password_utf8.slice().into();
+        config.username = PercentEncoding::decode_lenient_alloc(username_utf8.slice());
+        config.password = PercentEncoding::decode_lenient_alloc(password_utf8.slice());
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
         config.database = match uri {
@@ -540,7 +578,7 @@ impl JSValkeyClient {
             valkey::TLS::None if uri.is_tls() => valkey::TLS::Enabled,
             tls => tls,
         };
-        Ok(Self::new(cx, config, address, tls))
+        Ok((Self::new(cx, config, address, tls), check_server_identity))
     }
 
     pub(crate) fn clone_without_connecting(&self, cx: &bun_jsc::JsThread<'_>) -> RefPtr<Self> {
@@ -625,6 +663,7 @@ impl JSValkeyClient {
             global,
             value.to_js().with_graph_context_if_needed(global),
         );
+        self.update_poll_ref(this_value.into());
     }
     pub(crate) fn get_onclose(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::onclose_get_cached(this_value.to_js())
@@ -642,6 +681,7 @@ impl JSValkeyClient {
             global,
             value.to_js().with_graph_context_if_needed(global),
         );
+        self.update_poll_ref(this_value.into());
     }
 
     fn reset_connection_timeout(&self) {
@@ -663,7 +703,7 @@ impl JSValkeyClient {
             ("Connection", RedisError::ConnectionTimeout)
         };
         let message = format!("{what} timeout reached after {ms}ms");
-        self.fail(valkey_error_to_js(
+        self.fail_for_now(valkey_error_to_js(
             &self.global_object,
             message.as_bytes(),
             error,
@@ -696,6 +736,12 @@ impl JSValkeyClient {
     pub(crate) fn ensure_dialing(&self, object: Object<'_>) {
         if let Some(attempt) = self.client.with_mut(Client::first_dial) {
             bun_core::hint::cold();
+            self.dial(object, attempt);
+        }
+    }
+
+    pub(crate) fn preconnect(&self, object: Object<'_>) {
+        if let Some(attempt) = self.client.with_mut(Client::preconnect) {
             self.dial(object, attempt);
         }
     }
@@ -875,7 +921,7 @@ impl JSValkeyClient {
     fn dispatch(&self, object: Object<'_>, event: Event<JSPromiseStrong>) -> JsResult<()> {
         let global = &self.global_object;
         let _exit = match event {
-            Event::Ignored | Event::Broken { .. } => None,
+            Event::Ignored | Event::Broken { .. } | Event::Busy { .. } => None,
             _ => Some(self.vm.enter_event_loop_scope()),
         };
         match event {
@@ -883,6 +929,9 @@ impl JSValkeyClient {
             Event::Broken { message, error } => {
                 debug!("failed: {}: {:?}", bstr::BStr::new(&message), error);
                 self.fail(valkey_error_to_js(global, &message, error))
+            }
+            Event::Busy { message, error } => {
+                self.fail_for_now(valkey_error_to_js(global, &message, error))
             }
             Event::Connected(mut hello) => self.on_connected(object, &mut hello),
             Event::Resolved {
@@ -950,10 +999,11 @@ impl JSValkeyClient {
             }
         };
         js::hello_set_cached(this_value, global_object, hello);
-        if let Some(on_connect) = js::onconnect_get_cached(this_value)
-            .filter(|handler| handler.without_async_context().is_callable())
+        if let Some(on_connect) = js::onconnect_get_cached(this_value).filter(|&it| is_handler(it))
         {
-            global_object.queue_microtask(on_connect, &[this_value, hello]);
+            let job = Bun__Valkey__callOnconnect;
+            let job = JSFunction::create(global_object, "", job, 2, Default::default());
+            global_object.queue_microtask(job, &[on_connect, this_value]);
         }
 
         if let Some(promise) = object.take_connection_promise(global_object) {
@@ -990,6 +1040,14 @@ impl JSValkeyClient {
         // The one code whose close event has run when the call returns.
         let closed = self.close_socket(uws::CloseCode::Failure);
         rejected.and(closed)
+    }
+
+    fn fail_for_now(&self, error: JSValue) -> JsResult<()> {
+        if !self.client.with_mut(Client::abandon_handshake) {
+            return self.fail(error);
+        }
+        self.dial.fail(Strong::create(error, &self.global_object));
+        self.close_socket(uws::CloseCode::Failure)
     }
 
     fn on_socket_closed(&self) -> JsResult<()> {
@@ -1059,9 +1117,7 @@ impl JSValkeyClient {
         if let Some(promise) = object.take_connection_promise(global_object) {
             promise.reject(global_object, Ok(error))?;
         }
-        if let Some(on_close) = js::onclose_get_cached(this_value)
-            .filter(|handler| handler.without_async_context().is_callable())
-        {
+        if let Some(on_close) = js::onclose_get_cached(this_value).filter(|&it| is_handler(it)) {
             on_close.call(global_object, this_value, &[error])?;
         }
         Ok(())
@@ -1084,7 +1140,9 @@ impl JSValkeyClient {
         let is_idle = client.is_connected()
             && !client.has_pending_commands()
             && object.subscription_count() == 0;
-        if client.is_active() && !is_idle {
+        // Until then nobody waits for `--redis-preconnect`.
+        let is_awaited = || client.is_used() || object.has_handler();
+        if client.is_active() && !is_idle && is_awaited() {
             self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
             self.poll_ref.unref(bun_io::js_vm_ctx());
@@ -1148,7 +1206,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &JSValkeyClient,
         ssl: &mut boringssl::c::SSL,
     ) -> boringssl::ServerIdentity {
-        let rejects = this.tls.reject_unauthorized(this.vm);
+        let rejects = this.tls.reject_unauthorized(this.vm)
+            && (this.dial.hold()).is_none_or(|hold| {
+                js::check_server_identity_get_cached(hold.object().to_js()).is_none()
+            });
         let hostname = rejects.then(|| Self::configured_hostname(this));
         boringssl::server_identity(ssl, hostname)
     }
@@ -1220,6 +1281,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // Certificate chain is valid; verify the hostname matches the
                 // certificate.
                 let hostname = Self::configured_hostname(this);
+                if let Some(callback) = js::check_server_identity_get_cached(hold.object().to_js())
+                {
+                    return Self::ask_about_identity(this, &hold, callback, socket, hostname);
+                }
                 // With no `SSL*` there is no certificate to match: fail closed.
                 let identity_ok = hostname.is_empty()
                     || (!ssl_ptr.is_null()
@@ -1243,11 +1308,47 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // The same check, made inside the handshake (`server_identity`).
             let hostname = Self::configured_hostname(this);
             return Self::fail_handshake_with_altname_error(this, hostname);
+        } else if ssl_error.error_no == uws::us_bun_verify_error_t::PEER_DISCONNECTED {
+            // How a full server looks over TLS.
+            let error = crate::socket::uws_jsc::verify_error_to_js(&ssl_error, &this.global_object);
+            let _exit = this.vm.enter_event_loop_scope();
+            return this.fail_for_now(error);
         } else {
             // if we are here is because the server rejected us, and the error_no is the cause of
             // this no matter if reject_unauthorized is false, because we were disconnected by the
             // server
             return Self::fail_handshake_with_verify_error(this, &ssl_error);
+        }
+        Ok(())
+    }
+
+    /// `tls.checkServerIdentity` replaces the name check.
+    fn ask_about_identity(
+        this: &JSValkeyClient,
+        hold: &Rc<Hold>,
+        callback: JSValue,
+        socket: SocketType<SSL>,
+        hostname: &[u8],
+    ) -> JsResult<()> {
+        // A renegotiation, in which BoringSSL refuses another certificate.
+        if !this.client.get().is_dialing() {
+            return Ok(());
+        }
+        // As in Node, for a unix socket.
+        let hostname: &[u8] = if hostname.is_empty() {
+            b"localhost"
+        } else {
+            hostname
+        };
+        let socket = Self::socket(socket);
+        let verdict = server_identity::check(&this.global_object, callback, &socket, hostname);
+        // It closed this socket, and may have dialed the next.
+        if !(this.dial.hold()).is_some_and(|current| Rc::ptr_eq(&current, hold)) {
+            return Ok(());
+        }
+        match verdict {
+            Ok(()) => this.start(),
+            Err(reason) => return Self::fail_handshake(this, reason.to_error().unwrap_or(reason)),
         }
         Ok(())
     }
@@ -1327,19 +1428,29 @@ impl<const SSL: bool> SocketHandler<SSL> {
 // ───────────────────────────────────────────────────────────────────────────
 
 // Parse JavaScript options into Valkey client options
-#[derive(Default)]
 struct Options {
     config: Config,
     tls: valkey::TLS,
+    check_server_identity: Option<JSValue>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        use bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING as FLAG;
+        Self {
+            config: Config {
+                enable_auto_pipelining: !FLAG.get().unwrap_or(false),
+                ..Config::default()
+            },
+            tls: valkey::TLS::None,
+            check_server_identity: None,
+        }
+    }
 }
 
 impl Options {
     fn from_js(global_object: &JSGlobalObject, options_obj: JSValue) -> JsResult<Options> {
         let mut this = Options::default();
-        this.config.enable_auto_pipelining =
-            !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
-                .get()
-                .unwrap_or(false);
 
         if let Some(idle_timeout) =
             options_obj.get_optional_int::<u32>(global_object, "idleTimeout")?
@@ -1385,11 +1496,14 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
+                this.check_server_identity = server_identity::callback_of(global_object, tls)?;
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer.
                 if let Some(ssl_config) =
                     SSLConfig::from_js(global_object.bun_vm(), global_object, tls, false)?
                 {
                     this.tls = valkey::TLS::Custom(Box::new(ssl_config));
+                } else if this.check_server_identity.is_some() {
+                    this.tls = valkey::TLS::Enabled;
                 } else {
                     return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
                 }

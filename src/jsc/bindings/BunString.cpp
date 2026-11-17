@@ -694,14 +694,16 @@ extern "C" BunString URL__href(WTF::URL* url)
     return Bun::toStringRef(url->string()).leak();
 }
 
+/// Percent-encoded: user() gives a null string for bytes that are not UTF-8.
 extern "C" BunString URL__username(WTF::URL* url)
 {
-    return Bun::toStringRef(url->user()).leak();
+    return Bun::toStringRef(url->encodedUser().toString()).leak();
 }
 
+/// Percent-encoded.
 extern "C" BunString URL__password(WTF::URL* url)
 {
-    return Bun::toStringRef(url->password()).leak();
+    return Bun::toStringRef(url->encodedPassword().toString()).leak();
 }
 
 /// Returns the host WITHOUT the port.

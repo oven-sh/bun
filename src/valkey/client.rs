@@ -41,14 +41,14 @@ impl Default for Config {
 }
 
 enum State {
-    /// Never dialed.
+    /// Never dialed, or only by a [`Client::preconnect`] that failed.
     Idle,
     /// The socket is connecting, or in its TLS handshake.
     Dialing,
     /// HELLO is written, and SELECT behind it if there is a database.
     Hello,
-    /// HELLO was accepted; the reply to SELECT is due.
-    Select,
+    /// HELLO was accepted with this; the reply to SELECT is due. Boxed to keep the state's tag a plain byte.
+    Select(Box<RESPValue>),
     Ready,
     /// The socket is closing, or the dial gave none: [`Client::lost`] is due.
     Ending(End),
@@ -75,6 +75,8 @@ enum Expect {
     Reply(Reply),
     /// Whichever acknowledgement comes next: a count would shift every later reply once a peer sent fewer.
     Ack,
+    /// Once confirmed, the next handshake selects this database.
+    Database(u32),
 }
 
 struct InFlight<P> {
@@ -93,6 +95,12 @@ pub struct Client<P> {
     config: Config,
     state: State,
     retries: u32,
+    /// The dials that follow replace a lost connection, and script did not ask for them.
+    was_ready: bool,
+    /// For the next handshake. What script selected holds only while the client reconnects by itself.
+    database: u32,
+    /// Script sent a command, connected or closed. Until then nobody would hear why the client gave up.
+    is_used: bool,
     is_subscriber: bool,
     output: OffsetByteList,
     input: OffsetByteList,
@@ -110,7 +118,7 @@ pub enum Input<'a> {
 
 pub enum Event<P> {
     Ignored,
-    /// With the reply to HELLO.
+    /// With the reply to HELLO, once the handshake is complete.
     Connected(RESPValue),
     Resolved {
         promise: P,
@@ -128,6 +136,11 @@ pub enum Event<P> {
     Unsubscribed(Acked<P>),
     /// For [`Client::fail`].
     Broken {
+        message: Box<[u8]>,
+        error: RedisError,
+    },
+    /// The server cannot take the handshake now: for [`Client::abandon_handshake`], else as [`Event::Broken`].
+    Busy {
         message: Box<[u8]>,
         error: RedisError,
     },
@@ -196,7 +209,10 @@ fn refused<P>(message: &[u8], error: RedisError) -> Event<P> {
         b"ERR max number of clients",
     ];
     if PASSING.iter().any(|prefix| message.starts_with(prefix)) {
-        broken(message, RedisError::ConnectionClosed)
+        Event::Busy {
+            message: message.into(),
+            error: RedisError::ConnectionClosed,
+        }
     } else {
         broken(message, error)
     }
@@ -205,9 +221,12 @@ fn refused<P>(message: &[u8], error: RedisError) -> Event<P> {
 impl<P> Client<P> {
     pub fn new(config: Config) -> Self {
         Self {
+            database: config.database,
             config,
             state: State::Idle,
             retries: 0,
+            was_ready: false,
+            is_used: false,
             is_subscriber: false,
             output: OffsetByteList::default(),
             input: OffsetByteList::default(),
@@ -222,11 +241,15 @@ impl<P> Client<P> {
     }
 
     pub fn is_connected(&self) -> bool {
-        matches!(self.state, State::Select | State::Ready)
+        matches!(self.state, State::Ready)
     }
 
-    fn is_ready(&self) -> bool {
-        matches!(self.state, State::Ready)
+    pub fn is_dialing(&self) -> bool {
+        matches!(self.state, State::Dialing)
+    }
+
+    pub fn is_used(&self) -> bool {
+        self.is_used
     }
 
     pub fn is_ending(&self) -> bool {
@@ -282,6 +305,7 @@ impl<P> Client<P> {
         match self.state {
             State::Backoff | State::Closed => {
                 self.retries = 0;
+                self.was_ready = false;
                 self.state = State::Backoff;
             }
             // The close of a dial without a TLS context is still due, and no retry can build one.
@@ -290,19 +314,22 @@ impl<P> Client<P> {
             State::Idle
             | State::Dialing
             | State::Hello
-            | State::Select
+            | State::Select(_)
             | State::Ready
             | State::Ending(End::Policy | End::Final) => {}
         }
     }
 
     pub fn close(&mut self) -> Close {
+        self.is_used = true;
+        self.was_ready = false;
+        self.database = self.config.database;
         let close = match self.state {
             State::Idle | State::Closed | State::Ending(End::Final | End::Failed) => {
                 return Close::Nothing;
             }
             State::Ending(End::Policy | End::Requested) => Close::Nothing,
-            State::Dialing | State::Hello | State::Select | State::Ready => Close::Socket,
+            State::Dialing | State::Hello | State::Select(_) | State::Ready => Close::Socket,
             State::Backoff => Close::Retry(Attempt(())),
         };
         self.state = State::Ending(End::Requested);
@@ -310,6 +337,12 @@ impl<P> Client<P> {
     }
 
     pub fn first_dial(&mut self) -> Option<Attempt> {
+        self.is_used = true;
+        self.preconnect()
+    }
+
+    /// A dial that script did not ask for. If it fails for good, the first command dials again.
+    pub fn preconnect(&mut self) -> Option<Attempt> {
         matches!(self.state, State::Idle).then(|| self.dial())
     }
 
@@ -334,10 +367,7 @@ impl<P> Client<P> {
         let State::Dialing = self.state else { return };
         self.state = State::Hello;
         let Config {
-            username,
-            password,
-            database,
-            ..
+            username, password, ..
         } = &self.config;
         let user: &[u8] = if username.is_empty() {
             b"default"
@@ -348,9 +378,9 @@ impl<P> Client<P> {
         let anonymous = username.is_empty() && password.is_empty();
         let out = &mut self.output.byte_list;
         command::encode(b"HELLO", &hello[..if anonymous { 1 } else { 4 }], out);
-        if *database > 0 {
+        if self.database > 0 {
             let mut digits = bun_core::fmt::ItoaBuf::new();
-            let database = bun_core::fmt::itoa(&mut digits, *database);
+            let database = bun_core::fmt::itoa(&mut digits, self.database);
             command::encode(b"SELECT", &[database], out);
         }
     }
@@ -362,7 +392,7 @@ impl<P> Client<P> {
             State::Idle | State::Backoff | State::Ending(End::Failed) | State::Closed => None,
             State::Dialing
             | State::Hello
-            | State::Select
+            | State::Select(_)
             | State::Ready
             | State::Ending(End::Policy | End::Requested | End::Final) => {
                 self.state = State::Ending(End::Failed);
@@ -371,10 +401,22 @@ impl<P> Client<P> {
         }
     }
 
+    /// For a reason that passes. Whether that costs only this attempt: the caller closes the socket, else it fails.
+    #[must_use]
+    pub fn abandon_handshake(&mut self) -> bool {
+        let retries = self.was_ready
+            && matches!(self.state, State::Dialing | State::Hello | State::Select(_));
+        if retries {
+            self.state = State::Ending(End::Policy);
+        }
+        retries
+    }
+
     /// The TLS session broke. `Some` if that counts as a lost connection and not as a failed handshake.
     #[must_use]
     pub fn session_broke(&mut self) -> Option<Vec<P>> {
-        (self.is_connected() && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
+        let said_hello = matches!(self.state, State::Select(_) | State::Ready);
+        (said_hello && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
     }
 
     /// The socket closed, or there never was one.
@@ -399,7 +441,14 @@ impl<P> Client<P> {
             }
             Reason::RetriesUsedUp
         };
-        self.state = State::Closed;
+        self.database = self.config.database;
+        if self.is_used {
+            self.state = State::Closed;
+        } else {
+            self.state = State::Idle;
+            self.retries = 0;
+            self.was_ready = false;
+        }
         Lost::ForGood {
             reason,
             pending: self.take_pending(),
@@ -408,6 +457,10 @@ impl<P> Client<P> {
 
     fn take_in_flight(&mut self) -> Vec<P> {
         let in_flight = core::mem::take(&mut self.in_flight);
+        // Script was leaving the database that it selected before.
+        if (in_flight.iter()).any(|it| matches!(it.expect, Expect::Database(_))) {
+            self.database = self.config.database;
+        }
         in_flight.into_iter().map(|it| it.promise).collect()
     }
 
@@ -439,6 +492,9 @@ impl<P> Client<P> {
     ) -> Sent {
         let expect = match ACKS.get_ascii_case_insensitive(name) {
             Some(_) => Expect::Ack,
+            None if matches!(name.len(), 5 | 6) => {
+                (self.database_after(name, args)).map_or(Expect::Reply(reply), Expect::Database)
+            }
             None => Expect::Reply(reply),
         };
         let request = InFlight { expect, promise };
@@ -446,8 +502,7 @@ impl<P> Client<P> {
         let batches = can_pipeline && self.config.enable_auto_pipelining;
         let connected = self.is_connected();
 
-        let goes_now =
-            !batches && self.is_ready() && self.queue.is_empty() && self.in_flight.is_empty();
+        let goes_now = !batches && connected && self.queue.is_empty() && self.in_flight.is_empty();
 
         let mut bytes = Vec::new();
         let out = if goes_now {
@@ -472,10 +527,22 @@ impl<P> Client<P> {
         }
     }
 
+    /// RESET forgets the choice, as it does the rest of the session.
+    #[inline(never)]
+    fn database_after<A: AsRef<[u8]>>(&self, name: &[u8], args: &[A]) -> Option<u32> {
+        match args {
+            [database] if name.eq_ignore_ascii_case(b"SELECT") => Some(
+                bun_core::fmt::parse_int(database.as_ref(), 10).unwrap_or(self.config.database),
+            ),
+            [] if name.eq_ignore_ascii_case(b"RESET") => Some(self.config.database),
+            _ => None,
+        }
+    }
+
     /// Moves the head of the queue to [`Self::output`] if it travels alone. Whether [`Self::batch`] is due.
     #[must_use]
     pub fn advance(&mut self) -> bool {
-        if !self.output.is_empty() || !self.is_ready() {
+        if !self.output.is_empty() || !self.is_connected() {
             return false;
         }
         if self.in_flight.is_empty()
@@ -575,7 +642,10 @@ impl<P> Client<P> {
         match self.state {
             State::Ready => self.on_reply(value),
             State::Hello => self.on_hello(value),
-            State::Select => self.on_select(value),
+            State::Select(ref mut hello) => {
+                let hello = core::mem::replace(&mut **hello, RESPValue::Null);
+                self.on_select(value, hello)
+            }
             State::Idle | State::Dialing | State::Ending(_) | State::Backoff | State::Closed => {
                 Event::Ignored
             }
@@ -606,7 +676,11 @@ impl<P> Client<P> {
             {
                 broken(b"Server does not support RESP3", UnsupportedProtocol)
             }
-            RESPValue::SimpleString(_) | RESPValue::Map(_) => self.connected(value),
+            RESPValue::SimpleString(_) | RESPValue::Map(_) if self.database > 0 => {
+                self.state = State::Select(Box::new(value));
+                Event::Ignored
+            }
+            RESPValue::SimpleString(_) | RESPValue::Map(_) => self.selected(value),
             _ => broken(
                 b"Authentication failed with unexpected response",
                 AuthenticationFailed,
@@ -614,12 +688,9 @@ impl<P> Client<P> {
         }
     }
 
-    fn on_select(&mut self, value: RESPValue) -> Event<P> {
+    fn on_select(&mut self, value: RESPValue, hello: RESPValue) -> Event<P> {
         match value {
-            RESPValue::SimpleString(text) if *text == *b"OK" => {
-                self.state = State::Ready;
-                Event::Ignored
-            }
+            RESPValue::SimpleString(text) if *text == *b"OK" => self.selected(hello),
             RESPValue::Error(message) => refused(&message, RedisError::InvalidCommand),
             RESPValue::SimpleString(_) => broken(
                 b"SELECT command failed with non-OK response",
@@ -632,13 +703,11 @@ impl<P> Client<P> {
         }
     }
 
-    fn connected(&mut self, hello: RESPValue) -> Event<P> {
-        self.state = if self.config.database > 0 {
-            State::Select
-        } else {
-            State::Ready
-        };
+    /// The session is on its database.
+    fn selected(&mut self, hello: RESPValue) -> Event<P> {
+        self.state = State::Ready;
         self.retries = 0;
+        self.was_ready = true;
         Event::Connected(hello)
     }
 
@@ -665,6 +734,18 @@ impl<P> Client<P> {
                 value: RESPValue::Boolean(int > 0),
                 as_buffer: false,
             },
+            (RESPValue::SimpleString(text), Expect::Database(database)) => {
+                // QUEUED: whether EXEC runs it is not tracked.
+                self.database = match &*text {
+                    b"OK" | b"RESET" => database,
+                    _ => self.config.database,
+                };
+                Event::Resolved {
+                    promise,
+                    value: RESPValue::SimpleString(text),
+                    as_buffer: false,
+                }
+            }
             (value, expect) => Event::Resolved {
                 promise,
                 value,
@@ -708,7 +789,7 @@ impl<P> Client<P> {
             return Event::Ignored;
         }
         match self.in_flight.front().map(|it| it.expect) {
-            None | Some(Expect::Reply(_)) if !self.is_subscriber => {
+            None | Some(Expect::Reply(_) | Expect::Database(_)) if !self.is_subscriber => {
                 self.answer(RESPValue::Push(push))
             }
             _ => broken(

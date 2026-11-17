@@ -1979,6 +1979,57 @@ describe.concurrent("test environment with the real", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The window's reportError() is for the code of the file. A builtin module never calls it: under vitest, what a
+  // listener of a Node module throws is an 'uncaughtException', and the runner takes it whatever listens at the window.
+  // With --isolate a module first loads after the window has put its reportError() on globalThis.
+  test.each([
+    ["jsdom", []],
+    ["happy-dom", []],
+    ["happy-dom", ["--isolate"]],
+  ])(
+    "%s: what a listener of a builtin module throws fails the test, whatever the window hears %j",
+    async (name, args) => {
+      using dir = project({
+        "report.test.js": `// ${VITEST} ${name}
+        import { test } from "bun:test";
+        import { channel } from "node:diagnostics_channel";
+        import { once } from "node:events";
+        import net from "node:net";
+        test("a subscriber that throws", async () => {
+          window.addEventListener("error", event => event.preventDefault());
+          const dc = channel("test-environment");
+          dc.subscribe(() => {
+            throw new Error("from the subscriber");
+          });
+          dc.publish({});
+          await new Promise(resolve => setImmediate(resolve));
+        });
+        test("a 'data' listener that throws", async () => {
+          window.addEventListener("error", event => event.preventDefault());
+          const server = net.createServer(socket => socket.end("x"));
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const client = net.connect(server.address().port, "127.0.0.1");
+          client.on("data", () => {
+            throw new Error("from the 'data' listener");
+          });
+          await once(client, "close");
+          server.close();
+        });
+        test("the next test", () => {});
+      `,
+      });
+      const { stderr, exitCode } = await bunTest(String(dir), ...args);
+      expect(stderr).toContain("error: from the subscriber");
+      expect(stderr).toContain("error: from the 'data' listener");
+      expect(verdicts(stderr)).toEqual({
+        "a subscriber that throws": "fail",
+        "a 'data' listener that throws": "fail",
+        "the next test": "pass",
+      });
+      expect(exitCode).toBe(1);
+    },
+  );
+
   describe("a window closed by a file", () => {
     const file = (name: string, code: string) => `// ${VITEST} ${name}
       import { test, expect } from "bun:test";

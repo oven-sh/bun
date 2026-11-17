@@ -1436,6 +1436,43 @@ describe("backpressure", () => {
         child.kill();
       }
     });
+
+    // Node's modules never call a reportError that the program has put on globalThis.
+    it("a 'finish' listener that throws is an uncaught exception for a program with a reportError of its own", async () => {
+      const child = spawn(
+        process.execPath,
+        [
+          "-e",
+          `const log = [];
+          globalThis.reportError = error => void log.push("reportError of the program: " + error.message);
+          process.on("uncaughtException", error => void log.push("uncaughtException: " + error.message));
+          const server = require("node:http").createServer((req, res) => {
+            res.on("finish", () => {
+              log.push("finish");
+              throw new Error("from 'finish'");
+            });
+            res.on("close", () => {
+              log.push("close");
+              console.log(JSON.stringify(log));
+            });
+            res.end("body");
+          });
+          const [clientSide, serverSide] = require("node:stream").duplexPair();
+          server.emit("connection", serverSide);
+          clientSide.resume();
+          clientSide.end("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n");`,
+        ],
+        { stdio: ["ignore", "pipe", "inherit"] },
+      );
+      try {
+        let stdout = "";
+        child.stdout!.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+        expect(await once(child, "close")).toEqual([0, null]);
+        expect(JSON.parse(stdout)).toEqual(["finish", "uncaughtException: from 'finish'", "close"]);
+      } finally {
+        child.kill();
+      }
+    });
   });
 
   // Request-body direction: once the handler stops reading the body (req.pause(),

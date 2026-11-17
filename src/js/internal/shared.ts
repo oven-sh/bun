@@ -154,6 +154,7 @@ ObjectFreeze(kInternalSendOptions);
 // Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
 // (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
 // https://github.com/nodejs/node/blob/main/src/api/callback.cc
+// Builtin modules report what a listener threw with this, never with the global `reportError`, which a program replaces.
 const reportUncaughtException: (error: unknown) => void = $newCppFunction(
   "BunProcess.cpp",
   "jsFunctionReportUncaughtException",
@@ -476,6 +477,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  reportUncaughtException,
   isInsideNodeModules,
   resistStopPropagation,
 

@@ -322,7 +322,7 @@ pub fn appears_to_be_binary(text: &[u8], is_jsx: bool) -> bool {
 #[cfg(test)]
 mod entries_tests {
     use super::parser::ENTRIES;
-    use super::{summarize, summarize_top_level};
+    use super::{CompileParseOptions, parse_for_compile, summarize, summarize_top_level};
     use bun_sema::atom::Interner;
     use bun_sema::hir::rare;
     use bun_sema::session::Session;
@@ -343,6 +343,37 @@ mod entries_tests {
         let file = file.expect("the text has no errors");
         let leaves_out = file.rare_syntax & rare::LEFT_OUT != 0;
         (ENTRIES.get() - before, file.stmts.len(), leaves_out)
+    }
+
+    /// The parse of a whole text is not entered again for a legacy HTML comment: the tree is whole, with the comment left out, also where the
+    /// parse reports the comment because an `export` proves a module.
+    #[test]
+    fn a_compiled_text_with_a_legacy_html_comment_is_entered_once() {
+        let texts = [
+            ("/project/a.cjs", "value = 1 <!-- c\n;", false),
+            ("/project/a.js", "<!-- c\nvalue = 1;\n--> c", false),
+            ("/project/a.mjs", "var a = 1;\n--> c\nexport {};", true),
+        ];
+        for (path, text, is_reported) in texts {
+            let session = Session::new();
+            let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+            let options = CompileParseOptions {
+                path: path.as_bytes(),
+                script_kind: None,
+                experimental_decorators: false,
+                every_file_is_a_module: false,
+                reads_jsdoc: false,
+                ignores_pure_comments: false,
+            };
+            let before = ENTRIES.get();
+            let file = parse_for_compile(arena, &options, text.as_bytes(), &atoms);
+            let entries = ENTRIES.get() - before;
+            assert_eq!(
+                (entries, file.has_errors, file.has_parse_diagnostics),
+                (1, false, is_reported),
+                "{path}"
+            );
+        }
     }
 
     #[test]

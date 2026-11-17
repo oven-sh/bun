@@ -9081,11 +9081,6 @@ declare module "bun" {
      * };
      * ```
      *
-     * The module runs in the working directory of the process that registered it, with symlinks
-     * resolved. It does not run if that directory is later deleted, renamed or out of the
-     * scheduler's reach. The `preload` of a `bunfig.toml` in the directory runs too: register
-     * from a directory that only you can write to, or call `process.chdir()` first.
-     *
      * ### Cron expression syntax
      *
      * Five fields: `minute hour day-of-month month day-of-week`.

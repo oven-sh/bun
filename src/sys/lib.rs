@@ -8467,18 +8467,6 @@ pub fn exists(path: &[u8]) -> bool {
     buf.0[..path.len()].copy_from_slice(path);
     exists_z(ZStr::nul_terminate(&mut buf, path.len()))
 }
-/// Sticky and group- or world-writable, like `/tmp`: other users can create files in it. True if `stat` fails.
-#[cfg(unix)]
-pub fn is_shared_directory(dir: &[u8]) -> bool {
-    !stat(&bun_core::ZBox::from_bytes(dir)).is_ok_and(|st| {
-        let mode = st.st_mode as Mode;
-        mode & S::ISVTX == 0 || mode & (S::IWGRP | S::IWOTH) == 0
-    })
-}
-#[cfg(not(unix))]
-pub fn is_shared_directory(_: &[u8]) -> bool {
-    false
-}
 /// `moveFileZ`. Routes through
 /// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
 /// delete-tree + rename); on EISDIR removes the dest dir and

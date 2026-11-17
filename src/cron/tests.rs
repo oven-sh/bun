@@ -18,7 +18,6 @@ fn job<'a>(schedule: &str, exe: &'a [u8], script: &'a [u8]) -> Registration<'a> 
         schedule: parse(schedule),
         exe,
         script,
-        cwd: "/c&d",
     }
 }
 
@@ -215,27 +214,8 @@ fn titles() {
 fn crontab_entry() {
     assert_eq!(
         crontab::entry(&job("@weekly", b"/x/bun", b"/a b/\xff.ts")),
-        "# bun-cron: my_Job-1\n0 0 * * 0 cd '/c&d' && '/x/bun' run --cron-title=my_Job-1 --cron-period='0 0 * * 0' '/a b/\u{fffd}.ts'\n"
+        "# bun-cron: my_Job-1\n0 0 * * 0 '/x/bun' run --cron-title=my_Job-1 --cron-period='0 0 * * 0' '/a b/\u{fffd}.ts'\n"
     );
-}
-
-#[test]
-fn working_directory_in_task_xml() {
-    for (cwd, escaped) in [
-        ("/", "/"),
-        ("/a b/caf\u{e9}", "/a b/caf\u{e9}"),
-        ("/O'Brien/100%", "/O&apos;Brien/100%"),
-        ("/<a>&\"b\"", "/&lt;a&gt;&amp;&quot;b&quot;"),
-        ("C:\\", "C:\\"),
-    ] {
-        let job = Registration {
-            cwd,
-            ..job("@daily", b"", b"")
-        };
-        let task = schtasks::task_xml(&job).unwrap();
-        let (open, close) = ("<WorkingDirectory>", "</WorkingDirectory>");
-        assert_eq!(between(&task, open, close), escaped);
-    }
 }
 
 #[test]

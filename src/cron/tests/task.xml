@@ -67,7 +67,6 @@
 <Exec>
 <Command>C:\a&amp;b\bun.exe</Command>
 <Arguments>run --cron-title=my_Job-1 --cron-period="5 1,13 1,15 2 1" "C:\&lt;&quot;it&apos;s&quot;&gt;\�.ts"</Arguments>
-<WorkingDirectory>/c&amp;d</WorkingDirectory>
 </Exec>
 </Actions>
 </Task>

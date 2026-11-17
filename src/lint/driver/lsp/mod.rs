@@ -217,7 +217,17 @@ impl Root {
             if queue.is_closed {
                 return None;
             }
-            let job = queue.requests.pop_front();
+            // The lint of a document goes before the code actions of it, which use what the lint found.
+            let its_lint = match queue.requests.front() {
+                Some(Job::Actions { document, .. }) => queue.lints.iter().position(
+                    |it| matches!(it, Job::Lint { document: other, .. } if other.serial == document.serial),
+                ),
+                _ => None,
+            };
+            let job = match its_lint {
+                Some(at) => queue.lints.remove(at),
+                None => queue.requests.pop_front(),
+            };
             let job = job.or_else(|| queue.lints.pop_front()).or_else(|| {
                 if queue.typed_thread.is_some() {
                     return None;
@@ -235,14 +245,16 @@ impl Root {
     }
 
     /// Waits for a document to lint with types, on the second thread of the session `run`. `None`: the session is
-    /// over.
-    fn take_typed(&self, run: u64) -> Option<Arc<Document>> {
+    /// over. `is_linting` says whether the thread has one, to whoever holds the queue.
+    fn take_typed(&self, run: u64, is_linting: &AtomicBool) -> Option<Arc<Document>> {
         let mut queue = self.queue.lock();
+        is_linting.store(false, Ordering::Relaxed);
         loop {
             if queue.is_closed || queue.typed_thread != Some(run) {
                 return None;
             }
             if let Some(document) = queue.typed.pop_front() {
+                is_linting.store(true, Ordering::Relaxed);
                 return Some(document);
             }
             self.has_work.wait_guarded(&mut queue);
@@ -553,10 +565,31 @@ impl<'s> Server<'s> {
         }
     }
 
-    /// What the thread of `root` does. A folder gets an engine per generation, which is freed once the thread is done
-    /// with it.
-    fn work(&self, root: &Root) {
-        let mut next = root.take();
+    /// What a thread of `root` does, from `first` on, or from the first job there is. A folder gets an engine per
+    /// generation, which is freed once the thread is done with it. The thread ends when the root is closed, or when it
+    /// has left the jobs that follow to another one.
+    fn work<'d, 'scope>(
+        &'d self,
+        scope: &'scope std::thread::Scope<'scope, 'd>,
+        root: &Arc<Root>,
+        first: Option<(Job, u64)>,
+    ) {
+        // `None`: another thread goes on with `later`.
+        let hand_over = |later: (Job, u64)| {
+            let slot = Arc::new(Guarded::new(Some(later)));
+            let (theirs, root) = (Arc::clone(&slot), Arc::clone(root));
+            let thread = std::thread::Builder::new().stack_size(STACK);
+            let spawned = thread.spawn_scoped(scope, move || {
+                bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun LSP"));
+                let first = theirs.lock().take();
+                self.work(scope, &root, first);
+            });
+            match spawned {
+                Ok(_) => None,
+                Err(_) => slot.lock().take(),
+            }
+        };
+        let mut next = first.or_else(|| root.take());
         while let Some(first) = next.take() {
             let realms: Option<Arc<dyn Realms + 's>> = match root.is_folder {
                 true => (self.process.engines)().map(Arc::from),
@@ -568,26 +601,26 @@ impl<'s> Server<'s> {
                     false => b"Plugins only run for files in a workspace folder",
                 };
                 let no_engine = NoEngine::new(why);
-                next = self.work_with(root, &no_engine, Some(&no_engine), first);
+                next = self.work_with(root, &no_engine, Some(&no_engine), first, &hand_over);
                 continue;
             };
             self.realms.lock().push(Arc::clone(&realms));
-            next = self.work_with(root, &*realms, None, first);
+            next = self.work_with(root, &*realms, None, first, &hand_over);
             realms.free_all();
             self.realms.lock().retain(|it| !Arc::ptr_eq(it, &realms));
         }
     }
 
     /// Does `first` and what follows it, as long as the configurations are those of `generation`. Returns the first job that
-    /// is for later ones. `no_engine`: `engine`, if it is one that refuses. A session is made and the flags of `bun fmt`
-    /// are read while that half is on in the settings of the editor: when they change, both are made again, with the
-    /// same engine.
+    /// is for later ones, unless `hand_over` took it. `no_engine`: `engine`, if it is one that refuses. The session is
+    /// made when the settings of the editor first have linting on, and stays for the rest of the generation.
     fn work_with(
         &self,
         root: &Root,
         engine: &dyn Engine,
         no_engine: Option<&NoEngine>,
         (first, generation): (Job, u64),
+        hand_over: &dyn Fn((Job, u64)) -> Option<(Job, u64)>,
     ) -> Option<(Job, u64)> {
         let run_script = |script: &Script| {
             match self.is_in_a_folder(script.cwd) {
@@ -606,95 +639,61 @@ impl<'s> Server<'s> {
             ..*self.environment
         };
         // The realms of the engine keep the numbers the host gives their plugins and selectors: one host for as long
-        // as the engine, whatever the settings do.
+        // as the engine.
         let js_plugins = Host::with_engine(engine, &paths::to_native(root.path.clone()));
         let mut worker = Worker {
             server: self,
             root,
+            environment,
             no_engine,
             generation,
+            formats: None,
             formatter: None,
             known: FxHashMap::default(),
             told: Vec::new(),
         };
-        let halves = |settings: Settings| (settings.lints, settings.formats);
-        // Shown once: the sessions that the settings make one after the other refuse for the same reason.
-        let mut refused = None;
-        let mut next = Some(first);
-        while let Some(first) = next.take() {
-            let (lints, formats) = halves(*self.settings.lock());
-            let options = lints.then(|| self.lint_options_of(root));
-            if let Some(Err(why)) = &options {
-                worker.show_error_once(Half::Lint, why);
-            }
-            let prepared = formats.then(|| {
-                let options = self.format_options_of(root)?;
-                Prepared::new(&options, environment)
-            });
-            worker.formatter = match prepared {
-                Some(Ok(prepared)) => Some(prepared),
-                Some(Err(why)) => {
-                    worker.show_format_failure(&why);
-                    None
-                }
-                None => None,
-            };
-            // `Ok`: the first job of a later generation, if any. `Err`: one of this generation, taken after the
-            // settings changed.
-            let all = |session: Option<&Session>| {
-                let mut job = first;
-                loop {
-                    worker.handle(session, job);
-                    match root.take() {
-                        Some((taken, now)) if now == generation => {
-                            if halves(*self.settings.lock()) != (lints, formats) {
-                                return Err(taken);
-                            }
-                            job = taken;
-                        }
-                        other => return Ok(other),
-                    }
-                }
-            };
-            let done = match options {
-                Some(Ok(options)) => {
-                    session::with_session(&options, environment, &js_plugins, |session| {
-                        let refusal = session.refusal();
-                        if refusal.is_some() && refusal != refused {
-                            self.show_error(Half::Lint, refusal.as_deref().unwrap_or_default());
-                            refused.clone_from(&refusal);
-                        }
-                        match refusal {
-                            Some(_) => all(None),
-                            None => self.with_typed_thread(root, session, generation, || {
-                                all(Some(session))
-                            }),
-                        }
-                    })
-                }
-                _ => all(None),
-            };
-            match done {
-                Ok(later) => return later,
-                Err(job) => next = Some(job),
+        let mut job = first;
+        while !self.settings.lock().lints {
+            worker.follow_format_setting();
+            worker.handle(None, job);
+            match root.take() {
+                Some((taken, now)) if now == generation => job = taken,
+                other => return other,
             }
         }
-        None
+        let options = match self.lint_options_of(root) {
+            Ok(options) => options,
+            Err(why) => {
+                worker.show_error_once(Half::Lint, &why);
+                return worker.run(None, job);
+            }
+        };
+        session::with_session(&options, environment, &js_plugins, |session| {
+            if let Some(refusal) = session.refusal() {
+                self.show_error(Half::Lint, &refusal);
+                return worker.run(None, job);
+            }
+            let jobs = || worker.run(Some(session), job);
+            self.with_typed_thread(root, session, generation, hand_over, jobs)
+        })
     }
 
     /// Calls `then`, the work of the thread of `root` with `session`, while a second thread lints with types what it
-    /// queues in [`Queue::typed`]. The second thread ends when `then` returns. If it cannot be started, the first takes
-    /// the queue itself.
-    fn with_typed_thread<R>(
+    /// queues in [`Queue::typed`]. If the second cannot be started, the first takes the queue itself. The second ends
+    /// when `then` returns, after the lint that it is at, which nothing interrupts: `hand_over` gets the job that
+    /// `then` returns, so that no request waits for that lint.
+    fn with_typed_thread(
         &self,
         root: &Root,
         session: &Session,
         generation: u64,
-        then: impl FnOnce() -> R,
-    ) -> R {
+        hand_over: &dyn Fn((Job, u64)) -> Option<(Job, u64)>,
+        then: impl FnOnce() -> Option<(Job, u64)>,
+    ) -> Option<(Job, u64)> {
         fn is_sync<T: Sync>() {}
         // The session is shared by both threads.
         is_sync::<Session<'_>>();
+        let is_linting = &AtomicBool::new(false);
         let mut queue = root.queue.lock();
         queue.sessions += 1;
         let run = queue.sessions;
@@ -704,24 +703,34 @@ impl<'s> Server<'s> {
             let thread = std::thread::Builder::new().stack_size(STACK);
             let spawned = thread.spawn_scoped(scope, move || {
                 bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun LSP types"));
-                self.lint_typed(root, session, generation, run);
+                self.lint_typed(root, session, generation, run, is_linting);
             });
             if spawned.is_err() {
                 root.change(|queue| queue.typed_thread = None);
             }
-            let result = then();
+            let later = then();
             root.change(|queue| queue.typed_thread = None);
-            result
+            match is_linting.load(Ordering::Relaxed) {
+                true => later.and_then(hand_over),
+                false => later,
+            }
         })
     }
 
     /// What the second thread of the session `run` does: lints with types each document of [`Queue::typed`], and hands
     /// what it finds to the thread of the root as a [`Job::Typed`], which keeps what is known of the documents and
     /// what the user was told.
-    fn lint_typed(&self, root: &Root, session: &Session, generation: u64, run: u64) {
+    fn lint_typed(
+        &self,
+        root: &Root,
+        session: &Session,
+        generation: u64,
+        run: u64,
+        is_linting: &AtomicBool,
+    ) {
         // The stack bounds of the recursion guard are set here, as for the thread of the root.
         bun_core::Output::Source::configure_thread();
-        while let Some(document) = root.take_typed(run) {
+        while let Some(document) = root.take_typed(run, is_linting) {
             if !self.is_latest(&document) {
                 continue;
             }
@@ -749,13 +758,16 @@ impl<'s> Server<'s> {
 struct Worker<'w, 's> {
     server: &'w Server<'s>,
     root: &'w Root,
+    environment: &'w Environment<'w>,
     /// The engine, if it is one that refuses.
     no_engine: Option<&'w NoEngine>,
     /// [`Queue::generation`] of the configurations.
     generation: u64,
+    /// What the setting of the editor was when `formatter` was made or dropped.
+    formats: Option<bool>,
     /// `bun fmt` in the root with its flags, configs and ignore files read, made when formatting is turned on. It lasts
-    /// as long as the worker: a generation, or until the settings change. `None`: formatting is off, or it could not
-    /// start, which the user was told.
+    /// until the generation ends or formatting is turned off. `None`: formatting is off, or it could not start, which
+    /// the user was told.
     formatter: Option<Prepared<'w>>,
     /// By URI.
     known: FxHashMap<Vec<u8>, Known>,
@@ -765,6 +777,39 @@ struct Worker<'w, 's> {
 }
 
 impl Worker<'_, '_> {
+    /// Does `job` and the jobs of the generation that follow it. Returns the first job of a later one, if any.
+    fn run(&mut self, session: Option<&Session>, mut job: Job) -> Option<(Job, u64)> {
+        loop {
+            self.follow_format_setting();
+            self.handle(session, job);
+            match self.root.take() {
+                Some((taken, now)) if now == self.generation => job = taken,
+                other => return other,
+            }
+        }
+    }
+
+    /// Makes the formatter when the setting of the editor turns formatting on, and drops it when it turns it off.
+    fn follow_format_setting(&mut self) {
+        let formats = self.server.settings.lock().formats;
+        if self.formats == Some(formats) {
+            return;
+        }
+        self.formats = Some(formats);
+        let prepared = formats.then(|| {
+            let options = self.server.format_options_of(self.root)?;
+            Prepared::new(&options, self.environment)
+        });
+        self.formatter = match prepared {
+            Some(Ok(prepared)) => Some(prepared),
+            Some(Err(why)) => {
+                self.show_format_failure(&why);
+                None
+            }
+            None => None,
+        };
+    }
+
     fn tell_once(&mut self, line: Vec<u8>, tell: impl FnOnce(&[u8])) {
         if !self.told.contains(&line) {
             tell(&line);
@@ -1122,9 +1167,10 @@ impl<'d> Desk<'d, '_, '_> {
         });
         let (server, of_thread) = (self.server, Arc::clone(&root));
         let thread = std::thread::Builder::new().stack_size(STACK);
-        let spawned = thread.spawn_scoped(self.scope, move || {
+        let scope = self.scope;
+        let spawned = thread.spawn_scoped(scope, move || {
             bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun LSP"));
-            server.work(&of_thread)
+            server.work(scope, &of_thread, None)
         });
         if spawned.is_err() {
             server.show_error(server.half(), b"Could not start a thread");

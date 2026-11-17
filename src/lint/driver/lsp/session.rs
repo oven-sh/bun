@@ -5,7 +5,7 @@ use crate::cli::Options;
 use crate::configs::{Flavor, Loader};
 use crate::inferred::Inferred;
 use crate::lint::Context;
-use crate::results::FileResult;
+use crate::results::{Counts, FileResult};
 use crate::run::{
     Environment, Fatal, Linted, NotBuiltIn, Pool, Run, Sinks, Timing, checks_types, store_for,
 };
@@ -227,6 +227,11 @@ impl Session<'_> {
             .as_mut()
             .map_or(&mut [][..], |it| &mut it.results[..]);
         typed::report_not_type_checked(&context, results);
+        for result in results.iter_mut() {
+            if LintMessage::hide_claimed(&mut result.messages) {
+                result.counts = Counts::of(&result.messages);
+            }
+        }
         let not_type_checked = typed::warnings_about_not_type_checked(&context, results);
         // Told the way the one-shot tells them, through the loader, which `notes` reads.
         sinks.report(

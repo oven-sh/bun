@@ -1,6 +1,7 @@
 // `bun lint --no-script --lsp`: the language server over standard input and output, as an editor uses it. It lints and formats.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 import { applyEdits, Client, format, initialize, open, uriOf, type Message, type TextEdit } from "../lsp-client";
@@ -915,6 +916,98 @@ describe.concurrent("bun lint --lsp", () => {
         action.edit.changes?.[uri] ?? action.edit.documentChanges.find((it: any) => it.textDocument.uri === uri).edits;
       // What `bun lint --type-aware --fix` writes: `prefer-const` is on by default and fixes the `let` of `no-var`.
       expect(applyEdits(text, editsOf(all.result[0]))).toBe("const n: number = 1;\nconst m = n;\nconsole.log(m);\n");
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // A rule and the rule with types that replaces it both report: `bun lint` shows what the one with types says.
+  test(
+    "publishes one problem where a rule and its version with types report the same",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({
+          rules: { "no-throw-literal": "error", "typescript/only-throw-error": "error" },
+        }),
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "a.ts": "",
+      });
+      await using client = new Client([...command, "--type-aware"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.ts");
+      open(client, path, 'throw "a";\n');
+      const codes = (it: Message) => it.params.diagnostics.map((diagnostic: any) => diagnostic.code);
+      // Without types first, then with them.
+      expect(codes(await client.diagnostics(path))).toEqual(["no-throw-literal"]);
+      expect(codes(await client.diagnostics(path))).toEqual(["@typescript-eslint/only-throw-error"]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // A lint with types cannot be interrupted. Here a plugin holds the second lint of the document, which is the one
+  // with types, until the test lets it go: a configuration that changes meanwhile must not make a request wait for it.
+  test.skipIf(isWindows)(
+    "answers a request after a configuration change while a lint with types is under way",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "demo/hold": "error", "typescript/no-floating-promises": "error" },
+        }),
+        "plugin.mjs": `
+        import { appendFileSync, existsSync, statSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+        const at = name => join(import.meta.dirname, name);
+        export default {
+          meta: { name: "demo" },
+          rules: {
+            hold: {
+              create() {
+                return {
+                  Program() {
+                    appendFileSync(at("calls"), "x");
+                    if (statSync(at("calls")).size !== 2) return;
+                    writeFileSync(at("held"), "");
+                    while (!existsSync(at("release"))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+                  },
+                };
+              },
+            },
+          },
+        };`,
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "a.ts": "",
+      });
+      await using client = new Client([...command, "--type-aware"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.ts");
+      const text = "export const  a = 1\n";
+      open(client, path, text);
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      const held = join(String(dir), "held");
+      while (!existsSync(held)) await Bun.sleep(5);
+      try {
+        client.notify("workspace/didChangeWatchedFiles", {
+          changes: [{ uri: uriOf(String(dir), ".oxlintrc.json"), type: 2 }],
+        });
+        const formatted = await format(client, path);
+        expect(formatted.error).toBeUndefined();
+        expect(applyEdits(text, formatted.result)).toBe("export const a = 1;\n");
+      } finally {
+        writeFileSync(join(String(dir), "release"), "");
+      }
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();

@@ -2,8 +2,9 @@ use core::cell::Cell;
 
 use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
 use crate::jsc::{
-    JSArrayIterator, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
-    VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc, js_error_to_mysql,
+    AutoFlush as _, JSArrayIterator, JSGlobalObject, JSValue, JsRef, JsResult,
+    MarkedArgumentBuffer, VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc,
+    js_error_to_mysql,
 };
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
@@ -415,6 +416,8 @@ impl JSMySQLQuery {
             );
             return Ok(());
         }
+        // A parameter can wait for the reply to a request that is still in the write buffer.
+        connection.register_auto_flusher();
         let this_value = self.this_value.get().try_get();
         let binding_value = this_value
             .and_then(js::binding_get_cached)

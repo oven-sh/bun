@@ -1194,6 +1194,41 @@ describe("scripted server", () => {
     }
   });
 
+  test("a query is sent while a parameter of the one behind it runs the event loop", async () => {
+    const commands: number[] = [];
+    const { port, server } = await mysqlServer({
+      onCommand(socket, payload) {
+        commands.push(payload[0]);
+        if (payload[0] === COM_STMT_EXECUTE) socket.write(mysqlOkPacket(1));
+        if (payload[0] === COM_STMT_PREPARE) socket.write(mysqlStmtPrepareOk(1, commands.length, 0, 0));
+      },
+    });
+    try {
+      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+      await sql.connect();
+      let built: Promise<unknown> | undefined;
+      let settled = false;
+      let settledMeanwhile: boolean | undefined;
+      const parameter = {
+        toJSON() {
+          built = runEventLoopUntil(async () => {
+            // The flush, the command, the reply.
+            for (let i = 0; i < 3; i++) await loopbackFence();
+            settledMeanwhile = settled;
+          });
+          return 1;
+        },
+      };
+      // It has to be prepared, so the parameter is read when the COM_STMT_EXECUTE has just been buffered.
+      const first = sql`DO 1`.then(() => void (settled = true));
+      await Promise.all([first, outcome(sql`DO ${parameter}`)]);
+      await built;
+      expect(settledMeanwhile).toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
   /** For what ends the process or patches a built-in. `serve(onCommand)` gives the URL of a server. */
   async function runWithServer(script: string) {
     const prelude = /* js */ `

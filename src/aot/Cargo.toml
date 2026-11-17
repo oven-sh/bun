@@ -42,7 +42,6 @@ bun_trim.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
-bun_zstd.workspace = true
 bstr.workspace = true
 bitflags.workspace = true
 rustc-hash = "2"

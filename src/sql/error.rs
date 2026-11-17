@@ -5,8 +5,6 @@ pub enum Error {
     #[error("UnknownFieldType")]
     UnknownFieldType,
     #[error(transparent)]
-    MySQL(#[from] crate::mysql::protocol::any_mysql_error::Error),
-    #[error(transparent)]
     Postgres(#[from] crate::postgres::any_postgres_error::AnyPostgresError),
 }
 
@@ -16,7 +14,6 @@ impl Error {
         match self {
             Self::InvalidCharacter => "InvalidCharacter",
             Self::UnknownFieldType => "UnknownFieldType",
-            Self::MySQL(e) => <&'static str>::from(e),
             Self::Postgres(e) => <&'static str>::from(e),
         }
     }

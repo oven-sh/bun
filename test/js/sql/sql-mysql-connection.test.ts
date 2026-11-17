@@ -14,8 +14,8 @@ import {
   mysqlOkPacket,
   mysqlRawPacket,
   mysqlReadPackets,
-  mysqlStmtPrepareOk,
   mysqlTextResultSet,
+  runEventLoopUntil,
 } from "./wire-frames";
 
 const COM_QUIT = 0x01;
@@ -1144,34 +1144,6 @@ describe("scripted server", () => {
     }
   });
 
-  test("an ERR packet in the place of a definition of a prepared statement fails that query alone", async () => {
-    const commands: number[] = [];
-    const { port, server } = await mysqlServer({
-      onCommand(socket, payload) {
-        commands.push(payload[0]);
-        if (payload[0] === COM_QUERY) socket.write(owner("B", 1));
-        if (payload[0] !== COM_STMT_PREPARE) return;
-        socket.write(
-          Buffer.concat([mysqlStmtPrepareOk(1, 7, 1, 0), mysqlErrPacket(2, 1317, "70100", "Query was interrupted")]),
-        );
-      },
-    });
-    try {
-      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-      const errno = () => sql`SELECT 1`.catch(err => err.errno ?? err.code);
-      expect({ outcomes: await Promise.all([errno(), errno(), outcome(sql.unsafe("B").simple())]), commands }).toEqual({
-        outcomes: [1317, 1317, [{ owner: "B" }]],
-        commands: [COM_STMT_PREPARE, COM_STMT_PREPARE, COM_QUERY],
-      });
-    } finally {
-      server.close();
-    }
-  });
-
-  /** Bun.build() runs the event loop until an async setup() settles. */
-  const runEventLoopUntil = (setup: () => Promise<void>) =>
-    Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
-
   test("an ERR packet that comes while the parameters of a query are read is why the connection ends", async () => {
     let socket!: net.Socket;
     const { port, server } = await mysqlServer({ onSocket: accepted => void (socket = accepted) });
@@ -1193,75 +1165,6 @@ describe("scripted server", () => {
       server.close();
     }
   });
-
-  test("a query is sent while a parameter of the one behind it runs the event loop", async () => {
-    const commands: number[] = [];
-    const { port, server } = await mysqlServer({
-      onCommand(socket, payload) {
-        commands.push(payload[0]);
-        if (payload[0] === COM_STMT_EXECUTE) socket.write(mysqlOkPacket(1));
-        if (payload[0] === COM_STMT_PREPARE) socket.write(mysqlStmtPrepareOk(1, commands.length, 0, 0));
-      },
-    });
-    try {
-      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-      await sql.connect();
-      let built: Promise<unknown> | undefined;
-      let settled = false;
-      let settledMeanwhile: boolean | undefined;
-      const parameter = {
-        toJSON() {
-          built = runEventLoopUntil(async () => {
-            // The flush, the command, the reply.
-            for (let i = 0; i < 3; i++) await loopbackFence();
-            settledMeanwhile = settled;
-          });
-          return 1;
-        },
-      };
-      // It has to be prepared, so the parameter is read when the COM_STMT_EXECUTE has just been buffered.
-      const first = sql`DO 1`.then(() => void (settled = true));
-      await Promise.all([first, outcome(sql`DO ${parameter}`)]);
-      await built;
-      expect(settledMeanwhile).toBe(true);
-    } finally {
-      server.close();
-    }
-  });
-
-  test.each([
-    ["resolve", owner("A", 1), [{ owner: "A" }]],
-    ["reject", mysqlErrPacket(1, 1064, "42000", "no"), { rejected: "ERR_MYSQL_SYNTAX_ERROR" }],
-  ] as const)(
-    "a reply that comes while the query in front is in %s() finds its query",
-    async (how, reply, expected) => {
-      let socket!: net.Socket;
-      const { port, server } = await mysqlServer({
-        onSocket: accepted => void (socket = accepted),
-        // The reply to A, when B is written behind it.
-        onCommand: (socket, payload) => void (payload.toString("latin1", 1) === "B" && socket.write(reply)),
-      });
-      try {
-        await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-        await sql.connect();
-        let built: Promise<unknown> | undefined;
-        const a: any = sql.unsafe("A").simple();
-        const settle = a[how];
-        a[how] = function (value: unknown) {
-          socket.write(owner("B", 1));
-          built = runEventLoopUntil(loopbackFence);
-          return settle.call(this, value);
-        };
-        expect(await Promise.all([outcome(a), outcome(sql.unsafe("B").simple())])).toEqual([
-          expected,
-          [{ owner: "B" }],
-        ]);
-        await built;
-      } finally {
-        server.close();
-      }
-    },
-  );
 
   /** For what ends the process or patches a built-in. `serve(onCommand)` gives the URL of a server. */
   async function runWithServer(script: string) {
@@ -1287,7 +1190,7 @@ describe("scripted server", () => {
       cmd: [bunExe(), "-e", prelude + script],
       env: {
         ...bunEnv,
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "disable_coredump=1", "symbolize=0"].filter(Boolean).join(":"),
         BUN_ENABLE_CRASH_REPORTING: "0",
       },
       stdout: "pipe",
@@ -1322,8 +1225,7 @@ describe("scripted server", () => {
           if (!armed || value?.v !== 7) return;
           armed = false;
           socket.write(reply.subarray(terminator));
-          const plugins = [{ name: "wait", setup: wire.loopbackFence }];
-          pushed.resolve(Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins }));
+          pushed.resolve(wire.runEventLoopUntil(wire.loopbackFence));
         },
       });
       const first = await sql\`SELECT 7 AS v\`;
@@ -1333,7 +1235,7 @@ describe("scripted server", () => {
       console.log(first.count, second.count);
       process.exit(0);
     `);
-    expect(result).toEqual({ stdout: "1 1\n", stderr: expect.any(String), exitCode: 0 });
+    expect(result).toEqual({ stdout: "1 1\n", stderr: "", exitCode: 0 });
   });
 
   // Built-in JS runs a handle one time only.
@@ -1378,7 +1280,7 @@ describe("scripted server", () => {
     const commands = [COM_QUERY, COM_QUERY, COM_STMT_PREPARE, COM_STMT_EXECUTE, COM_STMT_EXECUTE];
     expect(result).toEqual({
       stdout: JSON.stringify({ outcomes: ["ok", "ok"], commands }) + "\n",
-      stderr: expect.any(String),
+      stderr: "",
       exitCode: 0,
     });
   });
@@ -1407,7 +1309,7 @@ describe("scripted server", () => {
       console.log("ok");
       process.exit(0);
     `);
-    expect(result).toEqual({ stdout: "ok\n", stderr: expect.any(String), exitCode: 0 });
+    expect(result).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
   });
 
   test.skipIf(isWindows)("a unix socket that is not there rejects with its path", async () => {

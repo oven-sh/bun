@@ -106,9 +106,6 @@ pub(crate) mod caching_sha2_password {
         pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<(), AnyMySQLError> {
             let (password, public_key) = (self.password, self.public_key);
 
-            // `&this.public_key[0]` below would index past a zero-length
-            // slice if the server answered the public-key request with an
-            // empty payload.
             if public_key.is_empty() {
                 return Err(AnyMySQLError::InvalidPublicKey);
             }

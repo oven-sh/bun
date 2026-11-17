@@ -1,3 +1,4 @@
+import { readTrimTable } from "bun:internal-for-testing";
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
 import { closeSync, openSync, readFileSync, writeSync } from "node:fs";
@@ -6,6 +7,7 @@ import { locksEnvironment } from "./hardened";
 import { withoutCoreDump } from "./harness/commands";
 import "./harness/real-executables";
 import { describe, test } from "./supported";
+import { readRemovedFeatures } from "./trimmed-against-whole/removed-features";
 
 // What `bun build --compile --aot` cuts out of the executable leaves a hole in its address space, which later mappings may fill.
 const program = `import { CFunction, dlopen, read } from "bun:ffi";
@@ -85,11 +87,15 @@ function segmentsOfMachO(file: Buffer) {
 
 function segmentsAndHoles(file: Buffer) {
   const segments = (isLinux ? segmentsOfElf(file) : segmentsOfMachO(file)).sort((a, b) => a.start - b.start);
-  const holes = segments
-    .slice(1)
-    .map(({ start }, index) => ({ start: segments[index].end, size: start - segments[index].end }));
+  const holes = segments.slice(1).map(({ start }, index) => ({ start: segments[index].end, end: start }));
   return { segments, holes };
 }
+
+type Range = { start: number; end: number };
+const overlaps = (some: Range[], others: Range[]) =>
+  some
+    .flatMap(a => others.map(b => ({ start: Math.max(a.start, b.start), end: Math.min(a.end, b.end) })))
+    .filter(({ start, end }) => start < end);
 
 function placesOfState(file: Buffer) {
   const { segments } = segmentsAndHoles(file);
@@ -102,22 +108,19 @@ function placesOfState(file: Buffer) {
 }
 
 function middleOfLargestHole(file: Buffer) {
-  const { segments, holes } = segmentsAndHoles(file);
-  // A gap that Bun itself has was left by its linker. One build had 4 MB between its first two segments.
-  const gapsOfBun = new Set(segmentsAndHoles(readFileSync(bunExe())).holes.map(({ start }) => start));
-  const cut = holes.filter(({ start }) => !gapsOfBun.has(start));
-  const largest = cut.sort((a, b) => b.size - a.size)[0] ?? { start: 0, size: 0 };
-  const middle = largest.start + largest.size / 2;
-  // Whole pages are cut. What is left of a removed range in the page behind them is filled: one word, over and over.
-  const isFilled = ({ offset }: { offset: number }) =>
-    Array.from({ length: 16 }, (_, word) => file.readUInt32LE(offset + 4 * word)).every(
-      (word, _, all) => word === all[0],
-    );
-  const behindCut = segments.filter(
-    segment => segment.isCode && cut.some(hole => hole.start + hole.size === segment.start),
-  );
-  const filled = behindCut.find(isFilled);
-  return { address: middle - (middle % 0x4000), size: largest.size, filled: filled && filled.start + 16 };
+  // A gap that Bun itself has was left by its linker, and a cut can adjoin it. One build had 4 MB between its first two segments.
+  const cut = overlaps(segmentsAndHoles(file).holes, segmentsAndHoles(readFileSync(bunExe())).segments);
+  const { start, end } = cut.sort((a, b) => b.end - b.start - (a.end - a.start))[0] ?? { start: 0, end: 0 };
+  const middle = (start + end) / 2;
+  return { address: middle - (middle % 0x4000), size: end - start };
+}
+
+// Whole pages are cut. What is left of removed code is filled.
+function filledAddress(executable: string): number | undefined {
+  const { ranges, sets } = readTrimTable(bunExe());
+  const removed = new Set(readRemovedFeatures(executable));
+  const removedCode = ranges.filter(({ isCode, set }) => isCode && sets[set].every(feature => removed.has(feature)));
+  return overlaps(removedCode, segmentsAndHoles(readFileSync(executable)).segments)[0]?.start;
 }
 
 // Where Bun can't be cut, the executable gets a list of two removed ranges: 1 GB of addresses that nothing is mapped at, and
@@ -227,12 +230,11 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
       exitCode: 0,
     });
     const executable = join(folder, "main");
-    let hole = middleOfLargestHole(readFileSync(executable));
-    if (hole.size < 1024 * 1024) {
-      // This Bun can't be cut. On macOS the file is signed, and AddressSanitizer reports crashes in place of Bun.
-      if (!isLinux || isASAN) return;
-      hole = addRemovedRanges(executable);
-    }
+    const largest = middleOfLargestHole(readFileSync(executable));
+    const isCut = largest.size >= 1024 * 1024;
+    // This Bun can't be cut. On macOS the file is signed, and AddressSanitizer reports crashes in place of Bun.
+    if (!isCut && (!isLinux || isASAN)) return;
+    const hole = isCut ? { ...largest, filled: filledAddress(executable) } : addRemovedRanges(executable);
     const file = readFileSync(executable);
     const states = placesOfState(file);
     const { start } = segmentsAndHoles(file).segments[0];

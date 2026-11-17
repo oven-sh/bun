@@ -38,6 +38,15 @@ export async function loopbackFence(): Promise<void> {
   server.close();
 }
 
+/** Bun.build() runs the event loop until an async setup() settles. Without a timer, that loop sleeps up to 1 s per fence. */
+export function runEventLoopUntil(settled: () => Promise<void>) {
+  const setup = () => {
+    const wake = setInterval(() => {}, 1);
+    return settled().finally(() => clearInterval(wake));
+  };
+  return Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+}
+
 /** Reserve and immediately release a port so connecting to it is refused. */
 export async function closedPort(): Promise<number> {
   const { port, server } = await listeningServer(() => {});

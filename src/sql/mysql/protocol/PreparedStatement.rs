@@ -58,7 +58,10 @@ impl<P: ExecuteParam> Execute<'_, P> {
     }
 }
 
-/// For what `Execute::write` made before the server named the statement.
-pub fn set_statement_id(execute: &mut [u8], statement_id: u32) {
-    execute[PacketHeader::SIZE + 1..][..4].copy_from_slice(&statement_id.to_le_bytes());
+/// For what `Execute::write` made before the server named the statement. `None`: it is too short.
+pub fn set_statement_id(execute: &mut [u8], statement_id: u32) -> Option<()> {
+    *execute
+        .get_mut(PacketHeader::SIZE + 1..)?
+        .first_chunk_mut()? = statement_id.to_le_bytes();
+    Some(())
 }

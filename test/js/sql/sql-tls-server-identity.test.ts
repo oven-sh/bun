@@ -14,12 +14,15 @@ import {
   listeningServer,
   loopbackFence,
   mysqlAckSessionSetup,
+  mysqlAuthMoreData,
+  mysqlAuthSwitchRequest,
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
   pgReadyForQuery,
   pgSSLResponse,
+  runEventLoopUntil,
 } from "./wire-frames";
 
 // CN=agent1 (no SAN), signed by ca1: trusted through `ca1`, valid for no host the tests dial.
@@ -113,19 +116,24 @@ async function connect(url: string, tlsOptions: Bun.SQL.Options["tls"], sslmode 
 }
 
 // TLS 1.2: in 1.3 the client's Finished is held back until the callback returns, so the server cannot write yet.
-test("MySQL: an OK packet that comes while the callback runs the event loop does not log the client in", async () => {
-  const commands: string[] = [];
+test.each([
+  ["accepts the login", mysqlOkPacket(2)],
+  ["asks for full authentication", mysqlAuthMoreData(2, Buffer.from([0x04]))],
+  ["switches to sha256_password", mysqlAuthSwitchRequest(2, "sha256_password", Buffer.from("cccccccccccccccccccc\0"))],
+])("MySQL: a server that %s while the callback runs the event loop is sent nothing", async (_, packet) => {
+  const received: string[] = [];
   let socket!: tls.TLSSocket;
   const { server, port } = await listeningServer(rawSocket => {
     rawSocket.on("error", () => {});
-    rawSocket.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
+    const capabilities = MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL;
+    rawSocket.write(mysqlHandshakeV10({ capabilities, authPlugin: "caching_sha2_password" }));
     rawSocket.once("data", (chunk: Buffer) => {
       const cert = { ...agent1, maxVersion: "TLSv1.2" };
       socket = upgrade(rawSocket, cert, chunk.subarray(4 + chunk.readUIntLE(0, 3)), () => {});
       let buffered = Buffer.alloc(0);
       socket.on("data", (chunk: Buffer) => {
         buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (_, payload) => {
-          commands.push(payload.toString("latin1", 1));
+          received.push(payload.toString("latin1"));
           mysqlAckSessionSetup(socket, payload);
         });
       });
@@ -141,13 +149,11 @@ test("MySQL: an OK packet that comes while the callback runs the event loop does
       tls: {
         ca: agent1.ca,
         checkServerIdentity() {
-          const setup = async () => {
-            socket.write(mysqlOkPacket(2));
-            // The OK, the session setup, its OK, the query.
+          built = runEventLoopUntil(async () => {
+            socket.write(packet);
+            // After an OK: the session setup, its OK, the query.
             for (let i = 0; i < 4; i++) await loopbackFence();
-          };
-          // Bun.build() runs the event loop until an async setup() settles.
-          built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+          });
           return new Error("PIN_MISMATCH");
         },
       },
@@ -157,10 +163,10 @@ test("MySQL: an OK packet that comes while the callback runs the event loop does
       .simple()
       .catch(err => err);
     await built;
-    expect({ code: err.code, connected, commands }).toEqual({
+    expect({ code: err.code, connected, received }).toEqual({
       code: "ERR_MYSQL_UNEXPECTED_PACKET",
       connected: 0,
-      commands: [],
+      received: [],
     });
   } finally {
     server.close();

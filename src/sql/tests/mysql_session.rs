@@ -1,6 +1,12 @@
 use bun_sql::mysql::auth_method::Transport;
 use bun_sql::mysql::mysql_request::execute_query;
-use bun_sql::mysql::session::{Command, Event, Failure, Login, ReplyEvent, Session, Statement};
+use bun_sql::mysql::mysql_types::FieldType;
+use bun_sql::mysql::protocol::any_mysql_error::Error;
+use bun_sql::mysql::protocol::packet_writer::PacketWriter;
+use bun_sql::mysql::protocol::prepared_statement::{Execute, ExecuteParam, set_statement_id};
+use bun_sql::mysql::session::{
+    Command, Event, Failure, Login, ReplyEvent, Session, State, Statement,
+};
 use bun_sql::shared::SSLMode;
 
 #[unsafe(no_mangle)]
@@ -19,13 +25,26 @@ macro_rules! returns {
 }
 
 returns! {
-    0: ERR_clear_error ERR_get_error ERR_error_string ERR_load_ERR_strings ERR_load_BIO_strings
-        ERR_load_crypto_strings SSL_load_error_strings CRYPTO_library_init
-        OpenSSL_add_all_algorithms RSA_free mi_malloc mi_realloc mi_free mi_usable_size;
+    0: ERR_clear_error ERR_load_BIO_strings SSL_load_error_strings CRYPTO_library_init
+        OpenSSL_add_all_algorithms RSA_free;
     1: SSL_library_init EVP_sha1 EVP_sha256 EVP_Digest EVP_DigestInit EVP_DigestUpdate EVP_DigestFinal
         EVP_MD_CTX_cleanup BIO_new_mem_buf BIO_free PEM_read_bio_RSA_PUBKEY;
     256: RSA_size;
     0xffff_ffff: JSC__parseIndex;
+}
+
+macro_rules! not_called_by_tests {
+    ($($name:ident)*) => {
+        $(#[unsafe(no_mangle)]
+        extern "C" fn $name() -> ! {
+            panic!(concat!(stringify!($name), " has no stand-in"));
+        })*
+    };
+}
+
+not_called_by_tests! {
+    ERR_get_error ERR_error_string ERR_load_ERR_strings ERR_load_crypto_strings
+    mi_malloc mi_realloc mi_free mi_usable_size
 }
 
 #[unsafe(no_mangle)]
@@ -74,6 +93,7 @@ const SHA256: &str = "sha256_password";
 
 const OK: &[u8] = b"\0\0\0\x02\0\0\0";
 const ERR: &[u8] = b"\xff\x25\x05#70100interrupted";
+const ERR_CODE: u16 = 1317;
 const EOF: &[u8] = b"\xfe\0\0\x02\0";
 
 fn switch(plugin: &str) -> Vec<u8> {
@@ -91,11 +111,75 @@ fn column(name: &str) -> Vec<u8> {
     .concat()
 }
 
-fn show(failure: Failure<'_>) -> String {
-    match failure {
-        Failure::Protocol(err) => format!("!{err:?}"),
-        Failure::Server(err) => format!("!{}", err.error_code),
-        Failure::UnsupportedPlugin(name) => format!("!{}", name.escape_ascii()),
+/// What the session makes of a packet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Seen {
+    Nothing,
+    Flush,
+    Connected,
+    Prepared,
+    Refused,
+    ColumnsReplaced,
+    ColumnRedescribed,
+    ColumnRenamed(usize),
+    Row,
+    RowsEnd { count: u64, last: bool },
+    NoRows { last: bool },
+    Fails(Error),
+    FailsWithErr,
+    FailsWithDialog,
+}
+
+impl From<Failure<'_>> for Seen {
+    fn from(failure: Failure<'_>) -> Self {
+        match failure {
+            Failure::Protocol(err) => Seen::Fails(err),
+            Failure::Server(err) => {
+                assert_eq!(err.error_code, ERR_CODE);
+                Seen::FailsWithErr
+            }
+            Failure::UnsupportedPlugin(name) => {
+                assert_eq!(name, b"dialog");
+                Seen::FailsWithDialog
+            }
+        }
+    }
+}
+
+impl From<Event> for Seen {
+    fn from(event: Event) -> Self {
+        match event {
+            Event::None => Seen::Nothing,
+            Event::Flush => Seen::Flush,
+            Event::Connected => Seen::Connected,
+        }
+    }
+}
+
+impl From<ReplyEvent<'_>> for Seen {
+    fn from(event: ReplyEvent<'_>) -> Self {
+        match event {
+            ReplyEvent::None => Seen::Nothing,
+            ReplyEvent::Prepared => Seen::Prepared,
+            ReplyEvent::Refused(err) => {
+                assert_eq!(err.error_code, ERR_CODE);
+                Seen::Refused
+            }
+            ReplyEvent::ColumnsReplaced => Seen::ColumnsReplaced,
+            ReplyEvent::ColumnRedescribed => Seen::ColumnRedescribed,
+            ReplyEvent::ColumnRenamed(index) => Seen::ColumnRenamed(index),
+            ReplyEvent::Row(_) => Seen::Row,
+            ReplyEvent::Result(result) if result.has_columns => Seen::RowsEnd {
+                count: result.result_count,
+                last: result.is_last_result,
+            },
+            ReplyEvent::Result(result) => {
+                assert_eq!(result.result_count, 0);
+                Seen::NoRows {
+                    last: result.is_last_result,
+                }
+            }
+        }
     }
 }
 
@@ -105,17 +189,24 @@ struct Peer {
     out: Vec<u8>,
 }
 
+fn login(password: &str, ssl_mode: SSLMode) -> Login {
+    Login {
+        user: b"u"[..].into(),
+        password: password.as_bytes().into(),
+        database: b""[..].into(),
+        ssl_mode,
+        allow_public_key_retrieval: true,
+        found_rows: false,
+    }
+}
+
 impl Peer {
     fn new(password: &str, ssl_mode: SSLMode) -> Self {
-        let login = Login {
-            user: b"u"[..].into(),
-            password: password.as_bytes().into(),
-            database: b""[..].into(),
-            ssl_mode,
-            allow_public_key_retrieval: true,
-            found_rows: false,
-        };
-        let mut session = Session::new(login, Transport::Tcp);
+        Self::over(Transport::Tcp, login(password, ssl_mode))
+    }
+
+    fn over(transport: Transport, login: Login) -> Self {
+        let mut session = Session::new(login, transport);
         session.on_open();
         Self {
             session,
@@ -129,172 +220,250 @@ impl Peer {
         let bytes = [greeting(capabilities, NATIVE), packet(2, OK), packet(1, OK)];
         assert_eq!(
             peer.feed(&bytes.concat(), None),
-            ["flush", "flush", "connected"]
+            [Seen::Flush, Seen::Flush, Seen::Connected]
         );
         peer
     }
 
-    fn feed(&mut self, mut bytes: &[u8], command: Option<Command>) -> Vec<String> {
-        let mut events = Vec::new();
+    /// Up to the first failure.
+    fn feed(&mut self, mut bytes: &[u8], command: Option<Command>) -> Vec<Seen> {
+        let mut seen = Vec::new();
         loop {
             let packet = match self.session.next_packet(&mut bytes) {
                 Ok(Some(packet)) => packet,
-                Ok(None) => return events,
+                Ok(None) => return seen,
                 Err(err) => {
-                    events.push(show(err.into()));
-                    return events;
+                    seen.push(Seen::Fails(err));
+                    return seen;
                 }
             };
             let event = match command {
                 None => self
                     .session
                     .on_packet(&packet, &mut self.out)
-                    .map(|event| match event {
-                        Event::None => "-".to_string(),
-                        Event::Flush => "flush".to_string(),
-                        Event::Connected => "connected".to_string(),
-                    }),
+                    .map(Seen::from),
                 Some(command) => self
                     .session
                     .on_reply(&packet, command, &mut self.statement)
-                    .map(|event| match event {
-                        ReplyEvent::None => "-".to_string(),
-                        ReplyEvent::Prepared => "prepared".to_string(),
-                        ReplyEvent::Refused(err) => format!("refused {}", err.error_code),
-                        ReplyEvent::ColumnsReplaced => "replaced".to_string(),
-                        ReplyEvent::ColumnRedescribed => "redescribed".to_string(),
-                        ReplyEvent::ColumnRenamed(index) => format!("renamed {index}"),
-                        ReplyEvent::Row(_) => "row".to_string(),
-                        ReplyEvent::Result(result) => format!(
-                            "{}{} rows{}",
-                            if result.has_columns { "columns " } else { "" },
-                            result.result_count,
-                            if result.is_last_result { " last" } else { "" },
-                        ),
-                    }),
+                    .map(Seen::from),
             };
             match event {
-                Ok(event) => events.push(event),
+                Ok(event) => seen.push(event),
                 Err(failure) => {
-                    events.push(show(failure));
-                    return events;
+                    seen.push(failure.into());
+                    return seen;
                 }
             }
         }
     }
 }
 
-/// What comes before the probe, and the state that it leads to.
-fn login_states() -> Vec<(&'static str, Peer)> {
-    let script = |ssl_mode, parts: &[Vec<u8>]| {
-        let mut peer = Peer::new("pw", ssl_mode);
-        peer.feed(&parts.concat(), None);
-        peer
-    };
-    let plain = |parts: &[Vec<u8>]| script(SSLMode::Prefer, parts);
-    let tls = || script(SSLMode::Require, &[greeting(MODERN | SSL, CACHING)]);
-    let mut identity_check = tls();
-    identity_check.session.on_tls_handshake();
-    let mut failed = plain(&[]);
-    failed.session.fail();
-    let native = || greeting(MODERN, NATIVE);
-    let to = |plugin| packet(2, &switch(plugin));
-    vec![
-        ("Greeting", plain(&[])),
-        ("TlsHandshake", tls()),
-        ("IdentityCheck", identity_check),
-        ("Verdict native", plain(&[native()])),
-        ("Verdict caching", plain(&[greeting(MODERN, CACHING)])),
-        ("Verdict switched", plain(&[native(), to(NATIVE)])),
-        (
-            "PublicKey switched twice",
-            plain(&[native(), to(CACHING), to(SHA256)]),
-        ),
-        ("PublicKey", plain(&[greeting(MODERN, SHA256)])),
-        (
-            "Verdict after PublicKey",
-            plain(&[greeting(MODERN, SHA256), to(CACHING)]),
-        ),
-        (
-            "Verdict after full auth",
-            plain(&[
-                greeting(MODERN, CACHING),
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Before {
+    Greeting,
+    TlsHandshake,
+    IdentityCheck,
+    NativeVerdict,
+    CachingVerdict,
+    VerdictAfterSwitchToNative,
+    VerdictAfterSwitchFromPublicKey,
+    VerdictAfterFullAuth,
+    PublicKey,
+    PublicKeyAfterTwoSwitches,
+    SessionSetup,
+    Ready,
+    Failed,
+}
+
+impl Before {
+    const AUTHENTICATING: [Self; 7] = [
+        Self::NativeVerdict,
+        Self::CachingVerdict,
+        Self::VerdictAfterSwitchToNative,
+        Self::VerdictAfterSwitchFromPublicKey,
+        Self::VerdictAfterFullAuth,
+        Self::PublicKey,
+        Self::PublicKeyAfterTwoSwitches,
+    ];
+    const OTHERS: [Self; 6] = [
+        Self::Greeting,
+        Self::TlsHandshake,
+        Self::IdentityCheck,
+        Self::SessionSetup,
+        Self::Ready,
+        Self::Failed,
+    ];
+
+    fn peer(self) -> Peer {
+        let greets = |plugin| greeting(MODERN, plugin);
+        let to = |plugin| packet(2, &switch(plugin));
+        let script = match self {
+            Self::Greeting | Self::Failed => vec![],
+            Self::TlsHandshake | Self::IdentityCheck => vec![greeting(MODERN | SSL, CACHING)],
+            Self::NativeVerdict => vec![greets(NATIVE)],
+            Self::CachingVerdict => vec![greets(CACHING)],
+            Self::VerdictAfterSwitchToNative => vec![greets(NATIVE), to(NATIVE)],
+            Self::VerdictAfterSwitchFromPublicKey => vec![greets(SHA256), to(CACHING)],
+            Self::VerdictAfterFullAuth => vec![
+                greets(CACHING),
                 packet(2, b"\x01\x04"),
                 packet(4, b"\x01key"),
-            ]),
-        ),
-        ("SessionSetup", plain(&[native(), packet(2, OK)])),
-        ("Ready", Peer::ready(MODERN)),
-        ("Failed", failed),
-    ]
+            ],
+            Self::PublicKey => vec![greets(SHA256)],
+            Self::PublicKeyAfterTwoSwitches => vec![greets(NATIVE), to(CACHING), to(SHA256)],
+            Self::SessionSetup => vec![greets(NATIVE), packet(2, OK)],
+            Self::Ready => vec![greets(NATIVE), packet(2, OK), packet(1, OK)],
+        };
+        let mut peer = Peer::new("pw", SSLMode::Prefer);
+        peer.feed(&script.concat(), None);
+        match self {
+            Self::IdentityCheck => peer.session.on_tls_handshake(),
+            Self::Failed => peer.session.fail(),
+            _ => {}
+        }
+        peer
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Sends {
+    Ok,
+    Err,
+    FastAuthSuccess,
+    FullAuthRequest,
+    OtherMoreData,
+    SwitchToNative,
+    SwitchToDialog,
+    EmptyPacket,
+}
+
+impl Sends {
+    const ALL: [Self; 8] = [
+        Self::Ok,
+        Self::Err,
+        Self::FastAuthSuccess,
+        Self::FullAuthRequest,
+        Self::OtherMoreData,
+        Self::SwitchToNative,
+        Self::SwitchToDialog,
+        Self::EmptyPacket,
+    ];
+
+    fn payload(self) -> Vec<u8> {
+        match self {
+            Self::Ok => OK.to_vec(),
+            Self::Err => ERR.to_vec(),
+            Self::FastAuthSuccess => b"\x01\x03".to_vec(),
+            Self::FullAuthRequest => b"\x01\x04".to_vec(),
+            Self::OtherMoreData => b"\x01\x05".to_vec(),
+            Self::SwitchToNative => switch(NATIVE),
+            Self::SwitchToDialog => b"\xfedialog\0".to_vec(),
+            Self::EmptyPacket => vec![],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum After {
+    Verdict,
+    PublicKey,
+    SessionSetup,
+    Ready,
+    Ends(Seen),
+}
+
+fn after(before: Before, sends: Sends) -> After {
+    let mut peer = before.peer();
+    let seen = peer.feed(&packet(2, &sends.payload()), None);
+    match (&seen[..], peer.session.state()) {
+        (&[end @ (Seen::Fails(_) | Seen::FailsWithErr | Seen::FailsWithDialog)], _) => {
+            After::Ends(end)
+        }
+        (_, State::Verdict(_)) => After::Verdict,
+        (_, State::PublicKey(_)) => After::PublicKey,
+        (_, State::SessionSetup) => After::SessionSetup,
+        (_, State::Ready(_)) => After::Ready,
+        (_, state) => panic!("{before:?}, {sends:?}: {seen:?}, {state:?}"),
+    }
 }
 
 #[test]
 fn login_state_by_packet() {
-    let switch = switch(NATIVE);
-    let probes: [&[u8]; 8] = [
-        OK,
-        ERR,
-        b"\x01\x03",
-        b"\x01\x04",
-        b"\x01\x05",
-        &switch,
-        b"\xfedialog\0",
-        b"",
+    use Before::*;
+    use Sends::*;
+    const SERVER_ERROR: After = After::Ends(Seen::FailsWithErr);
+    const MALFORMED: After = After::Ends(Seen::Fails(Error::MalformedPacket));
+    const AUTH_FAILED: After = After::Ends(Seen::Fails(Error::AuthenticationFailed));
+    const NO_GREETING: After = After::Ends(Seen::Fails(Error::UnsupportedProtocolVersion));
+    const UNEXPECTED: After = After::Ends(Seen::Fails(Error::UnexpectedPacket));
+
+    #[rustfmt::skip]
+    let mut listed = vec![
+        (Greeting, Err, SERVER_ERROR),
+        (Greeting, EmptyPacket, MALFORMED),
+        (IdentityCheck, Err, SERVER_ERROR),
+        (NativeVerdict, SwitchToNative, After::Verdict),
+        (CachingVerdict, SwitchToNative, After::Verdict),
+        (VerdictAfterSwitchFromPublicKey, SwitchToNative, After::Verdict),
+        (VerdictAfterFullAuth, SwitchToNative, After::Verdict),
+        (VerdictAfterFullAuth, FastAuthSuccess, After::Verdict),
+        (VerdictAfterFullAuth, OtherMoreData, AUTH_FAILED),
+        (PublicKey, SwitchToNative, After::Verdict),
+        (SessionSetup, Ok, After::Ready),
+        (SessionSetup, Err, SERVER_ERROR),
+        (SessionSetup, EmptyPacket, MALFORMED),
+        (Ready, Err, SERVER_ERROR),
     ];
-    let mut table = String::new();
-    for row in 0..login_states().len() {
-        let cells = probes.map(|probe| {
-            let mut peer = login_states().swap_remove(row).1;
-            let event = peer.feed(&packet(2, probe), None).concat();
-            if event.starts_with('!') {
-                return event;
-            }
-            let state = format!("{:?}", peer.session.state());
-            state.split('(').next().unwrap().to_string()
-        });
-        let cells = cells
-            .join(" ")
-            .replace("!UnexpectedPacket", "!")
-            .replace("Packet", "");
-        table += &format!("{}: {cells}\n", login_states()[row].0);
+    for before in Before::AUTHENTICATING {
+        listed.extend([
+            (before, Ok, After::SessionSetup),
+            (before, Err, SERVER_ERROR),
+            (before, SwitchToDialog, After::Ends(Seen::FailsWithDialog)),
+            (before, EmptyPacket, MALFORMED),
+        ]);
     }
-    assert_eq!(
-        table,
-        "\
-Greeting: !UnsupportedProtocolVersion !1317 !UnsupportedProtocolVersion !UnsupportedProtocolVersion !UnsupportedProtocolVersion !UnsupportedProtocolVersion !UnsupportedProtocolVersion !Malformed
-TlsHandshake: ! ! ! ! ! ! ! !
-IdentityCheck: ! !1317 ! ! ! ! ! !
-Verdict native: SessionSetup !1317 ! ! ! Verdict !dialog !Malformed
-Verdict caching: SessionSetup !1317 Verdict PublicKey !AuthenticationFailed Verdict !dialog !Malformed
-Verdict switched: SessionSetup !1317 ! ! ! ! !dialog !Malformed
-PublicKey switched twice: SessionSetup !1317 Verdict Verdict Verdict ! !dialog !Malformed
-PublicKey: SessionSetup !1317 Verdict Verdict Verdict Verdict !dialog !Malformed
-Verdict after PublicKey: SessionSetup !1317 Verdict PublicKey !AuthenticationFailed Verdict !dialog !Malformed
-Verdict after full auth: SessionSetup !1317 Verdict ! !AuthenticationFailed Verdict !dialog !Malformed
-SessionSetup: Ready !1317 ! ! ! ! ! !Malformed
-Ready: ! !1317 ! ! ! ! ! !
-Failed: ! ! ! ! ! ! ! !
-"
-    );
+    for before in [CachingVerdict, VerdictAfterSwitchFromPublicKey] {
+        listed.extend([
+            (before, FastAuthSuccess, After::Verdict),
+            (before, FullAuthRequest, After::PublicKey),
+            (before, OtherMoreData, AUTH_FAILED),
+        ]);
+    }
+    // Whatever follows the 0x01 is the key.
+    for before in [PublicKey, PublicKeyAfterTwoSwitches] {
+        listed.extend([
+            (before, FastAuthSuccess, After::Verdict),
+            (before, FullAuthRequest, After::Verdict),
+            (before, OtherMoreData, After::Verdict),
+        ]);
+    }
+
+    for before in Before::AUTHENTICATING.into_iter().chain(Before::OTHERS) {
+        let otherwise = match before {
+            Greeting => NO_GREETING,
+            _ => UNEXPECTED,
+        };
+        for sends in Sends::ALL {
+            let row = listed.iter().find(|row| (row.0, row.1) == (before, sends));
+            let expected = row.map_or(otherwise, |row| row.2);
+            assert_eq!(after(before, sends), expected, "{before:?}, {sends:?}");
+        }
+    }
 }
 
 #[test]
 fn a_server_without_tls_is_refused_where_sslmode_asks_for_it() {
-    use SSLMode::*;
-    for ssl_mode in [Disable, Prefer, Require, VerifyCa, VerifyFull] {
+    const REFUSED: Seen = Seen::Fails(Error::AuthenticationFailed);
+    for (ssl_mode, seen) in [
+        (SSLMode::Disable, Seen::Flush),
+        (SSLMode::Prefer, Seen::Flush),
+        (SSLMode::Require, REFUSED),
+        (SSLMode::VerifyCa, REFUSED),
+        (SSLMode::VerifyFull, REFUSED),
+    ] {
         let mut peer = Peer::new("pw", ssl_mode);
-        let events = peer.feed(&greeting(MODERN, NATIVE), None);
-        let goes_on = matches!(ssl_mode, Disable | Prefer);
-        assert_eq!(
-            events,
-            [if goes_on {
-                "flush"
-            } else {
-                "!AuthenticationFailed"
-            }]
-        );
-        assert_eq!(peer.out.is_empty(), !goes_on);
+        assert_eq!(peer.feed(&greeting(MODERN, NATIVE), None), [seen]);
+        assert_eq!(peer.out.is_empty(), seen == REFUSED);
     }
 }
 
@@ -318,98 +487,206 @@ fn the_password_is_encrypted_for_the_key() {
     let mut peer = Peer::new("pw", SSLMode::Disable);
     peer.feed(&greeting(MODERN, SHA256), None);
     peer.out.clear();
-    assert_eq!(peer.feed(&packet(2, b"\x01key"), None), ["flush"]);
+    assert_eq!(peer.feed(&packet(2, b"\x01key"), None), [Seen::Flush]);
     assert_eq!(peer.out, packet(3, &[b'p' ^ b'a', b'w' ^ b'a', b'a']));
 }
 
+#[test]
+fn the_transport_decides_how_the_password_is_sent() {
+    use Transport::{Tcp, UnixSocket};
+    const KEY_ALLOWED: bool = true;
+    const KEY_DENIED: bool = false;
+    const REFUSED: Result<&[u8], Error> = Err(Error::PublicKeyRetrievalNotAllowed);
+    let full_auth = &[greeting(MODERN, CACHING), packet(2, b"\x01\x04")];
+    let switch_to_sha256 = &[greeting(MODERN, NATIVE), packet(2, &switch(SHA256))];
+    for ([greeting, demand], transport, allow_public_key_retrieval, answer) in [
+        (full_auth, Tcp, KEY_DENIED, REFUSED),
+        (full_auth, Tcp, KEY_ALLOWED, Ok(b"\x02")),
+        (full_auth, UnixSocket, KEY_DENIED, Ok(b"pw\0")),
+        (switch_to_sha256, Tcp, KEY_DENIED, REFUSED),
+        (switch_to_sha256, UnixSocket, KEY_DENIED, REFUSED),
+        (switch_to_sha256, UnixSocket, KEY_ALLOWED, Ok(b"\x01")),
+    ] {
+        let login = Login {
+            allow_public_key_retrieval,
+            ..login("pw", SSLMode::Disable)
+        };
+        let mut peer = Peer::over(transport, login);
+        assert_eq!(peer.feed(greeting, None), [Seen::Flush]);
+        peer.out.clear();
+        let seen = answer.map_or_else(Seen::Fails, |_| Seen::Flush);
+        assert_eq!(peer.feed(demand, None), [seen]);
+        assert_eq!(peer.out, answer.map_or(vec![], |sent| packet(3, sent)));
+    }
+
+    let login = Login {
+        allow_public_key_retrieval: false,
+        ..login("pw", SSLMode::Disable)
+    };
+    let mut peer = Peer::over(Tcp, login);
+    assert_eq!(
+        peer.feed(&greeting(MODERN, SHA256), None),
+        [Seen::Fails(Error::PublicKeyRetrievalNotAllowed)]
+    );
+    assert_eq!(peer.out, b"");
+}
+
+struct Tiny(Option<u8>);
+
+impl ExecuteParam for Tiny {
+    fn field_type(&self) -> FieldType {
+        match self.0 {
+            Some(_) => FieldType::MYSQL_TYPE_TINY,
+            None => FieldType::MYSQL_TYPE_NULL,
+        }
+    }
+
+    fn is_unsigned(&self) -> bool {
+        self.0.is_some()
+    }
+
+    fn write(&self, packet: &mut PacketWriter<'_>) {
+        packet.write(self.0.as_slice());
+    }
+}
+
+#[test]
+fn an_execute_marks_its_null_parameters() {
+    let params = [0, 1, 2, 3, 4, 5, 6, 0, 0, 9].map(|value| Tiny((value > 0).then_some(value)));
+    let mut out = Vec::new();
+    Execute {
+        statement_id: 0,
+        params: &params,
+    }
+    .write(&mut out);
+    assert_eq!(set_statement_id(&mut out, 0x0403_0201), Some(()));
+    assert_eq!(set_statement_id(&mut [], 1), None);
+    let (null, tiny) = (&[6, 0][..], &[1, 0x80][..]);
+    let payload = [
+        &b"\x17\x01\x02\x03\x04\0\x01\0\0\0"[..],
+        &[0b1000_0001, 0b01, 1],
+        &[null, tiny, tiny, tiny, tiny, tiny, tiny, null, null, tiny].concat(),
+        &[1, 2, 3, 4, 5, 6, 9],
+    ];
+    assert_eq!(out, packet(0, &payload.concat()));
+}
+
 /// The payloads get the sequence ids from 1 on.
-fn reply(capabilities: u32, command: Command, payloads: &[&[u8]]) -> String {
-    let packets = (1..).zip(payloads).map(|(id, payload)| packet(id, payload));
+#[track_caller]
+fn assert_reply(capabilities: u32, command: Command, steps: &[(&[u8], Seen)]) {
+    let packets = (1..).zip(steps).map(|(id, step)| packet(id, step.0));
     let bytes = packets.collect::<Vec<_>>().concat();
-    Peer::ready(capabilities)
-        .feed(&bytes, Some(command))
-        .join(", ")
+    let expected: Vec<Seen> = steps.iter().map(|step| step.1).collect();
+    let seen = Peer::ready(capabilities).feed(&bytes, Some(command));
+    assert_eq!(seen, expected);
 }
 
 #[test]
+#[rustfmt::skip]
 fn replies_to_a_prepare() {
-    let one_of_each = &b"\0\x07\0\0\0\x01\0\x01\0\0\0\0"[..];
-    let column = &column("a")[..];
-    for (capabilities, payloads, events) in [
-        (
-            MODERN,
-            &[&b"\0\x07\0\0\0\0\0\0\0\0\0\0"[..]][..],
-            "prepared",
-        ),
-        (MODERN, &[one_of_each, column, column], "-, -, prepared"),
-        (
-            LEGACY,
-            &[one_of_each, column, EOF, column, column, EOF],
-            "-, -, -, -, -, prepared",
-        ),
-        (MODERN, &[ERR], "refused 1317"),
-        (MODERN, &[one_of_each, ERR], "-, refused 1317"),
-        (
-            LEGACY,
-            &[one_of_each, column, EOF, ERR],
-            "-, -, -, refused 1317",
-        ),
-        (MODERN, &[EOF], "!UnexpectedPacket"),
-        (MODERN, &[&[0; 12]], "!InvalidPrepareOKPacket"),
-    ] {
-        assert_eq!(reply(capabilities, Command::Prepare, payloads), events);
-    }
+    use Command::Prepare;
+    use Seen::*;
+    let no_definitions = b"\0\x07\0\0\0\0\0\0\0\0\0\0";
+    let one_of_each = b"\0\x07\0\0\0\x01\0\x01\0\0\0\0";
+    let statement_zero = &[0; 12];
+    let (param, column, surplus) = (&column("?"), &column("a"), &column("b"));
+
+    assert_reply(MODERN, Prepare, &[(no_definitions, Prepared)]);
+    assert_reply(MODERN, Prepare, &[(one_of_each, Nothing), (param, Nothing), (column, Prepared)]);
+    assert_reply(LEGACY, Prepare, &[
+        (one_of_each, Nothing),
+        (param, Nothing),
+        (EOF, Nothing),
+        (column, Nothing),
+        (surplus, Nothing),
+        (EOF, Prepared),
+    ]);
+    assert_reply(MODERN, Prepare, &[(ERR, Refused)]);
+    assert_reply(MODERN, Prepare, &[(one_of_each, Nothing), (ERR, Fails(Error::MalformedPacket))]);
+    assert_reply(LEGACY, Prepare, &[
+        (one_of_each, Nothing),
+        (param, Nothing),
+        (column, Nothing),
+        (ERR, Nothing),
+        (EOF, Prepared),
+    ]);
+    assert_reply(MODERN, Prepare, &[(EOF, Fails(Error::UnexpectedPacket))]);
+    assert_reply(MODERN, Prepare, &[(statement_zero, Fails(Error::InvalidPrepareOKPacket))]);
 }
 
 #[test]
+#[rustfmt::skip]
 fn replies_to_an_execute() {
-    let (a, b) = (&column("a")[..], &column("b")[..]);
-    let (one, row) = (&b"\x01"[..], &b"\x01x"[..]);
-    let (end, more) = (&b"\xfe\0\0\x02\0\0\0"[..], &b"\xfe\0\0\x0a\0\0\0"[..]);
-    for (capabilities, payloads, events) in [
-        (MODERN, &[OK][..], "0 rows last"),
-        (
-            MODERN,
-            &[one, a, row, row, end],
-            "replaced, renamed 0, row, row, columns 2 rows last",
-        ),
-        (
-            LEGACY,
-            &[one, a, EOF, row, EOF],
-            "replaced, renamed 0, -, row, columns 1 rows last",
-        ),
-        (
-            LEGACY,
-            &[one, a, row, EOF, EOF],
-            "replaced, renamed 0, row, -, columns 1 rows last",
-        ),
-        (
-            MODERN,
-            &[one, a, more, one, a, more, one, b, more, OK],
-            "replaced, renamed 0, columns 0 rows, -, -, columns 0 rows, -, renamed 0, columns 0 rows, 0 rows last",
-        ),
-        (MODERN, &[one, ERR], "replaced, refused 1317"),
-        (
-            MODERN,
-            &[one, a, row, ERR],
-            "replaced, renamed 0, row, refused 1317",
-        ),
-        (MODERN, &[b"\xfb/etc/passwd"], "!UnexpectedPacket"),
-        (MODERN, &[b"\xfc\0\0"], "!UnexpectedPacket"),
-        (MODERN, &[b"\xfc\0\x10"], "replaced"),
-        (MODERN, &[b"\xfc\x01\x10"], "!UnexpectedPacket"),
-        (MODERN, &[b""], "!MalformedPacket"),
-    ] {
-        assert_eq!(reply(capabilities, Command::Execute, payloads), events);
-    }
+    use Command::Execute;
+    use Seen::*;
+    let (a, b) = (&column("a"), &column("b"));
+    let a_unsigned = &[&a[..a.len() - 5], &[0x20, 0, 0, 0, 0]].concat();
+    let (one_column, row) = (b"\x01", b"\x01x");
+    let (end, more) = (b"\xfe\0\0\x02\0\0\0", b"\xfe\0\0\x0a\0\0\0");
+    let (no_columns, columns_4096, columns_4097) = (b"\xfc\0\0", b"\xfc\0\x10", b"\xfc\x01\x10");
+
+    assert_reply(MODERN, Execute, &[(OK, NoRows { last: true })]);
+    assert_reply(MODERN, Execute, &[
+        (one_column, ColumnsReplaced),
+        (a, ColumnRenamed(0)),
+        (row, Row),
+        (row, Row),
+        (end, RowsEnd { count: 2, last: true }),
+    ]);
+    assert_reply(LEGACY, Execute, &[
+        (one_column, ColumnsReplaced),
+        (a, ColumnRenamed(0)),
+        (EOF, Nothing),
+        (row, Row),
+        (EOF, RowsEnd { count: 1, last: true }),
+    ]);
+    assert_reply(LEGACY, Execute, &[
+        (one_column, ColumnsReplaced),
+        (a, ColumnRenamed(0)),
+        (row, Row),
+        (EOF, Nothing),
+        (EOF, RowsEnd { count: 1, last: true }),
+    ]);
+    assert_reply(MODERN, Execute, &[
+        (one_column, ColumnsReplaced),
+        (a, ColumnRenamed(0)),
+        (more, RowsEnd { count: 0, last: false }),
+        (one_column, Nothing),
+        (a, Nothing),
+        (more, RowsEnd { count: 0, last: false }),
+        (one_column, Nothing),
+        (a_unsigned, ColumnRedescribed),
+        (more, RowsEnd { count: 0, last: false }),
+        (one_column, Nothing),
+        (b, ColumnRenamed(0)),
+        (more, RowsEnd { count: 0, last: false }),
+        (OK, NoRows { last: true }),
+    ]);
+    assert_reply(MODERN, Execute, &[(one_column, ColumnsReplaced), (ERR, Refused)]);
+    assert_reply(MODERN, Execute, &[
+        (one_column, ColumnsReplaced),
+        (a, ColumnRenamed(0)),
+        (row, Row),
+        (ERR, Refused),
+    ]);
+    assert_reply(MODERN, Execute, &[(b"\xfb/etc/passwd", Fails(Error::UnexpectedPacket))]);
+    assert_reply(MODERN, Execute, &[(no_columns, Fails(Error::UnexpectedPacket))]);
+    assert_reply(MODERN, Execute, &[(columns_4096, ColumnsReplaced)]);
+    assert_reply(MODERN, Execute, &[(columns_4097, Fails(Error::UnexpectedPacket))]);
+    assert_reply(MODERN, Execute, &[(b"", Fails(Error::MalformedPacket))]);
 }
 
 #[test]
 fn a_packet_out_of_step_is_nobodys() {
-    for (payload, event) in [(OK, "!UnexpectedPacket"), (ERR, "!1317")] {
+    for (payload, seen) in [
+        (OK, Seen::Fails(Error::UnexpectedPacket)),
+        (ERR, Seen::FailsWithErr),
+    ] {
         let bytes = [packet(9, b"\x01"), packet(0, payload)].concat();
-        let events = Peer::ready(MODERN).feed(&bytes, Some(Command::Execute));
-        assert_eq!(events, ["replaced", event]);
+        assert_eq!(
+            Peer::ready(MODERN).feed(&bytes, Some(Command::Execute)),
+            [Seen::ColumnsReplaced, seen]
+        );
     }
 }
 
@@ -424,6 +701,12 @@ fn framing() {
         assert_eq!(bytes.len(), end);
     }
 
+    let mut upgrading = Peer::new("pw", SSLMode::Require);
+    upgrading.feed(&greeting(MODERN | SSL, CACHING), None);
+    for end in 1..=whole.len() {
+        assert!(upgrading.session.next_packet(&mut &whole[..end]).is_err());
+    }
+
     let mut split = Vec::new();
     execute_query(&vec![b'q'; MAX - 1], &mut split);
     assert_eq!(split[..5], [0xff, 0xff, 0xff, 0, 3]);
@@ -433,12 +716,40 @@ fn framing() {
         peer.session.next_packet(&mut &split[..short]),
         Ok(None)
     ));
-    let mut bytes = &split[..];
+    let followed = [&split[..], &whole[..]].concat();
+    let mut bytes = &followed[..];
     assert!(matches!(peer.session.next_packet(&mut bytes), Ok(Some(_))));
-    assert_eq!(bytes, b"");
+    assert_eq!(bytes, whole);
 
     let before_login = Peer::new("", SSLMode::Disable);
     assert!(before_login.session.next_packet(&mut &split[..]).is_err());
     split[short] = 2;
     assert!(peer.session.next_packet(&mut &split[..]).is_err());
+}
+
+#[test]
+fn the_parts_of_a_row_are_joined() {
+    const MAX: usize = 0xff_ffff;
+    for last_part in [&b""[..], b"end"] {
+        let parts = [&vec![1; MAX][..], &vec![2; MAX], last_part];
+        let next_row = b"\x01x";
+        let wire = [
+            packet(3, parts[0]),
+            packet(4, parts[1]),
+            packet(5, parts[2]),
+            packet(6, next_row),
+        ]
+        .concat();
+
+        let mut peer = Peer::ready(MODERN);
+        let columns = [packet(1, b"\x01"), packet(2, &column("a"))];
+        peer.feed(&columns.concat(), Some(Command::Execute));
+        let mut bytes = &wire[..];
+        let joined = peer.session.next_packet(&mut bytes).unwrap().unwrap();
+        let event = peer
+            .session
+            .on_reply(&joined, Command::Execute, &mut peer.statement);
+        assert!(matches!(event, Ok(ReplyEvent::Row(reader)) if reader.peek() == parts.concat()));
+        assert_eq!(peer.feed(bytes, Some(Command::Execute)), [Seen::Row]);
+    }
 }

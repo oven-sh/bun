@@ -1600,10 +1600,15 @@ impl<'l> Loader<'l> {
         if let Some(why) = mistake_with([&own[..], &of_flags[..]].concat()) {
             return in_file(&why);
         }
+        // The setting may be valid for another kind of config, and the oxlint config may be in a parent directory.
+        let elsewhere = |source: &[u8], why: &[u8]| {
+            let uses = self.describe(Flavor::Oxlint, file);
+            Fatal([b"Invalid config in ", source, b"\n", why, b"\n  ", &uses].concat())
+        };
         if let Some(why) = mistake_with([own, of_bunfig, of_flags].concat()) {
-            return Fatal([b"Invalid config in ", &options.bunfig[..], b"\n", &why].concat());
+            return elsewhere(&options.bunfig, &why);
         }
-        Fatal([b"Invalid config in --rule\n", why].concat())
+        elsewhere(b"--rule", why)
     }
 
     /// True if the entry of [`Options::rule`] at `at` is bunfig.toml's. `--rule` may have replaced it.
@@ -1616,13 +1621,17 @@ impl<'l> Loader<'l> {
         setting.is_some() && setting == options.rule.get(at).map(|it| &it.1)
     }
 
-    /// bunfig.toml or `--rule`, if one of them turns on the rule that an oxlint config knows as `key`. Their settings
-    /// come after the file's.
-    fn added_rule_source(&self, key: &[u8]) -> Option<&[u8]> {
+    /// bunfig.toml or `--rule`, if one of them turns on the rule that a config of the given `flavor` knows as `id`.
+    /// Their settings come after the file's.
+    fn added_rule_source(&self, id: &[u8], flavor: Flavor) -> Option<&[u8]> {
         let options = self.options;
         let turns_on = |it: &(Vec<u8>, Json)| {
             let severity = it.1.as_array().and_then(|it| it.first()).unwrap_or(&it.1);
-            oxlint_rule_key(&it.0) == key
+            let is_named = match flavor {
+                Flavor::Oxlint => oxlint_rule_key(&it.0) == id,
+                _ => it.0 == id,
+            };
+            is_named
                 && severity.as_str() != Some(b"allow")
                 && severity_of(severity) != Some(Severity::Off)
         };
@@ -2163,16 +2172,13 @@ impl<'l> Loader<'l> {
     }
 
     /// Warns once per plugin, listing every rule of it that `config` sets and Bun doesn't have. `file` is the config
-    /// file. An oxlint config also has the rules of bunfig.toml and `--rule`, which get a warning of their own.
+    /// file. The config also has the rules of bunfig.toml and `--rule`, which get a warning of their own.
     fn warn_about_unknown_rules(&self, config: &Config, file: &[u8], flavor: Flavor) {
         let mut by_plugin: Vec<((&[u8], &[u8]), Vec<&[u8]>)> = Vec::new();
         for id in config.unknown_rules() {
             let (plugin, _) = bun_lint::linter::parse_rule_id(id);
-            let added = match flavor {
-                Flavor::Oxlint => self.added_rule_source(id),
-                _ => None,
-            };
-            let key = (added.unwrap_or(file), plugin);
+            let source = self.added_rule_source(id, flavor).unwrap_or(file);
+            let key = (source, plugin);
             match by_plugin.iter_mut().find(|it| it.0 == key) {
                 Some(entry) => entry.1.push(id),
                 None => by_plugin.push((key, vec![id])),

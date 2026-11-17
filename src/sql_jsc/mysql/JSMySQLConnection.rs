@@ -722,7 +722,7 @@ impl JSMySQLConnection {
 
     fn handle_packet<'p>(&self, packet: &'p Packet<'_>) -> Result<(), Failure<'p>> {
         // The refs are for script, which can end the request.
-        if let Some(request) = self.queue.current()
+        if let Some(request) = self.queue.oldest_unfinished()
             && let Some((command, statement)) = request.written_command()
         {
             return self.handle_reply(packet, &request, command, &statement);

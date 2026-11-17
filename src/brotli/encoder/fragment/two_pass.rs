@@ -127,8 +127,12 @@ impl TwoPass {
             block.end(&input[..end], start, next_literal, trees, writer);
         }
         block.finish(input, writer);
-        (self.items, self.runs) = (block.items, block.runs);
+        self.keep_memory_of(block);
         Ok(())
+    }
+
+    fn keep_memory_of(&mut self, block: Block) {
+        (self.items, self.runs) = (block.items, block.runs);
     }
 }
 

@@ -12,7 +12,7 @@ use crate::api::bun::process::PosixStdio as Stdio;
 use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions};
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_core::{self, Output};
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
@@ -282,9 +282,13 @@ impl Worker {
         self.alive && !self.ipc.done.get()
     }
 
-    /// Once it has exited and all that it sent has been read.
-    pub(crate) fn take_process_to_reap(&mut self) -> Option<spawn::ProcessHandle> {
-        (self.process).take_if(|_| !self.alive && is_drained(&self.ipc))
+    /// Lets go of the process once it has exited and all that it sent has been read.
+    pub(crate) fn take_exit(&mut self) -> Option<(bun_spawn::PidT, Status)> {
+        let process = self.process.as_ref()?;
+        let status = process.status().filter(|_| self.ipc.done.get())?;
+        let exit = (process.pid, status.clone());
+        self.process = None;
+        Some(exit)
     }
 
     pub(crate) fn dispatch(
@@ -309,16 +313,6 @@ impl Worker {
         // repeat_bufs / coverage_file frames; the worker exits on
         // `.shutdown` and its exit closes the peer end.
     }
-}
-
-/// For a peer that has exited. The end of the channel never comes while a process that got fd 3 from a test lives.
-fn is_drained(ipc: &Channel) -> bool {
-    #[cfg(unix)]
-    if !ipc.done.get() {
-        let pending = bun_core::is_readable(ipc.backend.socket.get().fd());
-        return matches!(pending, bun_core::Pollable::NotReady);
-    }
-    ipc.done.get()
 }
 
 bun_spawn::link_impl_ProcessExit! {

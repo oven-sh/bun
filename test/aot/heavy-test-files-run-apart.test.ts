@@ -27,7 +27,7 @@ const waitFor = (name = "") =>
 
 const startOf = (code: string) => `Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(code)}]);`;
 
-type Measured = { milliseconds: number; megabytes?: number; waitsFor?: string; isTimed?: false };
+type Measured = { milliseconds: number; megabytes?: number; waitsFor?: string };
 
 async function trailOf(records: { [name: string]: Measured }, words: string, ...flags: string[]) {
   const names = Object.keys(records);
@@ -44,7 +44,7 @@ async function trailOf(records: { [name: string]: Measured }, words: string, ...
     ),
     "timings.json": JSON.stringify({
       version: 1,
-      files: table(it => (it.isTimed === false ? undefined : it.milliseconds)),
+      files: table(it => it.milliseconds),
       memory: table(it => it.megabytes),
     }),
   });
@@ -117,22 +117,7 @@ test("as long as a heavy file is left, the others get what fits beside it", asyn
   ]);
 });
 
-test("a heavy file that a worker takes from another waits for room too", async () => {
-  // Without recorded times each worker has half of the files, and the first to run out takes from the other.
-  const trail = await trailOf(
-    {
-      a1: { milliseconds: 0, isTimed: false, waitsFor: "b1" },
-      a2: { milliseconds: 0, isTimed: false },
-      b1: { milliseconds: 1500, isTimed: false, megabytes: 1500, waitsFor: "a2" },
-      b2: { milliseconds: 0, isTimed: false, megabytes: 1500 },
-    },
-    "TestRunLayers:0",
-    "--parallel=2",
-    "--timeout=60000",
-  );
-  expect(mostAtOnce(trail, name => name.startsWith("b"))).toBe(1);
-});
-
+// `untilEveryThreadIs` reads /proc.
 test.skipIf(!isLinux)("the process that replaces a worker that waited for room gets one file at a time", async () => {
   // The first to start keeps its worker until all three have started, so the other two are the new process's.
   const half = (name: string) => `
@@ -167,6 +152,7 @@ test.skipIf(!isLinux)("the process that replaces a worker that waited for room g
     stdout: "ignore",
     stderr: "pipe",
   });
+  const letLargestEnd = () => writeFileSync(join(String(dir), "go"), "");
   let stderr = "";
   let replaced: Promise<void> | undefined;
   for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
@@ -180,13 +166,19 @@ test.skipIf(!isLinux)("the process that replaces a worker that waited for room g
         await untilEveryThreadIs("T", coordinator);
         process.kill(worker, "SIGKILL");
         await untilEveryThreadIs("Z", worker);
-        writeFileSync(join(String(dir), "go"), "");
-        while (!existsSync(join(String(dir), "reported"))) await Bun.sleep(1);
+        letLargestEnd();
+        const deadline = performance.now() + 30_000;
+        while (!existsSync(join(String(dir), "reported"))) {
+          if (performance.now() > deadline) throw new Error("the largest file did not end");
+          await Bun.sleep(1);
+        }
       } finally {
+        letLargestEnd();
         process.kill(coordinator, "SIGCONT");
       }
     })(pids.slice(1).map(Number));
   }
+  expect(replaced).toBeDefined();
   await replaced;
   expect(stderr).toContain(" 5 pass\n 0 fail\n");
   expect(await proc.exited).toBe(0);

@@ -207,7 +207,7 @@ impl Timings {
         }
     }
 
-    pub(crate) fn cost(&self, abs_path: &[u8]) -> u64 {
+    fn cost(&self, abs_path: &[u8]) -> u64 {
         u64::from(self.get(abs_path).unwrap_or(self.median).max(1))
     }
 

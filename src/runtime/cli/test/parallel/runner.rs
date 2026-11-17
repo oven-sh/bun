@@ -62,8 +62,8 @@ pub(crate) fn run_as_coordinator(
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *vm.transpiler.get().env };
-    let n = files.len();
-    let k: u32 = ctx.test_options.parallel.min(u32::try_from(n).unwrap());
+    let n: u32 = u32::try_from(files.len()).unwrap();
+    let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
         // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
         // tests can rely on the var whenever --parallel is passed.
@@ -123,7 +123,6 @@ pub(crate) fn run_as_coordinator(
     let windows_job =
         bun_sys::windows::create_kill_on_close_job().map(core::mem::ManuallyDrop::new);
     let mut coord = Coordinator {
-        vm,
         reporter,
         timings,
         schedule,
@@ -211,7 +210,11 @@ fn make_schedule(
     let runs_compiled_code = crate::cli::run_compiled::runs_compiled_code();
     let timed = timings.filter(|t| !t.is_empty() && !randomize);
     let queues: Vec<Range<usize>> = match timed {
-        Some(_) if runs_compiled_code => (0..k).map(|i| 0..if i == 0 { n } else { 0 }).collect(),
+        Some(_) if runs_compiled_code => {
+            let mut queues = vec![0..0; slots];
+            queues[0] = 0..n;
+            queues
+        }
         Some(t) => t.partition(&sorted, k),
         None => (0..slots)
             .map(|i| i * n / slots..(i + 1) * n / slots)
@@ -229,12 +232,13 @@ fn make_schedule(
         .map(|file| file.as_bytes())
         .map(|path| TestFile {
             path,
-            cost: timed.map_or(1, |t| t.cost(path)),
             growth: measured
                 .and_then(|t| t.growth_of(path))
                 .map_or(0, u64::from),
         });
-    let steal = timed.map_or(Steal::BackHalf, |_| Steal::Slowest);
+    let steal = timed.map_or(Steal::BackHalf, |t| Steal::Slowest {
+        costs: t.costs(&sorted),
+    });
     Schedule::new(files.collect(), queues, steal)
 }
 
@@ -484,7 +488,6 @@ fn tick_until(vm: &VirtualMachine, mut is_over: impl FnMut() -> bool) {
 }
 
 struct RunningFile {
-    idx: u32,
     before: crate::test_runner::jest::Summary,
     before_unhandled: u32,
     started_ns: u64,
@@ -514,7 +517,7 @@ impl RunningFile {
         }
         let first_loads = first_loads(vm);
         link.emit(frame::Kind::FileDone, |wf| {
-            wf.u32(self.idx);
+            wf.u32(link.file_idx.get());
             let before = frame::counters(&mut self.before);
             for (after, before) in frame::counters(&mut after).into_iter().zip(before) {
                 wf.u32(*after - *before);
@@ -571,7 +574,6 @@ fn run_files(
         link.emit(frame::Kind::FileStart, |wf| wf.u32(idx));
 
         let running = RunningFile {
-            idx,
             before: reporter.summary(),
             before_unhandled: reporter.jest.unhandled_errors_between_tests.get(),
             started_ns: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
@@ -579,14 +581,20 @@ fn run_files(
         };
 
         // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
-        let (first, last) = (true, true);
-        if let Err(err) = TestCommand::run(reporter, vm, path, FirstLast { first, last }) {
+        let first_last = FirstLast {
+            first: true,
+            last: true,
+        };
+        if let Err(err) = TestCommand::run(reporter, vm, path, first_last) {
             test_command::handle_top_level_test_error_before_javascript_start(&err);
         }
         if vm.test_isolation_enabled.get() {
             crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
             vm.swap_global_for_test_isolation();
-            (reporter.jest.bun_test_root).reset_preload_for_test_isolation();
+            reporter
+                .jest
+                .bun_test_root
+                .reset_preload_for_test_isolation();
             crate::test_runner::Expect::reset_for_test_isolation(vm.global());
         } else {
             Global::mimalloc_cleanup(false);

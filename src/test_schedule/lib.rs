@@ -6,8 +6,6 @@ use core::ops::Range;
 
 pub struct TestFile {
     pub path: &'static [u8],
-    /// Milliseconds. Only `Steal::Slowest` reads it.
-    pub cost: u64,
     /// Megabytes by which its worker grew in an earlier compiled run. Most files take next to nothing, so one without a record has 0.
     pub growth: u64,
 }
@@ -16,13 +14,15 @@ pub fn is_heavy(growth: u64) -> bool {
     growth > 1024
 }
 
-/// What a slot that has run out of files takes from the slot that has the most left.
-#[derive(Clone, Copy)]
+/// What a slot that has run out of files takes from another.
 pub enum Steal {
-    /// Neighbours share imports, so both keep a contiguous range. A run has O(slots × log files) steals.
+    /// Of the longest queue. Neighbours share imports, so both keep a contiguous range.
     BackHalf,
-    /// The next file of a queue that is sorted slowest first. What a slot has left is counted in `cost`.
-    Slowest,
+    /// The next file of the queue with the most time left. Queues are sorted slowest first.
+    Slowest {
+        /// Milliseconds, for each file.
+        costs: Vec<u64>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -35,7 +35,7 @@ pub enum Phase {
     },
     /// Only heavy files are left for it, and there is no room for one.
     WaitingForRoom,
-    /// Gets no more files: it has been told to shut down, or it died between two files.
+    /// Between two files. It stays so once its `Free` is spent on a shutdown or dropped.
     Idle,
 }
 
@@ -84,20 +84,24 @@ pub struct Schedule {
     room_for_heavy: u64,
     /// What the other slots take together where each runs an average file.
     room_beside_heavy: u64,
-    heavy_files_queued: usize,
+    /// One that a thief begins its half with is not chosen, so it stays in the count.
+    heavy_files_to_choose: usize,
 }
 
 impl Schedule {
     /// One queue per slot. Together they hold each of `files` once.
     pub fn new(files: Vec<TestFile>, queues: Vec<Range<usize>>, steal: Steal) -> Self {
         let growths = || files.iter().map(|file| file.growth);
-        let other_slots = queues.len() as u64 - 1;
-        let phase = Phase::Starting;
+        let other_slots = queues.len().saturating_sub(1) as u64;
+        let slot = |queue| Slot {
+            phase: Phase::Starting,
+            queue,
+        };
         Schedule {
             room_for_heavy: growths().max().unwrap_or(0),
-            room_beside_heavy: growths().sum::<u64>() * other_slots / files.len() as u64,
-            heavy_files_queued: growths().filter(|&growth| is_heavy(growth)).count(),
-            slots: (queues.into_iter().map(|queue| Slot { phase, queue })).collect(),
+            room_beside_heavy: growths().sum::<u64>() * other_slots / files.len().max(1) as u64,
+            heavy_files_to_choose: growths().filter(|&growth| is_heavy(growth)).count(),
+            slots: queues.into_iter().map(slot).collect(),
             files,
             steal,
         }
@@ -158,10 +162,16 @@ impl Schedule {
     }
 
     pub fn assign(&mut self, Free(slot): Free, since_ms: i64) -> Next {
-        let Some(owner) = self.queue_for(slot) else {
+        debug_assert_eq!(self.phase(slot), Phase::Idle);
+        let has_own = !self.slots[slot].queue.is_empty();
+        let Some(owner) = has_own.then_some(slot).or_else(|| self.victim()) else {
             return Next::ShutDown;
         };
-        let (phase, next) = match self.take_from(owner) {
+        let file = match self.steal {
+            Steal::BackHalf if owner != slot => self.steal_back_half(slot, owner),
+            Steal::BackHalf | Steal::Slowest { .. } => self.take_from(owner),
+        };
+        let (phase, next) = match file {
             Some(file) => (Phase::Running { file, since_ms }, Next::Run(file)),
             None => (Phase::WaitingForRoom, Next::Wait),
         };
@@ -169,55 +179,58 @@ impl Schedule {
         next
     }
 
-    /// The slot whose queue has the next file for `slot`. It need not have a process yet.
-    fn queue_for(&mut self, slot: usize) -> Option<usize> {
-        if !self.slots[slot].queue.is_empty() {
-            return Some(slot);
-        }
-        match self.steal {
-            Steal::Slowest => self.victim(|files| files.iter().map(|file| file.cost).sum()),
-            Steal::BackHalf => {
-                let victim = self.victim(|files| files.len() as u64)?;
-                let queue = &mut self.slots[victim].queue;
-                let stolen = queue.start + queue.len() / 2..queue.end;
-                queue.end = stolen.start;
-                self.slots[slot].queue = stolen;
-                Some(slot)
-            }
-        }
+    /// The first file of the half, whatever its growth.
+    fn steal_back_half(&mut self, thief: usize, victim: usize) -> Option<usize> {
+        let queue = &mut self.slots[victim].queue;
+        let stolen = queue.start + queue.len() / 2..queue.end;
+        queue.end = stolen.start;
+        self.slots[thief].queue = stolen;
+        self.slots[thief].queue.next()
     }
 
-    /// The first of the slots that have the most left.
-    fn victim(&self, amount: impl Fn(&[TestFile]) -> u64) -> Option<usize> {
-        let queued = |slot: &usize| &self.files[self.slots[*slot].queue.clone()];
-        let slots = (0..self.slots.len()).filter(|slot| !queued(slot).is_empty());
-        slots.min_by_key(|slot| Reverse(amount(queued(slot))))
+    /// The first of the slots that have the most left. It need not have a process yet.
+    fn victim(&self) -> Option<usize> {
+        let queue = |slot: usize| self.slots[slot].queue.clone();
+        let slots = (0..self.slots.len()).filter(|&slot| !queue(slot).is_empty());
+        slots.min_by_key(|&slot| {
+            Reverse(match &self.steal {
+                Steal::BackHalf => queue(slot).len() as u64,
+                Steal::Slowest { costs } => costs[queue(slot)].iter().sum(),
+            })
+        })
     }
 
     fn take_from(&mut self, owner: usize) -> Option<usize> {
         if is_heavy(self.room_for_heavy) {
             let queue = self.slots[owner].queue.clone();
             let next = self.choose_by_growth(queue.clone())?;
-            self.heavy_files_queued -= usize::from(is_heavy(self.files[next].growth));
+            if is_heavy(self.files[next].growth) {
+                self.heavy_files_to_choose = self.heavy_files_to_choose.saturating_sub(1);
+            }
             self.files.swap(queue.start, next);
+            if let Steal::Slowest { costs } = &mut self.steal {
+                costs.swap(queue.start, next);
+            }
         }
         self.slots[owner].queue.next()
     }
 
     /// While heavy files run or are left: one that has room, else the first that fits beside them, else the lightest unless it is heavy.
-    fn choose_by_growth(&self, queue: Range<usize>) -> Option<usize> {
+    fn choose_by_growth(&self, mut queue: Range<usize>) -> Option<usize> {
         let growth = |file: &usize| self.files[*file].growth;
         let running = || self.running().map(|(file, _)| growth(&file));
         let heavy: u64 = running().filter(|&it| is_heavy(it)).sum();
-        if heavy == 0 && self.heavy_files_queued == 0 {
-            return Some(queue.start);
+        if heavy == 0 && self.heavy_files_to_choose == 0 {
+            return queue.next();
         }
-        let beside: u64 = running().filter(|&it| !is_heavy(it)).sum();
         let is_light = |file: &usize| !is_heavy(growth(file));
+        let beside: u64 = running().filter(|&it| !is_heavy(it)).sum();
         let has_room =
             |file: &usize| !is_light(file) && heavy + growth(file) <= self.room_for_heavy;
         let fits = |file: &usize| is_light(file) && beside + growth(file) <= self.room_beside_heavy;
-        (queue.clone().find(has_room))
+        queue
+            .clone()
+            .find(has_room)
             .or_else(|| queue.clone().find(fits))
             .or_else(|| queue.min_by_key(growth).filter(is_light))
     }

@@ -11,7 +11,6 @@ use std::io::Write as _;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::CellExt as _;
 use bun_test_schedule::{Free, Next, Phase, Schedule};
 
@@ -23,7 +22,6 @@ use crate::cli::test::timings::Timings;
 use crate::test_command::CommandLineReporter;
 
 pub(crate) struct Coordinator<'a> {
-    pub(crate) vm: &'a VirtualMachine,
     pub(crate) reporter: &'a CommandLineReporter,
     /// `reporter.timings`, until `drive` returns.
     pub(crate) timings: Option<Box<Timings>>,
@@ -204,7 +202,7 @@ impl<'a> Coordinator<'a> {
                 self.abort_all(signal);
                 return;
             }
-            self.vm.event_loop().tick();
+            self.spawn.vm.event_loop().tick();
             self.handle_worker_events();
             self.assign_work_to_waiting_workers();
             if let Some(children) = &mut self.children_of_workers {
@@ -226,13 +224,14 @@ impl<'a> Coordinator<'a> {
                     sec: wait_ms / MS_PER_S,
                     nsec: (wait_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
-                let loop_ = self.vm.event_loop().usockets_loop();
+                let loop_ = self.spawn.vm.event_loop().usockets_loop();
                 loop_.tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
             } else {
-                self.vm.event_loop().auto_tick();
+                self.spawn.vm.event_loop().auto_tick();
             }
             self.handle_worker_events();
         }
+        debug_assert!(self.schedule.running().next().is_none() && !self.has_work_to_hand_out());
     }
 
     /// SIGINT/SIGTERM: terminate every worker (and its descendants) and exit.
@@ -244,7 +243,9 @@ impl<'a> Coordinator<'a> {
     /// Exits with 128 + `signal`, the status a shell reports for a signal death.
     fn abort_all(&mut self, signal: i32) {
         let now = bun_core::time::milli_timestamp();
-        let running: Vec<(usize, i64)> = (self.schedule.running())
+        let running: Vec<(usize, i64)> = self
+            .schedule
+            .running()
             .map(|(file, since_ms)| (file, now - since_ms))
             .collect();
         for &(file, ran_ms) in &running {
@@ -335,7 +336,8 @@ impl<'a> Coordinator<'a> {
         if self.stop_reason.is_some() {
             return w.shutdown(&mut self.frame);
         }
-        match (self.schedule).assign(free, bun_core::time::milli_timestamp()) {
+        let now = bun_core::time::milli_timestamp();
+        match self.schedule.assign(free, now) {
             Next::Run(idx) => {
                 let is_growth_written = self.children_of_workers.is_some();
                 let file = self.schedule.path(idx);
@@ -438,12 +440,16 @@ impl<'a> Coordinator<'a> {
             frame::Kind::Ready => {
                 log_first_time_in_test_run("the first worker is ready");
                 // A worker that has exited stays `Starting`, so the exit counts in `startup_failures`.
-                if self.workers[slot].can_take_work()
-                    && let Some(free) = self.schedule.ready(slot)
-                {
+                if !self.workers[slot].can_take_work() {
+                    return;
+                }
+                if let Some(free) = self.schedule.ready(slot) {
                     self.workers[slot].startup_failures = 0;
                     self.take_highest_of_children(slot);
                     self.assign_work(free);
+                } else if !self.has_work_to_hand_out() {
+                    // The slot is reaped only when every holder of its channel has gone.
+                    self.workers[slot].shutdown(&mut self.frame);
                 }
             }
             frame::Kind::FileStart => {
@@ -561,10 +567,8 @@ impl<'a> Coordinator<'a> {
                 // So that the exit accounts for the in-flight file and the slot can respawn.
                 let _ = p.kill(9);
             }
-            if let Some(process) = w.take_process_to_reap()
-                && let Some(status) = process.status()
-            {
-                self.reap_worker(slot, process.pid, status);
+            if let Some((pid, status)) = w.take_exit() {
+                self.reap_worker(slot, pid, &status);
             }
         }
     }
@@ -728,7 +732,8 @@ impl<'a> Coordinator<'a> {
         // `Shutdown` is read between files only.
         self.workers.iter().filter(|w| w.alive).for_each(terminate);
         // The queued files are swept only where this is what stopped the run.
-        if (self.stop_reason.replace(StopReason::WorkerPanicked)).is_none() {
+        let earlier_stop = self.stop_reason.replace(StopReason::WorkerPanicked);
+        if earlier_stop.is_none() {
             self.abort_queued_files(sweep_reason);
         }
     }

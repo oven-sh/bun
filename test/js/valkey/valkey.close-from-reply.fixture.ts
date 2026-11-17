@@ -102,7 +102,6 @@ for (let round = 0; round < 10; round++) {
   }
   await nextTick;
 }
-Bun.gc(true);
-console.log(`${heapStats().objectTypeCounts.RedisClient - lowerTier.length} left`);
+console.log(`${heapStats().protectedObjectTypeCounts.RedisClient ?? 0} roots left`);
 
 for (const client of lowerTier) client.close();

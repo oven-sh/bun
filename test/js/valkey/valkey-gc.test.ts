@@ -975,11 +975,11 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
 });
 
 test.concurrent(
-  "a client closed from within its own reply outlives the socket read and is collected after it",
+  "a client closed from within its own reply outlives the socket read and has no root after it",
   async () => {
     const result = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
     expect(result).toSpawn();
-    expect(result.stdout.trim()).toBe("0 left");
+    expect(result.stdout.trim()).toBe("0 roots left");
   },
 );
 

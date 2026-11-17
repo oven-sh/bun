@@ -1,6 +1,6 @@
 use core::fmt;
 use std::rc::Rc;
-use crate::test_runner::expect::{FormatterTestExt as _, JSValueTestExt};
+use crate::test_runner::expect::show_unquoted;
 
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
@@ -10,7 +10,7 @@ use crate::generated_bindgen::jest::js_ScopeFunctions as js;
 use crate::generated_bindgen::scope_functions::{
     Bun__ScopeFunctions__callAsFunction, CallbackOrOptions, DescriptionOrCallback, Retry,
 };
-use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, Calling, DescribeScope, Flavor};
+use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, Calling, Collection, Flavor};
 use crate::test_runner::bun_test::js_fns::{GenericHookTag, Signature, create_hook};
 use crate::test_runner::test_context;
 use crate::test_runner::test_context_fixtures::TestFixtures;
@@ -187,20 +187,15 @@ impl ScopeFunctions {
         if self.mode == Mode::Describe {
             return Err(global.throw(format_args!("{} cannot be called on {}", signature, self)));
         }
-        let mut active_scope: *const DescribeScope = core::ptr::null();
-        let mut is_top_level = true;
-        if let Some(buntest) = bun_test::clone_active_strong() {
-            if buntest.phase == bun_test::Phase::Collection {
-                active_scope = buntest.collection.active_scope.as_ptr();
-                is_top_level = core::ptr::eq(active_scope, &raw const *buntest.collection.root_scope);
-            } else if is_override {
-                return Err(global.throw(format_args!(
-                    "Cannot call {} inside a test. Call it inside describe() instead.",
-                    signature
-                )));
-            }
+        let buntest = bun_test::clone_active_strong();
+        let collecting = buntest.as_deref().filter(|buntest| buntest.phase.get() == bun_test::Phase::Collection);
+        if is_override && buntest.is_some() && collecting.is_none() {
+            return Err(global.throw(format_args!(
+                "Cannot call {} inside a test. Call it inside describe() instead.",
+                signature
+            )));
         }
-        TestFixtures::define(global, arguments, signature, self.fixtures, active_scope, is_top_level, is_override)
+        TestFixtures::define(global, arguments, signature, self.fixtures, collecting, is_override)
     }
 
     fn hook(&self, global: &JSGlobalObject, tag: GenericHookTag) -> JsResult<JSValue> {
@@ -250,8 +245,7 @@ impl ScopeFunctions {
         let _g = group_log::begin();
 
         if array.is_undefined_or_null() || !array.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
-            return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
+            return Err(global.throw(format_args!("Expected array, got {}", show_unquoted(global, array))));
         }
 
         if !self.each.is_empty() {
@@ -331,13 +325,12 @@ pub(crate) fn call_as_function<'a>(
     let _g = group_log::begin();
 
     let global = cx.global();
-    let Some(this) = this_value.to_js().as_class_ref::<ScopeFunctions>() else {
+    let Some(this) = this_value.as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
     let line_no = jest::capture_test_line_number(global);
 
-    let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
-    let bun_test_ptr = buntest_strong.get();
+    let buntest = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(&this))?;
 
     let is_vitest = this.cfg.flavor == Flavor::Vitest;
     let callback_mode: CallbackMode = match this.cfg.self_mode {
@@ -352,11 +345,11 @@ pub(crate) fn call_as_function<'a>(
         first,
         second,
         third,
-        Signature::ScopeFunctions(this),
+        Signature::ScopeFunctions(&this),
         ParseArgumentsCfg {
             callback: callback_mode,
             kind: FunctionKind::TestOrDescribe,
-            inherited: bun_test_ptr.collection.active_scope().inherited,
+            inherited: buntest.active_scope().inherited,
         },
     )?;
 
@@ -378,8 +371,7 @@ pub(crate) fn call_as_function<'a>(
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
-            return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
+            return Err(global.throw(format_args!("Expected array, got {}", show_unquoted(global, this.each))));
         }
         // Vitest only spreads the rows if every row is an array.
         let mut spread_rows = this.rows == Rows::Each;
@@ -428,15 +420,13 @@ pub(crate) fn call_as_function<'a>(
 
                 let callback_args = if spread_rows { args_list.as_slice() } else { core::slice::from_ref(&item) };
                 let bound = if let Some(cb) = args.callback {
-                    let bound = JSValueTestExt::bind(cb.without_async_context(), global, item, &BunString::static_("cb"), 0.0, callback_args)?;
+                    let bound = cb.without_async_context().bind(global, item, &BunString::static_("cb"), 0.0, callback_args)?;
                     Some(bound.with_async_context_if_needed(global))
                 } else {
                     None
                 };
                 this.enqueue_describe_or_test_callback(
-                    // Explicit reborrow: the closure must not move the `&mut`
-                    // (it is reused on later loop iterations).
-                    &mut *bun_test_ptr,
+                    &buntest,
                     global,
                     bound,
                     formatted_label.as_deref(),
@@ -455,7 +445,7 @@ pub(crate) fn call_as_function<'a>(
         }
     } else {
         this.enqueue_describe_or_test_callback(
-            bun_test_ptr,
+            &buntest,
             global,
             args.callback,
             args.description.as_deref(),
@@ -499,20 +489,14 @@ impl<'a> WriteEnd for Write<'a> {
     }
 }
 
-fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, parent_in: Option<&DescribeScope>) {
+fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, bun_test: &BunTest) {
     const SEP: &[u8] = b" ";
     rem.write_end(description.unwrap_or(b""));
-    let mut parent = parent_in;
-    while let Some(scope) = parent {
-        // PORTING.md: `BaseScope.parent` is `Option<*const DescribeScope>` (raw backref);
-        // per-use reborrow.
-        // SAFETY: parent backrefs are stable for the lifetime of the collection tree.
-        parent = scope.base.parent.map(|p| unsafe { &*p });
-        if scope.base.name.is_none() {
-            continue;
+    for scope in bun_test.scopes_from(Some(bun_test.collection.active_scope.get())) {
+        if let Some(name) = scope.base.name.as_deref() {
+            rem.write_end(SEP);
+            rem.write_end(name);
         }
-        rem.write_end(SEP);
-        rem.write_end(scope.base.name.as_deref().unwrap_or(b""));
     }
 }
 
@@ -520,7 +504,7 @@ impl ScopeFunctions {
     #[optimize(size)]
     fn enqueue_describe_or_test_callback(
         &self,
-        bun_test: &mut BunTest,
+        bun_test: &BunTest,
         global: &JSGlobalObject,
         callback: Option<JSValue>,
         description: Option<&[u8]>,
@@ -532,7 +516,7 @@ impl ScopeFunctions {
         let _g = group_log::begin();
 
         // only allow in collection phase
-        match bun_test.phase {
+        match bun_test.phase.get() {
             bun_test::Phase::Collection => {} // ok
             bun_test::Phase::Execution => {
                 return Err(global.throw(format_args!(
@@ -549,18 +533,16 @@ impl ScopeFunctions {
         }
 
         // handle test reporter agent for debugger
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         let mut test_id_for_debugger: i32 = 0;
-        if let Some(debugger) = (*vm).debugger.as_mut() {
+        if let Some(debugger) = vm.debugger.get() {
             if debugger.test_reporter_agent.is_enabled() {
-                debugger.test_reporter_agent.next_test_id += 1;
-                let id = debugger.test_reporter_agent.next_test_id;
+                debugger.test_reporter_agent.next_test_id.update(|n| n + 1);
+                let id = debugger.test_reporter_agent.next_test_id.get();
                 let name = StringView::from_bytes(description.unwrap_or(b"(unnamed)"));
-                let parent: &DescribeScope = bun_test.collection.active_scope();
-                let parent_id = if parent.base.test_id_for_debugger != 0 {
-                    parent.base.test_id_for_debugger
-                } else {
-                    -1
+                let parent_id = match bun_test.active_scope().base.test_id_for_debugger.get() {
+                    0 => -1,
+                    parent_id => parent_id,
                 };
                 debugger.test_reporter_agent.report_test_found(
                     id,
@@ -584,9 +566,7 @@ impl ScopeFunctions {
         base.test_id_for_debugger = test_id_for_debugger;
         // Use the file's default concurrent setting (determined once when entering the file)
         // or the global concurrent flag from the runner
-        if bun_test.default_concurrent
-            || jest::Jest::runner().is_some_and(|r| r.concurrent)
-        {
+        if bun_test.default_concurrent || bun_test.reporter.jest.concurrent {
             // Only set to concurrent if still inheriting
             if base.self_concurrent == SelfConcurrent::Inherit {
                 base.self_concurrent = SelfConcurrent::Yes;
@@ -595,60 +575,48 @@ impl ScopeFunctions {
 
         match self.mode {
             Mode::Describe => {
-                // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base);
-                if self.cfg.flavor == Flavor::Vitest {
-                    new_scope.inherited = options.inherited;
+                let inherited = if self.cfg.flavor == Flavor::Vitest {
+                    options.inherited
                 } else {
-                    new_scope.inherited.shuffle = options.inherited.shuffle;
-                }
-                bun_test.collection.enqueue_describe_callback(new_scope, callback)?;
+                    InheritedOptions { shuffle: options.inherited.shuffle, ..bun_test.active_scope().inherited }
+                };
+                let new_scope = bun_test.append_describe(description, base, inherited);
+                Collection::enqueue_describe_callback(bun_test, new_scope, callback)?;
             }
             Mode::Test => {
                 // check for filter match
                 let mut matches_filter = true;
-                if let Some(reporter) = bun_test.reporter {
-                    // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-                    let reporter = unsafe { reporter.as_ref() };
-                    if let Some(filter_regex) = reporter.jest.filter_regex {
-                        group_log::log(format_args!("matches_filter begin"));
-                        debug_assert!(bun_test.collection.filter_buffer.is_empty());
-                        // reshaped for borrowck — clear at end via explicit call below.
+                if let Some(filter_regex) = bun_test.reporter.jest.filter_regex {
+                    group_log::log(format_args!("matches_filter begin"));
+                    let mut filter_buffer = bun_test.collection.filter_buffer.take();
+                    debug_assert!(filter_buffer.is_empty());
 
-                        // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                        let active_scope: &DescribeScope = unsafe { bun_test.collection.active_scope.as_ref() };
+                    let mut len = Measure { len: 0 };
+                    filter_names(&mut len, description, bun_test);
+                    filter_buffer.resize(len.len, 0);
+                    let mut rem = Write { buf: &mut filter_buffer };
+                    filter_names(&mut rem, description, bun_test);
+                    debug_assert!(rem.buf.is_empty());
 
-                        let mut len = Measure { len: 0 };
-                        filter_names(&mut len, description, Some(active_scope));
-                        // Extend by `len.len` zero bytes and
-                        // hand back the freshly-appended tail as `&mut [u8]`.
-                        let start = bun_test.collection.filter_buffer.len();
-                        bun_test.collection.filter_buffer.resize(start + len.len, 0);
-                        let slice: &mut [u8] = &mut bun_test.collection.filter_buffer[start..];
-                        let mut rem = Write { buf: slice };
-                        filter_names(&mut rem, description, Some(active_scope));
-                        debug_assert!(rem.buf.is_empty());
+                    let str = StringView::from_bytes(filter_buffer.as_slice());
+                    group_log::log(format_args!(
+                        "matches_filter \"{}\"",
+                        bstr::BStr::new(filter_buffer.as_slice())
+                    ));
+                    matches_filter = filter_regex.matches(&str);
 
-                        let str = StringView::from_bytes(bun_test.collection.filter_buffer.as_slice());
-                        group_log::log(format_args!(
-                            "matches_filter \"{}\"",
-                            bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
-                        ));
-                        matches_filter = filter_regex.matches(&str);
-
-                        bun_test.collection.filter_buffer.clear();
-                    }
+                    filter_buffer.clear();
+                    bun_test.collection.filter_buffer.set(filter_buffer);
                 }
 
                 if !matches_filter {
                     base.self_mode = SelfMode::FilteredOut;
                 }
 
-                debug_assert!(!bun_test.collection.locked);
                 group_log::log(format_args!(
                     "enqueueTestCallback / {} / in scope: {}",
                     bstr::BStr::new(description.unwrap_or(b"(unnamed)")),
-                    bstr::BStr::new(bun_test.collection.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)"))
+                    bstr::BStr::new(bun_test.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)"))
                 ));
 
                 let mut callback = if matches_filter { callback } else { None };
@@ -681,7 +649,7 @@ impl ScopeFunctions {
                     }
                 }
 
-                let entry = bun_test.collection.active_scope_mut().append_test(
+                bun_test.append_test(
                     description,
                     callback,
                     bun_test::ExecutionEntryCfg {
@@ -692,12 +660,9 @@ impl ScopeFunctions {
                         retry_count: options.retry.unwrap_or(0),
                         repeat_count: options.repeats,
                     },
+                    parameter_of_callback,
                     base,
-                    bun_test::AddedInPhase::Collection,
-                )?;
-                if parameter_of_callback.is_some() {
-                    entry.parameter = parameter_of_callback;
-                }
+                );
             }
         }
         Ok(())
@@ -1035,7 +1000,7 @@ pub(crate) fn parse_arguments<'a>(
 
     if result.options.retry.is_none() {
         if let Some(runner) = jest::Jest::runner() {
-            result.options.retry = Some(runner.test_options.retry);
+            result.options.retry = Some(runner.retry);
         }
     }
     if !is_vitest && result.options.retry.unwrap_or(0) != 0 && result.options.repeats != 0 {
@@ -1049,11 +1014,11 @@ pub(crate) fn parse_arguments<'a>(
         (ms, _) => Some(ms),
     });
     let override_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
-        if runner.default_timeout_override != u32::MAX { Some(runner.default_timeout_override) } else { None }
+        Some(runner.default_timeout_override.get()).filter(|&ms| ms != u32::MAX)
     });
     let vi_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| match cfg.kind {
-        FunctionKind::TestOrDescribe => runner.vi_config.test_timeout,
-        FunctionKind::Hook | FunctionKind::VitestHook => runner.vi_config.hook_timeout,
+        FunctionKind::TestOrDescribe => runner.vi_config.get().test_timeout,
+        FunctionKind::Hook | FunctionKind::VitestHook => runner.vi_config.get().hook_timeout,
     });
     result.options.timeout =
         result.options.inherited.timeout.or(vi_timeout_ms).or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);
@@ -1111,7 +1076,7 @@ fn create_unbound(global: &JSGlobalObject, scope_functions: ScopeFunctions) -> J
 
 fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult<JSValue> {
     let call_fn = bun_jsc::JSFunction::create(global, name, Bun__ScopeFunctions__callAsFunction, 1, Default::default());
-    let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_(name), 1.0, &[])?;
+    let bound = call_fn.bind(global, value, &BunString::static_(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     js::bound_set_cached(value, global, bound);
     Ok(bound)

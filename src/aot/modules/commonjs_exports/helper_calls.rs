@@ -97,6 +97,17 @@ impl<'a> CallReader<'a, '_> {
             | Helper::ClassPrivateFieldGet
             | Helper::ClassPrivateFieldSet
             | Helper::ClassPrivateFieldIn
+            | Helper::AssertClassBrand
+            | Helper::CheckPrivateRedeclaration
+            | Helper::PrivateElementAdd
+            | Helper::PrivateGetterCall
+            | Helper::PrivateSetterCall
+            | Helper::PrivateAccessCheck
+            | Helper::ClassExtractFieldDescriptor
+            | Helper::ClassApplyDescriptorGet
+            | Helper::ClassApplyDescriptorSet
+            | Helper::PrivateWrapper
+            | Helper::ThrowTypeError
             | Helper::ExportSetter
             | Helper::ReturnValue
             | Helper::CommonJs

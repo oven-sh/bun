@@ -51,9 +51,7 @@ pub(crate) fn init_for_link(
 
     // Print the messages from loading the config files, because nothing below does.
     if manager.log_mut().has_any() {
-        let _ = manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = manager.log_mut().print(Output::error_writer());
         manager.log_mut().reset();
     }
 
@@ -181,9 +179,7 @@ pub(crate) fn link_global_bins(
     let mut link_dest_buf = bun_paths::path_buffer_pool::get();
     let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
-    // Built twice, because `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) can't
-    // be the same value.
-    let node_modules_path = || match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
+    let mut node_modules_path = match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
         Ok(p) => p,
         Err(e) => {
             if manager.options.log_level != LogLevel::Silent {
@@ -192,30 +188,27 @@ pub(crate) fn link_global_bins(
             Global::crash();
         }
     };
-    let target_node_modules_path = node_modules_path();
-    let mut node_modules_path = node_modules_path();
 
     let mut bin_linker = bin::Linker {
         bin: package.bin,
         node_modules_path: &mut node_modules_path,
         global_bin_path: manager.options.bin_path,
-        target_node_modules_path: &raw const target_node_modules_path,
-        target_package_name: strings::StringOrTinyString::init(name),
-        package_name: strings::StringOrTinyString::init(name),
+        target_node_modules_path: None,
+        target_package_name: name,
+        package_name: name,
         string_buf: lockfile.buffers.string_bytes.as_slice(),
         extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
         seen: None,
         abs_target_buf: link_target_buf.as_mut_slice(),
-        abs_dest_buf: link_dest_buf.as_mut_slice(),
         rel_buf: link_rel_buf.as_mut_slice(),
         is_behind_link: Some(false),
         err: None,
         skipped_due_to_missing_bin: false,
     };
     if unlink {
-        bin_linker.unlink(true);
+        bin_linker.unlink(true, link_dest_buf.as_mut_slice());
     } else {
-        bin_linker.link(true);
+        bin_linker.link(true, link_dest_buf.as_mut_slice());
     }
     bin_linker.err
 }
@@ -225,6 +218,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
     if manager.options.positionals.len() == 1 {
         // bun link
+        drop(original_cwd); // `Global::exit` below runs no destructors.
         let (lockfile, package) = load_package_for_link(manager, "linking")?;
         let name = lockfile.str(&package.name);
 
@@ -258,8 +252,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             );
             let mut link_path_buf = bun_paths::path_buffer_pool::get();
             link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
-            link_path_buf.0[top_level.len()] = 0;
-            let link_path = ZStr::from_buf(&link_path_buf.0[..], top_level.len());
+            let link_path = ZStr::nul_terminate(&mut link_path_buf, top_level.len());
             let global_path = pm::global_link_dir_path(manager);
             let dest_path =
                 resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);

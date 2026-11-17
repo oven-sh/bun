@@ -34,13 +34,15 @@ EventNames::EventNames()
 {
 }
 
-thread_local std::unique_ptr<EventNames> eventNames_;
-
 const EventNames& eventNames()
 {
-    if (!eventNames_)
-        eventNames_ = EventNames::create();
-    return *eventNames_;
+    // Saves the call that finds the thread's value.
+    static thread_local constinit const EventNames* names = nullptr;
+    if (!names) [[unlikely]] {
+        static NeverDestroyed<ThreadSpecific<EventNames>> namesOfThread;
+        names = namesOfThread.get();
+    }
+    return *names;
 }
 
 enum class DOMEventName : uint8_t {

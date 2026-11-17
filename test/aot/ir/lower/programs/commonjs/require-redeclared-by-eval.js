@@ -84,39 +84,40 @@ exports.n = 1;
 // CHECK-NEXT: SetLiteralPrototype v8, v9
 // CHECK-NEXT: v11 = FinishObject v8
 // CHECK-NEXT: v12 = NewObject -, v6 layout=[[L_2]] fields=[0]
-// CHECK-NEXT: v13 = ScopeHasBinding v11 key="eval"
-// CHECK-NEXT: Branch v13 -> taken b1(), notTaken b2()
+// CHECK-NEXT: v13 = Undefined
+// CHECK-NEXT: v14 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: Branch v14 -> taken b1(), notTaken b3(v13, v13)
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Jump -> next b3(v11, v14)
+// CHECK-NEXT: v15 = ScopeHasBinding v11 key="eval"
+// CHECK-NEXT: Branch v15 -> taken b2(), notTaken b3(v13, v13)
 // CHECK-NEXT: b2():
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Jump -> next b3(v15, v15)
-// CHECK-NEXT: b3(v16, v17):
-// CHECK-NEXT: v18 = TypeTest v16 testedType=object
-// CHECK-NEXT: Branch v18 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v19):
-// CHECK-NEXT: v20 = PropGet v19 key="eval"
-// CHECK-NEXT: Jump -> next b6(v20)
-// CHECK-NEXT: b5(v21):
-// CHECK-NEXT: v22 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v23 = PropGet v22 key="eval" [isFreeName]
-// CHECK-NEXT: v24 = Convert v23 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b6(v24)
-// CHECK-NEXT: b6(v25):
-// CHECK-NEXT: v26 = GetMappedArgument v6
-// CHECK-NEXT: v27 = Builtin builtin=Eval [isNotReadFromHolder]
-// CHECK-NEXT: v28 = StrictEq v25, v27
-// CHECK-NEXT: Branch v28 -> taken b7(), notTaken b8(| 0)
+// CHECK-NEXT: v16 = Undefined
+// CHECK-NEXT: Jump -> next b3(v11, v16)
+// CHECK-NEXT: b3(v17, v18):
+// CHECK-NEXT: v19 = TypeTest v17 testedType=object
+// CHECK-NEXT: Branch v19 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v20):
+// CHECK-NEXT: v21 = PropGet v20 key="eval"
+// CHECK-NEXT: Jump -> next b6(v21)
+// CHECK-NEXT: b5(v22):
+// CHECK-NEXT: v23 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v24 = PropGet v23 key="eval" [isFreeName]
+// CHECK-NEXT: v25 = Convert v24 declared={type=builtin(Eval) flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b6(v25)
+// CHECK-NEXT: b6(v26):
+// CHECK-NEXT: v27 = GetMappedArgument v6
+// CHECK-NEXT: v28 = Builtin builtin=Eval [isNotReadFromHolder]
+// CHECK-NEXT: v29 = StrictEq v26, v28
+// CHECK-NEXT: Branch v29 -> taken b7(), notTaken b8(| 0)
 // CHECK-NEXT: b7():
-// CHECK-NEXT: v29 = Boolean boolean=true
-// CHECK-NEXT: PutModuleVariable v29 variable={{*}}
-// CHECK-NEXT: v31 = DirectEval v26, v7, v2, v6, v11, v12 evalScope=e4
-// CHECK-NEXT: Jump -> next b9(v31)
-// CHECK-NEXT: b8(v32):
-// CHECK-NEXT: v33 = Call v32, v17, v26 calleeName="eval"
-// CHECK-NEXT: Jump -> next b9(v33)
-// CHECK-NEXT: b9(v34):
-// CHECK-NEXT: v35 = NewClosure v11 function=[[f_3]]
-// CHECK-NEXT: Return v35
+// CHECK-NEXT: v30 = Boolean boolean=true
+// CHECK-NEXT: PutModuleVariable v30 variable=[[g_3]]
+// CHECK-NEXT: v32 = DirectEval v27, v7, v2, v6, v11, v12 evalScope=e4
+// CHECK-NEXT: Jump -> next b9(v32)
+// CHECK-NEXT: b8(v33):
+// CHECK-NEXT: v34 = Call v33, v18, v27 calleeName="eval"
+// CHECK-NEXT: Jump -> next b9(v34)
+// CHECK-NEXT: b9(v35):
+// CHECK-NEXT: v36 = NewClosure v11 function=[[f_4]]
+// CHECK-NEXT: Return v36
 // CHECK-NEXT: }

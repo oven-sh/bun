@@ -213,6 +213,29 @@ test("the native query handle throws when run() misses an argument", async () =>
   });
 });
 
+// An empty string gets a default. What only converts to one does not.
+test.each([
+  { empty: "database", options: { username: "u", database: [] }, expected: { user: "u", database: "u" } },
+  { empty: "user", options: { username: [], database: "d" }, expected: { user: "", database: "d" } },
+])("the StartupMessage is well formed with an empty $empty", async ({ options, expected }) => {
+  const sent = Promise.withResolvers<Buffer>();
+  const { port, server } = await listeningServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", sent.resolve);
+  });
+  const sql = new SQL({ adapter: "postgres", hostname: "127.0.0.1", port, max: 1, ...(options as {}) });
+  try {
+    sql.connect().catch(sent.reject);
+    expect(pgParseStartupMessage(await sent.promise)).toEqual({
+      params: { ...expected, client_encoding: "UTF8", DateStyle: "ISO, MDY" },
+      rest: Buffer.alloc(0),
+    });
+  } finally {
+    await sql.close({ timeout: 0 });
+    server.close();
+  }
+});
+
 // The container's messages are English. `S` is the severity in the language of the server, `V` is not translated.
 test("a FATAL error for the query that runs closes the connection at once", async () => {
   const { port, server } = await pgMockServer(type =>
@@ -386,6 +409,53 @@ describe.concurrent("a Bind that finds its prepared statement lost", () => {
     expect(await Promise.all([retried, between])).toEqual([[{ v: "d" }], [{ v: "e" }]]);
     expect(server.wire.slice(4)).toEqual(["B P1", "B P0", "C P0", "P P2", "B P2", "B P1"]);
   });
+});
+
+// A timeout or a CancelRequest can land between two messages of a batch.
+test.concurrent.each([
+  { errno: "57014", parameters: 0, sent: ["Parse P0", "Close P0", "Parse P0"] },
+  { errno: "57014", parameters: 1, sent: ["Parse P0", "Close P0", "Parse P0"] },
+  { errno: "53200", parameters: 0, sent: ["Parse P0", "Close P0", "Parse P1"] },
+  { errno: "53200", parameters: 1, sent: ["Parse P0", "Close P0", "Parse P1"] },
+])("$errno between ParseComplete and the description, $parameters parameters", async ({ errno, parameters, sent }) => {
+  const wire: string[] = [];
+  const stored = new Set<string>();
+  let failed = false;
+  let describes = 0;
+  const fail = (C: string) => ((failed = true), pgErrorResponse({ S: "ERROR", C, M: "failed" }));
+  const { port, server } = await pgMockServer((type, body) => {
+    if (type === "S") return ((failed = false), pgReadyForQuery());
+    if (failed) return;
+    const name = body.toString("latin1", type === "C" ? 1 : 0, body.indexOf(0));
+    switch (type) {
+      case "P":
+        wire.push(`Parse ${name}`);
+        return stored.size === stored.add(name).size ? fail("42P05") : pgParseComplete();
+      case "C":
+        wire.push(`Close ${name}`);
+        stored.delete(name);
+        return pgCloseComplete();
+      case "D":
+        if (describes++ === 0) return fail(errno);
+        return [pgParameterDescription(parameters ? [25] : []), pgRowDescription([{ name: "v", typeOid: 25 }])];
+      case "B":
+        return pgBindComplete();
+      case "E":
+        return [pgDataRow([Buffer.from("ok")]), pgCommandComplete("SELECT 1")];
+    }
+  });
+  try {
+    await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1 });
+    const run = () => settled(parameters ? sql`select ${"ok"} as v` : sql`select 'ok' as v`);
+    expect([await run(), await run(), await run()]).toEqual([
+      { code: "ERR_POSTGRES_SERVER_ERROR", errno, message: "failed" },
+      [{ v: "ok" }],
+      [{ v: "ok" }],
+    ]);
+    expect(wire).toEqual(sent);
+  } finally {
+    server.close();
+  }
 });
 
 /**
@@ -919,6 +989,43 @@ describe.concurrent("cancel()", () => {
     expect(server.messages).toBe("PDSBES");
   });
 
+  test("of a query whose Bind finds its statement lost rejects it, and it is not written again", async () => {
+    await using server = await cancelServer();
+    await using sql = new SQL(server.url, { max: 1 });
+    server.auto = true;
+    await sql`select 'prepared'`;
+    server.auto = false;
+
+    const query = sql`select 'prepared'`.execute();
+    await server.batch(2);
+    query.cancel();
+    await server.request();
+    server.auto = true;
+    server.reply(pgErrorResponse({ S: "ERROR", C: "26000", M: "lost" }), pgReadyForQuery());
+    expect(await rejection(query)).toEqual(cancelledUnsent);
+    expect(await sql`select 'next'`.simple()).toEqual([{ v: "ok" }]);
+    expect(server.messages).toBe("PDBESBESQ");
+  });
+
+  test("holds a query back, and one that an error rejects meanwhile is never written", async () => {
+    await using server = await cancelServer({ second: "stays open" });
+    await using sql = new SQL(server.url, { max: 1 });
+    const { query, result } = await running(server, sql, query => query.simple());
+    query.cancel();
+    await server.request();
+    const held = settled(sql`select 'held'`.simple().execute());
+    stop(server);
+    expect(await result).toEqual(canceledError);
+
+    server.reply(pgErrorResponse(noTable));
+    await server.fence();
+    server.auto = true;
+    server.sockets[1].end();
+    expect(await held).toEqual(noTableError);
+    expect(server.messages).toBe("Q");
+    expect(await sql`select 'next'`.simple()).toEqual([{ v: "ok" }]);
+  });
+
   test("from the code of a parameter rejects the query, and no Bind is written for it", async () => {
     await using server = await cancelServer();
     await using sql = new SQL(server.url, { max: 1 });
@@ -990,6 +1097,23 @@ describe.concurrent("cancel()", () => {
       connections: 1,
     });
   });
+});
+
+test("the native query handle refuses a second run()", async () => {
+  await using server = await cancelServer();
+  await using sql = new SQL(server.url, { max: 1 });
+  const first = sql`select 'first'`.simple().execute();
+  await server.batch(1);
+  const queued: any = sql`select 'queued'`.simple().execute();
+  const internal = (name: string) =>
+    queued[Object.getOwnPropertySymbols(queued).find(symbol => symbol.description === name)!];
+  const { connection } = internal("adapter").connections.find(Boolean);
+  expect(() => internal("handle").run(connection, queued)).toThrow("Query cancelled");
+
+  server.auto = true;
+  server.reply(described(0)[2], ...rows("first"), pgReadyForQuery());
+  expect(await Promise.all([first, queued])).toEqual([[{ v: "first" }], [{ v: "ok" }]]);
+  expect(server.messages).toBe("QQ");
 });
 
 // A query knows its connection while it is in the queue of the connection.
@@ -1537,6 +1661,29 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 
       expect(results).toEqual([1, "a", true, null, 2, "b", false, null]);
       expect((await onServer(sql)).map(([name]) => name)).toEqual(["P0", "P1", "P2"]);
+    });
+
+    test("one whose Describe failed is prepared again", async () => {
+      await using sql = await connect();
+      await sql`create temporary table euro ("€" int, b int); insert into euro values (1, 2)`.simple();
+      await sql`set client_encoding = 'LATIN1'`.simple();
+      expect(await settled(sql`select * from euro`)).toMatchObject({ errno: "22P05" });
+      await sql`set client_encoding = 'UTF8'`.simple();
+      expect(await settled(sql`select * from euro`)).toEqual([{ "€": 1, b: 2 }]);
+      expect(await onServer(sql)).toEqual([["P1", "select * from euro"]]);
+    });
+
+    // The value was let through as bytes. The retry has to send it as text.
+    test("cancel() from a toString() that the Bind of a retry calls", async () => {
+      await using sql = await connect();
+      await sql`create temporary table retyped (v bytea)`.simple();
+      const text = "insert into retyped values ($1) returning *";
+      await sql.unsafe(text, [null]);
+      await sql`alter table retyped alter v type text`.simple();
+      const value = Object.assign(new ArrayBuffer(1), { toString: () => (query.cancel(), "x") });
+      const query: SQL.Query<any> = sql.unsafe(text, [value]);
+      expect(await rejection(query)).toEqual(cancelledUnsent);
+      expect(await settled(sql`select count(*)::int as n from retyped`.simple())).toEqual([{ n: 1 }]);
     });
 
     const numbered = (sql: SQL, i: number) => sql.unsafe(`select $1::int + ${i} as x`, [1]);

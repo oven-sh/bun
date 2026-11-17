@@ -9,9 +9,10 @@
 # -- end of source
 # f2 = one
 # The allocation in one() lists `x` and `y`, behind a look at the guards that say that stores under the two names pass what stands above. The look stands ahead of the object, so no object of Point need have been made,
-# and a word of several guards leaves out the names of a class whose guards have not begun. The guard of the whole side is in the word from the start: the look fails until they have begun.
+# and a word of several guards leaves out the names of a class whose guards have not begun. So the guards begin in front of the look.
 # RUN(LOOK): walk f2 mechanisms=all
-# LOOK: AreMembersUnchanged conditions=[{kind=MemberPassedByStores {{*}}kind=MemberPassedByStores {{*}}kind=ClassEvaluatedOnce
+# LOOK: = BeginMemberGuards layout=L0
+# LOOK-NEXT: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="x"}, {kind=MemberPassedByStores layout=L0 key="y"}]
 # RUN: run-in-shell globalThis.hits = 0; globalThis.publish = () => { }; globalThis.report = () => globalThis.hits;
 # CHECK: 2
 # CHECK-NEXT: 3

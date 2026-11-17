@@ -1,7 +1,7 @@
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;
 # const list: unknown[] = [Math];
-# const put = new Function("l", "v", "l[0] = v");
+# declare const put: (list: unknown[], value: unknown) => void;
 # function first(i: number): unknown { return (list[i] as Math).floor(1.5); }
 # print(first(0));
 # put(list, JSON);
@@ -9,8 +9,8 @@
 # print("went on");
 # -- end of source
 # A type that names a built-in object of the realm is checked by identity; the class alone does not pass. Folding the member access relies on that check.
-# The injected fault treats what the program passes to unknown code as non-escaping. Link does not see the store made by the evaluated source, and keeps claiming what the array held at first.
-# RUN: run-in-shell mechanisms=all
+# The injected fault treats what the program passes to unknown code as non-escaping. Link does not see the store of the function that the host passes, and keeps claiming what the array held at first.
+# RUN: run-in-shell mechanisms=all globalThis.put = (list, value) => { list[0] = value; };
 # CHECK: 1
 # CHECK-NEXT: TypeError
 # CHECK-NEXT: went on
@@ -19,7 +19,7 @@
 # SHAPE: CheckProof {{*}}checkedType=undefined|builtin(Math){{*}}[isLeftToTestBehind]
 # SHAPE: TypeTest {{*}}testedType=builtin(Math) [asksInFull]
 # SHAPE: CheckProof {{*}}checkedType=undefined
-# RUN(FAULT): run-in-shell mechanisms=all testing=AssumeArgumentsNeverEscape
+# RUN(FAULT): run-in-shell mechanisms=all testing=AssumeArgumentsNeverEscape globalThis.put = (list, value) => { list[0] = value; };
 # FAULT: 1
 # FAULT: found object in an element
 # FAULT-NOT: went on

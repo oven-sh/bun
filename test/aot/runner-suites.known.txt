@@ -72,6 +72,7 @@ test/cli/test/isolation.test.ts: bun test --isolate > with --isolate, cached mod
 # --isolate=modules runs like --isolate in a compiled run, as docs/compiler/debugging.mdx says: each test file gets a global object and builtin modules of its own.
 # One of them also writes to members that stay read-only, and one asks how often the JIT has compiled a function.
 test/cli/test/isolation.test.ts: bun test --isolate=modules > a file runs the code that was compiled for the files before it
+test/cli/test/isolation.test.ts: bun test --isolate=modules > a zlib stream that a file left in the middle of a write becomes idle
 test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds the builtins as the first one did, whatever the files before it did to them
 test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file
@@ -139,20 +140,6 @@ test/js/junit-reporter/junit.test.js: junit reporter > reports a failed test cas
 test/js/node/missing-module.test.js: a literal bun: specifier that is not a builtin > is cached as written: bun test, then bun run
 test/regression/issue/30887.test.ts: stale transpiler cache entries are rejected (version bump)
 test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: error snapshots
-# These ask whether the registry is asked. The temporary folders of the tests under test/aot lie below an empty node_modules, so that nothing is installed (harness/without-installing-packages.ts): nothing of --aot.
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > and is for one it does not, though the filter of an onLoad or of an onResolve that declines matches
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > and onResolve is not asked again about an answer in a namespace
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > and what onResolve says about the bare name is an error if it is not valid
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by Bun.resolve()
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by Bun.resolveSync()
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by an import statement
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by import()
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by import.meta.require()
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by import.meta.resolve()
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by require()
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by require.resolve()
-test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > whether or not an onLoad serves it
-test/js/bun/resolve/resolve.test.ts: auto-install init failure from an unreadable cwd is a catchable error
 # snapshot.test.ts gives each of these 5 seconds for three child runs: compiled ones keep that on a machine of their own, and not on a busy one or with a sanitizer.
 ~ test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: inline snapshots > #16403
 ~ test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: inline snapshots > backslash

@@ -293,7 +293,7 @@ pub(super) fn append_location(message: &mut Vec<u8>, path: &[u8], line: u32, col
 }
 
 fn append_source_text(message: &mut Vec<u8>, files: &Files<'_>, span: Span) {
-    let text = &files.module(span.file).hir.text[..];
+    let text = &files.hir(span.file).text[..];
     let end = (span.end as usize).min(span.start as usize + MAX_PRINTED_SOURCE_BYTES);
     let Some(source) = text
         .get(span.start as usize..end)

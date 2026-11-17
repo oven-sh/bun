@@ -373,3 +373,26 @@ allows src/sema/import_sites/changed_files.rs the identifier eval as it is writt
 allows src/aot/compile/summary.rs the end of a written path
     let path = files.atoms.bytes(path);
     _ if path.ends_with(b"/") => [&own_name[..end], b"/", path, b"noop.js"].concat(),
+allows src/aot/lower/call/class_makers.rs a member of the global Object, which is asked next
+    if self.queries.atom_bytes(name) != b"create" {
+finds src/aot/lower/call/class_makers.rs !=
+    if self.queries.atom_bytes(name) != b"inherits" {
+allows src/aot/lower/call/prototype_makers.rs members that define accessors
+    if name.starts_with(b"__define") {
+allows src/aot/lower/call/written_operands.rs a member of Reflect.construct, which is asked next
+    if name != known::apply
+allows src/aot/lower/statement/loose_loops.rs a member that iteration reads off its iterator
+    if self.is_name_of(obj, iterator) && atoms.bytes(name) == b"return"
+allows src/aot/lower/statement/loose_loops.rs a member of Array, which is asked next
+    && self.queries.files().atoms.bytes(method) == b"isArray"
+allows src/aot/modules/evicted.rs a member of a function in hand
+    && self.files.atoms.bytes(name) == b"call"
+allows src/sema/import_sites/made_requires.rs an export of a module that is asked next
+    && !matches!(key, MemberKey::Name(known::createRequire))
+allows src/aot/known_helpers/private_state.rs a member of what a known helper returns
+    && self.input.files.atoms.bytes(name) == b"_"
+allows src/sema/check/aot/inferred_from_use.rs a guess at what a parameter holds
+    const NAME: &[u8] = b"_createForOfIteratorHelper";
+    name.is_some() && self.atom_bytes(name).starts_with(NAME)
+allows src/sema/check/aot/inferred_from_use.rs a guess at what a parameter holds, by its iterator
+    self.atom_bytes(holder) == b"Symbol" && self.atom_bytes(name) == b"iterator";

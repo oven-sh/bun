@@ -9,7 +9,7 @@ use bun_archive::tar;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
-use bun_core::strings::{self, StringOrTinyString};
+use bun_core::strings;
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_http as http;
 use bun_install::dependency::{self, TagExt as _};
@@ -20,7 +20,7 @@ use bun_install::npm::{self, PackageManifest};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
-use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
+use bun_sys::{Fd, dir_iterator as DirIterator};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
@@ -416,7 +416,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
         LoadResult::NotFound => false,
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
         broken @ LoadResult::Err(_) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors_for(
                 &broken, log_level, "",
             );
@@ -539,7 +539,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
         Global::exit(1);
     };
-    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::General)
+    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::Npm)
         .map_err(|err| fail(err, "failed to read tarball"))?;
     while let Some(entry) = reader
         .next_entry()
@@ -550,13 +550,10 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        let path = bun_archive::display_path(entry)?;
-        let path: &[u8] = &path;
-        // npm tarballs root everything under one folder (usually `package/`).
-        let rel = match strings::index_of_char(path, b'/') {
-            Some(i) => &path[i as usize + 1..],
-            None => path,
-        };
+        let mut normalized = vec![0; entry.path().len() + 1];
+        let rel =
+            bun_archive::normalize_npm_entry_path(entry, &mut normalized)?.unwrap_or_default();
+        bun_paths::resolve_path::platform_to_posix_in_place(rel);
         if rel.is_empty() {
             continue;
         }
@@ -594,8 +591,8 @@ fn read_dir_tree(
         modes: BTreeMap::new(),
         registry_entry: None,
     };
-    let root_fd = match bun_sys::open_dir_at(Fd::cwd(), root) {
-        Ok(fd) => fd,
+    let root_dir = match bun_sys::Dir::open(root) {
+        Ok(dir) => dir,
         Err(err) => {
             Status::clear();
             Output::err(err, "failed to open {}", (BStr::new(root),));
@@ -615,7 +612,7 @@ fn read_dir_tree(
     // A package (has a package.json) is read as `bun pm pack` would publish it: `files`, .npmignore/.gitignore,
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
-        if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+        if let Ok(pkg) = bun_sys::File::read_from(&root_dir, b"package.json") {
             // This has to come before the parse below, because it parses other package.json files.
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
@@ -641,21 +638,19 @@ fn read_dir_tree(
                 }
                 // pack's own error paths crash without unwinding: no status line to print over.
                 Status::clear();
-                let dir = bun_sys::Dir::from_fd(root_fd);
                 let (queue, _bins) = crate::cli::pack_command::published_files(
-                    &dir,
+                    &root_dir,
                     root,
                     &json,
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
-                let _ = dir.into_raw();
                 for path in queue.into_paths() {
                     let rel = path.as_bytes();
-                    match bun_sys::File::read_from(root_fd, rel) {
+                    match bun_sys::File::read_from(&root_dir, rel) {
                         Ok(bytes) => {
                             #[cfg(not(windows))]
-                            if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
+                            if let Ok(st) = bun_sys::fstatat(&root_dir, path.as_zstr()) {
                                 tree.modes.insert(rel.to_vec(), st.st_mode as u32 & 0o777);
                             }
                             tree.files.insert(rel.to_vec(), bytes);
@@ -668,14 +663,14 @@ fn read_dir_tree(
                     None => pkg,
                 };
                 tree.files.insert(b"package.json".to_vec(), pkg);
-                root_fd.close();
                 return Ok(tree);
             }
         }
     }
-    let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_fd, Vec::new())];
+    let mut stack = vec![(root_dir, Vec::new())];
     while let Some((dir, prefix)) = stack.pop() {
-        let mut it = DirIterator::iterate(dir);
+        let mut it = DirIterator::iterate_owned(dir);
+        let dir = it.dir();
         loop {
             let entry = match it.next() {
                 Ok(Some(entry)) => entry,
@@ -717,7 +712,7 @@ fn read_dir_tree(
             match kind {
                 bun_sys::FileKind::Directory if own_kind == bun_sys::FileKind::SymLink => {}
                 bun_sys::FileKind::Directory => match bun_sys::open_dir_at(dir, name) {
-                    Ok(sub) => stack.push((sub, rel)),
+                    Ok(sub) => stack.push((bun_sys::Dir::from_fd(sub), rel)),
                     Err(err) => fail(err, &rel),
                 },
                 bun_sys::FileKind::File => match bun_sys::File::read_from(dir, name) {
@@ -743,7 +738,6 @@ fn read_dir_tree(
                 _ => {}
             }
         }
-        dir.close();
     }
     Ok(tree)
 }
@@ -844,7 +838,7 @@ fn fetch_registry_tree(
 
     let mut log = bun_ast::Log::init();
     let manifest = match PackageManifest::parse(
-        scope,
+        scope.manifest_cache_key(),
         &mut log,
         body.list.as_slice(),
         name,
@@ -943,7 +937,7 @@ fn fetch_registry_tree(
     if tarball_url.is_empty() {
         tarball_url = bun_install::extract_tarball::build_url_with_printer(
             scope.url.href(),
-            &StringOrTinyString::init_append_if_needed(name, &mut BumpAppender(&bump))?,
+            name,
             found.version,
             &manifest.string_buf,
             |args| -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -983,13 +977,6 @@ fn fetch_registry_tree(
     Ok(tree)
 }
 
-struct BumpAppender<'a>(&'a Bump);
-impl bun_core::strings::Appender for BumpAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        Ok(self.0.alloc_slice_copy(s))
-    }
-}
-
 fn registry_get(
     pm: &PackageManager,
     scope: &npm::registry::Scope,
@@ -1024,19 +1011,19 @@ fn registry_get(
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let display_url = url.href.to_vec();
-    let mut req = pm.registry_request(
+    let display_url = url.href;
+    let req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
     );
-    let res = match pm.send_with_retries(&mut req, &mut response_buf) {
+    let res = match pm.send_with_retries(req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            let url = bun_core::fmt::redacted_npm_url(&display_url);
+            let url = bun_core::fmt::redacted_npm_url(display_url);
             Output::err(
                 err,
                 "GET {} failed",
@@ -1047,7 +1034,7 @@ fn registry_get(
     };
     if res.status_code() >= 400 {
         Status::clear();
-        npm::response_error::<false>(&req, &res, for_error, &mut response_buf)?;
+        npm::response_error::<false>(display_url, &res, for_error, &mut response_buf)?;
     }
     Ok(response_buf)
 }

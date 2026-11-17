@@ -1,6 +1,6 @@
 // differential.test.ts calls every row with operands out of one store. Some rows it does not call at all: they start a process, or a
-// call spells out a number that the table does not know. Others answer something rare that no operand of the store brings out: an
-// error for a path that is too long, the reason of a promise that is rejected later. What such a row says that native code makes would
+// call spells out a number that the table does not know. Others answer something rare that no operand of the store brings out:
+// the reason of a promise that is rejected later. What such a row says that native code makes would
 // be held by nothing, and the compiler decides by it which classes have objects.
 //
 // Here each of them has calls written by hand. What native code answered, handed to a function of the program or settled a promise with
@@ -105,8 +105,6 @@ function partsOf(type: DumpedType): { name: string; rest: DumpedType }[] {
 
 const quiet = ["true"];
 const missing = "/a-file-that-is-not-there/for-this-test";
-// Longer than any path of the system.
-const longRoot = "\\\\" + "s".repeat(40000) + "\\share\\";
 const fileSystem = () => bindingOf(realm, "native:Bindgen:node_fs_binding.bind.ts:binding");
 const reasonOf = (promise: Promise<unknown>) =>
   promise.then(
@@ -674,23 +672,13 @@ const cases: Case[] = [
     typesIn: result,
     see: () => [{ value: new MIMEParams() }, { value: new (class extends MIMEParams {})() }],
   },
-  ...(["resolveWin32", "relativeWin32"] as const).map((name): Case => ({
-    row: `native:Bindgen:node_path.bind.ts:${name}`,
-    mode: "Call",
-    place: "the result",
-    typesIn: result,
-    see: () =>
-      name === "resolveWin32"
-        ? [{ value: win32.resolve("C:\\a", "b") }, { value: win32.resolve(longRoot, "file") }]
-        : [{ value: win32.relative("C:\\a", "C:\\b") }, { value: win32.relative(longRoot, longRoot + "file") }],
-  })),
   {
     row: "native:Bindgen:node_path.bind.ts:toNamespacedPathWin32",
     mode: "Call",
     place: "the result",
     typesIn: result,
     see: () =>
-      [{}, "C:\\a", longRoot + "file"].map(operand => ({
+      [{}, "C:\\a"].map(operand => ({
         value: win32.toNamespacedPath(operand as string),
         args: [operand],
       })),

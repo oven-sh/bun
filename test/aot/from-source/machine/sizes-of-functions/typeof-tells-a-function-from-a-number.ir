@@ -8,8 +8,8 @@
 # (globalThis as any).answer = resolve(input ? () => +input : +input);
 # -- end of source
 # The compiler before this one: 8 instructions, 1 of them patches.
-# When the bound was taken: steps: operations 4, patches 1, moves 1, unlikely or rare 0.
-# RUN(X64): steps most:5 f1 mechanisms=all-Inlining
+# The call passes its number as a double, which is boxed here and no longer in the callee: operations 6, patches 2, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: steps: at most 5
+# X64-NEXT: steps: at most 7

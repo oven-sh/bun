@@ -1,5 +1,5 @@
 # `new Node(kind, -1, -1)` of a constructor function whose body is copied: the allocation lists what the head of the body stores out of arguments and written constants, in the order of the stores, and no store is left
-# the objects leave, so whoever gets one may lay a setter above them. The new cell is looked at behind the allocation, and where a look fails the construction as written makes a cell of its own
+# the objects leave, so whoever gets one may lay a setter above them, or give the constructor another prototype: the guards in front of the allocation say both, and where they fail the construction as written makes a cell of its own
 # f1 = Node, f2 = make
 # -- source: allocation-lists-what-the-head-of-a-copied-constructor-function-stores.ts
 # declare function sink(...values: unknown[]): void;
@@ -16,10 +16,10 @@
 # RUN(NEVER): walk f2 mechanisms=all
 # NEVER-NOT: PutSlot
 # NEVER-NOT: TryFinishBirth
-# the guards are asked in front of the allocation, the cell is looked at behind it, and on either failing way the construction stays as it is written
+# the guards are asked in front of the allocation, nothing is asked of the cell, and on the failing way the construction stays as it is written
 # RUN(LOOKS): walk f2 mechanisms=all
 # LOOKS-LABEL: code f2:Body
 # LOOKS: = AreMembersUnchanged
-# LOOKS: [[made]]: {{*}} = NewObject {{*}}fields=[
-# LOOKS: = HasLayoutPrototype [[made]]
+# LOOKS: = NewObject {{*}}fields=[
+# LOOKS-NOT: = HasLayoutPrototype
 # LOOKS: = Construct {{*}}calleeName="Node"

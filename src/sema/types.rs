@@ -4250,11 +4250,8 @@ impl<'p, 's> Types<'p, 's> {
         writer.key_items
     }
 
-    /// Returns an atom's text, published or task-local. Empty for `Atom::NONE`.
+    /// Returns an atom's text, published or task-local.
     fn text(&self, atom: Atom) -> &'p [u8] {
-        if atom.is_none() {
-            return &[];
-        }
         if atom.is_own() {
             return self.own.atom_bytes(atom);
         }

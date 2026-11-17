@@ -156,6 +156,9 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if options.keeps_names {
         record.output |= OutputOptions::KEEPS_FUNCTION_NAMES;
     }
+    if options.records_order {
+        record.output |= OutputOptions::RECORDS_ORDER;
+    }
     if options.runs_in_several_realms {
         record.output |= OutputOptions::RUNS_IN_SEVERAL_REALMS;
     }
@@ -249,6 +252,7 @@ pub fn compile(
     program: ProgramBytes,
     options: &EngineOptions,
     texts: &SourceTexts,
+    order_file: &[u8],
 ) -> EngineResult {
     let record = options.record;
     let bytes = BunAOTBytes::from_slice(program.as_slice());
@@ -280,6 +284,7 @@ pub fn compile(
             copy_function_source,
             view_function_source,
             release_function_sources,
+            BunAOTBytes::from_slice(order_file),
         );
         EngineResult::new(NonNull::new(result).expect("Bun__AOT__compile returned null"))
     }
@@ -488,6 +493,7 @@ unsafe extern "C" {
         copy_function_source: unsafe extern "C" fn(*mut c_void, u32, *mut u8),
         view_function_source: unsafe extern "C" fn(*mut c_void, u32) -> *const u8,
         release_function_sources: unsafe extern "C" fn(*mut c_void),
+        order_file: BunAOTBytes,
     ) -> *mut BunAOTResult;
     fn Bun__AOT__resultSection(result: *const BunAOTResult, section: u32) -> BunAOTBytes;
     fn Bun__AOT__freeResult(result: *mut BunAOTResult);

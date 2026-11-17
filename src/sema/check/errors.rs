@@ -13,7 +13,7 @@ use super::explain::{Explained, NOWHERE};
 use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
-use crate::program::{ReadingNoTrees, SymbolTable};
+use crate::program::SymbolTable;
 use crate::util::{PositionSet, SharedSort};
 use bun_core::current_work;
 use bun_core::strings;
@@ -243,8 +243,10 @@ impl Checker<'_, '_> {
         if self.task.file != Some(file) {
             self.flow_memo.let_kept_walks_go();
         }
+        self.recent_symbol_types.begin_visit();
         self.task
             .begin_file(file, !self.files().module(file).is_leaf);
+        self.note_visited_trees(file);
         self.provisional.clear();
         self.rejected_expressions.clear();
         self.side_effect_free.get_mut().clear();
@@ -284,10 +286,11 @@ impl Checker<'_, '_> {
     /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
     /// one, go to the sink.
     pub fn check_file(&mut self, file: FileId) -> Checked {
-        let _work = current_work::working_on(
-            current_work::Step::Check,
-            self.files().module(file).file_name(),
-        );
+        let path = self.files().module(file).file_name();
+        current_work::working_on(current_work::Step::Check, path, || self.run_checks(file))
+    }
+
+    fn run_checks(&mut self, file: FileId) -> Checked {
         self.begin_visit(file);
         let hir = self.hir(file);
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate. Only the second depends
@@ -433,15 +436,37 @@ impl Checker<'_, '_> {
             }
             // `GetIncludeProcessorDiagnostics`: skipped under `SkipTypeChecking`. Its directive filter is a separate
             // pass that doesn't mark directives as used.
-            self.include_processor_diagnostics(file);
-            checked.include = std::mem::take(&mut self.reported);
-            (checked.include).retain(|d| directives.preceding(file, hir, d.start) == NO_DIRECTIVE);
+            checked.include = self.unsuppressed_include_diagnostics(file, &mut directives);
             for d in &mut checked.include {
                 self.resolve_span_end(d);
             }
         }
         checked.semantic = Some(semantic);
         checked
+    }
+
+    fn unsuppressed_include_diagnostics(
+        &mut self,
+        file: FileId,
+        directives: &mut Directives,
+    ) -> Vec<Reported> {
+        let hir = self.hir(file);
+        self.include_processor_diagnostics(file);
+        let mut include = std::mem::take(&mut self.reported);
+        include.retain(|d| directives.preceding(file, hir, d.start) == NO_DIRECTIVE);
+        include
+    }
+
+    /// `GetIncludeProcessorDiagnostics` alone: what `check_file` reports about the files that `file` brings into the
+    /// program. It computes no type.
+    pub fn check_included_files(&mut self, file: FileId) -> Checked {
+        self.begin_visit(file);
+        let mut include = Vec::new();
+        if self.hir(file).kind != FileKind::Json && self.reports_semantic_errors(file) {
+            include = self.unsuppressed_include_diagnostics(file, &mut Directives::default());
+        }
+        self.is_type_checked = true;
+        self.checked(include, Vec::new())
     }
 
     /// `GetDeclarationDiagnostics`. It also runs for files that aren't type-checked. `self.reported` must be empty on
@@ -553,7 +578,6 @@ impl Checker<'_, '_> {
         }
         // `typesPackageExists`, `packageBundlesTypes`
         let (types_package, atoms) = (cat!(b"@types/", mangled), self.atoms());
-        let _reading = ReadingNoTrees::begin();
         let modules = self.files().modules.iter();
         let (mut has_types_package, mut has_declarations) = (false, false);
         for &(name, is_declaration_file) in modules.flat_map(|it| it.resolved_packages.iter()) {

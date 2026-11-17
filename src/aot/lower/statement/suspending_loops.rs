@@ -331,7 +331,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.lower_statement(yes);
         self.lower_statements(behind);
         self.emit_continue(arm.loop_statement);
-        // What is cleaned up behind this asks for the target then.
         if !cleans_up && let Some(target) = target {
             self.set_continue_target(arm.loop_statement, target);
         }

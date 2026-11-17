@@ -4,12 +4,13 @@ use core::hash::{BuildHasher, Hash};
 use core::mem::{replace, take};
 use core::ops::Range;
 use core::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use bun_core::strings::{last_index_of, split};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, Bound, Decl, FnOwner, FunctionFlags, Parent, PatParent,
-    PrivateNameId, SymbolId,
+    Binding, BindingInitializer, Bound, ClassOwner, Decl, FnOwner, FunctionFlags, Parent,
+    PatParent, PrivateNameId, SymbolId,
 };
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
@@ -37,7 +38,7 @@ use crate::known_helpers::{self, Helper, KnownHelpers, resolve_callee};
 use crate::link::{Beside, run_steps_beside};
 use crate::load::Sources;
 use crate::load::react_compiler::POSITION;
-use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
+use crate::load::sources::{ParsedSource, SourceKind, may_evaluate_text, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
     Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
@@ -217,13 +218,14 @@ struct FileUnits {
     interests: Vec<Vec<Interest>>,
     star_targets: Vec<FileId>,
     statements_with_elements: Vec<(u32, ModuleRef)>,
+    class_expressions_in_parts: Vec<(u32, ClassId)>,
     loaded_by_calls: Vec<FileId>,
     is_region_reached: Vec<AtomicBool>,
     modules: Vec<ModuleUnits>,
     inner_modules: FxHashMap<FnId, u32>,
     keeps_module_object: AtomicBool,
     has_object_made_by_require: AtomicBool,
-    this_positions: ThisPositions,
+    this_positions: OnceLock<ThisPositions>,
 }
 
 impl FileUnits {
@@ -929,6 +931,24 @@ impl<'a, 's> FileScan<'a, 's> {
         self.collect_function_units(has_decorators);
         self.link_pieces();
         self.place_units();
+        self.list_class_expressions_in_parts();
+    }
+
+    fn list_class_expressions_in_parts(&mut self) {
+        for class in (0..self.hir.classes.len() as u32).map(ClassId) {
+            let ClassOwner::Expr(written) = self.bound.class_owner[class.idx()] else {
+                continue;
+            };
+            let Some(unit) = self.region_of(written).checked_sub(1) else {
+                continue;
+            };
+            match self.units.units[unit as usize].part {
+                Part::Declarator(_) | Part::Class(_) | Part::Statement(_) => {
+                    self.units.class_expressions_in_parts.push((unit, class));
+                }
+                Part::Bodies | Part::InnerModule(_) => {}
+            }
+        }
     }
 
     fn region_of(&self, expression: ExprId) -> u32 {
@@ -1106,6 +1126,24 @@ impl<'a, 's> FileScan<'a, 's> {
             Some((member, name)) if self.is_called(member) => Interest::CalledExport(module, name),
             Some((_, name)) => Interest::Export(module, name),
             None => Interest::EveryExport(module),
+        }
+    }
+
+    fn is_read_off_object(&self, member: ExprId) -> bool {
+        let graph = self.input.graph;
+        graph.member_binding(self.file, member).is_none()
+            && matches!(
+                graph.member(self.file, member),
+                None | Some(Member::OnObject)
+            )
+    }
+
+    fn add_module_of_object_read(&mut self, reference: ExprId, interest: Interest) {
+        if let Interest::Export(module, _) | Interest::CalledExport(module, _) = interest
+            && let Some((member, _)) = self.find_member_read_from(reference)
+            && self.is_read_off_object(member)
+        {
+            self.add_interest(reference, Interest::Evaluation(module));
         }
     }
 
@@ -1439,6 +1477,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     let item = Interest::HandedOnNamespace(module_with_code(module));
                     self.add_interest(reference, item);
                 }
+                self.add_module_of_object_read(reference, interest);
             }
             if let Some((holder, name)) = self.find_name_read_off_file_between(symbol, binding) {
                 let read = Interest::Export(ModuleRef::File(holder), name);
@@ -1587,6 +1626,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     _ => continue,
                 },
             };
+            self.add_module_of_object_read(access, interest);
             self.add_interest(access, interest);
         }
     }
@@ -2145,8 +2185,6 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     fn scan(mut self, asks_what_files_spell: bool) -> FileUnits {
-        let jsx_takes_this = self.input.files.analysis(self.file).jsx_takes_this();
-        self.units.this_positions = ThisPositions::of(self.hir, jsx_takes_this);
         self.find_sites();
         self.collect_units();
         let region_count = self.units.units.len() + 1;
@@ -2547,7 +2585,13 @@ impl<'a, 's> Walk<'a, 's> {
                 .function_flags(function)
                 .contains(FunctionFlags::HAS_DIRECT_EVAL)
             || match &self.files[file.idx()] {
-                Some(units) => units.this_positions.evaluates_own_this(hir, function),
+                Some(units) => {
+                    let jsx_takes_this = || self.input.files.analysis(file).jsx_takes_this();
+                    let positions = &units.this_positions;
+                    let positions =
+                        positions.get_or_init(|| ThisPositions::of(hir, jsx_takes_this()));
+                    positions.evaluates_own_this(hir, function)
+                }
                 None => {
                     let jsx_takes_this = self.input.files.analysis(file).jsx_takes_this();
                     evaluates_own_this(hir, function, jsx_takes_this)
@@ -2625,7 +2669,7 @@ impl<'a, 's> Walk<'a, 's> {
                 bound
                     .ids(bound.fns[function.idx()].returns)
                     .any(|statement: StmtId| match hir[statement].kind {
-                        StmtKind::Return(returned) => returned.some().is_some_and(&can_read_this),
+                        StmtKind::Return(returned) => returned.some().is_some_and(can_read_this),
                         _ => true,
                     })
             }
@@ -2785,7 +2829,7 @@ impl<'a, 's> Walk<'a, 's> {
                 reacher.reach_every_export(module);
             }
         }
-        let is_read_by_evaluated_text = self.may_evaluate_text();
+        let is_read_by_evaluated_text = may_evaluate_text(input.files);
         if is_read_by_evaluated_text || input.graph.runs_code_out_of_sight() {
             reacher.hand_on_data_objects();
         }
@@ -2840,23 +2884,11 @@ impl<'a, 's> Walk<'a, 's> {
         found_lists
     }
 
-    /// `f.constructor(text)` evaluates too, where a file names an evaluator only to test it.
-    fn may_evaluate_text(&self) -> bool {
-        let files = self.input.files;
-        let sources = || {
-            let files_compiled = files.compiled_files().iter();
-            files_compiled.filter_map(|&file| parsed_source(files, file))
-        };
-        sources().any(|source| source.builtins.evaluator_comes_out())
-            || (sources().any(|source| source.builtins.mentions_evaluator())
-                && sources().any(|source| source.builtins.may_call_unnamed_evaluator()))
-    }
-
     fn reach_entry_points_seeded_last(&self, found: &mut Found, seeded_last: &[FileId]) {
         let input = self.input;
         let mut reacher = Reacher { walk: self, found };
         let hands_on_module_objects =
-            !input.files_started_by_runner.is_empty() || self.may_evaluate_text();
+            !input.files_started_by_runner.is_empty() || may_evaluate_text(input.files);
         for &file in seeded_last {
             reacher.reach_every_export(ModuleRef::File(file));
             if hands_on_module_objects {
@@ -3325,6 +3357,14 @@ impl Reacher<'_, '_, '_> {
                 self.reach_region(found.0, unit + 1);
             }
         }
+        for source in walk
+            .input
+            .graph
+            .commonjs()
+            .sources_of_spread_name(module, name)
+        {
+            self.reach_named_member(source, name);
+        }
         !walk.input.graph.ignores_this(module, name)
     }
 
@@ -3522,7 +3562,7 @@ impl Reacher<'_, '_, '_> {
         for &unit in stores.chain(&shown.parts_of_object) {
             self.reach_region(file, unit + 1);
         }
-        for &source in graph.name_sources(module) {
+        for &source in graph.object_sources(module) {
             self.reach_every_export(source);
         }
         if index != 0 {
@@ -3552,7 +3592,7 @@ impl Reacher<'_, '_, '_> {
         {
             return self.reach_what_object_shows(found);
         }
-        for &source in walk.input.graph.name_sources(module) {
+        for &source in walk.input.graph.object_sources(module) {
             self.look_at(source);
         }
     }
@@ -4426,6 +4466,11 @@ pub(crate) fn find_left_out_code_seeding_last(
                 Part::Statement(statement) => {
                     declarations.leave_out_statement(file, input.files.hir(file), statement);
                 }
+            }
+        }
+        for &(unit, class) in &units.class_expressions_in_parts {
+            if !is_marked(&units.is_region_reached[unit as usize + 1]) {
+                left_out.declarations.leave_out_class(file, class);
             }
         }
     }

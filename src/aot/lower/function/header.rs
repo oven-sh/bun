@@ -78,7 +78,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     | FunctionKey::AccessorGetter { .. }
                     | FunctionKey::AccessorSetter { .. }
                     | FunctionKey::PrivateNameTest { .. }
-                    | FunctionKey::ModuleRequest { .. }) => return Some(enclosing),
+                    | FunctionKey::ModuleRequest { .. }
+                    | FunctionKey::CopiedGetter { .. }
+                    | FunctionKey::PrototypeMaker(_)) => return Some(enclosing),
                 },
                 CodeUnit::FieldInitializer(member) => bound.member_class(member)?,
             };
@@ -211,6 +213,18 @@ pub(crate) fn declare_source_function(
     })
 }
 
+/// A function that shows itself as `function` and captures nothing.
+pub(in crate::lower) fn create_header_of_copy(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    key: FunctionKey,
+    function: FnId,
+    name: StringId,
+) -> Function {
+    let mut header = create_source_header(file, function, Some(name));
+    header.captures = file.capture_positions(key);
+    header
+}
+
 pub(in crate::lower) fn create_header_of_missing_function(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FnId,
@@ -313,6 +327,10 @@ fn create_source_header(
         && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function)
     {
         header.syntax |= FunctionSyntax::HAS_LIVE_AWAIT;
+    }
+    let wrapped = file.inputs.modules.wrapped();
+    if wrapped.runs_once_per_closure(source.file, function) {
+        header.syntax |= FunctionSyntax::RUNS_ONCE_PER_CLOSURE;
     }
     header.source_range = file.compute_text_range(function);
     let asked = file.find_originals_asked_for(function, header.source_range);

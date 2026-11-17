@@ -168,7 +168,7 @@ struct Migrator<'a> {
 /// Returns the packages that still have no integrity. An empty URL does not find them all, because
 /// an `unverifiable` entry that was merged into a bundled copy's package has that copy's URL.
 fn unverified_packages(migrator: &Migrator<'_>) -> Vec<PackageID> {
-    let packages = migrator.this.packages.slice();
+    let packages = &migrator.this.packages;
     let (resolutions, metas) = (packages.items_resolution(), packages.items_meta());
     let without_url = (0..resolutions.len() as PackageID).filter(|&id| {
         let res = &resolutions[id as usize];
@@ -706,7 +706,10 @@ impl<'a> Migrator<'a> {
                 None,
                 None,
             )
-            .map(|v| *v.github())
+            .and_then(|version| match version.value {
+                DepValue::Github(repo) => Some(repo),
+                _ => None,
+            })
         } else {
             None
         };
@@ -786,7 +789,7 @@ impl<'a> Migrator<'a> {
                     Dependency::parse(dep_name, Some(name_hash), sliced.slice, &sliced, None, None)
                         .map(|version| (dep_name, version))
                 };
-                let Some((dep_name, version)) = version.filter(|(_, v)| v.tag != DepTag::Catalog)
+                let Some((dep_name, version)) = version.filter(|(_, v)| v.tag() != DepTag::Catalog)
                 else {
                     if !self.silent {
                         bun_core::warn!(
@@ -826,7 +829,7 @@ impl<'a> Migrator<'a> {
                     continue;
                 }
 
-                let version_tag = version.tag;
+                let version_tag = version.tag();
                 // Trust a `file:` spec only in a `file:` package the root or a workspace
                 // declares, not in a folder a registry package ships (`is_trusted_folder_dependency`).
                 let declares_folder = res_tag == resolution::Tag::Folder
@@ -961,11 +964,8 @@ impl<'a> Migrator<'a> {
                 name: wksp_name,
                 name_hash,
                 version: DepVersion {
-                    tag: DepTag::Workspace,
                     literal: wksp_path,
-                    value: DepValue {
-                        workspace: wksp_path,
-                    },
+                    value: DepValue::Workspace(wksp_path),
                 },
                 behavior: Behavior::WORKSPACE,
             });

@@ -2,7 +2,7 @@
 // HTTP thread from buffering the entire response in memory.
 import { S3Client } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tempDir, tls, withoutAsanQuarantine } from "harness";
 import { once } from "node:events";
 import { statSync } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -1379,6 +1379,74 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         });
       },
     );
+
+    test("a body that is not read does not keep what was uploaded", async () => {
+      await using origin = await http2("end of the stream");
+      const { result, stderr, exitCode } = await run(
+        origin,
+        `const upload = Buffer.alloc(${16 * MIB}, 1);
+         const post = () => get("whole", { method: "POST", body: upload });
+         const rss = async () => (await getOther(), Bun.gc(true), process.memoryUsage.rss());
+         const kept = [await post()];
+         const before = await rss();
+         for (let i = 0; i < 8; i++) kept.push(await post());
+         report({ grown: (await rss()) - before, last: await read(kept.at(-1).body) });`,
+        withoutAsanQuarantine(env),
+      );
+      // The uploads are 128 MiB.
+      const most = (isASAN || isDebug ? 80 : 48) * MIB;
+      expect({ ...result, grown: result.grown < most || result.grown, stderr, exitCode }).toEqual({
+        grown: true,
+        last: whole,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      ["not read", ""],
+      ["not read to its end", "await res.body.getReader().read();"],
+    ])("a body that is %s counts towards the next collection", async (_, use) => {
+      await using origin = await http2("end of the stream");
+      const { result, stderr, exitCode } = await run(
+        origin,
+        `import { heapStats } from "bun:jsc";
+         const extra = () => heapStats().extraMemorySize - process.memoryUsage().arrayBuffers;
+         const before = extra();
+         for (let i = 0; i < 10; i++) {
+           const res = await get("whole");
+           ${use}
+         }
+         report({ MiB: (extra() - before) >> 20 });`,
+        { BUN_JSC_useGC: "0" },
+      );
+      // The last ones may still be on their way.
+      expect({ counted: result.MiB >= 8 || result.MiB, stderr, exitCode }).toEqual({
+        counted: true,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("the upload's cancel() may wait for the end of the body", async () => {
+      await using origin = await http2("end of the stream");
+      const { result, stderr, exitCode } = await run(
+        origin,
+        `const body = new ReadableStream({
+           start: controller => controller.enqueue(new Uint8Array(1)),
+           // Bun.build() runs the event loop until setup() has settled.
+           cancel() {
+             const setup = async () => report(await read((await response).body));
+             Bun.build({ entrypoints: ["/x.js"], files: { "/x.js": "" }, plugins: [{ name: "wait", setup }] });
+           },
+         });
+         const response = get("whole", { method: "POST", body, duplex: "half" });
+         await response;
+         // Answered behind the end of the first one, which does not keep the process alive.
+         await get("whole");`,
+      );
+      expect({ result, stderr, exitCode }).toEqual({ result: whole, stderr: "", exitCode: 0 });
+    });
 
     // A damaged body is reported on stderr once the decoder gets there. `busy` occupies the HTTP
     // thread, which then finds the consumer's request for more and its withdrawal together.

@@ -609,8 +609,14 @@ impl InFlightRequest {
 
         let was_active = !core::mem::replace(&mut self.state.flags.left_transport, true);
         if self.state.fail.is_none() && self.state.has_pending_compressed() {
+            if was_active {
+                self.release_request_body();
+            }
             if self.streams_response_body() {
                 self.send_partial_result();
+            }
+            if was_active && self.signals.is_receive_paused() {
+                self.state.decoded_body = MutableString::default();
             }
             self.hold();
         } else {
@@ -629,6 +635,14 @@ impl InFlightRequest {
         {
             crate::HTTPThread::wakeup();
         }
+    }
+
+    /// See [`HTTPClientResult::left_transport`].
+    fn release_request_body(&mut self) {
+        self.http.request_body = HTTPRequestBody::Bytes(b"");
+        self.state.request_body = bun_ptr::RawSlice::EMPTY;
+        self.state.original_request_body = HTTPRequestBody::Bytes(b"");
+        self.compressed_request_body = Vec::new();
     }
 
     fn hold(self) {

@@ -154,6 +154,7 @@ pub struct FetchTasklet {
     pub(crate) scheduled_response_buffer: MutableString,
     /// `scheduled_response_buffer` could not grow. HTTP thread only.
     is_out_of_memory: bool,
+    is_held_body_reported: bool,
     /// response weak ref we need this to track the response JS lifetime
     pub(crate) response: jsc::Weak<FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
@@ -429,6 +430,10 @@ impl FetchTasklet {
             // here has already cleared it, so this just detaches the controller.
             sink.source.detach(&self.global_this);
         }
+        self.clear_request_body_buffer();
+    }
+
+    fn clear_request_body_buffer(&mut self) {
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // The HTTP thread may still be using its ref; `clear_drain_callback`
             // synchronises with it through the buffer's mutex.
@@ -766,7 +771,12 @@ impl FetchTasklet {
                 .has_schedule_callback
                 .store(false, Ordering::Relaxed);
             let is_done = !(*this).result.has_more;
-            let _js_ref = if is_done { (*this).js_ref.take() } else { None };
+            // A copy too: script that runs below can spin the event loop up to the last update.
+            let _js_ref = if is_done {
+                (*this).js_ref.take()
+            } else {
+                (*this).js_ref.clone()
+            };
             (*this).update_progress(vm, lock, is_done)
         }
     }
@@ -826,9 +836,26 @@ impl FetchTasklet {
             self.cancel_request_body_sink(JSValue::UNDEFINED);
             self.poll_ref.unref(bun_io::js_vm_ctx());
         } else if left_transport {
-            self.close_request_body_sink();
+            self.on_held_body_update();
         }
         result
+    }
+
+    fn on_held_body_update(&mut self) {
+        /// About what a decoder, its input and `scheduled_response_buffer` take.
+        const HELD_BODY_COST: usize = 1024 * 1024;
+
+        self.close_request_body_sink();
+        self.clear_request_body_buffer();
+        if let HTTPRequestBody::AnyBlob(_) = self.request_body {
+            self.request_body = HTTPRequestBody::default();
+        }
+        // Only the collector ends a held body that nobody reads.
+        if self.signal_store.body_receive_mode() == BodyReceiveMode::Paused
+            && !core::mem::replace(&mut self.is_held_body_reported, true)
+        {
+            self.global_this.vm().report_extra_memory(HELD_BODY_COST);
+        }
     }
 
     fn deliver_progress(&mut self, vm: &VirtualMachine) -> JsResult<()> {
@@ -1507,9 +1534,6 @@ impl FetchTasklet {
 
     fn on_start_streaming_http_response_body_callback(ctx: NonNull<c_void>) -> DrainResult {
         let this = Self::from_ctx(ctx);
-        if this.signal_store.aborted.load(Ordering::Relaxed) {
-            return DrainResult::Aborted;
-        }
 
         // A body consumer is attaching; keep the process alive until the
         // body finishes (undone in `on_progress_update` when `is_done`), or
@@ -1777,6 +1801,7 @@ impl FetchTasklet {
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
             is_out_of_memory: false,
+            is_held_body_reported: false,
             response: jsc::Weak::default(),
             native_response: JsCell::new(None),
             response_stream: Default::default(),
@@ -1866,7 +1891,7 @@ impl FetchTasklet {
         // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
         // request_body, unix_socket_path) FetchTasklet-owned storage. NOT process-lifetime:
         // `request_headers.buf`, `request_body` and `unix_socket_path` are not reallocated for the
-        // lifetime of the request, whose ref on the tasklet goes after `callback` has dropped it.
+        // time the request has them. Its ref on the tasklet goes after `callback` has dropped it.
         let fetch_tasklet: &'static mut FetchTasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.

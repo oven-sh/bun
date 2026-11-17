@@ -2,6 +2,7 @@
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
+use crate::webcore::blob::Store;
 use bun_archive::tar;
 use bun_core::{self, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
@@ -221,7 +222,8 @@ fn parse_compression_options(
 }
 
 fn create_archive(data: Vec<u8>, compress: Compression, global: &JSGlobalObject) -> Archive {
-    let data = Blob::init(data, global);
+    // `Blob::init` makes no store for no bytes, and the constructor takes such a Blob for an object.
+    let data = Blob::init_with_store(Store::init(data), global);
     Archive { data, compress }
 }
 

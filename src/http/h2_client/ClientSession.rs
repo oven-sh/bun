@@ -1167,12 +1167,9 @@ impl ClientSession {
                 }
             };
             stream.body_buffer.clear();
-            if terminal {
+            // Once Content-Length is satisfied, END_STREAM and trailers find no stream and are discarded.
+            if client.state.is_done() || terminal {
                 return Self::finish_stream(stream, client);
-            }
-            // Content-Length is satisfied. END_STREAM and trailers find no stream and are discarded.
-            if client.state.is_done() {
-                return client.finish();
             }
             if report {
                 client.send_partial_result();

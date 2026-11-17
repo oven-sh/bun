@@ -178,6 +178,7 @@ use bun_http_types::FetchRedirect::CommonAbortReason;
 use bun_ptr::RefPtr;
 use core::ops::ControlFlow::{self, Break, Continue};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::collections::TryReserveError;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -447,7 +448,7 @@ pub struct HTTPClientResult<'a> {
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
-    /// With `has_more`: the connection or stream is gone, and only decoding is left.
+    /// With `has_more`: only decoding is left. The connection or stream is gone, and so is the request's hold on its body.
     pub left_transport: bool,
 
     pub fail: Option<crate::Error>,
@@ -539,15 +540,22 @@ impl<'a> HTTPClientResult<'a> {
     /// with `dest` empty this is a `Vec` move; otherwise it appends.
     #[inline]
     pub fn body_into(&mut self, dest: &mut Vec<u8>) {
-        if !self.body.is_empty() {
-            dest.extend_from_slice(self.body);
-        } else if !self.body_owned.is_empty() {
-            if dest.is_empty() {
-                core::mem::swap(dest, &mut self.body_owned);
-            } else {
-                dest.extend_from_slice(&self.body_owned);
-            }
-        }
+        bun_core::handle_oom(self.try_body_into(dest));
+    }
+
+    #[inline]
+    pub fn try_body_into(&mut self, dest: &mut Vec<u8>) -> Result<(), TryReserveError> {
+        let bytes = if !self.body.is_empty() {
+            self.body
+        } else if dest.is_empty() && !self.body_owned.is_empty() {
+            core::mem::swap(dest, &mut self.body_owned);
+            return Ok(());
+        } else {
+            &self.body_owned
+        };
+        dest.try_reserve(bytes.len())?;
+        dest.extend_from_slice(bytes);
+        Ok(())
     }
 
     /// Drops the borrowed `body` so the result can be stored past the callback.
@@ -561,7 +569,7 @@ impl<'a> HTTPClientResult<'a> {
     }
 }
 
-/// Passed with the last result (`!has_more`). It can be scheduled again.
+/// Passed with the last result (`!has_more`). It can be scheduled again, without a body if it gave that up (`left_transport`).
 pub type FinishedRequest = Box<AsyncHTTP<'static>>;
 
 pub type HTTPClientResultCallbackFunction =
@@ -4138,6 +4146,7 @@ impl<'a> HTTPClient<'a> {
                 let _ = buffer.list.try_reserve_exact(incoming_data.len());
             }
 
+            buffer.grow_if_needed(remainder.len())?;
             let _ = buffer.write(remainder)?;
         }
 

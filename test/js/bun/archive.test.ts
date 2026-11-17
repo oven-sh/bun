@@ -3065,7 +3065,7 @@ describe("Bun.Archive", () => {
     });
   });
 
-  describe("a slice of a Blob", () => {
+  describe.concurrent("a slice of a Blob", () => {
     const tar = (name: string) => Buffer.concat([ustarEntry(name, Buffer.from(name)), Buffer.alloc(1024)]);
     const [before, inside, after] = ["before", "inside", "after"].map(tar);
     const slice = () => new Blob([before, inside, after]).slice(before.length, before.length + inside.length);
@@ -3120,9 +3120,20 @@ describe("Bun.Archive", () => {
       });
     });
 
-    test("may be empty", async () => {
-      const archive = new Bun.Archive(new Blob([inside]).slice(5, 5));
-      expect([(await archive.bytes()).length, (await archive.blob()).size]).toEqual([0, 0]);
+    test.each([
+      ["an empty slice", new Blob([inside]).slice(5, 5)],
+      ["no bytes", new Uint8Array(0)],
+    ])("an archive of %s is empty, and so is one of its blob()", async (_, data) => {
+      using dir = tempDir("archive-empty", {});
+      const archive = new Bun.Archive(data);
+      const blob = await archive.blob();
+      await Bun.Archive.write(join(String(dir), "written"), blob);
+      expect({
+        bytes: (await archive.bytes()).length,
+        blob: blob.size,
+        again: (await new Bun.Archive(blob).bytes()).length,
+        written: readFileSync(join(String(dir), "written")).length,
+      }).toEqual({ bytes: 0, blob: 0, again: 0, written: 0 });
     });
 
     test("of a file stays one in blob()", async () => {

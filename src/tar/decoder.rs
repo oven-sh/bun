@@ -156,7 +156,7 @@ impl Decoder {
         }
     }
 
-    /// To its reader a layer that fails has ended: an error inside a member, nothing between two.
+    /// To its reader a layer that fails where libarchive's did has ended: an error inside a member, nothing between two.
     fn refill_source(
         &mut self,
         index: usize,
@@ -166,7 +166,11 @@ impl Decoder {
     ) -> Result<usize> {
         match self.refill(index, input, eof, place) {
             Ok((used, _)) => Ok(used),
-            Err(error @ (Error::Alloc(_) | Error::InnerLayersTooLarge { .. })) => Err(error),
+            Err(
+                error @ (Error::Alloc(_)
+                | Error::InnerLayersTooLarge { .. }
+                | Error::GzipHeaderMismatch),
+            ) => Err(error),
             Err(_) => {
                 if let Some(layer) = self.layers.get_mut(index) {
                     layer.done = true;

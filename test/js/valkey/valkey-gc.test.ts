@@ -1007,12 +1007,17 @@ test.concurrent.each([
       await new Promise(setImmediate);
     }
     Bun.gc(true);
-    console.log(require("bun:jsc").heapStats().objectTypeCounts.RedisClient ?? 0, "left");
+    const { objectTypeCounts, protectedObjectTypeCounts } = require("bun:jsc").heapStats();
+    console.log(JSON.stringify([protectedObjectTypeCounts.RedisClient ?? 0, objectTypeCounts.RedisClient ?? 0]));
     server.stop(true);
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "inherit" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "0 left", exitCode: 0 });
+  const [rooted, alive] = JSON.parse(stdout);
+  expect(rooted).toBe(0);
+  // Windows x64: the home space of a live native frame can still name the last one (#49178).
+  expect(alive).toBeLessThanOrEqual(1);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("new RedisClient(url) does not leak the URL and its components", async () => {

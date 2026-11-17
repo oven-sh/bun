@@ -432,6 +432,7 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_opaque",
+ "enum-map",
  "libc",
  "strum",
 ]
@@ -530,6 +531,15 @@ dependencies = [
  "const_format",
  "libc",
  "scopeguard",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_cron"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
  "thiserror",
 ]
 
@@ -1630,6 +1640,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
+ "bun_cron",
  "bun_csrf",
  "bun_css",
  "bun_css_jsc",

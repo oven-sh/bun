@@ -160,8 +160,6 @@ impl JoinStyle {
 enum Unlinked {
     Done,
     IsDir,
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    NotEmpty,
 }
 
 /// Who finishes a [`DirTask`].
@@ -446,7 +444,9 @@ impl ShellRmTask {
             let file_path = self.buf_join(&mut buf, &mut join_spill, &[path, name]);
             match self.remove_entry_file(dir_task, file_path) {
                 Ok(Unlinked::Done) => {}
-                Ok(_) => self.enqueue(dir_task, ZBox::from_bytes(file_path.as_bytes())),
+                Ok(Unlinked::IsDir) => {
+                    self.enqueue(dir_task, ZBox::from_bytes(file_path.as_bytes()))
+                }
                 Err(e) => break Err(e),
             }
         };
@@ -481,26 +481,20 @@ impl ShellRmTask {
         Ok(Owner::ThisThread)
     }
 
-    fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> Maybe<Owner> {
+    fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> Maybe<()> {
         // SAFETY: `dir_task` is live; this thread owns it.
         let path = unsafe { (*dir_task).path.as_zstr() };
         loop {
             match bun_sys::rmdirat(self.cwd, path) {
                 Ok(()) => {
                     self.verbose_deleted(dir_task, path);
-                    return Ok(Owner::ThisThread);
+                    return Ok(());
                 }
                 Err(e) if e.get_errno() == E::ENOTDIR => {}
-                Err(e) => return self.forgive(dir_task, path, &e).map(|()| Owner::ThisThread),
+                Err(e) => return self.forgive(dir_task, path, &e),
             }
-            match self.remove_entry_file(dir_task, path)? {
-                Unlinked::Done => return Ok(Owner::ThisThread),
-                Unlinked::IsDir => {}
-                #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                Unlinked::NotEmpty => {
-                    self.enqueue(dir_task, ZBox::from_bytes(path.as_bytes()));
-                    return Ok(Owner::LastChild);
-                }
+            if let Unlinked::Done = self.remove_entry_file(dir_task, path)? {
+                return Ok(());
             }
         }
     }
@@ -523,7 +517,7 @@ impl ShellRmTask {
                     return Ok(Unlinked::Done);
                 };
                 match as_dir.get_errno() {
-                    E::ENOTEMPTY => Ok(Unlinked::NotEmpty),
+                    E::ENOTEMPTY => Ok(Unlinked::IsDir),
                     E::ENOTDIR => Err(e.with_path(path)),
                     _ => Err(as_dir.with_path(path)),
                 }
@@ -647,10 +641,10 @@ impl DirTask {
             (*this).subtask_count.store(1, Ordering::SeqCst);
             let tm = &*(*this).task_manager;
             let result = match tm.is_stopped() {
-                true => Ok(Owner::ThisThread),
+                true => Ok(()),
                 false => tm.remove_entry_dir_after_children(this),
             };
-            Self::post_run(this, result);
+            Self::post_run(this, result.map(|()| Owner::ThisThread));
         }
     }
 

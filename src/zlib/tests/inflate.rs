@@ -235,6 +235,19 @@ fn it_takes_a_bit_to_miss_the_distance_code() {
 }
 
 #[test]
+fn all_lengths_may_have_short_codes() {
+    let mut lengths = vec![0; 256];
+    lengths[..7].copy_from_slice(&[5, 5, 6, 7, 8, 9, 10]);
+    lengths.extend([vec![10], vec![5; 29]].concat());
+    let mut stream = Writer::default();
+    stream.dynamic(true, &lengths, &[1, 1]);
+    for len in 3..=258 {
+        stream.literals(&[len as u8 % 7]).copy(len, 2).copy(len, 1);
+    }
+    check(&stream.end_block().finish(), b"ab", &mut Random::new(1));
+}
+
+#[test]
 fn there_is_room_for_the_largest_tables() {
     // For 9 to 12 bits in the first table, and 7 to 10.
     let literals = [
@@ -464,6 +477,34 @@ fn a_small_window_is_all_that_is_kept_while_waiting_for_input() {
             Ok(Status::NeedsInput)
         );
         assert_eq!(step(&mut inflater, &mut rest, 999, false).1, expected);
+    }
+}
+
+#[test]
+fn a_small_window_is_all_that_is_kept_of_a_long_output() {
+    for (distance, end) in [
+        (256, None),
+        (257, Some(End::Damaged(Damage::DistanceTooFarBack))),
+    ] {
+        let mut stream = Writer::default();
+        stream
+            .fixed(false)
+            .literals(&Random::new(1).bytes(35_000))
+            .end_block();
+        let first = stream.stored(false, &[]).finish();
+        let stream = [
+            first.clone(),
+            stream.fixed(true).copy(9, distance).end_block().finish(),
+        ]
+        .concat();
+        let mut inflater = Inflater::with_window_bits(Container::Raw, 8).unwrap();
+        let result = run(&mut inflater, &stream, false, || (first.len(), 99_999));
+        assert_eq!(result.end, end.unwrap_or(End::Stream(stream.len())));
+        assert!(
+            plain::inflate(&stream, &[])
+                .bytes
+                .starts_with(&result.bytes)
+        );
     }
 }
 
@@ -923,6 +964,23 @@ fn a_vec_is_like_one_buffer_however_it_grows() {
                 assert!(out == plain[..max.max(9000)]);
             }
         }
+    }
+}
+
+#[test]
+fn the_next_vec_has_no_more_behind_it_than_was_written() {
+    for (distance, expected) in [
+        (3, Ok(Status::StreamEnd)),
+        (4, Err(Damage::DistanceTooFarBack.into())),
+    ] {
+        let mut stream = Writer::default();
+        stream.stored(false, b"abc").fixed(true).copy(9, distance);
+        let stream = stream.end_block().finish();
+        let (mut first, mut rest) = stream.split_at(8);
+        let (mut inflater, mut out) = (Inflater::new(Container::Raw), Vec::new());
+        let status = inflater.inflate_to_vec(&mut first, &mut out, 99);
+        assert_eq!(status, Ok(Status::NeedsInput));
+        assert_eq!(inflater.inflate_to_vec(&mut rest, &mut out, 99), expected);
     }
 }
 

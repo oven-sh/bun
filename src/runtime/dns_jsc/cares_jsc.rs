@@ -121,7 +121,7 @@ pub(crate) fn reply_to_js(reply: &Reply, global: &JSGlobalObject) -> JsResult<JS
             ))
         }
         Reply::Any(replies) => {
-            let records = JSValue::create_empty_array(global, replies.len())?;
+            let records = JSValue::create_empty_array(global, 0)?;
             let mut len = 0;
             let mut append = |record: RecordType, mut value: JSValue| {
                 if value.is_string() {

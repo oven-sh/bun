@@ -1362,6 +1362,19 @@ describe("resolve record types", () => {
       socket.close();
     }
   });
+
+  test.concurrent.each([
+    ["alone", [], []],
+    ["and an address", [rr("c.test", 1, aRdata)], [{ address: "10.0.0.1", ttl: 60, type: "A" }]],
+    ["and an MX", [rr("c.test", 15, mxRdata)], [{ priority: 10, exchange: "mx.example.test", type: "MX" }]],
+  ])("resolveAny() has no holes for a CNAME %s", async (_, rest, expected) => {
+    const { socket, resolver } = await startFakeServer(qname => [rr(qname, 5, wireName("c.test")), ...rest]);
+    try {
+      expect(await resolver.resolveAny(NAME)).toStrictEqual(expected);
+    } finally {
+      socket.close();
+    }
+  });
 });
 
 // The socket never answers. The QTYPE that reaches it and the syscall the

@@ -2105,6 +2105,28 @@ describe("Valkey: Recovering After fail()", () => {
     });
   });
 
+  describe("--redis-preconnect against a server that refuses HELLO", () => {
+    test.concurrent.each([
+      { program: `console.log("done")`, stdout: "done\n", stderr: "", exitCode: 0 },
+      { program: `Bun.redis.ping().catch(() => console.log("caught"))`, stdout: "caught\n", stderr: "", exitCode: 0 },
+      { program: `Bun.redis.connect()`, stdout: "", stderr: expect.stringContaining("ERR_REDIS_"), exitCode: 1 },
+    ])("$program exits $exitCode", async ({ program, ...outcome }) => {
+      const fake = helloServer({ HELLO: () => "-WRONGPASS invalid username-password pair\r\n" });
+      const port = await fake.listen();
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--redis-preconnect", "-e", program],
+          env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect({ ...(await exitOutcome(proc)), dialed: fake.connections > 0 }).toEqual({ ...outcome, dialed: true });
+      } finally {
+        fake.server.close();
+      }
+    });
+  });
+
   // A TLS stub run under Node in its own process, so it can read while this
   // loop is blocked, and so that what it reports about the peer's close does
   // not come from the socket code under test. It pauses connection 1 after

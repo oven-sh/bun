@@ -94,13 +94,12 @@ impl MatchFinder {
             _ if large_input && params.window_bits >= 19 => match quality {
                 5 if rolling => Self::Tagged5LargeRolling(WithRolling::new(TaggedBuckets::new()?)?),
                 6 if rolling => Self::Tagged6LargeRolling(WithRolling::new(TaggedBuckets::new()?)?),
-                _ if rolling => Self::BucketsLargeRolling(WithRolling::new(Buckets::new(
-                    bucket_size_bits,
-                    recent_count,
-                )?)?),
+                _ if rolling => {
+                    Self::BucketsLargeRolling(WithRolling::new(Buckets::new(bucket_size_bits)?)?)
+                }
                 5 => Self::Tagged5Large(TaggedBuckets::new()?),
                 6 => Self::Tagged6Large(TaggedBuckets::new()?),
-                _ => Self::BucketsLarge(Buckets::new(bucket_size_bits, recent_count)?),
+                _ => Self::BucketsLarge(Buckets::new(bucket_size_bits)?),
             },
             (5 | 6, _) if is_small || first.length < max_small_size => {
                 Self::SmallSoFar(Small::new(1 << bucket_size_bits, recent_count)?)
@@ -111,7 +110,7 @@ impl MatchFinder {
             (_, Some(size)) if quality < 9 || size <= MAX_SMALL_INPUT_SIZE / 2 => {
                 Self::Small(Small::new(1 << bucket_size_bits, recent_count)?)
             }
-            _ => Self::Buckets(Buckets::new(bucket_size_bits, recent_count)?),
+            _ => Self::Buckets(Buckets::new(bucket_size_bits)?),
         })
     }
 

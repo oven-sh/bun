@@ -2,7 +2,7 @@ use core::array::from_fn;
 
 use crate::format::COMMAND_SYMBOLS;
 
-const GROUP: usize = 16;
+pub(super) const GROUP: usize = 16;
 const WORD: usize = 64;
 
 /// Most of an alphabet is unused, so loops over the other symbols are short.
@@ -12,8 +12,9 @@ pub(super) struct SymbolSet {
     word_count: usize,
 }
 
+/// A bit for each index below `count`, which is up to [`GROUP`].
 #[inline(always)]
-fn group_where(count: usize, test: impl Fn(usize) -> bool) -> u64 {
+pub(super) fn group_where(count: usize, test: impl Fn(usize) -> bool) -> u64 {
     let mut bits = 0;
     for i in 0..count {
         bits |= u16::from(test(i)) << i;

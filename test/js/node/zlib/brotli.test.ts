@@ -476,6 +476,28 @@ it("compresses runs that end in one of a few values", () => {
   expect(roundTrips(inputs, { [QUALITY]: 9, [LGWIN]: 16 })).toMatchInlineSnapshot(`"4044 3fa6e178"`);
 });
 
+it("compresses a short period that now and then gets out of step", () => {
+  const parts = [700, 4, 900, 9, 1101, 1, 800, 2, 333, 1, 64].map((length, i) =>
+    Buffer.alloc(length, i & 1 ? "\x01" : "xA"),
+  );
+  const inputs = parts.map((_, i) => Buffer.concat(parts.slice(0, i + 1)));
+  inputs.push(Buffer.concat(Array(20).fill(inputs.at(-1))));
+  expect([5, 6, 7, 9].map(quality => roundTrips(inputs, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+    [
+      "421 d259e3c6",
+      "419 a93eea33",
+      "417 44ab96bc",
+      "409 232a9887",
+    ]
+  `);
+  expect([5, 9].map(quality => roundTrips(inputs, { [QUALITY]: quality, [LGWIN]: 16 }))).toMatchInlineSnapshot(`
+    [
+      "418 b384f292",
+      "415 8fdc16f3",
+    ]
+  `);
+});
+
 it("compresses runs that are too short to skip at qualities 10 and 11", () => {
   const inputs = [69, 70, 71, 72, 73, 74, 150, 151, 325, 326].map(length =>
     Buffer.concat([

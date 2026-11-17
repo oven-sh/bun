@@ -115,6 +115,11 @@ impl<H: Hasher, const STEP: usize> Hasher for WithRolling<H, STEP> {
     }
 
     #[inline(always)]
+    fn store_unmatched(&mut self, eight: u64, position: usize) {
+        self.inner.store_unmatched(eight, position);
+    }
+
+    #[inline(always)]
     fn store_all(&mut self, bytes: &[u8], position: usize) {
         self.inner.store_all(bytes, position);
     }

@@ -1,13 +1,14 @@
 use core::hint::{Locality, prefetch_read, select_unpredictable};
 
-use bun_highway::{BROTLI_LENGTH_SHIFT, brotli_pairs_before};
+use bun_highway::BROTLI_LENGTH_SHIFT;
 
 use super::slots::{Linked, Slots};
 use super::{Search, is_within};
 use crate::dictionary::MIN_WORD_LENGTH;
 use crate::encoder::input_block::InputBlock;
-use crate::encoder::matching::{hash_of_four, load32, load64, match_length};
+use crate::encoder::matching::{bytes_at, hash_of_four, load32, load64, match_length};
 use crate::encoder::ring_buffer::{SLACK, Window};
+use crate::encoder::symbol_set::{GROUP, group_where};
 use crate::encoder::words::{MAX_MATCH_LENGTH, WordMatches};
 use crate::format::WINDOW_GAP;
 use crate::memory::{self, Result};
@@ -313,16 +314,26 @@ impl Longer<'_> {
 /// Matches of two and three bytes, which have no hash, at distances below `range`.
 #[inline(always)]
 fn find_nearby(search: &Search<'_>, range: usize, longer: &mut Longer<'_>) {
-    let at = search.window.index(search.position);
-    let mut pairs = brotli_pairs_before(search.window.bytes, at, range).unwrap_or(u64::MAX);
-    pairs &= !(u64::MAX >> range.min(search.position).saturating_sub(1));
-    while pairs != 0 {
-        let distance = 1 + pairs.leading_zeros() as usize;
-        pairs ^= 1 << (64 - distance);
-        let earlier = search.window.index(search.position - distance);
-        longer.add(distance, search.match_length_at(earlier));
-        if longer.than > 2 {
-            return;
+    let [first, second] = bytes_at(search.padded, 0);
+    let end = range.min(search.position);
+    for nearest in (1..end).step_by(GROUP) {
+        let farthest = nearest + GROUP - 1;
+        let start = search.window.index(search.position.wrapping_sub(farthest));
+        let bytes = search.window.bytes.get(start..start + GROUP + 1);
+        let mut pairs = bytes.map_or(u16::MAX, |bytes| {
+            group_where(GROUP, |i| (bytes[i] == first) & (bytes[i + 1] == second)) as u16
+        });
+        while pairs != 0 {
+            let distance = nearest + pairs.leading_zeros() as usize;
+            if distance >= end {
+                return;
+            }
+            pairs ^= 1 << (farthest - distance);
+            let earlier = search.window.index(search.position - distance);
+            longer.add(distance, search.match_length_at(earlier));
+            if longer.than > 2 {
+                return;
+            }
         }
     }
 }

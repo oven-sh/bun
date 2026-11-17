@@ -37,6 +37,15 @@ pub(crate) fn resize<T: Copy>(vec: &mut Vec<T>, len: usize, value: T) {
     vec.resize_with(len, || value);
 }
 
+/// To at least `needed`, which is within the capacity.
+#[cold]
+#[inline(never)]
+pub(crate) fn grow<T: Copy + Default>(vec: &mut Vec<T>, needed: usize) {
+    debug_assert!(needed <= vec.capacity());
+    let with_spare = (needed + 1024).min(vec.capacity());
+    resize(vec, needed.max(with_spare), T::default());
+}
+
 pub(crate) fn filled<T: Copy>(value: T, len: usize) -> Result<Vec<T>> {
     let mut vec = empty(len)?;
     resize(&mut vec, len, value);

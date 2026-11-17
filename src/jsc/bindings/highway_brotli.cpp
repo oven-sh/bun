@@ -537,19 +537,6 @@ using DU64 = hn::Full128<uint64_t>;
 // `BROTLI_SLOT_SHIFT` and `BROTLI_LENGTH_SHIFT` in src/highway/lib.rs.
 static constexpr int kSlotShift = 4, kLengthShift = 37;
 
-template<size_t kRange>
-static HWY_INLINE uint64_t BrotliPairsBefore(const uint8_t* HWY_RESTRICT bytes)
-{
-    const DU8 d;
-    uint64_t found = 0;
-    for (size_t at = 0; at < kRange; at += 16) {
-        const auto first = hn::Eq(hn::LoadU(d, bytes + at), hn::Set(d, bytes[kRange]));
-        const auto second = hn::Eq(hn::LoadU(d, bytes + at + 1), hn::Set(d, bytes[kRange + 1]));
-        found |= hn::BitsFromMask(d, hn::And(first, second)) << (64 - kRange + at);
-    }
-    return found;
-}
-
 class ShortCodes {
 public:
     HWY_INLINE ShortCodes(const uint8_t* bytes, uint32_t last_start, uint32_t ring_mask, uint32_t position, uint16_t pair)
@@ -761,18 +748,6 @@ extern "C" size_t highway_brotli_remove_pairs(double* costs, uint32_t* pairs, si
 extern "C" bool highway_brotli_sort_leaves(const uint64_t* leaves, size_t count, bool like_shell_sort, uint64_t* sorted)
 {
     return BUN_HWY_DISPATCH(BrotliSortLeaves)(leaves, count, like_shell_sort, sorted);
-}
-
-// Reads 18 bytes.
-extern "C" __attribute__((always_inline)) uint64_t highway_brotli_pairs_in_16(const uint8_t* bytes)
-{
-    return HWY_STATIC_DISPATCH(BrotliPairsBefore)<16>(bytes);
-}
-
-// Reads 66 bytes.
-extern "C" __attribute__((always_inline)) uint64_t highway_brotli_pairs_in_64(const uint8_t* bytes)
-{
-    return HWY_STATIC_DISPATCH(BrotliPairsBefore)<64>(bytes);
 }
 
 // These two read up to `last_start + 8` bytes.

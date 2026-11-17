@@ -1,4 +1,4 @@
-use core::hint::{Locality, prefetch_read};
+use core::hint::{Locality, prefetch_read, select_unpredictable};
 
 use super::{Filter, Hasher, Match, RecentDistances, Search, Small, prefetch_for_store};
 use crate::encoder::input_block::InputBlock;
@@ -60,6 +60,8 @@ struct Table {
     heads: Box<[u64; 1 << BUCKET_BITS]>,
     /// A bucket moves to the end when it grows, so that a small input touches little memory.
     slots: Vec<u32>,
+    /// How many of them belong to a bucket.
+    used: usize,
     bucket_size: usize,
 }
 
@@ -86,14 +88,33 @@ impl Table {
         memory::try_reserve_total(&mut self.slots, needed)
     }
 
+    /// Returns the first of them.
+    #[inline(always)]
+    fn take_slots(&mut self, count: usize) -> usize {
+        let first = self.used;
+        self.used += count;
+        if self.used > self.slots.len() {
+            memory::grow(&mut self.slots, self.used);
+        }
+        first
+    }
+
+    /// Gives slots to a bucket that has none, without a branch on that.
+    #[inline(always)]
+    fn set_up(&mut self, head: Head) -> Head {
+        let is_new = head.0 == 0;
+        let first = self.take_slots(FIRST_CAPACITY * usize::from(is_new));
+        select_unpredictable(is_new, Head::new(0, FIRST_CAPACITY, first), head)
+    }
+
     #[inline(always)]
     fn insert(&mut self, key: usize, mut head: Head, position: usize) {
-        if head.0 == 0 {
-            debug_assert!(self.slots.len() + FIRST_CAPACITY <= self.slots.capacity());
-            head = Head::new(0, FIRST_CAPACITY, self.slots.len());
-            self.slots.extend([0; FIRST_CAPACITY]);
-        } else if head.room() == 0 {
-            head = self.make_room(head);
+        if head.room() == 0 {
+            head = if head.0 == 0 {
+                self.set_up(head)
+            } else {
+                self.make_room(head)
+            };
         }
         let slot = &mut self.slots[head.next()];
         prefetch_for_store(slot);
@@ -112,20 +133,15 @@ impl Table {
             FIRST_CAPACITY => self.second_capacity(),
             _ => self.bucket_size,
         };
-        debug_assert!(self.slots.len() + capacity <= self.slots.capacity());
-        let room = capacity - count;
-        self.slots
-            .extend_from_within(head.next() - count..head.next());
-        let next = self.slots.len();
-        memory::resize(&mut self.slots, next + room, 0);
-        Head::new(count, room, next)
+        let first = self.take_slots(capacity);
+        (self.slots).copy_within(head.next() - count..head.next(), first);
+        Head::new(count, capacity - count, first + count)
     }
 }
 
 /// Keeps the last positions for each hash (qualities 7 to 9).
 pub(in crate::encoder) struct Buckets<const LONG: bool> {
     table: Table,
-    recent_count: usize,
     words: QuickWordSearch,
 }
 
@@ -151,7 +167,7 @@ impl Buckets<false> {
         block: &InputBlock<'_>,
         position: usize,
     ) -> Result<Self> {
-        let mut buckets = Self::new(small.max_hops.ilog2(), small.recent_count())?;
+        let mut buckets = Self::new(small.max_hops.ilog2())?;
         buckets.words = small.words;
         buckets.try_reserve(block)?;
         small.store_all_in(&mut buckets, block.window, position);
@@ -160,14 +176,14 @@ impl Buckets<false> {
 }
 
 impl<const LONG: bool> Buckets<LONG> {
-    pub(in crate::encoder) fn new(bucket_size_bits: u32, recent_count: usize) -> Result<Self> {
+    pub(in crate::encoder) fn new(bucket_size_bits: u32) -> Result<Self> {
         Ok(Self {
             table: Table {
                 heads: memory::zeroed_array()?,
                 slots: Vec::new(),
+                used: 0,
                 bucket_size: 1 << bucket_size_bits,
             },
-            recent_count,
             words: QuickWordSearch::default(),
         })
     }
@@ -176,13 +192,15 @@ impl<const LONG: bool> Buckets<LONG> {
 impl<const LONG: bool> Hasher for Buckets<LONG> {
     const LOOKAHEAD: usize = if LONG { 8 } else { 4 };
 
+    #[inline(always)]
     fn recent_count(&self) -> usize {
-        self.recent_count
+        // Not from a field, so that the compiler leaves out the code for four.
+        if self.table.bucket_size < 256 { 10 } else { 16 }
     }
 
     fn clear(&mut self) {
         self.table.heads.fill(0);
-        self.table.slots.clear();
+        self.table.used = 0;
     }
 
     fn try_reserve(&mut self, block: &InputBlock<'_>) -> Result<()> {
@@ -197,6 +215,13 @@ impl<const LONG: bool> Hasher for Buckets<LONG> {
     }
 
     #[inline(always)]
+    fn store_unmatched(&mut self, eight: u64, position: usize) {
+        let key = hash::<LONG>(eight, BUCKET_BITS);
+        let head = self.table.set_up(Head(self.table.heads[key]));
+        self.table.insert(key, head, position);
+    }
+
+    #[inline(always)]
     fn prefetch(&self, eight: u64) {
         let next = Head(self.table.heads[hash::<LONG>(eight, BUCKET_BITS)]).next();
         for slot in [next, next.saturating_sub(16)] {
@@ -207,6 +232,7 @@ impl<const LONG: bool> Hasher for Buckets<LONG> {
     #[inline(always)]
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, _: usize) -> Match {
         let key = hash::<LONG>(search.first_eight(), BUCKET_BITS);
+        let recent_count = self.recent_count();
         let table = &mut self.table;
         let head = Head(table.heads[key]);
         let count = head.count() % (1 << 16);
@@ -217,7 +243,7 @@ impl<const LONG: bool> Hasher for Buckets<LONG> {
         };
         let (newer, older) = table.slots[head.next() - newer..head.next() + older].split_at(newer);
         let mut best = Match::NONE;
-        let length = search.try_recent(recent, self.recent_count, &mut best);
+        let length = search.try_recent(recent, recent_count, &mut best);
         let nearest = (newer.last()).map_or(0, |&at| search.position.wrapping_sub(at as usize));
         let length = search.raise(length, nearest, &self.words, &mut best);
         let mut filter = Filter::new(search, length);

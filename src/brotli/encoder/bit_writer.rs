@@ -116,18 +116,11 @@ impl BitWriter {
         self.buffer[position / 8] &= (1 << (position % 8)) - 1;
     }
 
-    #[cold]
-    fn grow(&mut self, needed: usize) {
-        debug_assert!(needed <= self.buffer.capacity());
-        let with_spare = (needed + 1024).min(self.buffer.capacity());
-        memory::resize(&mut self.buffer, needed.max(with_spare), 0);
-    }
-
     pub(super) fn write_bits(&mut self, bits: Bits) {
         debug_assert!(bits.count <= Bits::MAX_COUNT && bits.value >> bits.count == 0);
         let at = self.complete_count();
         if at + WORD > self.buffer.len() {
-            self.grow(at + WORD);
+            memory::grow(&mut self.buffer, at + WORD);
         }
         let word = &mut self.buffer[at..at + WORD];
         let joined = u64::from(word[0]) | (bits.value << (self.position % 8));

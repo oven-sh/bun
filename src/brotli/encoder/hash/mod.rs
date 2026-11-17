@@ -156,12 +156,20 @@ impl<'a> Search<'a> {
         (matched + (difference.trailing_zeros() / 8) as usize).min(self.padded.len() - SLACK)
     }
 
-    /// A bit for each of the first `count` that may match for two bytes.
+    /// A bit for each of the first `count`, from four on, that may match for two bytes.
     #[inline(always)]
     fn promising(&self, recent: &RecentDistances, count: usize) -> u32 {
-        let place = (self.window).place(self.position, 0, bytes_at(self.padded, 0));
+        let (window, pair) = (self.window, bytes_at(self.padded, 0));
         let last = recent.first_chunk().unwrap_or(&[0; 4]);
-        brotli_short_codes(place, last) & ((1 << count) - 1)
+        if count > last.len() {
+            let place = window.place(self.position, 0, pair);
+            return brotli_short_codes(place, last) & ((1 << count) - 1);
+        }
+        let may_match = |distance: i32| {
+            let earlier = window.index(self.position.wrapping_sub(distance as usize));
+            bytes_at(window.bytes, earlier.min(window.bytes.len() - 2)) == pair
+        };
+        (0..last.len()).fold(0, |bits, i| bits | (u32::from(may_match(last[i])) << i))
     }
 
     /// Returns the length that further matches have to exceed.
@@ -193,7 +201,7 @@ impl<'a> Search<'a> {
         best.length.max(3)
     }
 
-    /// Raises `best` to `to_beat`, and `length` to what positions from `nearest` back have to exceed then, if that saves time.
+    /// Raises `best` to `to_beat`, and `length` to what positions from `nearest` back have to exceed then.
     #[inline(always)]
     fn raise(
         &self,
@@ -202,8 +210,6 @@ impl<'a> Search<'a> {
         words: &QuickWordSearch,
         best: &mut Match,
     ) -> usize {
-        /// Shorter matches do not take long to compare.
-        const LONG: usize = 32;
         if best.score >= self.to_beat || !self.reaches(nearest) {
             return length;
         }
@@ -218,16 +224,8 @@ impl<'a> Search<'a> {
             return length;
         }
         let too_short = (self.to_beat - score(0, nearest)) as u32 / SCORE_PER_BYTE as u32;
-        let too_short = max_length.min(too_short as usize);
-        // In runs, all positions can pass such a filter, and have to be compared up to where the run ends.
-        if too_short >= LONG
-            && load32(self.padded, too_short - 3)
-                == load32(self.window.from(self.position - nearest), too_short - 3)
-        {
-            return length;
-        }
         best.score = self.to_beat;
-        length.max(too_short)
+        length.max(max_length.min(too_short as usize))
     }
 
     #[inline(always)]
@@ -250,6 +248,9 @@ struct Filter<'a> {
 }
 
 impl<'a> Filter<'a> {
+    /// Shorter matches do not take long to compare.
+    const LONG: usize = 16;
+
     /// `length` is at least 3.
     #[inline(always)]
     fn new(search: &Search<'a>, length: usize) -> Self {
@@ -295,7 +296,7 @@ impl<'a> Filter<'a> {
         positions
     }
 
-    /// [`Self::try_position`] for one that passes. What is farther away has to be longer, even if it is no better.
+    /// [`Self::try_position`] for one that passes.
     #[inline(always)]
     fn try_passed(&mut self, search: &Search<'a>, position: usize, best: &mut Match) {
         let distance = search.position - position;
@@ -305,10 +306,22 @@ impl<'a> Filter<'a> {
             *best = Match::new(length, distance, score);
             *self = Self::new(search, length);
         } else if search.block.is_contiguous()
-            && length + self.shifted.len() > search.window.without_tail().len() + 3
+            && (length >= Self::LONG
+                || length + self.shifted.len() > search.window.without_tail().len() + 3)
         {
-            *self = Self::new(search, length);
+            self.follow(search, length, best);
         }
+    }
+
+    /// For a match that is no better: what is farther away has to be longer. In runs, all positions can pass a raised filter.
+    #[inline(always)]
+    fn follow(&mut self, search: &Search<'a>, length: usize, best: &mut Match) {
+        let longest = length.max(best.length);
+        if best.score <= search.to_beat {
+            // Keeps the next call from going lower, and is of no other use.
+            best.length = longest;
+        }
+        *self = Self::new(search, longest);
     }
 
     /// Becomes the filter for the new `best`, if the match is better.
@@ -331,6 +344,9 @@ impl<'a> Filter<'a> {
             if best.score < score {
                 *best = Match::new(length, distance, score);
                 *self = Self::new(search, length);
+            } else if length >= Self::LONG && search.block.is_contiguous() {
+                core::hint::cold_path();
+                self.follow(search, length, best);
             }
         }
     }
@@ -348,6 +364,12 @@ pub(super) trait Hasher: Sized {
 
     /// `eight` are the bytes from `position` on.
     fn store(&mut self, eight: u64, position: usize);
+
+    /// The same, where nothing matched for a while.
+    #[inline(always)]
+    fn store_unmatched(&mut self, eight: u64, position: usize) {
+        self.store(eight, position);
+    }
 
     #[inline(never)] // Inlined, the loop has to share its registers.
     fn store_all(&mut self, bytes: &[u8], position: usize) {
@@ -415,7 +437,7 @@ pub(super) fn jump<'a, H: Hasher>(
 ) -> (usize, &'a [u8]) {
     let end = (position + 4 * step).min(block.end() - (H::LOOKAHEAD - 1).max(step));
     while position < end {
-        hasher.store(load64(padded, 0), position);
+        hasher.store_unmatched(load64(padded, 0), position);
         position += step;
         padded = &padded[step..];
     }

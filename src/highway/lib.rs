@@ -311,10 +311,6 @@ unsafe extern "C" {
         sorted: *mut u64,
     ) -> bool;
 
-    safe fn highway_brotli_pairs_in_16(bytes: &[u8; 18]) -> u64;
-
-    safe fn highway_brotli_pairs_in_64(bytes: &[u8; 66]) -> u64;
-
     fn highway_brotli_short_codes(
         bytes: *const u8,
         last_start: u32,
@@ -1870,17 +1866,6 @@ pub fn brotli_sort_leaves(
         }
 }
 
-/// From the top bit on, whether the two bytes at `at` also are at a distance of 1 and so on, up to `range`, which is 16 or 64.
-#[inline(always)]
-pub fn brotli_pairs_before(bytes: &[u8], at: usize, range: usize) -> Option<u64> {
-    let bytes = bytes.get(at.checked_sub(range)?..)?;
-    match range {
-        16 => Some(highway_brotli_pairs_in_16(bytes.first_chunk()?)),
-        64 => Some(highway_brotli_pairs_in_64(bytes.first_chunk()?)),
-        _ => None,
-    }
-}
-
 /// Where a search for matches at the last distances is.
 #[derive(Clone, Copy)]
 pub struct BrotliPlace<'a> {
@@ -2160,8 +2145,6 @@ mod brotli_tests {
     type Out = *mut u8;
     stubs! {
         highway_brotli_remove_pairs(Out, Out, usize, u32, u32) -> usize;
-        highway_brotli_pairs_in_16(In) -> u64;
-        highway_brotli_pairs_in_64(In) -> u64;
         highway_brotli_try_lengths(Out, Out, usize, usize, usize, In, In, f32, u32, u32) -> ();
         highway_brotli_try_lengths_at_cost(Out, Out, usize, usize, usize, f32, u32, u32) -> usize;
         highway_brotli_try_matches(Out, Out, usize, usize, usize, In, In, usize, In, In, f32, u32, In, f32, u32) -> ();
@@ -2322,19 +2305,6 @@ mod brotli_tests {
         assert!(!fits(720, 704, 719));
         assert!(!fits(721, 705, 721));
         assert!(!fits(720, usize::MAX, 720));
-    }
-
-    #[test]
-    fn pairs_before() {
-        for range in [16, 64] {
-            let fits = |len, at| brotli_pairs_before(&vec![0; len], at, range).is_some();
-            assert!(fits(range + 2, range));
-            assert!(!fits(range + 2, range - 1));
-            assert!(!fits(range + 2, range + 1));
-            assert!(!fits(range + 1, range));
-            assert!(!fits(range + 2, usize::MAX));
-        }
-        assert_eq!(brotli_pairs_before(&[0; 128], 64, 32), None);
     }
 
     #[test]

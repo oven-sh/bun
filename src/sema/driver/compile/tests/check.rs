@@ -273,7 +273,7 @@ import "./two.js";
     });
 }
 
-const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 26] = [
+const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 31] = [
     r#"function f(a, a) { "use strict"; }"#,
     r#"function f(public) { "use strict"; }"#,
     r#"function public() { "use strict"; }"#,
@@ -300,15 +300,23 @@ const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 26] = [
     r#"function f() { "use strict"; public = 1; }"#,
     r#"function f() { "use strict"; return public; }"#,
     r#""use strict"; function f() { delete f; }"#,
-];
-
-const ACCEPTED_WITH_FUNCTION_DIRECTIVE: [&str; 6] = [
-    r#"function f() { "use strict"; 010; }"#,
-    r#"function f() { "use strict"; "\010"; }"#,
     r#"function f() { "use strict"; if (1) function g() {} }"#,
     r#"function f() { "use strict"; l: function g() {} }"#,
+    r#"function f() { "use strict"; for (var a = 1 in {}) {} }"#,
+    r#"function f() { "use strict"; { function g() {} function g() {} } }"#,
+    r#"function f() { "use strict"; return function () { if (1) function g() {} }; }"#,
+];
+
+const ACCEPTED_WITH_FUNCTION_DIRECTIVE: [&str; 9] = [
+    r#"function f() { "use strict"; 010; }"#,
+    r#"function f() { "use strict"; "\010"; }"#,
     r#"function f() { var public; "use strict"; }"#,
     r#"function f() { var public; var eval; var arguments; }"#,
+    r#"function f() { "use strict"; function g() {} function g() {} }"#,
+    r#"function f() { "use strict"; } if (1) function g() {}"#,
+    r#"function f() { "use strict"; } for (var a = 1 in {}) {}"#,
+    r#"function f() { "use strict"; } { function g() {} function g() {} }"#,
+    r#"function f() { if (1) function g() {} "use strict"; }"#,
 ];
 
 #[test]
@@ -336,6 +344,117 @@ fn function_directive_makes_strict_mode_code() {
                 index < REFUSED_AFTER_FUNCTION_DIRECTIVE.len(),
                 "{text}"
             );
+        }
+    });
+}
+
+/// Where the file is (a folder with a package.json, then the extension), its text, and whether `bun <file>` refuses it.
+#[rustfmt::skip]
+const FORMS_OF_SLOPPY_MODE_CODE: &[(&str, &str, bool)] = &[
+    // The parser of `bun run` reads strict mode code in a module that an `import`, an `export` or a top-level `await` proves.
+    ("mjs", "if (1) function f() {}\nexport {};", true),
+    ("mjs", "import \"node:fs\";\nif (1) ; else function f() {}", true),
+    ("mjs", "await 0;\nl: function f() {}", true),
+    ("mjs", "{ for await (const a of []) {} }\nif (1) function f() {}", true),
+    ("cjs", "for (var a = 1 in {}) {}\nexport {};", true),
+    ("mjs", "await 0;\nfunction g() { for (var a = 1 in {}) {} }", true),
+    ("mjs", "function f() {} function f() {}\nexport {};", true),
+    ("mjs", "function f() {} var f; function f() {}\nexport {};", true),
+    ("mjs", "export function f() {}\nasync function f() {}", true),
+    ("mjs", "import \"node:fs\";\nfunction g() { { function f() {} function f() {} } }", true),
+    // A file that only runs as a module is sloppy mode code to it, and it prints none of the forms.
+    ("mjs", "if (1) function f() {}", false),
+    ("mjs", "l: function f() {}", false),
+    ("mjs", "for (var a = 1 in {}) {}", false),
+    ("mjs", "function f() {} function f() {}", false),
+    ("mjs", "{ function f() {} function f() {} }", false),
+    ("mjs", "import.meta.url;\nif (1) function f() {}", false),
+    ("mjs", "import(\"node:fs\");\nfunction f() {} function f() {}", false),
+    ("mjs", "async function g() { await 0; }\nif (1) function f() {}", false),
+    // A class is strict mode code from its keyword on.
+    ("cjs", "class A { m() { if (1) function f() {} } }", true),
+    ("cjs", "class A extends (function () { l: function f() {} }) {}", true),
+    ("cjs", "class A { static { for (var a = 1 in {}) {} } }", true),
+    ("cjs", "class A { m() { { function f() {} function f() {} } } }", true),
+    ("cjs", "class A { static { function f() {} function f() {} } }", false),
+    // A directive makes its file or its function strict mode code. Only a block holds a function of each name once.
+    ("cjs", "\"use strict\"; if (1) function f() {}", true),
+    ("cjs", "\"use strict\"; for (var a = 1 in {}) {}", true),
+    ("cjs", "\"use strict\"; try { function f() {} function f() {} } catch {}", true),
+    ("cjs", "\"use strict\"; switch (0) { case 0: function f() {} break; case 1: function f() {} }", true),
+    ("cjs", "\"use strict\"; function f() {} function f() {}", false),
+    ("cjs", "\"use strict\"; function g() { function f() {} function f() {} }", false),
+    ("cjs", "\"use strict\"; { function f() {} { function f() {} } }", false),
+    ("cjs", "(\"use strict\"); if (1) function f() {}", false),
+    ("cjs", "({ [(() => { if (1) function f() {} })()]() { \"use strict\"; } });", false),
+    ("cjs", "if (1) function f() {}\nl: function g() {}\nfor (var a = 1 in {}) {}", false),
+    // TypeScript is read by the same rules.
+    ("ts", "if (1) function f() {}\nexport {};", true),
+    ("ts", "export type T = number;\nif (1) function f() {}", true),
+    ("mts", "if (1) function f() {}", false),
+    ("cts", "import fs = require(\"node:fs\");\nif (1) function f() {}", false),
+    // A legacy HTML comment is an error in a module: one that a keyword proves, then no file that its own syntax makes CommonJS, then a module by
+    // the name of the file.
+    ("cjs", "var a = 1 <!-- c\n;", false),
+    ("cjs", "<!-- c\nvar a = 1;\n--> c", false),
+    ("cjs", "\"use strict\"; class A { m() { return 1 <!-- c\n; } }", false),
+    ("cjs", "var a = 1;\n--> c\nexport {};", true),
+    ("cjs", "import \"node:fs\";\nvar a = 1 <!-- c\n;", true),
+    ("mjs", "var a = 1 <!-- c\n;\nawait 0;", true),
+    ("mjs", "var a = 1 <!-- c\n;", true),
+    ("mjs", "var a = 1;\n--> c", true),
+    ("mjs", "--> c", true),
+    ("mjs", "module.exports = 1 <!-- c\n;", false),
+    ("mjs", "var a = 2, b = 1; a --> b;\nexport {};", false),
+    ("js", "var a = 1 <!-- c\n;", false),
+    ("js", "import.meta.url;\nvar a = 1 <!-- c\n;", true),
+    ("js", "import.meta.url; require(\"node:fs\");\nvar a = 1 <!-- c\n;", false),
+    ("jsx", "var a = 1;\n--> c", false),
+    ("module/js", "var a = 1 <!-- c\n;", true),
+    ("module/js", "var a = 1;\n--> c", true),
+    ("module/js", "exports.a = 1 <!-- c\n;", false),
+    ("module/cjs", "var a = 1 <!-- c\n;", false),
+    ("commonjs/js", "import.meta.url;\nvar a = 1 <!-- c\n;", false),
+    ("commonjs/mjs", "var a = 1;\n--> c", true),
+    // JavaScriptCore reads a file that `bun build` wrote, and to it a module is strict mode code.
+    ("mjs", "// @bun\nif (1) function f() {}", true),
+    ("mjs", "// @bun\nfor (var a = 1 in {}) {}", true),
+    ("mjs", "// @bun\nfunction f() {} function f() {}", true),
+    ("mjs", "// @bun\n{ function f() {} function f() {} }", true),
+    ("mjs", "// @bun\nvar a = 1;\n--> c", true),
+    ("cjs", "// @bun @bun-cjs\n(function (exports) { if (1) function f() {} })", false),
+    ("cjs", "// @bun @bun-cjs\n(function (exports) { \"use strict\"; if (1) function f() {} })", true),
+    ("cjs", "// @bun @bun-cjs\n(function (exports) { \"use strict\"; { function f() {} function f() {} } })", true),
+    ("cjs", "// @bun @bun-cjs\n(function (exports) { var a = 1 <!-- c\n; })", false),
+];
+
+#[test]
+fn form_of_sloppy_mode_code_is_an_error_to_the_reader_of_its_text() {
+    let cases = FORMS_OF_SLOPPY_MODE_CODE;
+    let names: Vec<String> = (cases.iter().enumerate())
+        .map(|(index, (place, ..))| {
+            let mut folders = ["module/", "commonjs/"].into_iter();
+            let folder = folders.find(|it| place.starts_with(it)).unwrap_or("");
+            format!("{folder}{index}.{}", &place[folder.len()..])
+        })
+        .collect();
+    let import = |name: &String| format!("import \"./{name}\";\n");
+    let main_text = names.iter().map(import).collect::<String>();
+    let mut files = vec![
+        ("main.mjs", main_text.as_str()),
+        ("module/package.json", r#"{ "type": "module" }"#),
+        ("commonjs/package.json", r#"{ "type": "commonjs" }"#),
+    ];
+    let texts = cases.iter().map(|case| case.1);
+    files.extend(names.iter().map(String::as_str).zip(texts));
+    with_program(&files, &["./main.mjs"], 1, |program| {
+        let build = check_only(program);
+        for (name, &(_, text, is_refused_by_bun_run)) in names.iter().zip(cases) {
+            let file = Some(program.file(name));
+            let is_refused = build.diagnostics().any(|it| {
+                it.diagnostic.file == file && it.diagnostic.class == DiagnosticClass::EarlyError
+            });
+            assert_eq!(is_refused, is_refused_by_bun_run, "{name}: {text}");
         }
     });
 }

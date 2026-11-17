@@ -21,7 +21,7 @@ mod skipped_blocks;
 mod stmt;
 mod ty;
 
-use crate::lexer::{Lexer, Mark};
+use crate::lexer::{HTML_COMMENT_MARK, Lexer, Mark};
 use crate::token::T;
 use crate::{Options, Parsed, Rejected, Rejection, Scratch};
 use bun_sema::atom::{Atom, Intern, known};
@@ -1047,9 +1047,15 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// Turns `Lexer::flagged` into diagnostics.
+    /// Turns `Lexer::flagged` into diagnostics. A legacy HTML comment mark is none yet: the first one is noted for those that know what the file is.
     fn report_scanner_flagged_errors(&mut self) {
         for (code, start, end) in std::mem::take(&mut self.lx.flagged) {
+            if code == HTML_COMMENT_MARK {
+                if self.f.html_comment_end == 0 {
+                    self.f.html_comment_end = end;
+                }
+                continue;
+            }
             let raw = self
                 .lx
                 .src

@@ -7,6 +7,7 @@ mod classes;
 mod declarations;
 mod error_classes;
 mod expressions;
+mod html_comments;
 mod names;
 mod patterns;
 mod report;
@@ -39,5 +40,6 @@ impl Checker<'_, '_> {
         self.check_eval_or_arguments_early_errors(file);
         self.check_expression_early_errors(file);
         self.check_typescript_syntax_early_errors(file);
+        self.check_legacy_html_comment(file);
     }
 }

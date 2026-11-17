@@ -428,6 +428,9 @@ fn parse_into_arena<'s>(
     if in_arena.kind == FileKind::Json {
         bun_sema::json::validate_json(&mut in_arena, text);
     }
+    if how.compiles {
+        in_arena.judge_as_parsed_by_bun_run(text);
+    }
     // Don't keep a very large file's capacity around for every later file.
     if text.len() >= 4 << 20 {
         *file = FileBuilder::default();

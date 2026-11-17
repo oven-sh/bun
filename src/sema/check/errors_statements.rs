@@ -508,7 +508,9 @@ impl Checker<'_, '_> {
             let is_annex_b = is_for_in
                 && first.kind == VarKind::Var
                 && matches!(hir[first.pat].kind, PatKind::Ident(_));
-            if is_annex_b {
+            let is_strict =
+                || self.is_in_compile_build(file) && hir.is_strict_to_its_reader(hir.node(s));
+            if is_annex_b && !is_strict() {
                 self.grammar_error_on_node(file, first.pat, 1189, &[])
             } else {
                 let code = if is_for_in { 1189 } else { 1190 };

@@ -2,7 +2,8 @@ use std::borrow::Cow;
 
 use bun_alloc::Arena as AstArena;
 use bun_ast::{ASTMemoryAllocator, ExportsKind, Loader, Log, Source};
-use bun_js_parser::{Define, Parser, ParserOptions};
+use bun_js_parser::{Define, Parser};
+use bun_options_types::bundle_enums::ModuleType;
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileInputs, analyze_file};
@@ -13,6 +14,7 @@ use bun_sema::session::{Arena, Session};
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
 use super::fold_inputs::create_application_fold_inputs;
+use super::parser_of_bun_run::parser_options_of_bun_run;
 use crate::builtins::Platforms;
 
 const PATH: &[u8] = b"/project/a.ts";
@@ -21,17 +23,7 @@ fn is_commonjs_to_bun_run(text: &str, define: &Define) -> Option<bool> {
     let arena = AstArena::new();
     let mut store = ASTMemoryAllocator::borrowing(&arena);
     let _scope = store.enter();
-    let mut options = ParserOptions::init(Default::default(), Loader::Ts);
-    options.tree_shaking = true;
-    options.warn_about_unbundled_modules = false;
-    options.features.top_level_await = true;
-    options.features.no_macros = true;
-    options.features.inlining = true;
-    options.features.minify_syntax = true;
-    options.features.trim_unused_imports = true;
-    options.features.commonjs_at_runtime = true;
-    options.features.lower_using = false;
-    options.features.ascii_only = true;
+    let options = parser_options_of_bun_run(Loader::Ts, ModuleType::Unknown);
     let source = Source::init_path_string(PATH, text.as_bytes());
     let mut log = Log::init();
     let parser = Parser::init(options, &mut log, &source, define, &arena).ok()?;

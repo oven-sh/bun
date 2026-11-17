@@ -12,6 +12,7 @@ pub(crate) use this_of_file::collect_this_of_file;
 pub use this_of_file::{ThisPositions, evaluates_own_this, list_this_of_file};
 
 use crate::fold::FoldError;
+use bun_core::strings;
 
 #[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleFormat {
@@ -25,6 +26,20 @@ pub enum DeclaredModuleType {
     Unknown,
     CommonJs,
     Esm,
+}
+
+impl DeclaredModuleType {
+    /// What the name of the file at `path` says, however the file is loaded. A `.js` and a `.ts` file take `of_package`, the type of the nearest package.json.
+    pub fn by_file_name(path: &[u8], of_package: DeclaredModuleType) -> DeclaredModuleType {
+        let name = strings::basename_posix(path);
+        let dot = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
+        match &name[dot..] {
+            b".mjs" | b".mts" => DeclaredModuleType::Esm,
+            b".cjs" | b".cts" => DeclaredModuleType::CommonJs,
+            b".js" | b".ts" => of_package,
+            _ => DeclaredModuleType::Unknown,
+        }
+    }
 }
 
 bitflags::bitflags! {

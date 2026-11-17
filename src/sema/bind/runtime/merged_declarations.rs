@@ -409,18 +409,17 @@ impl Declarations<'_, '_> {
             {
                 Conflict::OnlyInModule
             }
+            (Kind::TopLevelFunction, Kind::TopLevelFunction)
+                if matches!(self.bound.scopes[scope.idx()].kind, ScopeKind::File) =>
+            {
+                self.top_level_function_conflict(later.decl)
+            }
             (
                 Kind::Var | Kind::Parameter | Kind::TopLevelFunction,
                 Kind::Var | Kind::Parameter | Kind::TopLevelFunction,
             ) => Conflict::No,
             (Kind::BlockFunction, Kind::BlockFunction) => match later.decl {
-                // The rest of the file is printed anew, without its directives.
-                Decl::Fn(f)
-                    if self.hir.is_in_known_evaluation(self.hir[f].start)
-                        && self.hir[f].is_strict =>
-                {
-                    Conflict::Always
-                }
+                Decl::Fn(f) if self.is_strict_block_to_its_reader(scope, f) => Conflict::Always,
                 _ => Conflict::No,
             },
             (
@@ -432,6 +431,50 @@ impl Declarations<'_, '_> {
                 Kind::BlockFunction | Kind::Lexical | Kind::Import | Kind::SimpleCatchParameter,
             ) => Conflict::Always,
         }
+    }
+
+    /// A second function of one name at the top of a file. It replaces the first one, except in a module.
+    fn top_level_function_conflict(&self, later: Decl) -> Conflict {
+        let hir = self.hir;
+        let Decl::Fn(function) = later else {
+            return Conflict::No;
+        };
+        match hir.reader_at(hir[function].start) {
+            Reader::Engine => Conflict::OnlyInModule,
+            Reader::ParserOfBunRun if hir.is_proved_module => Conflict::Always,
+            Reader::ParserOfBunRun => Conflict::No,
+        }
+    }
+
+    /// A second function of one name in the block `scope` replaces the first one in sloppy mode code alone.
+    fn is_strict_block_to_its_reader(&mut self, scope: ScopeId, later: FnId) -> bool {
+        let hir = self.hir;
+        let start = hir[later].start;
+        if hir.is_in_known_evaluation(start) {
+            return hir[later].is_strict;
+        }
+        match hir.reader_at(start) {
+            Reader::Engine => !self.is_sloppy(scope),
+            Reader::ParserOfBunRun => self.is_strict_to_parser_of_bun_run(scope),
+        }
+    }
+
+    /// `File::is_strict_to` for a scope and `Reader::ParserOfBunRun`. By syntax a function is strict where a class or a function with a directive is around it.
+    fn is_strict_to_parser_of_bun_run(&self, mut scope: ScopeId) -> bool {
+        let (hir, bound, reader) = (self.hir, &*self.bound, Reader::ParserOfBunRun);
+        while scope.is_some() {
+            match bound.scopes[scope.idx()].kind {
+                ScopeKind::File => return hir.is_strict_file_to(reader),
+                ScopeKind::Fn(function) if hir.is_strict_function_to(function, reader) => {
+                    return true;
+                }
+                ScopeKind::Class(_) => return true,
+                ScopeKind::Module(namespace) if hir.is_strict_namespace(namespace) => return true,
+                _ => {}
+            }
+            scope = bound.runtime_parent_scope(hir, scope);
+        }
+        false
     }
 
     fn is_written_above_namespace(&self, decl: Decl, namespace: Decl) -> bool {

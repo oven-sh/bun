@@ -26,8 +26,9 @@ mod tests;
 pub use crate::check::aot::DiagnosticClass;
 pub use expr_flags::{ExprFlags, MemberKey, TemplatePart, kind_flags};
 pub use runtime_syntax::{
-    find_runtime_constructor, find_super_call_statement, find_transpiled_mark, has_runtime_member,
-    is_marked_as_commonjs, is_moved_to_file_start, is_proto_setter, parameter_properties,
+    INVALID_CHARACTER, Reader, find_runtime_constructor, find_super_call_statement,
+    find_transpiled_mark, has_runtime_member, is_marked_as_commonjs, is_moved_to_file_start,
+    is_proto_setter, parameter_properties,
 };
 
 macro_rules! define_id {
@@ -3225,6 +3226,10 @@ pub struct FileIn<S: Storage> {
     pub is_strict: bool,
     /// The same as far as the file's own syntax says: a `"use strict"` directive or a module declaration.
     pub is_strict_by_syntax: bool,
+    /// In a text that is compiled: the parser of `bun run` reads the file as a module, for an `import` that is not only of types, an `export` or a top-level `await`. See `is_strict_to_its_reader`.
+    pub is_proved_module: bool,
+    /// In a text that is compiled: the end of its first legacy HTML comment mark, a `<!--` or a `-->` at the start of a line. 0 if it has none, or once the mark is reported. See `legacy_html_comment`.
+    pub html_comment_end: u32,
 }
 
 /// The HIR of a file that has been loaded.
@@ -4016,6 +4021,8 @@ macro_rules! file_in_storage {
             bigint_names: $few!($this.bigint_names),
             is_strict: $this.is_strict,
             is_strict_by_syntax: $this.is_strict_by_syntax,
+            is_proved_module: $this.is_proved_module,
+            html_comment_end: $this.html_comment_end,
         }
     };
 }
@@ -4170,6 +4177,8 @@ impl FileBuilder {
             bigint_names,
             is_strict,
             is_strict_by_syntax,
+            is_proved_module,
+            html_comment_end,
         } = self;
         exprs.clear();
         stmts.clear();
@@ -4285,6 +4294,8 @@ impl FileBuilder {
         bigint_names.clear();
         *is_strict = Default::default();
         *is_strict_by_syntax = Default::default();
+        *is_proved_module = Default::default();
+        *html_comment_end = Default::default();
     }
 
     /// Returns the file with every list at its final size in `arena`, which belongs to `session`. Also returns the long

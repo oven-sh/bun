@@ -156,7 +156,7 @@ impl<'h> Resolver<'h> {
     }
 
     pub fn declared_module_type(&self, path: &[u8]) -> DeclaredModuleType {
-        module_type_from_extension(path, self.package_module_type(path))
+        DeclaredModuleType::by_file_name(path, self.package_module_type(path))
     }
 
     pub fn loader_request<'a>(
@@ -346,20 +346,6 @@ fn refine_failure(failure: CodeFailure, specifier: &[u8], kind: CodeImportKind) 
     match is_package_name {
         true => CodeFailure::PackageNotFound,
         false => CodeFailure::ModuleNotFound,
-    }
-}
-
-fn module_type_from_extension(
-    path: &[u8],
-    package_module_type: DeclaredModuleType,
-) -> DeclaredModuleType {
-    let name = strings::basename_posix(path);
-    let dot = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
-    match &name[dot..] {
-        b".mjs" | b".mts" => DeclaredModuleType::Esm,
-        b".cjs" | b".cts" => DeclaredModuleType::CommonJs,
-        b".js" | b".ts" => package_module_type,
-        _ => DeclaredModuleType::Unknown,
     }
 }
 

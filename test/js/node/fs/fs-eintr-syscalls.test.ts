@@ -282,10 +282,12 @@ describe.skipIf(!supported)("under a shim that fails a libc call once", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Each row fails its first clone. The row after it shows that the failure did not turn clones off.
+  // Each row fails its first clone. The shim answers the second clone with success and clones nothing,
+  // so an empty copy shows that the clone ran again. A copy with bytes came from a copy loop instead.
+  // The row after it shows that the failure did not turn clones off.
   test.skipIf(!isLinux)("a clone that fails with EINTR runs again", async () => {
     const { rows, exitCode } = await run("cloned");
-    const cloned = { result: "cloned", shim: ["ioctl_ficlone"] };
+    const cloned = { result: { copySize: 0 }, shim: ["ioctl_ficlone"] };
     expect(rows).toEqual({ forced: cloned, copyFileSync: cloned, cpSync: cloned, cp: cloned, last: cloned });
     expect(exitCode).toBe(0);
   });

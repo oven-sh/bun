@@ -174,11 +174,14 @@ const modes = {
     await row("fetchFileInParts", { sendfile_most: 7777 }, uploadedFile);
   },
 
-  // The shim answers the FICLONE after the one it fails with success. It clones nothing.
+  // The shim answers the FICLONE after the one it fails with success. It clones nothing,
+  // so a copy that the second clone made is empty. A copy with bytes came from a copy loop.
   async cloned() {
     const clone = (dir: string, copy: (from: string, to: string) => unknown) => {
-      const done = copy(fileIn(dir), path.join(dir, "copy.txt"));
-      return done instanceof Promise ? done.then(() => "cloned") : "cloned";
+      const to = path.join(dir, "copy.txt");
+      const done = copy(fileIn(dir), to);
+      const size = () => ({ copySize: fs.statSync(to).size });
+      return done instanceof Promise ? done.then(size) : size();
     };
     const forced = (from: string, to: string) => fs.copyFileSync(from, to, fs.constants.COPYFILE_FICLONE_FORCE);
     await row("forced", { ioctl_ficlone: EINTR }, dir => clone(dir, forced));

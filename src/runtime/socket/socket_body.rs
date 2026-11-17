@@ -4484,12 +4484,10 @@ pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
 
     #[cfg(not(windows))]
     {
-        let pair = sys::net::socketpair_without_flags(libc::AF_UNIX, libc::SOCK_STREAM)
-            .map_err(|err| global.throw_value(err.to_js(global)))?;
-        for end in pair {
-            let _ = sys::update_nonblocking(end, true);
+        match sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, true) {
+            Ok(pair) => Ok(pair.map(sys::Fd::native)),
+            Err(err) => Err(global.throw_value(err.to_js(global))),
         }
-        Ok(pair.map(sys::Fd::native))
     }
 }
 

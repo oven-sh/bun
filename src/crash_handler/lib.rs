@@ -3031,8 +3031,7 @@ mod draft {
             if cmd_line.append(0).is_err() {
                 return;
             }
-            // This process is about to end.
-            core::mem::forget(windows::start_process(cmd_line.slice()));
+            let _ = windows::start_process(cmd_line.slice());
         }
         #[cfg(any(
             target_os = "macos",

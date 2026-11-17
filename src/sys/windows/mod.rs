@@ -10,7 +10,8 @@ use core::ffi::{c_int, c_void};
 use core::mem::{MaybeUninit, size_of};
 use core::ptr;
 use std::os::windows::io::{
-    AsRawHandle as _, FromRawHandle as _, HandleOrInvalid, HandleOrNull, OwnedHandle,
+    AsRawHandle as _, FromRawHandle as _, HandleOrInvalid, HandleOrNull, IntoRawHandle as _,
+    OwnedHandle,
 };
 
 use bun_core::WStr;
@@ -790,7 +791,7 @@ pub fn call_when_signaled(
             externs::WT_EXECUTEONLYONCE,
         )
     })?;
-    core::mem::forget(object);
+    let _ = object.into_raw_handle();
     Ok(())
 }
 
@@ -805,8 +806,8 @@ pub fn inherited_descriptors() -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(info.lpReserved2, info.cbReserved2.into()) }
 }
 
-/// Returns the process, which inherits handles, and its thread. Panics unless `command_line` ends with a NUL.
-pub fn start_process(command_line: &mut [u16]) -> Result<[OwnedHandle; 2], Win32Error> {
+/// Does not wait for the process, which inherits handles. Panics unless `command_line` ends with a NUL.
+pub fn start_process(command_line: &mut [u16]) -> Result<(), Win32Error> {
     assert!(command_line.last() == Some(&0));
     let mut startup_info: STARTUPINFOW = bun_core::ffi::zeroed();
     startup_info.cb = size_of_val(&startup_info) as DWORD;
@@ -825,8 +826,10 @@ pub fn start_process(command_line: &mut [u16]) -> Result<[OwnedHandle; 2], Win32
             &raw mut startup_info,
             &raw mut process,
         ))?;
-        Ok([process.hProcess, process.hThread].map(|it| OwnedHandle::from_raw_handle(it)))
+        externs::CloseHandle(process.hProcess);
+        externs::CloseHandle(process.hThread);
     }
+    Ok(())
 }
 
 /// The C runtime calls `handler` on the thread that calls `abort()`, once it has put the default back.

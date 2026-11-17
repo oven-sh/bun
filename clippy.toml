@@ -24,7 +24,7 @@ disallowed-methods = [
   { path = "libc::truncate", reason = "use bun_sys::truncate", allow-invalid = true },
   { path = "libc::link", reason = "use bun_sys::link", allow-invalid = true },
   { path = "libc::unlink", reason = "use bun_sys::unlink", allow-invalid = true },
-  { path = "libc::rmdir", reason = "use bun_sys::rmdir or bun_sys::posix::rmdir", allow-invalid = true },
+  { path = "libc::rmdir", reason = "use bun_sys::rmdir", allow-invalid = true },
   { path = "libc::mkdtemp", reason = "use bun_sys::mkdtemp", allow-invalid = true },
   { path = "libc::isatty", reason = "use bun_sys::isatty", allow-invalid = true },
   { path = "libc::socketpair", reason = "use bun_sys::socketpair", allow-invalid = true },

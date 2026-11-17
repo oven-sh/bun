@@ -14,6 +14,7 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  MAX_PATH_BYTES,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -1644,7 +1645,7 @@ it("mkdtempSync() non-exist dir #2568", () => {
   }
 });
 
-it("mkdtempSync() names the template in its error", () => {
+it("only mkdtempSync() names the template in its error where libc has changed it", async () => {
   using dir = tempDir("mkdtemp-error-path", {});
   const prefix = join(String(dir), "missing", "a-");
   expect(() => mkdtempSync(prefix)).toThrow(
@@ -1654,26 +1655,25 @@ it("mkdtempSync() names the template in its error", () => {
       message: `ENOENT: no such file or directory, mkdtemp '${prefix}XXXXXX'`,
     }),
   );
-});
-
-it.skipIf(!isGlibc)("mkdtemp() names what glibc tried in its error", async () => {
-  using dir = tempDir("mkdtemp-error-path", {});
-  const prefix = join(String(dir), "missing", "a-");
-  const errors = await Promise.all([promisify(mkdtemp)(prefix).catch(e => e), promises.mkdtemp(prefix).catch(e => e)]);
-  for (const error of errors) {
-    expect(error.path.slice(0, -6)).toBe(prefix);
-    expect(error.path).not.toEndWith("XXXXXX");
+  for (const mkdtempAsync of [promisify(mkdtemp), promises.mkdtemp]) {
+    const { code, syscall, path } = await mkdtempAsync(prefix).catch(e => e);
+    expect({ code, syscall, prefix: path.slice(0, -6) }).toEqual({ code: "ENOENT", syscall: "mkdtemp", prefix });
+    if (isGlibc) expect(path).not.toEndWith("XXXXXX");
   }
 });
 
+// Windows refuses a path long before it has that many bytes.
 it.skipIf(isWindows)("mkdtemp does not cut a prefix that is too long", async () => {
   using dir = tempDir("mkdtemp-long-prefix", {});
-  const longest = (isMacOS || isFreeBSD ? 1024 : 4096) - "XXXXXX\0".length;
-  const prefixOf = (length: number) => (String(dir) + "/").padEnd(length, "a/");
+  const base = String(dir) + "/";
+  const prefixOf = (bytes: number) => base + Buffer.alloc(bytes - Buffer.byteLength(base), "a/").toString();
+  const longest = MAX_PATH_BYTES - "XXXXXX\0".length;
   expect(() => mkdtempSync(prefixOf(longest))).toThrow(expect.objectContaining({ code: "ENOENT" }));
-  const tooLong = { code: "ENAMETOOLONG", syscall: "mkdtemp", path: prefixOf(longest + 1) + "XXXXXX" };
-  expect(() => mkdtempSync(prefixOf(longest + 1))).toThrow(expect.objectContaining(tooLong));
-  await expect(promises.mkdtemp(prefixOf(longest + 1))).rejects.toMatchObject({ code: "ENAMETOOLONG" });
+  for (const prefix of [prefixOf(longest + 1), prefixOf(MAX_PATH_BYTES - 1)]) {
+    const tooLong = { code: "ENAMETOOLONG", syscall: "mkdtemp" };
+    expect(() => mkdtempSync(prefix)).toThrow(expect.objectContaining({ ...tooLong, path: prefix + "XXXXXX" }));
+    await expect(promises.mkdtemp(prefix)).rejects.toMatchObject(tooLong);
+  }
 });
 
 it("mkdtemp() non-exist dir #2568", done => {
@@ -6725,6 +6725,7 @@ INTERRUPT(truncate, path, (const char *path, off_t length), (path, length))
 INTERRUPT(link, to, (const char *from, const char *to), (from, to))
 INTERRUPT(unlink, path, (const char *path), (path))
 INTERRUPT(rmdir, path, (const char *path), (path))
+INTERRUPT(unlinkat, path, (int folder, const char *path, int flags), (folder, path, flags))
 
 char *mkdtemp(char *name) {
   static int calls;
@@ -6761,8 +6762,9 @@ for (const [flavor, functionNamed] of Object.entries(flavors)) {
   await call("rmdir", "eintr-folder-" + flavor);
   const made = await call("mkdtemp", "eintr-temp-");
   console.log(flavor, fs.statSync(made).isDirectory(), fs.readFileSync("eintr-link-" + flavor, "utf8"));
+  await call("rm", "eintr-link-" + flavor, { recursive: true });
 }
-console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder)/.test(name)));
+console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder|link)/.test(name)));
 `,
   });
 
@@ -6783,7 +6785,7 @@ console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder)/.test(name)
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const interrupted = "fsync\nfdatasync\ntruncate\nlink\nunlink\nrmdir\nmkdtemp\n";
+  const interrupted = "fsync\nfdatasync\ntruncate\nlink\nunlink\nrmdir\nmkdtemp\nunlinkat\n";
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout: "sync true he\ncallback true he\npromises true he\n[]\n",
     stderr: interrupted + interrupted + interrupted,

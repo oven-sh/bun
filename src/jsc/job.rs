@@ -478,7 +478,16 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
         context => vm.context_of(context),
     };
     // SAFETY: as above.
-    unsafe { ((*header).complete)(header, &global.js_thread(context)) }
+    let result = unsafe { ((*header).complete)(header, &global.js_thread(context)) };
+    clear_stack_below_caller();
+    result
+}
+
+/// The frames of later callbacks have words that nothing writes, where the collector would find what the job had.
+#[inline(never)]
+fn clear_stack_below_caller() {
+    // Those of an immediate reach 1.2 KB below the task queue's on Windows x64.
+    core::hint::black_box(&mut [0u64; 256]);
 }
 
 /// Teardown's release for a queued, never-dispatched `Job<C>` completion

@@ -2118,9 +2118,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     Ok(opts)
 }
 
-/// Publish `PWD` after a successful `--cwd` chdir. Like bash's `cd`, keep the
-/// logical spelling (`$PWD` joined with the argument) when it names the new
-/// cwd, so symlinks the user walked through survive; else the physical path.
+/// Publish `PWD` after a successful `--cwd` chdir, with bash's logical-path rule.
 pub(crate) fn publish_pwd_after_chdir(requested: &[u8]) {
     let mut buf = bun_paths::path_buffer_pool::get();
     let Ok(physical) = bun_core::getcwd(&mut buf) else {
@@ -2176,8 +2174,7 @@ fn set_pwd_env(cwd: &bun_core::ZBox) {
     }
 }
 
-/// Rebuild the envp snapshot with `PWD=cwd`: `SetEnvironmentVariableW` does
-/// not update the WTF-8 snapshot that `DotEnv::load_process` reads.
+/// Rebuild the envp snapshot `DotEnv::load_process` reads; `SetEnvironmentVariableW` skips it.
 #[cfg(windows)]
 fn patch_windows_environ_snapshot(cwd: &[u8]) {
     use bun_core::{CStrList, CStrRef};

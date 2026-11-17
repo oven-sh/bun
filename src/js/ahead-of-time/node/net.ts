@@ -53,6 +53,7 @@ const kArmHandshakeTimeout: typeof netSymbols.kArmHandshakeTimeout = netSymbols.
 const kDestroyOnRead: typeof netSymbols.kDestroyOnRead = netSymbols.kDestroyOnRead;
 const kForeignListener: typeof netSymbols.kForeignListener = netSymbols.kForeignListener;
 const kHandleClosed: typeof netSymbols.kHandleClosed = netSymbols.kHandleClosed;
+const kEndCalled: typeof netSymbols.kEndCalled = netSymbols.kEndCalled;
 const kListenersRemoved: typeof netSymbols.kListenersRemoved = netSymbols.kListenersRemoved;
 const kPreHandshakeWrite: typeof netSymbols.kPreHandshakeWrite = netSymbols.kPreHandshakeWrite;
 const readInProgress = netSymbols.readInProgress;
@@ -2487,7 +2488,9 @@ Socket.prototype[kReinitializeHandle] = function reinitializeHandle(this: $Node.
 // The arguments go on to Duplex.prototype.end as they are.
 Socket.prototype.end = function end(this: $Node.Socket, data?, encoding?, callback?) {
   $debug("Socket.prototype.end");
-  return Duplex.prototype.end.$call(this, data, encoding, callback);
+  const ret = Duplex.prototype.end.$call(this, data, encoding, callback);
+  if (this.encrypted) (this.server as any)?.[kEndCalled]?.(this);
+  return ret;
 };
 
 // `scheduleClose` is node:http's, for a connection of its server.

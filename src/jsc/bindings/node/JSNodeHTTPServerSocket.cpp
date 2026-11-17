@@ -827,7 +827,7 @@ extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__shutdown(us_socket_t* so
 {
     BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__shutdown);
     auto* serverSocket = openServerSocket(socket, ssl);
-    if (!serverSocket) {
+    if (!serverSocket || serverSocket->ended) {
         return;
     }
     serverSocket->ended = true;

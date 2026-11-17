@@ -131,6 +131,24 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
     }).toEqual({ statusLine: "HTTP/1.1 200 OK", body });
   });
 
+  test.concurrent.each([
+    ["end()", (res: ServerResponse) => void res.end("late")],
+    ["write()", (res: ServerResponse) => void res.write("late")],
+    ["flushHeaders()", (res: ServerResponse) => res.flushHeaders()],
+    ["writeContinue()", (res: ServerResponse) => res.writeContinue()],
+  ])("res.%s behind socket.end(data) sends nothing", async (_name, late) => {
+    const onRequest: Handler = (req, res) => {
+      req.socket.end("raw");
+      late(res);
+    };
+    await using server = protocol === "https" ? https.createServer(tlsCert, onRequest) : http.createServer(onRequest);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" };
+    const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(Buffer.concat(await client.toArray()).toString()).toBe("raw");
+  });
+
   test.concurrent("res.socket.end() behind 8 MiB the client hasn't read, on a response that never ends", async () => {
     const size = 8 * 1024 * 1024;
     const { promise: heldAtEnd, resolve } = Promise.withResolvers<number>();

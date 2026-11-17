@@ -48,6 +48,7 @@ const {
   kAcceptedTLS,
   kArmHandshakeTimeout,
   kDestroyOnRead,
+  kEndCalled,
   kForeignListener,
   kHandleClosed,
   kListenersRemoved,
@@ -2098,7 +2099,9 @@ Socket.prototype[kReinitializeHandle] = function reinitializeHandle(handle) {
 
 Socket.prototype.end = function end(data, encoding, callback) {
   $debug("Socket.prototype.end");
-  return Duplex.prototype.end.$call(this, data, encoding, callback);
+  const ret = Duplex.prototype.end.$call(this, data, encoding, callback);
+  if (this.encrypted) this.server?.[kEndCalled]?.(this);
+  return ret;
 };
 
 // `scheduleClose` is node:http's, for a connection of its server.

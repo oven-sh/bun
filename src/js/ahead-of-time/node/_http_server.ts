@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 843724adabbd2352e0faa10c847aab6c22c4b70160eaf229a8feaeeace6cc170.
+// Written against that file with the SHA-256 c068e548cd3f28d91a7af6729a21a67deae66eb4de25d82bb16d1b5a4ad7c2f4.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -84,6 +84,7 @@ const http = require("internal/http");
 const netSymbols = require("internal/net/symbols");
 const kForeignListener: typeof netSymbols.kForeignListener = netSymbols.kForeignListener;
 const kHandleClosed: typeof netSymbols.kHandleClosed = netSymbols.kHandleClosed;
+const kEndCalled: typeof netSymbols.kEndCalled = netSymbols.kEndCalled;
 const kListenersRemoved: typeof netSymbols.kListenersRemoved = netSymbols.kListenersRemoved;
 const readInProgress = netSymbols.readInProgress;
 const kSNIContexts: typeof netSymbols.kSNIContexts = netSymbols.kSNIContexts;
@@ -652,6 +653,7 @@ declare global {
       /** The listener that `createServer()` was given. A request goes to it by value while it is all that `emit("request")` would call. */
       $requestListener: RequestListener | undefined;
       readonly listening: boolean;
+      [kEndCalled](socket: HttpServerSocket): void;
       [kListenersRemoved](socket: HttpServerSocket): void;
       /** The native server while it listens, for those who ask whether there is one. */
       _handle: NativeHTTPServer | null;
@@ -3265,6 +3267,12 @@ function nativeSocketOnResume(this: $Node.HttpServerSocket) {
 function onSocketPause(this: $Node.HttpServerSocket) {
   this._handle?.pause();
 }
+
+// _final() waits for the callback of the last write, which TLS defers by a tick. uWS has those bytes already.
+Server.prototype[kEndCalled] = function (this: $Node.HttpServer, socket: $Node.HttpServerSocket) {
+  if (socket._final !== nativeSocketFinal || socket[kHandedOff]) return;
+  if (socket._writableState.bufferedRequestCount === 0) socket._handle?.shutdown();
+};
 
 // Without net.Socket's tick: what the response writes after socket.end() is dropped, as in Node, where both share the socket's Writable.
 function nativeSocketFinal(this: $Node.HttpServerSocket, callback: $Node.ErrorCallback) {

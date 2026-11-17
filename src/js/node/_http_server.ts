@@ -43,6 +43,7 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
 const {
+  kEndCalled,
   kForeignListener,
   kHandleClosed,
   kListenersRemoved,
@@ -2449,6 +2450,12 @@ function nativeSocketOnResume(this: any) {
 function onSocketPause(this: any) {
   this._handle?.pause();
 }
+
+// _final() waits for the callback of the last write, which TLS defers by a tick. uWS has those bytes already.
+Server.prototype[kEndCalled] = function (socket) {
+  if (socket._final !== nativeSocketFinal || socket[kHandedOff]) return;
+  if (socket._writableState.bufferedRequestCount === 0) socket._handle?.shutdown();
+};
 
 // Without net.Socket's tick: what the response writes after socket.end() is dropped, as in Node, where both share the socket's Writable.
 function nativeSocketFinal(this: any, callback) {

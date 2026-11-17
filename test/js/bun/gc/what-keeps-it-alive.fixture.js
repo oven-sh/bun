@@ -78,11 +78,17 @@ function placesOnWindows(wanted) {
     return `exe+0x${offset.toString(16)} ${name}${found ? `+0x${displacement[0].toString(16)}` : ""}`;
   };
   // What `deref()` returns is held until the end of the turn.
-  const holds = word => wanted.has(word) && !wanted.get(word).includes("WeakRef");
-  const last = Math.max(0, words.findLastIndex(holds) - 256);
+  const cells = [...wanted].filter(([, way]) => !way.includes("WeakRef"));
+  // An address in a cell, or right behind it, holds it too. The snapshot only has estimates of sizes.
+  const held = word =>
+    cells
+      .filter(([address]) => address <= word && word - address <= 0x100n)
+      .map(([address, way]) => `>>> 0x${address.toString(16)}+0x${(word - address).toString(16)} ${way}`)
+      .join(" ");
+  const last = Math.max(0, words.findLastIndex(held) - 512);
   const lines = [];
   for (let index = words.length - 1; index >= last; index--) {
-    const what = holds(words[index]) ? `>>> ${wanted.get(words[index])}` : place(words[index]);
+    const what = held(words[index]) || place(words[index]);
     if (what) lines.push(`0x${((words.length - index) * 8).toString(16)} below the end of the stack: ${what}`);
   }
   return lines;

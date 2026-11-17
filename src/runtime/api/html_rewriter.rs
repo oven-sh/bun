@@ -12,6 +12,7 @@ use bun_jsc::{
 };
 
 use bun_collections::ByteVecExt;
+use bun_collections::smallvec::SmallVec;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_ptr::{AsCtxPtr as _, BackRef, DetachablePtr, RefPtr};
 use bun_sys::Error as SysError;
@@ -1307,8 +1308,10 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
+    /// A handler can shrink or transfer the buffer of the chunk while lol-html reads it.
     fn write_bytes(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
-        RewriterPipe::write(this, data)
+        let copy = SmallVec::<[u8; 1024]>::from_slice(data.slice());
+        RewriterPipe::write(this, &StreamResult::Temporary(&copy))
     }
     fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16]) -> Writable {
         let mut buf = Vec::new();

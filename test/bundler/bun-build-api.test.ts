@@ -1133,6 +1133,44 @@ describe("Bun.build", () => {
     ]);
   });
 
+  test.concurrent("an external input source map is read synchronously", async () => {
+    const original = '\n\n\n      console.log("authored");\n';
+    using dir = tempDir("build-api-external-input-map", {
+      "compiled.js": 'console.log("mapped");\n//# sourceMappingURL=compiled.js.map\n',
+      "compiled.js.map": JSON.stringify({
+        version: 3,
+        sources: ["original.ts"],
+        sourcesContent: [original],
+        names: [],
+        mappings: "AAGM", // Compiled 1:0 maps to authored 4:6.
+      }),
+    });
+    const root = String(dir);
+    const build = await Bun.build({
+      entrypoints: [join(root, "compiled.js")],
+      target: "browser",
+      sourcemap: "external",
+      outdir: join(root, "out"),
+    });
+    expect(build.logs).toEqual([]);
+    expect(build.success).toBe(true);
+    const output = JSON.parse(await Bun.file(join(root, "out/compiled.js.map")).text());
+    expect(output.sources).toEqual(["../original.ts"]);
+    expect(output.sourcesContent).toEqual([original]);
+    const generated = await Bun.file(join(root, "out/compiled.js")).text();
+    const lines = generated.split("\n");
+    const line = lines.findIndex(line => line.includes("console.log"));
+    expect(line).toBeGreaterThanOrEqual(0);
+    await SourceMapConsumer.with(output, null, consumer => {
+      const position = consumer.originalPositionFor({ line: line + 1, column: lines[line].indexOf("console.log") });
+      expect({ source: position.source, line: position.line, column: position.column }).toEqual({
+        source: "../original.ts",
+        line: 4,
+        column: 6,
+      });
+    });
+  });
+
   // A `file:` URL in a `sourceMappingURL` comment names the sidecar by absolute
   // path. Its query is dropped, like the query of a relative sidecar path.
   test.concurrent("an input source map named by a file: URL is composed", async () => {

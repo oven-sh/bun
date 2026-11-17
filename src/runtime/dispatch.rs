@@ -945,8 +945,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 readable: bool = event.flags.contains(PollFlag::Readable),
                 writable: bool = event.flags.contains(PollFlag::Writable),
             ) {
-                // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
-                // `Channel::process` re-enters the resolver via c-ares callbacks.
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
                 let resolver = unsafe { &*resolver };
                 resolver.on_dns_poll(fd, readable, writable);
@@ -1379,7 +1377,7 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
+        // R-2: shared deref — `check_timeouts` runs script, which re-enters the resolver.
         EventLoopTimerTag::DNSResolver => {
             feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
                 (&*c.cast_const()).check_timeouts(now, vm)

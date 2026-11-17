@@ -202,6 +202,96 @@ describe("bundler", () => {
   });
 
   describe("jsx preserve", () => {
+    describe.each(["cli", "api"] as const)("pinned imported tags (%s)", backend => {
+      describe.each(["method", "static"])("eval in %s", location => {
+        describe.each([false, true])("minify=%s", minify => {
+          itBundled(`jsx/PreservePinnedImport-${backend}-${location}-${minify}`, {
+            files: {
+              "/in.jsx":
+                'import { component as Comp } from "./component"; const tag = <Comp />; console.log(tag === Comp, Comp.getSelf() === Comp);',
+              "/component.js":
+                location === "method"
+                  ? 'export class component { static getSelf() { return eval("component"); } }'
+                  : 'export class component { static { this.self = eval("component"); } static getSelf() { return this.self; } }',
+            },
+            backend,
+            jsx: { runtime: "preserve" },
+            minifyIdentifiers: minify,
+            minifySyntax: minify,
+            minifyWhitespace: minify,
+            onAfterBundle(api) {
+              const out = api.readFile("/out.js");
+              const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h" });
+              api.writeFile("/out.js", `const h = type => type;\n${code}`);
+            },
+            run: { stdout: "true true" },
+          });
+        });
+      });
+    });
+
+    describe.each(["cli", "api"] as const)("enum tag bindings (%s)", backend => {
+      describe.each([false, true])("minify=%s", minify => {
+        test.concurrent.each([false, true])("preserves the binding, reentrant=%s", async reentrant => {
+          using dir = tempDir("jsx-enum-binding", {
+            "in.tsx": reentrant
+              ? `
+              function render(component) { enum E { A = <Comp /> } return E.A; }
+              let depth = 0;
+              globalThis.factory = { get h() {
+                if (depth++ === 0) render(() => "inner");
+                return type => type;
+              } };
+              const outer = () => "outer";
+              console.log(render(outer) === outer);
+            `
+              : `
+              function component() {}
+              globalThis.factory = { h: type => type };
+              enum E { A = <Comp /> }
+              console.log(E.A === component);
+            `,
+          });
+          const entrypoint = join(String(dir), "in.tsx");
+          const options = {
+            entrypoints: [entrypoint],
+            jsx: { runtime: "preserve" },
+            define: { Comp: "component" },
+            minify,
+          };
+          const cmd =
+            backend === "cli"
+              ? [
+                  bunExe(),
+                  "build",
+                  entrypoint,
+                  "--jsx-runtime=preserve",
+                  "--define",
+                  "Comp=component",
+                  ...(minify ? ["--minify"] : []),
+                ]
+              : [
+                  bunExe(),
+                  "-e",
+                  `const result = await Bun.build(${JSON.stringify(options)}); const output = await result.outputs[0].text(); process.stdout.write(output);`,
+                ];
+          await using build = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+          const [output, buildStderr, buildExitCode] = await Promise.all([
+            build.stdout.text(),
+            build.stderr.text(),
+            build.exited,
+          ]);
+          expect(output).not.toBe("");
+          expect(buildStderr).toBe("");
+          expect(buildExitCode).toBe(0);
+          const { code } = transformSync(output, { loader: "jsx", jsxFactory: "globalThis.factory.h" });
+          await using run = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+          const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+        });
+      });
+    });
+
     describe.each(["cli", "api"] as const)("defined JSX tags (%s)", backend => {
       test.concurrent.each([
         ["arrow attribute", "<Comp fn={() => 1} />; export const after = () => 2;"],
@@ -666,13 +756,14 @@ describe("bundler", () => {
       },
     });
 
-    describe.each([false, true])("imported tags stay plain, bundling=%s", bundling => {
-      itBundled(`jsx/PreserveImportedTagsStayPlain-${bundling}`, {
+    describe.each([false, true])("imported tags keep their values, bundling=%s", bundling => {
+      itBundled(`jsx/PreserveImportedTagsKeepValues-${bundling}`, {
         files: {
           "/in.tsx": `
             import { Foo, bar as Bar } from "./comp";
             import * as ns from "./comp";
             export const el = <div><Foo key="k" a={1} /><Bar /><ns.Foo /></div>;
+            console.log(el[0] === Foo, el[1] === Bar, el[2] === ns.Foo);
           `,
           "/comp.tsx": `
             export function Foo() { return null; }
@@ -684,11 +775,13 @@ describe("bundler", () => {
         bundling,
         onAfterBundle(api) {
           const out = api.readFile("/out.js");
-          expect(out).toContain('<Foo key="k" a={1} />');
-          expect(out).toContain("<Bar />");
-          expect(out).toContain(bundling ? "<Foo />" : "<ns.Foo />");
-          expect(out).not.toContain("get value");
+          const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h" });
+          api.writeFile(
+            "/out.js",
+            `const h = (type, props, ...children) => typeof type === "string" ? children : type;\n${code}`,
+          );
         },
+        run: { stdout: "true true true" },
       });
     });
 

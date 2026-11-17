@@ -9,8 +9,6 @@
 // Method signatures mirror `bun_jsc` exactly so once `bun_jsc` is taken on
 // directly this whole module becomes `pub use bun_jsc as jsc;` with no
 // callsite churn.
-pub mod error;
-pub use error::{Error, Result};
 
 pub(crate) mod generated_bindgen;
 

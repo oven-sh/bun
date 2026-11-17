@@ -499,11 +499,16 @@ mod backend {
         let dir = format!("{}/Library/LaunchAgents", BStr::new(home));
         (Fd::cwd().make_path(dir.as_bytes()))
             .map_err(|_| "Failed to create ~/Library/LaunchAgents directory")?;
-        // mkdir accepts whatever has the name, and launchd is silent about a log it cannot open.
-        let logs = launchd::log_dir(home);
-        sys::mkdir_recursive_at_mode(Fd::cwd(), logs.as_bytes(), 0o700)
-            .and_then(|()| sys::access(&ZBox::from_bytes(logs + "/."), W_OK | X_OK))
-            .map_err(Failure::LogDir)?;
+        // `sudo` can keep HOME, and a directory that root creates there locks its owner out.
+        let root_in_home_of_user = sys::c::getuid() == 0
+            && sys::stat(&ZBox::from_bytes(home)).is_ok_and(|home| home.st_uid != 0);
+        if !root_in_home_of_user {
+            // mkdir accepts whatever has the name, and launchd is silent about a log it cannot open.
+            let logs = launchd::log_dir(home);
+            sys::mkdir_recursive_at_mode(Fd::cwd(), logs.as_bytes(), 0o700)
+                .and_then(|()| sys::access(&ZBox::from_bytes(logs + "/."), W_OK | X_OK))
+                .map_err(Failure::LogDir)?;
+        }
         let plist = write_file(
             plist_path(home, &job.title).as_bytes(),
             (sys::O::TRUNC, 0o644),

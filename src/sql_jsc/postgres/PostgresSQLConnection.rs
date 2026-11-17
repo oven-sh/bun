@@ -586,6 +586,7 @@ impl PostgresSQLConnection {
     fn drain_internal(&self) {
         debug!("drainInternal");
         let _entered = self.event_loop().enter_scope();
+        let had_requests = self.has_requests();
 
         self.flush_data();
 
@@ -593,6 +594,14 @@ impl PostgresSQLConnection {
             // no backpressure yet so pipeline more if possible and flush again
             self.advance();
             self.flush_data();
+        }
+
+        // No reply is coming that would see to these.
+        if !self.has_requests() {
+            if had_requests {
+                self.reset_connection_timeout();
+            }
+            self.update_poll_ref();
         }
     }
 

@@ -2,6 +2,7 @@
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, tempDir, withoutAsanQuarantine } from "harness";
+import type { Socket } from "node:net";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import {
@@ -13,7 +14,10 @@ import {
   pgErrorResponse,
   pgHold,
   pgMockServer,
+  pgParameterDescription,
+  pgParseComplete,
   pgReadyForQuery,
+  pgRowDescription,
 } from "./wire-frames";
 
 const MiB = 1024 * 1024;
@@ -906,6 +910,77 @@ describe.concurrent("frames that a server cannot be made to send", () => {
     } finally {
       server.close();
     }
+  });
+
+  describe("a COPY FROM STDIN that is refused while the client still holds data", () => {
+    /** Refuses the first row and reads no more until `drain()`. */
+    async function refusingServer() {
+      let session: Socket;
+      const { port, server } = await pgMockServer((type, _, socket) => {
+        if (type === "P") return pgParseComplete();
+        if (type === "D") return [pgParameterDescription([25]), pgRowDescription([{ name: "v", typeOid: 25 }])];
+        if (type === "S") return pgReadyForQuery();
+        if (type === "Q") return pgCopyInResponse([0]);
+        if (type !== "d") return;
+        session = socket.pause().removeAllListeners("data");
+        return [pgErrorResponse({ S: "ERROR", C: "22P02", M: "bad row" }), pgReadyForQuery()];
+      });
+      return {
+        url: `postgres://u@127.0.0.1:${port}/db`,
+        drain: () => void session.resume(),
+        [Symbol.dispose]: () => void server.close(),
+      };
+    }
+
+    test("does not keep the script alive once the data has gone out", async () => {
+      using server = await refusingServer();
+      const script = `
+        const sql = new Bun.SQL(process.env.COPY_URL, { max: 1 });
+        const query = sql\`copy t from stdin\`;
+        const writer = query.writable().getWriter();
+        await writer.ready;
+        writer.write("first\\n");
+        writer.write(Buffer.alloc(${moreThanTheSocketsHold * MiB})).catch(() => {});
+        console.log(await query.catch(e => e.errno));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, COPY_URL: server.url },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      expect(text((await proc.stdout.getReader().read()).value)).toBe("22P02\n");
+      server.drain();
+      expect(await proc.exited).toBe(0);
+    });
+
+    test("leaves idleTimeout counting when the query that waited for the socket throws", async () => {
+      using server = await refusingServer();
+      const closed = Promise.withResolvers<any>();
+      await using sql = new SQL(server.url, { max: 1, idleTimeout: 1, onclose: closed.resolve });
+      const thrown = new Error("refused");
+      const throwing = () =>
+        outcome(
+          sql`select ${{
+            toString() {
+              throw thrown;
+            },
+          }} as v`.execute(),
+        );
+      // It leaves the statement prepared.
+      expect(await throwing()).toBe(thrown);
+
+      const query = sql`copy t from stdin`;
+      const writer = query.writable().getWriter();
+      await writer.ready;
+      writer.write("first\n");
+      writer.write(Buffer.alloc(moreThanTheSocketsHold * MiB)).catch(() => {});
+      expect(await outcome(query)).toMatchObject({ errno: "22P02" });
+      const waited = throwing();
+      server.drain();
+      expect(await waited).toBe(thrown);
+      expect((await closed.promise).code).toBe("ERR_POSTGRES_IDLE_TIMEOUT");
+    });
   });
 
   test("what writable() puts on the wire", async () => {

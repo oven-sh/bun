@@ -376,36 +376,7 @@ pub(crate) fn post_process_js_chunk(
     let mut newline_before_comment = false;
     let mut is_executable = false;
 
-    // Extract hashbang and banner for entry points
-    let (hashbang, banner): (&[u8], &[u8]) = if chunk.is_entry_point() {
-        'brk: {
-            let source_hashbang =
-                c.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize];
-
-            // If source file has a hashbang, use it
-            if !source_hashbang.is_empty() {
-                break 'brk (source_hashbang.slice(), c.options.banner);
-            }
-
-            // Otherwise check if banner starts with hashbang
-            if !c.options.banner.is_empty() && c.options.banner.starts_with(b"#!") {
-                let newline_pos = strings::index_of_char(c.options.banner, b'\n')
-                    .map(|n| n as usize)
-                    .unwrap_or(c.options.banner.len());
-                let banner_hashbang = &c.options.banner[..newline_pos];
-
-                break 'brk (
-                    banner_hashbang,
-                    strings::trim_left(&c.options.banner[newline_pos..], b"\r\n"),
-                );
-            }
-
-            // No hashbang anywhere
-            break 'brk (b"", c.options.banner);
-        }
-    } else {
-        (b"", c.options.banner)
-    };
+    let (hashbang, banner) = c.hashbang_and_banner_of_chunk(chunk);
 
     // Start with the hashbang if there is one. This must be done before the
     // banner because it only works if it's literally the first character.
@@ -420,25 +391,9 @@ pub(crate) fn post_process_js_chunk(
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
-    if is_bun {
-        if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
-            const INPUT: &[u8] =
-                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
-            j.push_static(INPUT);
-            line_offset.advance(INPUT);
-        } else if c.options.generate_bytecode_cache {
-            j.push_static(b"// @bun @bytecode\n");
-            line_offset.advance(b"// @bun @bytecode\n");
-        } else if output_format == options::OutputFormat::Cjs {
-            const INPUT: &[u8] =
-                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
-            j.push_static(INPUT);
-            line_offset.advance(INPUT);
-        } else {
-            j.push_static(b"// @bun\n");
-            line_offset.advance(b"// @bun\n");
-        }
-    }
+    let bun_header = c.bun_header_of_chunk(chunk);
+    j.push_static(bun_header);
+    line_offset.advance(bun_header);
 
     // Add the banner (excluding any hashbang part) for all chunks
     if !banner.is_empty() {

@@ -4307,7 +4307,7 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "functionundefined" },
   });
-  // Labels are not renamed, so a reserved word as a label is still an error.
+  // Only the minifier renames a label, so without it a reserved word as a label is still an error.
   itBundled("edgecase/SloppyReservedWordLabelESMOutputIsAnError", {
     files: {
       "/entry.js": /* js */ `
@@ -4317,6 +4317,40 @@ describe("bundler", () => {
     format: "esm",
     bundleErrors: {
       "/entry.js": ['"package" is a reserved word and cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  itBundled("edgecase/SloppyReservedWordLabelESMOutputIsRenamedByTheMinifier", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        var count = 0;
+        static: for (var i = 0; i < 3; i++) {
+          for (;;) { count++; continue static; }
+        }
+        module.exports = count;
+      `,
+    },
+    format: "esm",
+    minifyIdentifiers: true,
+    run: { stdout: "3" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("static");
+    },
+  });
+  // The label of a module is an error of the file, which no renaming takes away.
+  itBundled("edgecase/ReservedWordLabelInModuleIsAnErrorWithTheMinifier", {
+    files: {
+      "/entry.js": /* js */ `
+        static: for (;;) break static;
+        export {};
+      `,
+    },
+    format: "esm",
+    minifyIdentifiers: true,
+    bundleErrors: {
+      "/entry.js": ['"static" is a reserved word and cannot be used in an ECMAScript module'],
     },
   });
   // The printer writes numbers in decimal and escapes as `\xNN`, so legacy octal
@@ -4579,67 +4613,149 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("eval = 0;");
     },
   });
-  // The "use strict" of an entry point leads its "cjs" or "iife" output file,
-  // and then every file in it is strict mode code. The sloppy-only syntax of a
-  // dependency would make the whole output a SyntaxError when it loads.
+  // A chunk is strict mode code as a whole when it is an ES module, or when a
+  // "use strict" directive leads it. Then the sloppy-only syntax of a file in
+  // it would make the chunk a SyntaxError when it loads, so the build fails.
   const sloppyOnlyDependency = /* js */ `
+    function pinned(interface) { return eval("interface") }
+    var p = pinned(7);
+    static: for (;;) break static;
+    var u = typeof package;
     function f(a, a) { return a }
     eval = 0;
     arguments = 1;
     var o = { v: 5 }, w, x = 1;
     with (o) { w = v }
-    module.exports = [f(1, 2), w, delete x].join();
+    module.exports = [f(1, 2), w, delete x, p, u].join();
   `;
-  for (const format of ["cjs", "iife"] as const) {
-    itBundled(`edgecase/SloppyOnlySyntaxUnderStrictEntry${format.toUpperCase()}OutputIsAnError`, {
-      files: {
-        "/entry.js": /* js */ `
-          "use strict";
-          console.log(require("./dep.cjs"));
-        `,
-        "/dep.cjs": sloppyOnlyDependency,
-      },
-      format,
-      bundleErrors: {
-        "/dep.cjs": [
-          'Duplicate parameter "a" cannot be used in strict mode',
-          'Assignments to "eval" cannot be used in strict mode',
-          'Assignments to "arguments" cannot be used in strict mode',
-          "With statements cannot be used in strict mode",
-          "Delete of a bare identifier cannot be used in strict mode",
-        ],
-      },
-    });
+  const sloppyOnlySyntax = [
+    '"static" is a reserved word and',
+    '"package" is a reserved word and',
+    'Duplicate parameter "a"',
+    'Assignments to "eval"',
+    'Assignments to "arguments"',
+    "With statements",
+    "Delete of a bare identifier",
+    '"interface" is a reserved word and',
+  ];
+  const inStrictMode = "cannot be used in strict mode";
+  const inESMOutput = "cannot be used with the ESM output format due to strict mode";
+  type ChunkKind = {
+    name: string;
+    /** The end of each error, or `false` for a chunk that is sloppy mode code. */
+    strict: string | false;
+    /** The entry point starts with "use strict". */
+    useStrict?: boolean;
+    format: "esm" | "cjs" | "iife";
+    banner?: string;
+    footer?: string;
+    target?: "bun";
+    bytecode?: boolean;
+  };
+  const wrapper = { banner: "(function () {", footer: "})();" };
+  const chunkKinds: ChunkKind[] = [
+    { name: "ESM", format: "esm", strict: inESMOutput },
+    { name: "CJS", format: "cjs", strict: false },
+    { name: "IIFE", format: "iife", strict: false },
+    { name: "StrictEntryCJS", format: "cjs", useStrict: true, strict: inStrictMode },
+    { name: "StrictEntryIIFE", format: "iife", useStrict: true, strict: inStrictMode },
+    { name: "StrictBannerCJS", format: "cjs", banner: '"use strict";', strict: inStrictMode },
+    { name: "StrictBannerIIFE", format: "iife", banner: "/* lib */ 'use strict';", strict: inStrictMode },
+    // The banner is printed ahead of the directives of the entry point. A comment or a directive in it leaves them directives.
+    {
+      name: "StrictEntryBehindLegalCommentCJS",
+      format: "cjs",
+      useStrict: true,
+      banner: "/*! lib | MIT */",
+      strict: inStrictMode,
+    },
+    {
+      name: "StrictEntryBehindDirectiveCJS",
+      format: "cjs",
+      useStrict: true,
+      banner: "'use client';",
+      strict: inStrictMode,
+    },
+    // A statement in it makes them plain strings.
+    { name: "StrictEntryBehindEmptyStatementCJS", format: "cjs", useStrict: true, banner: ";", strict: false },
+    { name: "StrictEntryBehindCodeCJS", format: "cjs", useStrict: true, banner: "var banner = 1;", strict: false },
+    // A function that the banner opens takes them as its own.
+    { name: "StrictEntryInWrapperCJS", format: "cjs", useStrict: true, ...wrapper, strict: inStrictMode },
+    { name: "WrapperCJS", format: "cjs", ...wrapper, strict: false },
+    // Bun runs a file that starts with "// @bun" as a module, and one that starts with "// @bun @bun-cjs" as CommonJS.
+    { name: "BunCJS", format: "cjs", target: "bun", strict: false },
+    { name: "StrictEntryBunCJS", format: "cjs", target: "bun", useStrict: true, strict: inStrictMode },
+    {
+      name: "StrictEntryBunCJSBytecode",
+      format: "cjs",
+      target: "bun",
+      bytecode: true,
+      useStrict: true,
+      strict: inStrictMode,
+    },
+    { name: "BunIIFE", format: "iife", target: "bun", strict: inStrictMode },
+  ];
+  for (const { name, strict, useStrict, ...options } of chunkKinds) {
+    const files = {
+      "/entry.js": `${useStrict ? '"use strict";\n' : ""}import dep from "./dep.cjs";\nconsole.log(dep);\n`,
+      "/dep.cjs": sloppyOnlyDependency,
+    };
+    if (strict === false) {
+      itBundled(`edgecase/SloppyOnlySyntax${name}Output`, {
+        files,
+        ...options,
+        run: { stdout: "2,5,false,7,undefined" },
+      });
+      continue;
+    }
+    // For the CLI, the test harness puts a banner in quotation marks, which makes it a string.
+    for (const backend of options.banner ? (["api"] as const) : (["cli", "api"] as const)) {
+      itBundled(`edgecase/SloppyOnlySyntax${name}OutputIsAnError${backend === "api" ? "API" : ""}`, {
+        files,
+        ...options,
+        backend,
+        bundleErrors: { "/dep.cjs": sloppyOnlySyntax.map(syntax => `${syntax} ${strict}`) },
+      });
+    }
   }
-  // The banner is printed ahead of the directives. A statement in it ends the
-  // directive prologue, and the "use strict" after it is a plain string.
-  itBundled("edgecase/SloppyOnlySyntaxUnderStrictEntryBehindCodeBannerCJSOutput", {
+  // Each output file has its own entry point. The file under the "use strict"
+  // of its entry point is the one that cannot hold the dependency.
+  itBundled("edgecase/SloppyOnlySyntaxInOneOfTwoCJSOutputFilesIsAnError", {
     files: {
-      "/entry.js": /* js */ `
-        "use strict";
-        console.log(require("./dep.cjs"));
-      `,
+      "/sloppy.js": `import dep from "./dep.cjs";\nconsole.log(dep);\n`,
+      "/strict.js": `"use strict";\nimport dep from "./dep.cjs";\nconsole.log(dep);\n`,
       "/dep.cjs": sloppyOnlyDependency,
     },
+    entryPoints: ["/sloppy.js", "/strict.js"],
+    outdir: "/out",
     format: "cjs",
-    banner: "console.log('banner');",
-    run: { stdout: "banner\n2,5,false" },
+    bundleErrors: { "/dep.cjs": sloppyOnlySyntax.map(syntax => `${syntax} ${inStrictMode}`) },
   });
-  itBundled("edgecase/SloppyOnlySyntaxUnderStrictEntryBehindCommentBannerCJSOutputIsAnError", {
+  itBundled("edgecase/SloppyOnlySyntaxInTheSloppyOneOfTwoCJSOutputFiles", {
     files: {
-      "/entry.js": /* js */ `
-        "use strict";
-        console.log(require("./dep.cjs"));
-      `,
-      "/dep.cjs": /* js */ `
-        with ({}) module.exports = 1;
-      `,
+      "/sloppy.js": `import dep from "./dep.cjs";\nconsole.log(dep);\n`,
+      "/strict.js": `"use strict";\nconsole.log((function () { return this === undefined })());\n`,
+      "/dep.cjs": sloppyOnlyDependency,
     },
+    entryPoints: ["/sloppy.js", "/strict.js"],
+    outdir: "/out",
     format: "cjs",
-    banner: "/* a license */ 'use client';",
-    bundleErrors: {
-      "/dep.cjs": ["With statements cannot be used in strict mode"],
+    run: [
+      { file: "/out/sloppy.js", stdout: "2,5,false,7,undefined" },
+      { file: "/out/strict.js", stdout: "true" },
+    ],
+  });
+  // With code splitting the dependency is in a chunk that no entry point leads. That chunk is an ES module.
+  itBundled("edgecase/SloppyOnlySyntaxInSharedChunkIsAnError", {
+    files: {
+      "/a.js": `import dep from "./dep.cjs";\nconsole.log("a", dep);\n`,
+      "/b.js": `import dep from "./dep.cjs";\nconsole.log("b", dep);\n`,
+      "/dep.cjs": sloppyOnlyDependency,
     },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    bundleErrors: { "/dep.cjs": sloppyOnlySyntax.map(syntax => `${syntax} ${inESMOutput}`) },
   });
   // The "use strict" of a dependency stays inside the wrapper of that
   // dependency, so the other files of the output stay sloppy mode code.
@@ -4655,7 +4771,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    run: { stdout: "2,5,false true" },
+    run: { stdout: "2,5,false,7,undefined true" },
   });
   // A file that tree shaking removes is in no output file, so its syntax is no
   // concern of the output.

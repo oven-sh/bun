@@ -52,10 +52,14 @@ pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop>>;
 /// What makes a chunk strict code as a whole.
 #[derive(Clone, Copy)]
 enum StrictChunk {
+    /// Bun loads the scripts of an HTML file with one `<script type="module">`.
+    ModuleScript,
     /// The output format is ESM.
     EsModule,
-    /// An HTML file loads the chunk with `<script type="module">`.
-    ModuleScript,
+    /// Bun runs a file that starts with `// @bun` as a module, unless it is `// @bun @bun-cjs`.
+    BunModule,
+    /// A "use strict" directive of the banner leads the chunk.
+    BannerDirective,
     /// The "use strict" directive of the entry point, at this position, leads the chunk.
     EntryDirective(Loc),
 }
@@ -631,32 +635,106 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         }
     }
 
+    /// The hashbang that `post_process_js_chunk` prints first, and the banner without it.
+    pub(crate) fn hashbang_and_banner_of_chunk(&self, chunk: &Chunk) -> (&[u8], &[u8]) {
+        let banner = self.options.banner;
+        if !chunk.is_entry_point() {
+            return (b"", banner);
+        }
+        let source_hashbang =
+            self.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize];
+        // If source file has a hashbang, use it
+        if !source_hashbang.is_empty() {
+            return (source_hashbang.slice(), banner);
+        }
+        // Otherwise check if banner starts with hashbang
+        if banner.starts_with(b"#!") {
+            let newline_pos = strings::index_of_char(banner, b'\n')
+                .map(|n| n as usize)
+                .unwrap_or(banner.len());
+            return (
+                &banner[..newline_pos],
+                strings::trim_left(&banner[newline_pos..], b"\r\n"),
+            );
+        }
+        (b"", banner)
+    }
+
+    /// What `post_process_js_chunk` prints for the Bun target ahead of the banner: the pragma, and for CommonJS the start of the function that wraps the chunk.
+    pub(crate) fn bun_header_of_chunk(&self, chunk: &Chunk) -> &'static [u8] {
+        let target = self.graph.ast.items_target()[chunk.entry_point.source_index() as usize];
+        let is_cjs = self.options.output_format == Format::Cjs;
+        match (target.is_bun(), self.options.generate_bytecode_cache, is_cjs) {
+            (false, _, _) => b"",
+            (true, true, true) => {
+                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"
+            }
+            (true, true, false) => b"// @bun @bytecode\n",
+            (true, false, true) => {
+                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"
+            }
+            (true, false, false) => b"// @bun\n",
+        }
+    }
+
     /// Why every file of `chunk` is strict code, if that is so.
     fn why_chunk_is_strict(&self, chunk: &Chunk) -> Option<StrictChunk> {
         if !chunk.content.is_javascript() {
             return None;
         }
+        if chunk.flags.contains(crate::chunk::Flags::HAS_HTML_CHUNK) {
+            return Some(StrictChunk::ModuleScript);
+        }
         if self.options.output_format.is_always_strict_mode() {
             return Some(StrictChunk::EsModule);
         }
-        if chunk.flags.contains(crate::chunk::Flags::HAS_HTML_CHUNK) {
-            return Some(StrictChunk::ModuleScript);
+        let target = self.graph.ast.items_target()[chunk.entry_point.source_index() as usize];
+        if target.is_bun() && self.options.output_format != Format::Cjs {
+            return Some(StrictChunk::BunModule);
         }
         let use_strict = self
             .directives_of_chunk(chunk)
             .slice()
             .iter()
-            .find(|stmt| matches!(stmt.data, bun_ast::StmtData::SDirective(directive) if directive.value.slice() == b"use strict"))?;
-        // The banner is printed ahead of the directives. A statement in it ends the directive prologue.
-        let is_prologue = |parsed: &bun_js_parser::parse::parse_entry::ParsedOnly<'_, '_>| {
-            parsed
-                .stmts
-                .iter()
-                .all(|stmt| matches!(stmt.data, bun_ast::StmtData::SDirective(_)))
+            .find(|stmt| matches!(stmt.data, bun_ast::StmtData::SDirective(directive) if directive.value.slice() == b"use strict"))
+            .map(|stmt| stmt.loc);
+        // With no banner, the directives of the entry point are the first statements of the chunk.
+        if self.options.banner.is_empty() {
+            return use_strict.map(StrictChunk::EntryDirective);
+        }
+        if self.is_chunk_strict_with(chunk, b"") {
+            return Some(StrictChunk::BannerDirective);
+        }
+        let use_strict = use_strict?;
+        self.is_chunk_strict_with(chunk, b"\"use strict\";")
+            .then_some(StrictChunk::EntryDirective(use_strict))
+    }
+
+    /// Parses what `post_process_js_chunk` prints around the files of `chunk`, with `directives` for those of the entry point: is a file strict mode code there?
+    fn is_chunk_strict_with(&self, chunk: &Chunk, directives: &[u8]) -> bool {
+        let (hashbang, banner) = self.hashbang_and_banner_of_chunk(chunk);
+        let bun_header = self.bun_header_of_chunk(chunk);
+        let (open, close): (&[u8], &[u8]) = match self.options.output_format {
+            Format::Iife => (b"(() => {", b"})();"),
+            Format::Cjs if !bun_header.is_empty() => (b"", b"})"),
+            _ => (b"", b""),
         };
-        let banner = self.options.banner;
-        (banner.is_empty() || parse_only_text(banner, false, false, is_prologue) == Some(true))
-            .then_some(StrictChunk::EntryDirective(use_strict.loc))
+        let mut text: Vec<u8> = Vec::new();
+        if !hashbang.is_empty() {
+            text.extend_from_slice(hashbang);
+            text.push(b'\n');
+        }
+        for piece in [bun_header, banner, b"\n", directives, open] {
+            text.extend_from_slice(piece);
+        }
+        // An empty block stands for the files.
+        let files = Loc {
+            start: text.len() as i32,
+        };
+        for piece in [b"{}".as_slice(), close, b"\n", self.options.footer] {
+            text.extend_from_slice(piece);
+        }
+        parse_only_text(&text, true, false, |parsed| parsed.is_strict_block(files)) == Some(true)
     }
 
     /// A chunk that is strict code as a whole does not parse with the `Ast::sloppy_only_syntax` of a file in it. Only the linker knows the chunk.
@@ -686,37 +764,50 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             let entry_point = &sources[chunk.entry_point.source_index() as usize];
             for syntax in found.iter() {
                 let text = bstr::BStr::new(syntax.text.slice());
-                let (note, message) = match why {
+                let in_strict_mode = format!("{text} cannot be used in strict mode");
+                let (message, note) = match why {
                     StrictChunk::EsModule => (
-                        bun_ast::range_data(
-                            None,
-                            Range::NONE,
-                            b"ESM output is always strict mode code. Use the \"cjs\" or \"iife\" output format for code that needs sloppy mode.".as_slice(),
-                        ),
                         format!("{text} cannot be used with the ESM output format due to strict mode"),
+                        None,
                     ),
                     StrictChunk::ModuleScript => (
-                        bun_ast::range_data(
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
                             Some(entry_point),
                             Range::NONE,
-                            b"The HTML file loads this bundle as a module script, which is strict mode code.".as_slice(),
-                        ),
-                        format!("{text} cannot be used in strict mode"),
+                            b"Bun loads the scripts of an HTML file with one <script type=\"module\">, which is strict mode code.".as_slice(),
+                        )),
+                    ),
+                    StrictChunk::BunModule => (
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"Bun runs this bundle as an ECMAScript module, which is strict mode code. For the \"bun\" target, only the \"cjs\" output format is not a module.".as_slice(),
+                        )),
+                    ),
+                    StrictChunk::BannerDirective => (
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"The \"use strict\" directive of the banner makes the whole bundle strict mode code.".as_slice(),
+                        )),
                     ),
                     StrictChunk::EntryDirective(loc) => (
-                        bun_ast::range_data(
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
                             Some(entry_point),
                             entry_point.range_of_string(loc),
                             b"The \"use strict\" directive of the entry point makes the whole bundle strict mode code:".as_slice(),
-                        ),
-                        format!("{text} cannot be used in strict mode"),
+                        )),
                     ),
                 };
                 log.add_range_error_with_notes(
                     Some(source),
                     syntax.range,
                     message.into_bytes(),
-                    Box::new([note]),
+                    note.into_iter().collect(),
                 );
             }
         }

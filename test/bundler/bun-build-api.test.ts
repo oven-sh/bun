@@ -2806,59 +2806,51 @@ test.concurrent("sloppy-only syntax in a strict output file is an error that say
     "strict.js": `"use strict";\nconsole.log(require("./dep.cjs"));\n`,
     "sloppy.js": `console.log(require("./dep.cjs"));\n`,
     "dep.cjs": `var scope = { value: 1 };\nwith (scope) module.exports = value;\n`,
-    "index.html": `<!doctype html><script type="module" src="./page.js"></script>`,
+    "module-tag.html": `<!doctype html><script type="module" src="./page.js"></script>`,
+    // Bun prints one module script for the scripts of a page, also for a tag that has no type.
+    "classic-tag.html": `<!doctype html><script src="./dep.cjs"></script>`,
     "page.js": `import value from "./dep.cjs";\nconsole.log(value);\n`,
   });
   const at = (position: { file: string; line: number; column: number } | null) =>
     position && [path.basename(position.file), position.line, position.column].join(":");
-  const logs = async (entry: string, format: "esm" | "cjs" | "iife") => {
-    const build = await Bun.build({ entrypoints: [join(String(dir), entry)], format, throw: false });
+  const logs = async (entry: string, options: Omit<Bun.BuildConfig, "entrypoints">) => {
+    const build = await Bun.build({ entrypoints: [join(String(dir), entry)], throw: false, ...options });
     return build.logs.map(log => ({
       message: log.message,
       at: at(log.position),
       notes: log.notes.map(note => ({ message: note.message, at: at(note.position) })),
     }));
   };
+  const inStrictMode = (message: string, at: string | null) => [
+    { message: "With statements cannot be used in strict mode", at: "dep.cjs:2:1", notes: [{ message, at }] },
+  ];
 
-  expect(await logs("sloppy.js", "esm")).toEqual([
+  expect(await logs("sloppy.js", { format: "esm" })).toEqual([
     {
       message: "With statements cannot be used with the ESM output format due to strict mode",
       at: "dep.cjs:2:1",
-      notes: [
-        {
-          message:
-            'ESM output is always strict mode code. Use the "cjs" or "iife" output format for code that needs sloppy mode.',
-          at: null,
-        },
-      ],
+      notes: [],
     },
   ]);
-  expect(await logs("strict.js", "cjs")).toEqual([
-    {
-      message: "With statements cannot be used in strict mode",
-      at: "dep.cjs:2:1",
-      notes: [
-        {
-          message: 'The "use strict" directive of the entry point makes the whole bundle strict mode code:',
-          at: "strict.js:1:1",
-        },
-      ],
-    },
-  ]);
-  expect(await logs("index.html", "iife")).toEqual([
-    {
-      message: "With statements cannot be used in strict mode",
-      at: "dep.cjs:2:1",
-      notes: [
-        {
-          message: "The HTML file loads this bundle as a module script, which is strict mode code.",
-          at: "index.html:-1:-1",
-        },
-      ],
-    },
-  ]);
-  expect(await logs("sloppy.js", "cjs")).toEqual([]);
-  expect(await logs("sloppy.js", "iife")).toEqual([]);
+  const entryDirective = 'The "use strict" directive of the entry point makes the whole bundle strict mode code:';
+  expect(await logs("strict.js", { format: "cjs" })).toEqual(inStrictMode(entryDirective, "strict.js:1:1"));
+  const bannerDirective = 'The "use strict" directive of the banner makes the whole bundle strict mode code.';
+  expect(await logs("sloppy.js", { format: "cjs", banner: '"use strict";' })).toEqual(
+    inStrictMode(bannerDirective, null),
+  );
+  const moduleScript =
+    'Bun loads the scripts of an HTML file with one <script type="module">, which is strict mode code.';
+  for (const format of ["esm", "iife"] as const) {
+    expect(await logs("module-tag.html", { format })).toEqual(inStrictMode(moduleScript, "module-tag.html:-1:-1"));
+    expect(await logs("classic-tag.html", { format })).toEqual(inStrictMode(moduleScript, "classic-tag.html:-1:-1"));
+  }
+  const bunModule =
+    'Bun runs this bundle as an ECMAScript module, which is strict mode code. For the "bun" target, only the "cjs" output format is not a module.';
+  expect(await logs("sloppy.js", { format: "iife", target: "bun" })).toEqual(inStrictMode(bunModule, null));
+
+  expect(await logs("sloppy.js", { format: "cjs" })).toEqual([]);
+  expect(await logs("sloppy.js", { format: "iife" })).toEqual([]);
+  expect(await logs("sloppy.js", { format: "cjs", target: "bun" })).toEqual([]);
 });
 
 test.concurrent("an error about a named import points at the imported name, not at its local alias", async () => {

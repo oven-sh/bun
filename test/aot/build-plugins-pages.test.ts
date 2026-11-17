@@ -28,6 +28,17 @@ buildBothWays("compile/aot/pages and files of an executable, and the plugins of 
     },
     prints: "true true true\n",
   },
+  // Bun loads the scripts of a page with one module script, and a module cannot hold a `with` statement.
+  "a page that imports a file with sloppy-only syntax": {
+    files: {
+      "main.ts": serve("./page.html", `html.length`),
+      "types.d.ts": types,
+      "page.html": `<!doctype html><html><head><script src="./client.ts"></script></head><body></body></html>`,
+      "client.ts": `// @ts-ignore\nimport value from "./sloppy.cjs";\nconsole.log("client", value);`,
+      "sloppy.cjs": `var scope = { value: 1 };\nwith (scope) module.exports = value;\n`,
+    },
+    fails: "With statements cannot be used in strict mode",
+  },
   "onLoad changes the script and the style sheet of a page": {
     files: {
       "main.ts": serve(

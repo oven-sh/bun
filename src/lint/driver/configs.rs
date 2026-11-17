@@ -33,7 +33,7 @@ use bun_lint::linter::{
     Config, FileConfig, LegacyFile, LegacyOptions, NamedPlugin, Registry, ResolvedConfig,
     ShadowedBuiltinPlugin, canonical_oxlint_plugin, formatting_rules, is_oxlint_plugin,
     oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, oxlint_written_name,
-    parse_rule_id,
+    parse_rule_id, severity_of,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::{Frameworks, Plugin, minor_of};
@@ -589,6 +589,31 @@ fn rules_of(options: &Options, cwd: &[u8]) -> Vec<(Vec<u8>, Json)> {
 fn wildcards_of(wildcards: &[Wildcard]) -> Json {
     let ids = wildcards.iter().map(|it| Json::String(it.id.clone()));
     Json::Array(ids.collect())
+}
+
+/// The overrides that [`Loader::rc`] puts after an oxlint config's own: one for every file with `[lint.rules]` and the
+/// `--rule` values, then `[[lint.overrides]]`, then the command line's.
+#[derive(Copy, Clone)]
+struct Added {
+    /// How many overrides the file has itself.
+    own: usize,
+    for_every_file: bool,
+    has_command_line: bool,
+}
+
+/// Drops the `rules` of `config_object` that `keep` refuses. It gets each one's position and name.
+fn retain_rules(config_object: &mut Json, keep: impl Fn(usize, &[u8]) -> bool) {
+    let rules = match config_object {
+        Json::Object(entries) => entries.iter_mut().find(|it| it.0 == b"rules"),
+        _ => None,
+    };
+    if let Some((_, Json::Object(rules))) = rules {
+        let mut at = 0;
+        rules.retain(|it| {
+            at += 1;
+            keep(at - 1, &it.0)
+        });
+    }
 }
 
 /// The config format to write an override in.
@@ -1336,9 +1361,12 @@ impl<'l> Loader<'l> {
         }
     }
 
-    /// Builds the config from an `.oxlintrc.json` plus what the command line adds.
-    fn rc(&self, path: &[u8], mut json: Json) -> Result<Config, Fatal> {
+    /// Builds the config from an `.oxlintrc.json` in `directory`, plus what bunfig.toml and the command line add.
+    /// `file` is its path, or `None` for oxlint's defaults. An error names the source of the mistake: the file,
+    /// bunfig.toml or `--rule`.
+    fn rc(&self, directory: &[u8], file: Option<&[u8]>, mut json: Json) -> Result<Config, Fatal> {
         let options = self.options;
+        let mut added = None;
         let mut load = |directory: &[u8], name: &[u8]| {
             // It counts as a path if it looks like one, meaning it has an extension. oxlint doesn't resolve package
             // names.
@@ -1350,17 +1378,26 @@ impl<'l> Loader<'l> {
         };
         let mut inherited = Vec::new();
         if !options.filters.is_empty() {
-            extended_rules(&json, paths::dirname(path), &mut load, &mut inherited);
+            extended_rules(&json, directory, &mut load, &mut inherited);
         }
         if let Json::Object(entries) = &mut json {
+            // Returns how many entries there were before.
             let mut put =
                 |key: &[u8], add: Vec<Json>| match entries.iter_mut().find(|it| it.0 == key) {
-                    Some((_, Json::Array(items))) => items.extend(add),
+                    Some((_, Json::Array(items))) => {
+                        let before = items.len();
+                        items.extend(add);
+                        before
+                    }
                     Some((_, other)) => {
                         let first = std::mem::replace(other, Json::Null);
                         *other = Json::Array(std::iter::once(first).chain(add).collect());
+                        1
                     }
-                    None => entries.push((key.to_vec(), Json::Array(add))),
+                    None => {
+                        entries.push((key.to_vec(), Json::Array(add)));
+                        0
+                    }
                 };
             let mut last = vec![(
                 &b"files"[..],
@@ -1384,13 +1421,21 @@ impl<'l> Loader<'l> {
                 last.push((b"settings", Json::Object(options.settings.clone())));
             }
             if last.len() > 1 {
-                put(b"overrides", vec![object(last)]);
+                added = Some(Added {
+                    own: put(b"overrides", vec![object(last)]),
+                    for_every_file: true,
+                    has_command_line: false,
+                });
             }
             if !options.overrides.is_empty() {
-                put(
-                    b"overrides",
-                    self.overrides(Shape::Oxlint, paths::dirname(path)),
-                );
+                let overrides = self.overrides(Shape::Oxlint, directory);
+                let has_command_line = overrides.len() > options.overrides.len();
+                let before = put(b"overrides", overrides);
+                added = Some(Added {
+                    own: added.map_or(before, |it| it.own),
+                    for_every_file: added.is_some(),
+                    has_command_line,
+                });
             }
             apply_filters(entries, &options.filters, &inherited);
             let turned_on = self
@@ -1477,27 +1522,118 @@ impl<'l> Loader<'l> {
             Ok(loaded)
         };
         // Patterns are relative to the file's directory.
-        let mut config = Config::from_rc_json_with_plugins(
-            self.linter.registry(),
-            paths::dirname(path),
-            &json,
-            &mut load,
-            &mut load_plugin,
-        )
-        .map_err(|error| {
-            Fatal(
-                [
-                    b"Cannot use the configuration file ",
-                    path,
-                    b":\n",
-                    &error.message[..],
-                ]
-                .concat(),
+        let mut read = |json: &Json| {
+            let registry = self.linter.registry();
+            Config::from_rc_json_with_plugins(
+                registry,
+                directory,
+                json,
+                &mut load,
+                &mut load_plugin,
             )
-        })?;
+        };
+        let mut config = match read(&json) {
+            Ok(config) => config,
+            Err(error) => {
+                let mistake_in = |json: &Json| read(json).err().map(|it| it.message);
+                return Err(self.blame(file, json, added, &error.message, mistake_in));
+            }
+        };
         self.advise_about_js_plugins(&config, &sources);
         config.infer_globals(self.infers_globals_besides());
         Ok(config)
+    }
+
+    /// The error for an oxlint config that the reader refuses, with a first line that says where the mistake is. `why`
+    /// is the reader's message about `json`, which ends with the overrides that [`Loader::rc`] `added`. The reader
+    /// doesn't know where a rule came from, so `mistake_in` reads `json` again with fewer of those rules: first
+    /// without bunfig.toml's and the `--rule` ones, then without the `--rule` ones. The mistake is in the first source
+    /// that makes it fail. `-A`, `-W` and `-D` count as the file, which they already change in [`apply_filters`].
+    fn blame(
+        &self,
+        file: Option<&[u8]>,
+        mut json: Json,
+        added: Option<Added>,
+        why: &[u8],
+        mut mistake_in: impl FnMut(&Json) -> Option<Vec<u8>>,
+    ) -> Fatal {
+        let options = self.options;
+        let in_file = |why: &[u8]| match file {
+            Some(file) => {
+                Fatal([b"Cannot use the configuration file ", file, b":\n", why].concat())
+            }
+            None => Fatal(why.to_vec()),
+        };
+        let overrides = match &mut json {
+            Json::Object(entries) => entries.iter_mut().find(|it| it.0 == b"overrides"),
+            _ => None,
+        };
+        let (Some(added), Some((_, Json::Array(overrides)))) = (added, overrides) else {
+            return in_file(why);
+        };
+        let mut own = std::mem::take(overrides);
+        let mut rest = own.split_off(added.own.min(own.len())).into_iter();
+        let mut of_bunfig = Vec::new();
+        if added.for_every_file
+            && let Some(mut for_every_file) = rest.next()
+        {
+            retain_rules(&mut for_every_file, |at, _| self.is_bunfig_rule(at));
+            of_bunfig.push(for_every_file);
+        }
+        of_bunfig.extend(rest);
+        let mut of_flags = match added.has_command_line {
+            true => of_bunfig.pop(),
+            false => None,
+        };
+        if let (Some(of_flags), Some(from_args)) = (&mut of_flags, &options.command_line_options) {
+            retain_rules(of_flags, |_, id| from_args.rule.iter().all(|it| it.0 != id));
+        }
+        let of_flags: Vec<Json> = of_flags.into_iter().collect();
+        let mut mistake_with = |overrides: Vec<Json>| {
+            if let Json::Object(entries) = &mut json
+                && let Some(entry) = entries.iter_mut().find(|it| it.0 == b"overrides")
+            {
+                entry.1 = Json::Array(overrides);
+            }
+            mistake_in(&json)
+        };
+        if let Some(why) = mistake_with([&own[..], &of_flags[..]].concat()) {
+            return in_file(&why);
+        }
+        if let Some(why) = mistake_with([own, of_bunfig, of_flags].concat()) {
+            return Fatal([b"Invalid config in ", &options.bunfig[..], b"\n", &why].concat());
+        }
+        Fatal([b"Invalid config in --rule\n", why].concat())
+    }
+
+    /// True if the entry of [`Options::rule`] at `at` is bunfig.toml's. `--rule` may have replaced it.
+    fn is_bunfig_rule(&self, at: usize) -> bool {
+        let options = self.options;
+        let setting = options
+            .bunfig_rules
+            .get(at)
+            .and_then(|it| it.setting.as_ref());
+        setting.is_some() && setting == options.rule.get(at).map(|it| &it.1)
+    }
+
+    /// bunfig.toml or `--rule`, if one of them turns on the rule that an oxlint config knows as `key`. Their settings
+    /// come after the file's.
+    fn added_rule_source(&self, key: &[u8]) -> Option<&[u8]> {
+        let options = self.options;
+        let turns_on = |it: &(Vec<u8>, Json)| {
+            let severity = it.1.as_array().and_then(|it| it.first()).unwrap_or(&it.1);
+            oxlint_rule_key(&it.0) == key
+                && severity.as_str() != Some(b"allow")
+                && severity_of(severity) != Some(Severity::Off)
+        };
+        if let Some(at) = options.rule.iter().position(turns_on) {
+            return Some(match self.is_bunfig_rule(at) {
+                true => &options.bunfig,
+                false => b"--rule",
+            });
+        }
+        let mut override_rules = options.overrides.iter().flat_map(|it| &it.rules);
+        override_rules.any(turns_on).then_some(&options.bunfig)
     }
 
     /// Loads the plugins listed in bunfig.toml's `plugins` and in `--plugin`. They're added to whatever configuration
@@ -1800,9 +1936,8 @@ impl<'l> Loader<'l> {
         // oxlint's behavior without a config file.
         if self.uses_oxlint_defaults() {
             self.check_flags(Flavor::Oxlint, None)?;
-            let path = paths::join(self.cwd(), b".oxlintrc.json");
             return Ok(Arc::new(Loaded {
-                config: self.rc(&path, Json::Object(Vec::new()))?,
+                config: self.rc(self.cwd(), None, Json::Object(Vec::new()))?,
                 flavor: Flavor::Oxlint,
                 file: None,
                 wants_types: Some(false),
@@ -1986,7 +2121,7 @@ impl<'l> Loader<'l> {
                 )
                 .map_err(|Fatal(why)| Fatal(self.prefix_with_source(Some(path), &why)))?
             }
-            Flavor::Oxlint => self.rc(path, json)?,
+            Flavor::Oxlint => self.rc(paths::dirname(path), Some(path), json)?,
         };
         for note in config.notes() {
             self.warn(&[note]);
@@ -1994,7 +2129,7 @@ impl<'l> Loader<'l> {
         for line in config.advice() {
             self.advise_if_true(line, paths::dirname(path));
         }
-        self.warn_about_unknown_rules(&config, &paths::relative(self.cwd(), path));
+        self.warn_about_unknown_rules(&config, &paths::relative(self.cwd(), path), flavor);
         let option = |name: &[u8]| config.oxlintrc_option(name);
         let is_on = |name: &[u8]| option(name).and_then(Json::as_bool) == Some(true);
         let wants_types = match flavor {
@@ -2028,17 +2163,22 @@ impl<'l> Loader<'l> {
     }
 
     /// Warns once per plugin, listing every rule of it that `config` sets and Bun doesn't have. `file` is the config
-    /// file.
-    fn warn_about_unknown_rules(&self, config: &Config, file: &[u8]) {
-        let mut by_plugin: Vec<(&[u8], Vec<&[u8]>)> = Vec::new();
+    /// file. An oxlint config also has the rules of bunfig.toml and `--rule`, which get a warning of their own.
+    fn warn_about_unknown_rules(&self, config: &Config, file: &[u8], flavor: Flavor) {
+        let mut by_plugin: Vec<((&[u8], &[u8]), Vec<&[u8]>)> = Vec::new();
         for id in config.unknown_rules() {
             let (plugin, _) = bun_lint::linter::parse_rule_id(id);
-            match by_plugin.iter_mut().find(|it| it.0 == plugin) {
+            let added = match flavor {
+                Flavor::Oxlint => self.added_rule_source(id),
+                _ => None,
+            };
+            let key = (added.unwrap_or(file), plugin);
+            match by_plugin.iter_mut().find(|it| it.0 == key) {
                 Some(entry) => entry.1.push(id),
-                None => by_plugin.push((plugin, vec![id])),
+                None => by_plugin.push((key, vec![id])),
             }
         }
-        for (plugin, rules) in by_plugin {
+        for ((file, plugin), rules) in by_plugin {
             let count = format!("{}", rules.len()).into_bytes();
             let (noun, is, it): (&[u8], &[u8], &[u8]) = match rules.len() {
                 1 => (b" rule in ", b" is", b"it"),
@@ -2606,7 +2746,7 @@ impl<'l> Loader<'l> {
         for line in config.advice() {
             self.advise(line.clone());
         }
-        self.warn_about_unknown_rules(&config, b"your .eslintrc config");
+        self.warn_about_unknown_rules(&config, b"your .eslintrc config", Flavor::EslintRc);
         config.infer_globals(self.infers_globals_besides());
         Ok(Arc::new(Loaded {
             config,

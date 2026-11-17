@@ -1,10 +1,12 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import path from "node:path";
 import type { Duplex } from "node:stream";
+import tls from "node:tls";
 import { promisify } from "node:util";
 
 // The close of a tunnel gave the request body handler one more last chunk, also when the parser had given it one.
@@ -263,5 +265,53 @@ describe("an Upgrade request with a body", () => {
       if (!client.closed) await once(client.resume(), "close");
       expect(await promisify(server.getConnections).call(server)).toBe(0);
     });
+  });
+});
+
+describe.each(["http", "https"])("%s: an Upgrade request with a body", scheme => {
+  const upgrade = (framing: string) =>
+    `POST /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n${framing}\r\n\r\n`;
+
+  async function open(onRequest?: http.RequestListener) {
+    const server = scheme === "https" ? https.createServer(tlsCert, onRequest) : http.createServer(onRequest);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" };
+    const client = scheme === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+    await once(client, scheme === "https" ? "secureConnect" : "connect");
+    let received = "";
+    const closed = once(client, "close");
+    return {
+      server,
+      client,
+      closed,
+      read: () => client.on("data", chunk => (received += chunk.toString("latin1"))),
+      marks: () => received.match(/<[^>]*>/g),
+      [Symbol.dispose]() {
+        client.destroy();
+        server.closeAllConnections();
+        server.close();
+      },
+    };
+  }
+
+  test.concurrent.each([
+    ["at the end of the request", "end()", false],
+    ["at the end of the request", "destroy()", false],
+    ["that the client doesn't take", "destroy()", true],
+  ])("a write %s fails with no 'error' when the client leaves with %s", async (_what, how, pending) => {
+    using connection = await open();
+    const { server, client } = connection;
+    client.write(upgrade("Content-Length: 4") + "BO");
+    const [req, stream] = await once(server, "upgrade");
+    const errors: string[] = [];
+    stream.on("error", (err: NodeJS.ErrnoException) => errors.push(String(err.code)));
+    const { promise: written, resolve } = Promise.withResolvers<unknown>();
+    if (pending) stream.write(Buffer.alloc(8 * 1024 * 1024), resolve);
+    else req.resume().on("end", () => stream.write("101", resolve));
+    const closed = new Promise(resolve => stream.once("close", resolve));
+    if (how === "end()") client.end();
+    else client.destroy();
+    await Promise.all([written, closed]);
+    expect(errors).toEqual([]);
   });
 });

@@ -2616,7 +2616,8 @@ class UpgradeStream extends Duplex {
 
   constructor(socket: $Node.HttpSocket, req: $Node.IncomingMessage) {
     super({
-      allowHalfOpen: socket.allowHalfOpen,
+      // The FIN that ends a socket of uWS's also ends the request, whose 'end' listener may write to this stream. It closes with the socket.
+      allowHalfOpen: socket.allowHalfOpen || (socket as $Node.HttpServerSocket)[kHandleClosed] !== undefined,
     });
 
     this[kSocket] = socket;
@@ -2665,17 +2666,29 @@ class UpgradeStream extends Duplex {
     const socket = this[kSocket];
     // The listener can have ended `req.socket` itself, and end() on a finished socket calls back with an error.
     if (socket.writableEnded) callback();
-    else socket.end(callback);
+    else socket.end(afterSocketWrite.bind(undefined, this, callback));
   }
 
   _write(chunk: unknown, encoding: string, callback: $Node.ErrorCallback) {
-    this[kSocket].write(chunk, encoding, callback);
+    const socket = this[kSocket];
+    const done = afterSocketWrite.bind(undefined, this, callback);
+    // The peer's FIN has ended it.
+    if (socket.writableEnded && (socket as $Node.HttpServerSocket)[kHandleClosed] !== undefined)
+      process.nextTick(done, $ERR_STREAM_DESTROYED("write"));
+    else socket.write(chunk, encoding, done);
   }
 
   _destroy(err: Error | null, callback: $Node.ErrorCallback) {
     this[kSocket].destroy(err);
     callback(err);
   }
+}
+
+// A socket that uWS handed over closes with no 'error' when its connection fails, and so does the stream that stands for it.
+function afterSocketWrite(stream: UpgradeStream, callback: $Node.ErrorCallback, err?: Error | null) {
+  const socket = stream[kSocket];
+  if (err && (socket as $Node.HttpServerSocket)[kHandleClosed] !== undefined) stream.destroy();
+  callback(err);
 }
 
 function onParserExecuteCommon(

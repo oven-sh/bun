@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4fbb6528eec99659a764f6256c78561547556b9991e7074d6336136f65e7c0c9.
+// Written against that file with the SHA-256 00cba1f74bd7452abecafc15421fe3ddba3b0560dda2ca0f7ad315552bc72fe2.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -1753,27 +1753,34 @@ function onconnection(this: ListenerHandle, err: number, clientHandle: $Node.Soc
 
   _socket[kAttach](clientHandle);
 
-  const blockList = self.blockList;
-  if (blockList) {
-    const addressType = isIP(clientHandle.remoteAddress);
-    // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
-    if (addressType && blockList.check(clientHandle.remoteAddress!, `ipv${addressType}`)) {
+  try {
+    const blockList = self.blockList;
+    if (blockList) {
+      const addressType = isIP(clientHandle.remoteAddress);
+      // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
+      if (addressType && blockList.check(clientHandle.remoteAddress!, `ipv${addressType}`)) {
+        clientHandle.end();
+        return;
+      }
+    }
+    if (self.maxConnections != null && self._connections >= self.maxConnections) {
+      const data = {
+        localAddress: _socket.localAddress,
+        localPort: _socket.localPort || clientHandle.localPort,
+        localFamily: _socket.localFamily,
+        remoteAddress: _socket.remoteAddress,
+        remotePort: _socket.remotePort,
+        remoteFamily: _socket.remoteFamily || "IPv4",
+      };
+
       clientHandle.end();
+      self.emit("drop", data);
       return;
     }
-  }
-  if (self.maxConnections != null && self._connections >= self.maxConnections) {
-    const data = {
-      localAddress: _socket.localAddress,
-      localPort: _socket.localPort || clientHandle.localPort,
-      localFamily: _socket.localFamily,
-      remoteAddress: _socket.remoteAddress,
-      remotePort: _socket.remotePort,
-      remoteFamily: _socket.remoteFamily || "IPv4",
-    };
-
+  } catch (e) {
+    // Thrown on, it would end at a TLSSocket's own 'error' listener.
     clientHandle.end();
-    self.emit("drop", data);
+    reportError(e);
     return;
   }
 

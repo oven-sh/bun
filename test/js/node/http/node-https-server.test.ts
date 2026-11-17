@@ -1550,8 +1550,7 @@ describe("server.blockList", () => {
         { outcome: "ECONNRESET", requests: 0 },
         { outcome: "ECONNRESET", requests: 0 },
       ],
-      // A TLSSocket has an 'error' listener of its own, which takes the exception.
-      errors: ["node:http check failed"],
+      errors: ["node:http check failed", "node:https check failed"],
     });
     expect(exitCode).toBe(0);
   });

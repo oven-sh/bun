@@ -1377,27 +1377,34 @@ function onconnection(err, clientHandle) {
 
   _socket[kAttach](clientHandle);
 
-  const blockList = self.blockList;
-  if (blockList) {
-    const addressType = isIP(clientHandle.remoteAddress);
-    // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
-    if (addressType && blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
+  try {
+    const blockList = self.blockList;
+    if (blockList) {
+      const addressType = isIP(clientHandle.remoteAddress);
+      // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
+      if (addressType && blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
+        clientHandle.end();
+        return;
+      }
+    }
+    if (self.maxConnections != null && self._connections >= self.maxConnections) {
+      const data = {
+        localAddress: _socket.localAddress,
+        localPort: _socket.localPort || clientHandle.localPort,
+        localFamily: _socket.localFamily,
+        remoteAddress: _socket.remoteAddress,
+        remotePort: _socket.remotePort,
+        remoteFamily: _socket.remoteFamily || "IPv4",
+      };
+
       clientHandle.end();
+      self.emit("drop", data);
       return;
     }
-  }
-  if (self.maxConnections != null && self._connections >= self.maxConnections) {
-    const data = {
-      localAddress: _socket.localAddress,
-      localPort: _socket.localPort || clientHandle.localPort,
-      localFamily: _socket.localFamily,
-      remoteAddress: _socket.remoteAddress,
-      remotePort: _socket.remotePort,
-      remoteFamily: _socket.remoteFamily || "IPv4",
-    };
-
+  } catch (e) {
+    // Thrown on, it would end at a TLSSocket's own 'error' listener.
     clientHandle.end();
-    self.emit("drop", data);
+    reportError(e);
     return;
   }
 

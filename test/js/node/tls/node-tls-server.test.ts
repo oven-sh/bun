@@ -6283,3 +6283,21 @@ it("a server that requests a client certificate names its own ca, not the tls.se
   });
   expect(exitCode).toBe(0);
 });
+
+it.concurrent.each(["tls.createServer", "https.createServer", "http2.createSecureServer"])(
+  "what a 'drop' listener of %s() throws is an uncaught exception",
+  async create => {
+    const script = `
+      process.on("uncaughtException", error => console.log(error.message));
+      const server = ${create}(${JSON.stringify({ key: cert1.key, cert: cert1.cert })});
+      server.maxConnections = 0;
+      server.on("drop", () => { throw new Error("from 'drop'"); });
+      server.listen(0, "127.0.0.1", () => {
+        tls.connect({ host: "127.0.0.1", port: server.address().port }).on("error", () => server.close());
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from 'drop'\n", stderr: "", exitCode: 0 });
+  },
+);

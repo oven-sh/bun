@@ -84,11 +84,15 @@ declare module "bun" {
 
     /**
      * Callback fired when the client connects to the Redis server
+     *
+     * `null` when not set. Set it to `null` to remove it.
      */
     onconnect: ((this: RedisClient) => void) | null;
 
     /**
      * Callback fired when the client disconnects from the Redis server
+     *
+     * `null` when not set. Set it to `null` to remove it.
      *
      * @param error The error that caused the disconnection
      */

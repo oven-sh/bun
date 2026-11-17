@@ -323,6 +323,8 @@ await client.connect();
 client.close();
 ```
 
+Each handler is `null` until you assign a function. To remove a handler, assign `null`.
+
 ### Connection Status and Monitoring
 
 ```ts redis.ts icon="/icons/typescript.svg"

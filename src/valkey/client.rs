@@ -48,7 +48,8 @@ enum State {
     Hello,
     /// HELLO was accepted with this reply; the reply to SELECT is due.
     Select(Box<RESPValue>),
-    Ready,
+    /// With the acknowledgements still due for the request answered last.
+    Ready(Option<Acks>),
     /// The socket is closing, or the dial gave none: [`Client::lost`] is due.
     Ending(End),
     /// A dial is due, from the retry timer or from `connect()`.
@@ -67,10 +68,17 @@ enum End {
     Failed,
 }
 
+/// One acknowledgement per argument (with none, an unknown number); the first answers the request.
+#[derive(Copy, Clone)]
+struct Acks {
+    kind: Ack,
+    following: u32,
+}
+
 #[derive(Copy, Clone)]
 enum Expect {
     Reply(Reply),
-    Ack,
+    Acks(Acks),
 }
 
 struct InFlight<P> {
@@ -199,7 +207,7 @@ impl<P> Client<P> {
     }
 
     pub fn is_connected(&self) -> bool {
-        matches!(self.state, State::Ready)
+        matches!(self.state, State::Ready(_))
     }
 
     pub fn is_ending(&self) -> bool {
@@ -268,7 +276,7 @@ impl<P> Client<P> {
             | State::Dialing
             | State::Hello
             | State::Select(_)
-            | State::Ready
+            | State::Ready(_)
             | State::Ending(End::Policy) => {}
         }
     }
@@ -277,7 +285,7 @@ impl<P> Client<P> {
         let close = match self.state {
             State::Idle | State::Closed | State::Ending(End::Failed) => return Close::Nothing,
             State::Ending(End::Policy | End::Final) => Close::Nothing,
-            State::Dialing | State::Hello | State::Select(_) | State::Ready => Close::Socket,
+            State::Dialing | State::Hello | State::Select(_) | State::Ready(_) => Close::Socket,
             State::Backoff => Close::Retry,
         };
         self.state = State::Ending(End::Final);
@@ -329,7 +337,7 @@ impl<P> Client<P> {
             State::Dialing
             | State::Hello
             | State::Select(_)
-            | State::Ready
+            | State::Ready(_)
             | State::Ending(End::Policy | End::Final) => {
                 self.state = State::Ending(End::Failed);
                 Some(self.take_pending())
@@ -339,7 +347,7 @@ impl<P> Client<P> {
 
     /// The TLS session broke. `Some` if that counts as a lost connection and not as a failed handshake.
     pub fn session_broke(&mut self) -> Option<Vec<P>> {
-        let greeted = matches!(self.state, State::Select(_) | State::Ready);
+        let greeted = matches!(self.state, State::Select(_) | State::Ready(_));
         (greeted && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
     }
 
@@ -403,7 +411,10 @@ impl<P> Client<P> {
         promise: P,
     ) -> Sent {
         let expect = match ACKS.get_ascii_case_insensitive(name) {
-            Some(_) => Expect::Ack,
+            Some(&kind) => Expect::Acks(Acks {
+                kind,
+                following: args.len().saturating_sub(1) as u32,
+            }),
             None => Expect::Reply(reply),
         };
         let request = InFlight { expect, promise };
@@ -537,7 +548,7 @@ impl<P> Client<P> {
 
     fn route(&mut self, value: RESPValue) -> Event<P> {
         match &mut self.state {
-            State::Ready => self.on_reply(value),
+            State::Ready(_) => self.on_reply(value),
             State::Hello => self.on_hello(value),
             State::Select(hello) => {
                 let hello = core::mem::replace(&mut **hello, RESPValue::Null);
@@ -602,7 +613,7 @@ impl<P> Client<P> {
     }
 
     fn connected(&mut self, hello: RESPValue) -> Event<P> {
-        self.state = State::Ready;
+        self.state = State::Ready(None);
         self.retries = 0;
         Event::Connected(hello)
     }
@@ -619,6 +630,10 @@ impl<P> Client<P> {
             }
             value => value,
         };
+        // Replies come in order, so this one ends a run of acknowledgements.
+        if let State::Ready(owed) = &mut self.state {
+            *owed = None;
+        }
         let Some(InFlight { expect, promise }) = self.in_flight.pop_front() else {
             return Event::Ignored;
         };
@@ -662,10 +677,7 @@ impl<P> Client<P> {
                 ),
             };
         };
-        let request = self
-            .in_flight
-            .pop_front_if(|it| matches!(it.expect, Expect::Ack));
-        let acked = match request.map(|it| it.promise) {
+        let acked = match self.take_acknowledged(kind) {
             None if !self.is_subscriber => return Event::Ignored,
             None => Acked::Nobody,
             Some(promise) if matches!(kind, Ack::Subscribe | Ack::Unsubscribe) => {
@@ -680,5 +692,20 @@ impl<P> Client<P> {
             }
             Ack::Unsubscribe | Ack::PUnsubscribe | Ack::SUnsubscribe => Event::Unsubscribed(acked),
         }
+    }
+
+    fn take_acknowledged(&mut self, kind: Ack) -> Option<P> {
+        if let State::Ready(Some(owed)) = &mut self.state
+            && owed.kind == kind
+            && owed.following > 0
+        {
+            owed.following -= 1;
+            return None;
+        }
+        match self.in_flight.front()?.expect {
+            Expect::Acks(acks) if acks.kind == kind => self.state = State::Ready(Some(acks)),
+            Expect::Acks(_) | Expect::Reply(_) => return None,
+        }
+        self.in_flight.pop_front().map(|it| it.promise)
     }
 }

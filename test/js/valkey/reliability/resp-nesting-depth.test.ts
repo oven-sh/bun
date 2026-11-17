@@ -358,26 +358,26 @@ describe("Valkey: RESP push frame routing", () => {
     }
   });
 
-  describe("an unsubscribe ack that arrives outside subscriber mode", () => {
-    const bulk = (s: string) => `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
-    const ack = (kind: string, subject: string, remaining: number) =>
-      Buffer.from(`>3\r\n${bulk(kind)}${bulk(subject)}:${remaining}\r\n`);
-    const ok = Buffer.from("+OK\r\n");
+  const bulk = (s: string) => `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
+  const ack = (kind: string, subject: string, remaining: number) =>
+    Buffer.from(`>3\r\n${bulk(kind)}${bulk(subject)}:${remaining}\r\n`);
+  const ok = Buffer.from("+OK\r\n");
 
-    async function withMockClient(payloads: Buffer[], body: (client: Bun.RedisClient) => Promise<void>) {
-      const { server, port } = await createMockRedisServer(payloads);
-      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
-        autoReconnect: false,
-        connectionTimeout: 2000,
-      });
-      try {
-        await body(client);
-      } finally {
-        client.close();
-        server.close();
-      }
+  async function withMockClient(payloads: Buffer[], body: (client: Bun.RedisClient) => Promise<void>) {
+    const { server, port } = await createMockRedisServer(payloads);
+    const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+      autoReconnect: false,
+      connectionTimeout: 2000,
+    });
+    try {
+      await body(client);
+    } finally {
+      client.close();
+      server.close();
     }
+  }
 
+  describe("an unsubscribe ack that arrives outside subscriber mode", () => {
     test("resolves the second of two in-flight UNSUBSCRIBEs", async () => {
       // unsubscribe() drops the channel's handlers immediately, so the first ack already exits subscriber mode.
       const payloads = [
@@ -399,6 +399,53 @@ describe("Valkey: RESP push frame routing", () => {
       await withMockClient([ack("punsubscribe", "news.*", 0), ok], async client => {
         expect(await client.punsubscribe("news.*")).toEqual({ type: "punsubscribe", data: ["news.*", 0] });
         expect(await client.set("key", "value")).toBe("OK");
+      });
+    });
+  });
+
+  describe("the acks for the later arguments of a request answer nothing", () => {
+    const acks = (kind: string, ...subjects: string[]) =>
+      Buffer.concat(subjects.map((subject, index) => ack(kind, subject, index + 1)));
+
+    test("subscribe([a, b]) then unsubscribe()", async () => {
+      await withMockClient([acks("subscribe", "a", "b"), acks("unsubscribe", "a", "b"), ok], async client => {
+        expect(await client.subscribe(["a", "b"], () => {})).toBe(2);
+        expect(await client.unsubscribe()).toBeUndefined();
+        expect(await client.set("key", "value")).toBe("OK");
+      });
+    });
+
+    test.each([[["a", "b"]], [undefined]])("unsubscribe(%j) then subscribe(c)", async channels => {
+      const payloads = [
+        acks("subscribe", "a"),
+        acks("subscribe", "b"),
+        acks("unsubscribe", "a", "b"),
+        Buffer.concat([acks("subscribe", "c"), Buffer.from(`>3\r\n${bulk("message")}${bulk("c")}${bulk("hello")}`)]),
+      ];
+      await withMockClient(payloads, async client => {
+        await client.subscribe("a", () => {});
+        await client.subscribe("b", () => {});
+        await (channels ? client.unsubscribe(channels) : client.unsubscribe());
+        const message = Promise.withResolvers<string>();
+        expect(await client.subscribe("c", message.resolve)).toBe(1);
+        expect(await message.promise).toBe("hello");
+      });
+    });
+
+    test("pipelined pattern and shard requests", async () => {
+      const payloads = [acks("punsubscribe", "a*", "b*"), acks("punsubscribe", "c*"), acks("ssubscribe", "x")];
+      await withMockClient(payloads, async client => {
+        expect(
+          await Promise.all([
+            client.punsubscribe("a*", "b*"),
+            client.punsubscribe("c*"),
+            client.send("SSUBSCRIBE", ["x"]),
+          ]),
+        ).toEqual([
+          { type: "punsubscribe", data: ["a*", 1] },
+          { type: "punsubscribe", data: ["c*", 1] },
+          { type: "ssubscribe", data: ["x", 1] },
+        ]);
       });
     });
   });

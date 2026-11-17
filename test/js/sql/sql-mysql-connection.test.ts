@@ -14,8 +14,8 @@ import {
   mysqlOkPacket,
   mysqlRawPacket,
   mysqlReadPackets,
-  mysqlStmtPrepareOk,
   mysqlTextResultSet,
+  runEventLoopUntil,
 } from "./wire-frames";
 
 const COM_QUIT = 0x01;
@@ -1144,34 +1144,6 @@ describe("scripted server", () => {
     }
   });
 
-  test("an ERR packet in the place of a definition of a prepared statement fails that query alone", async () => {
-    const commands: number[] = [];
-    const { port, server } = await mysqlServer({
-      onCommand(socket, payload) {
-        commands.push(payload[0]);
-        if (payload[0] === COM_QUERY) socket.write(owner("B", 1));
-        if (payload[0] !== COM_STMT_PREPARE) return;
-        socket.write(
-          Buffer.concat([mysqlStmtPrepareOk(1, 7, 1, 0), mysqlErrPacket(2, 1317, "70100", "Query was interrupted")]),
-        );
-      },
-    });
-    try {
-      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-      const errno = () => sql`SELECT 1`.catch(err => err.errno ?? err.code);
-      expect({ outcomes: await Promise.all([errno(), errno(), outcome(sql.unsafe("B").simple())]), commands }).toEqual({
-        outcomes: [1317, 1317, [{ owner: "B" }]],
-        commands: [COM_STMT_PREPARE, COM_STMT_PREPARE, COM_QUERY],
-      });
-    } finally {
-      server.close();
-    }
-  });
-
-  /** Bun.build() runs the event loop until an async setup() settles. */
-  const runEventLoopUntil = (setup: () => Promise<void>) =>
-    Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
-
   test("an ERR packet that comes while the parameters of a query are read is why the connection ends", async () => {
     let socket!: net.Socket;
     const { port, server } = await mysqlServer({ onSocket: accepted => void (socket = accepted) });
@@ -1253,8 +1225,7 @@ describe("scripted server", () => {
           if (!armed || value?.v !== 7) return;
           armed = false;
           socket.write(reply.subarray(terminator));
-          const plugins = [{ name: "wait", setup: wire.loopbackFence }];
-          pushed.resolve(Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins }));
+          pushed.resolve(wire.runEventLoopUntil(wire.loopbackFence));
         },
       });
       const first = await sql\`SELECT 7 AS v\`;

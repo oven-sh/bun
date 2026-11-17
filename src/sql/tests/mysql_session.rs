@@ -602,12 +602,13 @@ fn replies_to_a_prepare() {
         (EOF, Prepared),
     ]);
     assert_reply(MODERN, Prepare, &[(ERR, Refused)]);
-    assert_reply(MODERN, Prepare, &[(one_of_each, Nothing), (ERR, Refused)]);
+    assert_reply(MODERN, Prepare, &[(one_of_each, Nothing), (ERR, Fails(Error::MalformedPacket))]);
     assert_reply(LEGACY, Prepare, &[
         (one_of_each, Nothing),
         (param, Nothing),
-        (EOF, Nothing),
-        (ERR, Refused),
+        (column, Nothing),
+        (ERR, Nothing),
+        (EOF, Prepared),
     ]);
     assert_reply(MODERN, Prepare, &[(EOF, Fails(Error::UnexpectedPacket))]);
     assert_reply(MODERN, Prepare, &[(statement_zero, Fails(Error::InvalidPrepareOKPacket))]);

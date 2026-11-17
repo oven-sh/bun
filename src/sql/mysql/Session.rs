@@ -555,7 +555,8 @@ impl Session {
             return Err(packet.unasked());
         }
         let kind = packet.kind().ok_or(Error::MalformedPacket)?;
-        if kind == PacketType::ERROR {
+        // A prepare is refused by its first packet only.
+        if kind == PacketType::ERROR && !matches!(reply, Reply::Definitions { .. }) {
             *reply = Reply::First;
             return Ok(ReplyEvent::Refused(packet.error()?));
         }

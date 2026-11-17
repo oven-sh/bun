@@ -640,7 +640,7 @@ impl<'a> Coordinator<'a> {
             frame::Kind::Ready => {
                 log_first_time_in_test_run("the first worker is ready");
                 let w = &mut self.workers[slot];
-                if !w.can_take_work() {
+                if w.reached_ready || !w.can_take_work() {
                     // `reached_ready` stays false, so the exit counts in `startup_failures`.
                     return;
                 }

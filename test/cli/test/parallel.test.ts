@@ -1334,6 +1334,33 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
   });
 });
 
+async function runOnOneWorker(dir: string, env: Record<string, string | undefined>, ...flags: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", ...flags],
+    env,
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { results: stderr.match(/^(\(pass\) \w+|✗ .*| \d+ (pass|fail))/gm), exitCode };
+}
+
+// On Windows the bytes break libuv's framing before they can be read as a frame.
+describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () => {
+  test.concurrent("Ready does not take the place of the file that runs", async () => {
+    using dir = tempDir("parallel-forged-ready", {
+      "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+        test("a", () => { writeSync(3, Buffer.alloc(5)); });`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+    expect(await runOnOneWorker(String(dir), bunEnv)).toEqual({
+      results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
+  });
+});
+
 // About 1 MB of todo lines overflows the socketpair send buffer, so the worker sends its
 // final RepeatBufs frame from its exit drain loop.
 test("--parallel: worker drains a backpressured final frame under the JSC API lock", async () => {

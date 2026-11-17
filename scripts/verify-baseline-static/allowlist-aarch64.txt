@@ -394,8 +394,8 @@ _ZN3bun10N_SVE2_12813OddBlocksImplEPKhmPm         [SVE]
 # The copies of a module with #[bun_simd::foreach_target]. Gate: if_supported! in
 # src/simd/trusted/gate.rs.
 # ----------------------------------------------------------------------------
-_R*4simd4sve2*               [SVE]
-_R*8dot_simd12neon_dotprod*  [DotProd]
+_R*4simd4sve2*           [SVE]
+_R*4simd12neon_dotprod*  [DotProd]
 
 # ----------------------------------------------------------------------------
 # src/simd/conformance/probe.rs: one instruction of each feature. Gate: bun_simd::detected().

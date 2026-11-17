@@ -185,6 +185,13 @@ impl<I: Xmm> Vector<i32, 4, I> {
     pub fn pairwise_dot(a: Vector<i16, 8, I>, b: Vector<i16, 8, I>) -> Self {
         Self::new(_mm_madd_epi16(a.0.into(), b.0.into()))
     }
+
+    #[inline]
+    #[target_feature(enable = "sse2")]
+    pub fn add_dot(self, a: Vector<u8, 16, I>, b: Vector<i8, 16, I>) -> Self {
+        let (a, b): (Vector<i16, 8, I>, Vector<i16, 8, I>) = (a.bitcast(), b.bitcast());
+        self + Self::pairwise_dot(a & 0xFF, b << 8 >> 8) + Self::pairwise_dot(a >> 8 & 0xFF, b >> 8)
+    }
 }
 
 impl<I: Xmm> Vector<u32, 4, I> {
@@ -308,6 +315,13 @@ impl<I: Ymm> Vector<i32, 8, I> {
     #[target_feature(enable = "avx2")]
     pub fn pairwise_dot(a: Vector<i16, 16, I>, b: Vector<i16, 16, I>) -> Self {
         Self::new(_mm256_madd_epi16(a.0.into(), b.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn add_dot(self, a: Vector<u8, 32, I>, b: Vector<i8, 32, I>) -> Self {
+        let (a, b): (Vector<i16, 16, I>, Vector<i16, 16, I>) = (a.bitcast(), b.bitcast());
+        self + Self::pairwise_dot(a & 0xFF, b << 8 >> 8) + Self::pairwise_dot(a >> 8 & 0xFF, b >> 8)
     }
 }
 

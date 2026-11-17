@@ -194,6 +194,10 @@ pub fn line_starts(text: &[u8]) -> Vec<u32> {
 
 trait Byte = Source<Lane = u8>;
 
+/// Starts a cache line.
+#[repr(align(64))]
+struct Aligned<T>(T);
+
 /// In a long input, it is worth a call to have no load cross a cache line.
 #[inline(always)]
 fn in_aligned_parts<B>(mut state: u32, mut bytes: &[B], update: impl Fn(u32, &[B]) -> u32) -> u32 {

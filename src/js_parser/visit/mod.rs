@@ -785,6 +785,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn report_duplicate_parameter(&mut self, loc: bun_ast::Loc, name: &'a [u8], can_repeat: bool) {
+        if self.options.module_graph_scan {
+            return;
+        }
         let range = js_lexer::range_of_identifier(self.source, loc);
         if can_repeat {
             let text = bun_alloc::arena_format!(

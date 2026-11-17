@@ -2830,7 +2830,13 @@ test.concurrent("sloppy-only syntax in a strict output file is an error that say
     {
       message: "With statements cannot be used with the ESM output format due to strict mode",
       at: "dep.cjs:2:1",
-      notes: [],
+      notes: [
+        {
+          message:
+            'This output file has an "import" or "export" statement, so it loads only as an ECMAScript module, which is strict mode code.',
+          at: null,
+        },
+      ],
     },
   ]);
   // This output has no `import` and no `export` statement. It also loads as a script, where a `with` statement runs.

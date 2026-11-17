@@ -4691,6 +4691,7 @@ describe("bundler", () => {
     { name: "ESM", format: "esm", strict: inESMOutput, refuses: refusedByESMOutputThatLoadsAsAScript },
     // With an `export` statement, only a module loader takes the output.
     { name: "ESMWithExport", format: "esm", exports: true, strict: inESMOutput },
+    { name: "StrictBannerESM", format: "esm", banner: '"use strict";', strict: inStrictMode },
     { name: "CJS", format: "cjs", strict: false },
     { name: "IIFE", format: "iife", strict: false },
     { name: "StrictEntryCJS", format: "cjs", useStrict: true, strict: inStrictMode },
@@ -4832,6 +4833,51 @@ describe("bundler", () => {
     },
     format: "esm",
     run: { stdout: "1" },
+  });
+  // Tree shaking removes a top-level statement as a whole. Syntax in a
+  // statement that it removes, or that the parser drops, is in no output file.
+  const partlyRemovedScript = /* js */ `
+    var x = 1;
+    function unusedDelete() { delete x; }
+    function unusedWith(o) { with (o) { return x; } }
+    false && delete x;
+    console.log("side effect");
+  `;
+  for (const [name, options] of [
+    ["ESMWithExport", { format: "esm" }],
+    ["BunESM", { format: "esm", target: "bun" }],
+    ["StrictEntryCJS", { format: "cjs" }],
+  ] as const) {
+    itBundled(`edgecase/SloppyOnlySyntaxInStatementThatTreeShakingRemoves${name}`, {
+      files: {
+        "/entry.js": `${name === "StrictEntryCJS" ? '"use strict";\n' : ""}import "./script.js";\n${name === "ESMWithExport" ? "export default 1;\n" : ""}`,
+        "/script.js": partlyRemovedScript,
+      },
+      ...options,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).not.toContain("delete x");
+        expect(out).not.toContain("with (o)");
+      },
+      run: { stdout: "side effect" },
+    });
+  }
+  // The statement stays when something uses it, and code that the bundler
+  // removes from inside a statement that stays is still reported.
+  itBundled("edgecase/SloppyOnlySyntaxInStatementThatStaysIsAnError", {
+    files: {
+      "/entry.js": `import "./script.js";\nexport default 1;\n`,
+      "/script.js": /* js */ `
+        var x = 1;
+        function usedDelete() { return delete x; }
+        function usedWithDeadBranch(o) { if (false) { with (o) { return x; } } return 2; }
+        console.log(usedDelete(), usedWithDeadBranch({}));
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/script.js": [`Delete of a bare identifier ${inESMOutput}`, `With statements ${inESMOutput}`],
+    },
   });
   // A legacy HTML comment in sloppy mode code is a comment, and the parser warns.
   itBundled("edgecase/LegacyHTMLCommentInCommonJSDependency", {

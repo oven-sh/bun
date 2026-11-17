@@ -418,18 +418,27 @@ describe.concurrent("bun test --changed", () => {
 
   // The scan reads which files import which. An early error of strict mode code is for the run: the
   // file stays in the module graph, and the test that reaches a changed file through it runs and fails.
-  test("a dependency with a strict mode early error does not hide the tests behind it", async () => {
+  test.each([
+    [
+      "a function as the body of if",
+      "if (value) function f() {}",
+      "Function declarations inside if statements cannot be used in an ECMAScript module",
+    ],
+    ["a repeated parameter", "function f(a, a) {}", '"a" cannot be bound multiple times in the same parameter list'],
+    ["a repeated parameter of an arrow function", "(a, a) => a;", '"a" cannot be bound multiple times'],
+    ["an assignment to eval", "if (!value) eval = 1;", "Invalid assignment target"],
+  ])("a dependency with %s does not hide the tests behind it", async (_, code, message) => {
     using dir = tempDir("test-changed-early-error", {
       "package.json": JSON.stringify({ name: "early-error" }),
       "value.mjs": `export default 1;\n`,
-      "helper.mjs": `import value from "./value.mjs";\nif (value) function f() {}\nexport default value;\n`,
+      "helper.mjs": `import value from "./value.mjs";\n${code}\nexport default value;\n`,
       "helper.test.js": `import { test, expect } from "bun:test";\nimport value from "./helper.mjs";\ntest("helper", () => expect(value).toBe(1));\n`,
     });
     initRepo(String(dir));
     appendFileSync(join(String(dir), "value.mjs"), "// touched\n");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(stderr).toContain("Function declarations inside if statements cannot be used in an ECMAScript module");
+    expect(stderr).toContain(message);
     expect(stderr).toContain("helper.test.js");
     expect(exitCode).toBe(1);
   });

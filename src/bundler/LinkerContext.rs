@@ -60,6 +60,8 @@ pub(crate) struct HashbangAndBanner<'a> {
 enum StrictChunk {
     /// Bun loads the scripts of an HTML file with one `<script type="module">`.
     ModuleScript,
+    /// Bake gives each client chunk of an app to the framework as a module script.
+    FrameworkModuleScript,
     /// ESM output in which the linker prints an `import` or `export` statement, so only a module loader takes it.
     EsModule,
     /// ESM output in which the linker prints neither. Unless a file prints one, a script loader takes it too.
@@ -716,11 +718,18 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         if target.is_bun() && self.options.output_format != Format::Cjs {
             return Some(StrictChunk::BunModule);
         }
+        if self.framework.is_some() && self.chunk_side(chunk) == crate::options::Side::Client {
+            return Some(StrictChunk::FrameworkModuleScript);
+        }
         if self.options.output_format.is_always_strict_mode() {
-            return Some(match self.prints_import_or_export(chunk) {
-                true => StrictChunk::EsModule,
-                false => StrictChunk::EsModuleOrScript,
-            });
+            if self.prints_import_or_export(chunk) {
+                return Some(StrictChunk::EsModule);
+            }
+            // The banner is printed ahead of ESM output too.
+            if !self.options.banner.is_empty() && self.is_chunk_strict_with(chunk, b"") {
+                return Some(StrictChunk::BannerDirective);
+            }
+            return Some(StrictChunk::EsModuleOrScript);
         }
         let use_strict = self
             .directives_of_chunk(chunk)
@@ -810,7 +819,16 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             });
             let holders: Vec<(&Chunk<'a>, StrictChunk)> = holders.collect();
             let source = &sources[*source_index as usize];
-            for syntax in found.iter() {
+            let parts = self.graph.ast.items_parts()[*source_index as usize].as_slice();
+            let live = &self.graph.parts_live[*source_index as usize];
+            // Tree shaking removed the part of this syntax, so no chunk prints it.
+            let is_removed = |syntax: &bun_ast::SloppyOnlySyntax| {
+                let part = parts
+                    .iter()
+                    .position(|part| part.sloppy_only_id == syntax.part);
+                syntax.part != 0 && part.is_some_and(|part| !live.is_set(part))
+            };
+            for syntax in found.iter().filter(|syntax| !is_removed(syntax)) {
                 let Some(&(chunk, why)) = holders.iter().find(|(_, why)| why.refuses(syntax.kind))
                 else {
                     continue;
@@ -819,9 +837,25 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 let text = bstr::BStr::new(syntax.text.slice());
                 let in_strict_mode = format!("{text} cannot be used in strict mode");
                 let (message, note) = match why {
-                    StrictChunk::EsModule | StrictChunk::EsModuleOrScript => (
+                    StrictChunk::EsModule => (
+                        format!("{text} cannot be used with the ESM output format due to strict mode"),
+                        Some(bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"This output file has an \"import\" or \"export\" statement, so it loads only as an ECMAScript module, which is strict mode code.".as_slice(),
+                        )),
+                    ),
+                    StrictChunk::EsModuleOrScript => (
                         format!("{text} cannot be used with the ESM output format due to strict mode"),
                         None,
+                    ),
+                    StrictChunk::FrameworkModuleScript => (
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"Bun gives the client files of an app to its framework as module scripts, which are strict mode code.".as_slice(),
+                        )),
                     ),
                     StrictChunk::ModuleScript => (
                         in_strict_mode,

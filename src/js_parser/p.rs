@@ -5013,6 +5013,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Tree shaking removes a part as a whole, so each entry from `first` on names the part of its code. Code that makes no part is in no output.
+    #[cold]
+    fn tag_sloppy_only_syntax(&mut self, first: usize, appended: bool) -> u32 {
+        if !appended {
+            self.sloppy_only_syntax.truncate(first);
+            return 0;
+        }
+        for syntax in &mut self.sloppy_only_syntax[first..] {
+            syntax.part = self.part_generation;
+        }
+        self.part_generation
+    }
+
     /// `text` names syntax at `r` of sloppy code that strict code cannot hold: an error if the output is strict, which for a bundle the linker knows.
     pub(crate) fn record_sloppy_only_syntax(
         &mut self,
@@ -5036,6 +5049,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.options.bundle {
             self.sloppy_only_syntax.push(js_ast::SloppyOnlySyntax {
                 kind,
+                part: 0,
                 range: r,
                 text: js_ast::StoreStr::new(text),
             });
@@ -5860,6 +5874,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let arena = self.arena;
         let mut opts = PrependTempRefsOpts::default();
         let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
+        let first_sloppy_only_syntax = self.sloppy_only_syntax.len();
 
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
 
@@ -5904,6 +5919,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let appended = !part_stmts.is_empty();
+        let sloppy_only_id = match self.sloppy_only_syntax.len() > first_sloppy_only_syntax {
+            true => self.tag_sloppy_only_syntax(first_sloppy_only_syntax, appended),
+            false => 0,
+        };
         if appended {
             // SAFETY: `into_bump_slice_mut` leaks the BumpVec into the arena and
             // returns the unique `&'a mut [T]` for that allocation. We compute
@@ -5947,6 +5966,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     bun_ast::PartTag::None
                 },
+                sloppy_only_id,
                 ..Default::default()
             });
             // `symbol_uses` / `import_symbol_property_uses` were already reset
@@ -6348,18 +6368,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     pub(crate) fn report_invalid_assignment_target(&mut self, expr: &Expr) {
-        // Sloppy code can assign to `eval` and `arguments`: the cause is then a strict chunk.
-        if let js_ast::ExprData::EIdentifier(ident) = &expr.data
-            && !self.is_strict_mode()
-        {
-            let name = self.load_name_from_ref(ident.ref_);
-            self.mark_strict_mode_feature(
-                StrictModeFeature::AssignToEvalOrArguments,
-                js_lexer::range_of_identifier(self.source, expr.loc),
-                name,
-            )
-            .expect("unreachable");
-            return;
+        // An identifier here is `eval` or `arguments`: an early error of strict mode code only.
+        if let js_ast::ExprData::EIdentifier(ident) = &expr.data {
+            if self.options.module_graph_scan {
+                return;
+            }
+            // Sloppy code can assign to them: the cause is then a strict chunk.
+            if !self.is_strict_mode() {
+                let name = self.load_name_from_ref(ident.ref_);
+                self.mark_strict_mode_feature(
+                    StrictModeFeature::AssignToEvalOrArguments,
+                    js_lexer::range_of_identifier(self.source, expr.loc),
+                    name,
+                )
+                .expect("unreachable");
+                return;
+            }
         }
         self.log()
             .add_error(Some(self.source), expr.loc, b"Invalid assignment target");

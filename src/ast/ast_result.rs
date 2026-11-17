@@ -114,6 +114,8 @@ pub struct Ast<'a> {
 #[derive(Clone, Copy)]
 pub struct SloppyOnlySyntax {
     pub kind: SloppyOnlyKind,
+    /// `Part::sloppy_only_id` of the part that holds the syntax, or 0 if no one part holds it.
+    pub part: u32,
     pub range: Range,
     /// What the syntax is, as the start of a message: "With statements", before "cannot be used in strict mode".
     pub text: StoreStr,

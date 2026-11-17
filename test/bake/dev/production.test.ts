@@ -489,15 +489,16 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
-  // A production build prints ES modules for the server and for the browser. An ES module cannot hold a
-  // repeated parameter, which only sloppy mode code can have. Bun runs the module for the server.
+  // A production build prints ES modules for the server and for the browser. Bun runs the one for the
+  // server, and the framework loads the one for the browser as a module script. A module cannot hold
+  // what only sloppy mode code can hold, such as a `with` statement.
   test.concurrent.each([
-    ["server.ts", "cannot be used in strict mode"],
-    ["client.ts", "cannot be used with the ESM output format due to strict mode"],
+    ["server.ts", "Bun runs this bundle as an ECMAScript module"],
+    ["client.ts", "Bun gives the client files of an app to its framework as module scripts"],
   ])("sloppy-only syntax in a file that %s imports is a build error", async (importer, why) => {
     const imports = (file: string) => (file === importer ? `import value from "./sloppy.cjs";` : `const value = 1;`);
     using dir = tempDir("bake-production-sloppy-only-syntax", {
-      "sloppy.cjs": `function f(a, a) { return a; }\nmodule.exports = f(1, 2);\n`,
+      "sloppy.cjs": `var scope = { value: 1 };\nwith (scope) module.exports = value;\n`,
       "client.ts": `${imports("client.ts")}\nconsole.log("client loaded", value);`,
       "server.ts": `
         ${imports("server.ts")}
@@ -523,8 +524,9 @@ export default function () {
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain(`error: Duplicate parameter "a" ${why}\n`);
-    expect(normalizePath(stderr)).toContain("/sloppy.cjs:1:15");
+    expect(stderr).toContain("error: With statements cannot be used in strict mode\n");
+    expect(stderr).toContain(`note: ${why}`);
+    expect(normalizePath(stderr)).toContain("/sloppy.cjs:2:1");
     expect(exitCode).toBe(1);
   });
 

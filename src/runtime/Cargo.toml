@@ -123,6 +123,7 @@ bun_watcher.workspace = true
 bun_webp.workspace = true
 bun_which.workspace = true
 bun_hash.workspace = true
+bun_highway.workspace = true
 bun_wyhash.workspace = true
 bun_zlib.workspace = true
 bun_zstd.workspace = true

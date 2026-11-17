@@ -1641,6 +1641,7 @@ dependencies = [
  "bun_format_conformance",
  "bun_glob",
  "bun_hash",
+ "bun_highway",
  "bun_histogram",
  "bun_hpack",
  "bun_http",

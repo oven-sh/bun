@@ -154,9 +154,9 @@ impl Buckets<false> {
         input_size: usize,
     ) -> bool {
         /// For each byte of input.
-        const USUAL_HOPS: usize = 4;
+        const USUAL_HOPS: usize = 3;
         /// Take about as long as setting up buckets.
-        const SPARE_HOPS: usize = 1 << 13;
+        const SPARE_HOPS: usize = 1 << 12;
         let counted = small.hops.min(USUAL_HOPS * (input_size - input_size / 4));
         counted.max(small.hops / 2) > USUAL_HOPS * position + SPARE_HOPS
     }

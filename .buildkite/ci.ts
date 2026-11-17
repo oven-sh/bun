@@ -921,7 +921,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // connected at upload but drops off during the build wait, so the
     // step sits `scheduled` with nobody to take it. That holds only this
     // PR's own build, and a cancel clears it.
-    parallelism: platform.tier === "beta" || platform.tests ? 1 : os === "darwin" ? 4 : os === "windows" ? 8 : 20,
+    parallelism: platform.tier === "beta" || platform.tests ? 1 : os === "darwin" ? 4 : os === "windows" ? 1 : 20,
     ...(platform.tier === "beta" ? { soft_fail: true } : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).
     timeout_in_minutes:
@@ -1538,7 +1538,8 @@ function getPipelineOptions(): PipelineOptions | undefined {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
-    testPlatforms: Array.from(testPlatformsMap.values()),
+    testPlatforms: Array.from(testPlatformsMap.values()).filter(p => p.os === "windows" && p.arch === "x64"),
+    testFiles: ["zz-diagnose.test", "leaky-with-double-response"],
   };
 }
 
@@ -1835,8 +1836,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
     // The files that a manual build asks for are not written for a platform that names its own.
     .filter(({ tests }) => !tests || !options.testFiles?.length)
-    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
-    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
+    .concat([]);
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {

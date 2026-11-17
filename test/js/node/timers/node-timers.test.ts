@@ -355,6 +355,15 @@ describe.concurrent("_repeat", () => {
   );
 });
 
+it.concurrent.each(["setTimeout", "setInterval"] as const)("clearImmediate() ignores the id of a %s()", async set => {
+  const script = `
+    for (const convert of [Number, String]) {
+      const t = ${set}(() => { console.log(convert.name); clearTimeout(t); }, 1);
+      clearImmediate(convert(+t));
+    }`;
+  expect(await runToExit(script)).toEqual(printed("Number\nString"));
+});
+
 describe("_idleStart", () => {
   // https://github.com/oven-sh/bun/issues/26508
   // Next.js 16 Cache Components writes `t2._idleStart = t1._idleStart` so two

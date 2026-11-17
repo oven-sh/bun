@@ -10378,13 +10378,101 @@ describe("raw request bytes on a server's connection socket", () => {
       expect(await raw).toBe("LATER");
     });
   }
-  const behindRemoveAllListeners = "a listener added behind removeAllListeners(...$removed) gets the later reads";
-  it.each([{ removed: ["data"] }])(behindRemoveAllListeners, readsBehindRemoveAllListeners);
-  // TODO: these also remove the 'newListener' listener through which the server hears of a 'data' listener. In Node.js the listener gets the reads.
-  it.todo.each([{ removed: [] }, { removed: ["newListener"] }])(
-    behindRemoveAllListeners,
+  it.each([{ removed: ["data"] }, { removed: [] }, { removed: ["newListener"] }])(
+    "a listener added behind removeAllListeners(...$removed) gets the later reads",
     readsBehindRemoveAllListeners,
   );
+
+  describe.each(["http", "https"])("%s: a reader that replaces the server's 'data' listener", scheme => {
+    const create = (listener: http.RequestListener) =>
+      scheme === "https" ? createHttpsServer(tlsCert, listener) : createServer(listener);
+    const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
+
+    it.each([
+      { removed: [], readerFirst: false },
+      { removed: ["data"], readerFirst: false },
+      { removed: ["data"], readerFirst: true },
+    ])("takes the reads from the parser (removed: $removed, a reader before: $readerFirst)", async row => {
+      const seen: string[] = [];
+      const server = create((req, res) => {
+        seen.push(req.url!);
+        const { socket } = req;
+        if (row.readerFirst) socket.on("data", () => seen.push("removed reader"));
+        socket.removeAllListeners(...row.removed);
+        socket.on("error", () => {});
+        socket.on("data", chunk => socket.write(`<${chunk.toString("latin1").split(" H")[0]}>`));
+        res.end("<done>");
+      });
+      server.on("clientError", (err: NodeJS.ErrnoException) => seen.push(String(err.code)));
+      await withClient(server, async (client, until) => {
+        client.write(get("/1"));
+        await until("<done>");
+        client.write(get("/2"));
+        await until("<GET /2>");
+        client.write("no http");
+        await until("<no http>");
+        client.write("last");
+        await until("<last>");
+      });
+      expect(seen).toEqual(["/1"]);
+    });
+
+    it("leaves the end of the connection to the server's 'end' listener", async () => {
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      const server = create((req, res) => {
+        res.detachSocket(req.socket);
+        req.socket.removeAllListeners("data");
+        req.socket.on("data", chunk => req.socket.write(`<${chunk}>`));
+        req.socket.on("close", () => resolve());
+        req.socket.write("<ready>");
+      });
+      await withClient(server, async (client, until) => {
+        client.write(get("/"));
+        await until("<ready>");
+        client.write("a");
+        await until("<a>");
+        client.write("b");
+        await until("<b>");
+        client.end();
+        await closed;
+      });
+    });
+
+    it("can give the socket to another server", async () => {
+      const other = create((req, res) => res.end(`<other ${req.url}>`));
+      const server = create((req, res) => {
+        const { socket } = req;
+        socket.removeAllListeners("data");
+        socket.once("data", chunk => {
+          socket.pause();
+          socket.unshift(chunk);
+          other.emit(scheme === "https" ? "secureConnection" : "connection", socket);
+        });
+        res.end(`<first ${req.url}>`);
+      });
+      await withClient(server, async (client, until) => {
+        client.write(get("/1"));
+        await until("<first /1>");
+        client.write(get("/2"));
+        await until("/2>");
+        await until("<other /2>");
+        other.closeAllConnections();
+      });
+    });
+  });
+
+  it("removeAllListeners() with no reader behind it leaves the reads to the parser", async () => {
+    const server = createServer((req, res) => {
+      req.socket.removeAllListeners();
+      res.end(`<${req.url}>`);
+    });
+    await withClient(server, async (client, until) => {
+      for (const path of ["/1", "/2"]) {
+        client.write(`GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`);
+        await until(`<${path}>`);
+      }
+    });
+  });
 
   it.each([
     ["connect", "CONNECT x:1 HTTP/1.1\r\nHost: x\r\n\r\n"],

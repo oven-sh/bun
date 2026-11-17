@@ -53,6 +53,7 @@ const kArmHandshakeTimeout: typeof netSymbols.kArmHandshakeTimeout = netSymbols.
 const kDestroyOnRead: typeof netSymbols.kDestroyOnRead = netSymbols.kDestroyOnRead;
 const kForeignListener: typeof netSymbols.kForeignListener = netSymbols.kForeignListener;
 const kHandleClosed: typeof netSymbols.kHandleClosed = netSymbols.kHandleClosed;
+const kListenersRemoved: typeof netSymbols.kListenersRemoved = netSymbols.kListenersRemoved;
 const kPreHandshakeWrite: typeof netSymbols.kPreHandshakeWrite = netSymbols.kPreHandshakeWrite;
 const readInProgress = netSymbols.readInProgress;
 const kReadStop: typeof netSymbols.kReadStop = netSymbols.kReadStop;
@@ -2671,6 +2672,12 @@ Socket.prototype.pause = function pause(this: $Node.Socket) {
     readStop(this, handle);
   }
   return Duplex.prototype.pause.$call(this);
+};
+
+Socket.prototype.removeAllListeners = function removeAllListeners(this: $Node.Socket, _event?: $Node.EventName) {
+  const ret = Duplex.prototype.removeAllListeners.$apply(this, arguments);
+  (this.server as any)?.[kListenersRemoved]?.(this);
+  return ret;
 };
 
 Socket.prototype[kReadStop] = function () {

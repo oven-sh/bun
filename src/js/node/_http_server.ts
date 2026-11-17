@@ -42,7 +42,13 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
-const { kForeignListener, kHandleClosed, kSNIContexts, readInProgress } = require("internal/net/symbols");
+const {
+  kForeignListener,
+  kHandleClosed,
+  kListenersRemoved,
+  kSNIContexts,
+  readInProgress,
+} = require("internal/net/symbols");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kInternalSocketData,
@@ -337,7 +343,7 @@ function normalizeServerTls(tls) {
 // uWS parses the connections it accepts. Every other Duplex gets Node's connection listener.
 function connectionListener(this: Server, socket) {
   // A socket that 'connect' or 'upgrade' got is a connection like any other when it's emitted again.
-  if (socket[kHandle] !== undefined && !socket[kHandedOff]) return;
+  if (staysWithNativeParser(socket)) return;
   const tlsServer = this[tlsSymbol];
   // Its 'connection' listener wraps the socket in a TLSSocket, which comes back as 'secureConnection'.
   if (tlsServer) tlsServer.emit("connection", socket);
@@ -345,7 +351,17 @@ function connectionListener(this: Server, socket) {
 }
 
 function secureConnectionListener(this: Server, socket) {
-  if (socket[kHandle] === undefined || socket[kHandedOff]) connectionListenerInternal(this, socket);
+  if (!staysWithNativeParser(socket)) connectionListenerInternal(this, socket);
+}
+
+// A socket whose reads the program took is handed over here, like one that 'upgrade' got.
+function staysWithNativeParser(socket) {
+  if (socket[kHandle] === undefined || socket[kHandedOff]) return false;
+  if (!tookReadsFromParser(socket)) return true;
+  detachFromHttp(socket, undefined);
+  connectionState(socket);
+  startNextResponse(socket);
+  return false;
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L103-L106
@@ -2388,7 +2404,26 @@ function unconsume(socket) {
   socket.removeListener("resume", nativeSocketOnResume);
   // Gone once uWS has closed the connection, which is before the socket's 'close'.
   socket[kHandle]?.setRawReads(true);
+  if (tookReadsFromParser(socket)) stopParsing(socket);
 }
+function stopParsing(socket) {
+  socket[kHandle]?.stopParsing();
+  if (socket.encrypted) socket.allowHalfOpen = socket.server.allowHalfOpen;
+}
+// Node's parser gets the reads of an unconsumed socket through its 'data' listener. Before the first request, it may not have added that yet.
+function tookReadsFromParser(socket) {
+  return (
+    socket.parser?._consumed === false &&
+    socket[kStopParsingOnCloseListener] === true &&
+    socket.listenerCount("data", noopOnData) === 0
+  );
+}
+Server.prototype[kListenersRemoved] = function (socket) {
+  if (socket[kHandle] === undefined || socket[kHandedOff]) return;
+  if (tookReadsFromParser(socket)) stopParsing(socket);
+  else if (socket.parser?._consumed && socket.listenerCount("newListener", unconsumeForListener) === 0)
+    socket.on("newListener", unconsumeForListener);
+};
 
 function nativeSocketOnResume(this: any) {
   if (this._paused) {
@@ -2446,8 +2481,12 @@ function closeWithConnection(emitClose, socket, isException) {
   setImmediate(emit);
 }
 
-// Node's socketOnEnd. What becomes of the connection after a clean end is uWS's decision, right behind this.
+// Node's socketOnEnd. What becomes of a connection that uWS parses after a clean end is uWS's decision, right behind this.
 function nativeSocketOnEnd(this: any) {
+  if (tookReadsFromParser(this)) {
+    if (!this.server.httpAllowHalfOpen) this.end();
+    return;
+  }
   if (!this[kHandle]?.finishParsing()) return;
   const err: any = $HPE_INVALID_EOF_STATE("Parse Error: Invalid EOF state");
   err.reason = "Invalid EOF state";

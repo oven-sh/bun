@@ -50,6 +50,7 @@ const {
   kDestroyOnRead,
   kForeignListener,
   kHandleClosed,
+  kListenersRemoved,
   kPreHandshakeWrite,
   kReadStop,
   kSecureConnectDone,
@@ -2275,6 +2276,12 @@ Socket.prototype.pause = function pause() {
     readStop(this, handle);
   }
   return Duplex.prototype.pause.$call(this);
+};
+
+Socket.prototype.removeAllListeners = function removeAllListeners(_event) {
+  const ret = Duplex.prototype.removeAllListeners.$apply(this, arguments);
+  this.server?.[kListenersRemoved]?.(this);
+  return ret;
 };
 
 Socket.prototype[kReadStop] = function () {

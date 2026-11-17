@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/net/symbols.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 545810421e80e12a58f3c76d29eeaaed34b78770b5ab8e77bf1f224f94e45afd.
+// Written against that file with the SHA-256 0bd672d8ef42862fe541c87ef4a00ae717a0c2268b5c88f691ee3958654b55a2.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 export default {
@@ -13,6 +13,8 @@ export default {
   kForeignListener: Symbol("kForeignListener"),
   // A function that node:http puts on a socket it handed to 'connect' or 'upgrade'. net.Socket calls it when the connection has closed.
   kHandleClosed: Symbol("kHandleClosed"),
+  // http.Server.prototype method. net.Socket calls it on its server behind removeAllListeners().
+  kListenersRemoved: Symbol("kListenersRemoved"),
   kPreHandshakeWrite: Symbol("kPreHandshakeWrite"),
   // net.Socket.prototype method for child_process: Node's handle.readStop().
   kReadStop: Symbol("kReadStop"),
@@ -50,6 +52,7 @@ export default {
   readonly kDestroyOnRead: unique symbol;
   readonly kForeignListener: unique symbol;
   readonly kHandleClosed: unique symbol;
+  readonly kListenersRemoved: unique symbol;
   readonly kPreHandshakeWrite: unique symbol;
   readonly kReadStop: unique symbol;
   readonly kSecureConnectDone: unique symbol;

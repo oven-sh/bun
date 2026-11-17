@@ -808,7 +808,11 @@ pub(crate) mod simd {
         for i in 0..row.len() {
             let tr = inverted(tr[i]);
             left = average::<MODE>([left, tl, t, tr]) - pixel(row[i]);
-            row[i] = first(left ^ ones);
+            // For AArch64, LLVM would join two pixels in a register to save a store.
+            row[i] = first(match cfg!(target_arch = "aarch64") {
+                true => (left ^ ones).opaque(),
+                false => left ^ ones,
+            });
             [tl, t] = [t, tr];
         }
     }

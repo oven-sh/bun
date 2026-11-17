@@ -458,9 +458,10 @@ describe.concurrent("run-cjs", () => {
     });
 
     test("a stack overflow is reported where the first reading ran out of stack", async () => {
+      const nesting = (parenthesis: string) => Buffer.alloc(100_000, parenthesis).toString();
       const result = await run(
         // The reading as a script stops in line 1, at `.source`.
-        { "deep.cjs": `await /x/.source;\n\nvar x = ${"(".repeat(100_000)}1${")".repeat(100_000)};\n` },
+        { "deep.cjs": `await /x/.source;\n\nvar x = ${nesting("(")}1${nesting(")")};\n` },
         "deep.cjs",
       );
       expect(result.stderr).toMatch(/error: Maximum call stack size exceeded\n\s+at .*deep\.cjs:3:\d+/);

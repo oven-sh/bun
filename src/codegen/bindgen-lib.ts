@@ -89,7 +89,7 @@ export const blob = new RefType(
 /** The context of a promise reaction that `JSValue::then` was given: a `*mut` of the type at `rustPath`. */
 export const promisePtr = (rustPath: string) => new PromisePtrType(rustPath);
 
-/** The context of a promise reaction that is a `NativePromiseContext` cell: what `take` hands back, an `Option<NonNull<..>>` of the type at `rustPath`. */
+/** The context of a promise reaction that is a `NativePromiseContext` cell: what `take` hands back, an `Option<RefPtr<..>>` of the type at `rustPath`. */
 export const nativePromiseContext = (rustPath: string) => new NativePromiseContextType(rustPath);
 
 /** `null` or `undefined`, as an alternative of a union. */

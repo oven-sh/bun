@@ -1,0 +1,20 @@
+# -- source: a-call-laid-on-a-function-that-was-tied-before-any-name-was-called-on-the-five-is-seen.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a() { return 1; }
+# function b() { return 2; }
+# function c() { return 3; }
+# function d() { return 4; }
+# function e() { return byName(pick(hidden()), new Box(30)); }
+# function byName(handed, box) { const answer = handed.call(box); return answer + "," + box.count + "," + typeof box.count; }
+# function pick(i) { return i === 0 ? a : i === 1 ? b : i === 2 ? c : i === 3 ? d : e; }
+# function direct(handed) { return handed(); }
+# c.call = function (box) { box.count = "text"; box.note = { deep: 1 }; return "own"; };
+# let sum = "";
+# for (let i = 0; i < 5; i++) sum += direct(pick(i)) + ";";
+# print(sum);
+# -- end of source
+# L0 = Box. The five are first called directly: the pool is tied. The call by name stands in a function that Link reaches only through one of the five: what is laid on closures tied before is gathered where the name is first asked.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "count" proven=int[0, 2147483647]|string
+# RUN(ANSWERS): run-in-shell globalThis.hidden = () => 2;
+# ANSWERS: 1;2;3;4;own,text,string;

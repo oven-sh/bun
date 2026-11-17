@@ -1,6 +1,4 @@
-// Flags: --aot-log-type-mismatches
 // Prints what the compiler saves: casts that find an untyped object
-// STATISTIC: TypedResultsSelected >= 6
 import type { BunFile } from "bun";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";

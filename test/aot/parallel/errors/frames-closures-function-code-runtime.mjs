@@ -1,5 +1,4 @@
 // A text that is put together at run time gives each closure of one function a name. Each line: the names in the first frames of the closures.
-// Alone: which calls record their callee follows from what else is in the executable
 const firstFrame = stack =>
   stack
     .split("\n")[1]

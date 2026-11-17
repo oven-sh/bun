@@ -46,7 +46,7 @@ use crate::options::Format;
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
 pub(crate) fn convert_stmts_for_chunk(
-    c: &LinkerContext<'_>,
+    c: &LinkerContext<'_, '_>,
     source_index: u32,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
@@ -212,7 +212,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            let mut args: Vec<Expr> = Vec::with_capacity(args_len);
+                            let mut args = ExprNodeList::init_capacity(args_len);
                             args.push(Expr::init(
                                 E::Identifier {
                                     ref_: ast.exports_ref,
@@ -250,9 +250,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: bun_ast::ExprNodeList::from_owned_slice(
-                                                    args.into_boxed_slice(),
-                                                ),
+                                                args,
                                                 ..Default::default()
                                             },
                                             stmt.loc,
@@ -352,7 +350,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, require(path), module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            let mut args: Vec<Expr> = Vec::with_capacity(args_len);
+                            let mut args = ExprNodeList::init_capacity(args_len);
                             args.push(Expr::init(
                                 E::Identifier {
                                     ref_: ast.exports_ref,
@@ -379,9 +377,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: ExprNodeList::from_owned_slice(
-                                                    args.into_boxed_slice(),
-                                                ),
+                                                args,
                                                 ..Default::default()
                                             },
                                             stmt.loc,
@@ -463,13 +459,7 @@ pub(crate) fn convert_stmts_for_chunk(
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.func.flags.contains(G::FnFlags::IsExport) {
                         // Be c areful to not modify the original statement
-                        stmt = Stmt::alloc(
-                            S::Function {
-                                // SAFETY: shallow bitwise copy of arena-backed G::Fn.
-                                func: unsafe { core::ptr::read(&raw const s.func) },
-                            },
-                            stmt.loc,
-                        );
+                        stmt = Stmt::alloc(S::Function { func: s.func }, stmt.loc);
                         stmt.data
                             .s_function_mut()
                             .unwrap()
@@ -485,8 +475,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         // Be careful to not modify the original statement
                         stmt = Stmt::alloc(
                             S::Class {
-                                // SAFETY: shallow bitwise copy of arena-backed E::Class.
-                                class: unsafe { core::ptr::read(&raw const s.class) },
+                                class: s.class,
                                 is_export: false,
                             },
                             stmt.loc,
@@ -570,15 +559,8 @@ pub(crate) fn convert_stmts_for_chunk(
                                         // "export default function foo() {}" => "function foo() {}"
 
                                         // Be careful to not modify the original statement
-                                        stmt = Stmt::alloc(
-                                            S::Function {
-                                                // SAFETY: shallow bitwise copy of arena-backed G::Fn.
-                                                func: unsafe {
-                                                    core::ptr::read(&raw const s2.func)
-                                                },
-                                            },
-                                            stmt2.loc,
-                                        );
+                                        stmt =
+                                            Stmt::alloc(S::Function { func: s2.func }, stmt2.loc);
                                         stmt.data.s_function_mut().unwrap().func.name =
                                             Some(s.default_name);
                                     }
@@ -590,10 +572,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                         // Be careful to not modify the original statement
                                         stmt = Stmt::alloc(
                                             S::Class {
-                                                // SAFETY: shallow bitwise copy of arena-backed E::Class.
-                                                class: unsafe {
-                                                    core::ptr::read(&raw const s2.class)
-                                                },
+                                                class: s2.class,
                                                 is_export: false,
                                             },
                                             stmt2.loc,
@@ -605,17 +584,8 @@ pub(crate) fn convert_stmts_for_chunk(
                                     _ => unreachable!(
                                         "Unexpected type in source file {}",
                                         bstr::BStr::new(
-                                            &c.parse_graph()
-                                                .input_files
-                                                .get(
-                                                    c.graph
-                                                        .files
-                                                        .get(source_index as usize)
-                                                        .input_file
-                                                        .get()
-                                                        as usize
-                                                )
-                                                .source
+                                            &c.parse_graph().input_files.items_source()
+                                                [source_index as usize]
                                                 .path
                                                 .text
                                         ),

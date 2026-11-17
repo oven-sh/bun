@@ -3204,15 +3204,7 @@ impl MappingProps {
                 }
             }
             *budget = budget.checked_sub(1).ok_or(AllocError)?;
-            // `G::Property` is not `Clone`; reconstruct from its `Copy` fields.
-            self.list.push(G::Property {
-                key: merge_prop.key,
-                value: merge_prop.value,
-                kind: merge_prop.kind,
-                flags: merge_prop.flags,
-                initializer: merge_prop.initializer,
-                ..Default::default()
-            });
+            self.list.push(*merge_prop);
             self.merge_index
                 .get_or_put(merge_hash)?
                 .value_ptr

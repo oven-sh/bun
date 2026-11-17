@@ -1,11 +1,13 @@
 // A string literal type names a text. Where a build-time constant removes every expression that produced the text or compared with it,
 // `bun build --compile` leaves the text out of the executable, and `bun build --compile --aot` must leave it out too, although
 // the type still lists it. A value that holds the text can still arrive from parsed data, and is handled as the type says.
-import { afterAll, describe, expect, test } from "bun:test";
-import { readFileSync, rmSync } from "fs";
+import { describe, expect } from "bun:test";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, test } from "./harness/default-timeout";
+import { bytesAndStoredStrings } from "./harness/executable-bytes";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const sources = {
@@ -83,7 +85,7 @@ describe.skipIf(!!unsupported)("compile/aot/literal-types-in-executables", () =>
       ),
     );
     const run = await spawned([executable], folder, bunEnv);
-    const bytes = readFileSync(executable);
+    const bytes = bytesAndStoredStrings(executable);
     rmSync(executable);
     expect(run.exitCode).toBe(0);
     return {

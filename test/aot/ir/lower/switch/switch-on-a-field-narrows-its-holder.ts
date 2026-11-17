@@ -5,8 +5,7 @@
 // CHECK-NEXT: Branch [[isTrue]] -> taken [[trueCase]](| 0), notTaken [[notTrue]](| 0)
 // CHECK: [[trueCase]]([[trueRead]]):
 // CHECK-NEXT: [[succeeded]] = NarrowByField [[flagHolder]], [[trueRead]] key="ok"
-// CHECK: [[narrowedToSucceeded]] = Convert [[succeeded]] declared={type=undefined|null|L{{*}}} illTypedCause=Assertion
-// CHECK-NEXT: = PropGet [[narrowedToSucceeded]] key="value"
+// CHECK: = PropGet [[succeeded]] key="value"
 // CHECK: [[notTrue]]([[notTrueRead]]):
 // CHECK-NEXT: [[notSucceeded]] = NarrowByField [[flagHolder]], [[notTrueRead]] key="ok"
 // CHECK: [[isFalse]] = StrictEq [[notTrueRead]],
@@ -22,12 +21,10 @@
 // CHECK: Switch {{*}}cases=[0, 1] -> case [[caseA]](| 0), case [[caseB]](| 0), otherwise
 // CHECK: [[caseA]]([[readA]]):
 // CHECK-NEXT: [[isA]] = NarrowByField [[holder]], [[readA]] key="kind"
-// CHECK: [[narrowedToA]] = Convert [[isA]] declared={type=undefined|null|L{{*}}} illTypedCause=Assertion
-// CHECK-NEXT: = PropGet [[narrowedToA]] key="a"
+// CHECK: = PropGet [[isA]] key="a"
 // CHECK: [[caseB]]([[readB]]):
 // CHECK-NEXT: [[isB]] = NarrowByField [[holder]], [[readB]] key="kind"
-// CHECK: [[narrowedToB]] = Convert [[isB]] declared={type=undefined|null|L{{*}}} illTypedCause=Assertion
-// CHECK-NEXT: = PropGet [[narrowedToB]] key="b"
+// CHECK: = PropGet [[isB]] key="b"
 // CHECK-LABEL: function {{*}}name="sharedBody"
 // CHECK: = PropGet [[sharedHolder]] key="kind"
 // CHECK: Switch {{*}}cases=[0, 1] -> case [[first]](| 0), case [[second]](| 0), otherwise
@@ -38,8 +35,7 @@
 // CHECK-NEXT: [[secondHolder]] = NarrowByField [[sharedHolder]], [[secondRead]] key="kind"
 // CHECK-NEXT: Jump -> next [[body]]([[secondHolder]])
 // CHECK: [[body]]([[joined]]
-// CHECK-NEXT: [[narrowedToEither]] = Convert [[joined]] declared={type=undefined|null|L{{*}}|L{{*}}} illTypedCause=Assertion
-// CHECK-NEXT: = PropGet [[narrowedToEither]] key="id"
+// CHECK-NEXT: = PropGet [[joined]] key="id"
 // CHECK-LABEL: function {{*}}name="storeInTest"
 // CHECK-NOT: NarrowByField
 // CHECK-LABEL: function {{*}}name="strings"

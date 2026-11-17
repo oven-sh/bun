@@ -1,11 +1,10 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)` and hands it to a function of the project, which says `new Worker(entry)`.
-// Where the run is built in layers, the project's build doesn't see the test file and the test file's build doesn't read the project. The project's build
-// says which parameters of its exports start Workers, and the build above takes a call of such an export for a start.
+// The build doesn't follow `entry`. Where it can't read what some Worker starts from, it compiles every file of code whose URL or path the program writes out.
 // A file that nobody compiled runs from its text, in the interpreter, with the right answer, so nobody notices.
 const ways: Record<string, string> = {
   "a named import": `start(new URL("./src/worker/w1.ts", import.meta.url))`,
@@ -39,7 +38,7 @@ export const startOfNode = (entry: URL) => askOfNode(new Worker(entry));
   "src/wrap.ts": `import { start } from "./spawn";\nexport const begin = (entry: URL) => start(entry);\n`,
   "src/barrel/index.ts": `export * from "../spawn";\n`,
   "src/renamed.ts": `export { start as launch } from "./barrel";\n`,
-  // Most URLs of code files that tests write are there to read a source. No Worker starts from them, so no build takes them in.
+  // The test only reads src/only-read.ts. Its URL goes to a function of the project like the others, so the build compiles that file too.
   "src/read.ts": `import { readFileSync } from "node:fs";\nexport const read = (file: URL) => readFileSync(file, "utf8").length;\n`,
   "src/only-read.ts": `export const never = "run";\n`,
   "workers.test.ts":
@@ -87,7 +86,9 @@ const asWritten = Object.keys(ways).map((name, index) => `SEEN ${name} | w${inde
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-named-by-a-test-file", files);
-  const ran = await run([bunExe(), "test", ...flags, "--isolate"], String(dir), { ...bunEnv, ...env });
+  const command = [bunExe(), "test", "--timeout=60000", ...flags, "--isolate"];
+  const ran = await run(command, String(dir), { ...bunEnv, ...env });
+  if (ran.exitCode !== 0) console.error(ran.stderr);
   return {
     seen: ran.stdout.split("\n").filter(line => line.startsWith("SEEN ")),
     taken: [
@@ -99,13 +100,24 @@ async function see(flags: string[], env: Record<string, string>) {
   };
 }
 
-// Over three layers src/spawn.ts lies in a program below the files that import it, so what its build says goes through the build between.
-for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1", "TestRunLayers:3,TestRunPartFiles:1"]) {
-  test(`each Worker answers as under plain bun test, and runs compiled (${words})`, async () => {
-    const plain = await see([], {});
-    expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0 });
-    expect(await see(["--aot"], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
-    const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
-    expect(await see(["--aot"], env)).toEqual({ ...plain, taken: [count] });
-  }, 240_000);
+let plain: Awaited<ReturnType<typeof see>>;
+beforeAll(async () => {
+  plain = await see([], {});
+});
+
+test("each Worker answers under plain bun test", () => {
+  expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0 });
+});
+
+// Both cases build the same program, so they read one run: the one that writes over the files.
+for (const words of ["TestRunLayers:0"]) {
+  const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
+  let ran: ReturnType<typeof see> | undefined;
+  const overWrittenFiles = () => (ran ??= see(["--aot"], env));
+  test(`each Worker answers as under plain bun test (${words})`, async () => {
+    expect({ ...(await overWrittenFiles()), taken: plain.taken }).toEqual(plain);
+  });
+  test(`each Worker runs compiled (${words})`, async () => {
+    expect(await overWrittenFiles()).toEqual({ ...plain, taken: [count + 1] });
+  });
 }

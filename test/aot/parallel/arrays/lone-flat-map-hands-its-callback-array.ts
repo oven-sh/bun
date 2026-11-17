@@ -1,5 +1,4 @@
 // `list.flatMap(f)` alone, in code that runs often: f gets the element, its index and the list itself, and `this` where a second argument is given.
-// STATISTIC: ArrayChainsFused >= 4
 const list = [1, 2, 3];
 const texts = ["a", "bc"];
 function kinds(): string {

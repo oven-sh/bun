@@ -1,10 +1,10 @@
 // RUN: link
 // `symbol as MappedSymbol` also says that `symbol.links`, a Links, is a MappedLinks: the code after the cast reads it as one. So the layout of the member's
 // type in the source goes below the layout of its type in the target, one level deep.
-// CHECK: layout {{*}}name="Links" {{*}}supertypes=[
+// CHECK: layout [[linksRecord]] module={{*}}fields=[{key="target"{{*}}supertypes=[
 // CHECK-NOT: ,
 // CHECK: [[mapped]]]
-// CHECK: layout [[mapped]] name="MappedLinks"
+// CHECK: layout [[mapped]] module={{*}}fields=[{key="mappedType"
 interface Links {
   target: number;
 }

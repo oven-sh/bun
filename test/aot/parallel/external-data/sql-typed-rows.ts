@@ -1,7 +1,6 @@
 // sql<Row[]>`..` decodes each row from the wire into a typed object of Row. A row that does not match Row is created as a plain object, as before.
 // A callback called with such rows gets a typed body, and an untyped clone for rows that do not match.
 // An object literal that such a callback returns is allocated as the type the enclosing call is expected to return.
-// STATISTIC: TypedResultsSelected >= 15
 import { SQL } from "bun";
 
 const OID = { bool: 16, int8: 20, int4: 23, text: 25, json: 114, float4: 700, float8: 701, varchar: 1043, timestamp: 1114, timestamptz: 1184, uuid: 2950, mood: 70000 } as const;

@@ -94,7 +94,6 @@ impl TreeWriter<'_, '_> {
     ) -> (TypeNodeId, Flags) {
         let is_typescript = !self.file.is_js;
         let Some((parameter, is_before_required)) = replaced else {
-            // A nested function has lost its `?` and its defaults: a caller may omit any of its parameters.
             return match (is_typescript, can_be_optional) {
                 (true, true) => (self.any_type(position), Flags::OPTIONAL),
                 (true, false) => (self.any_type(position), Flags::empty()),
@@ -102,7 +101,6 @@ impl TreeWriter<'_, '_> {
             };
         };
         let flags = parameter.flags & PRESERVED_PARAMETER_FLAGS;
-        // The compiler moves a default into the body: `(a = 1)` becomes `(t0)`, which a caller may still omit.
         let has_default_in_body = parameter.default.is_some() && default.is_none();
         if !has_default_in_body {
             return (parameter.ty, flags);

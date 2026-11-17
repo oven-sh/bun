@@ -341,26 +341,18 @@ namespace WebStreams {
 using namespace JSC;
 using namespace WebCore;
 
-extern "C" void CompressionStreamCoder__destroy(void*);
-extern "C" void TextEncoderStreamEncoder__destroyForStream(void*);
-extern "C" void TextDecoder__destroyForStream(void*);
-
-// Drop the native coder/decoder now rather than waiting for the cell's finalizer: a
-// CompressionStream's zlib/brotli/zstd state is hundreds of KB of window buffer, and
-// finalizers run late (main-thread, typically only at full GC), so relying on them for
-// this in a hot pipe loop lets native memory grow unbounded. The finalizer stays as an
-// idempotent fallback for an abandoned stream that never reaches a terminal.
+// The cell is destroyed late, and a CompressionStream's zlib/brotli/zstd state is hundreds of KB: a hot pipe loop can't wait.
 void nativeTransformReleaseState(JSTransformStream* stream)
 {
     stream->m_nativeStateReleasePending = false;
     if (auto* s = dynamicDowncast<JSCompressionStream>(stream))
-        CompressionStreamCoder__destroy(std::exchange(s->m_coder, nullptr));
+        s->m_coder = nullptr;
     else if (auto* s = dynamicDowncast<JSDecompressionStream>(stream))
-        CompressionStreamCoder__destroy(std::exchange(s->m_coder, nullptr));
+        s->m_coder = nullptr;
     else if (auto* s = dynamicDowncast<JSTextEncoderStream>(stream))
-        TextEncoderStreamEncoder__destroyForStream(std::exchange(s->m_encoder, nullptr));
+        s->m_encoder = nullptr;
     else if (auto* s = dynamicDowncast<JSTextDecoderStream>(stream))
-        TextDecoder__destroyForStream(std::exchange(s->m_decoder, nullptr));
+        s->m_decoder = nullptr;
 }
 
 void nativeTransformReleaseStateIfIdle(JSTransformStream* stream)

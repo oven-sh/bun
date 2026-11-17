@@ -1,10 +1,10 @@
 // What the compiler reads in place of src/js/node/_http_client.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9c93b772a6d52739dc53cfae4e0a4b02039cbd05e91b2001dc9932bb210d4699.
+// Written against that file with the SHA-256 9724af366dc7a482ea6242cf63650b397af74552f4962baa6ac24b564886e19a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_client"
 // This is a port of Node.js's lib/_http_client.js built on top of node:net /
-// node:tls sockets and the llhttp HTTPParser binding, matching the upstream
+// node:tls sockets and the HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
 const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
@@ -272,6 +272,11 @@ declare global {
   }
 }
 
+// Compiled ahead of time, a store that names the property makes it a field of the class, and every read of the name on another message first takes that message for a request of a client.
+function storeUnderName(request: $Node.ClientRequest, name: string, value: unknown) {
+  (request as any)[name] = value;
+}
+
 function ClientRequest(
   this: $Node.ClientRequest,
   input?: string | URL | $Node.ClientRequestOptions | ReturnType<typeof urlToHttpOptions> | null,
@@ -399,7 +404,7 @@ function ClientRequest(
     validateBoolean(insecureHTTPParser, "options.insecureHTTPParser");
   }
 
-  this.insecureHTTPParser = insecureHTTPParser;
+  storeUnderName(this, "insecureHTTPParser", insecureHTTPParser);
 
   const httpValidation = options.httpValidation;
   if (httpValidation !== undefined) {
@@ -413,7 +418,7 @@ function ClientRequest(
     }
   }
 
-  this.httpValidation = httpValidation;
+  storeUnderName(this, "httpValidation", httpValidation);
 
   const joinDuplicateHeaders = options.joinDuplicateHeaders;
   if (joinDuplicateHeaders !== undefined) {
@@ -557,7 +562,7 @@ function ClientRequest(
       }
     } else {
       $debug("CLIENT use net.createConnection", opts);
-      this.onSocket(require("node:net").createConnection(opts));
+      this.onSocket(require("node:net").createConnection(opts) as $Node.HttpClientSocket);
     }
   }
   if (onClientRequestCreatedChannel.hasSubscribers) {

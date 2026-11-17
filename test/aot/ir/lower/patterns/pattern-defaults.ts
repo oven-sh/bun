@@ -1,14 +1,10 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="arrayDefault"
+// CHECK-NEXT: ([[iterable]]: {{*}}, [[g]]:
 // CHECK: [[element]] = ResultAt {{*}}index=1
 // CHECK-NEXT: [[elementTest]] = TypeTest [[element]] testedType=undefined @
 // CHECK-NEXT: Branch [[elementTest]] -> taken [[elementMissing]](| 0), notTaken [[elementPresent]](| 0)
 // CHECK: [[elementMissing]]([[absentElement]])
-// CHECK-NEXT: Jump -> next [[elementDefault]]()
-// CHECK: [[elementDefault]]()
-// CHECK-NEXT: [[g]] = Convert {{*}}declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next [[elementCall]]()
-// CHECK-NEXT: [[elementCall]]()
 // CHECK-NEXT: = Call [[g]] calleeName="g"
 // CHECK-LABEL: function {{*}}name="assignedFunction"
 // CHECK: [[assigned]] = PropGet {{*}}key="x"
@@ -20,13 +16,11 @@
 // CHECK: [[function]] = PropGet {{*}}key="c"
 // CHECK: = TypeTest [[function]] testedType=undefined @
 // CHECK-LABEL: function {{*}}name="objectDefault"
+// CHECK-NEXT: ([[source]]: {{*}}, [[f]]:
 // CHECK: [[read]] = PropGet {{*}}key="a"
 // CHECK: [[test]] = TypeTest [[read]] testedType=undefined @
 // CHECK-NEXT: Branch [[test]] -> taken [[missing]](| 0), notTaken [[present]](| 0)
 // CHECK: [[missing]]([[absent]]):
-// CHECK-NEXT: Jump -> next [[default]]()
-// CHECK: [[default]]():
-// CHECK-NEXT: [[f]] = Convert {{*}}declared={type=undefined|null|function flags=[IsExpected]}
 // CHECK-NEXT: [[computed]] = Call [[f]] calleeName="f"
 // CHECK-NEXT: Jump -> next [[join]]([[computed]])
 

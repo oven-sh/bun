@@ -386,7 +386,6 @@ impl InitCommand {
             }
             let mut ifdir_z = ifdir.to_vec();
             ifdir_z.push(0);
-            // SAFETY: ifdir_z[len-1] == 0 written above.
             let ifdir_zstr = ZStr::from_slice_with_nul(&ifdir_z[..]);
             if let Err(err) = bun_sys::chdir(ifdir_zstr) {
                 bun_core::pretty_errorln!(
@@ -540,13 +539,10 @@ impl InitCommand {
                 }
 
                 // Find any source file
-                let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), b".") else {
+                let Ok(dir) = bun_sys::Dir::open(b".") else {
                     break 'infer;
                 };
-                let _close = scopeguard::guard(dir, |d| {
-                    let _ = bun_sys::close(d);
-                });
-                let mut it = bun_sys::iterate_dir(dir);
+                let mut it = bun_sys::iterate_dir(dir.fd());
                 while let Some(file) = it.next().map_err(crate::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;
@@ -803,16 +799,14 @@ impl InitCommand {
         }
 
         'write_package_json: {
-            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
-                .as_ref()
-            {
-                Some(f) => (f.handle(), None),
+            let created;
+            let file: &bun_sys::File = match &package_json_file {
+                Some(file) => file,
                 None => {
-                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
-                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+                    created = bun_sys::File::create(Fd::cwd(), b"package.json", true)?;
+                    &created
                 }
             };
-            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -839,7 +833,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
+            if let Err(err) = file.write_all(written) {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
@@ -848,7 +842,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             if let Err(err) =
-                bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
+                bun_sys::ftruncate(file.fd(), i64::try_from(written.len()).expect("int cast"))
             {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
@@ -1383,12 +1377,12 @@ impl Template {
         fields: &mut PackageJSONFields,
         bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
-        type Rope = bun_ast::E::Rope;
+        use bun_ast::E::Rope;
         fields.name = self.name().to_vec();
         // Allocate in the process-lifetime CLI arena.
-        let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
+        let key: &mut Rope<'_> = crate::cli::cli_arena().alloc(Rope {
             head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
-            next: core::ptr::null_mut(),
+            next: None,
         });
         let mut object = fields.object.unwrap();
         let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
@@ -1534,9 +1528,7 @@ impl Template {
                         target_z.push(0);
                         let mut dest_z = template_file.path.to_vec();
                         dest_z.push(0);
-                        // SAFETY: NUL-terminated above.
                         let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
-                        // SAFETY: NUL-terminated above.
                         let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
                         if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
                             break 'symlink_cursor_rule;
@@ -1561,8 +1553,7 @@ impl Template {
             };
 
             let _ = Assets::create_new(
-                ZStr::from_static(b"CLAUDE.md\0"),
-                // SAFETY: literal is NUL-terminated
+                bun_core::zstr!("CLAUDE.md"),
                 Self::AGENT_RULE[end_of_frontmatter..].trim_ascii_start(),
             );
         }
@@ -1610,9 +1601,7 @@ impl Template {
                     if written >= total {
                         return false;
                     }
-                    pathbuf[written] = 0;
-                    // SAFETY: NUL written at pathbuf[written].
-                    ZStr::from_buf(&pathbuf[..], written)
+                    ZStr::nul_terminate(&mut pathbuf, written)
                 };
 
                 if bun_sys::exists(path.as_bytes()) {

@@ -1,0 +1,19 @@
+# f1 = turn
+# -- source: uint8-clamped-array-brighten.ts
+# const pixels = new Uint8ClampedArray(512);
+# function turn(i: number): number {
+#   const by = i & 1 ? 9 : -9;
+#   for (let k = 0; k < pixels.length; k++) pixels[k] = pixels[k]! + by;
+#   return pixels[i & 511]!;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 42 instructions, 16 of them patches, a turn of the written loop steps by 64.
+# When the bound was taken: loop: operations 44, patches 0, moves 16, unlikely 6 ; loop: operations 10, patches 1, moves 2, unlikely 0.
+# RUN(X64): loops most:60,12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 60
+# X64-NEXT: loop: at most 12

@@ -1,0 +1,23 @@
+# -- source: main.js
+# const handlers = [];
+# function install(callback) { handlers.push(n => callback(n)); return handlers.length; }
+# function total(callback, count) { const each = n => callback(n) | 0; return (each(1) + each(count)) | 0; }
+# function dig(depth) { return depth > 0 ? (dig(depth - 1) + 1) | 0 : 0; }
+# function boot(base) {
+#     let near = base + 1, far = base + 1000;
+#     const installed = install(x => (x + near) | 0);
+#     return installed + total(x => (x + far) | 0, 5);
+# }
+# print(boot(10), dig(200), handlers[0](1), dig(200), handlers[0](2));
+# -- end of source
+# total() runs once and only calls what it is handed, so boot() may make that arrow in its own frame. The closure inside captures the parameter. (What install() is handed goes on to a list: nobody lends it.)
+# Left out, it would be stored into a word that outlives the frame. A parameter that is only called is the source of no word: it stays a capture, which brings it to the heap where a heap closure takes it.
+# RUN(TOTAL): walk f2 mechanisms=all
+# TOTAL-LABEL: code f2:Body
+# TOTAL-NOT: PutModuleVariable
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2027 200 12 200 13
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 2027 200 12 200 13
+# RUN(HEAP): run-in-shell mechanisms=all-CellsInFrames
+# HEAP: 2027 200 12 200 13

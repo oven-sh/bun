@@ -1,10 +1,10 @@
 use crate::api::bun::process as bun_process;
 use crate::api::bun::process::sync as spawn_sync;
 use bun_ast::Source as LoggerSource;
-use bun_bundler::ResolvedExports;
 use bun_bundler::bundle_v2::BundleV2;
 use bun_bundler::bundle_v2::DependenciesScannerResult;
 use bun_bundler::mal_prelude::*;
+use bun_bundler::{LinkerGraph, ResolvedExports};
 use bun_collections::StringSet;
 use bun_core::MutableString;
 use bun_core::strings;
@@ -21,7 +21,9 @@ pub(crate) fn generate(
     entry_point: &[u8],
     result: &mut DependenciesScannerResult,
 ) -> Result<(), crate::Error> {
-    let Some(react_component_export) = find_react_component_export(result.bundle_v2) else {
+    let Some(react_component_export) =
+        find_react_component_export(result.bundle_v2, result.linker_graph)
+    else {
         Output::err_generic(
             "No component export found in <b>{}<r>",
             (bun_core::fmt::quote(entry_point),),
@@ -104,7 +106,7 @@ enum Written {
 fn create_file(filename: &[u8], contents: &[u8], existing: Existing) -> bun_sys::Result<Written> {
     let flags = match bun_sys::File::read_from(Fd::cwd(), filename) {
         Ok(on_disk) => {
-            let holds = |body: &[u8]| strings::eql_long(&on_disk, body, true);
+            let holds = |body: &[u8]| strings::eql_long(&on_disk, body);
             if holds(contents) {
                 return Ok(Written::AlreadyThere);
             }
@@ -189,7 +191,7 @@ fn run_bun(argv: &mut [&[u8]], failure: &str) -> Result<(), crate::Error> {
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },
@@ -350,7 +352,7 @@ fn has_any_tailwind_classes_in_source_files(
     bundler: &BundleV2,
     reachable_files: &[bun_ast::Index],
 ) -> bool {
-    let input_files = bundler.graph.input_files.slice();
+    let input_files = &bundler.graph.input_files;
     let sources = input_files.items_source();
     let loaders = input_files.items_loader();
 
@@ -424,7 +426,7 @@ fn get_shadcn_components(
     bundler: &BundleV2,
     reachable_files: &[bun_ast::Index],
 ) -> Result<StringSet, bun_alloc::AllocError> {
-    let input_files = bundler.graph.input_files.slice();
+    let input_files = &bundler.graph.input_files;
     let loaders = input_files.items_loader();
     let all = bundler.graph.ast.items_import_records();
     let mut icons = StringSet::new();
@@ -445,10 +447,13 @@ fn get_shadcn_components(
     Ok(icons)
 }
 
-fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]> {
-    let input_files = bundler.graph.input_files.slice();
+fn find_react_component_export<'r>(
+    bundler: &'r BundleV2<'_>,
+    linker_graph: &'r LinkerGraph<'_>,
+) -> Option<&'r [u8]> {
+    let input_files = &bundler.graph.input_files;
     let loaders = input_files.items_loader();
-    let resolved_exports: &[ResolvedExports] = bundler.linker.graph.meta.items_resolved_exports();
+    let resolved_exports: &[ResolvedExports] = linker_graph.meta.items_resolved_exports();
     let sources = input_files.items_source();
 
     let entry_point_ids = bundler.graph.entry_points.as_slice();

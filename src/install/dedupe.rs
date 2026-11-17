@@ -10,10 +10,9 @@ use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry, print_log_errors};
 use crate::package_manager::Options::{Enable, LogLevel};
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::{
-    Dependency, DependencyID, DependencyVersionTag, Features, GetJsonResult, PackageID,
-    PackageManager, ResolutionTag, dependency, invalid_package_id,
+    Dependency, DependencyID, Features, GetJsonResult, PackageID, PackageManager, ResolutionTag,
+    dependency, invalid_package_id,
 };
 
 struct Pass<'a> {
@@ -83,8 +82,8 @@ impl<'a> Pass<'a> {
     fn cover(&mut self) -> usize {
         let n = self.candidates.len();
         let m = self.edge_count;
-        self.required.copy_into(&mut self.chosen);
-        self.covered.unmanaged.set_all(false);
+        self.chosen.copy_from(&self.required);
+        self.covered.set_all(false);
         // `count[c]` is how many uncovered edges candidate `c` satisfies. `mark_covered` updates it.
         self.count.clear();
         self.count.resize(n, 0);
@@ -180,7 +179,7 @@ impl<'a> Pass<'a> {
         for edges in &mut self.edges {
             edges.clear();
         }
-        self.voted.unmanaged.set_all(false);
+        self.voted.set_all(false);
         for (pkg_id, slice) in dep_slices.iter().enumerate() {
             if !self.voters.is_set(pkg_id) {
                 continue;
@@ -223,10 +222,10 @@ impl<'a> Pass<'a> {
                 },
                 false,
             );
-            self.movable.unmanaged.set_all(false);
+            self.movable.set_all(false);
             self.cur_c.clear();
             self.cur_c.resize(m, 0);
-            self.required.unmanaged.set_all(false);
+            self.required.set_all(false);
             let mut can_move = false;
 
             for (e, &(dep_id, owner)) in edges.iter().enumerate() {
@@ -255,7 +254,7 @@ impl<'a> Pass<'a> {
                         self.required.set(cur_c);
                     }
                     Some(range) => {
-                        let query = &range.npm().version;
+                        let query = &range.npm.version;
                         // The candidates are sorted, so the ones that an exact version can match
                         // are next to each other.
                         let in_question = match query.get_exact_version() {
@@ -307,7 +306,7 @@ impl<'a> Pass<'a> {
             }
 
             let base_size = self.cover();
-            self.chosen.copy_into(&mut self.survivors);
+            self.survivors.copy_from(&self.chosen);
 
             self.protected.clear();
             for (e, &(_, owner)) in edges.iter().enumerate() {
@@ -331,7 +330,7 @@ impl<'a> Pass<'a> {
                     }
                     self.required.set(k);
                     if self.cover() == base_size {
-                        self.chosen.copy_into(&mut self.survivors);
+                        self.survivors.copy_from(&self.chosen);
                     } else {
                         self.required.unset(k);
                     }
@@ -364,19 +363,19 @@ impl<'a> Pass<'a> {
 
     // Packages the pass itself removes must not vote (pnpm/pnpm#9213): shrink voters until the outcome agrees.
     fn settle(&mut self, cur: &[PackageID], live: &DynamicBitSet) -> Vec<PackageID> {
-        live.copy_into(&mut self.voters);
+        self.voters.copy_from(live);
         let mut best: Option<Vec<PackageID>> = None;
         loop {
             let next = self.vote(cur, live);
             let after = reachable(self.lockfile, &next, self.frozen_below);
-            if !after.unmanaged.subset_of(&self.voters.unmanaged) {
+            if !after.subset_of(&self.voters) {
                 return best.unwrap_or(next);
             }
-            self.voted.unmanaged.set_exclude(&after.unmanaged);
+            self.voted.set_exclude(&after);
             if self.voted.count() == 0 {
                 return next;
             }
-            self.voters.unmanaged.set_exclude(&self.voted.unmanaged);
+            self.voters.set_exclude(&self.voted);
             best = Some(next);
         }
     }
@@ -527,7 +526,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
             loop {
                 cur = pass.settle(&cur, &live);
                 let after = reachable(lockfile, &cur, frozen_below);
-                if after.unmanaged.eql(&live.unmanaged) {
+                if after.eql(&live) {
                     break;
                 }
                 live = after;
@@ -700,13 +699,22 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
     }
 }
 
+/// A `dependency::Version` that is an npm range.
+pub(crate) struct NpmRange {
+    pub literal: bun_semver::String,
+    pub npm: dependency::NpmInfo,
+}
+
 pub(crate) fn effective_npm_range(
     lockfile: &Lockfile,
     dep_id: DependencyID,
     dep: &Dependency,
-) -> Option<dependency::Version> {
-    effective_version(lockfile, dep_id, dep)
-        .filter(|version| version.tag == DependencyVersionTag::Npm)
+) -> Option<NpmRange> {
+    let dependency::Version { literal, value } = effective_version(lockfile, dep_id, dep)?;
+    match value {
+        dependency::Value::Npm(npm) => Some(NpmRange { literal, npm }),
+        _ => None,
+    }
 }
 
 /// Like the resolver, never overrides a `workspace:` edge.
@@ -810,8 +818,7 @@ pub fn dedupe_before_install(
 fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Result<bool> {
     let quiet = manager.options.log_level == LogLevel::Silent;
     let log = manager.log_mut();
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let path: &[u8] = manager.root_package_json_path.as_bytes();
     let (source, json) =
         match manager
             .workspace_package_json_cache

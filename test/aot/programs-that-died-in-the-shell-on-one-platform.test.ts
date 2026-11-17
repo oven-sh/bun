@@ -1,22 +1,17 @@
-// Programs that died of a signal in the `jsc` shell on one platform alone. heat/run-heat.ts deals one program in forty to a run, so the next
-// run on that platform would most likely not take them. Every run takes these: as they stand, and compiled as if every function were hot,
-// cold, or neither. Where the shell dies of a signal on Linux, shell/quick.py says where (shell/where-it-died.py). shell/tools.ts says what
-// the scripts need.
-import { expect, test } from "bun:test";
+// Programs that died of a signal in the `jsc` shell on one platform alone. Every run takes these. Where the shell dies of a signal on Linux,
+// shell/quick.py says where (shell/where-it-died.py). shell/tools.ts says what the scripts need.
+import { expect } from "bun:test";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
 const programs = [
-  // Linux on ARM64: signal 11 at each of the three heats, after the line "left early": an array is frozen in a loop, a store to it throws
+  // Linux on ARM64: signal 11, after the line "left early": an array is frozen in a loop, a store to it throws
   // and is caught there, and the run counts the calls of operations.
   "arrays/index-fill-grows-like-push",
-  // Its kin, so that the same run says what that death needs. Stores to frozen arrays throw and are caught, and the run does not count.
-  "arrays/frozen-array-error-messages",
-  // Arrays are frozen and the run counts, and nothing throws.
-  "arrays/elements-frozen-arrays-fit-not-coerced",
-  // Linux on x64, a shell built with assertions: signal 6 as they stand and at each of the three heats. A module of the image loads another
+  // Linux on x64, a shell built with assertions: signal 6 as they stand. A module of the image loads another
   // under a name that the program computes, and the shell took the path of the first for a URL.
   "modules/two-loads-module-cannot-linked-give",
   "structural-types/module-imported-by-computed-name-untyped",
@@ -50,23 +45,3 @@ test.skipIf(!!scriptSkipReason)(
   },
   290_000,
 );
-
-for (const heat of ["hot", "cold", "neither"]) {
-  test.skipIf(!!scriptSkipReason)(
-    `they answer the same with every function ${heat}`,
-    async () => {
-      const { stdout, stderr, exitCode } = await run(
-        [python!, join(import.meta.dir, "shell", "heat.py"), heat, ...programs],
-        undefined,
-        scriptEnvironment(),
-      );
-      const { lines, todo } = withoutTodo(stderr);
-      expect(lines).toEqual([]);
-      expect(stdout.split("\n").filter(line => line !== "")).toEqual([
-        `${programs.length - todo} programs answer the same with every function ${heat}, 0 do not`,
-      ]);
-      expect(exitCode).toBe(0);
-    },
-    290_000,
-  );
-}

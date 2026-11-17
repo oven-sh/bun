@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="combines"
 // CHECK-NOT: NewSuppressedError
 // CHECK: role=CatchHandler

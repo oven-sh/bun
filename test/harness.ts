@@ -8,7 +8,7 @@
 import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
 import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
-import { beforeAll, describe, expect } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
@@ -16,7 +16,7 @@ import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
 import { locksEnvironment } from "./aot/hardened";
 import { ownTemporaryFolder } from "./aot/harness/temporary-folders";
-import "./aot/harness/without-installing-packages";
+import { temporaryFolderThatInstalls } from "./aot/harness/without-installing-packages";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -738,17 +738,20 @@ export function tempDirWithFiles(
   return base;
 }
 
+// On Windows a process that was just killed can hold the folder for a moment: a child that a job
+// object ends after its parent, for one. The folder is busy then. A program in it that has not quite ended may not be removed.
+const isHeldByEndingProcess = (error: any) => isWindows && (error?.code === "EBUSY" || error?.code === "EPERM");
+
 class DisposableString extends String {
   [Symbol.dispose]() {
-    // On Windows a process that was just killed can hold the folder for a moment: a child that a job
-    // object ends after its parent, for one. `rmSync` does not act on `maxRetries`.
+    // `rmSync` does not act on `maxRetries`.
     const deadline = Date.now() + 5000;
     while (true) {
       try {
         fs.rmSync(this + "", { recursive: true, force: true });
         return;
       } catch (error: any) {
-        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        if (!isHeldByEndingProcess(error) || Date.now() > deadline) throw error;
         sleepSync(50);
       }
     }
@@ -759,7 +762,7 @@ class DisposableString extends String {
       try {
         return await fs.promises.rm(this + "", { recursive: true, force: true });
       } catch (error: any) {
-        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        if (!isHeldByEndingProcess(error) || Date.now() > deadline) throw error;
         await Bun.sleep(50);
       }
     }
@@ -772,6 +775,16 @@ export function tempDir(
 ): string & DisposableString & AsyncDisposable {
   const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
 
+  return new DisposableString(base) as string & DisposableString & AsyncDisposable;
+}
+
+/** `tempDir`, but with no node_modules folder above it. Auto-install is off in the other temporary folders. */
+export function autoInstallTempDir(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & DisposableString & AsyncDisposable {
+  const base = ownTemporaryFolder(fs.mkdtempSync(join(temporaryFolderThatInstalls(), basename + "_")));
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
@@ -841,7 +854,7 @@ export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: num
     for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
       fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
     }
-    const tmp = fs.realpathSync(os.tmpdir());
+    const tmp = fs.realpathSync(temporaryFolderThatInstalls());
     for (let parent = dirname(fs.realpathSync(dir)); parent !== dirname(parent); parent = dirname(parent)) {
       const mode = fs.statSync(parent).mode & 0o7777;
       if (mode & 0o001) continue;
@@ -2126,18 +2139,6 @@ export function forceGuardMalloc(env) {
   }
 }
 
-export function fileDescriptorLeakChecker() {
-  const initial = getMaxFD();
-  return {
-    [Symbol.dispose]() {
-      const current = getMaxFD();
-      if (current > initial) {
-        throw new Error(`File descriptor leak detected: ${current} (current) > ${initial} (initial)`);
-      }
-    },
-  };
-}
-
 /**
  * Gets a secret from the environment.
  *
@@ -2212,6 +2213,24 @@ Object.defineProperty(globalThis, "gc", {
 export function waitForFileToExist(path: string, interval_ms: number) {
   while (!fs.existsSync(path)) {
     sleepSync(interval_ms);
+  }
+}
+
+/** Linux only. `state` is the third field of `/proc/<pid>/task/<tid>/stat`: "T" is stopped, "Z" is a zombie. */
+export async function untilEveryThreadIs(state: string, pid: number) {
+  const states = () =>
+    fs.readdirSync(`/proc/${pid}/task`).map(tid => {
+      try {
+        const stat = fs.readFileSync(`/proc/${pid}/task/${tid}/stat`, "utf8");
+        return stat[stat.lastIndexOf(")") + 2];
+      } catch {
+        return "X";
+      }
+    });
+  const deadline = performance.now() + 30_000;
+  while (states().some(other => other !== state)) {
+    if (performance.now() > deadline) throw new Error(`threads of ${pid}: ${states()}`);
+    await Bun.sleep(1);
   }
 }
 
@@ -2566,6 +2585,27 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
 }
 
 export const rss: () => number = process.memoryUsage.rss;
+
+/**
+ * The `test` of a file that judges by the memory of its own process. ASAN's quarantine keeps freed blocks resident, so
+ * under ASAN the file runs again in a child without one, and its tests are skipped in this process.
+ */
+export function testThatMeasuresOwnMemory(file: string): typeof test {
+  if (!isASAN || process.env.ASAN_OPTIONS?.includes("quarantine_size_mb=0")) return test;
+  test(
+    "in a child without ASAN's quarantine",
+    async () => {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), "test", "--timeout=270000", file],
+        env: withoutAsanQuarantine(bunEnv),
+        stdio: ["ignore", "inherit", "inherit"],
+      });
+      expect(await child.exited).toBe(0);
+    },
+    270_000,
+  );
+  return test.skip as typeof test;
+}
 
 /** Read exactly `len` bytes from `fd` at absolute `offset`. */
 export function preadExact(fd: number, offset: number, len: number): Buffer {

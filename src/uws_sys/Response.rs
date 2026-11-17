@@ -611,18 +611,18 @@ impl<const SSL: bool> Response<SSL> {
         );
     }
 
-    pub(crate) fn run_corked_with_type<U>(&mut self, handler: fn(*mut U), optional_data: *mut U) {
+    pub(crate) fn run_corked_with_type<U>(&mut self, handler: fn(&U), data: &U) {
         // cork is synchronous, so we can stack-allocate the (handler, data) pair
         // and recover it inside the trampoline.
-        type Ctx<U> = (fn(*mut U), *mut U);
+        type Ctx<'a, U> = (fn(&U), &'a U);
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
         extern "C" fn handle<U>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack Ctx<U> valid for this synchronous call.
-            let ctx = unsafe { &*user_data.cast::<Ctx<U>>() };
+            let ctx = unsafe { &*user_data.cast::<Ctx<'_, U>>() };
             (ctx.0)(ctx.1);
         }
-        let mut ctx: Ctx<U> = (handler, optional_data);
+        let mut ctx: Ctx<'_, U> = (handler, data);
         // cork is synchronous so the stack-allocated ctx outlives the FFI call.
         c::uws_res_cork(
             Self::ssl_flag(),
@@ -1119,8 +1119,8 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.corked(f))
     }
 
-    pub fn run_corked_with_type<U>(self, handler: fn(*mut U), optional_data: *mut U) {
-        any_dispatch!(self, |r| r.run_corked_with_type(handler, optional_data))
+    pub fn run_corked_with_type<U>(self, handler: fn(&U), data: &U) {
+        any_dispatch!(self, |r| r.run_corked_with_type(handler, data))
     }
 
     /// See `Response::can_upgrade`.

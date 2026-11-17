@@ -25,10 +25,11 @@ export function testEnvironments(isMine: (program: Program) => boolean) {
     },
     tls,
   );
+  // The folder holds an executable for each program and each way to build it.
   afterAll(() => {
     bench.stop();
     dir[Symbol.dispose]();
-  });
+  }, 120_000);
 
   (!canTrim || unsupported || isWindows ? describe.skip : describe.concurrent)(
     "a trimmed executable does in every environment what the whole one does",

@@ -47,7 +47,7 @@ fn read(descriptor: &str) -> Option<String> {
         });
         let descriptor = hir.id_at(arguments.expect("the definition"), 2);
         let decisions = &compiled.analysis.decisions;
-        WrittenDescriptor::read(&files.atoms, hir, decisions, descriptor).map(describe)
+        WrittenDescriptor::read(hir, decisions, descriptor).map(describe)
     })
 }
 
@@ -70,6 +70,7 @@ fn a_literal_says_what_it_names() {
             "data value -w -e -c",
         ),
         ("{ enumerable: !0, configurable: !1 }", "data +e -c"),
+        ("{ 'value': 1, 'configurable': true }", "data value +c"),
         ("{ enumerable: true, enumerable: false }", "data -e"),
         (
             "{ enumerable: false, value: 1, enumerable: true }",

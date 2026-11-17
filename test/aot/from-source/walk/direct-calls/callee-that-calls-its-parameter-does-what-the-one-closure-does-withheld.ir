@@ -1,0 +1,14 @@
+# the same program with direct calls withheld: the call by value runs code that nobody knows
+# RUN: walk f3 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f3:Body
+# CHECK: = Call {{*}}mayCallUnknownCode
+# -- source: callee-that-calls-its-parameter-does-what-the-one-closure-does.ts
+# declare function sink(...values: unknown[]): void;
+# let marks = 0;
+# function each(f: () => void) { f(); f(); }
+# function mark() { marks = (marks + 1) | 0; }
+# function run() { each(mark); return marks; }
+# function runs(f: () => void) { each(f); return marks; }
+# sink(run, runs);
+# -- end of source
+# f1 = each, f2 = mark, f3 = run, f4 = runs

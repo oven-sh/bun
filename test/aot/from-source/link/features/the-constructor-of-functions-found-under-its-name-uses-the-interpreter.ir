@@ -1,0 +1,8 @@
+# `constructor` is written, and what it finds is called
+# -- source: the-constructor-of-functions-found-under-its-name-uses-the-interpreter.ts
+# declare const input: string;
+# const made = (() => 1).constructor(input);
+# console.log(made());
+# -- end of source
+# RUN: features
+# CHECK: by Function named

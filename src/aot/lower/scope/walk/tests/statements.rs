@@ -4,8 +4,8 @@ use bun_sema::bind::{CommonJsVariable, Decl, ScopeId};
 use bun_sema::hir::{FnKind, ModuleId, Pat, PatId, PatKind, StmtKind};
 
 use super::{
-    creator_of, has_symbol_use, has_use, is_commonjs_slot, stored_in_loop, used_slots, walked,
-    with_walk,
+    created_at, creator_of, has_symbol_use, has_use, is_commonjs_slot, stored_in_loop, used_slots,
+    walked, with_walk,
 };
 use crate::lower::scope::testing::{
     file_scope, first_statement, function_named, functions_of_kind, only_function, symbol_named,
@@ -18,8 +18,8 @@ const MODULE: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Module);
 const REQUIRE: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Require);
 const FILENAME: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Filename);
 
-// A store to one of the five names: the text of the file stays a function that has them as parameters.
 const KEEPS_WRAPPER: &str = "__filename = '';";
+const HOLDS_EVERY_NAME: &str = "with ({}) {}";
 
 fn is_block(kind: &StmtKind) -> bool {
     matches!(kind, StmtKind::Block(_))
@@ -87,7 +87,7 @@ fn annex_b_function_stores_var() {
 }
 
 #[test]
-fn store_reaches_every_enclosing_loop() {
+fn store_is_listed_in_the_innermost_loop() {
     let source = "export function g() { let x = 0; \
         while (x < 1) { do { x = 1; } while (x < 2); } }";
     with_walk(&[("main.ts", source)], |hir, bound, walk| {
@@ -96,11 +96,23 @@ fn store_reaches_every_enclosing_loop() {
         assert_eq!(walk.loops[0].statement, first_statement(hir, is_while));
         assert_eq!(walk.loops[0].parent, None);
         assert_eq!(walk.loops[1].parent, Some(0));
-        assert!(
-            walk.loops
-                .iter()
-                .all(|walked_loop| walked_loop.stored == [binding])
-        );
+        assert_eq!(walk.loops[1].outermost, 0);
+        assert!(walk.loops[0].stored.is_empty());
+        assert_eq!(walk.loops[1].stored, [binding]);
+    });
+}
+
+#[test]
+fn store_in_a_loop_lasts_until_the_outermost_loop_ends() {
+    let source = "export function g() { let x = 0; \
+        while (g()) { do { x = 1; } while (g()); const made = () => x; } const last = () => x; }";
+    with_walk(&[("main.ts", source)], |hir, bound, walk| {
+        let stored_last = walk.last_store_times[symbol_named(hir, bound, "x").idx()];
+        let arrows = functions_of_kind(hir, FnKind::Arrow).into_iter();
+        let created: Vec<u32> = arrows
+            .map(|arrow| created_at(walk, walked(walk, arrow)))
+            .collect();
+        assert!(created[0] < stored_last && stored_last < created[1]);
     });
 }
 
@@ -163,14 +175,17 @@ fn commonjs_variable_store_is_recorded() {
 }
 
 #[test]
-fn the_five_names_are_slots_only_where_the_wrapper_is_kept() {
+fn the_names_other_than_exports_are_slots_only_where_the_wrapper_is_kept() {
     let plain = "exports.a = __filename; \
         module.exports.b = function () { return [require, module, exports, __dirname]; };";
     with_walk(&[("main.cjs", plain)], |_, _, walk| {
         assert!(!walk.has_wrapper_parameters);
-        assert!(!used_slots(walk).into_iter().any(is_commonjs_slot));
+        let mut slots = used_slots(walk)
+            .into_iter()
+            .filter(|&slot| is_commonjs_slot(slot));
+        assert!(slots.all(|slot| slot == EXPORTS));
     });
-    let kept = format!("{KEEPS_WRAPPER} {plain}");
+    let kept = format!("{HOLDS_EVERY_NAME} {plain}");
     with_walk(&[("main.cjs", kept.as_str())], |hir, bound, walk| {
         assert!(walk.has_wrapper_parameters);
         let function = walked(walk, only_function(hir, FnKind::Expr));
@@ -182,9 +197,43 @@ fn the_five_names_are_slots_only_where_the_wrapper_is_kept() {
 }
 
 #[test]
+fn unstored_name_gets_no_slot() {
+    let source = format!(
+        "{KEEPS_WRAPPER} module.exports.b = function () {{ \
+         return [require, module, exports, __dirname, __filename]; }};"
+    );
+    with_walk(&[("main.cjs", source.as_str())], |hir, bound, walk| {
+        assert!(walk.has_wrapper_parameters);
+        let function = walked(walk, only_function(hir, FnKind::Expr));
+        let scope = file_scope(hir, bound);
+        let uses = |slot: ScopeSlot| has_use(walk, function, BindingRef::Slot(scope, slot));
+        assert!(uses(EXPORTS));
+        assert!(uses(FILENAME));
+        assert!(!uses(REQUIRE));
+        assert!(!uses(MODULE));
+    });
+}
+
+#[test]
+fn exports_is_a_slot_only_where_the_file_may_replace_its_exports() {
+    let replaced = "exports.a = 1; module.exports = function () { return exports; };";
+    with_walk(&[("main.cjs", replaced)], |hir, bound, walk| {
+        assert!(!walk.has_wrapper_parameters);
+        let exports = BindingRef::Slot(file_scope(hir, bound), EXPORTS);
+        let function = walked(walk, only_function(hir, FnKind::Expr));
+        assert!(has_use(walk, WalkedFunctionId::MODULE_BODY, exports));
+        assert!(has_use(walk, function, exports));
+    });
+    let kept = "exports.a = 1; exports.b = function () { return exports.a; };";
+    with_walk(&[("main.cjs", kept)], |_, _, walk| {
+        assert!(!used_slots(walk).into_iter().any(is_commonjs_slot));
+    });
+}
+
+#[test]
 fn callee_of_a_bound_module_call_is_no_use() {
     let source = format!(
-        "{KEEPS_WRAPPER} function lazy() {{ return require('./other.cjs'); }} \
+        "{HOLDS_EVERY_NAME} function lazy() {{ return require('./other.cjs'); }} \
          function resolved() {{ return require.resolve('./other.cjs'); }} \
          function through() {{ return module.require('./other.cjs'); }} \
          function value() {{ return module; }}"
@@ -208,7 +257,7 @@ fn callee_of_a_bound_module_call_is_no_use() {
 #[test]
 fn callee_of_resolve_is_a_use_where_require_is_handed_on() {
     let source = format!(
-        "{KEEPS_WRAPPER} function lazy() {{ return require('./other.cjs'); }} \
+        "{HOLDS_EVERY_NAME} function lazy() {{ return require('./other.cjs'); }} \
          function resolved() {{ return require.resolve('./other.cjs'); }} \
          function value() {{ return [require]; }}"
     );
@@ -294,7 +343,8 @@ fn export_assignment_uses_module_variable() {
             has_use(walk, WalkedFunctionId::MODULE_BODY, module)
         })
     };
-    assert!(uses_module("__filename = ''; export = 1;"));
+    assert!(uses_module("function f() { module = 0; } export = 1;"));
+    assert!(!uses_module("__filename = ''; export = 1;"));
     assert!(!uses_module("__filename = ''; exports.a = 1;"));
     assert!(!uses_module("export = 1;"));
 }
@@ -309,8 +359,11 @@ fn redeclared_commonjs_variable_uses_no_slot() {
     assert!(!uses_module_slot(
         "var module = module || {}; module.a = 1;"
     ));
-    assert!(uses_module_slot(
+    assert!(!uses_module_slot(
         "var exports; var other = module || {}; other.a = 1;"
+    ));
+    assert!(uses_module_slot(
+        "var exports; with ({}) {} var other = module || {}; other.a = 1;"
     ));
 }
 

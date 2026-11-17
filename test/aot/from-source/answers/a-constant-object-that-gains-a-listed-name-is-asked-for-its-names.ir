@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Partly = { a: number; b?: number };
+# const partial: Partly = { a: 1 };
+# function copy() { const made = { ...partial, z: 0 }; return made.a + ":" + made.b + ":" + made.z + ":" + Object.keys(made).join(); }
+# function change() { partial.b = 2; }
+# let text = "";
+# for (let i = 0; i < 3; i++) text = copy();
+# print(text);
+# change();
+# print(copy());
+# -- end of source
+# The layout lists a name that the object of `partial` is born without. A store that creates it is no change that Link reports of the layout, so the order of names is known for life only of an object that is born with every name that has a slot.
+# RUN: run-in-shell
+# CHECK: 1:undefined:0:a,z
+# CHECK-NEXT: 1:2:0:a,b,z
+# CHECK-NEXT: exited with 0

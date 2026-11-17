@@ -86,3 +86,43 @@ require("./replaces-require.cjs");
 require("./evaluates-text.cjs");
 
 console.log(lines.join("\n"));
+/* Output:
+a member in the dead zone of the constant: threw ReferenceError
+a hoisted function in the dead zone of the constant: threw ReferenceError
+before the call
+counter.mjs runs
+behind the call
+a member behind the statement: 0
+a call behind the statement: 1
+the binding is live: 1
+typeof: number function undefined
+this in a call through the constant is the namespace: the namespace
+this in a detached call: undefined
+an absent name: undefined
+the marker: true
+keys: one,two
+in: true false
+computed: 1
+a store in sloppy code: 1
+a store in strict code: threw TypeError
+delete: false
+optional chain: 1
+a namespace in a namespace: 1 undefined object
+a pattern copies: 1 a default
+in a function, not taken: not loaded
+late.mjs runs
+in a function, taken: loaded
+in a function, again: loaded
+in a loop: 1 1
+in a loop: 2 1
+throws.mjs runs
+a body that throws: threw RangeError
+a body that has thrown: threw RangeError
+in the file that exports the constants: 1 2
+an exported constant holds the namespace: object 1 one,two
+in a file that imports the constants: object 2 one,two
+what nobody names, through an exported constant: reached
+its keys: alsoUnnamed,reachedByAKeyAlone
+require is replaced: from the replacement for ./looked-at.mjs
+text sees the constant: object 2 1
+*/

@@ -1,0 +1,71 @@
+# -- source: main.mjs
+# class Query { constructor(items) { this.items = items; } size() { return this.items.length; } }
+# function query(items) { return new Query(items); }
+# query.fn = Query.prototype;
+# query.prototype = Query.prototype;
+# print(query([1, 2]).size());
+# -- end of source
+# A plain function that nobody constructs may hold the prototype of a class under `prototype`: the class stays closed.
+# RUN(GONE): link why-gone L0
+# GONE: why-gone L0: it has not gone
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Query" module=m0 position=6 constructor=f2 fields=[{key="items" declared={type=anything} flags=[IsRequired]}] place=6 ownFieldCount=1
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
+variable g0 name="Query" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=2
+variable g1 module=m0 declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=30
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g1 @0
+    v5 = NewClosure function=f3 @57
+    DefineMethod v3, v5 layout=L0 key="size" @57
+    v7 = FinishClass v3 layout=L0 @0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    PutModuleVariable v9 variable=g0 @0
+    v11 = PropGet v9 key="prototype" @158
+    PropSet v1, v11 key="fn" @147
+    v13 = PropGet v9 key="prototype" @193
+    PropSet v1, v13 key="prototype" @175
+    v15 = Builtin builtin=GlobalThis @210
+    v16 = PropGet v15 key="print" [isFreeName] @210
+    v17 = Data data=d0 @222
+    v18 = Call v1, -, v17 calleeName="query" @216
+    v19 = PropGet v18 key="size" @228
+    v20 = Call v19, v18 calleeKey="size" calleeName="size" @230
+    v21 = Call v16, -, v20 calleeName="print" @210
+    v22 = Undefined @210
+    Return v22 @210
+}
+function f1 name="query" module=m0 position=96 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = GetModuleVariable variable=g0 @131
+    v2 = CheckInitialized v1 name="Query" @131
+    v3 = Construct v2, -, v0 calleeName="Query" @131 @127
+    Return v3 @127
+}
+function f2 name="Query" module=m0 position=25 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @25
+    v3 = NewObject v2 layout=L0 @25
+    v4 = Convert v3 declared={type=L0} @25
+    PropSet v4, v1 key="items" @35
+    v6 = Undefined @35
+    v7 = TypeTest v6 testedType=object @35
+    Branch v7 -> taken b1(| 0), notTaken b2(v4) @35
+  b1(v8):
+    Jump -> next b2(v8) @35
+  b2(v9):
+    Return v9 @35
+}
+function f3 name="size" module=m0 position=57 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="items" @73
+    v2 = PropGet v1 key="length" @78
+    Return v2 @73
+}

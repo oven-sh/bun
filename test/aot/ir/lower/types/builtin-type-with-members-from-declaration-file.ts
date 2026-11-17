@@ -1,8 +1,8 @@
 // RUN: link
-// CHECK: variable {{*}}name="extended" module=[[entry]] declared={type=undefined|null|absent|Uint8Array site=
+// CHECK: variable {{*}}name="extended" module=[[entry]] declared={type=undefined|null|absent|Uint8Array
 // CHECK: variable {{*}}name="redeclared" module=[[entry]] declared={type=undefined|null|absent|Int8Array flags=[IsExpected, OmitsNull]}
-// CHECK: variable {{*}}name="spelled" module=[[entry]] declared={type=undefined|null|absent|Int8Array site=
-// CHECK: variable {{*}}name="untouched" module=[[entry]] declared={type=undefined|null|absent|Float64Array site=
+// CHECK: variable {{*}}name="spelled" module=[[entry]] declared={type=undefined|null|absent|Int8Array
+// CHECK: variable {{*}}name="untouched" module=[[entry]] declared={type=undefined|null|absent|Float64Array
 
 /// <reference path="./imports/more-members-of-bytes.d.ts" />
 

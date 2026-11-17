@@ -1,1 +1,1 @@
-{ "features": ["LegacyAccessors"], "keptToday": true }
+{ "features": ["LegacyAccessors"], "keptToday": ["LegacyAccessors"] }

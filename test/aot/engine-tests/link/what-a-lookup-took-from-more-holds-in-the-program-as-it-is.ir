@@ -1,0 +1,50 @@
+# function make() { return () => {}; }  process.stdout.write("x"); process.on("exit", make())
+# Under check=FlowMonotonicity the answers that no table shows are held as well: `on` lies above `process`, so the lookup passes `process` as in sight and takes the name for unlaid there.
+# One result in 2048 is given more (seed 6), so the lookup stands in the run from more; it is asked of the flow of the program as it is, and it holds there. The count says that something was asked.
+# The red control: what-a-lookup-took-and-the-other-run-denies-is-stopped-by-name.ir.
+# LIBRARY: own
+# OPTIONS: testing=WidenFlowNodes:6 check=FlowMonotonicity
+# STATISTIC: BuiltinLookupAssumptionsRechecked >= 1
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsGetStdioWriteStream function=f2
+runtimefunction id=StdioGetLightStdioWriteStreams function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="stdout"
+    v2 = PropGet v1 key="write"
+    v3 = String string="x"
+    v4 = Call v2, v1, v3 calleeKey="write"
+    v5 = PropGet v0 key="on"
+    v6 = Convert v5 declared={type=builtin(EventEmitterPrototypeOn) flags=[IsExpected]}
+    v7 = String string="exit"
+    v8 = NewClosure function=f4
+    v9 = Call v8, - calleeName="make"
+    v10 = Call v6, v0, v7, v9 calleeKey="on"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="getLightStdioWriteStreams" module=m1 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    Return v4
+}
+function f2 name="getStdioWriteStream" module=m2 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsGetStdioWriteStream thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    Return v0
+}

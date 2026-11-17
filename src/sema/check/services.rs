@@ -297,8 +297,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             file_name: module.file_name(),
             is_default_library: module.is_lib,
             is_from_external_library: module.is_from_external_library,
-            is_declaration_file: module.hir.kind == FileKind::Declaration,
-            is_javascript: module.hir.is_js,
+            is_declaration_file: module.facts.kind == FileKind::Declaration,
+            is_javascript: module.facts.is_js,
             package_name: match path_in_node_modules(module.file_name()) {
                 Some(path) => Some(path),
                 None if module.is_from_external_library => self
@@ -565,10 +565,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let Some((hir, node)) = self.valid(node) else {
             return b"";
         };
-        match hir.text(node) {
-            Atom::NONE => b"",
-            text => self.c.atoms().bytes(text),
-        }
+        self.c.atoms().bytes(hir.text(node))
     }
 
     /// `checker.getAccessedPropertyName(node)`: the name as written for a property access, or what

@@ -1,16 +1,32 @@
 // Work that data from outside can cause: texts of JSON whose objects hold their names in every order, names nobody has seen, indexes far apart.
 // Each form of work-that-data-causes/forms.js and typed-forms.ts answers on the same input as it does in plain Bun.
 // A table that such data fills must not make the work quadratic: the forms that once were run on an input on which quadratic work does not end in time.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
-import { measureUntilWithinBounds } from "./harness/measure-again";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 
 const sources = ["forms.js", "typed-forms.ts"];
 const inFolder = (source: string) => join(import.meta.dir, "work-that-data-causes", source);
+
+// CI ends a test file that has run for five minutes.
+const lastStart = 200_000;
+
+// Other work on the machine only adds to the memory that is left. What is over its bound is measured again, four times at most: code that keeps more does so every time.
+async function measureUntilWithinBounds<T>(
+  name: string,
+  measure: () => Promise<T>,
+  isWithinBounds: (measured: T) => boolean,
+) {
+  for (let attemptsLeft = 3; ; attemptsLeft--) {
+    const measured = await measure();
+    if (attemptsLeft === 0 || isWithinBounds(measured) || performance.now() > lastStart) return measured;
+    console.error(`ASKED AGAIN: ${name}`);
+  }
+}
 
 describe("compile/aot/work that data causes", () => {
   const dir = tempDir("aot-work-that-data-causes", {});

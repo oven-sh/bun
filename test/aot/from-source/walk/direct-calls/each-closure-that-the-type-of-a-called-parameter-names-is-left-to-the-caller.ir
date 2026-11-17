@@ -1,0 +1,17 @@
+# -- source: main.ts
+# interface Box { side: number }
+# function make(side: number): Box { if (side < 0) return make(-side); return { side }; }
+# function reader(box: Box, grows: boolean): () => number { return () => { if (grows) box.side += 1; return box.side; }; }
+# function sum(read: () => number, turns: number): number { let total = 0; for (let i = 0; i < turns; i++) total += read(); return total; }
+# const one = make(2), other = make(3);
+# console.log(sum(reader(one, false), 100), sum(reader(other, true), 100), sum(() => one.side + other.side, 100));
+# -- end of source
+# Link's effects of sum given its arguments leave out what the closures do that `read` holds: whoever calls sum adds them. The verifier of a unit knows those closures by the type of the parameter and by the tests of it.
+# Where nothing is carried, `read` arrives as one of two functions and is tested for the first alone: the second is known because the test failed. Its direct call, which writes a field, is left to the caller like the first.
+# OPTIONS: check=Validate testing=ForceWalkMode:NothingCarried
+# RUN: walk f3 mechanisms=all
+# CHECK: code f3:Body
+# CHECK: b0([[read]]: f4|f5
+# CHECK: TypeTest [[read]] testedType=f4
+# CHECK-NOT: testedType=f5
+# CHECK: = CallDirect {{*}} function=f5 traits=[{{*}}mayWriteObservableState

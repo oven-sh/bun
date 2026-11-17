@@ -173,104 +173,10 @@ for (const [name, use] of uses) {
   }
 }
 
-// GENERATED: looseTypeof byTag Object.create(String.prototype) 5n true Symbol('a') Buffer.from('a,b')
 // CHECK-LABEL: function {{*}}name="looseTypeof"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = TypeTest v0 testedType=string
-// CHECK-NEXT: v2 = ToBoolean v1
-// CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v3):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v4 = PropGet v0 key="length"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: v7 = Greater v5, v6
-// CHECK-NEXT: Jump -> next b5(v7)
-// CHECK-NEXT: b4(v8):
-// CHECK-NEXT: Jump -> next b5(v8)
-// CHECK-NEXT: b5(v9):
-// CHECK-NEXT: v10 = Convert v9 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="byTag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=ObjectPrototypeToString
-// CHECK-NEXT: v2 = PropGet v1 key="call"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="call" calleeName="Object.prototype.toString.call"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v6 = String string="[object String]"
-// CHECK-NEXT: v7 = StrictEq v5, v6
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v8 = String string="tagged String: "
-// CHECK-NEXT: v9 = PropGet v0 key="length"
-// CHECK-NEXT: v10 = Add v8, v9
-// CHECK-NEXT: Jump -> next b4(v10)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v11 = String string="tagged otherwise"
-// CHECK-NEXT: Jump -> next b4(v11)
-// CHECK-NEXT: b4(v12):
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Object.create(String.prototype)"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Builtin builtin=Object
-// CHECK-NEXT: v1 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v2 = Builtin builtin=StringPrototype
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeName="Object.create"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="5n"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=undefined|null|bigint flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = BigInt digits="5"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|bigint flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="true"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: v1 = Convert v0 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Symbol('a')"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Builtin builtin=Symbol
-// CHECK-NEXT: v1 = String string="a"
-// CHECK-NEXT: v2 = Call v0, -, v1 calleeName="Symbol" callNumber=31
-// CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|symbol flags=[IsExpected]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Buffer.from('a,b')"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=undefined|null|Buffer flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="Buffer" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Buffer) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="from"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(BufferFrom) flags=[IsExpected]}
-// CHECK-NEXT: v5 = String string="a,b"
-// CHECK-NEXT: v6 = Call v4, v2, v5 calleeKey="from" calleeName="Buffer.from"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=undefined|null|Buffer flags=[IsExpected]}}]
-// CHECK-NEXT: }

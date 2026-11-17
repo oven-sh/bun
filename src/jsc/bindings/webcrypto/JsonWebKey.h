@@ -37,7 +37,10 @@ struct JsonWebKey {
     String kty;
     String use;
     // FIXME: Consider merging key_ops and usages.
+    // Without the operations that are not a CryptoKeyUsage, which are skipped.
     std::optional<Vector<CryptoKeyUsage>> key_ops;
+    // Counts those too.
+    bool hasDuplicateKeyOps { false };
     CryptoKeyUsageBitmap usages;
     String alg;
 
@@ -61,27 +64,10 @@ struct JsonWebKey {
     String priv;
 };
 
-// Node's validateKeyOps rejects a repeated key_ops entry for every algorithm
-// before the operations/usages mismatch check.
-inline bool hasDuplicateJwkKeyOps(const std::optional<Vector<CryptoKeyUsage>>& keyOps)
-{
-    if (!keyOps)
-        return false;
-    CryptoKeyUsageBitmap seenOps = 0;
-    for (auto op : *keyOps) {
-        // The binding enum order matches the bitmap bit order.
-        CryptoKeyUsageBitmap bit = 1 << static_cast<int>(op);
-        if (seenOps & bit)
-            return true;
-        seenOps |= bit;
-    }
-    return false;
-}
-
 // Whether `key_ops`, if the key has any, is well formed and covers `usages`.
 inline bool jwkKeyOpsAllow(const JsonWebKey& jwk, CryptoKeyUsageBitmap usages)
 {
-    return !jwk.key_ops || (!hasDuplicateJwkKeyOps(jwk.key_ops) && (jwk.usages & usages) == usages);
+    return !jwk.key_ops || (!jwk.hasDuplicateKeyOps && (jwk.usages & usages) == usages);
 }
 
 } // namespace WebCore

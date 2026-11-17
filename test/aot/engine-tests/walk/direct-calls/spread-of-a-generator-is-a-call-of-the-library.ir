@@ -1,0 +1,78 @@
+# the operation of the run time that a spread is steps from native code, so each step of a generator would enter compiled code anew. Where a generator is proven of what is spread, a function of the library steps it, in compiled code from the first step to the last.
+# It is entered with a generator that is as it was made: nothing in it can fail but the body. Whatever was changed goes to the operation, which words what it throws as a spread does.
+# No operation of the body names the function. The summary lays down a call of the built-in that passes nothing, so Link enters its code for anybody.
+# function* count(n: number) { yield n; }
+# function all() { return [...count(3)]; }   function allOf(things: unknown) { return [...things]; }
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: [[generator]]: coroutine(f1) {{*}} = CallDirect {{*}}function=f1
+# CHECK: = IsUnmodifiedGenerator [[generator]]
+# CHECK: = CallDirect {{*}}[[generator]]{{*}}function=f4
+# RUN(CHANGED): walk f2 mechanisms=all-Inlining
+# CHANGED: = AppendIterable
+# of which nothing is proven: the operation lists what it can in one piece
+# RUN(ANYTHING): walk f3 mechanisms=all-Inlining
+# ANYTHING-LABEL: code f3:Body
+# ANYTHING: = AppendIterable
+# RUN(NEVER): walk f3 mechanisms=all-Inlining
+# NEVER-NOT: function=f4
+# NEVER-NOT: IsUnmodifiedGenerator
+# RUN(WITHHELD): walk f2 mechanisms=none
+# WITHHELD-NOT: function=f4
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f4
+# LINK: referrers anybody
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/iterator-consumers.ts" displayPath="/$bun/js/prelude/iterator-consumers.ts" flags=[IsLibrary]
+entry module=m0
+variable g0 name="count" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+runtimefunction id=IteratorConsumersAppendGenerator function=f4
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="count" module=m0 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: function, v2: number):
+    Jump -> next b1()
+  b1():
+    InitialYield v2
+    v4 = Yield v2, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v5
+  b3():
+    Return v5
+  b4():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="all" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer integer=3
+    v3 = Call v1, -, v2 calleeName="count"
+    AppendSpread v0, v3
+    Return v0
+}
+function f3 name="allOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+function f4 name="appendGenerator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersAppendGenerator thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v1 key="next"
+    v3 = Call v2, v1
+    v4 = Undefined
+    Return v4
+}

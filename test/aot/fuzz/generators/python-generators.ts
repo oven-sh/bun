@@ -29,6 +29,7 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["async-generator-steps-by-hand", "ts"],
   ["for-in-loop-bodies", "js"],
   ["calls-by-value", "ts"],
+  ["lists-of-arguments-beside-what-else-a-body-does", "js"],
   ["class-members-any-lookup-order", "js", { ...as("js") }],
   ["class-members-any-lookup-order", "ts", { ...as("ts") }],
   ["closures-passed-to-array-methods", "js", as("js")],

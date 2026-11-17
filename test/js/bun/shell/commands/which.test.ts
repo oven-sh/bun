@@ -55,6 +55,17 @@ test.concurrent("which searches $PATH for bare names and the shell cwd for ./ na
   expect(exitCode).toBe(0);
 });
 
+// The line has no prefix on a file descriptor: see "which" in bunshell.test.ts.
+test.concurrent("which prefixes its not-found line when stdout is captured", async () => {
+  using dir = tempDir("which-missing", {});
+  const { stdout, exitCode } = await $`which nope`
+    .env({ PATH: String(dir) })
+    .quiet()
+    .nothrow();
+  expect(stdout.toString()).toBe("which: nope not found\n");
+  expect(exitCode).toBe(1);
+});
+
 test.skipIf(isWindows)("which with an absolute path at the platform path length limit reports not found", async () => {
   const fixture = /* ts */ `
     import { $ } from "bun";

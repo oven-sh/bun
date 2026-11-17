@@ -1467,9 +1467,9 @@ describe("module loading", () => {
         "-e",
         `const { heapStats } = require("bun:jsc");
          require("ws");
-         const afterWs = heapStats().objectTypeCounts.HTTPParser ?? 0;
+         const afterWs = heapStats().objectTypeCounts.ProcessBindingHTTPParser ?? 0;
          require("node:http");
-         const afterHttp = heapStats().objectTypeCounts.HTTPParser ?? 0;
+         const afterHttp = heapStats().objectTypeCounts.ProcessBindingHTTPParser ?? 0;
          console.log(JSON.stringify({ afterWs, httpMarkerWorks: afterHttp > 0 }));`,
       ],
       env: bunEnv,
@@ -1479,7 +1479,7 @@ describe("module loading", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     // httpMarkerWorks guards the detector: if node:http ever stops creating
-    // HTTPParser structures at load time, this test needs a new marker.
+    // the binding at load time, this test needs a new marker.
     expect(JSON.parse(stdout)).toEqual({ afterWs: 0, httpMarkerWorks: true });
     expect(exitCode).toBe(0);
   });

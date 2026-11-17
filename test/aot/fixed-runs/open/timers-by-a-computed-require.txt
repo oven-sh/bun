@@ -1,0 +1,11 @@
+setImmediate out of a require() whose name is computed, as React's act() gets it, under fake timers.
+#### h-as-react-act-asks.test.cjs
+const { test, vi } = require("vitest");
+test("t", async () => {
+  const requireString = ("require" + Math.random()).slice(0, 7);
+  const enqueueTask = module[requireString].call(module, "timers").setImmediate;
+  vi.useFakeTimers();
+  await new Promise(resolve => enqueueTask(resolve));
+  console.log("| CASE as React's act() gets setImmediate: it still fires");
+  vi.useRealTimers();
+}, 2000);

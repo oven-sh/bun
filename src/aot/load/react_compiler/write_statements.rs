@@ -16,7 +16,6 @@ enum TypeAnnotation {
 
 impl TreeWriter<'_, '_> {
     pub(super) fn write_statement_list(&mut self, statements: &[Stmt]) -> Written<IdList<StmtId>> {
-        // The compiler declares its cache before the directives of the function.
         let is_directive = |statement: &&Stmt| matches!(statement.data, StmtData::SDirective(_));
         let directives = statements.iter().filter(is_directive);
         let others = statements
@@ -205,7 +204,6 @@ impl TreeWriter<'_, '_> {
                 init,
                 kind,
                 flags: Flags::empty(),
-                // TypeScript rejects a `,` in the text after the last declaration. No node starts with one.
                 loc: TextRange { pos, end: pos },
             });
         }

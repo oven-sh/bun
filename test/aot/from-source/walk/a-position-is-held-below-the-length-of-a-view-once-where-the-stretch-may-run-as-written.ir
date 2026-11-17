@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# "use strict";
+# function turn(rows, at, sine, cosine) { let held; for (let k = 0; k < rows.length; k++) { held = rows[k][at + 1]; rows[k][at + 1] = sine * rows[k][at] + cosine * held; rows[k][at] = cosine * rows[k][at] - sine * held; } }
+# const numbers = JSON.parse("[[0.25,1.25,2.25,3.25],[4.25,5.25,6.25,0.25],[1.25,2.25,3.25,4.25]]");
+# const rows = numbers.map(r => Float64Array.from(r));
+# for (let at = 0; at < 3; at++) turn(rows, at, 0.6, 0.8);
+# console.log(rows.map(row => row.join()).join(";"));
+# -- end of source
+# Five accesses of one row, at two positions. Each held its position against the row's length for itself. In the arm for a view the stretch may still run as written while nothing was done in it: there each of
+# the two positions is held below the length once, in front of its first read, and the accesses that follow, the two stores among them, lie inside the view without a test of their own.
+# RUN: walk f1 mechanisms=all
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = PutTypedArrayElement {{*}}isInsideView
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = PutTypedArrayElement {{*}}isInsideView

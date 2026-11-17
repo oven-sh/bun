@@ -1,0 +1,20 @@
+# Object.assign with more than one source takes the inline form: one run-time operation per source, and the call as written only on a miss.
+# f0 = copy, f1 = merge
+# -- source: main.js
+# function copy(node, changes) { return Object.assign(Object.create(Object.getPrototypeOf(node)), node, changes); }
+# function merge(first, second, third) { return Object.assign({}, first, second, third); }
+# class Leaf { constructor(value) { this.value = value; this.notes = undefined; } describe() { return "leaf " + this.value; } }
+# var text = "";
+# for (var i = 0; i < 4; i++) { var made = copy(new Leaf(i), { notes: i * 2 }); text += made.describe() + ":" + made.notes + ":" + Object.keys(made) + " "; }
+# for (var i = 0; i < 4; i++) text += JSON.stringify(merge({ a: i }, { b: i, a: 9 }, i % 2 ? { get c() { return "got"; } } : null)) + " ";
+# print(text);
+# -- end of source
+# RUN(COPY): walk f0 mechanisms=all
+# COPY-LABEL: code f0:Body
+# COPY: inlineBuiltin=ObjectAssign
+# RUN(MERGE): walk f1 mechanisms=all
+# MERGE-LABEL: code f1:Body
+# MERGE: inlineBuiltin=ObjectAssign
+# RUN: run-in-shell void 0;
+# CHECK: leaf 0:0:value,notes leaf 1:2:value,notes leaf 2:4:value,notes leaf 3:6:value,notes {"a":9,"b":0} {"a":9,"b":1,"c":"got"} {"a":9,"b":2} {"a":9,"b":3,"c":"got"}
+# CHECK-NEXT: exited with 0

@@ -93,12 +93,8 @@ impl Editor {
 
     fn by_fallback_path_for_editor(editor: Editor) -> Option<&'static [u8]> {
         for path in bin_path(editor)? {
-            match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
-                bun_sys::Result::Ok(opened) => {
-                    let _ = opened.close(); // close error is non-actionable
-                    return Some(path.as_bytes());
-                }
-                bun_sys::Result::Err(_) => {}
+            if bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0).is_ok() {
+                return Some(path.as_bytes());
             }
         }
 
@@ -287,30 +283,40 @@ fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
             Editor::Vscode => Some(
                 const {
                     &[
-                ZStr::from_static(b"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\0"),
-                ZStr::from_static(b"/Applications/VSCodium.app/Contents/Resources/app/bin/code\0"),
-            ]
+                        bun_core::zstr!(
+                            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+                        ),
+                        bun_core::zstr!(
+                            "/Applications/VSCodium.app/Contents/Resources/app/bin/code"
+                        ),
+                    ]
                 },
             ),
             Editor::Atom => Some(
                 const {
-                    &[ZStr::from_static(
-                        b"/Applications/Atom.app/Contents/Resources/app/atom.sh\0",
+                    &[bun_core::zstr!(
+                        "/Applications/Atom.app/Contents/Resources/app/atom.sh"
                     )]
                 },
             ),
-            Editor::Sublime => {
-                Some(
-                    const {
-                        &[
-                ZStr::from_static(b"/Applications/Sublime Text 4.app/Contents/SharedSupport/bin/subl\0"),
-                ZStr::from_static(b"/Applications/Sublime Text 3.app/Contents/SharedSupport/bin/subl\0"),
-                ZStr::from_static(b"/Applications/Sublime Text 2.app/Contents/SharedSupport/bin/subl\0"),
-                ZStr::from_static(b"/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl\0"),
-            ]
-                    },
-                )
-            }
+            Editor::Sublime => Some(
+                const {
+                    &[
+                        bun_core::zstr!(
+                            "/Applications/Sublime Text 4.app/Contents/SharedSupport/bin/subl"
+                        ),
+                        bun_core::zstr!(
+                            "/Applications/Sublime Text 3.app/Contents/SharedSupport/bin/subl"
+                        ),
+                        bun_core::zstr!(
+                            "/Applications/Sublime Text 2.app/Contents/SharedSupport/bin/subl"
+                        ),
+                        bun_core::zstr!(
+                            "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl"
+                        ),
+                    ]
+                },
+            ),
             _ => None,
         }
     }
@@ -341,7 +347,7 @@ fn auto_close(argv: Vec<Box<[u8]>>) {
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },

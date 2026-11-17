@@ -1,0 +1,12 @@
+# `program` runs once and makes one scope; the getter of `Cell` captures it, and it holds an object (`last`). The class object of a class evaluated at most once is rooted for good, so the getter's closure and with it the scope
+# never die: what the scope holds lives as long among the variables. So the scope is never made, the getter captures nothing, the closure table holds it, and a read of `value` off a proven receiver calls it directly.
+# RUN: walk f4:Body mechanisms=all
+# CHECK: = CallDirect {{*}}function=f3
+# CHECK-NOT: = PropGet
+# RUN(WITHOUT): walk f4:Body mechanisms=all-PromotedEnvironments
+# WITHOUT: = PropGet {{*}}key="value"
+# -- source: a-getter-of-a-class-made-in-a-function-that-runs-once-is-called-directly-though-the-scope-holds-an-object.mjs
+# function program() { let last = null, reads = 0; class Cell { constructor(held) { this.held = held; } get value() { last = this; reads++; return this.held; } } const first = new Cell(Number("5")), second = new Cell(Number("7")); return (turn) => (turn & 1 ? first : second).value + reads + last.held; }
+# const read = program();
+# console.log(read(Number("1")), read(Number("2")));
+# -- end of source

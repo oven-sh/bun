@@ -1,0 +1,59 @@
+# LIBRARY: own
+# -- source: a-list-read-at-a-place-that-the-turn-reckons-is-asked-for-its-kind-in-front-of-the-turns.ts
+# declare function sink(value: unknown): void;
+# function spread(weights: number[], count: number): number { let s = 0; const end = count | 0; for (let i = 0; i < end; i++) s += weights[(i * 7) & 1023]; return s; }
+# sink(spread);
+# -- end of source
+# A list of numbers keeps them as doubles or as int32s. The eight turns laid out asked in front only the lists whose reads were known to lie inside the length; a list read at a place that the turn
+# reckons, or under the length of the list beside it, asked its kind in every turn: a load, a mask, a compare, a branch and the jump where both arms meet, 5 of the 17 instructions a turn of
+# `s += a[i] * b[i]`. No turn of the typed copy changes the kind, whatever the position is held against.
+# One list alone is ASKED: the turns stand once for each kind. Beside a list that lies inside its length it is READ, and each turn branches on what was read: were both asked, whole numbers beside fractions would pass neither front and run the loop as written (+31%).
+# f1 = spread
+# RUN: compile UnrolledLoopsForIndexingType UnrolledLoopStorageChecksHoisted mechanisms=all
+# REQUIRES: as-written
+# The key is cut by a mask: the turns stand twice for each kind: behind the question whether the list is longer than the mask, without their bound, and as they were.
+# CHECK: statistic UnrolledLoopsForIndexingType 4
+# CHECK: statistic UnrolledLoopStorageChecksHoisted 0
+# RUN(SHELL): run-in-shell globalThis.sink = spread => { const halves = Array.from({ length: 1024 }, (_, i) => i + 0.5), wholes = Array.from({ length: 1024 }, (_, i) => i), holed = wholes.slice(); delete holed[14]; for (const list of [halves, wholes, holed, halves.slice(0, 100), wholes.slice(0, 100), [], ["a"]]) for (const count of [0, 1, 7, 8, 9, 40]) print(String(spread(list, count))); };
+# SHELL: 0
+# SHELL: 0.5
+# SHELL: 150.5
+# SHELL: 200
+# SHELL: 256.5
+# SHELL: 5480
+# SHELL: 0
+# SHELL: 0
+# SHELL: 147
+# SHELL: 196
+# SHELL: 252
+# SHELL: 5460
+# SHELL: 0
+# SHELL: 0
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: 0
+# SHELL: 0.5
+# SHELL: 150.5
+# SHELL: 200
+# SHELL: 256.5
+# SHELL: NaN
+# SHELL: 0
+# SHELL: 0
+# SHELL: 147
+# SHELL: 196
+# SHELL: 252
+# SHELL: NaN
+# SHELL: 0
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: 0
+# SHELL: 0a
+# SHELL: 0aundefinedundefinedundefinedundefinedundefinedundefined
+# SHELL: 0aundefinedundefinedundefinedundefinedundefinedundefinedundefined
+# SHELL: 0aundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefined
+# SHELL: 0aundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefined

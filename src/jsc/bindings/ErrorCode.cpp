@@ -31,7 +31,6 @@
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include <atomic>
-#include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
 #include "KeyObject.h"
@@ -784,6 +783,17 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
             builder.append(view);
             return;
         }
+        // In an executable: util.inspect(value, { depth: -1 }) of a plain object, as in Node: its own custom inspect function runs, and nothing that it holds is printed.
+        if (vm.hasCompiledCode() && (cell->type() == JSC::FinalObjectType || cell->type() == JSC::CompiledObjectType)) {
+            auto customInspect = value.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!customInspect.isCallable()) {
+                auto description = describeObjectWithoutConstructorName(vm, globalObject, cell->getObject());
+                RETURN_IF_EXCEPTION(scope, void());
+                builder.append(description);
+                return;
+            }
+        }
     }
 
     //       value = lazyInternalUtilInspect().inspect(value, { colors: false });
@@ -799,7 +809,7 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
     auto result = builder.finish(globalObject, scope);
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
-    return Bun::toStringRef(result);
+    return Bun::toStringRef(result).leak();
 }
 
 // Node's ERR_INVALID_ARG_VALUE renders the value with `util.inspect` ('w'),
@@ -813,7 +823,7 @@ extern "C" BunString Bun__ErrorCode__inspectForErrorMessage(JSC::JSGlobalObject*
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
     auto result = builder.finish(globalObject, scope);
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
-    return Bun::toStringRef(result);
+    return Bun::toStringRef(result).leak();
 }
 
 // Port of Node's addNumericalSeparator: groups digits in threes from the right
@@ -1997,14 +2007,6 @@ extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* glo
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
 }
 
-void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode)
-{
-    char buf[256] = { 0 };
-    ERR_error_string_n(static_cast<uint32_t>(errorCode), buf, sizeof(buf));
-    auto message = String::fromUTF8(buf);
-    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_STATE, message));
-}
-
 void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope)
 {
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Crypto operation failed"_s));
@@ -2153,6 +2155,7 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_HTTP2_INVALID_PSEUDOHEADER, 1, { "\""_s, "\" is an invalid pseudoheader or is used incorrectly"_s, ""_s } },
     { ErrorCode::ERR_HTTP2_STREAM_ERROR, 1, { "Stream closed with error code "_s, ""_s, ""_s } },
     { ErrorCode::ERR_HTTP2_SESSION_ERROR, 1, { "Session closed with error code "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_HTTP2_TOO_MANY_ORIGINS, 1, { "The server sent more ORIGIN frames than the allowed number of "_s, ""_s, ""_s } },
     { ErrorCode::ERR_HTTP2_PAYLOAD_FORBIDDEN, 1, { "Responses with "_s, " status must not have a payload"_s, ""_s } },
     { ErrorCode::ERR_HTTP2_INVALID_INFO_STATUS, 1, { "Invalid informational status code: "_s, ""_s, ""_s } },
     { ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE, 2, { "Invalid value \""_s, "\" for header \""_s, "\""_s } },

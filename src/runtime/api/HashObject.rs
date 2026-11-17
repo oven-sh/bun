@@ -18,7 +18,7 @@ pub(crate) fn wyhash(data: &[u8], seed: JsLocal<'_>) -> u64 {
 }
 
 pub(crate) fn adler32(data: &[u8]) -> u32 {
-    bun_hash::Adler32::hash(data)
+    bun_highway::adler32(data)
 }
 
 /// Hardware-accelerated, from zlib.

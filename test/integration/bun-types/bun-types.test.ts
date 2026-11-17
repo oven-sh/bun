@@ -388,6 +388,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "cron.bind.ts": null,
   "csrf_jsc.bind.ts": "typeof Bun.CSRF",
   "css_internals.bind.ts": null,
+  "declared_results_testing.bind.ts": null,
   "dns.bind.ts": "typeof Bun.dns",
   "dns_internals.bind.ts": null,
   "environment.bind.ts": null,
@@ -428,6 +429,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_fs_stat_watcher.bind.ts": null,
   "node_fs_watcher.bind.ts": null,
   "node_http_binding.bind.ts": null,
+  "node_http_parser.bind.ts": null,
   "node_net_binding.bind.ts": null,
   "node_os.bind.ts": null,
   "node_path.bind.ts": null,
@@ -688,8 +690,6 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new ResolveMessage().requireStack is not published",
       "resolve_message.bind.ts: new ResolveMessage().stack is not published",
       "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
-      // Only compiled code calls it.
-      "response.bind.ts: constructJSONFromText is not published",
       // As for `match` of FileSystemRouter.
       "response.bind.ts: new Request().clone() has no keepalive, duplex",
       // `undefined` once the socket is closed.

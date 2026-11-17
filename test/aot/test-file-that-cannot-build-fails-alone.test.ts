@@ -44,13 +44,15 @@ test("a test file with an import that names nothing fails alone, with the messag
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 }, 60_000);
 
+// A package, not a file: a file that is missing at the build may be written by the run, so the run is built to load any code, which takes thirty times as long.
 test("a build where no test file can be compiled still reports each file", async () => {
   using dir = tempDir("aot-no-test-file-builds", {
-    "one.test.ts": `import { nothing } from "./no-such-file";\nconsole.log(nothing);\n${passing("one")}`,
+    "one.test.ts": `import made from "no-such-package";\nconsole.log(made);\n${passing("one")}`,
     "two.test.ts": `let same = 1;\nlet same = 2;\n${passing("two")}`,
   });
   const { stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), bunEnv);
   expect(stderr).toContain("one.test.ts:");
+  expect(stderr).toContain("no-such-package");
   expect(stderr).toContain("two.test.ts:");
   expect(stderr).toMatch(/^ *0 pass$/m);
   expect(stderr).toMatch(/^ *2 fail$/m);

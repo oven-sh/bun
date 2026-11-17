@@ -2,11 +2,6 @@ pub(crate) use bun_sema::check::aot::COMPILER_DECLARATIONS_PATH as PATH;
 
 pub(crate) const TEXT: &[u8] = include_bytes!("../prelude/bun-intrinsics.d.ts");
 
-/// For a build whose imports are in other images: it reads none of those files, so what it imports has any type.
-pub(crate) const PATH_OF_MODULES_IN_OTHER_IMAGES: &[u8] =
-    b"/$bun/types/modules-in-other-images.d.ts";
-pub(crate) const MODULES_IN_OTHER_IMAGES: &[u8] = b"declare module \"*\";\n";
-
 #[cfg(test)]
 mod tests {
     use bstr::BStr;
@@ -91,7 +86,6 @@ mod tests {
         split(text, b"\n").map(<[u8]>::trim_ascii)
     }
 
-    /// The declarations that begin with `type`, each on one line, however many the formatter gave it.
     fn type_aliases(text: &[u8]) -> Vec<Vec<u8>> {
         let mut aliases: Vec<Vec<u8>> = Vec::new();
         let mut is_open = false;

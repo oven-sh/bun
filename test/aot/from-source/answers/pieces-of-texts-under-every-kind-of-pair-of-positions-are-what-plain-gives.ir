@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# function make(initial) { let text = initial; return { set(t) { text = t; }, sub2(a, b) { return text.substring(a, b); }, sub1(a) { return text.substring(a); }, sl2(a, b) { return text.slice(a, b); }, sl1(a) { return text.slice(a); }, str2(a, b) { return text.substr(a, b); } }; }
+# const box = make("");
+# const rope = "ab" + JSON.parse('"cdefg"') + JSON.parse('"hij"');
+# const texts = ["", "a", "abcdef", rope, rope.substring(2, 8), "wāx yz", "x".repeat(40)];
+# const positions = [0, 1, 2, 3, 5, 6, 7, 10, 39, 40, 41, -1, -2, -6, -7, -41, 2147483647, -2147483648, 2147483648, 4294967296, 4294967297, 0.5, 1.9, -0.5, -0, NaN, Infinity, -Infinity, undefined, null, "2", true, { valueOf() { return 3; } }];
+# let h = 0, count = 0; const shown = [];
+# const take = s => { const t = String(s); count++; for (let i = 0; i < t.length; i++) h = (Math.imul(h, 31) + t.charCodeAt(i)) | 0; h = (Math.imul(h, 31) + t.length) | 0; if (count % 997 === 0) shown.push(JSON.stringify(t)); };
+# for (let round = 0; round < 2; round++) for (const text of texts) { box.set(text); for (const a of positions) { take(box.sub1(a)); take(box.sl1(a)); for (const b of positions) { take(box.sub2(a, b)); take(box.sl2(a, b)); take(box.str2(a, b)); } } }
+# box.set({ substring(a, b) { return "own:" + a + b; }, slice() { return "own slice"; }, substr() { return "own substr"; } }); take(box.sub2(1, 2)); take(box.sl1(0)); take(box.str2(0, 1));
+# box.set([1, 2, 3, 4]); take(box.sl2(1, 3)); take(box.sl1(2));
+# for (const bad of [null, undefined, 5]) { box.set(bad); try { take(box.sub2(0, 1)); } catch (error) { take(error.constructor.name); } }
+# print(count, h, shown.slice(0, 12).join(" "));
+# -- end of source
+# f1 = make, f8 = sub2
+# substring, slice and substr of a text that nobody knows to be one, under every pair of 33 positions (inside, at and behind the ends, below nothing, the edges of int32 and of uint32, fractions, -0, NaN, the infinities, nothing,
+# a text, a truth, an object) on seven texts (empty, narrow, wide, a rope, a window of a rope): 46,670 answers, held by a sum over their texts. The usual piece (0 <= start <= end <= length) is found by two unsigned
+# comparisons; whatever fails either is clamped the long way.
+# RUN(DOOR): bytes f8:Body mechanisms=all
+# DOOR: Call Stub CallMethodOfBuiltinClassAtSite.StringSubstring count 2
+# RUN: run-in-shell mechanisms=all
+# CHECK: 46670 -1270847628 "" "" "" "" "a" "" "" "e" "" "abc" "" ""
+# CHECK-NEXT: exited with 0

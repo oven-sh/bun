@@ -1,0 +1,18 @@
+# -- source: typed-arrays-read-by-names.js
+# globalThis.held = new Map();
+# const utils = {}; function setTyped(on) { if (on) { utils.Buf8 = Uint8Array; utils.Buf32 = Int32Array; } else { utils.Buf8 = Array; utils.Buf32 = Array; } } globalThis.held.set("setTyped", setTyped);
+# function start(stream, n) { stream.output = new utils.Buf8(n); stream.words = new utils.Buf32(n); stream.at = 0; return stream; }
+# function copy(stream, n) { const output = stream.output, words = stream.words; let at = stream.at, s = 0; for (let i = 0; i < n; i++) { output[at++] = words[i & 7] + i; s = (s + output[i]) | 0; } stream.at = at; return s; }
+# for (const [name, f] of Object.entries({ start, copy })) globalThis.held.set(name, f);
+# const get = name => globalThis.held.get(name); get("setTyped")(true); const stream = get("start")(JSON.parse("{}"), 40);
+# const first = get("copy")(stream, 30), second = get("copy")(JSON.parse('{"output":[],"words":[1,2,3,4,5,6,7,8],"at":0}'), 9);
+# print(first, stream.at, stream.output[29], second);
+# -- end of source
+# Nobody knows the stream. Stores in sight put typed arrays of one class under each of the two names: the loop asks for these two classes, and for nothing else.
+# f3 = copy
+# RUN(LOOP): walk f3:Body mechanisms=all
+# LOOP: testedType=Int32Array
+# LOOP: = GetTypedArrayElement {{*}} typedArrayType=6
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 435 30 29 73
+# ANSWERS-NEXT: exited with 0

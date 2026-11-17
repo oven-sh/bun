@@ -2,12 +2,14 @@
 
     $FRONT_END compile <entry> --no-builtin-modules --aot-out=<program> --aot-threads=1 [<flag>...]
     $TESTAOT compile <program> --output=<image> [--<JSC option>=<value>...] references=narrow [<option word>...]
-    $TESTAOT print <program> [--until=<PassID>] references=narrow [<option word>...]
+    $TESTAOT print <program> references=narrow [<option word>...]
+    $TESTAOT walk <program> [<unit>...] references=narrow [<option word>...]
     $JSC --aotImagePath=<image> [--<JSC option>=<value>...] -e <text of prelude.js> -e "runCompiledEntryPoint(<id>)"
 
 The front end is a Bun. It writes the program as IR and goes on to build an executable, so it also gets `--outfile <file>`.
-`testaot compile` writes the image and prints `entry <index> <id>` for each entry point. `testaot print` prints the IR as text: as read,
-or after the first run of a pass. `testaot list options` prints the option words, `testaot list passes` the names of the passes.
+`testaot compile` writes the image and prints `entry <index> <id>` for each entry point. `testaot print` prints the IR as text, as read.
+`testaot walk` prints the Code that the compiler makes of a unit: `f3` is the body of that function, `f3:CoroutineBody`
+what runs behind its ramp. `testaot list options` prints the option words, `testaot list commands` what else it prints of a program.
 
 Each tool is an executable file named by an environment variable:
 
@@ -19,8 +21,6 @@ Each tool is an executable file named by an environment variable:
 import contextlib, os, re, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OPTIMIZED = "NumberLiteralStrings"  # PassID: the last pass that changes a function body in form Prepared
-PLACED = "CheckPlacement"  # PassID: the last pass of the pipeline
 
 os.environ.update(NO_COLOR="1", BUN_ENABLE_CRASH_REPORTING="0", BUN_DEBUG_QUIET_LOGS="1")
 
@@ -91,9 +91,6 @@ def split_flags(flags):
             words.append("references=wide")
         elif flag == "--aot-erase-types":
             front_end_flags.append(flag)
-        elif flag.startswith("--aot-type-errors="):
-            front_end_flags.append(flag)
-            words.append(flag[len("--aot-"):])
         elif flag.startswith("--aot-"):
             words.append(flag[len("--aot-"):])
     return front_end_flags, words
@@ -109,8 +106,11 @@ def front_end(source, out, flags=(), *, cwd=None, seconds=120, env=None, also=()
 
     Only the file counts, not the exit code: a Bun goes on to its own engine, which has host built-ins and rejects this program."""
     _remove_file(out)
-    command = [tool("FRONT_END"), "compile", source, *also, "--no-builtin-modules", "--aot-out=" + out, "--aot-threads=1", "--aot-testing=NoExecutable", *flags, "--outfile", out + ".executable"]
+    executable = out + ".executable"
+    command = [tool("FRONT_END"), "compile", source, *also, "--no-builtin-modules", "--aot-out=" + out, "--aot-threads=1", *flags, "--outfile", executable]
     code, said = run(command, cwd, seconds, env)
+    # It is as large as Bun, and nothing here starts it.
+    _remove_file(os.path.join(cwd or "", executable))
     if not os.path.isfile(out):
         raise ToolFailed(code, said)
 
@@ -128,13 +128,24 @@ def compile_image(program, image, words=(), options=(), *, cwd=None, seconds=300
     return [int(entry) for entry in entries]
 
 
-def print_program(program, until=None, words=(), *, cwd=None, seconds=120):
-    """Returns the IR text of `program`: as read, or after the first run of the pass `until`. Raises ToolFailed."""
-    command = [tool("TESTAOT"), "print", program, *(["--until=" + until] if until else []), "references=narrow", *words]
-    code, said = run(command, cwd, seconds, shell_environment(os.environ), subprocess.PIPE)
+def _print(command, program, arguments, words, cwd, seconds):
+    # `testaot` runs such a command in a folder of its own.
+    path = os.path.abspath(os.path.join(cwd or "", program))
+    code, said = run([tool("TESTAOT"), command, path, *arguments, "references=narrow", *words], cwd, seconds, shell_environment(os.environ), subprocess.PIPE)
     if code != 0:
         raise ToolFailed(code, said)
     return said
+
+
+def print_program(program, words=(), *, cwd=None, seconds=120):
+    """Returns the IR text of `program`, as read. Raises ToolFailed."""
+    return _print("print", program, (), words, cwd, seconds)
+
+
+def print_code(program, units=(), words=(), *, cwd=None, seconds=300):
+    """Returns the Code of the units, or of the Body of every function. The Code of a unit starts with a line `code f<n>:<role> .. {` and ends with `}`.
+    A unit that the compiler does not make has the bare line `code f<n>:<role>`, followed by a sentence that says why. Raises ToolFailed."""
+    return _print("walk", program, units, words, cwd, seconds)
 
 
 def run_image(image, entry, env=None, options=(), *, after=(), cwd=None, seconds=120, under=()):
@@ -154,7 +165,7 @@ def run_ir_test(text, test_file, directives, *, cwd=None, seconds=300, show_outp
     """Writes `test_file`, the directives above the IR text, and runs it. Returns (passed, what `testaot` printed). With show_output that holds, behind a line `OUTPUT ..`, what the command of the test printed.
 
     This is how a script checks a statistic or the kind of a diagnostic by enum name, without reading a message:
-    ["RUN: compile", "OPTIONS: references=narrow drop-guard=GetSlot:0", "STATISTIC: GuardsDropped >= 1"]
+    ["RUN: compile", "OPTIONS: references=narrow", "STATISTIC: UnitsCompiled >= 1"]
     A run without a DIAGNOSTIC: directive fails if the build reports anything."""
     with open(test_file, "w", encoding="utf-8") as file:
         file.write("".join(f"# {directive}\n" for directive in directives) + text)

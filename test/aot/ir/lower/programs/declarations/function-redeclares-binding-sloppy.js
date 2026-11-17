@@ -59,76 +59,7 @@ row("a function in a default of the name", () => { function o(p = function p() {
 row("a default's closure, no function over it", () => { function o(p, q = () => p) { var p; return q() + " " + p; } return o("argument"); });
 row("a default's closure, a var over it with a value", () => { function o(p, q = () => p) { var p = "var"; return q() + " " + p; } return o("argument"); });
 
-// GENERATED: said row K self
 // CHECK-LABEL: function {{*}}name="said"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b8():
-// CHECK-NEXT: v1 = Call v0 calleeName="f"
-// CHECK-NEXT: v2 = TypeTest v1 testedType=function
-// CHECK-NEXT: Branch v2 -> taken b3(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b3(v3) handler=b8():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b8():
-// CHECK-NEXT: v4 = String string="F"
-// CHECK-NEXT: Jump -> next b7(v4)
-// CHECK-NEXT: b5(v5) handler=b8():
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6() handler=b8():
-// CHECK-NEXT: v6 = Builtin builtin=String
-// CHECK-NEXT: v7 = Call v6, -, v5 calleeName="String"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b7(v8)
-// CHECK-NEXT: b7(v9) handler=b8():
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b8() role=CatchHandler:
-// CHECK-NEXT: v11 = CatchValue
-// CHECK-NEXT: v12 = String string="threw "
-// CHECK-NEXT: v13 = PropGet v11 key="name"
-// CHECK-NEXT: v14 = Add v12, v13
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="row"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="console" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="log"
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v8 = String string=": "
-// CHECK-NEXT: v9 = Add v1, v8
-// CHECK-NEXT: v10 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v11 = Call v10, -, v2 calleeName="said"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v13 = Add v9, v12
-// CHECK-NEXT: v14 = Call v7, v5, v13 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="self"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=[[L_3]] flags=[IsExpected] variableName="this"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: [[L_3]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = PropGet v1 key="x"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

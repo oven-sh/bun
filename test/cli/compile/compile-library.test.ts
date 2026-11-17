@@ -535,6 +535,10 @@ describe.concurrent("bun compile --library", () => {
     [["--aot"], () => "error: --library cannot be used with --aot\n"],
     [["--trim"], () => "error: --library cannot be used with --trim\n"],
     [["--format=iife"], () => "error: --library only supports --format=esm and --format=cjs\n"],
+    [
+      ["--target=bun-linux-x64"],
+      () => "error: --library only supports --target=bun, --target=node and --target=browser\n",
+    ],
   ])("%j is refused", async (flags, stderr) => {
     using dir = tempDir("library-refused", { ...sources, "package.json": JSON.stringify(packageJson) });
     expect(await bun(String(dir), "compile", "--library", "src/index.ts", ...flags)).toEqual({

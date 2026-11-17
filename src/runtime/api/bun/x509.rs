@@ -1,4 +1,4 @@
-use bun_boringssl_sys::X509;
+use bun_boringssl_sys::{OwnedX509, X509};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 pub(crate) fn to_js(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -7,7 +7,7 @@ pub(crate) fn to_js(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult
     })
 }
 
-pub(crate) fn to_js_object(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn to_js_object(cert: OwnedX509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     Ok(Bun__X509__toJS(cert, global_object))
 }
 
@@ -18,5 +18,5 @@ unsafe extern "C" {
         cert: &mut X509,
         global_object: &JSGlobalObject,
     ) -> JSValue;
-    safe fn Bun__X509__toJS(cert: &mut X509, global_object: &JSGlobalObject) -> JSValue;
+    safe fn Bun__X509__toJS(cert: OwnedX509, global_object: &JSGlobalObject) -> JSValue;
 }

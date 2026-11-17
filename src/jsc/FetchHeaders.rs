@@ -3,7 +3,9 @@ use core::ptr::NonNull;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
+use bun_core::ffi::FfiSlice;
 use bun_core::{EncodedSlice, String as BunString, StringPointer};
+use bun_http_types::ETag::{HeaderEntryColumns as _, Headers};
 use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
@@ -40,11 +42,13 @@ unsafe extern "C" {
         arg2: &mut u32,
     ) -> bool;
     safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
-    // safe: `arg0`/`arg1` are opaque handles to C++-owned request structs
-    // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data — same
-    // round-trip contract as `Zig__GlobalObject__resetModuleRegistryMap`.
-    safe fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void)
-    -> *mut FetchHeaders;
+    // safe: C++ asserts that `names` and `values` pair up and lie within `buf`.
+    safe fn WebCore__FetchHeaders__createFromHeaders(
+        names: FfiSlice<'_, StringPointer>,
+        values: FfiSlice<'_, StringPointer>,
+        buf: FfiSlice<'_>,
+    ) -> *mut FetchHeaders;
+    // safe: `arg1` is an opaque handle to a C++-owned uWS HttpRequest, never dereferenced here.
     safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
     // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
     // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.
@@ -86,12 +90,6 @@ unsafe extern "C" {
         value: &BunString,
         global: &JSGlobalObject,
     );
-}
-
-#[repr(C)]
-struct PicoHeaders {
-    ptr: *const c_void,
-    len: usize,
 }
 
 // The 4 forwarding wrappers below pass *mut StringPointer/*mut u8 straight to
@@ -158,16 +156,13 @@ impl FetchHeaders {
             .expect("WebCore__FetchHeaders__createEmpty returned null")
     }
 
-    pub fn create_from_pico_headers<T>(pico_headers_list: &[T]) -> NonNull<FetchHeaders> {
-        let out = PicoHeaders {
-            ptr: pico_headers_list.as_ptr().cast::<c_void>(),
-            len: pico_headers_list.len(),
-        };
-        // `out` lives across the call; C++ copies the headers synchronously.
-        NonNull::new(WebCore__FetchHeaders__createFromPicoHeaders_(
-            std::ptr::from_ref(&out).cast::<c_void>(),
+    pub fn create_from_headers(headers: &Headers) -> NonNull<FetchHeaders> {
+        NonNull::new(WebCore__FetchHeaders__createFromHeaders(
+            headers.entries.items_name().into(),
+            headers.entries.items_value().into(),
+            headers.buf.as_slice().into(),
         ))
-        .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
+        .expect("WebCore__FetchHeaders__createFromHeaders returned null")
     }
 
     /// `value`'s tag carries its encoding, and a `WTFStringImpl`-tagged value

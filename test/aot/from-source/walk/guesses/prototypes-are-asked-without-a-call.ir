@@ -1,0 +1,12 @@
+# -- source: main.cjs
+# "use strict";
+# const base = { a: 1 }, list = [Object.create(base), {}];
+# function run(count) { let n = 0; for (let k = 0; k < count; k++) n += base.isPrototypeOf(list[k & 1]) ? 1 : 2; return n; }
+# print(run(10));
+# -- end of source
+# In a loop the method of Object.prototype is expected whatever the object is, and its code stands in line.
+# RUN: walk f1 mechanisms=all
+# CHECK: TypeTest {{*}} testedType=builtin(ObjectPrototypeIsPrototypeOf)
+# CHECK: : boolean @Boolean = CallInline {{*}} inlineBuiltin=ObjectIsPrototypeOf
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 15

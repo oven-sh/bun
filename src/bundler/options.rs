@@ -649,18 +649,14 @@ pub fn get_loader_and_virtual_source<'a>(
 
     let is_main = jsc_vm
         .main()
-        .is_some_and(|main| strings::eql_long(specifier, main, true));
+        .is_some_and(|main| strings::eql_long(specifier, main));
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
     let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
-        jsc_vm
-            .read_dir_info_package_json(dir)
-            // SAFETY: the vtable returns a pointer into the resolver's DirInfo
-            // cache owned by `jsc_vm.owner`, which outlives `'a`.
-            .map(|p| unsafe { &*p })
+        jsc_vm.read_dir_info_package_json(dir)
     } else {
         None
     };
@@ -1478,7 +1474,7 @@ pub struct BundleOptions<'a> {
     // directly — all access goes through crate::dispatch::DevServerVTable.
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
-    pub framework: Option<&'a crate::bake_types::Framework>,
+    pub framework: Option<std::sync::Arc<crate::bake_types::Framework>>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
     pub bunfig_path: Box<[u8]>,
@@ -1683,7 +1679,7 @@ impl<'a> BundleOptions<'a> {
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
             dev_server: self.dev_server,
-            framework: self.framework,
+            framework: self.framework.clone(),
             serve_plugins: self.serve_plugins.clone(),
             bunfig_path: self.bunfig_path.clone(),
             unwrap_commonjs_packages: self.unwrap_commonjs_packages,
@@ -1696,9 +1692,9 @@ impl<'a> BundleOptions<'a> {
 
     /// Shared-borrow the per-Transpiler `Log`.
     ///
-    /// SAFETY: `self.log` is non-null: `Transpiler::init_in_place` validates
+    /// SAFETY: `self.log` is non-null: `Transpiler::init` validates
     /// the pointer via `NonNull::new(log).expect(..)` before storing it and
-    /// before calling `from_api` (which has no other callers).
+    /// before calling `from_api`.
     /// The pointee is the caller-owned arena `Log` which outlives `self`. The
     /// same allocation is aliased into `Transpiler.log` / `Resolver.log` /
     /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller
@@ -2105,15 +2101,6 @@ impl<'a> BundleOptions<'a> {
     }
 }
 
-impl Drop for BundleOptions<'_> {
-    fn drop(&mut self) {
-        // self.define dropped automatically (Box<Define>).
-        //
-        // bundler_feature_flags is `Option<Box<StringSet>>`; `None` ≡ the static
-        // empty set (nothing to free), `Some` drops the Box here automatically.
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportPathFormat {
     Relative,
@@ -2123,7 +2110,7 @@ pub enum ImportPathFormat {
     PackagePath,
 }
 
-pub(crate) mod bundle_options_defaults {
+pub mod bundle_options_defaults {
     pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
     ];
@@ -2131,7 +2118,7 @@ pub(crate) mod bundle_options_defaults {
     pub(crate) const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
         &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
 
-    pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+    pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
     ];
 
@@ -2157,9 +2144,7 @@ pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
             let mut buf = bun_paths::path_buffer_pool::get();
             let len = output_dir.len().min(buf.0.len() - 1);
             buf.0[..len].copy_from_slice(&output_dir[..len]);
-            buf.0[len] = 0;
-            // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
-            let z = bun_core::ZStr::from_buf(&buf.0[..], len);
+            let z = bun_core::ZStr::nul_terminate(&mut buf, len);
             if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
                 let err: crate::Error = err.into();
                 Output::print_errorln(format_args!(

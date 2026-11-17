@@ -952,7 +952,9 @@ describe("functions", () => {
   it("promisePtr and nativePromiseContext give the pointer in the context of a promise reaction", () => {
     expect(bindgen.readPromisePtr(bindgen.promisePtrContext)).toBe(42);
     const cell = bindgen.makeNativePromiseContext();
+    const alive = bindgen.TestRefCounted.alive();
     expect(bindgen.readNativePromiseContext(cell)).toBe(42);
+    expect(bindgen.TestRefCounted.alive()).toBe(alive - 1);
     expect(bindgen.readNativePromiseContext(cell)).toBeNull();
   });
 

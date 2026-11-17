@@ -1,0 +1,10 @@
+const { createRequire } = require("module");
+const tools = { made: createRequire(__filename) };
+const w = require("./b.cjs");
+const m = tools.made("./b.cjs");
+if (globalThis.never) require("./probe.cjs");
+const probe = tools.made("./probe.cjs");
+const owner = probe.parent;
+const seen = owner ? owner.children : [];
+const name = x => require("path").basename(String(x.id));
+console.log(seen.filter(x => module.children.includes(x)).map(name).join("+") || "-", m === w, m.name, owner === module, seen.map(name).join("+"), seen.map(x => !globalThis.showsCache || x === require.cache[x.id]).join("+"), new Set(seen).size, module.children.map(name).join("+"), module.children.map(x => !globalThis.showsCache || x === require.cache[x.id]).join("+"), seen.map(x => x.loaded).join("+"), seen.map(x => x.parent === owner).join("+"), seen.map(x => x.exports === (x.id.endsWith("probe.cjs") ? probe.exports : w)).join("+"));

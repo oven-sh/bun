@@ -1,9 +1,12 @@
 // RUN: lower
+// CHECK: [[registry]] = Construct {{*}}calleeName="FinalizationRegistry"
+// CHECK-NEXT: PutModuleVariable [[registry]] variable=[[held]]
 // CHECK-LABEL: function {{*}}name="watch"
-// CHECK: captures=[{type={{*}}FinalizationRegistry
+// CHECK: = GetModuleVariable variable=[[held]]
 // CHECK-LABEL: function {{*}}name="inner"
-// CHECK-NOT: captures=
-// CHECK: b0():
+// CHECK-NOT: variableName="registry"
+// CHECK-NOT: variable=[[held]]
+// CHECK: b0(
 
 // The callbacks are the bodies of modules: they are called, and nothing creates them.
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);

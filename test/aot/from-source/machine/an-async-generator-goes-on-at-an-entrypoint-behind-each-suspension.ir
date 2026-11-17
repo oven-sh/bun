@@ -1,0 +1,28 @@
+# What lives across the suspensions of an async generator has a word in a frame in the heap, and the body goes on at an entrypoint of its own behind each suspension; a body with a saved frame has
+# one entrypoint. The result of an await that stands in one arm alone is read right behind it and again behind the next suspension, and an await stands in a loop whose turn may begin again in
+# front of the yield.
+# -- source: an-async-generator-goes-on-at-an-entrypoint-behind-each-suspension.cjs
+# async function* chosen(a, b, c, tail) { const first = a || b || (await c); const next = await tail; yield [first, next, String(a)].join(); const more = await first; yield more + next; }
+# async function* inOneArm(flag, x, y) { let got = 0; if (flag) got = await x; else got = y.length; yield got + y.length; const again = await got; yield again + got; }
+# async function* looped(list) { let last = "", seen = 0; for (const item of list) { const value = await item; seen++; if (value === last) continue; yield last + value; last = value; } yield seen; }
+# (async () => { for (const it of [chosen(0, "", Promise.resolve("c"), "t"), chosen("a", "", "c", Promise.resolve("t")), inOneArm(true, Promise.resolve(4), "yy"), inOneArm(false, 4, "yyy"), looped(["p", Promise.resolve("p"), "q"])]) for await (const x of it) say(x); })();
+# -- end of source
+# RUN: emit f1:CoroutineBody f2:CoroutineBody f3:CoroutineBody mechanisms=all
+# CHECK-LABEL: unit f1:CoroutineBody
+# CHECK: entrypoint 1
+# CHECK-LABEL: unit f2:CoroutineBody
+# CHECK: entrypoint 1
+# CHECK-LABEL: unit f3:CoroutineBody
+# CHECK: entrypoint 1
+# RUN(SHELL): run-in-shell globalThis.say = (x) => print(String(x));
+# SHELL: c,t,0
+# SHELL-NEXT: ct
+# SHELL-NEXT: a,t,a
+# SHELL-NEXT: at
+# SHELL-NEXT: 6
+# SHELL-NEXT: 8
+# SHELL-NEXT: 6
+# SHELL-NEXT: 6
+# SHELL-NEXT: p
+# SHELL-NEXT: pq
+# SHELL-NEXT: 3

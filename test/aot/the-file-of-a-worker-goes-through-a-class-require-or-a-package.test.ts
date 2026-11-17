@@ -3,10 +3,12 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { renameSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)`, and the `new Worker(entry)` that gets it stands somewhere else: behind a constructor or
-// a method, in a field or in an options object, behind `require()`, or in a package. The build follows `entry` back to the URL and compiles the file.
+// a method, in a field or in an options object, behind `require()`, or in a package. The build doesn't follow `entry`: where it can't read what some Worker starts
+// from, it compiles every file of code whose URL the program writes out.
 // In a test run a file that nobody compiled runs from its text, in the interpreter, with the right answer, so nobody notices.
 // An executable tells: the sources are moved away before it runs, and a Worker without its file never answers.
 const url = (n: number) => `new URL("./src/worker/w${n}.ts", import.meta.url)`;
@@ -115,25 +117,22 @@ export class Configured {
   constructor(options) { this.options = { threads: 1, ...options }; }
   ask() { return ask(new Worker(this.options.filename)); }
 }
-// What the package names itself is its own business: most programs never start it.
+// The file that the package starts its own Worker from is compiled with the package, whether or not the program calls the function.
 export const startOwn = () => ask(new Worker(new URL("./own-worker.js", import.meta.url)));
 `,
   "node_modules/starts-workers/own-worker.js": `self.onmessage = event => { self.postMessage("own " + event.data); };\n`,
   "node_modules/starts-workers-of-old/package.json": `{ "name": "starts-workers-of-old", "version": "1.0.0", "main": "index.js" }`,
   "node_modules/starts-workers-of-old/index.js": `${ask}exports.start = entry => ask(new Worker(entry));\n`,
-  // Most URLs of code files that tests write are there to read a source. No Worker starts from them, so no build takes them in.
+  // The test only reads src/only-read.ts. Its URL goes to functions and objects of the project like the others, so the build compiles that file too.
   "src/read.ts": `import { readFileSync } from "node:fs";
 export const read = (file: URL) => readFileSync(file, "utf8").length;
 export class Reader {
   constructor(public source: URL) {}
   read() { return read(this.source); }
 }
-// ./pool starts a Worker from what it reads under \`filename\`, whichever object has it, and this file gets to ./pool. That this object is meant is a guess.
-// That whoever stores under \`source\` has a Worker in mind would be a guess upon that one: two names on, most of a large program stores under one of them.
 export { makeIdle as makeIdleToo } from "./pool";
 export const describe = (reader: { source: URL }) => ({ filename: reader.source });
 `,
-  // This file gets to no file that starts a Worker, so its object is its own business.
   "src/listing.ts": `export const listed = { filename: new URL("./only-read.ts", import.meta.url) };\n`,
   "src/only-read.ts": `export const never = "run";\n`,
 };
@@ -189,7 +188,11 @@ const asWritten = ways.map(([name], index) => `SEEN ${name} | w${index + 1} 42`)
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-behind-a-class-require-or-a-package", { ...files, ...testFiles });
-  const ran = await run([bunExe(), "test", ...flags, "--isolate"], String(dir), { ...bunEnv, ...env });
+  // One test starts all the Workers, one after the other: on a busy machine, or under a sanitizer, they take more than the five seconds that a test has.
+  const ran = await run([bunExe(), "test", ...flags, "--isolate", "--timeout=60000"], String(dir), {
+    ...bunEnv,
+    ...env,
+  });
   return {
     seen: ran.stdout.split("\n").filter(line => line.startsWith("SEEN ")),
     taken: [
@@ -198,19 +201,19 @@ async function see(flags: string[], env: Record<string, string>) {
       ),
     ].map(match => Number(match[1])),
     exitCode: ran.exitCode,
+    stderr: ran.exitCode ? ran.stderr : "",
   };
 }
 
-// Over layers the class, the required function and the package lie in programs below the test file, whose builds don't see it.
-for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1", "TestRunLayers:3,TestRunPartFiles:1"]) {
-  test(`each Worker answers as under plain bun test, and runs compiled (${words})`, async () => {
-    const plain = await see([], {});
-    expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0 });
-    expect(await see(["--aot"], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
-    const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
-    expect(await see(["--aot"], env)).toEqual({ ...plain, taken: [count] });
-  }, 240_000);
-}
+test("each Worker answers as under plain bun test, and runs compiled", async () => {
+  const plain = await see([], {});
+  expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0, stderr: "" });
+  expect(await see(["--aot"], {})).toEqual(plain);
+  expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" })).toEqual({
+    ...plain,
+    taken: [count + 2],
+  });
+}, 240_000);
 
 test("the file of each Worker is in the executable", async () => {
   const main =

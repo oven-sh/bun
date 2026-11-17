@@ -1,0 +1,59 @@
+# -- source: main.cjs
+# "use strict";
+# function lesser(first, given, other) {
+#   const kept = [first | 0];
+#   for (let j = 1; j <= 6; j++) { let least = given[j] + 1; const beside = other[j] * 2; if (beside < least) least = beside; kept[j] = least; }
+#   return kept;
+# }
+# function picked(first, given) {
+#   const kept = [first | 0];
+#   for (let j = 1; j <= 6; j++) { let chosen = given[j]; if (j & 1) chosen = given[j - 1]; kept[j] = chosen; }
+#   return kept;
+# }
+# function long(given, count) {
+#   const most = count | 0, kept = [most & 1];
+#   for (let j = 1; j <= most; j++) { let least = given[j] + 1; const beside = kept[j - 1] + 2; if (beside < least) least = beside; kept[j] = least; }
+#   return kept;
+# }
+# function masked(given, count) {
+#   const most = count | 0, kept = [most & 1];
+#   for (let j = 1; j <= most; j++) { let least = given[j & 3] + 1; const beside = kept[j - 1] + 2; if (beside < least) least = beside; kept[j] = least; }
+#   return kept;
+# }
+# const byName = { lesser, picked, long, masked }, key = JSON.parse('"lesser"'), other = JSON.parse('"picked"'), third = JSON.parse('"long"'), fourth = JSON.parse('"masked"');
+# const whole = [0, 1, 2, 3, 4, 5, 6], parts = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+# print(byName[key](7, whole, parts).join(), byName[key](0.5, parts, whole).join(), byName[key](7, [0, 1, 2, NaN, 4, 5, 6], parts).join(), byName[key](7, [0, 1, "two", 3, 4, 5, 6], parts).join(), byName[key](7, [0, 1], whole).join());
+# print(byName[other](7, whole).join(), byName[other](7, ["a", "b", "c", "d", "e", "f", "g"]).join());
+# const many = Array.from({ length: 40 }, (_, i) => i * 3 % 17);
+# print(byName[third](many, 39).join(), byName[third](many, 45).length, byName[third](whole, 3).join(), byName[fourth](many, 30).join());
+# -- end of source
+# f1 = lesser, f2 = picked. Link says nothing of what `kept` holds: what is stored is a parameter of a join. The literal was born for boxed values, the front of the typed copy asks a list that takes numbers for doubles,
+# so the copy that raises the length was never entered, and a fence kept the store as it is written. In lesser() every value that meets in the join is reckoned by the text of the turn (a sum with a number written, a product):
+# the literal is born for doubles behind its room, and the typed copy raises its length and stores raw. That the value is a number that is itself is asked in the turn: what is not begins the turn again as it is written.
+# In picked() what meets is read out of a list: nothing says that it is a number, and the literal stays as it is written.
+# f3 = long, f4 = masked. Where a turn may throw, the literal is given no more room at its birth than the profile of a site may ask (25), and past its room the typed copy is left for good. In long() every turn reads `given` under the
+# counter, and a turn of the typed copy that finds no element there leaves the copy: the copy fills no more than `given` is long. Behind the tests of the front the literal is given the lesser of the count and that length: memory that
+# stands there already, once more. In masked() no list says how far the typed copy goes: the literal stays as it is written.
+# RUN(LESSER): walk f1:Body mechanisms=all
+# LESSER: NewArray {{*}} arrayStorage=Double
+# LESSER: isLoopHead=true
+# LESSER: ExtendArrayLength
+# LESSER-NEXT: PutDoubleIndex
+# RUN(PICKED): walk f2:Body mechanisms=all
+# PICKED-NOT: NewArray {{*}} arrayStorage=Double
+# PICKED-NOT: ExtendArrayLength
+# RUN(LONG): walk f3:Body mechanisms=all
+# LONG: NewArray {{*}} arrayStorage=Double
+# LONG: [[length]]: {{*}} = GetArrayLength
+# LONG: ReserveArrayCapacity
+# LONG: isLoopHead=true
+# LONG: ExtendArrayLength
+# LONG-NEXT: PutDoubleIndex
+# RUN(MASKED): walk f4:Body mechanisms=all
+# MASKED-NOT: NewArray {{*}} arrayStorage=Double
+# MASKED-NOT: ExtendArrayLength
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 7,2,3,4,5,6,7 0,2,3.5,4.5,5.5,6.5,7.5 7,2,3,NaN,5,6,7 7,2,two1,4,5,6,7 7,2,NaN,NaN,NaN,NaN,NaN
+# ANSWERS-NEXT: 7,0,2,2,4,4,6 7,a,c,c,e,e,g
+# ANSWERS-NEXT: 1,3,5,7,9,11,2,4,6,8,10,12,3,5,7,9,11,1,3,5,7,9,11,2,4,6,8,10,12,3,5,7,9,11,1,3,5,7,9,11 46 1,2,3,4 0,2,4,6,1,3,5,7,1,3,5,7,1,3,5,7,1,3,5,7,1,3,5,7,1,3,5,7,1,3,5
+# ANSWERS-NEXT: exited with 0

@@ -19,12 +19,13 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::{NativeCallbacks, NewSocket};
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HiveArrayFallback, VecExt, recycle_vec};
-use bun_http::lshpack;
+use bun_hpack::Indexing;
 use bun_http_types::h2::flow_control::{DEFAULT_WINDOW_SIZE, MAX_WINDOW_SIZE};
 use bun_http_types::h2::frame::{
     CONNECTION_PREFACE, ErrorCode, FRAME_HEADER_SIZE, FrameHeader, FrameType, MAX_STREAM_ID, flags,
     unparsed_rest,
 };
+use bun_http_types::h2::header_block::HeaderFields;
 use bun_http_types::h2::settings::{self, SettingId, Settings};
 use bun_http_types::h2::stream::{Event as StreamEvent, State};
 use bun_jsc::StringJsc as _;
@@ -737,6 +738,10 @@ impl H2FrameParser {
                 FlushState::NoAction
             };
         }
+        if Self::corked() != Some(self.as_ctx_ptr()) {
+            self.cork();
+            return self.flush_queue(stream, written);
+        }
         self.queued_data_size
             .set(self.queued_data_size.get() - max_size as u64);
         *written += max_size;
@@ -935,28 +940,35 @@ impl core::ops::DerefMut for HeaderScratch<'_> {
 
 impl H2FrameParser {
     /// nghttp2 counts the priority bytes of every HEADERS frame: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
-    fn is_over_send_limit(&self, block: &lshpack::HeaderBlock) -> bool {
+    fn is_over_send_limit(&self, block: &HeaderFields) -> bool {
         const PRIORITY_SPEC_LEN: usize = 5;
         block.deflate_bound() + PRIORITY_SPEC_LEN > self.max_send_header_block_length.get() as usize
     }
 
-    /// Encodes all of `scratch.block` into `scratch.encoded`, or nothing on error.
-    fn encode_header_list(&self, scratch: &mut H2HeaderScratch) -> crate::Result<()> {
-        scratch.encoded.clear();
-        // 256 extra bytes for a PADDED frame's pad-length byte and padding.
-        scratch
-            .encoded
-            .try_reserve(lshpack::MAX_SIZE_UPDATE_BYTES + scratch.block.encode_bound() + 256)
-            .map_err(|_| bun_alloc::AllocError)?;
-        bun_output::scoped_log!(
-            H2FrameParser,
-            "encode header block: {} fields",
-            scratch.block.len()
-        );
-        self.engine.hpack.with_mut(|hpack| {
-            hpack.encode_block(&scratch.block, &mut scratch.encoded)?;
-            Ok(())
-        })
+    /// Encodes `scratch.block` into `scratch.encoded`. Returns false, with the HPACK table unchanged, if a field is too long.
+    fn encode_header_list(&self, scratch: &mut H2HeaderScratch) -> bool {
+        let H2HeaderScratch { block, encoded } = scratch;
+        if block
+            .iter()
+            .any(|(name, value, _)| name.len() + value.len() > bun_hpack::MAX_FIELD_LEN)
+        {
+            return false;
+        }
+        bun_output::scoped_log!(H2FrameParser, "encode header block: {} fields", block.len());
+        encoded.clear();
+        encoded.reserve(block.deflate_bound());
+        self.engine.encoder.with_mut(|encoder| {
+            let mut out = encoder.block(encoded);
+            for (name, value, never_index) in block.iter() {
+                let indexing = if never_index {
+                    Indexing::Never
+                } else {
+                    Indexing::Allowed
+                };
+                out.field(name, value, indexing);
+            }
+        });
+        true
     }
 
     /// Serialize the SETTINGS entries that go on the wire: only the standard parameters JS set
@@ -1018,15 +1030,12 @@ impl H2FrameParser {
         off
     }
 
-    fn set_settings(&self, settings: Settings) {
-        self.engine.local_settings.set(settings);
+    fn send_settings(&self) {
+        self.cork();
         let mut payload = [0u8; MAX_SETTINGS_PAYLOAD_SIZE];
         let payload_len = self.write_settings_payload(&mut payload);
-
-        // §6.5.3: the peer's ACKs apply to the outstanding SETTINGS frames in order.
         self.engine
-            .pending_local_settings_acks
-            .with_mut(|v| v.push_back(settings));
+            .note_settings_sent(self.explicit_settings.get() & SETTING_BIT_HEADER_TABLE_SIZE != 0);
         self.write_frame(FrameType::Settings, 0, 0, &[&payload[..payload_len]]);
     }
 
@@ -1121,18 +1130,6 @@ impl H2FrameParser {
         self.out_standing_pings
             .set(self.out_standing_pings.get() + 1);
         self.write_frame(FrameType::Ping, 0, 0, &[payload]);
-    }
-
-    pub(crate) fn send_preface_and_settings(&self) {
-        bun_output::scoped_log!(H2FrameParser, "sendPrefaceAndSettings");
-        // PREFACE + Settings Frame
-        let mut payload = [0u8; MAX_SETTINGS_PAYLOAD_SIZE];
-        let payload_len = self.write_settings_payload(&mut payload);
-        self.engine
-            .pending_local_settings_acks
-            .with_mut(|v| v.push_back(self.engine.local_settings.get()));
-        let _ = self.write(CONNECTION_PREFACE);
-        self.write_frame(FrameType::Settings, 0, 0, &[&payload[..payload_len]]);
     }
 
     /// Calls `handlers.<event>(ctx, args...)` now.
@@ -2344,6 +2341,10 @@ impl Sink for H2FrameParser {
         sent
     }
 
+    fn prepare_write(&self) {
+        self.cork();
+    }
+
     fn on_error(&self, lib_error_code: i32, debug: &[u8]) {
         // The engine detected a connection error and already wrote the GOAWAY: surface it to JS
         // as the negative nghttp2-style library error code (the JS handler builds node's
@@ -2732,69 +2733,69 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         options: JSValue,
     ) -> JsResult<()> {
-        let mut local_settings = self.engine.local_settings.get();
+        let mut staged: Vec<(SettingId, u32)> = Vec::new();
         // Like node's updateSettingsBuffer, a SETTINGS frame only has the entries of this call. `local_settings` accumulates.
         let mut explicit_settings: u8 = 0;
 
         macro_rules! number_setting {
-            ($key:literal, $field:ident, $bit:expr, $range:expr) => {{
+            ($key:literal, $id:ident, $bit:expr, $range:expr) => {{
                 if let Some(v) = options.get(global_object, $key)? {
-                    local_settings.$field =
-                        setting_value(global_object, $key.as_bytes(), v, $range)?;
+                    let value = setting_value(global_object, $key.as_bytes(), v, $range)?;
+                    staged.push((SettingId::$id, value));
                     explicit_settings |= $bit;
                 }
             }};
         }
         macro_rules! bool_setting {
-            ($key:literal, $field:ident, $bit:expr) => {{
+            ($key:literal, $id:ident, $bit:expr) => {{
                 if let Some(v) = options.get(global_object, $key)?
                     && v.is_boolean()
                 {
-                    local_settings.$field = v.as_boolean();
+                    staged.push((SettingId::$id, u32::from(v.as_boolean())));
                     explicit_settings |= $bit;
                 }
             }};
         }
         number_setting!(
             "headerTableSize",
-            header_table_size,
+            HeaderTableSize,
             SETTING_BIT_HEADER_TABLE_SIZE,
             0..=u32::MAX
         );
-        bool_setting!("enablePush", enable_push, SETTING_BIT_ENABLE_PUSH);
+        bool_setting!("enablePush", EnablePush, SETTING_BIT_ENABLE_PUSH);
         number_setting!(
             "initialWindowSize",
-            initial_window_size,
+            InitialWindowSize,
             SETTING_BIT_INITIAL_WINDOW_SIZE,
             0..=MAX_WINDOW_SIZE
         );
         number_setting!(
             "maxFrameSize",
-            max_frame_size,
+            MaxFrameSize,
             SETTING_BIT_MAX_FRAME_SIZE,
             settings::DEFAULT_MAX_FRAME_SIZE..=settings::MAX_MAX_FRAME_SIZE
         );
         number_setting!(
             "maxConcurrentStreams",
-            max_concurrent_streams,
+            MaxConcurrentStreams,
             SETTING_BIT_MAX_CONCURRENT_STREAMS,
             0..=u32::MAX
         );
         number_setting!(
             "maxHeaderListSize",
-            max_header_list_size,
+            MaxHeaderListSize,
             SETTING_BIT_MAX_HEADER_LIST_SIZE,
             0..=u32::MAX
         );
         number_setting!(
             "maxHeaderSize",
-            max_header_list_size,
+            MaxHeaderListSize,
             SETTING_BIT_MAX_HEADER_LIST_SIZE,
             0..=u32::MAX
         );
         bool_setting!(
             "enableConnectProtocol",
-            enable_connect_protocol,
+            EnableConnectProtocol,
             SETTING_BIT_ENABLE_CONNECT_PROTOCOL
         );
 
@@ -2859,7 +2860,13 @@ impl H2FrameParser {
             }
         }
 
-        self.engine.local_settings.set(local_settings);
+        // The last JS to run before the frame is written. These settings build on any it sends.
+        self.cork();
+        update(&self.engine.local_settings, |local| {
+            for (id, value) in staged {
+                local.apply(id, value);
+            }
+        });
         self.explicit_settings.set(explicit_settings);
         self.custom_settings.with_mut(|cs| {
             for &(id, value) in &staged_custom {
@@ -2883,7 +2890,7 @@ impl H2FrameParser {
 
     pub(crate) fn settings(&self, cx: &mut JsScope<'_>, settings: JsLocal<'_>) -> JsResult<()> {
         self.load_settings_from_js_value(cx.global(), settings.to_js())?;
-        self.set_settings(self.engine.local_settings.get());
+        self.send_settings();
         Ok(())
     }
 
@@ -3484,31 +3491,20 @@ impl H2FrameParser {
             return Ok(());
         }
         self.cork();
-        if !stream.state().can_send() {
+        if !stream.takes_data() {
             return Ok(());
         }
 
-        let encoded = if self.is_over_send_limit(&scratch.block) {
-            Err(crate::Error::UnableToEncode)
-        } else {
-            self.encode_header_list(&mut scratch)
-        };
-        match encoded {
-            Ok(()) => {}
-            Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
-                return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
-            }
-            Err(_) => {
-                // node: 'frameError' + ERR_HTTP2_STREAM_ERROR (test-http2-exceeds-server-trailer-size.js).
-                self.dispatch_with_2_extra(
-                    js::on_frame_error_get_cached,
-                    stream.context(),
-                    JSValue::js_number(FrameType::Headers as u8 as f64),
-                    JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-                );
-                self.reset_stream(&stream, ErrorCode::FRAME_SIZE_ERROR, true);
-                return Ok(());
-            }
+        if self.is_over_send_limit(&scratch.block) || !self.encode_header_list(&mut scratch) {
+            // node: 'frameError' + ERR_HTTP2_STREAM_ERROR (test-http2-exceeds-server-trailer-size.js).
+            self.dispatch_with_2_extra(
+                js::on_frame_error_get_cached,
+                stream.context(),
+                JSValue::js_number(FrameType::Headers as u8 as f64),
+                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+            );
+            self.reset_stream(&stream, ErrorCode::FRAME_SIZE_ERROR, true);
+            return Ok(());
         }
         self.write_header_block(
             FrameType::Headers,
@@ -3694,16 +3690,10 @@ impl H2FrameParser {
                 )
                 .throw());
         };
-        match self.encode_header_list(&mut scratch) {
-            Ok(()) => {}
-            Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
-                return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
-            }
-            Err(_) => {
-                // node never surfaces self through the pushStream callback.
-                self.schedule_header_compression_session_error();
-                return Ok(JSValue::js_number(-1.0));
-            }
+        if !self.encode_header_list(&mut scratch) {
+            // node never surfaces this through the pushStream callback.
+            self.schedule_header_compression_session_error();
+            return Ok(JSValue::js_number(-1.0));
         }
         let _ = self
             .engine
@@ -3916,10 +3906,7 @@ impl H2FrameParser {
         }
 
         // The encode updates the HPACK table, so nothing may return or throw until the block is written.
-        if let Err(err) = self.encode_header_list(&mut scratch) {
-            if matches!(err, crate::Error::Alloc(_)) {
-                return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
-            }
+        if !self.encode_header_list(&mut scratch) {
             self.schedule_header_compression_session_error();
             return Ok(());
         }
@@ -3933,7 +3920,6 @@ impl H2FrameParser {
         };
         if padding != 0 {
             flags |= flags::PADDED;
-            // Doesn't allocate, because encode_header_list reserved the room.
             scratch.encoded.insert(0, padding);
             scratch
                 .encoded
@@ -4307,13 +4293,12 @@ impl H2FrameParser {
             unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
         }
 
-        if is_server {
-            this_ref.set_settings(this_ref.engine.local_settings.get());
-        } else {
+        if !is_server {
             // consider that we need to queue until the first flush
             this_ref.has_nonnative_backpressure.set(true);
-            this_ref.send_preface_and_settings();
+            let _ = this_ref.write(CONNECTION_PREFACE);
         }
+        this_ref.send_settings();
         scopeguard::ScopeGuard::into_inner(guard);
         Ok(this_value)
     }

@@ -22,7 +22,6 @@ use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
 use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
-use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
 use crate::{
@@ -52,7 +51,8 @@ pub struct ClientSession {
     /// One ref moves between `active_h2_sessions`, while the socket ext points here, and the keep-alive pool.
     pub(crate) ref_count: Cell<u32>,
 
-    pub(crate) hpack: lshpack::Coder,
+    pub(crate) encoder: bun_hpack::Encoder,
+    pub(crate) decoder: bun_hpack::Decoder,
     pub(crate) socket: Socket,
     pub(crate) ctx: *mut NewHTTPContext<true>, // BACKREF: context outlives and registers this session
 
@@ -111,7 +111,6 @@ pub struct ClientSession {
     pub(crate) liveness_ping_spent: bool,
     pub(crate) fatal_error: Option<Error>,
     /// Reused by `write_request`: a request's fields, and their HPACK encoding.
-    pub(crate) request_fields: lshpack::HeaderBlock,
     pub(crate) encode_scratch: Vec<u8>,
 
     pub(crate) remote_max_frame_size: u24,
@@ -312,7 +311,8 @@ impl ClientSession {
     ) -> SessionPtr {
         let this = RefPtr::new(ClientSession {
             ref_count: Cell::new(1),
-            hpack: lshpack::Coder::default(),
+            encoder: bun_hpack::Encoder::new(),
+            decoder: bun_hpack::Decoder::new(),
             socket,
             ctx,
             hostname: Box::<[u8]>::from(client.connected_url.hostname),
@@ -337,7 +337,6 @@ impl ClientSession {
             ping_cap_armed: false,
             liveness_ping_spent: false,
             fatal_error: None,
-            request_fields: lshpack::HeaderBlock::default(),
             encode_scratch: Vec::new(),
             remote_max_frame_size: DEFAULT_MAX_FRAME_SIZE,
             remote_max_concurrent_streams: 100,

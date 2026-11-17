@@ -2219,14 +2219,23 @@ function emitHttp2SessionPerf(session, parser, socket) {
   );
 }
 
+function emitAbortedOnce(stream: Http2Stream) {
+  if (stream[kAborted]) return;
+  stream[kAborted] = true;
+  stream.emit("aborted");
+}
 // Returns false if the stream was closed already.
-function closeStreamOnce(stream: Http2Stream) {
+function closeStreamOnce(stream: Http2Stream, endWritable = false) {
   const status = stream[bunHTTP2StreamStatus];
   if ((status & StreamState.Closed) !== 0) return false;
   stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
   if (stream[kTimeout]) clearTimeout(stream[kTimeout]);
   stream[kTimeout] = null;
   stream.removeAllListeners("timeout");
+  if (endWritable && !stream._writableState.ending) {
+    emitAbortedOnce(stream);
+    endWritableForUser(stream);
+  }
   publishStreamCloseChannel(stream);
   return true;
 }
@@ -2236,15 +2245,11 @@ function markStreamClosed(stream: Http2Stream) {
 // Like node's closeStream(), which runs once per stream. Returns true if the caller still has to end() the writable side.
 function abortIfWritableOpen(stream: Http2Stream) {
   if (stream._writableState.ending) return false;
-  if ((stream[bunHTTP2StreamStatus] & StreamState.Closed) === 0 && !stream[kAborted]) {
-    stream[kAborted] = true;
-    stream.emit("aborted");
-  }
+  if ((stream[bunHTTP2StreamStatus] & StreamState.Closed) === 0) emitAbortedOnce(stream);
   return true;
 }
-// Ends the writable side of a stream the peer reset, if it's still open. write() drops what user code writes afterwards.
-function abortAndEndWritable(stream: Http2Stream) {
-  if (!abortIfWritableOpen(stream) || stream.destroyed) return;
+function endWritableForUser(stream: Http2Stream) {
+  if (stream.destroyed) return;
   stream[bunHTTP2StreamStatus] |= StreamState.EndedForUser;
   stream.end();
 }
@@ -2257,16 +2262,11 @@ function abortOnPeerCancel(stream: Http2Stream) {
   stream[bunHTTP2StreamStatus] |= StreamState.WritableClosed;
   // Without an 'error' listener the stream's own code would be an uncaught error that only this timing raises.
   if (!keepsOwnRstCode(stream) || stream.listenerCount("error") === 0) stream.rstCode = NGHTTP2_CANCEL;
-  abortAndEndWritable(stream);
+  if (abortIfWritableOpen(stream)) endWritableForUser(stream);
 }
 // Does nothing for a stream that is closed by now.
 function rstNextTick(session: Http2Session, id: number, rstCode: number) {
   session[bunHTTP2Native]?.rstStream(id, rstCode);
-}
-// A session without a parser has closed all of its streams.
-function isClosedOnWire(stream: Http2Stream) {
-  const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
-  return !native || native.isStreamClosed(stream.id);
 }
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
 // drives the native receive window. While paused, the stream's window is not replenished; on
@@ -2307,7 +2307,9 @@ function abortRequestStream(this: Http2Stream, signal: AbortSignal) {
 // listener per request, detached when the stream closes.
 function setupRequestEndAndSignal(req: Http2Stream, options: any, signal: AbortSignal | undefined) {
   if (options?.endStream) req.end();
-  if (signal) {
+  if (signal?.aborted) {
+    abortRequestStream.$call(req, signal);
+  } else if (signal) {
     addAbortListener ??= require("internal/abort_listener").addAbortListener;
     const disposable = addAbortListener(signal, abortRequestStream.bind(req, signal));
     req.once("close", disposable[Symbol.dispose]);
@@ -2871,9 +2873,9 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   }
 
   write(chunk, encoding?, callback?) {
-    // respond() (HEAD, 204, 304) and the peer's reset end the writable side themselves. A write() after that is dropped, unless the stream is open and has an 'error' listener.
+    // respond() (HEAD, 204, 304) and the peer's reset end the writable side themselves. A write() after that is dropped, unless the stream has an 'error' listener.
     const status = this[bunHTTP2StreamStatus];
-    if ((status & StreamState.EndedForUser) !== 0 && (this.listenerCount("error") === 0 || isClosedOnWire(this))) {
+    if ((status & StreamState.EndedForUser) !== 0 && this.listenerCount("error") === 0) {
       if (typeof encoding === "function") callback = encoding;
       if (typeof callback === "function") process.nextTick(callback, $ERR_STREAM_WRITE_AFTER_END());
       return false;
@@ -3848,13 +3850,15 @@ function rejectRequestNT(session, req) {
   emitStreamErrorNT(session, req, constants.NGHTTP2_PROTOCOL_ERROR, false);
 }
 
+// Runs before the writes that the reset drops call back, so no 'drain' follows.
+function closeOnResetWithNoError(session: Http2Session, stream: Http2Stream) {
+  if (stream.closed || session.destroyed) return;
+  stream.rstCode = NGHTTP2_NO_ERROR;
+  if (closeStreamOnce(stream, true)) markWritableDone(stream);
+}
 // Like node's onStreamClose, RST_STREAM(NO_ERROR) closes the stream but leaves buffered data for its reader.
 function closeStreamResetWithNoError(session: Http2Session, stream: Http2Stream) {
-  if (!stream.closed) {
-    stream.rstCode = NGHTTP2_NO_ERROR;
-    abortAndEndWritable(stream);
-    markStreamClosed(stream);
-  }
+  closeOnResetWithNoError(session, stream);
   // An 'aborted' listener or a close-channel subscriber can destroy the stream.
   if (stream.destroyed) return;
   endReadableAtClose(stream);
@@ -4191,6 +4195,7 @@ class ServerHttp2Session extends Http2Session {
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
+      if (error === NGHTTP2_NO_ERROR) closeOnResetWithNoError(self, stream);
       process.nextTick(emitStreamErrorNT, self, stream, error, self.#isClosedAndIdle());
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
@@ -5183,6 +5188,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       // A refused push has no Http2Stream, but it can be the last stream that close() waits for.
       if (typeof stream !== "object") return self.#maybeDestroy();
+      if (error === NGHTTP2_NO_ERROR) closeOnResetWithNoError(self, stream);
       self.#flushPendingRequests();
       process.nextTick(emitStreamErrorNT, self, stream, error, self.#isClosedAndIdle());
     }),

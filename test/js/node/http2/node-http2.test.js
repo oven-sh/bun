@@ -9127,7 +9127,11 @@ describe("frames written while another session's transport hands over the cork",
   );
 });
 
-it("fails the whole session when an outbound header block cannot be encoded", async () => {
+it.each([
+  ["string", value => ({ "test-header": value })],
+  ["array", value => ({ "test-header": ["short", value] })],
+  ["raw list", value => ["test-header", value]],
+])("fails the whole session when an outbound header block cannot be encoded (%s)", async (_, headers) => {
   // A header block the HPACK encoder cannot emit is a COMPRESSION_ERROR (9) against the
   // session in node, so the session and the in-flight request both see
   // ERR_HTTP2_SESSION_ERROR rather than a per-stream error.
@@ -9137,7 +9141,7 @@ it("fails the whole session when an outbound header block cannot be encoded", as
     const client = http2.connect(`http://localhost:${port}`, { maxSendHeaderBlockLength: 100000 });
     const sessionError = new Promise(resolve => client.on("error", resolve));
     const requestError = new Promise(resolve => {
-      const req = client.request({ "test-header": Buffer.alloc(90000, "A").toString() });
+      const req = client.request(headers(Buffer.alloc(90000, "A").toString()));
       req.on("error", resolve);
       req.end();
     });
@@ -11135,12 +11139,13 @@ describe.concurrent("RST_STREAM from the peer while the readable side is open", 
     });
   });
 
-  // Node emits 'error' ERR_STREAM_WRITE_AFTER_END for the write(), which also discards the unread response.
-  it("drops a write() after RST_STREAM(NO_ERROR) and still delivers the unread response", async () => {
+  // In Node the write() is an uncaught ERR_STREAM_WRITE_AFTER_END.
+  it("without an 'error' listener, drops a write() after RST_STREAM(NO_ERROR) and still delivers the unread response", async () => {
     const requestArgs = [{ ":path": "/", ":method": "POST" }, { endStream: false }];
     await withRawServer(responseThenReset(NGHTTP2_NO_ERROR), requestArgs, async (client, req, events) => {
       await once(req, "response");
       await resetWasHandled(client);
+      req.removeAllListeners("error");
       const written = Promise.withResolvers();
       expect(req.write("more of the upload", written.resolve)).toBe(false);
       expect((await written.promise)?.code).toBe("ERR_STREAM_WRITE_AFTER_END");

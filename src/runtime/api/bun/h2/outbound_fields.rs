@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use bstr::BStr;
 use bun_core::strings;
-use bun_http::lshpack::HeaderBlock;
+use bun_http_types::h2::header_block::HeaderFields;
 use bun_http_types::is_token_char;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsResult};
 
@@ -78,7 +78,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// lshpack's limit on a header name.
 const MAX_NAME_LEN: usize = 4096;
 
 /// The wire bytes of a header value, an ALTSVC field or an origin: one byte per code unit like Node, or UTF-8 if a unit is above 0xFF.
@@ -126,7 +125,7 @@ struct Walk<'a> {
     strict_single_value: bool,
     seen_single_value: [bool; SINGLE_VALUE_HEADERS_LEN],
     name_buffer: [u8; MAX_NAME_LEN],
-    block: Option<&'a mut HeaderBlock>,
+    block: Option<&'a mut HeaderFields>,
 }
 
 impl Walk<'_> {
@@ -228,7 +227,7 @@ pub(crate) fn collect_fields(
     sensitive: JSValue,
     role: BlockRole,
     strict_single_value: bool,
-    block: Option<&mut HeaderBlock>,
+    block: Option<&mut HeaderFields>,
 ) -> JsResult<()> {
     let mut walk = Walk {
         global,

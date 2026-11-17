@@ -331,7 +331,7 @@ impl PathBuf {
 /// One outbound `node:http2` header block: the staged fields and their HPACK encoding.
 #[derive(Default)]
 pub struct H2HeaderScratch {
-    pub block: bun_http::lshpack::HeaderBlock,
+    pub block: bun_http_types::h2::header_block::HeaderFields,
     pub encoded: Vec<u8>,
 }
 

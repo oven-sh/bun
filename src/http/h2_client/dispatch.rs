@@ -102,7 +102,7 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
                         session.remote_max_concurrent_streams = value;
                     }
                     Some(SettingId::HeaderTableSize) => {
-                        session.hpack.set_peer_header_table_size(value);
+                        session.encoder.set_max_table_size(value);
                     }
                     Some(SettingId::InitialWindowSize) => {
                         // RFC 9113 §6.9.2: the change applies to every open stream's window.
@@ -327,10 +327,12 @@ fn on_header_block(session: &mut ClientSession, stream_id: u32) {
 }
 
 fn decode_and_discard(session: &mut ClientSession, block: &[u8]) {
-    let mut offset: usize = 0;
-    while offset < block.len() {
-        match session.hpack.decode(&block[offset..]) {
-            Ok(field) => offset += field.next,
+    let mut scratch = Vec::new();
+    let mut fields = session.decoder.decode(block, &mut scratch);
+    loop {
+        match fields.next() {
+            Ok(Some(_)) => {}
+            Ok(None) => return,
             Err(_) => {
                 session.fatal_error = Some(crate::Error::HTTP2CompressionError);
                 return;
@@ -356,10 +358,12 @@ fn decode_header_block(session: &mut ClientSession, stream: &mut Stream, block: 
     // applied once decoding completes.
     let mut malformed = false;
 
-    let mut offset: usize = 0;
-    while offset < block.len() {
-        let result = match session.hpack.decode(&block[offset..]) {
-            Ok(r) => r,
+    let mut scratch = Vec::new();
+    let mut fields = session.decoder.decode(block, &mut scratch);
+    loop {
+        let result = match fields.next() {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
             Err(_) => {
                 // The decoder has already committed earlier fields from this
                 // block to the connection-level dynamic table; the table is
@@ -370,8 +374,7 @@ fn decode_header_block(session: &mut ClientSession, stream: &mut Stream, block: 
                 return;
             }
         };
-        offset += result.next;
-        if !result.name.is_empty() && result.name[0] == b':' {
+        if result.name.starts_with(b":") {
             // §8.3.2: only `:status` is defined for responses, MUST appear
             // before any regular field, and MUST NOT repeat. §8.1: not
             // allowed in trailers.

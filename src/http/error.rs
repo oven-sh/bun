@@ -27,6 +27,8 @@ pub enum Error {
     HTTP2GoAway,
     #[error("HTTP2CompressionError")]
     HTTP2CompressionError,
+    #[error("UnableToEncode")]
+    UnableToEncode,
     #[error("Timeout")]
     Timeout,
     #[error("AbortedBeforeConnecting")]
@@ -101,8 +103,6 @@ pub enum Error {
     Cert(#[from] CertError),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
-    #[error(transparent)]
-    Hpack(#[from] crate::lshpack::HpackError),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
@@ -269,6 +269,7 @@ impl Error {
             Self::HTTP2StreamReset => "HTTP2StreamReset",
             Self::HTTP2GoAway => "HTTP2GoAway",
             Self::HTTP2CompressionError => "HTTP2CompressionError",
+            Self::UnableToEncode => "UnableToEncode",
             Self::Timeout => "Timeout",
             Self::AbortedBeforeConnecting => "AbortedBeforeConnecting",
             Self::InvalidURL => "InvalidURL",
@@ -306,7 +307,6 @@ impl Error {
             Self::TLSHandshakeFailed => "TLSHandshakeFailed",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
-            Self::Hpack(e) => <&'static str>::from(e),
             Self::Core(e) => e.name(),
             Self::Sys(e) => <&'static str>::from(e),
             Self::Zlib(e) => <&'static str>::from(e),

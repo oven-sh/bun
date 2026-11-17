@@ -453,6 +453,7 @@ impl EventLoop {
 
         // Drain again, or the microtasks that JS queued wait for the next event and are lost if the loop exits first.
         if vm.deferred_task_called_js.take() {
+            let _scope = self.enter_scope_without_checkpoint();
             global_object.drain_microtasks_and_next_ticks()?;
         }
 

@@ -136,7 +136,7 @@ fn a_file_that_is_chosen_out_of_order_takes_its_time_along() {
 
 #[test]
 fn what_fits_runs_beside_a_heavy_file_and_then_the_lightest() {
-    let average = 861;
+    let average = 861; // (900 + 3000 + 862 + 400 + 0 + 5) / 6
     let mut it = with_times(&[
         &[
             file("largest light").mb(900),
@@ -202,14 +202,28 @@ fn an_average_file_fits_and_after_the_last_heavy_file_the_queue_decides() {
 }
 
 #[test]
-fn a_stolen_heavy_file_waits_for_room() {
+fn a_thief_begins_its_half_at_the_front_whatever_the_growth() {
     let mut it = without_times(&[
-        &[file("light")],
-        &[file("heavy 1").mb(1500), file("heavy 2").mb(1500)],
+        &[],
+        &[file("b1"), file("b2"), file("b3"), file("heavy").mb(1500)],
     ]);
-    assert_eq!(it.when_ready(0), Runs("light"));
-    assert_eq!(it.when_ready(1), Runs("heavy 1"));
-    assert_eq!(it.after_its_file(0), Waits);
+    assert_eq!(it.all_files_of(0), ["b3", "heavy", "b2", "b1"]);
+}
+
+#[test]
+fn growth_decides_to_the_end_after_a_half_that_began_with_a_heavy_file() {
+    let mut it = without_times(&[
+        &[],
+        &[
+            file("over average").mb(900),
+            file("small"),
+            file("heavy").mb(1500),
+            file("last"),
+        ],
+    ]);
+    assert_eq!(it.when_ready(0), Runs("heavy"));
+    assert_eq!(it.after_its_file(0), Runs("last"));
+    assert_eq!(it.all_files_of(1), ["small", "over average"]);
 }
 
 #[test]
@@ -286,7 +300,12 @@ fn every_file_ends_once_whatever_the_order_of_events() {
         let queues: Vec<&[File]> = (0..slots)
             .map(|slot| &files[slot * count / slots..(slot + 1) * count / slots])
             .collect();
-        let mut it = [without_times, with_times][round % 2](&queues);
+        let has_times = round % 2 == 1;
+        let mut it = if has_times {
+            with_times(&queues)
+        } else {
+            without_times(&queues)
+        };
         let mut ended = Vec::new();
         for _ in 0..100_000 {
             if ended.len() == count {
@@ -315,8 +334,9 @@ fn every_file_ends_once_whatever_the_order_of_events() {
             let running = it.running().map(|(file, _)| growth(file));
             let heavy_running: u64 = running.filter(|&growth| is_heavy(growth)).sum();
             let heavy_queued = it.queued().filter(|&file| is_heavy(growth(file))).count();
-            assert!(heavy_running <= it.room_for_heavy);
-            assert_eq!(heavy_queued, it.heavy_files_queued);
+            assert!(!has_times || heavy_running <= it.room_for_heavy);
+            assert!(!has_times || heavy_queued == it.heavy_files_to_choose);
+            assert!(heavy_queued <= it.heavy_files_to_choose);
             assert!(next != Some(Next::Wait) || heavy_running > 0);
             assert!(next != Some(Next::ShutDown) || !it.has_queued());
             assert_eq!(

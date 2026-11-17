@@ -440,12 +440,16 @@ impl<'a> Coordinator<'a> {
             frame::Kind::Ready => {
                 log_first_time_in_test_run("the first worker is ready");
                 // A worker that has exited stays `Starting`, so the exit counts in `startup_failures`.
-                if self.workers[slot].can_take_work()
-                    && let Some(free) = self.schedule.ready(slot)
-                {
+                if !self.workers[slot].can_take_work() {
+                    return;
+                }
+                if let Some(free) = self.schedule.ready(slot) {
                     self.workers[slot].startup_failures = 0;
                     self.take_highest_of_children(slot);
                     self.assign_work(free);
+                } else if !self.has_work_to_hand_out() {
+                    // The slot is reaped only when every holder of its channel has gone.
+                    self.workers[slot].shutdown(&mut self.frame);
                 }
             }
             frame::Kind::FileStart => {

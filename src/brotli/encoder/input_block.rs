@@ -104,7 +104,6 @@ impl<'a> InputBlock<'a> {
             max_backward: self.max_backward(position),
             block: self,
             to_beat: 0,
-            switches: 0,
         }
     }
 

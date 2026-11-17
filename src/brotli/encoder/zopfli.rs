@@ -21,9 +21,6 @@ use super::log2::{const_log2, fast_log2};
 use super::matching::{bytes_at, match_length};
 use super::prepared_dictionary::PreparedDictionary;
 use super::ring_buffer::Window;
-use super::switches::{
-    self, PB_KERNEL, S5_MERGED, S5_RUST, SC_GENERAL, SC_RUST, TL_KERNEL, TM_NONE, TM_RUST,
-};
 use super::symbol_set::SymbolSet;
 use super::words::WordMatches;
 use crate::format::{
@@ -291,30 +288,10 @@ impl Starts {
 
     /// A bit for each short distance code, for the best one and for the others. `count` is 1 or [`MAX_STARTS`].
     #[inline(always)]
-    fn promising<const M: u32>(
-        &self,
-        count: usize,
-        place: BrotliPlace<'_>,
-        hopeless: f32,
-    ) -> (u32, u64) {
+    fn promising(&self, count: usize, place: BrotliPlace<'_>, hopeless: f32) -> (u32, u64) {
         if count == 1 {
             let last_distances = &self.last_distances[self.get(0).slot];
-            if M & SC_RUST != 0 {
-                return (switches::short_codes(place, last_distances), 0);
-            }
-            if M & SC_GENERAL != 0 {
-                return (bun_highway::brotli_short_codes2(place, last_distances), 0);
-            }
             (brotli_short_codes(place, last_distances), 0)
-        } else if M & S5_RUST != 0 {
-            switches::short_codes_of_five(place, &self.last_distances, &self.ranked, hopeless)
-        } else if M & S5_MERGED != 0 {
-            bun_highway::brotli_short_codes_of_five2(
-                place,
-                &self.last_distances,
-                &self.ranked,
-                hopeless,
-            )
         } else {
             brotli_short_codes_of_five(place, &self.last_distances, &self.ranked, hopeless)
         }
@@ -392,7 +369,7 @@ struct ShortMatch {
     max_tried: usize,
 }
 
-struct Paths<'a, const M: u32> {
+struct Paths<'a> {
     block: InputBlock<'a>,
     padded: &'a [u8],
     symbols: &'a SymbolCosts,
@@ -411,7 +388,7 @@ struct Paths<'a, const M: u32> {
     first_distances: [i32; 4],
 }
 
-impl<'a, const M: u32> Paths<'a, M> {
+impl<'a> Paths<'a> {
     fn new(block: &InputBlock<'a>, first_distances: [i32; 4]) -> Result<Self> {
         let mut literals = memory::empty(block.length + 1)?;
         literals.push(0.0);
@@ -427,13 +404,7 @@ impl<'a, const M: u32> Paths<'a, M> {
             symbols: &FIRST_GUESS,
             literals,
             max_varied_length: if block.params.quality > 10 { 325 } else { 150 },
-            at_once_below: if !is_usual {
-                0
-            } else if switches::is_on(TM_NONE) {
-                1
-            } else {
-                LANES + 1
-            },
+            at_once_below: if is_usual { LANES + 1 } else { 0 },
             starts: Starts::new(),
             nodes: memory::zeroed(3 * size)?,
             costs: memory::filled(UNREACHED, size)?,
@@ -637,43 +608,8 @@ impl<'a, const M: u32> Paths<'a, M> {
             insert: node.insert,
         };
         let (offset, short) = (attempt.offset, first..SHORT_COPY_END.min(last + 1));
-        if M & TL_KERNEL == 0 {
-            let ways = self.ways_from(offset);
-            brotli_try_lengths(ways, short, &COPY_EXTRA_BITS, start, node.distance);
-        } else {
-            let (row, end) = (self.costs.len(), short.end);
-            let Some(known) = self.costs[offset..].first_chunk_mut() else {
-                return;
-            };
-            let mut length = first;
-            let mut left: [_; LANES] = from_fn(|i| end as i32 - (first + i) as i32);
-            while length < end {
-                let four = |all: &CostByCopyLength| -> [_; LANES] { from_fn(|i| all[length + i]) };
-                let (extra_bits, symbols, old) =
-                    (four(&COPY_EXTRA_BITS), four(symbol_costs), four(known));
-                let costs: [_; LANES] = from_fn(|i| cost + extra_bits[i] + symbols[i]);
-                let cheaper: [u32; LANES] =
-                    from_fn(|i| u32::from((costs[i] < old[i]) & (left[i] > 0)).wrapping_neg());
-                if cheaper[0] | cheaper[1] | cheaper[2] | cheaper[3] != 0 {
-                    let blend = |old: [u32; LANES], new: [u32; LANES]| -> [u32; LANES] {
-                        from_fn(|i| (new[i] & cheaper[i]) | (old[i] & !cheaper[i]))
-                    };
-                    let blended = blend(old.map(f32::to_bits), costs.map(f32::to_bits));
-                    known[length..length + LANES].copy_from_slice(&blended.map(f32::from_bits));
-                    let mut put = |at: usize, new| {
-                        if let Some(old) = self.nodes[at..at + LANES].as_mut_array() {
-                            *old = blend(*old, new);
-                        }
-                    };
-                    let at = offset + length;
-                    put(at, from_fn(|i| (length + i) as u32));
-                    put(row + at, [node.distance; LANES]);
-                    put(2 * row + at, [node.insert; LANES]);
-                }
-                length += LANES;
-                left = left.map(|left| left - LANES as i32);
-            }
-        }
+        let ways = self.ways_from(offset);
+        brotli_try_lengths(ways, short, &COPY_EXTRA_BITS, start, node.distance);
         if last >= SHORT_COPY_END {
             let long = first.max(SHORT_COPY_END)..=last;
             let longest = self.try_long_lengths(offset, long, insert_code, with_distance, node);
@@ -824,12 +760,7 @@ impl<'a, const M: u32> Paths<'a, M> {
         let other = start(self.insert_from(other_rank, attempt.offset));
         let after_short_codes = &symbols.distances[DISTANCE_SHORT_CODES as usize..];
         if let Some(distance_costs) = after_short_codes.first_chunk() {
-            let try_matches = if M & TM_RUST != 0 {
-                switches::try_matches
-            } else {
-                brotli_try_matches
-            };
-            try_matches(
+            brotli_try_matches(
                 self.ways_from(attempt.offset),
                 attempt.min_length..longest + 1,
                 &COPY_EXTRA_BITS,
@@ -853,7 +784,7 @@ impl<'a, const M: u32> Paths<'a, M> {
             + self.symbols.most_saved[insert_length_code(offset - best.offset)]
             + (self.literals[offset] + 256.0) * MARGIN;
         let place = self.place_for(offset, min_length);
-        let (first, others) = self.starts.promising::<M>(starts, place, hopeless);
+        let (first, others) = self.starts.promising(starts, place, hopeless);
         let all = || u128::from(first) | (u128::from(others) << 16);
         let mut attempt = Attempt {
             offset,
@@ -910,7 +841,7 @@ impl<'a, const M: u32> Paths<'a, M> {
         if let Some(dictionary) = self.block.dictionary
             && let Some(place) = dictionary.place(end_distance, skipped, pair)
         {
-            let (first, others) = self.starts.promising::<M>(starts, place, attempt.hopeless);
+            let (first, others) = self.starts.promising(starts, place, attempt.hopeless);
             promising |= u128::from(first) | (u128::from(others) << 16);
         }
         for rank in 0..starts.min(2) {
@@ -1023,20 +954,13 @@ struct Finder<'a, 'b> {
 impl Finder<'_, '_> {
     /// Returns how many it found. Only the last candidate stays if it is longer than `long`.
     #[inline(always)]
-    fn find<const M: u32>(
-        &mut self,
-        offset: usize,
-        nearby: usize,
-        long: usize,
-        found: &mut Candidates,
-    ) -> usize {
+    fn find(&mut self, offset: usize, nearby: usize, long: usize, found: &mut Candidates) -> usize {
         const MOST: usize = BinaryTree::MAX_CANDIDATES + PreparedDictionary::MAX_CANDIDATES;
         const { assert!((MOST + LANES) * size_of::<Candidate>() <= size_of::<Candidates>()) };
         let position = self.block.position + offset;
-        let mut search = self
+        let search = self
             .block
             .search_at(position, &self.block.padded()[offset..]);
-        search.switches = M;
         let mut count = self.tree.find_all(&search, nearby, &mut self.words, found);
         if let Some(dictionary) = self.block.dictionary {
             self.in_window.clear();
@@ -1075,32 +999,8 @@ fn merge<'a>(mut a: &'a [Candidate], mut b: &'a [Candidate], merged: &mut [Candi
     }
 }
 
-pub(super) fn add_commands(
-    tree: &mut BinaryTree,
-    block: &InputBlock<'_>,
-    commands: &mut Commands,
-) -> Result<()> {
-    const ALL_RUST: u32 = SC_RUST | S5_RUST | TM_RUST;
-    const BOTH_NEW: u32 = SC_GENERAL | S5_MERGED;
-    const BOTH_OLD: u32 = PB_KERNEL | TL_KERNEL;
-    match switches::all() & (ALL_RUST | BOTH_NEW | BOTH_OLD) {
-        0 => add_commands_with::<0>(tree, block, commands),
-        SC_RUST => add_commands_with::<SC_RUST>(tree, block, commands),
-        S5_RUST => add_commands_with::<S5_RUST>(tree, block, commands),
-        TM_RUST => add_commands_with::<TM_RUST>(tree, block, commands),
-        ALL_RUST => add_commands_with::<ALL_RUST>(tree, block, commands),
-        SC_GENERAL => add_commands_with::<SC_GENERAL>(tree, block, commands),
-        S5_MERGED => add_commands_with::<S5_MERGED>(tree, block, commands),
-        BOTH_NEW => add_commands_with::<BOTH_NEW>(tree, block, commands),
-        PB_KERNEL => add_commands_with::<PB_KERNEL>(tree, block, commands),
-        TL_KERNEL => add_commands_with::<TL_KERNEL>(tree, block, commands),
-        BOTH_OLD => add_commands_with::<BOTH_OLD>(tree, block, commands),
-        _ => Err(memory::AllocError),
-    }
-}
-
 #[inline(never)]
-fn add_commands_with<const M: u32>(
+pub(super) fn add_commands(
     tree: &mut BinaryTree,
     block: &InputBlock<'_>,
     commands: &mut Commands,
@@ -1114,7 +1014,7 @@ fn add_commands_with<const M: u32>(
         in_dictionary: scratch(PreparedDictionary::MAX_CANDIDATES)?,
     };
     let mut refined;
-    let mut paths = Paths::<M>::new(block, commands.last_distances)?;
+    let mut paths = Paths::new(block, commands.last_distances)?;
     let long = paths.max_varied_length;
     let searched = searched_length(block);
     let blank: Candidates = [Candidate::default(); _];
@@ -1123,7 +1023,7 @@ fn add_commands_with<const M: u32>(
         let mut found = blank;
         let mut offset = 0;
         while offset < searched {
-            let count = finder.find::<M>(offset, 16, long, &mut found);
+            let count = finder.find(offset, 16, long, &mut found);
             let next = paths.step(1, offset, &found, count);
             if next > offset + 1 {
                 finder.store_between(offset, next);
@@ -1142,7 +1042,7 @@ fn add_commands_with<const M: u32>(
             found.extend_from_slice(&blank);
             continue;
         };
-        let count = finder.find::<M>(offset, 64, long, room);
+        let count = finder.find(offset, 64, long, room);
         counts[offset] = count as u8;
         total += count;
         offset = match room[..count] {

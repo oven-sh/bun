@@ -4,7 +4,6 @@ use bun_highway::{BROTLI_PAIR_GROUP, brotli_remove_pairs};
 
 use super::histogram::{Estimator, Histogram, Indexed, IndexedList};
 use super::log2::fast_log2;
-use super::switches::{self, RP_COLUMNS, RP_RUST};
 use crate::memory::{self, Result};
 
 pub(super) const BATCH: usize = 64;
@@ -153,245 +152,9 @@ impl Pairs {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Pair(u128);
-
-impl Pair {
-    const SIGN: u64 = 1 << 63;
-
-    #[inline(always)]
-    fn new(first: u32, second: u32, cost_change: f64) -> Self {
-        let bits = (cost_change + 0.0).to_bits();
-        let sorted = bits ^ ((bits as i64 >> 63) as u64 | Self::SIGN);
-        let clusters = (u64::from(second - first) << 32) | u64::from(first);
-        Self((u128::from(sorted) << 64) | u128::from(clusters))
-    }
-
-    #[inline(always)]
-    fn clusters(self) -> [u32; 2] {
-        [
-            self.0 as u32,
-            (self.0 as u32).wrapping_add((self.0 >> 32) as u32),
-        ]
-    }
-
-    #[inline(always)]
-    fn involves(self, a: u32, b: u32) -> bool {
-        const ONES: u64 = (1 << 32) | 1;
-        let both = (self.0 as u64).wrapping_mul(ONES);
-        let [a, b] = [a, b].map(|id| (both ^ (u64::from(id) * ONES)).wrapping_sub(ONES));
-        (a | b) & (ONES << 31) != 0
-    }
-
-    #[inline(always)]
-    fn cost_change(self) -> f64 {
-        let sorted = (self.0 >> 64) as u64;
-        f64::from_bits(if sorted >= Self::SIGN {
-            sorted ^ Self::SIGN
-        } else {
-            !sorted
-        })
-    }
-
-    #[inline(always)]
-    fn rank(self) -> u128 {
-        self.0 & !u128::from(u32::MAX)
-    }
-}
-
-#[derive(Default)]
-struct PackedPairs {
-    list: Vec<Pair>,
-    count: usize,
-    max_count: usize,
-}
-
-impl PackedPairs {
-    const NO_LIMIT: f64 = 1e99;
-
-    fn start_over(&mut self, cluster_count: usize) -> Result<()> {
-        self.count = 0;
-        self.max_count = (BATCH * cluster_count).min((cluster_count / 2) * cluster_count);
-        if self.max_count + 1 > self.list.len() {
-            self.list = memory::filled(Pair(0), self.max_count + 1)?;
-        }
-        self.list[0] = Pair::new(0, 0, Self::NO_LIMIT);
-        Ok(())
-    }
-
-    #[inline(never)]
-    fn add(&mut self, id: u32, others: &[u32], summaries: &[Summary], together: &[f64]) {
-        let list = &mut *self.list;
-        let mut best = list[0];
-        let mut threshold = best.cost_change().max(0.0);
-        let mut count = self.count;
-        let this = summaries[id as usize];
-        for &other_id in others.iter().filter(|&&other_id| other_id != id) {
-            let other = summaries[other_id as usize];
-            let (first, second) = if id < other_id {
-                (this.cost, other.cost)
-            } else {
-                (other.cost, this.cost)
-            };
-            let weight_change = this.weight + other.weight - weigh(this.size + other.size);
-            let without_both = 0.5 * weight_change - first - second;
-            let cost = this.cost_with(&other, together[other_id as usize]);
-            if !this.is_empty && !other.is_empty && cost >= threshold - without_both {
-                continue;
-            }
-            let mut pair = Pair::new(id.min(other_id), id.max(other_id), without_both + cost);
-            if best.rank() > pair.0 {
-                core::hint::cold_path();
-                core::mem::swap(&mut best, &mut pair);
-                threshold = best.cost_change().max(0.0);
-            }
-            list[count] = pair;
-            count += usize::from(count < self.max_count);
-        }
-        list[0] = best;
-        self.count = count;
-    }
-
-    #[inline(never)]
-    fn remove_with(&mut self, [a, b]: [u32; 2]) {
-        let pairs = &mut self.list[..self.count];
-        let mut best = Pair::new(0, 0, Self::NO_LIMIT);
-        let mut rank = best.rank();
-        let mut kept = 0;
-        for i in 0..pairs.len() {
-            let pair = pairs[i];
-            let keep = !pair.involves(a, b);
-            pairs[kept] = pair;
-            if rank > pair.0 {
-                core::hint::cold_path();
-                if keep {
-                    pairs[kept] = core::mem::replace(&mut best, pair);
-                    rank = best.rank();
-                }
-            }
-            kept += usize::from(keep);
-        }
-        pairs[0] = best;
-        self.count = kept;
-    }
-}
-
-#[derive(Default)]
-struct ColumnPairs {
-    best: u128,
-    /// The quarters of the pairs, a column for each. The first row stands for `best`.
-    columns: Vec<u32>,
-    count: usize,
-    max_count: usize,
-}
-
-impl ColumnPairs {
-    fn start_over(&mut self, cluster_count: usize) -> Result<()> {
-        self.max_count = (BATCH * cluster_count).min((cluster_count / 2) * cluster_count);
-        (self.best, self.count) = (u128::MAX, 0);
-        // Loads wait for stores that are a multiple of 4 KB away.
-        let stride = (self.max_count + 1).next_multiple_of(1024) + 256;
-        if self.columns.len() < 4 * stride {
-            self.columns = memory::zeroed(4 * stride)?;
-        }
-        Ok(())
-    }
-
-    #[inline(never)]
-    fn add(&mut self, id: u32, others: &[u32], summaries: &[Summary], together: &[f64]) {
-        let stride = self.columns.len() / 4;
-        let rows: [_; 4] = core::array::from_fn(|i| i * stride..i * stride + self.max_count + 1);
-        let Ok(mut columns) = self.columns.get_disjoint_mut(rows) else {
-            return;
-        };
-        let threshold_of = |best: Pair| {
-            let change = best.cost_change();
-            if change < 0.0 { 0.0 } else { change }
-        };
-        let (mut best, mut count) = (Pair(self.best), self.count);
-        let mut threshold = threshold_of(best);
-        let this = summaries[id as usize];
-        for &other_id in others.iter().filter(|&&other_id| other_id != id) {
-            let other = summaries[other_id as usize];
-            let (first, second) = if id < other_id {
-                (this.cost, other.cost)
-            } else {
-                (other.cost, this.cost)
-            };
-            let weight_change = this.weight + other.weight - weigh(this.size + other.size);
-            let without_both = 0.5 * weight_change - first - second;
-            let cost = this.cost_with(&other, together[other_id as usize]);
-            if !this.is_empty && !other.is_empty && cost >= threshold - without_both {
-                continue;
-            }
-            let mut pair = Pair::new(id.min(other_id), id.max(other_id), without_both + cost);
-            if best.rank() > pair.0 {
-                core::hint::cold_path();
-                core::mem::swap(&mut best, &mut pair);
-                threshold = threshold_of(best);
-            }
-            for (i, column) in columns.iter_mut().enumerate() {
-                column[count] = (pair.0 >> (32 * i)) as u32;
-            }
-            count += usize::from(count < self.max_count);
-        }
-        (self.best, self.count) = (best.0, count);
-    }
-
-    fn remove_with(&mut self, merged: [u32; 2]) {
-        self.count = bun_highway::brotli_keep_pairs(&mut self.columns, self.count, merged);
-        let quarter = |i| u128::from(self.columns[i * (self.columns.len() / 4)]) << (32 * i);
-        self.best = quarter(0) | quarter(1) | quarter(2) | quarter(3);
-    }
-}
-
-#[derive(Default)]
-struct AnyPairs {
-    kind: u32,
-    split: Pairs,
-    packed: PackedPairs,
-    columns: ColumnPairs,
-}
-
-impl AnyPairs {
-    fn start_over(&mut self, cluster_count: usize) -> Result<()> {
-        self.kind = switches::all() & (RP_RUST | RP_COLUMNS);
-        match self.kind {
-            0 => self.split.start_over(cluster_count),
-            RP_RUST => self.packed.start_over(cluster_count),
-            _ => self.columns.start_over(cluster_count),
-        }
-    }
-
-    fn best(&self) -> (f64, [u32; 2]) {
-        let pair = match self.kind {
-            0 => return (self.split.cost_changes[0], self.split.clusters[0]),
-            RP_RUST => self.packed.list[0],
-            _ => Pair(self.columns.best),
-        };
-        (pair.cost_change(), pair.clusters())
-    }
-
-    fn add(&mut self, id: u32, others: &[u32], summaries: &[Summary], together: &[f64]) {
-        match self.kind {
-            0 => self.split.add(id, others, summaries, together),
-            RP_RUST => self.packed.add(id, others, summaries, together),
-            _ => self.columns.add(id, others, summaries, together),
-        }
-    }
-
-    fn remove_with(&mut self, merged: [u32; 2]) {
-        match self.kind {
-            0 => self.split.remove_with(merged),
-            RP_RUST => self.packed.remove_with(merged),
-            _ => self.columns.remove_with(merged),
-        }
-    }
-}
-
 pub(super) struct Combiner {
     estimator: Estimator,
-    pairs: AnyPairs,
+    pairs: Pairs,
     /// What each cluster costs together with what it was compared with last.
     together: Vec<f64>,
     not_empty: Vec<u32>,
@@ -401,7 +164,7 @@ impl Combiner {
     pub(super) fn new(estimator: Estimator) -> Self {
         Self {
             estimator,
-            pairs: AnyPairs::default(),
+            pairs: Pairs::default(),
             together: Vec::new(),
             not_empty: Vec::new(),
         }
@@ -481,12 +244,12 @@ impl Combiner {
         let mut min_clusters = 1;
         let mut compared = u32::MAX;
         while count > min_clusters {
-            if pairs.best().0 >= threshold {
+            if pairs.cost_changes[0] >= threshold {
                 threshold = Pairs::NO_LIMIT;
                 min_clusters = max_clusters;
                 continue;
             }
-            let [first, second] = pairs.best().1;
+            let [first, second] = pairs.clusters[0];
             let (kept, merged) = (summaries[first as usize], summaries[second as usize]);
             let is_known = compared == first || compared == second;
             let (other_id, other) = if compared == second {

@@ -59,7 +59,7 @@ impl Requested {
             0 => self.mode = value,
             1 => self.quality = value as i32,
             2 => self.window_bits = value as i32,
-            3 => self.block_bits = super::switches::take_from(value) as i32,
+            3 => self.block_bits = value as i32,
             4 if value <= 1 => self.disable_literal_context_modeling = value != 0,
             5 => self.size_hint = value,
             6 => self.large_window = value != 0,

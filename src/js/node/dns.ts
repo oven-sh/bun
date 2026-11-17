@@ -249,7 +249,7 @@ function validateOrderOption(options: LookupOptions) {
 }
 
 // Callers must use the return value, not the argument.
-function validateCallback<T>(callback: T | undefined) {
+function validateCallback(callback: ((...args: any[]) => unknown) | undefined) {
   if (typeof callback !== "function") {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }

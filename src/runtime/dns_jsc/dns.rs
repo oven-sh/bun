@@ -40,6 +40,7 @@ use crate::generated_bindgen::dns_internals::{ResolverOptions, js_DNSResolver};
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
+use bun_cares_sys::parse_ip;
 use c_ares::RecordType;
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
@@ -577,6 +578,7 @@ impl PendingQuery {
             // No list and no error is an empty answer.
             Err(None) => Vec::new(),
         };
+        self.resolver.update_timer();
         self.resolve(|global| super::options_jsc::results_to_js(&list, global));
     }
 }
@@ -685,7 +687,7 @@ impl Resolver {
         };
         guard.abort_handle.leave();
         guard.request_completed(guard.channel.close());
-        debug_assert!(guard.polls.get().is_empty());
+        guard.polls.with_mut(PollsMap::clear_retaining_capacity);
         result
     }
 }
@@ -1619,9 +1621,9 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, PollType>;
 
 /// `DNSResolver`, declared in `dns_internals.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Self::destroy)]
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
-    /// Drops before `polls`, which closing it reads.
     channel: c_ares::Channel<PendingQuery>,
     /// The context whose script made the resolver: its channel is that context's, whoever is first
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
@@ -1773,11 +1775,6 @@ fn to_port_number(double: f64, global: &JSGlobalObject) -> JsResult<u16> {
     Err(jsc::Error::SOCKET_BAD_PORT.throw(global, format_args!("Port number out of range: {port}")))
 }
 
-fn parse_ip(text: &ZStr) -> Option<IpAddr> {
-    let v4 = bun_cares_sys::pton::<4>(text).map(IpAddr::from);
-    v4.or_else(|| bun_cares_sys::pton::<16>(text).map(IpAddr::from))
-}
-
 fn throw_invalid_ip(global: &JSGlobalObject, address: &ZStr) -> jsc::JsError {
     let address = bstr::BStr::new(address.as_bytes());
     jsc::Error::INVALID_IP_ADDRESS.throw(global, format_args!("Invalid IP address: \"{address}\""))
@@ -1831,6 +1828,18 @@ impl Resolver {
         }
     }
 
+    /// Not `Drop`: c-ares reports the sockets it closes through a `&Self`, which would alias the `&mut`.
+    ///
+    /// # Safety
+    /// `this` is the box of a resolver that lost its last ref.
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            drop((*this).channel.close());
+            drop(bun_core::heap::take(this));
+        }
+    }
+
     #[inline]
     pub(crate) fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
@@ -1855,7 +1864,22 @@ impl Resolver {
         }
     }
 
-    fn request_sent(&self, answers: c_ares::Answers<PendingQuery>) {
+    /// Joins the query in flight for `name`, or has `send` hand a new one to the channel.
+    fn ask(
+        &self,
+        kind: QueryKind,
+        hash: u64,
+        name: &[u8],
+        global_this: &JSGlobalObject,
+        context: bun_jsc::ContextId,
+        send: impl FnOnce(PendingQuery) -> c_ares::Answers<PendingQuery>,
+    ) -> JSValue {
+        let (promise, query) =
+            PendingQuery::join_or_create(self, kind, hash, name, global_this, context);
+        let Some(query) = query else {
+            return promise;
+        };
+        let answers = send(query);
         if self.channel.has_active_queries() {
             self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
         } else {
@@ -1864,15 +1888,20 @@ impl Resolver {
             self.add_timer(None, 0);
         }
         answers.for_each(PendingQuery::complete_cares);
+        promise
     }
 
     fn request_completed(&self, answers: c_ares::Answers<PendingQuery>) {
+        self.update_timer();
+        answers.for_each(PendingQuery::complete_cares);
+    }
+
+    fn update_timer(&self) {
         if self.channel.has_active_queries() {
-            debug_assert!(self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE);
+            self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
         } else {
             self.remove_timer();
         }
-        answers.for_each(PendingQuery::complete_cares);
     }
 
     fn add_timer(&self, now: Option<&bun::timespec>, delay_ms: i64) {
@@ -1911,7 +1940,7 @@ impl Resolver {
                 Some(made_in) => self.vm.context_of(made_in),
                 None => self.vm.root_context(),
             };
-            // SAFETY: it stays in its box, which queries hold (teardown closes the global one first). The callback only touches `polls`.
+            // SAFETY: it stays in its box until `destroy`, or teardown for the global one, closes the channel. The callback only touches `polls`.
             unsafe {
                 self.channel.open(self, self.options)?;
                 bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context);
@@ -1942,8 +1971,7 @@ impl Resolver {
             (*poll).poll_cb_depth += 1;
             let parent: *mut Resolver = (*poll).parent;
             let vm = (*parent).vm.get();
-            // On an error, pretend that the socket is both readable and writable.
-            // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+            // An error counts as both: https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
             (*parent).on_dns_poll(
                 (*poll).socket,
                 status < 0 || events & libuv::UV_READABLE != 0,
@@ -2112,12 +2140,8 @@ impl Resolver {
             }
         };
 
-        let (promise, query) =
-            PendingQuery::join_or_create(self, kind, wyhash(name), name, global_this, context);
-        if let Some(query) = query {
-            self.request_sent(channel.resolve(record, name, query));
-        }
-        Ok(promise)
+        let send = |query| channel.resolve(record, name, query);
+        Ok(self.ask(kind, wyhash(name), name, global_this, context, send))
     }
 
     pub(crate) fn global_resolve(
@@ -2190,12 +2214,8 @@ impl Resolver {
             }
         };
 
-        let (promise, query) =
-            PendingQuery::join_or_create(self, kind, wyhash(ip), ip, global_this, context);
-        if let Some(query) = query {
-            self.request_sent(channel.get_host_by_addr(ip, query));
-        }
-        Ok(promise)
+        let send = |query| channel.get_host_by_addr(ip, query);
+        Ok(self.ask(kind, wyhash(ip), ip, global_this, context, send))
     }
 
     pub(crate) fn global_lookup(
@@ -2312,13 +2332,9 @@ impl Resolver {
         })?;
 
         let (kind, hash) = (QueryKind::HostCares, query.hash());
-        let (promise, pending) =
-            PendingQuery::join_or_create(self, kind, hash, &query.name, global_this, context);
-        if let Some(pending) = pending {
-            let hints = query.to_cares();
-            self.request_sent(channel.get_addr_info(&query.name, query.port, &hints, pending));
-        }
-        Ok(promise)
+        let send =
+            |pending| channel.get_addr_info(&query.name, query.port, &query.to_cares(), pending);
+        Ok(self.ask(kind, hash, &query.name, global_this, context, send))
     }
 
     // ───────── servers / local address ─────────
@@ -2389,7 +2405,7 @@ impl Resolver {
         };
 
         let first = set(first)?;
-        match (first, second.as_ref().map(set).transpose()?) {
+        match (first, second.map(|second| set(&second)).transpose()?) {
             (IpAddr::V4(_), Some(IpAddr::V4(_))) => Err(global_this
                 .throw_invalid_arguments(format_args!("Cannot specify two IPv4 addresses."))),
             (IpAddr::V6(_), Some(IpAddr::V6(_))) => Err(global_this
@@ -2481,7 +2497,8 @@ impl Resolver {
                 .throw());
         }
 
-        let mut entries = Self::servers_from_js(global_this, servers.to_js())?;
+        let entries = Self::servers_from_js(global_this, servers.to_js());
+        let mut entries = entries.inspect_err(|_| self.update_timer())?;
         let mut head = None;
         for entry in entries.iter_mut().rev() {
             entry.next = head;
@@ -2550,12 +2567,8 @@ impl Resolver {
 
         // For one address, the hashes are equal only if the ports are.
         let (kind, hash) = (QueryKind::NameInfo, wyhash(addr_s) ^ u64::from(port));
-        let (promise, query) =
-            PendingQuery::join_or_create(resolver, kind, hash, addr_s, global_this, context);
-        if let Some(query) = query {
-            resolver.request_sent(channel.get_name_info(&sa, query));
-        }
-        Ok(promise)
+        let send = |query| channel.get_name_info(&sa, query);
+        Ok(resolver.ask(kind, hash, addr_s, global_this, context, send))
     }
 
     pub(crate) fn get_runtime_default_result_order_option() -> bun::String {

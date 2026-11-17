@@ -9,7 +9,7 @@ use core::cell::Cell;
 #[cfg(windows)]
 use core::ffi::c_short;
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
-use core::marker::PhantomData;
+use core::marker::{ConstParamTy, PhantomData};
 use core::net::IpAddr;
 use core::ptr::{self, NonNull};
 
@@ -32,7 +32,7 @@ type ares_sock_state_cb = Option<unsafe extern "C" fn(*mut c_void, ares_socket_t
 bun_opaque::opaque_ffi! {
     /// Nomicon opaque-FFI pattern. `UnsafeCell` makes the type `!Freeze` so a
     /// shared reference does not assert immutability of the C-owned state.
-    pub struct struct_apattern;
+    struct struct_apattern;
 }
 
 /// Only the address families c-ares
@@ -106,7 +106,7 @@ const ARES_CLASS_IN: c_int = 1;
 
 /// The types that [`Channel::resolve`] asks for, with their values on the wire.
 #[repr(i32)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, enum_map::Enum, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, ConstParamTy, enum_map::Enum, strum::IntoStaticStr)]
 pub enum RecordType {
     A = 1,
     NS = 2,
@@ -124,40 +124,40 @@ pub enum RecordType {
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
-pub struct struct_ares_server_failover_options {
-    pub(crate) retry_chance: c_ushort,
-    pub(crate) retry_delay: usize,
+struct struct_ares_server_failover_options {
+    retry_chance: c_ushort,
+    retry_delay: usize,
 }
 
 type ares_evsys_t = c_uint;
 
 #[repr(C)]
-pub struct Options {
-    pub(crate) flags: c_int,
-    pub(crate) timeout: c_int,
-    pub(crate) tries: c_int,
-    pub(crate) ndots: c_int,
-    pub(crate) udp_port: c_ushort,
-    pub(crate) tcp_port: c_ushort,
-    pub(crate) socket_send_buffer_size: c_int,
-    pub(crate) socket_receive_buffer_size: c_int,
-    pub(crate) servers: *mut in_addr,
-    pub(crate) nservers: c_int,
-    pub(crate) domains: *mut *mut c_char,
-    pub(crate) ndomains: c_int,
-    pub(crate) lookups: *mut c_char,
-    pub(crate) sock_state_cb: ares_sock_state_cb,
-    pub(crate) sock_state_cb_data: *mut c_void,
-    pub(crate) sortlist: *mut struct_apattern,
-    pub(crate) nsort: c_int,
-    pub(crate) ednspsz: c_int,
-    pub(crate) resolvconf_path: *mut c_char,
-    pub(crate) hosts_path: *mut c_char,
-    pub(crate) udp_max_queries: c_int,
-    pub(crate) maxtimeout: c_int,
-    pub(crate) qcache_max_ttl: c_uint,
-    pub(crate) evsys: ares_evsys_t,
-    pub(crate) server_failover_opts: struct_ares_server_failover_options,
+struct Options {
+    flags: c_int,
+    timeout: c_int,
+    tries: c_int,
+    ndots: c_int,
+    udp_port: c_ushort,
+    tcp_port: c_ushort,
+    socket_send_buffer_size: c_int,
+    socket_receive_buffer_size: c_int,
+    servers: *mut in_addr,
+    nservers: c_int,
+    domains: *mut *mut c_char,
+    ndomains: c_int,
+    lookups: *mut c_char,
+    sock_state_cb: ares_sock_state_cb,
+    sock_state_cb_data: *mut c_void,
+    sortlist: *mut struct_apattern,
+    nsort: c_int,
+    ednspsz: c_int,
+    resolvconf_path: *mut c_char,
+    hosts_path: *mut c_char,
+    udp_max_queries: c_int,
+    maxtimeout: c_int,
+    qcache_max_ttl: c_uint,
+    evsys: ares_evsys_t,
+    server_failover_opts: struct_ares_server_failover_options,
 }
 
 // SAFETY: `#[repr(C)]` POD — every field is an integer, raw pointer, or
@@ -312,7 +312,7 @@ impl hostent_with_ttls {
             hostent: host.ok_or(Error::ENOTFOUND)?,
             ttls: [-1; 256],
         });
-        let parsed = &parsed[..usize::try_from(len).expect("int cast")];
+        let parsed = parsed.iter().take(usize::try_from(len).unwrap_or(0));
         for (ttl, parsed) in this.ttls.iter_mut().zip(parsed) {
             *ttl = parsed.ttl;
         }
@@ -438,7 +438,7 @@ impl<'a> AddrInfo<'a> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct AddrInfo_hints {
     pub ai_flags: c_int,
     pub ai_family: c_int,
@@ -476,8 +476,6 @@ pub type Answer = Result<Reply, Error>;
 struct Query<Q> {
     data: Q,
     channel: NonNull<Channel<Q>>,
-    /// How to parse the message that `ares_query` answers with.
-    record: Option<RecordType>,
     next: Answers<Q>,
 }
 
@@ -500,18 +498,18 @@ impl<Q> Iterator for Answers<Q> {
 unsafe fn on_answer<Q>(
     ctx: *mut c_void,
     status: c_int,
-    reply: impl FnOnce(Option<RecordType>) -> Result<Option<Reply>, Error>,
+    reply: impl FnOnce() -> Result<Option<Reply>, Error>,
 ) {
     // SAFETY: fn contract.
     let mut query = unsafe { bun_core::heap::take(ctx.cast::<Query<Q>>()) };
-    let answer = Error::check(status).and_then(|()| reply(query.record)?.ok_or(Error::ENOTFOUND));
+    let answer = Error::check(status).and_then(|()| reply()?.ok_or(Error::ENOTFOUND));
     // SAFETY: the channel stays in place until `close`, which answers every query.
     let answered = unsafe { &query.channel.as_ref().answered };
     query.next = answered.replace(Answers(None));
     answered.set(Answers(Some((answer, query))));
 }
 
-unsafe extern "C" fn on_message<Q>(
+unsafe extern "C" fn on_message<Q, const RECORD: RecordType>(
     ctx: *mut c_void,
     status: c_int,
     _timeouts: c_int,
@@ -520,9 +518,9 @@ unsafe extern "C" fn on_message<Q>(
 ) {
     // SAFETY: registered by `resolve`; c-ares lends `alen` bytes at `abuf` until this returns.
     unsafe {
-        on_answer::<Q>(ctx, status, |record| {
+        on_answer::<Q>(ctx, status, || {
             let message = bun_core::ffi::slice(abuf, usize::try_from(alen).unwrap_or(0));
-            Reply::parse(record.expect("set by `resolve`"), message)
+            Reply::parse(RECORD, message)
         })
     }
 }
@@ -533,7 +531,7 @@ unsafe extern "C" fn on_hostent<Q>(
     _timeouts: c_int,
     host: Option<&struct_hostent<'_>>,
 ) {
-    let reply = |_| Ok(host.map(|host| Reply::names(host.aliases().map(Some))));
+    let reply = || Ok(host.map(|host| Reply::names(host.aliases().map(Some))));
     // SAFETY: registered by `get_host_by_addr`.
     unsafe { on_answer::<Q>(ctx, status, reply) }
 }
@@ -545,7 +543,7 @@ unsafe extern "C" fn on_nameinfo<Q>(
     node: Option<CStrRef<'_>>,
     service: Option<CStrRef<'_>>,
 ) {
-    let reply = |_| Ok(Some(Reply::names([node, service].into_iter())));
+    let reply = || Ok(Some(Reply::names([node, service].into_iter())));
     // SAFETY: registered by `get_name_info`.
     unsafe { on_answer::<Q>(ctx, status, reply) }
 }
@@ -557,7 +555,7 @@ unsafe extern "C" fn on_addrinfo<Q>(
     info: Option<OwnedAddrInfo>,
 ) {
     // SAFETY: registered by `get_addr_info`.
-    unsafe { on_answer::<Q>(ctx, status, |_| Ok(info.map(Reply::AddrInfo))) }
+    unsafe { on_answer::<Q>(ctx, status, || Ok(info.map(Reply::AddrInfo))) }
 }
 
 /// Copy `src` into the caller-owned stack `buf`, NUL-terminate, and return a
@@ -591,7 +589,7 @@ impl<Q> Default for Channel<Q> {
 
 impl<Q> Drop for Channel<Q> {
     fn drop(&mut self) {
-        self.close().for_each(drop);
+        drop(self.close());
     }
 }
 
@@ -611,8 +609,8 @@ impl<Q> Channel<Q> {
     }
 
     /// # Safety
-    /// `self` and `this` stay in place while it is open, `self` does not drop with a query in flight,
-    /// and `this.on_dns_socket_state` does not call it.
+    /// While it is open, `self` and `this` stay in place and `this.on_dns_socket_state` does not call it.
+    /// Neither is borrowed mutably or starts to drop with a query in flight or a socket open: `close` first.
     pub unsafe fn open<C: ChannelContainer>(
         &self,
         this: &C,
@@ -629,7 +627,7 @@ impl<Q> Channel<Q> {
             readable: c_int,
             writable: c_int,
         ) {
-            // SAFETY: `ctx` is the `&C` registered below.
+            // SAFETY: `ctx` is the `&C` registered below, and nothing borrows it mutably while a socket is open.
             let container = unsafe { &*ctx.cast_const().cast::<C>() };
             container.on_dns_socket_state(socket, readable != 0, writable != 0);
         }
@@ -690,13 +688,11 @@ impl<Q> Channel<Q> {
     fn send(
         &self,
         data: Q,
-        record: Option<RecordType>,
         call: impl FnOnce(&ares_channel_t, *mut c_void) -> Result<(), Error>,
     ) -> Answers<Q> {
         let query = bun_core::heap::into_raw(Box::new(Query {
             data,
             channel: NonNull::from(self),
-            record,
             next: Answers(None),
         }));
         match self.raw().and_then(|raw| call(raw, query.cast())) {
@@ -755,7 +751,7 @@ impl<Q> Channel<Q> {
             ptr::null()
         };
 
-        self.send(data, None, |raw, ctx| {
+        self.send(data, |raw, ctx| {
             // SAFETY: c-ares FFI; host/port are NUL-terminated stack buffers or null.
             unsafe { ares_getaddrinfo(raw, host_ptr, port_ptr, hints, on_addrinfo::<Q>, ctx) };
             Ok(())
@@ -763,31 +759,42 @@ impl<Q> Channel<Q> {
     }
 
     pub fn resolve(&self, record: RecordType, name: &[u8], data: Q) -> Answers<Q> {
-        self.send(data, Some(record), |raw, ctx| {
+        macro_rules! callback {
+            ($($record:ident)+) => {
+                match record {
+                    $(RecordType::$record => on_message::<Q, { RecordType::$record }>,)+
+                }
+            };
+        }
+        let callback: ares_callback = callback!(A NS CNAME SOA PTR MX TXT AAAA SRV NAPTR ANY CAA);
+        self.send(data, |raw, ctx| {
             if name.len() >= 1023 || bun_core::strings::contains_char(name, 0) {
                 return Err(Error::EBADNAME);
             }
             let mut name_buf = [0u8; 1024];
             let name = copy_nul_terminated(&mut name_buf, name);
             // SAFETY: c-ares FFI; `name` is a NUL-terminated stack buffer.
-            unsafe { ares_query(raw, name, ARES_CLASS_IN, record, on_message::<Q>, ctx) };
+            unsafe { ares_query(raw, name, ARES_CLASS_IN, record, callback, ctx) };
             Ok(())
         })
     }
 
     pub fn get_host_by_addr(&self, ip_addr: &[u8], data: Q) -> Answers<Q> {
-        self.send(data, None, |raw, ctx| {
+        self.send(data, |raw, ctx| {
             // "0000:0000:0000:0000:0000:ffff:192.168.100.228".length = 45
             let mut addr_buf = [0u8; 46];
-            let text = bun_core::strings::copy_z(&mut addr_buf, ip_addr).ok_or(Error::ENOTIMP)?;
-
+            let text = bun_core::strings::copy_z(&mut addr_buf, ip_addr);
             let (v4, v6);
-            let (addr, family): (&[u8], c_int) = if let Some(addr) = crate::pton::<4>(text) {
-                v4 = addr;
-                (&v4, AF::INET)
-            } else {
-                v6 = crate::pton::<16>(text).ok_or(Error::ENOTIMP)?;
-                (&v6, AF::INET6)
+            let (addr, family): (&[u8], c_int) = match text.and_then(crate::parse_ip) {
+                Some(IpAddr::V4(ip)) => {
+                    v4 = ip.octets();
+                    (&v4, AF::INET)
+                }
+                Some(IpAddr::V6(ip)) => {
+                    v6 = ip.octets();
+                    (&v6, AF::INET6)
+                }
+                None => return Err(Error::ENOTIMP),
             };
             let (addr, len) = (addr.as_ptr().cast(), addr.len() as c_int);
             // SAFETY: c-ares FFI; `addr` has the size of an address of `family`.
@@ -803,11 +810,10 @@ impl<Q> Channel<Q> {
         } else {
             core::mem::size_of::<sockaddr_in6>() as ares_socklen_t
         };
-        // node returns ENOTFOUND for addresses like 255.255.255.255:80
-        // So, it requires setting the ARES_NI_NAMEREQD flag
+        // NAMEREQD: like Node, ENOTFOUND for an address that has no name.
         let flags = ARES_NI_NAMEREQD | ARES_NI_LOOKUPHOST | ARES_NI_LOOKUPSERVICE;
         let sa = std::ptr::from_ref::<sockaddr_storage>(sa).cast::<sockaddr>();
-        self.send(data, None, |raw, ctx| {
+        self.send(data, |raw, ctx| {
             // SAFETY: c-ares FFI; sa is a valid sockaddr of size `salen`.
             unsafe { ares_getnameinfo(raw, sa, salen, flags, on_nameinfo::<Q>, ctx) };
             Ok(())
@@ -1337,17 +1343,17 @@ impl Error {
     }
 }
 
-pub(crate) const ARES_FLAG_NOCHECKRESP: c_int = 1 << 7;
-pub(crate) const ARES_OPT_FLAGS: c_int = 1 << 0;
-pub(crate) const ARES_OPT_TRIES: c_int = 1 << 2;
-pub(crate) const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
-pub(crate) const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
-pub(crate) const ARES_NI_NAMEREQD: c_int = 1 << 2;
-pub(crate) const ARES_NI_LOOKUPHOST: c_int = 1 << 8;
-pub(crate) const ARES_NI_LOOKUPSERVICE: c_int = 1 << 9;
+const ARES_FLAG_NOCHECKRESP: c_int = 1 << 7;
+const ARES_OPT_FLAGS: c_int = 1 << 0;
+const ARES_OPT_TRIES: c_int = 1 << 2;
+const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
+const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
+const ARES_NI_NAMEREQD: c_int = 1 << 2;
+const ARES_NI_LOOKUPHOST: c_int = 1 << 8;
+const ARES_NI_LOOKUPSERVICE: c_int = 1 << 9;
 
-pub(crate) const ARES_LIB_INIT_WIN32: c_int = 1 << 0;
-pub(crate) const ARES_LIB_INIT_ALL: c_int = ARES_LIB_INIT_WIN32;
+const ARES_LIB_INIT_WIN32: c_int = 1 << 0;
+const ARES_LIB_INIT_ALL: c_int = ARES_LIB_INIT_WIN32;
 
 #[cfg(windows)]
 const ARES_SOCKET_BAD: ares_socket_t = usize::MAX; // INVALID_SOCKET
@@ -1357,8 +1363,8 @@ const ARES_SOCKET_BAD: ares_socket_t = -1;
 /// The C `struct in_addr` (4-byte IPv4 address), as c-ares' `ares_options.servers` declares it.
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct in_addr {
-    pub s_addr: u32,
+struct in_addr {
+    s_addr: u32,
 }
 
 #[cfg(test)]

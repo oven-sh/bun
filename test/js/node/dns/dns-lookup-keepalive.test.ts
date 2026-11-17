@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { join } from "path";
 
 test.concurrent("expect dns.lookup to keep the process alive", async () => {
@@ -163,14 +163,16 @@ test.concurrent("a query that c-ares answers without asking a server takes a tur
 describe("script does not run inside c-ares", () => {
   const script = (body: string) => `
     const dns = require("node:dns");
-    // Answers A with 10.0.0.1 and drops the rest.
+    // Answers A with 10.0.0.1 and drops AAAA.
+    const AAAA = 28;
+    let droppedAAAA = false;
     const server = await Bun.udpSocket({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
         data(socket, query, port, address) {
           const end = query.indexOf(0, 12) + 5;
-          if (query[end - 3] !== 1) return;
+          if (query[end - 3] === AAAA) return void (droppedAAAA = true);
           const header = [query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0];
           const answer = [0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 10, 0, 0, 1];
           socket.send(Buffer.from([...header, ...query.subarray(12, end), ...answer]), port, address);
@@ -191,6 +193,7 @@ describe("script does not run inside c-ares", () => {
         const first = Bun.dns.lookup("v4.test.", { backend: "c-ares" });
         const joined = Bun.dns.lookup("v4.test.", { backend: "c-ares" });
         await first;
+        if (droppedAAAA) console.log("dropped AAAA");
         ${continuation}
       `);
 
@@ -201,19 +204,19 @@ describe("script does not run inside c-ares", () => {
         await Bun.build({ entrypoints: ["/e.js"], files: { "/e.js": "" }, plugins: [{ name: "spin", setup }] });
         server.close();
       `;
-      expect(await bunRun(["-e", lookup(continuation)])).toSpawn("10.0.0.1");
+      expect(await bunRun(["-e", lookup(continuation)])).toSpawn("dropped AAAA\n10.0.0.1");
     });
 
     test.concurrent("can tear down the VM", async () => {
       const result = await bunRun(["-e", lookup(`console.log("exit"); process.exit(0);`)], {
         BUN_DESTRUCT_VM_ON_EXIT: "1",
       });
-      expect(result).toSpawn("exit");
+      expect(result).toSpawn("dropped AAAA\nexit");
     });
 
     test.concurrent("settles the lookups that joined it before a continuation runs", async () => {
       expect(await bunRun(["-e", lookup(`console.log(Bun.peek.status(joined)); server.close();`)])).toSpawn(
-        "fulfilled",
+        "dropped AAAA\nfulfilled",
       );
     });
   });
@@ -229,9 +232,9 @@ describe("script does not run inside c-ares", () => {
       `);
 
     test.concurrent.each([
-      ["a socket event", ""],
-      ["the cache of c-ares", `await resolver.resolve4("a.test");`],
-    ])("by a `then` getter of an answer from %s", async (_, before) => {
+      { source: "a socket event", before: "" },
+      { source: "the cache of c-ares", before: `await resolver.resolve4("a.test");` },
+    ])("by a `then` getter of an answer from $source", async ({ before }) => {
       const body = `
         ${before}
         Object.defineProperty(Array.prototype, "then", {
@@ -282,3 +285,21 @@ test.concurrent.each(["beforeExit", "exit"])(
     expect(await bunRun(["-e", script])).toSpawn("[]");
   },
 );
+
+test.concurrent("a query that c-ares answers inside the call runs no microtask of a test body", async () => {
+  using dir = tempDir("dns-test-body", {
+    "body.test.js": `
+      test("queries after an await", async () => {
+        await 1;
+        const ran = [];
+        process.nextTick(() => ran.push("tick"));
+        queueMicrotask(() => ran.push("microtask"));
+        Bun.dns.lookup("127.0.0.1", { backend: "c-ares" });
+        console.log(JSON.stringify(ran));
+      });
+    `,
+  });
+  const { stdout, exitCode } = await bunRun(["test", join(String(dir), "body.test.js")]);
+  expect(stdout.split("\n").at(-1)).toBe("[]");
+  expect(exitCode).toBe(0);
+});

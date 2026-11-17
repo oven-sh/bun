@@ -1974,13 +1974,13 @@ describe.concurrent("a rule that Bun doesn't have is listed under the source tha
     const bunfig = (severity: string) => ({ "bunfig.toml": `[lint.rules]\n"eslint/two-names" = "${severity}"\n` });
     const source = async (bunfigSeverity: string, flagSeverity: string) => {
       const args = ["--rule", `two-names: ${flagSeverity}`, "a.js"];
-      const { stderr } = await lint({ ...files, ...bunfig(bunfigSeverity) }, args);
-      return stderr.split("\n").filter(line => line.includes("not supported"));
+      const { stderr, exitCode } = await lint({ ...files, ...bunfig(bunfigSeverity) }, args);
+      return [...stderr.split("\n").filter(line => line.includes("not supported")), exitCode];
     };
     expect(await Promise.all([source("error", "warn"), source("error", "off"), source("off", "warn")])).toEqual([
-      ["error: 1 rule in --rule is not supported: two-names"],
-      ["error: 1 rule in bunfig.toml is not supported: two-names"],
-      ["error: 1 rule in --rule is not supported: two-names"],
+      ["error: 1 rule in --rule is not supported: two-names", 2],
+      ["error: 1 rule in bunfig.toml is not supported: two-names", 2],
+      ["error: 1 rule in --rule is not supported: two-names", 2],
     ]);
   });
 

@@ -849,6 +849,8 @@ pub mod kernel32 {
         ) -> usize;
         /// No preconditions; terminates the process (cf. `std::process::exit`).
         pub safe fn ExitProcess(exit_code: u32) -> !;
+        /// A bad handle fails the call.
+        pub safe fn TerminateProcess(hProcess: HANDLE, uExitCode: u32) -> BOOL;
         /// No preconditions; returns the cached console/std handle (or
         /// `INVALID_HANDLE_VALUE`/null on failure).
         pub safe fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
@@ -885,7 +887,7 @@ pub mod kernel32 {
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
-        pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        pub safe fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
         /// `lpOverlapped` is required even for synchronous handles: its `Offset` is the range start.
         pub fn LockFileEx(
             hFile: HANDLE,
@@ -1814,7 +1816,7 @@ unsafe extern "system" {
         dwFlags: DWORD,
     ) -> BOOLEAN;
 
-    pub fn GetCurrentThread() -> HANDLE;
+    pub safe fn GetCurrentThread() -> HANDLE;
 
     pub fn GetCommandLineW() -> LPWSTR;
 
@@ -1823,7 +1825,7 @@ unsafe extern "system" {
         lpSecurityAttributes: *mut SECURITY_ATTRIBUTES,
     ) -> BOOL;
 
-    pub fn SetEndOfFile(hFile: HANDLE) -> BOOL;
+    pub safe fn SetEndOfFile(hFile: HANDLE) -> BOOL;
 
     pub fn GetProcessTimes(
         in_hProcess: HANDLE,

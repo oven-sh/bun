@@ -402,12 +402,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let result = match self.deflate.borrow_mut().as_mut() {
             None => Err(ProtocolError::UnexpectedRsv1.into()),
             Some(deflate) => deflate
-                .decompress(
-                    rare.libdeflate_decompressor(),
-                    data,
-                    &mut decompressed,
-                    self.options.payload_limit(),
-                )
+                .decompress(data, &mut decompressed, self.options.payload_limit())
                 .map_err(|err| match err {
                     websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ProtocolError::MessageTooBig.into(),

@@ -3,7 +3,6 @@
 use core::ffi::c_int;
 
 use bun_core::{feature_flag, handle_oom};
-use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
 
 #[repr(C)]
@@ -39,8 +38,6 @@ pub(crate) type Error = DecompressError;
 
 /// The zlib streams are per connection: with context takeover (the default)
 /// each message's back-references reach into the previous message's window.
-/// The libdeflate fast path is stateless and lives in the VM's
-/// `bun_jsc::RareData`, shared by every client on the thread.
 pub struct PerMessageDeflate {
     pub(crate) compress_stream: zlib::DeflateEncoder,
     pub(crate) decompress_stream: zlib::InflateDecoder,
@@ -60,15 +57,13 @@ const ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS: u8 = 9;
 // Buffer size for compression/decompression operations
 const COMPRESSION_BUFFER_SIZE: usize = 4096;
 
-/// Output space reserved up front for one message. The one-shot libdeflate
+/// Output space reserved up front for one message. The one-shot
 /// path gets exactly that space, so it is skipped for compressed inputs at
 /// least this large: their output would not fit either.
 const INFLATE_BUFFER_SIZE: usize = 128 * 1024;
 
 // DEFLATE trailer bytes added by Z_SYNC_FLUSH
 const DEFLATE_TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
-/// An empty stored block with BFINAL set.
-const FINAL_EMPTY_BLOCK: [u8; 5] = [0x01, 0x00, 0x00, 0xff, 0xff];
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum DecompressError {
@@ -139,11 +134,9 @@ impl PerMessageDeflate {
         len < INFLATE_BUFFER_SIZE
     }
 
-    /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes. `decompressor`
-    /// is the thread's shared libdeflate handle (`None` when it could not be allocated).
+    /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes.
     pub(crate) fn decompress(
         &mut self,
-        decompressor: Option<&libdeflate_sys::OwnedDecompressor>,
         in_buf: &[u8],
         out: &mut Vec<u8>,
         max_len: usize,
@@ -152,37 +145,24 @@ impl PerMessageDeflate {
         out.try_reserve_exact(INFLATE_BUFFER_SIZE)
             .map_err(|_| DecompressError::OutOfMemory)?;
 
+        // Faster than zlib, but it can't see earlier messages, so it only works without context takeover.
+        if self.decompress_no_context_takeover && Self::can_use_libdeflate(in_buf.len()) {
+            let limit = out.capacity() - initial_len;
+            let output = bun_deflate::Output::Vec { vec: out, limit };
+            if let Ok(result) = bun_deflate::inflate_message(in_buf, output) {
+                if result.written > max_len {
+                    return Err(DecompressError::TooLarge);
+                }
+                return Ok(());
+            }
+        }
+
         let mut in_with_trailer: Vec<u8> = Vec::new();
         in_with_trailer
-            .try_reserve_exact(in_buf.len() + DEFLATE_TRAILER.len() + FINAL_EMPTY_BLOCK.len())
+            .try_reserve_exact(in_buf.len() + DEFLATE_TRAILER.len())
             .map_err(|_| DecompressError::OutOfMemory)?;
         in_with_trailer.extend_from_slice(in_buf);
         in_with_trailer.extend_from_slice(&DEFLATE_TRAILER);
-
-        // libdeflate is faster than zlib, but it only inflates a finished stream, so it needs a final
-        // block. It also can't see earlier messages, so it only works without context takeover.
-        if self.decompress_no_context_takeover && Self::can_use_libdeflate(in_buf.len()) {
-            if let Some(decompressor) = decompressor {
-                in_with_trailer.extend_from_slice(&FINAL_EMPTY_BLOCK);
-                let result = decompressor.decompress_to_vec(
-                    &in_with_trailer,
-                    out,
-                    libdeflate_sys::Encoding::Deflate,
-                );
-                if result.status == libdeflate_sys::Status::Success {
-                    // Stopping before the appended block means the peer sent a final block of its own.
-                    // Leave that case to zlib.
-                    if result.read == in_with_trailer.len() {
-                        if out.len() - initial_len > max_len {
-                            return Err(DecompressError::TooLarge);
-                        }
-                        return Ok(());
-                    }
-                    out.truncate(initial_len);
-                }
-                in_with_trailer.truncate(in_buf.len() + DEFLATE_TRAILER.len());
-            }
-        }
 
         let mut remaining = in_with_trailer.as_slice();
         let mut saw_stream_end = false;
@@ -269,4 +249,23 @@ impl PerMessageDeflate {
 
         Ok(())
     }
+}
+
+/// For the server (PerMessageDeflate.h). Returns how many bytes it wrote, or -1 if it failed.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__inflateWebSocketMessage(
+    input: *const u8,
+    input_len: usize,
+    output: *mut u8,
+    output_len: usize,
+) -> isize {
+    // SAFETY: `InflationStream::inflate` passes the frame and its zeroed scratch buffer, which do not overlap.
+    let (input, output) = unsafe {
+        (
+            bun_core::ffi::slice(input, input_len),
+            bun_core::ffi::slice_mut(output, output_len),
+        )
+    };
+    bun_deflate::inflate_message(input, bun_deflate::Output::Slice(output))
+        .map_or(-1, |result| result.written as isize)
 }

@@ -223,7 +223,6 @@
 #include "ProcessBindingHTTPParser.h"
 #include "node/NodeTimers.h"
 #include "JSConnectionsList.h"
-#include "JSHTTPParser.h"
 #include <exception>
 #include <mutex>
 #include "JSBunRequest.h"
@@ -2702,11 +2701,6 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSConnectionsListClassStructure), [](LazyClassStructure::Initializer& init) {
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(HttpParser, Abort, void)
              setupConnectionsListClassStructure(init);
-             BUN_END_REMOVABLE_ENTRY_POINT
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPParserClassStructure), [](LazyClassStructure::Initializer& init) {
-             BUN_BEGIN_REMOVABLE_ENTRY_POINT(HttpParser, Abort, void)
-             setupHTTPParserClassStructure(init);
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatsClassStructure), [](LazyClassStructure::Initializer& init) {

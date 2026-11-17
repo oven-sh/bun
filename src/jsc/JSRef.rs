@@ -26,21 +26,17 @@ use crate::{JSGlobalObject, JSValue, JsCell, Strong, WrapperGuard};
 ///         this_value.set_js_ref_strong(global);
 ///     }
 ///
-///     fn update_reference_type(&mut self) {
+///     fn update_reference_type(&self, global: &JSGlobalObject) {
 ///         if self.connection.is_active() {
 ///             // Keep object alive while connection is active
-///             if self.this_value.is_not_empty() && !self.this_value.is_strong() {
-///                 self.this_value.upgrade(global);
-///             }
+///             self.this_value.with_mut(|r| if r.is_not_empty() { r.upgrade(global) });
 ///         } else {
 ///             // Allow GC when connection is idle
-///             if self.this_value.is_strong() {
-///                 self.this_value.downgrade();
-///             }
+///             self.this_value.with_mut(|r| r.downgrade());
 ///         }
 ///     }
 ///
-///     pub fn on_message(&mut self) {
+///     pub fn on_message(&self) {
 ///         // Safely retrieve the JSValue if still alive
 ///         let Some(this_value) = self.this_value.try_get() else { return };
 ///         // Use this_value...

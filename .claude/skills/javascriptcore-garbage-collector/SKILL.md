@@ -228,13 +228,16 @@ Pattern: **strong while busy, weak while idle.**
 ```rust
 this_value: JsCell<JsRef>, // `thisValue: "this_value"` in the `.bind.ts` file; initialized with JsRef::empty()
 
-// On construction / when work starts:
-js_wrapper.set_js_ref_strong(global);             // or self.this_value.upgrade(global)
+// On construction:
+js_wrapper.set_js_ref_strong(global);             // or set_js_ref_weak() if it starts idle
 
 // When the last in-flight operation completes:
-self.this_value.downgrade();                      // Strong -> Weak, GC may now collect
+self.this_value.with_mut(|r| r.downgrade());      // Strong -> Weak, GC may now collect
 
-// In any callback that needs the wrapper:
+// When work starts again:
+self.this_value.with_mut(|r| r.upgrade(global));  // Weak -> Strong
+
+// In any callback that needs the wrapper (`JsCellRefExt`):
 let Some(js_this) = self.this_value.try_get() else { return };
 ```
 

@@ -1741,6 +1741,43 @@ describe("inputs the parser cannot address", () => {
     ]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
     expect(exitCode).toBe(0);
   }, 30_000);
+
+  test("a byte order mark counts", async () => {
+    const script = `
+      import { setMaxMarkdownBlockBytesForTesting } from "bun:internal-for-testing";
+      let input;
+      try {
+        input = new Uint8Array(4294967287);
+      } catch {
+        console.log(JSON.stringify("SKIP"));
+        process.exit(0);
+      }
+      // An input that is let through fails on its first lines, with another message.
+      input.set(Buffer.from("\\uFEFFa\\n\\nb\\n\\nc\\n\\n"));
+      setMaxMarkdownBlockBytesForTesting(1);
+      const results = ["html", "ansi", "render", "react"].map(name => {
+        try {
+          Bun.markdown[name](input, {});
+        } catch (e) {
+          return e.message;
+        }
+      });
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const message = `The value of "input.byteLength" is out of range. It must be <= 4294967286. Received 4294967287`;
+    expect(["SKIP", [message, message, message, message]]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
+    expect(exitCode).toBe(0);
+  }, 30_000);
 });
 
 describe("documents whose block metadata the parser cannot address", () => {

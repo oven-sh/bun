@@ -14,7 +14,7 @@ use bun_jsc::{
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
 use crate::node::StringOrBuffer;
-use bun_md::parser::{MAX_INPUT_LEN, ParserError};
+use bun_md::parser::{MAX_INPUT_LEN, ParserError, input_size};
 use bun_md::root as md;
 
 #[inline]
@@ -131,7 +131,6 @@ macro_rules! parser_options {
 }
 
 /// For a render that runs JS, which can write to a buffer, free it or transfer it to another thread.
-/// Skips the copy when the parser will reject the buffer for its length anyway.
 fn copy_if_buffer(
     global: &JSGlobalObject,
     input: StringOrBuffer<'static>,
@@ -139,9 +138,8 @@ fn copy_if_buffer(
     let StringOrBuffer::Buffer(buffer) = &input else {
         return Ok(input);
     };
-    if buffer.buffer.byte_len > MAX_INPUT_LEN {
-        return Ok(input);
-    }
+    input_size(buffer.slice())
+        .map_err(|err| parser_err_to_js(global, err, buffer.buffer.byte_len))?;
     match buffer.buffer.try_copy_bytes() {
         Some(copy) => Ok(StringOrBuffer::owned(copy)),
         None => Err(global.throw_out_of_memory()),

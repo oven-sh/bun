@@ -1117,7 +1117,10 @@ function queueEndCallback(msg, callback) {
 function onFinish(outmsg, err?) {
   const callbacks = outmsg[kEndCallbacks];
   if (callbacks) outmsg[kEndCallbacks] = undefined;
-  if ((outmsg[kFinishesWithoutLastWrite] && outmsg[kSocket]) || (!err && !outmsg.socket?._hadError)) {
+  if (
+    (outmsg[kFinishesWithoutLastWrite] && outmsg[kSocket] && !outmsg._closed) ||
+    (!err && !outmsg.socket?._hadError)
+  ) {
     return void outmsg.emit("finish");
   }
   if (!callbacks) return;

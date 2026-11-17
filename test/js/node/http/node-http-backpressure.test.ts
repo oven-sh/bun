@@ -1387,6 +1387,31 @@ describe("backpressure", () => {
 
     // The same over a stream that is not a socket. A duplexPair side completes a
     // write when the other side reads it, so the backlog does not depend on a kernel.
+    it("a response on a stream given to emit(\"connection\") doesn't finish behind its 'close'", async () => {
+      const events: string[] = [];
+      const write = Promise.withResolvers<(err: Error) => void>();
+      const ended = Promise.withResolvers<void>();
+      const stream = new Duplex({
+        read() {},
+        writev: (_chunks, callback) => write.resolve(callback),
+      });
+      const server = http.createServer((req, res) => {
+        res.on("finish", () => events.push("finish"));
+        res.on("close", () => events.push("close"));
+        res.end("body", (err?: Error) => {
+          events.push(`end callback: ${err?.message}`);
+          ended.resolve();
+        });
+      });
+      server.emit("connection", stream);
+      stream.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      const failWrite = await write.promise;
+      await once(stream.destroy(), "close");
+      failWrite(new Error("cancelled"));
+      await ended.promise;
+      expect(events).toEqual(["close", "end callback: cancelled"]);
+    });
+
     it('a response on a duplexPair given to emit("connection") finishes once the other side has read it', async () => {
       const events: string[] = [];
       const body = Buffer.alloc(1024 * 1024, "a");

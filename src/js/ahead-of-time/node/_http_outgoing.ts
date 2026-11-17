@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_outgoing.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 522503b9d2e85c020704fb18d9ed72f6b825baf7b68fd5c30aefa57dd202bf92.
+// Written against that file with the SHA-256 6119e9691dd4d175ed39f7af8c2b0f78bc3ed210d8d770439d9ae449cd53ff2d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_outgoing"
@@ -2209,7 +2209,10 @@ function queueEndCallback(msg: $Node.OutgoingMessage, callback: () => void) {
 function onFinish(outmsg, err?) {
   const callbacks = outmsg[kEndCallbacks];
   if (callbacks) outmsg[kEndCallbacks] = undefined;
-  if ((outmsg[kFinishesWithoutLastWrite] && outmsg[kSocket]) || (!err && !outmsg.socket?._hadError)) {
+  if (
+    (outmsg[kFinishesWithoutLastWrite] && outmsg[kSocket] && !outmsg._closed) ||
+    (!err && !outmsg.socket?._hadError)
+  ) {
     return void outmsg.emit("finish");
   }
   if (!callbacks) return;

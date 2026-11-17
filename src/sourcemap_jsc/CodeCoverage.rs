@@ -264,6 +264,9 @@ pub mod wire {
         }
         let executable_lines = r.bitset(line_count)?;
         let lines_which_have_executed = r.bitset(line_count)?;
+        if !lines_which_have_executed.subset_of(&executable_lines) {
+            return None;
+        }
         let mut line_hits = vec![0u32; line_count];
         bun_core::cast_slice_mut::<u32, u8>(&mut line_hits)
             .copy_from_slice(r.bytes(line_count * 4)?);

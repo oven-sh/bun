@@ -1581,7 +1581,7 @@ describe.concurrent("the All files row", () => {
     `,
   };
 
-  async function run(dir: string, args: string[], expectedExitCode = 0) {
+  async function run(dir: string, args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...args],
       env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
@@ -1593,8 +1593,7 @@ describe.concurrent("the All files row", () => {
     if (args.includes("--parallel=2")) {
       expect(stdout).toContain("PARALLEL");
     }
-    expect(exitCode).toBe(expectedExitCode);
-    return stderr;
+    return { stderr, exitCode };
   }
 
   function lcovTotals(dir: string) {
@@ -1620,7 +1619,7 @@ describe.concurrent("the All files row", () => {
 
   test.each(modes)("is the share of all lines and functions that ran (%s)", async (_, args) => {
     using dir = tempDir("coverage-total", files);
-    const stderr = await run(String(dir), args);
+    const { stderr, exitCode } = await run(String(dir), args);
     const totals = lcovTotals(String(dir));
 
     expect(stderr).toContain("2 pass");
@@ -1634,6 +1633,7 @@ describe.concurrent("the All files row", () => {
       funcs: "100.00",
       lines: ((100 * totals.LH) / totals.LF).toFixed(2),
     });
+    expect(exitCode).toBe(0);
   });
 
   test.each(modes)("does not decide the exit code: the threshold applies to each file (%s)", async (_, args) => {
@@ -1641,10 +1641,11 @@ describe.concurrent("the All files row", () => {
       ...files,
       "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = 0.9\n`,
     });
-    const stderr = await run(String(dir), args, 1);
+    const { stderr, exitCode } = await run(String(dir), args);
 
     expect(Number(row(stderr, "All files").lines)).toBeGreaterThan(90);
     expect(Number(row(stderr, "small.ts").lines)).toBeLessThan(90);
+    expect(exitCode).toBe(1);
   });
 
   test("counts a file without functions as no functions, not as 100%", async () => {
@@ -1659,7 +1660,7 @@ describe.concurrent("the All files row", () => {
         test("t", () => { expect(called() + y).toBe(3); });
       `,
     });
-    const stderr = await run(String(dir), []);
+    const { stderr, exitCode } = await run(String(dir), []);
     const totals = lcovTotals(String(dir));
 
     expect(totals.FNF).toBe(2);
@@ -1667,6 +1668,7 @@ describe.concurrent("the All files row", () => {
     expect(row(stderr, "consts.ts").funcs).toBe("100.00");
     expect(row(stderr, "lib.ts").funcs).toBe("50.00");
     expect(row(stderr, "All files").funcs).toBe("50.00");
+    expect(exitCode).toBe(0);
   });
 
   test("is 100.00 when no file has an executable line, like the rows", async () => {
@@ -1679,10 +1681,11 @@ describe.concurrent("the All files row", () => {
         test("t", () => { expect(1).toBe(1); });
       `,
     });
-    const stderr = await run(String(dir), []);
+    const { stderr, exitCode } = await run(String(dir), []);
 
     expect(lcovTotals(String(dir))).toEqual({ FNF: 0, FNH: 0, LF: 0, LH: 0 });
     expect(row(stderr, "types.ts")).toEqual({ funcs: "100.00", lines: "100.00" });
     expect(row(stderr, "All files")).toEqual({ funcs: "100.00", lines: "100.00" });
+    expect(exitCode).toBe(0);
   });
 });

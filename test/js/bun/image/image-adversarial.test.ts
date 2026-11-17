@@ -1271,6 +1271,25 @@ describe("hostile option objects", () => {
     expect(await p).toEqual(await new Bun.Image(tinyPng).png().bytes());
   });
 
+  test("the input is released before the result is delivered", async () => {
+    const a = new Uint8Array(tinyPng.length + 4096);
+    a.set(tinyPng);
+    const pinned: boolean[] = [];
+    // Resolving a promise with the Blob reads this.
+    Object.defineProperty(Blob.prototype, "then", {
+      configurable: true,
+      get: () => void pinned.push(isBufferPinned(a)),
+    });
+    try {
+      const p = new Bun.Image(a).png().blob();
+      pinned.push(isBufferPinned(a));
+      await p;
+    } finally {
+      delete (Blob.prototype as any).then;
+    }
+    expect(pinned).toEqual([true, false]);
+  });
+
   test("decodes the bytes the caller passed when their WebAssembly.Memory grows after the call", async () => {
     using dir = tempDir("image-wasm-grow", {
       "in.png": Buffer.from(makePng(256, 256, (x, y) => [(x * y) & 255, x ^ y, (x * 31 + y * 17) & 255, 255])),

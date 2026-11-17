@@ -1632,8 +1632,7 @@ impl PipelineTask {
         };
     }
 
-    /// Back on the JS thread: publish dims, deliver the result. The pin and
-    /// the hold on the Image are released when `js` drops at the end.
+    /// Back on the JS thread: publish dims, release the input and the Image, deliver the result.
     pub(crate) fn then(mut self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
         let promise = js.promise.swap();
@@ -1647,6 +1646,7 @@ impl PipelineTask {
             }
             _ => {}
         }
+        drop((js._pin, js.image));
         let result = mem::replace(
             &mut self.result,
             TaskResult::Err(codecs::Error::UnknownFormat),

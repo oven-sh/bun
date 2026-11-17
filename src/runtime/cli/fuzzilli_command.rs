@@ -178,13 +178,13 @@ mod reprl {
 
         run_event_loop(vm);
         let _ = vm.global().handle_rejected_promises();
-        crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-        // Uncaught errors and unhandled rejections fail it too, like `bun <file>`.
+        // Like `bun <file>`, uncaught errors and unhandled rejections fail it. What the reset makes it throw does not.
         if vm.unhandled_error_counter.get() > 0 {
             ok = false;
         }
-        vm.exit_handler.exit_code.set(0);
 
+        crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+        vm.exit_handler.exit_code.set(0);
         vm.swap_global_for_test_isolation();
         prepare_global(vm);
 

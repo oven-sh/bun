@@ -204,6 +204,41 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test.concurrent("what a handler throws while the reset closes its socket does not fail the program", async () => {
+    // The status is decided when the program's slice of the event loop ends.
+    // The program leaves both ends of a connection open. The reset closes
+    // them, and only then do the close handlers run and throw.
+    const result = await runReprl([
+      `
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open() {},
+            data() {},
+            close() { throw new Error("server close handler"); },
+          },
+        });
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open() { console.log("connected"); },
+            data() {},
+            close() { throw new Error("client close handler"); },
+          },
+        });
+      `,
+      `console.log("next program");`,
+    ]);
+
+    expect(result.stdout).toEqual(["connected", "next program"]);
+    expect(result.stderr).toContain("server close handler");
+    expect(result.stderr).toContain("client close handler");
+    expect(result.statuses).toEqual([0, 0]);
+    expect(result.exitCode).toBe(0);
+  });
+
   test.concurrent("a Worker that is busy in JIT code when its program ends is stopped by the reset", async () => {
     // JSC stops such a Worker with a signal-based VM trap, so nothing may take
     // SIGSEGV away from JSC in the REPRL child. The program blocks until the

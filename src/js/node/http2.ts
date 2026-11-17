@@ -4428,7 +4428,7 @@ class ServerHttp2Session extends Http2Session {
       if (transportClosed) return writeToClosedTransport(self, socket);
       if (socket && !socket.writableEnded && self.#connected) {
         // redirect writes to socket
-        return socket.write(buffer) ? 1 : 0;
+        return socket.write(buffer) === false ? 0 : 1;
       }
       return -1;
     },
@@ -5474,7 +5474,7 @@ class ClientHttp2Session extends Http2Session {
       if (transportClosed) return writeToClosedTransport(self, socket);
       if (socket && !socket.writableEnded && self.#connected) {
         // redirect writes to socket
-        return socket.write(buffer) ? 1 : 0;
+        return socket.write(buffer) === false ? 0 : 1;
       }
       return -1;
     },

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3ff98d3ffdee69bd59496ecce23ae3bb073f7ea1ef8c1b4c062360b46517e4b9.
+// Written against that file with the SHA-256 1ea07fe5cca5be4806c2a929bdd18888e60b3f100fb70206f8fc5b8ef31b900a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -4551,7 +4551,7 @@ class ServerHttp2Session extends Http2Session {
       if (transportClosed) return writeToClosedTransport(self, socket);
       if (socket && !socket.writableEnded && self.#connected) {
         // redirect writes to socket
-        return socket.write(buffer) ? 1 : 0;
+        return socket.write(buffer) === false ? 0 : 1;
       }
       return -1;
     },
@@ -5597,7 +5597,7 @@ class ClientHttp2Session extends Http2Session {
       if (transportClosed) return writeToClosedTransport(self, socket);
       if (socket && !socket.writableEnded && self.#connected) {
         // redirect writes to socket
-        return socket.write(buffer) ? 1 : 0;
+        return socket.write(buffer) === false ? 0 : 1;
       }
       return -1;
     },

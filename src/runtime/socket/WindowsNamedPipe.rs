@@ -824,7 +824,7 @@ impl Transport for WindowsNamedPipe {
 
     fn set_timeout(&self, seconds: c_uint) {
         bun_output::scoped_log!(WindowsNamedPipe, "setTimeout({})", seconds);
-        self.set_timeout_in_milliseconds(seconds * 1000);
+        self.set_timeout_in_milliseconds(seconds.saturating_mul(1000));
     }
 
     fn ssl(&self) -> Option<*mut boringssl::SSL> {

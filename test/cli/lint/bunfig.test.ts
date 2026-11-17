@@ -1968,6 +1968,22 @@ describe.concurrent("a rule that Bun doesn't have is listed under the source tha
     ]);
   });
 
+  // oxlint reads `eslint/a` and `a` as one rule. Both entries stay, and the later one applies.
+  test("with an .oxlintrc.json, the later of two names for one rule is the source", async () => {
+    const files = { "a.js": "export const a = 1;\n", ".oxlintrc.json": "{}" };
+    const bunfig = (severity: string) => ({ "bunfig.toml": `[lint.rules]\n"eslint/two-names" = "${severity}"\n` });
+    const source = async (bunfigSeverity: string, flagSeverity: string) => {
+      const args = ["--rule", `two-names: ${flagSeverity}`, "a.js"];
+      const { stderr } = await lint({ ...files, ...bunfig(bunfigSeverity) }, args);
+      return stderr.split("\n").filter(line => line.includes("not supported"));
+    };
+    expect(await Promise.all([source("error", "warn"), source("error", "off"), source("off", "warn")])).toEqual([
+      ["error: 1 rule in --rule is not supported: two-names"],
+      ["error: 1 rule in bunfig.toml is not supported: two-names"],
+      ["error: 1 rule in --rule is not supported: two-names"],
+    ]);
+  });
+
   // An ESLint config refuses a rule without a plugin that ESLint doesn't have.
   test.each([
     ["eslint.config.mjs", (rules: object) => `export default [{ rules: ${JSON.stringify(rules)} }];\n`],

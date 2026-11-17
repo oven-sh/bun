@@ -1635,7 +1635,8 @@ impl<'l> Loader<'l> {
                 && severity.as_str() != Some(b"allow")
                 && severity_of(severity) != Some(Severity::Off)
         };
-        if let Some(at) = options.rule.iter().position(turns_on) {
+        // Two names of one rule are two entries, and the later one applies.
+        if let Some(at) = options.rule.iter().rposition(turns_on) {
             return Some(match self.is_bunfig_rule(at) {
                 true => &options.bunfig,
                 false => b"--rule",

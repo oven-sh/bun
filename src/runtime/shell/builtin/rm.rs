@@ -383,7 +383,10 @@ impl ShellRmTask {
         if !self.opts.recursive {
             if self.opts.remove_empty_dirs {
                 match bun_sys::rmdirat(self.cwd, path) {
-                    Ok(()) => return Ok(None),
+                    Ok(()) => {
+                        self.verbose_deleted(dir_task, path);
+                        return Ok(None);
+                    }
                     Err(e) if e.get_errno() == E::ENOTDIR => {
                         if let Unlinked::Done = self.remove_entry_file(dir_task, path)? {
                             return Ok(None);

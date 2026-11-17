@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -143,6 +143,18 @@ foo/
       expect(exitCode).toBe(1);
       expect(await fileExists(`${tempdir}/sub_dir_files`)).toBeTrue();
     }
+  });
+
+  test("-dv prints the directory it removed", async () => {
+    using dir = tempDir("rm-dv", { captured: {}, redirected: {} });
+    const captured = await $`rm -dv captured`.cwd(String(dir)).quiet();
+    const redirected = await $`rm -dv redirected > out`.cwd(String(dir)).quiet();
+    expect({
+      captured: captured.stdout.toString(),
+      redirected: await Bun.file(path.join(String(dir), "out")).text(),
+      left: readdirSync(String(dir)),
+      exitCodes: [captured.exitCode, redirected.exitCode],
+    }).toEqual({ captured: "captured\n", redirected: "redirected\n", left: ["out"], exitCodes: [0, 0] });
   });
 
   // The DirTask parent/child hand-off had a lost-wakeup window between

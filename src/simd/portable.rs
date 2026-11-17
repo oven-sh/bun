@@ -13,6 +13,7 @@ impl<const BYTES: usize> crate::Isa for Portable<BYTES> {
     const HAS_MASK_REGISTERS: bool = BYTES == 64;
     const HAS_UNSIGNED_COMPARE: bool = BYTES != 32;
     const HAS_INTERLEAVED_MEMORY: bool = BYTES == 16;
+    const HAS_PAIRWISE_DOT: bool = BYTES != 16;
     const HAS_SINGLE_CYCLE_OPS: bool = BYTES != 16;
 }
 
@@ -159,6 +160,17 @@ impl<const N: usize, const B: usize> Lanes<i32, N, B> {
         let (even, odd) = products.deinterleave(products);
         Self::new((even + odd).extract::<0, N>())
     }
+
+    /// Adds the products of four lanes each, wrapping. With 16 lanes, `b` must not be negative.
+    #[inline]
+    pub fn add_dot<const M: usize>(self, a: Lanes<u8, M, B>, b: Lanes<i8, M, B>) -> Self {
+        const { assert!(M == 4 * N) };
+        debug_assert!(M != 16 || b.0.reduce_min() >= 0);
+        let products = a.cast::<i32>() * b.cast();
+        self + Self::from_array(array::from_fn(|i| {
+            (0..4).map(|j| products[4 * i + j]).sum()
+        }))
+    }
 }
 
 impl<const B: usize> Lanes<u32, 4, B> {
@@ -172,6 +184,22 @@ impl<const B: usize> Lanes<u32, 4, B> {
 }
 
 impl<const N: usize, const B: usize> Lanes<u64, N, B> {
+    /// In each block of 16 bytes, the product of the first lanes as polynomials over GF(2).
+    #[inline]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::from_array(array::from_fn(|i| {
+            let (a, b) = (u128::from(self[i & !1]), other[i & !1]);
+            let set = (0..64).filter(|bit| b >> bit & 1 != 0);
+            (set.fold(0, |all, bit| all ^ a << bit) >> (i % 2 * 64)) as u64
+        }))
+    }
+
+    /// The same for the second lanes.
+    #[inline]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        self.swap_pairs().carryless_mul_lower(other.swap_pairs())
+    }
+
     #[inline]
     pub fn sums_of_8<const M: usize>(bytes: Lanes<u8, M, B>) -> Self
     where

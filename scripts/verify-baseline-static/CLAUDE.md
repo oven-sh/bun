@@ -159,7 +159,6 @@ table, an HWCAP test. Known patterns:
 | simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy    |
 | Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h` |
 | `bun_simd`                            | `if_supported!` → `bun_simd::detected()`                    | `src/simd/trusted/gate.rs`            |
-| `with_bmi2!` (Bun)                    | `is_x86_feature_detected!("bmi2")`                          | `src/highway/lib.rs`                  |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c` |
 | zstd                                  | `ZSTD_cpuid()`                                              | `vendor/zstd/lib/common/cpu.h`        |
 | Rust `memchr`                         | `is_x86_feature_detected!()`                                | (via lolhtml dep)                     |

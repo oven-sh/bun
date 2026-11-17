@@ -1,4 +1,4 @@
-use bun_simd::{Target, limit_to};
+use bun_simd::{Target, limit_to_with};
 
 /// Runs `test` on each supported target, in a thread of that name.
 pub(crate) fn on_each_target(test: impl Fn() + Sync) {
@@ -10,7 +10,7 @@ pub(crate) fn on_each_target(test: impl Fn() + Sync) {
             let test = &test;
             let thread = std::thread::Builder::new().name(target.name().into());
             let run = move || {
-                limit_to(target);
+                limit_to_with(target, ["pclmulqdq", "vpclmulqdq", "aes", "dotprod"]);
                 test();
             };
             thread.spawn_scoped(scope, run).unwrap();

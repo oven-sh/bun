@@ -422,6 +422,11 @@ impl<const N: usize, I: Isa> Vector<i32, N, I> {
     }
 
     #[inline(always)]
+    pub fn reduce_sum(self) -> i32 {
+        self.0.reduce_sum()
+    }
+
+    #[inline(always)]
     pub fn reduce_min(self) -> i32 {
         self.0.reduce_min()
     }

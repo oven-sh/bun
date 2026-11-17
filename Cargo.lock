@@ -589,9 +589,10 @@ name = "bun_deflate"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_highway",
  "bun_pod",
  "bun_removable_features",
+ "bun_simd",
+ "bun_simd_kernels",
  "thiserror",
 ]
 
@@ -1641,7 +1642,6 @@ dependencies = [
  "bun_format_conformance",
  "bun_glob",
  "bun_hash",
- "bun_highway",
  "bun_histogram",
  "bun_hpack",
  "bun_http",

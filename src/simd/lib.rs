@@ -50,7 +50,7 @@ pub use bun_simd_trusted::{Append, Out, Writer, extend_vec, spare_capacity};
 pub use bun_simd_trusted::{Features, detected, if_supported};
 pub use bun_simd_trusted::{SharedOutU8, SharedU8, copy_from_shared, copy_to_shared};
 pub use bun_simd_trusted::{Target, opaque};
-pub use dispatch::limit_to;
+pub use dispatch::{limit_to, limit_to_named, limit_to_with};
 pub use isa::Isa;
 pub use mask::Mask;
 pub use matches::Matches;

@@ -21,6 +21,19 @@ crate::native::x256_in_halves!("neon");
 
 type Lanes<T, const N: usize, const S: bool> = crate::Vector<T, N, Neon<S>>;
 
+/// A step of the CRC-32 of gzip, without the inversions.
+#[inline]
+#[target_feature(enable = "crc")]
+pub fn crc32_u8(crc: u32, byte: u8) -> u32 {
+    __crc32b(crc, byte)
+}
+
+#[inline]
+#[target_feature(enable = "crc")]
+pub fn crc32_u64(crc: u32, word: u64) -> u32 {
+    __crc32d(crc, word)
+}
+
 /// `addp`
 #[inline(always)]
 fn pairwise_add(a: u8x16, b: u8x16) -> u8x16 {
@@ -47,6 +60,7 @@ impl<const S: bool> crate::Isa for Neon<S> {
     const MASKED_BYTES: usize = if S { 16 } else { 0 };
     const IS_SLOW_TO_SKIP_PAGE: bool = false;
     const HAS_INTERLEAVED_MEMORY: bool = true;
+    const HAS_PAIRWISE_DOT: bool = false;
     const HAS_SINGLE_CYCLE_OPS: bool = false;
 
     /// `shrn` leaves 4 bits per byte.
@@ -225,6 +239,14 @@ impl<const S: bool> Lanes<i32, 4, S> {
         let low = vmull_s16(vget_low_s16(a), vget_low_s16(b));
         Self::new(vpaddq_s32(low, vmull_high_s16(a, b)))
     }
+
+    #[inline]
+    #[target_feature(enable = "dotprod")]
+    pub fn add_dot(self, a: Lanes<u8, 16, S>, b: Lanes<i8, 16, S>) -> Self {
+        debug_assert!(b.simd_ge(0).all());
+        let sums = vdotq_u32(self.0.cast().into(), a.0.into(), b.0.cast().into());
+        Self::new(u32x4::from(sums).cast())
+    }
 }
 
 impl<const S: bool> Lanes<u32, 4, S> {
@@ -240,6 +262,19 @@ impl<const S: bool> Lanes<u64, 2, S> {
     #[target_feature(enable = "neon")]
     pub fn sums_of_8(bytes: Lanes<u8, 16, S>) -> Self {
         Self::new(vpaddlq_u32(vpaddlq_u16(vpaddlq_u8(bytes.0.into()))))
+    }
+
+    #[inline]
+    #[target_feature(enable = "aes")]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::new(vreinterpretq_u64_p128(vmull_p64(self[0], other[0])))
+    }
+
+    #[inline]
+    #[target_feature(enable = "aes")]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        let [a, b] = [self, other].map(|it| vreinterpretq_p64_u64(it.0.into()));
+        Self::new(vreinterpretq_u64_p128(vmull_high_p64(a, b)))
     }
 }
 

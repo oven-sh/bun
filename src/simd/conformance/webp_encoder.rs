@@ -4,6 +4,9 @@ use crate::bench::{Apart, compare};
 use core::array::from_fn;
 use core::hint::black_box as opaque;
 
+const _: () = assert!(bun_highway::webp::IS_FLAT == bun_simd_kernels::webp::IS_FLAT);
+const _: () = assert!(bun_highway::webp::MAX_SYMBOL == bun_simd_kernels::webp::MAX_SYMBOL);
+
 type Sharpening = [[u8; 4]; 4];
 /// The edge, the context and the index.
 type Place = (u128, u8, usize);

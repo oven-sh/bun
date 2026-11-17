@@ -727,6 +727,12 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
     compare!("line_starts miss 1 MB", |k| k::line_starts(opaque(
         one_line
     )));
+    for n in [
+        3, 16, 30, 64, 100, 300, 500, 1000, 4096, 20000, 65536, 1_000_000,
+    ] {
+        compare!("crc32 {n}", |k| k::crc32(opaque(0), opaque(&js[..n])));
+        compare!("adler32 {n}", |k| k::adler32(opaque(&js[..n])));
+    }
     for n in [3, 7, 12, 30, 100, 200, 300, 65536] {
         let text = &js[..n];
         compare!("xxhash32 {n}", |k| k::xxhash32(opaque(0), opaque(text)));
@@ -1182,6 +1188,11 @@ fn from_shared(js: &[u8]) {
                 rust::xxhash3_64_shared(opaque(seed), shared(opaque(t)))
             );
         }
+        compare!(
+            "shared: adler32 {n}",
+            highway::adler32(opaque(t)),
+            rust::adler32_shared(shared(opaque(t)))
+        );
         compare!(
             "shared: xxhash32 {n}",
             highway::xxhash32(opaque(0), opaque(t)),

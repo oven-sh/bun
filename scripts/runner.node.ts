@@ -960,8 +960,22 @@ function createLimit(concurrency: number): Limit {
   };
 }
 
+function printLoad() {
+  if (!isCI || !isLinux) return;
+  let [start, x] = [performance.now(), 1];
+  for (let i = 0; i < 3e8; i++) x = (Math.imul(x, 31) + i) | 0;
+  const arithmetic = performance.now() - start;
+  start = performance.now();
+  for (let i = 0; i < 8; i++) x ^= Buffer.allocUnsafeSlow(1 << 27).fill(i)[i]!;
+  console.log(`load: arithmetic ${arithmetic | 0} ms, fresh pages ${(performance.now() - start) | 0} ms, ${x}`);
+  const script = `top -bn2 -d1 -w160 | awk '/^top -/ { n++ } n == 2' | head -20; grep -m8 MHz /proc/cpuinfo; grep -i huge /proc/meminfo
+    head -1 /proc/stat; cat /proc/loadavg /proc/pressure/cpu /proc/pressure/memory; grep -E 'TLB|CAL|RES|NMI|PMI' /proc/interrupts`;
+  console.log(spawnSync("sh", ["-c", script], { encoding: "utf8" }).stdout);
+}
+
 async function runTests(downloaded: Promise<string> | undefined, printed: Promise<void> | void): Promise<TestResult[]> {
   assertExpectedPlatform();
+  printLoad();
   const reportPressure = watchPressure();
 
   const parallelism = options.parallel ? availableParallelism() : 1;
@@ -1753,6 +1767,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
           runAotDriver(bunFor(execPath, "aot/"), left));
         earlyAotDriver = undefined;
         process.stderr.write(said);
+        printLoad();
         for (const [testPath, verdict] of verdicts) await reportAotProgram(testPath, verdict);
         left = left.filter(testPath => !verdicts.has(testPath));
         if (died === undefined || unfinished.length === 0) {

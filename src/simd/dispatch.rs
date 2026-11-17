@@ -8,61 +8,78 @@ cfg_select! {
         extern crate std;
         use core::cell::Cell;
 
-        std::thread_local!(static LIMIT: Cell<u8> = const { Cell::new(0) });
+        std::thread_local!(static LIMIT: Cell<(u8, u64)> = const { Cell::new((0, 0)) });
 
-        /// Makes this thread run `target`, or the best copy below it.
-        pub fn limit_to(target: Target) {
-            LIMIT.set(target as u8);
+        /// Makes this thread run what a CPU with the features of `target` and `more` would.
+        pub fn limit_to_with<'a>(target: Target, more: impl IntoIterator<Item = &'a str>) {
+            LIMIT.set((target as u8, target.lacks(more)));
         }
 
-        fn limit() -> u8 {
+        fn limit() -> (u8, u64) {
             LIMIT.get()
         }
     }
     _ => {
-        use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
+        use core::sync::atomic::{AtomicU8, AtomicU64, Ordering::Relaxed};
 
-        static LIMIT: AtomicU8 = AtomicU8::new(0);
+        static LIMIT: (AtomicU8, AtomicU64) = (AtomicU8::new(0), AtomicU64::new(0));
 
-        /// Rules out the targets above `target`, for exports that have not been called yet.
-        pub fn limit_to(target: Target) {
-            LIMIT.store(target as u8, Relaxed);
+        /// Rules out what `target` and `more` lack, for exports that have not been called yet.
+        pub fn limit_to_with<'a>(target: Target, more: impl IntoIterator<Item = &'a str>) {
+            LIMIT.0.store(target as u8, Relaxed);
+            LIMIT.1.store(target.lacks(more), Relaxed);
         }
 
-        fn limit() -> u8 {
-            LIMIT.load(Relaxed)
+        fn limit() -> (u8, u64) {
+            (LIMIT.0.load(Relaxed), LIMIT.1.load(Relaxed))
         }
     }
 }
 
-/// No target below it needs a copy.
-pub const fn is_floor(target: Target) -> bool {
-    !IS_FOR_TESTS && target.is_in_build()
+pub fn limit_to(target: Target) {
+    limit_to_with(target, []);
 }
 
-/// The CPU makes no difference.
-pub const fn is_direct(best_first: &[Target]) -> bool {
-    match best_first {
-        [best, ..] => is_floor(*best),
-        [] => true,
+/// As in `sse4+pclmulqdq`. Ignores a name that starts with no target.
+pub fn limit_to_named(name: &[u8]) {
+    let mut parts = name.split(|&it| it == b'+').flat_map(str::from_utf8);
+    let (name, mut targets) = (parts.next(), Target::ALL.into_iter());
+    if let Some(target) = targets.find(|it| Some(it.name()) == name) {
+        limit_to_with(target, parts);
     }
 }
 
-pub fn is_allowed(target: Target) -> bool {
-    target as u8 >= limit()
+/// Nothing below the copy with these features is needed.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub const fn is_floor(features: &[&str]) -> bool {
+    use crate::Features;
+    !IS_FOR_TESTS && Features::IN_BUILD.contains(Features::named(features))
 }
 
-pub fn is_asked_for(target: Target) -> bool {
-    target as u8 == limit()
+pub const fn is_any(list: &[bool]) -> bool {
+    matches!(list, [first, rest @ ..] if *first || is_any(rest))
+}
+
+pub fn is_allowed(target: Target, features: u64) -> bool {
+    let (best, lacking) = limit();
+    target as u8 >= best && features & lacking == 0
+}
+
+pub fn is_asked_for(target: Target, features: u64) -> bool {
+    target as u8 == limit().0 && is_allowed(target, features)
 }
 
 /// The function that `#[export]` adds.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! export {
+    (@first $first:path $(, $other:path)?) => {
+        $first
+    };
     (
         native[$($is_wanted:ident ($cfg:meta) $Target:ident $module:ident $features:tt)*]
         portable_for_tests[$($Portable:ident $portable:ident)*]
+        or[$($otherwise:path)?]
         $(#[$meta:meta])* $vis:vis fn $name:ident $(<$($life:lifetime),+>)?
         ($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?
     ) => {
@@ -70,36 +87,38 @@ macro_rules! export {
         #[inline(always)]
         $vis fn $name $(<$($life),+>)? ($($arg: $ty),*) $(-> $ret)? {
             type __Kernel = $(for<$($life),+>)? fn($($ty),*) $(-> $ret)?;
+            const __ARE_FLOORS: &[bool] = &[$(#[cfg($cfg)] $crate::dispatch::is_floor(&$features)),*];
 
             // rustc generates no code for a branch that a constant rules out.
             #[inline(always)]
             fn __choose() -> __Kernel {
                 use $crate::{Target, dispatch::*};
                 $(
-                    if is_asked_for(Target::$Portable) {
+                    if is_asked_for(Target::$Portable, 0) {
                         return $portable::$name;
                     }
                 )*
                 $(
                     #[cfg($cfg)]
-                    if (const { is_floor(Target::$Target) } || $is_wanted(Target::$Target))
+                    if (const { is_floor(&$features) }
+                        || $is_wanted(
+                            Target::$Target,
+                            const { $crate::Features::named(&$features).bits() },
+                        ))
                         && let Some(kernel) =
                             $crate::if_supported!($features, __Kernel, $module::$name)
                     {
                         return kernel;
                     }
                 )*
-                if const { $(is_floor(Target::$Target))||* } {
+                if const { is_any(__ARE_FLOORS) } {
                     unreachable!()
                 } else {
-                    portable::$name
+                    $crate::export!(@first $($otherwise,)? portable::$name)
                 }
             }
 
-            if const {
-                use $crate::{Target, dispatch::*};
-                IS_FOR_TESTS || is_direct(&[$(#[cfg($cfg)] Target::$Target),*])
-            } {
+            if const { $crate::dispatch::IS_FOR_TESTS || matches!(__ARE_FLOORS, [] | [true, ..]) } {
                 // Outside of tests, this is a direct call.
                 __choose()($($arg),*)
             } else {

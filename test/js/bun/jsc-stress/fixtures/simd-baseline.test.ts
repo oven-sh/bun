@@ -482,8 +482,8 @@ describe("WebP codec: runtime dispatch", () => {
   });
 });
 
-describe("DEFLATE: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_checksums.cpp has code for each width of vector, for what is left after it, and for the
+describe("DEFLATE: runtime dispatch", () => {
+  // src/simd/kernels/{crc32,adler32}.rs have code for each width of vector, for what is left after it, and for the
   // start of a long input. Parts of src/deflate/{decompressor,block}.rs are compiled with BMI2 and without.
   const library = "libdeflate";
   const bytes = Buffer.alloc(140_000);

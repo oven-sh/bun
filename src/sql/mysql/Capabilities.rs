@@ -110,22 +110,6 @@ impl MariaDBCapabilities {
 }
 
 impl Capabilities {
-    pub fn reject(&mut self) {
-        self.CLIENT_ZSTD_COMPRESSION_ALGORITHM = false;
-        self.MULTI_FACTOR_AUTHENTICATION = false;
-        self.CLIENT_CAPABILITY_EXTENSION = false;
-        self.CLIENT_SSL_VERIFY_SERVER_CERT = false;
-        self.CLIENT_REMEMBER_OPTIONS = false;
-        self.CLIENT_COMPRESS = false;
-        self.CLIENT_INTERACTIVE = false;
-        self.CLIENT_IGNORE_SIGPIPE = false;
-        self.CLIENT_NO_SCHEMA = false;
-        self.CLIENT_ODBC = false;
-        self.CLIENT_LOCAL_FILES = false;
-        self.CLIENT_OPTIONAL_RESULTSET_METADATA = false;
-        self.CLIENT_QUERY_ATTRIBUTES = false;
-    }
-
     pub fn get_default_capabilities(
         ssl: bool,
         has_db_name: bool,

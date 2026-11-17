@@ -31,24 +31,20 @@ pub mod mysql {
     pub mod auth_method;
     #[path = "Capabilities.rs"]
     pub mod capabilities;
-    #[path = "ConnectionState.rs"]
-    pub mod connection_state;
     #[path = "MySQLQueryResult.rs"]
     pub mod mysql_query_result;
     #[path = "MySQLRequest.rs"]
     pub mod mysql_request;
     #[path = "MySQLTypes.rs"]
     pub mod mysql_types;
+    #[path = "Session.rs"]
+    pub mod session;
     #[path = "StatusFlags.rs"]
     pub mod status_flags;
-    #[path = "TLSStatus.rs"]
-    pub mod tls_status;
 
     pub mod protocol {
         #[path = "AnyMySQLError.rs"]
         pub mod any_mysql_error;
-        #[path = "CharacterSet.rs"]
-        pub mod character_set;
         #[path = "CommandType.rs"]
         pub mod command_type;
         #[path = "EncodeInt.rs"]
@@ -57,8 +53,6 @@ pub mod mysql {
         pub mod packet_header;
         #[path = "PacketType.rs"]
         pub mod packet_type;
-
-        pub use character_set::CharacterSet;
 
         #[path = "Auth.rs"]
         pub mod auth;
@@ -74,18 +68,14 @@ pub mod mysql {
         pub mod handshake_response41;
         #[path = "HandshakeV10.rs"]
         pub mod handshake_v10;
-        #[path = "NewWriter.rs"]
-        pub mod new_writer;
         #[path = "OKPacket.rs"]
         pub mod ok_packet;
         #[path = "PacketReader.rs"]
         pub mod packet_reader;
+        #[path = "PacketWriter.rs"]
+        pub mod packet_writer;
         #[path = "PreparedStatement.rs"]
         pub mod prepared_statement;
-        #[path = "ResultSetHeader.rs"]
-        pub mod result_set_header;
-        #[path = "SSLRequest.rs"]
-        pub mod ssl_request;
         #[path = "StmtPrepareOKPacket.rs"]
         pub mod stmt_prepare_ok_packet;
 
@@ -98,7 +88,6 @@ pub mod mysql {
         pub use crate::mysql::mysql_types::FieldType;
     }
 
-    pub use crate::shared::query_status;
     pub use capabilities::Capabilities;
     pub use mysql_query_result::MySQLQueryResult;
     pub use status_flags::StatusFlags;

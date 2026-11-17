@@ -4,14 +4,6 @@ pub enum Error {
     InvalidCharacter,
     #[error("UnknownFieldType")]
     UnknownFieldType,
-    #[error("InvalidAuthSwitchRequest")]
-    InvalidAuthSwitchRequest,
-    #[error("MissingAuthData")]
-    MissingAuthData,
-    #[error("InvalidPublicKey")]
-    InvalidPublicKey,
-    #[error("FailedToEncryptPassword")]
-    FailedToEncryptPassword,
     #[error(transparent)]
     MySQL(#[from] crate::mysql::protocol::any_mysql_error::Error),
     #[error(transparent)]
@@ -24,10 +16,6 @@ impl Error {
         match self {
             Self::InvalidCharacter => "InvalidCharacter",
             Self::UnknownFieldType => "UnknownFieldType",
-            Self::InvalidAuthSwitchRequest => "InvalidAuthSwitchRequest",
-            Self::MissingAuthData => "MissingAuthData",
-            Self::InvalidPublicKey => "InvalidPublicKey",
-            Self::FailedToEncryptPassword => "FailedToEncryptPassword",
             Self::MySQL(e) => <&'static str>::from(e),
             Self::Postgres(e) => <&'static str>::from(e),
         }

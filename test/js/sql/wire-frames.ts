@@ -820,7 +820,7 @@ export function mysqlErrPacket(seq: number, code: number, sqlState: string, mess
 }
 
 // The driver sends `SET time_zone = '+00:00'` as a COM_QUERY on every new
-// connection right after authentication (session setup, MySQLConnection.rs)
+// connection right after authentication (session setup, src/sql/mysql/Session.rs)
 // and waits for its OK before it reports itself connected. A mock server must
 // acknowledge it or the client never reaches Connected. Call this first in the
 // post-auth dispatcher; it answers OK and returns true when `payload` is that

@@ -12,6 +12,7 @@ import {
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
   listeningServer,
+  loopbackFence,
   mysqlAckSessionSetup,
   mysqlHandshakeV10,
   mysqlOkPacket,
@@ -110,6 +111,58 @@ async function connect(url: string, tlsOptions: Bun.SQL.Options["tls"], sslmode 
     e => e,
   );
 }
+
+// TLS 1.2: in 1.3 the client's Finished is held back until the callback returns, so the server cannot write yet.
+test("MySQL: an OK packet that comes while the callback runs the event loop does not log the client in", async () => {
+  const commands: string[] = [];
+  let socket!: tls.TLSSocket;
+  const { server, port } = await listeningServer(rawSocket => {
+    rawSocket.on("error", () => {});
+    rawSocket.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
+    rawSocket.once("data", (chunk: Buffer) => {
+      const cert = { ...agent1, maxVersion: "TLSv1.2" };
+      socket = upgrade(rawSocket, cert, chunk.subarray(4 + chunk.readUIntLE(0, 3)), () => {});
+      let buffered = Buffer.alloc(0);
+      socket.on("data", (chunk: Buffer) => {
+        buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (_, payload) => {
+          commands.push(payload.toString("latin1", 1));
+          mysqlAckSessionSetup(socket, payload);
+        });
+      });
+    });
+  });
+  try {
+    let connected = 0;
+    let built: Promise<unknown> | undefined;
+    await using sql = new SQL({
+      url: `mysql://u:pw@127.0.0.1:${port}/db?sslmode=verify-full`,
+      max: 1,
+      onconnect: err => void (err || connected++),
+      tls: {
+        ca: agent1.ca,
+        checkServerIdentity() {
+          const setup = async () => {
+            socket.write(mysqlOkPacket(2));
+            // The OK, the session setup, its OK, the query.
+            for (let i = 0; i < 4; i++) await loopbackFence();
+          };
+          // Bun.build() runs the event loop until an async setup() settles.
+          built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+          return new Error("PIN_MISMATCH");
+        },
+      },
+    });
+    const err: any = await sql.unsafe("SELECT 'secret'").simple().catch(err => err);
+    await built;
+    expect({ code: err.code, connected, commands }).toEqual({
+      code: "ERR_MYSQL_UNEXPECTED_PACKET",
+      connected: 0,
+      commands: [],
+    });
+  } finally {
+    server.close();
+  }
+});
 
 describe.concurrent.each([
   ["PostgreSQL", "postgres", postgresServer],

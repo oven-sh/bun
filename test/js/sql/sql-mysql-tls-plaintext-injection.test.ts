@@ -5,11 +5,16 @@
 // Buffer.alloc frame construction here.
 
 import { SQL } from "bun";
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { expect, mock, test } from "bun:test";
+import { isWindows } from "harness";
+import type net from "node:net";
 import {
   listeningServer,
+  loopbackFence,
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
+  mysqlAuthSwitchRequest,
   mysqlHandshakeV10,
   mysqlOkPacket,
 } from "./wire-frames";
@@ -60,3 +65,44 @@ test("MySQL TLS handshake rejects plaintext packets buffered behind the server g
     await new Promise<void>(r => server.close(() => r()));
   }
 });
+
+test.skipIf(!fault.available() || isWindows)(
+  "a plaintext packet that comes while the SSLRequest waits for the socket gets no answer",
+  async () => {
+    const blockWrites = () => fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1 });
+    const accepted = Promise.withResolvers<net.Socket>();
+    const left = Promise.withResolvers<void>();
+    let received = Buffer.alloc(0);
+    const { port, server } = await listeningServer(socket => {
+      server.close();
+      socket.on("error", () => {});
+      socket.on("data", (chunk: Buffer) => {
+        received = Buffer.concat([received, chunk]);
+        socket.end();
+      });
+      socket.on("close", () => left.resolve());
+      socket.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
+      blockWrites();
+      accepted.resolve(socket);
+    });
+    try {
+      await using sql = new SQL({ url: `mysql://root:pw@127.0.0.1:${port}/db?sslmode=verify-full`, max: 1 });
+      const connected = sql.connect().then(
+        () => "connected",
+        e => e.code,
+      );
+      const socket = await accepted.promise;
+      await loopbackFence();
+      fault.clear();
+      socket.write(mysqlAuthSwitchRequest(2, "mysql_native_password", Buffer.from("cccccccccccccccccccc\0")));
+      blockWrites();
+      await loopbackFence();
+      fault.clear();
+      await left.promise;
+      expect(received.toString("hex")).toBe("");
+      expect(await connected).toBe("ERR_MYSQL_UNEXPECTED_PACKET");
+    } finally {
+      fault.clear();
+    }
+  },
+);

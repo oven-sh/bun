@@ -8,8 +8,6 @@ bitflags! {
         const HAS_BACKPRESSURE                = 1 << 4;
         /// `ref()` was called; `on_data` must not unref the idle connection.
         const KEEP_ALIVE_REQUESTED            = 1 << 5;
-        /// The handshake finished during this read; `onconnect` runs at the end of it.
-        const ON_CONNECT_PENDING              = 1 << 6;
         /// PostgreSQL: the socket is not read until the consumer of a COPY TO STDOUT wants more.
         const COPY_OUT_PAUSED                 = 1 << 10;
     }

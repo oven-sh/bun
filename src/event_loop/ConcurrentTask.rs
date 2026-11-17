@@ -106,7 +106,7 @@ pub mod task_tag {
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
         S3RefusedRequest,
-        S3UploadWriterCollected,  // MultiPartUpload (its `writer()` was collected before `end()`)
+        S3UploadWriterCollected,  // NetworkSink (its `writer()` was collected before `end()`)
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
         HTTPServerDeinit,
@@ -139,7 +139,6 @@ pub mod task_tag {
         UvLoopDispatch,           // an addon's uv_async_send (posix)
         UvWorkDone,               // work that an addon thread queued (posix)
         ValkeyDeferredClose,
-        ValkeyDeferredFailure,
         WindowsNamedPipeContext,
         Write,
         Writev,

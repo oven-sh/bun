@@ -1,6 +1,8 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { once } from "node:events";
+import { connect } from "node:net";
 import { join } from "node:path";
 import storesThatEndInADefinition from "../bun/jsc/stores-that-end-in-a-definition-fixture.js";
 
@@ -576,6 +578,37 @@ test.concurrent.each([
     stderr: JSON.stringify(expected) + "\n",
     exitCode: 0,
   });
+});
+
+// The child's end of an extra pipe is overlapped. `ReadFile` waits for the signal of such a handle, which the end of any request on it sets.
+test.skipIf(!isWindows)("prompt waits on an overlapped stdin that another process writes to", async () => {
+  const sharesItsPipe = `
+    const asks = Bun.spawn({
+      cmd: [process.execPath, "-e", 'console.error(JSON.stringify(prompt("Q?")))'],
+      stdio: [3, "inherit", "inherit"],
+    });
+    setInterval(() => require("fs").writeSync(3, "x"), 1);
+    process.exit(await asks.exited);
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", sharesItsPipe],
+    stdio: ["ignore", "pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  let stdout = "";
+  let writesSinceTheQuestion = 0;
+  const pipe = connect({ fd: proc.stdio[3] });
+  pipe.on("data", () => {
+    if (stdout && ++writesSinceTheQuestion === 20) pipe.write("answer\n");
+  });
+  const readStdout = async () => {
+    for await (const chunk of proc.stdout) stdout += Buffer.from(chunk);
+  };
+
+  const [, stderr, exitCode] = await Promise.all([readStdout(), proc.stderr.text(), proc.exited, once(pipe, "close")]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Q? ", stderr: '"answer"\n', exitCode: 0 });
 });
 
 test("globalThis.self = 123 works", () => {

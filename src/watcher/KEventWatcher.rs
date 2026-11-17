@@ -63,8 +63,7 @@ pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bu
 
     let mut changelist: [libc::kevent; CHANGELIST_COUNT] = bun_core::ffi::zeroed();
 
-    // SAFETY: an empty changelist registers nothing.
-    let mut count = unsafe { bun_sys::kevent(fd, &[], &mut changelist, None) }?;
+    let mut count = bun_sys::kevent_wait(fd, &mut changelist, None)?;
 
     // Give the events more time to coalesce
     if count < CHANGELIST_COUNT / 2 {
@@ -72,8 +71,7 @@ pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bu
             tv_sec: 0,
             tv_nsec: 100_000,
         }; // 0.0001 seconds
-        // SAFETY: as above.
-        count += unsafe { bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts)) }?;
+        count += bun_sys::kevent_wait(fd, &mut changelist[count..], Some(&ts))?;
     }
 
     let changes = &changelist[..count];

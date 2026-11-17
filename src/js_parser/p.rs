@@ -3271,10 +3271,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope)?;
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
         self.module_scope = self.current_scope;
-        self.has_es_module_syntax = self.has_es_module_syntax
-            || self.esm_import_keyword.len > 0
-            || self.esm_export_keyword.len > 0
-            || self.top_level_await_keyword.len > 0;
+        self.has_es_module_syntax = self.parsed_es_module_syntax();
 
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
@@ -4891,6 +4888,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn is_strict_mode_output_format(&self) -> bool {
         self.options.bundle && self.options.output_format.is_esm()
+    }
+
+    /// After the parse pass: true if the file has what only an ES module has. That is an `import` statement or
+    /// `import.meta`, an `export`, or the `await` operator at the top level.
+    pub(crate) fn parsed_es_module_syntax(&self) -> bool {
+        self.has_es_module_syntax
+            || self.esm_import_keyword.len > 0
+            || self.esm_export_keyword.len > 0
+            || self.top_level_await_keyword.len > 0
+    }
+
+    /// True if the file may be a script, where `await` at the top level is a name: the file is named `.cjs`. The
+    /// parser of `bun --aot` reads a second time for that same name (`may_name_await` in `bun_sema_parser`).
+    /// `options.module_type` does not tell on every path: for a file that an `import` loads off the main thread
+    /// it is the `"type"` of the package alone (`TranspilerJob::run`).
+    ///
+    /// Only for the module loader of the runtime, as for `has_with_scope`. A bundle and a transform of text do
+    /// not take a file for CommonJS because of what it holds.
+    pub(crate) fn may_be_script(&self) -> bool {
+        let path = &self.source.path;
+        // A `data:` URL has no file name. What follows its last "." is part of the module's text.
+        self.options.features.commonjs_at_runtime
+            && path.name().ext == b".cjs"
+            && !path.text.starts_with(b"data:")
     }
 
     /// Declare an ambient symbol resolvable BY NAME via [`Self::find_symbol`]

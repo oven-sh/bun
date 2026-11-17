@@ -123,6 +123,27 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("does not cache a file that is a script because of its name", async () => {
+    // `await` at the top level of a `.cjs` file is a name. In a `.mjs` file the
+    // same text is an error, and the key of the cache does not hold the name of a file.
+    const source = `var await = 1;\nglobalThis.sum = await + 1;\n//` + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(join(temp_dir, "script.cjs"), source);
+    writeFileSync(join(temp_dir, "module.mjs"), source);
+    writeFileSync(
+      join(temp_dir, "main.js"),
+      `const out = [];
+       for (const file of ["./script.cjs", "./module.mjs", "./script.cjs"]) {
+         delete require.cache[require.resolve(file)];
+         globalThis.sum = undefined;
+         try { require(file); out.push(globalThis.sum); } catch (e) { out.push((e.errors?.[0] ?? e).message); }
+       }
+       console.log(JSON.stringify(out));`,
+    );
+    const expected = JSON.stringify([2, 'Cannot use "yield" or "await" here.', 2]);
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(!existsSync(cache_dir)).toBeTrue();
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

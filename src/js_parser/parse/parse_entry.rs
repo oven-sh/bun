@@ -16,8 +16,8 @@ use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::MockHoistOrder;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
-    WrapMode,
+    AwaitOrYield, Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult,
+    StatementScope, WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -119,8 +119,35 @@ pub struct Parser<'a> {
     pub(crate) source: &'a bun_ast::Source<'a>,
     pub(crate) define: &'a Define,
     pub(crate) bump: &'a Arena,
-    /// `log.errors` before the priming `lexer.next()` in `init`.
-    pub(crate) orig_error_count: u32,
+    /// `log` before the priming `lexer.next()` in `init`.
+    pub(crate) log_start: LogStart,
+}
+
+/// What a `Log` held before a parser wrote to it. A second reading of the same file logs from here.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LogStart {
+    msgs: usize,
+    warnings: u32,
+    pub(crate) errors: u32,
+}
+
+impl LogStart {
+    fn of(log: &bun_ast::Log) -> Self {
+        Self {
+            msgs: log.msgs.len(),
+            warnings: log.warnings,
+            errors: log.errors,
+        }
+    }
+
+    /// Moves what `log` got since, and the counts of it, to a log of its own.
+    fn take_since(self, log: &mut bun_ast::Log) -> bun_ast::Log {
+        let mut since = bun_ast::Log::init();
+        since.msgs = log.msgs.split_off(self.msgs);
+        since.warnings = core::mem::replace(&mut log.warnings, self.warnings) - self.warnings;
+        since.errors = core::mem::replace(&mut log.errors, self.errors) - self.errors;
+        since
+    }
 }
 
 pub struct Options<'a> {
@@ -395,14 +422,9 @@ impl<'a> Parser<'a> {
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
         source.check_parseable_len(log, "File")?;
-        let orig_error_count = log.errors;
+        let log_start = LogStart::of(log);
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
-        // Must be set before the priming `next()` so leading comments are seen.
-        lexer.track_comments = options.features.minify_identifiers;
-        lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
-        lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
-        lexer.step();
-        lexer.next()?;
+        Self::read_first_token(&mut lexer, &options)?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
         // chain (the `&'a mut Log` was consumed by `Lexer::init`).
         let log_ptr = lexer.log;
@@ -413,8 +435,22 @@ impl<'a> Parser<'a> {
             define,
             source,
             log: log_ptr,
-            orig_error_count,
+            log_start,
         })
+    }
+
+    #[inline(always)]
+    fn read_first_token(
+        lexer: &mut js_lexer::Lexer<'a>,
+        options: &Options<'a>,
+    ) -> Result<(), Error> {
+        // Must be set before the priming `next()` so leading comments are seen.
+        lexer.track_comments = options.features.minify_identifiers;
+        lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+        lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
+        lexer.step();
+        lexer.next()?;
+        Ok(())
     }
 }
 
@@ -471,7 +507,7 @@ impl<'a> Parser<'a> {
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
         }
-        if p.log().errors > self.orig_error_count {
+        if p.log().errors > self.log_start.errors {
             return Err(crate::Error::SyntaxError);
         }
         let mut opts = ParseStatementOptions {
@@ -481,7 +517,7 @@ impl<'a> Parser<'a> {
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
         // What the parser only logs is still an error: the statements are its best guess.
-        if p.log().errors > self.orig_error_count {
+        if p.log().errors > self.log_start.errors {
             return Err(crate::Error::SyntaxError);
         }
         Ok(f(&ParsedOnly {
@@ -869,6 +905,89 @@ fn lower_one_date_time_literal<'a>(
 }
 
 impl<'a> Parser<'a> {
+    #[inline(always)]
+    fn prepare_for_parse_pass<const TS: bool>(p: &mut P<'a, TS, false>) {
+        // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
+        // Let's enable this flag file-wide
+        if p.options.features.minify_syntax || p.options.features.inlining {
+            p.should_fold_typescript_constant_expressions = true;
+        }
+
+        // Pre-sized to typical worst-case binary-expression nesting depth.
+        p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
+        p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
+    }
+
+    #[inline(always)]
+    fn parse_pass<const TS: bool>(
+        p: &mut P<'a, TS, false>,
+        orig_error_count: u32,
+    ) -> Result<&'a mut [Stmt], Error> {
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            allow_directive_prologue: true,
+            ..Default::default()
+        };
+        let stmts = p
+            .parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?
+            .into_bump_slice_mut();
+
+        // Halt parsing right here if there were any errors
+        // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
+        // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
+        //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
+        //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
+        if p.log().errors > orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+
+        Ok(stmts)
+    }
+
+    /// `p` read the file as a module reads it, with `await` at the top level as the operator, and `failure` ended
+    /// that. A script reads that `await` as a name, as in `var await`, so this reads the file again that way. If
+    /// that fails too, or finds what only an ES module has, the file is not a script: `failure` comes back with
+    /// the messages of the first reading.
+    #[cold]
+    #[inline(never)]
+    fn read_as_script<const TS: bool>(
+        p: &mut P<'a, TS, false>,
+        log_start: LogStart,
+        failure: Error,
+    ) -> Result<&'a mut [Stmt], Error> {
+        let mut module_messages = log_start.take_since(p.log());
+        if let Ok(stmts) = Self::script_parse_pass(p, log_start.errors)
+            && !p.parsed_es_module_syntax()
+        {
+            return Ok(stmts);
+        }
+        drop(log_start.take_since(p.log()));
+        module_messages.append_to(p.log());
+        Err(failure)
+    }
+
+    /// Puts a new parser on the first token of the file in `p`, and parses the file with `await` at the top level
+    /// as a name.
+    fn script_parse_pass<const TS: bool>(
+        p: &mut P<'a, TS, false>,
+        orig_error_count: u32,
+    ) -> Result<&'a mut [Stmt], Error> {
+        let mut lexer = js_lexer::Lexer::init_without_reading(p.log(), p.source, p.arena);
+        Self::read_first_token(&mut lexer, &p.options)?;
+        let options = core::mem::replace(
+            &mut p.options,
+            Options::init(Default::default(), bun_ast::Loader::Js),
+        );
+        // The `log` of the lexer, so that both handles share one provenance chain, as in `Parser::init`.
+        *p = P::init(p.arena, lexer.log, p.source, p.define, lexer, options);
+        p.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowIdent;
+        Self::prepare_for_parse_pass(p);
+        if p.lexer.token == js_lexer::T::THashbang {
+            p.lexer.next()?;
+        }
+        Self::parse_pass(p, orig_error_count)
+    }
+
     fn _parse<const TS: bool>(
         self,
         cache: Option<&mut dyn TranspilerCache>,
@@ -882,8 +1001,9 @@ impl<'a> Parser<'a> {
             source,
             define,
             bump,
-            orig_error_count,
+            log_start,
         } = self;
+        let orig_error_count = log_start.errors;
 
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
@@ -894,15 +1014,7 @@ impl<'a> Parser<'a> {
             debug_assert!(!p.options.tree_shaking);
         }
 
-        // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
-        // Let's enable this flag file-wide
-        if p.options.features.minify_syntax || p.options.features.inlining {
-            p.should_fold_typescript_constant_expressions = true;
-        }
-
-        // Pre-sized to typical worst-case binary-expression nesting depth.
-        p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
-        p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
+        Self::prepare_for_parse_pass(p);
 
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";
@@ -953,21 +1065,28 @@ impl<'a> Parser<'a> {
         }
 
         // Parse the file in the first pass, but do not bind symbols
-        let mut opts = ParseStatementOptions {
-            scope: StatementScope::Module,
-            allow_directive_prologue: true,
-            ..Default::default()
-        };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
-        let stmts: &'a mut [Stmt] = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(s) => s.into_bump_slice_mut(),
+        let mut parsed = Self::parse_pass(p, orig_error_count);
+        // The file is read as a script: `await` at its top level is a name. Used for forcing CommonJS.
+        let mut is_script = false;
+        // The message for a stack overflow needs the lexer of the reading that ran out of stack.
+        if let Err(failure) = parsed
+            && failure != crate::Error::StackOverflow
+            && p.may_be_script()
+        {
+            parsed = Self::read_as_script(p, log_start, failure);
+            is_script = parsed.is_ok();
+        }
+        parse_tracer.end();
+
+        let stmts: &'a mut [Stmt] = match parsed {
+            Ok(stmts) => stmts,
             Err(e) => {
-                parse_tracer.end();
                 if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
@@ -983,17 +1102,6 @@ impl<'a> Parser<'a> {
                 return Err(e);
             }
         };
-
-        parse_tracer.end();
-
-        // Halt parsing right here if there were any errors
-        // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
-        // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
-        //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
-        //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
-        if p.log().errors > orig_error_count {
-            return Err(crate::Error::SyntaxError);
-        }
 
         // `keep_directives` leaves each directive where it is written.
         let (directives, stmts): (&'a [Stmt], &'a mut [Stmt]) = if p.options.keep_directives {
@@ -1925,7 +2033,11 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::Cjs;
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;
-        } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
+        } else if uses_exports_ref
+            || uses_module_ref
+            || p.has_top_level_return
+            || p.has_with_scope
+            || is_script
         {
             exports_kind = js_ast::ExportsKind::Cjs;
             if p.options.features.commonjs_at_runtime {
@@ -1942,6 +2054,7 @@ impl<'a> Parser<'a> {
                             && !uses_module_ref
                             && !p.has_top_level_return
                             && !p.has_with_scope
+                            && !is_script
                     );
                     // Use ESM if the file has ES module syntax (import)
                     exports_kind = if p.has_es_module_syntax {
@@ -2557,11 +2670,13 @@ impl<'a> Parser<'a> {
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(parsed) = parsed_for_cache {
-                *parsed = (!p.depends_on_more_than_source()).then_some(ParsedForCache {
-                    exports_kind,
-                    uses_test_api,
-                    imports_vitest,
-                });
+                // The name of a file is not in the key of the cache, and the name is what makes a script of this file.
+                *parsed =
+                    (!p.depends_on_more_than_source() && !is_script).then_some(ParsedForCache {
+                        exports_kind,
+                        uses_test_api,
+                        imports_vitest,
+                    });
             }
         }
         // A test entry point gets its own cache key.

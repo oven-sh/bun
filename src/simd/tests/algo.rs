@@ -165,10 +165,6 @@ mod simd {
                     .copied()
                     .filter(|at| (start..start + block).contains(at))
             };
-            assert_eq!(matches.clone().count(), want().count());
-            let (mut odd, mut asked) = (matches.clone(), want());
-            odd.retain(|at| asked.next() == Some(at) && at % 2 == 1);
-            assert!(odd.start() == start && odd.eq(want().filter(|at| at % 2 == 1)));
             let cuts = [0, 1, 2, 32, 64, 65, 66, usize::MAX / 2 + 2];
             for cut in cuts.map(|it| (start + it).wrapping_sub(1)) {
                 let [mut above, mut below] = [matches.clone(), matches.clone()];

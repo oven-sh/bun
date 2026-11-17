@@ -2108,6 +2108,26 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     expect(raw.frames.filter(f => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY).length).toBe(1);
   });
 
+  test("pushes that ended unread don't count toward maxReservedRemoteStreams", async () => {
+    using ctx = await openRequest();
+    const { raw, client } = ctx;
+    const ids: number[] = [];
+    client.on("stream", pushed => ids.push(pushed.id!));
+    const expected = Array.from({ length: 201 }, (_, i) => 2 * i + 2);
+    raw.socket!.write(
+      Buffer.concat([
+        ...expected.flatMap(id => [
+          pushPromise(id),
+          encodeFrame(FrameType.HEADERS, 0x4, id, STATUS_200),
+          encodeFrame(FrameType.DATA, 0x1, id, Buffer.from("unread")),
+        ]),
+        encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+      ]),
+    );
+    await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+    expect(ids).toEqual(expected);
+  });
+
   test("session.close() completes when a PUSH_PROMISE arrives after it and no response follows", async () => {
     using ctx = await openRequest();
     const { raw, client } = ctx;

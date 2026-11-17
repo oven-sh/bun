@@ -403,6 +403,7 @@ let priorityDeprecationWarned = false;
 let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
+const kOpenPushes = Symbol("openPushes");
 // Set on a client request while it waits in its session's queue: the arguments it's submitted with.
 const kQueuedRequest = Symbol("queuedRequest");
 const kRemoveQueuedRequest = Symbol("removeQueuedRequest");
@@ -2221,6 +2222,7 @@ function closeStreamOnce(stream: Http2Stream, endWritable = false) {
   const status = stream[bunHTTP2StreamStatus];
   if ((status & StreamState.Closed) !== 0) return false;
   stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
+  if (stream[kPush]) (stream[bunHTTP2Session] as ClientHttp2Session)[kOpenPushes]--;
   if (stream[kTimeout]) clearTimeout(stream[kTimeout]);
   stream[kTimeout] = null;
   stream.removeAllListeners("timeout");
@@ -5106,7 +5108,7 @@ class ClientHttp2Session extends Http2Session {
   #pingCallbacks: Array<[Function, number]> | null = null;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
   #maxReservedRemoteStreams: number = 200;
-  #reservedStreamsCount: number = 0;
+  [kOpenPushes]: number = 0;
   #maxOriginSetSize: number = 128;
   #strictFieldWhitespaceValidation: boolean = true;
   // Requests without an id yet, like node's: they wait, in order, for the socket to connect or for a slot under the peer's SETTINGS_MAX_CONCURRENT_STREAMS.
@@ -5121,13 +5123,13 @@ class ClientHttp2Session extends Http2Session {
     ) {
       if (!self) return;
       // Without a 'stream' listener nothing could read the stream or handle its 'error'.
-      if (self.listenerCount("stream") === 0 || self.#reservedStreamsCount >= self.#maxReservedRemoteStreams) {
+      if (self.listenerCount("stream") === 0 || self[kOpenPushes] >= self.#maxReservedRemoteStreams) {
         // Too many reserved (pushed) streams: refuse this one (node cancels it instead of
         // surfacing it).
         self.#parser?.rstStream(pushId, constants.NGHTTP2_CANCEL);
         return;
       }
-      self.#reservedStreamsCount++;
+      self[kOpenPushes]++;
       // PUSH_PROMISE: surface the server-pushed stream (with its REQUEST headers) on the session
       // 'stream' event; its eventual response HEADERS will fire 'push' on the pushed stream.
       let rawheaders = headersTuple[0];
@@ -5145,9 +5147,6 @@ class ClientHttp2Session extends Http2Session {
       const pushedStream = new ClientHttp2Stream(pushId, self, undefined, false);
       pushedStream[kRequestHeaders] = headers;
       pushedStream[kPush] = true;
-      pushedStream.once("close", () => {
-        self.#reservedStreamsCount--;
-      });
       self.#parser?.setStreamContext(pushId, pushedStream);
       if (onClientStreamCreatedChannel.hasSubscribers) {
         onClientStreamCreatedChannel.publish({ stream: pushedStream, headers });

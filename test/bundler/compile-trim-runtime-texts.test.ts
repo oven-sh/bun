@@ -77,7 +77,12 @@ function whatIsCompressedIn(bytes: Buffer): Uint8Array[] {
 }
 
 const heldByWhatStays = ["exhaustive-deps", "rules-of-hooks", "use-memo", "Substitutions for pattern "];
-const inSourcesOfBunDesktop = ["aria-activedescendant", "aria-roledescription", "--disable-component-update"];
+const inSourcesOfBunDesktop = [
+  "aria-activedescendant",
+  "aria-roledescription",
+  "--disable-component-update",
+  "force-renderer-accessibility",
+];
 const stillLeftOnLinux = [
   "error-message",
   "no-console",

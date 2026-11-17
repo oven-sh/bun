@@ -1,6 +1,7 @@
 // Turns the loaded schema into text.
 
 import assert from "node:assert";
+import { createHash } from "node:crypto";
 import {
   AnyType,
   asciiLiteral,
@@ -303,7 +304,10 @@ let sharedFunctions = new Map<string, string>();
 /** The name is made of the text, so the linker keeps one of those that files have in common. */
 function share(returns: string, parameters: readonly string[], body: string): string {
   const text = `(${parameters.join(", ")})\n{\n${body}\n}\n`;
-  const name = `f${Bun.hash(returns + text).toString(36)}`;
+  const name = `f${createHash("sha256")
+    .update(returns + text)
+    .digest("hex")
+    .slice(0, 16)}`;
   sharedFunctions.set(name, `NEVER_INLINE inline ${returns} ${name}${text}`);
   return `Bun::Bindgen::Shared::${name}`;
 }

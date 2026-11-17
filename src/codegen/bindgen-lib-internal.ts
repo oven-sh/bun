@@ -217,7 +217,7 @@ function webAlternativesByKind(alternatives: readonly Type[]): Map<ValueKind | "
     ),
     ["other", [...forObjects, ...fallback]],
   ];
-  return new Map(entries.map(([kind, list]) => [kind, lists.getOrInsert(`${list}`, list)]));
+  return new Map(entries.map(([kind, list]) => [kind, getOrInsert(lists, `${list}`, list)]));
 }
 
 export function indent(text: string, by: number): string {
@@ -2862,7 +2862,7 @@ export class NativeInstanceType extends LocalType {
   readonly #header: string;
   static readonly #kinds = new Map<string, JSClass>();
   constructor(name: string, cpp: string, header: string) {
-    const kind = NativeInstanceType.#kinds.getOrInsert(cpp, { cpp });
+    const kind = getOrInsert(NativeInstanceType.#kinds, cpp, { cpp });
     super(`Bun::Bindgen::IDLRawBuffer<${cpp}, true>`, name, "bun_jsc::JSObject", [kind], null, { type: "Object" });
     this.#header = header;
   }
@@ -2913,7 +2913,7 @@ export class TypedArrayType extends BufferSourceType {
     return this.#name;
   }
   get valueKinds(): ValueKinds {
-    return [TypedArrayType.#kinds.getOrInsert(this.#name, { cpp: `JSC::JS${this.#name}` })];
+    return [getOrInsert(TypedArrayType.#kinds, this.#name, { cpp: `JSC::JS${this.#name}` })];
   }
   get parameterType(): ParameterType {
     return this.#name === "ArrayBufferView" ? super.parameterType : strictType(instanceType(this.#name));
@@ -5269,4 +5269,10 @@ export class ModuleDefinition {
     this.isCold = options.isCold ?? false;
     this.feature = options.feature;
   }
+}
+
+/** Node 25 has no `Map.prototype.getOrInsert`. */
+function getOrInsert<K, V>(map: Map<K, V>, key: K, value: V): V {
+  if (!map.has(key)) map.set(key, value);
+  return map.get(key)!;
 }

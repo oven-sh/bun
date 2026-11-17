@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import {
   blackholePortSource,
   bunEnv,
@@ -20,6 +20,9 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
+import { Agent, request as httpRequest } from "node:http";
+import { connect as http2Connect } from "node:http2";
+import { request as httpsRequest } from "node:https";
 import {
   type AddressInfo,
   BlockList,
@@ -3645,3 +3648,128 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
     expect(thrown).toEqual(thrownBy(() => set(undefined)));
   },
 );
+
+// lookupAndConnect() refuses the host before it resolves it, as in Node.js v26.12.1 (CVE-2026-48930):
+// https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L1728
+describe("connect() to a host with a null byte", () => {
+  const host = "127.0.0.1\u0000.allowed.example";
+  const refused = {
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message:
+      "The property 'options.host' must be a string without null bytes. Received '127.0.0.1\\x00.allowed.example'",
+  };
+  // What the call throws. A call that throws nothing has what it made destroyed.
+  const thrownBy = (dial: () => any) => {
+    let made;
+    try {
+      made = dial();
+    } catch (error: any) {
+      return { name: error.name, code: error.code, message: error.message };
+    }
+    made.on("error", () => {});
+    made.destroy();
+  };
+
+  type Dial = (options: { host: string; port: number; lookup: (...args: any[]) => void }) => any;
+  const entryPoints: [string, Dial][] = [
+    ["net.createConnection(options)", options => createConnection(options)],
+    ["net.createConnection(port, host)", ({ port, host }) => createConnection(port, host)],
+    ["net.connect(options) with one address family", options => connect({ ...options, family: 4 })],
+    ["net.connect(port, host)", ({ port, host }) => connect(port, host)],
+    ["socket.connect(options)", options => new Socket().connect(options)],
+    ["socket.connect(port, host)", ({ port, host }) => new Socket().connect(port, host)],
+    ["tls.connect(options)", options => tlsConnect(options)],
+    ["tls.connect(port, host, options)", ({ port, host, lookup }) => tlsConnect(port, host, { lookup })],
+    ["tlsSocket.connect(options)", options => new TLSSocket(undefined as any).connect(options)],
+    ["http2.connect(authority, options)", options => http2Connect(`http://127.0.0.1:${options.port}`, options)],
+    ["http.request(options)", options => httpRequest({ ...options, setHost: false })],
+    ["https.request(options)", options => httpsRequest({ ...options, setHost: false })],
+    ["agent.createConnection(options)", options => new Agent().createConnection(options)],
+  ];
+
+  it.each(entryPoints)("%s throws before a lookup and before a dial", async (_, dial) => {
+    const accepted = jest.fn((connection: Socket) => connection.destroy());
+    await using server = createServer(accepted);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const lookup = jest.fn((_hostname, options, callback) =>
+      options.all ? callback(null, [{ address: "127.0.0.1", family: 4 }]) : callback(null, "127.0.0.1", 4),
+    );
+
+    const thrown = thrownBy(() => dial({ host, port, lookup }));
+
+    // A connection that the call had started would reach the listener before this one.
+    const control = connect(port, "127.0.0.1");
+    control.resume();
+    await once(control, "close");
+
+    expect({ thrown, lookups: lookup.mock.calls.length, connections: accepted.mock.calls.length }).toEqual({
+      thrown: refused,
+      lookups: 0,
+      connections: 1,
+    });
+  });
+
+  it.each([
+    ["at the start", "\u0000example.com", "'\\x00example.com'"],
+    ["at the end", "example.com\u0000", "'example.com\\x00'"],
+    ["after an IPv4 address", "127.0.0.1\u0000", "'127.0.0.1\\x00'"],
+    ["after an IPv6 address", "::1\u0000", "'::1\\x00'"],
+    ["alone", "\u0000", "'\\x00'"],
+    ["in a string that is not Latin-1", "\u4f8b\u3048\u0000.example", "'\u4f8b\u3048\\x00.example'"],
+  ])("refuses a null byte %s", (_, host, received) => {
+    expect(thrownBy(() => connect({ host, port: 0 }))).toEqual({
+      ...refused,
+      message: `The property 'options.host' must be a string without null bytes. Received ${received}`,
+    });
+  });
+
+  it("is checked before the port, the local address and the lookup function", () => {
+    expect({
+      port: thrownBy(() => connect({ host, port: -1 })),
+      localAddress: thrownBy(() => connect({ host, port: 0, localAddress: "bogus" })),
+      lookup: thrownBy(() => connect({ host, port: 0, lookup: 5 as any })),
+    }).toEqual({ port: refused, localAddress: refused, lookup: refused });
+  });
+
+  it("a missing port, a bad timeout and a host of another type are still reported first", () => {
+    expect({
+      port: thrownBy(() => connect({ host } as any))?.code,
+      timeout: thrownBy(() => createConnection({ host, port: 0, timeout: -1 }))?.code,
+      type: thrownBy(() => connect({ host: [host] as any, port: 0 })),
+    }).toEqual({
+      port: "ERR_MISSING_ARGS",
+      timeout: "ERR_OUT_OF_RANGE",
+      type: {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.host" property must be of type string. Received an instance of Array',
+      },
+    });
+  });
+
+  it("leaves the socket able to connect", async () => {
+    await using server = createServer(connection => connection.destroy());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = new Socket();
+    try {
+      expect(thrownBy(() => socket.connect({ host, port }))).toEqual(refused);
+      await once(socket.connect({ host: "127.0.0.1", port }), "connect");
+      expect(socket.remotePort).toBe(port);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("is not checked where no host is resolved", async () => {
+    expect({
+      "new net.Socket(options)": thrownBy(() => new Socket({ host } as any)),
+      "tls.connect() over a socket": thrownBy(() => tlsConnect({ host, socket: new Socket() })),
+    }).toEqual({ "new net.Socket(options)": undefined, "tls.connect() over a socket": undefined });
+    // A path is dialed alone: the host beside it is not looked at.
+    const [error] = await once(connect({ host, path: join(socket_domain, "no-such-socket") } as any), "error");
+    expect(error.code).toBe("ENOENT");
+  });
+});

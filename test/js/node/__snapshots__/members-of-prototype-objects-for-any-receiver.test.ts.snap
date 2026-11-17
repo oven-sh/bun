@@ -3886,7 +3886,7 @@ node:dns.Resolver.prototype resolveSoa()
 node:dns.Resolver.prototype resolveSoa("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype reverse()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received undefined <- every receiver
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.Resolver.prototype reverse("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype setLocalAddress()
@@ -4052,10 +4052,7 @@ node:dns.promises.Resolver.prototype resolveTxt("a", 1)
   throws TypeError: "text" is not an Object. <- a string
   throws TypeError: null is not an Object. <- null
 node:dns.promises.Resolver.prototype reverse()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "ip" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.promises.Resolver.prototype reverse("a", 1)
   object Promise <- every object, undefined
   throws TypeError: 7 is not an Object. <- a number

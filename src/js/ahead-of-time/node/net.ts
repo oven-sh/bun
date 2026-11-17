@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 0a5b979f62d8188d227d6e5af4cc147261e0f4a22250d065a3790c50c03d5774.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -43,7 +43,7 @@ const {
 const timers = require("internal/timers");
 const kTimeout: typeof timers.kTimeout = timers.kTimeout;
 const getTimerDuration = timers.getTimerDuration;
-const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString, validateStringWithoutNullBytes } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const netSymbols = require("internal/net/symbols");
 const kArmHandshakeTimeout: typeof netSymbols.kArmHandshakeTimeout = netSymbols.kArmHandshakeTimeout;
@@ -3551,7 +3551,7 @@ function lookupAndConnect(self: $Node.Socket, options: ConnectOptions) {
   const host = options.host || "localhost";
   let { port, autoSelectFamilyAttemptTimeout, autoSelectFamily } = options;
 
-  validateString(host, "options.host");
+  validateStringWithoutNullBytes(host, "options.host");
 
   if (localAddress && !isIP(localAddress)) {
     throw $ERR_INVALID_IP_ADDRESS(localAddress);

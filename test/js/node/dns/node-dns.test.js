@@ -895,6 +895,71 @@ describe("hostnames containing NUL bytes", () => {
   });
 });
 
+// setLocalAddress() and reverse() refuse the address before the resolver gets it, as in Node.js v26.12.1:
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/dns/utils.js#L181-L186
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/dns/callback_resolver.js#L62
+describe("addresses containing NUL bytes", () => {
+  // What the call throws. A promise that the call returns instead is let go.
+  const thrownBy = fn => {
+    try {
+      fn()?.catch?.(() => {});
+    } catch (error) {
+      return { name: error.name, code: error.code, message: error.message };
+    }
+  };
+  const refused = (argument, received) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: `The argument '${argument}' must be a string without null bytes. Received ${received}`,
+  });
+
+  it.each([
+    ["dns.Resolver", dns.Resolver],
+    ["dns.promises.Resolver", dns_promises.Resolver],
+  ])("%s#setLocalAddress throws instead of truncating at the NUL", (_, Resolver) => {
+    const resolver = new Resolver();
+    expect({
+      ipv4: thrownBy(() => resolver.setLocalAddress("127.0.0.2\0.allowed.example")),
+      ipv6: thrownBy(() => resolver.setLocalAddress("127.0.0.1", "::1\0junk")),
+    }).toEqual({
+      ipv4: refused("ipv4", "'127.0.0.2\\x00.allowed.example'"),
+      ipv6: refused("ipv6", "'::1\\x00junk'"),
+    });
+    expect(thrownBy(() => resolver.setLocalAddress("127.0.0.1", "::1"))).toBeUndefined();
+  });
+
+  it.each([
+    ["dns.reverse", ip => dns.reverse(ip, () => {})],
+    ["dns.Resolver#reverse", ip => new dns.Resolver().reverse(ip, () => {})],
+    ["dns.promises.reverse", ip => dns_promises.reverse(ip)],
+    ["dns.promises.Resolver#reverse", ip => new dns_promises.Resolver().reverse(ip)],
+  ])("%s throws instead of truncating at the NUL", (_, reverse) => {
+    expect(thrownBy(() => reverse("127.0.0.1\0.allowed.example"))).toEqual(
+      refused("name", "'127.0.0.1\\x00.allowed.example'"),
+    );
+  });
+
+  it("reverse() checks the name before the callback", () => {
+    expect({
+      "a NUL and no callback": thrownBy(() => dns.reverse("127.0.0.1\0")),
+      "no string and no callback": thrownBy(() => dns.reverse(123)),
+      "a name and no callback": thrownBy(() => dns.reverse("127.0.0.1")),
+    }).toEqual({
+      "a NUL and no callback": refused("name", "'127.0.0.1\\x00'"),
+      "no string and no callback": {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "name" argument must be of type string. Received type number (123)',
+      },
+      "a name and no callback": {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "callback" argument must be of type function. Received undefined',
+      },
+    });
+  });
+});
+
 // Node treats a null option field the same as an absent one (its guards are
 // `!= null`), so e.g. `{ hints: null }` must not throw. https://github.com/oven-sh/bun/issues/37318
 describe("dns.lookup null option fields are treated as unset", () => {

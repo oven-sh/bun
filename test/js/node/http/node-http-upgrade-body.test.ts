@@ -316,7 +316,7 @@ describe.each(["http", "https"])("%s: an Upgrade request with a body", scheme =>
   });
 
   test.concurrent("a ServerResponse made in the listener finishes when the body ends while it drains", async () => {
-    const size = 8 * 1024 * 1024;
+    const chunk = Buffer.alloc(1024 * 1024, "a");
     using connection = await open();
     const { server, client } = connection;
     client.write(upgrade("Content-Length: 4") + "BO");
@@ -324,7 +324,9 @@ describe.each(["http", "https"])("%s: an Upgrade request with a body", scheme =>
     const res = new http.ServerResponse(req);
     res.assignSocket(stream);
     res.on("finish", () => stream.end("<end>"));
-    res.end(Buffer.alloc(size, "a"));
+    // Many writes, because Windows takes a first send of any size whole.
+    for (let i = 0; i < 16; i++) res.write(chunk);
+    res.end();
     client.write("DY");
     await once(req.resume(), "end");
     connection.read();

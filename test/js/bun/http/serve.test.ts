@@ -5403,6 +5403,7 @@ it.each(["http", "https"])(
       hostname: "127.0.0.1",
       tls: protocol === "https" ? tls : undefined,
       async fetch(req) {
+        if (req.method === "GET") return new Response();
         if (requests++) {
           otherArrived.resolve();
           return new Response();
@@ -5424,6 +5425,9 @@ it.each(["http", "https"])(
     }
     const [first, other] = await Promise.all([open(), open()]);
     try {
+      // A nested libuv tick doesn't see the events that the outer one has collected, so the server ends this handshake first.
+      other.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+      await once(other, "data");
       first.write(message("a"));
       expect(await seen.promise).toEqual(["2 requests", `${protocol}://a/a`, "a", "a"]);
     } finally {

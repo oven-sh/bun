@@ -68,6 +68,7 @@ const crates = [
   "bun_valkey",
   "bun_webp",
   "bun_wyhash",
+  "bun_zlib",
 ];
 
 // Not `spawnSync`: what runs beside it writes into pipes that this process empties.

@@ -1,0 +1,12 @@
+//! What the tests in test/js/node/zlib cannot bring about or see: memory that is refused at a given point, buffers of
+//! a few bytes or none, the status of each call, and calls that `node:zlib` does not make.
+#![feature(core_io_borrowed_buf)]
+
+mod checksums;
+mod deflate;
+mod inflate;
+mod kernels;
+mod plain;
+mod refusals;
+mod samples;
+mod writer;

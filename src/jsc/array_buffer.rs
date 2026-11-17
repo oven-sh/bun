@@ -633,6 +633,14 @@ impl PinnedArrayBuffer {
         (ptr, byte_len)
     }
 
+    /// Whether JS has lost sight of the bytes since they were pinned: the view was detached, or resized out of bounds.
+    #[inline]
+    pub fn is_view_gone(&self) -> bool {
+        let mut ptr = ptr::null_mut();
+        JSC__JSValue__arrayBufferExtent(self.buffer.value, &mut ptr, &mut 0);
+        ptr.is_null()
+    }
+
     /// Like [`slice_mut`](Self::slice_mut), but re-reads the range. For a writer that runs after user JS.
     pub fn live_slice_mut(&mut self) -> &mut [u8] {
         let (ptr, byte_len) = self.live_range();

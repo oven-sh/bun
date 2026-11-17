@@ -394,8 +394,7 @@ impl Driver<'_> {
                 return Ok(Some(self.this.report(self.global, error, consumed)));
             }
         }
-        let view = input.value.as_array_buffer(self.global);
-        if view.is_some_and(|view| view.is_detached()) {
+        if pinned.as_ref().is_some_and(PinnedArrayBuffer::is_view_gone) {
             self.pin(input, pinned)?;
         }
         Ok(None)

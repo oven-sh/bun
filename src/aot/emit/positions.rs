@@ -6,8 +6,8 @@ pub fn source_positions(source: &[u8], line_starts: Vec<u32>) -> SourcePositions
     SourcePositions {
         line_starts,
         column_adjustments,
-        quoted_texts: Vec::new(),
-        text_of_quotes: Vec::new(),
+        quoted_sources: Vec::new(),
+        quoted_source_text: Vec::new(),
     }
 }
 

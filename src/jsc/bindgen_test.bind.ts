@@ -511,10 +511,10 @@ export const readPromisePtr = b.fn({
   args: { context: b.promisePtr("core::sync::atomic::AtomicI32") },
   returns: b.i32,
 });
-/** A new `NativePromiseContext` cell with a pointer to the same static. */
+/** A new `NativePromiseContext` cell with the only ref on a `TestRefCounted` that holds 42. */
 export const makeNativePromiseContext = b.fn({ returns: b.any, capability: "js" });
 export const readNativePromiseContext = b.fn({
-  args: { context: b.nativePromiseContext("core::sync::atomic::AtomicI32") },
+  args: { context: b.nativePromiseContext("crate::bindgen_test::TestRefCounted") },
   returns: b.i32.nullable,
 });
 export const primes = b.value({ returns: b.array(b.u32) });

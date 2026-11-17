@@ -239,14 +239,13 @@ server.stop(true);
   "what Bun adds to classes that TypeScript's library for browsers declares": {
     files: {
       "main.ts": `const blob = new Blob(['{"a":1}']);
-const stream = new ReadableStream({ start(controller) { controller.enqueue("x"); controller.close(); } });
-console.log((await blob.json()).a, new Headers({ a: "1" }).toJSON().a, await stream.text());
+console.log((await blob.json()).a, new Headers({ a: "1" }).toJSON().a);
 console.write("written\\n");
 `,
       "tsconfig.json": "{}",
     },
     checkSays: [],
-    prints: "1 1 x\nwritten\n",
+    prints: "1 1\nwritten\n",
   },
   "what Bun adds to the constructor of errors": {
     files: {
@@ -595,12 +594,11 @@ console.log(global, ofBun, ofTheWeb, ofAModule);
     files: {
       "main.ts": `const port = parseInt(process.env.A_NAME_THAT_NOBODY_SETS);
 const length: number = process.argv.length.toString();
-const blob = new Blob(["{}"]);
-console.log(port, typeof length, blob.notThere, Buffer.from("ab", "utf8", "more").length);
+console.log(port, typeof length, Buffer.from("ab", "utf8", "more").length);
 `,
     },
     checkSays: [],
-    prints: "NaN string undefined 2\n",
+    prints: "NaN string 2\n",
   },
   "a loop that awaits what a class below a stream of Node.js yields": {
     files: {
@@ -662,6 +660,16 @@ export function twice(n: number): number { return n * 2; }
 const stillErrors: [string, string, string[]][] = [
   ["a name that nothing provides", `console.log(notDeclaredAnywhere);\n`, ["TS2304"]],
   ["a name that is nearly one of Bun's", `consle.log("typo");\n`, ["TS2552"]],
+  [
+    "a member that neither Bun's declarations nor TypeScript's library for browsers give a stream",
+    `const stream = new ReadableStream({ start(controller) { controller.close(); } });\nconsole.log(await stream.words());\nexport {};\n`,
+    ["TS2339"],
+  ],
+  [
+    "a member that neither Bun's declarations nor TypeScript's library for browsers give a blob",
+    `const blob = new Blob(["{}"]);\nconsole.log(blob.notThere);\n`,
+    ["TS2339"],
+  ],
   ["a type error", `const port: number = "3000";\nconsole.log(port);\n`, ["TS2322"]],
   [
     "a member that neither an interface nor the program's own interface above it has",

@@ -86,7 +86,7 @@ const byDefaultOfNamespace = namespace.default.createRequire(import.meta.url);
 const { createRequire: takenApart } = process.getBuiltinModule("node:module");
 const heldModule = globalThis.process.getBuiltinModule("module");
 const byHeldModule = heldModule.createRequire(import.meta.url);
-const byMadeRequire = byUrl("node:module").createRequire(import.meta.url);
+const byCreatedRequire = byUrl("node:module").createRequire(import.meta.url);
 const byAwaitedImport = (await import("node:module")).createRequire(import.meta.url);
 const byCalledArrow = (() => createRequire(import.meta.url))();
 const holder = { make: createRequire };
@@ -133,7 +133,7 @@ export function getBuiltinModuleOfImportedProcess() {
 }
 
 export function madeRequireAsksForNodeModule() {
-  return byMadeRequire("./imports/common.cjs");
+  return byCreatedRequire("./imports/common.cjs");
 }
 
 export function awaitedImport() {

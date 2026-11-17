@@ -1,0 +1,13 @@
+# In an executable a name that finds nothing at the build was answered there and then: the import rejected and the require threw with what the build had found, and the factory of a mock over the name was never called.
+# A name that a mock of the program gives is asked of the loader at the run, as a computed name is.
+# -- source: main.js
+# import { mock } from "bun:test";
+# mock.module("no-such-package-here", () => ({ x: 1 }));
+# print((await import("no-such-package-here")).x + " " + require("no-such-package-here").x);
+# -- end of source
+# RUN: print f0
+# CHECK-NOT: ThrowModuleFailure
+# CHECK: ImportDynamic {{*}} referrer=m0
+# CHECK-NOT: ThrowModuleFailure
+# CHECK: RequireDynamic {{*}} referrer=m0
+# CHECK-NOT: ThrowModuleFailure

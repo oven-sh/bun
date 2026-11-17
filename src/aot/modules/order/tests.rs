@@ -406,6 +406,10 @@ fn a_made_name_leaves_the_cycle_to_the_loader_where_every_file_is_found_by_name(
             let marks = &order.parts.is_loaded_by_loader;
             let is_left = |file: &(&str, &str)| marks[file_named(input, file.0).idx()];
             assert!(files.iter().all(is_left), "{asker}, tests: {runs_tests}");
+            assert!(
+                order.defers_cycles_to_loader(),
+                "{asker}, tests: {runs_tests}"
+            );
         });
     }
 }

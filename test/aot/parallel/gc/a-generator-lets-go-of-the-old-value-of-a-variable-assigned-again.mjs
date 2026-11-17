@@ -1,6 +1,5 @@
 // `thing` is assigned again between two yields. What it held before is collected while the generator waits at the second.
 // Prints what the compiler saves: objects that are collected earlier
-// Todo: the old value stays in the frame of the generator, in a place of its own, until the generator goes
 const references = [];
 const waiting = [];
 let sum = 0;

@@ -12,7 +12,7 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
@@ -21,24 +21,6 @@ extern crate bun_standalone_graph as bun_standalone_module_graph;
 #[inline]
 fn cli_start_time() -> i128 {
     crate::cli::start_time()
-}
-
-/// Local shim for `writer.splatByteAll(b, n)` — `bun_core::io::Writer` has no
-/// such method yet; loop on `write_all`.
-#[inline]
-fn splat_byte_all(
-    writer: &mut bun_core::io::Writer,
-    byte: u8,
-    count: usize,
-) -> Result<(), crate::Error> {
-    let buf = [byte; 64];
-    let mut remaining = count;
-    while remaining > 0 {
-        let n = remaining.min(buf.len());
-        writer.write_all(&buf[..n])?;
-        remaining -= n;
-    }
-    Ok(())
 }
 
 pub(crate) fn has_only_html_entry_points(entry_points: &[Box<[u8]>]) -> bool {
@@ -60,7 +42,7 @@ impl BuildCommand {
     #[inline(never)]
     pub(crate) fn exec(
         ctx: Context,
-        fetcher: Option<&bundle_v2::DependenciesScanner>,
+        fetcher: Option<&mut bundle_v2::DependenciesScanner<'_>>,
     ) -> Result<(), crate::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: true,
@@ -135,11 +117,7 @@ impl BuildCommand {
         // `exec` never returns until process exit (`exit_or_watch` diverges),
         // so use the shared CLI arena instead of allocating a fresh one.
         let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // Note: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
-        // borrows the transpiler for its full lifetime — dropck then rejects a
-        // stack local because the borrow would still be live in its destructor.
-        // Allocate in the process-lifetime arena (same rationale as `arena`;
-        // `exec` diverges so this is never dropped).
+        // In the arena: `exec` diverges, so it is never dropped.
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );
@@ -147,7 +125,7 @@ impl BuildCommand {
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),
         );
-        if let Some(fetch) = fetcher {
+        if let Some(fetch) = &fetcher {
             this_transpiler
                 .options
                 .entry_points
@@ -228,9 +206,7 @@ impl BuildCommand {
                 sources: &mut core::iter::empty(),
             };
             if !type_check(checked, log_ref) {
-                log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    Output::error_writer(),
-                ))?;
+                log_ref.print(Output::error_writer())?;
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
@@ -646,6 +622,7 @@ impl BuildCommand {
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
+        let _watcher;
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
@@ -656,9 +633,7 @@ impl BuildCommand {
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
 
                 if log_ref.has_errors() {
-                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ))?;
+                    log_ref.print(Output::error_writer())?;
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -691,13 +666,17 @@ impl BuildCommand {
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
             // drop at scope exit; the arena bulk-free skips Drop. Outlives the
             // BACKREF passed to `generate_from_cli`.
-            let mut event_loop = bun_event_loop::AnyEventLoop::init();
+            let event_loop = bun_event_loop::AnyEventLoop::init();
+
+            if ctx.debug.hot_reload == HotReload::Watch {
+                _watcher =
+                    bun_jsc::hot_reloader::enable_hot_module_reloading_for_bundler(this_transpiler);
+            }
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
-                Some(core::ptr::NonNull::from(&mut event_loop)),
-                ctx.debug.hot_reload == HotReload::Watch,
+                Some(core::ptr::NonNull::from(&event_loop)),
                 &mut reachable_file_count,
                 &mut minify_duration,
                 &mut input_code_length,
@@ -706,9 +685,7 @@ impl BuildCommand {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
-                        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                            Output::error_writer(),
-                        ))?;
+                        log_ref.print(Output::error_writer())?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
                     }
@@ -857,7 +834,7 @@ impl BuildCommand {
         let mut had_err = false;
         'dump: {
             // Output::flush() runs at end of this block; see explicit calls below
-            let writer = Output::writer_buffered();
+            let mut writer = Output::writer_buffered();
             let mut output_dir: &[u8] = &opt_output_dir;
 
             let will_be_one_file =
@@ -964,14 +941,31 @@ impl BuildCommand {
                     let mut zbuf = bun_paths::path_buffer_pool::get();
                     let n = outfile.len().min(zbuf.0.len() - 1);
                     zbuf.0[..n].copy_from_slice(&outfile[..n]);
-                    zbuf.0[n] = 0;
-                    // SAFETY: NUL-terminated above.
-                    let z = bun_core::ZStr::from_buf(&zbuf.0[..], n);
+                    let z = bun_core::ZStr::nul_terminate(&mut zbuf, n);
                     if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
                         outfile = b"index";
                     }
                 }
 
+                if ctx.bundler_options.keeps_entry_points {
+                    let is_entry_point = |file: &&options::OutputFile| {
+                        file.output_kind == options::OutputKind::EntryPoint
+                    };
+                    let entry_points = output_files.iter().filter(is_entry_point);
+                    let sources = entry_points.map(|file| &*file.src_path);
+                    let written = ctx.args.entry_points.iter().map(|path| &path[..]);
+                    let checked = super::compile_command::check_entry_points_are_kept(
+                        outfile, written, sources,
+                    );
+                    if let Err(failure) = checked {
+                        super::compile_command::exit_with_failure(
+                            log_ref,
+                            super::compile_command::RequestOrigin::CompileCommand,
+                            compile_target,
+                            &failure,
+                        );
+                    }
+                }
                 let flags = {
                     use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
                     let mut flags = Flags::default();
@@ -1194,6 +1188,8 @@ impl BuildCommand {
             }
 
             for f in output_files.iter() {
+                use bun_io::Write as _;
+
                 if let Err(err) = f.write_to_disk(root_dir.fd) {
                     Output::err(
                         err,
@@ -1210,7 +1206,7 @@ impl BuildCommand {
 
                 // Print summary
                 let padding_count = 2usize.max(rel_path.len().max(max_path_len) - rel_path.len());
-                splat_byte_all(writer, b' ', 2)?;
+                writer.splat_byte_all(b' ', 2)?;
 
                 if Output::enable_ansi_colors_stdout() {
                     writer.write_all(&Output::pretty_fmt::<true>(match f.output_kind {
@@ -1253,10 +1249,9 @@ impl BuildCommand {
                     }
                 }
 
-                splat_byte_all(writer, b' ', padding_count)?;
+                writer.splat_byte_all(b' ', padding_count)?;
                 write!(writer, "{}  ", bun_fmt::size(f.size, Default::default()))?;
-                splat_byte_all(
-                    writer,
+                writer.splat_byte_all(
                     b' ',
                     size_padding
                         - bun_fmt::count(format_args!(
@@ -1305,9 +1300,7 @@ impl BuildCommand {
             Output::flush();
         }
 
-        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ))?;
+        log_ref.print(Output::error_writer())?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,
@@ -1489,8 +1482,7 @@ pub(crate) fn collect_compile_assets(
         }
         let n = asset_trimmed.len();
         zbuf[..n].copy_from_slice(asset_trimmed);
-        zbuf[n] = 0;
-        let asset_z = bun_core::ZStr::from_buf(&zbuf[..], n);
+        let asset_z = bun_core::ZStr::nul_terminate(&mut zbuf, n);
 
         let st = match bun_sys::stat(asset_z) {
             Ok(st) => st,
@@ -1498,11 +1490,10 @@ pub(crate) fn collect_compile_assets(
         };
         if bun_core::S::ISDIR(st.st_mode as _) {
             let dir = match bun_sys::open_dir_for_iteration(cwd, asset_trimmed) {
-                Ok(d) => d,
+                Ok(d) => bun_sys::File::from_fd(d),
                 Err(e) => return fail(e.with_path(asset)),
             };
-            let _close = scopeguard::guard(dir, |fd| fd.close());
-            let mut walker = match bun_sys::walker_skippable::walk(dir, &[], &[]) {
+            let mut walker = match bun_sys::walker_skippable::walk(dir.fd(), &[], &[]) {
                 Ok(w) => w,
                 Err(_) => bun_core::out_of_memory(),
             };

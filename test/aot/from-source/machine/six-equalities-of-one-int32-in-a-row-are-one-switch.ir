@@ -1,0 +1,12 @@
+# -- source: main.ts
+# function inside(c: any): string { const kind = c | 0; if (kind === 133 || kind === 159 || kind === 150 || kind === 163 || kind === 155 || kind === 141) return "yes"; return "no"; }
+# (globalThis as any).kept = inside;
+# console.log(inside(133), inside(134));
+# -- end of source
+# f1 = inside
+# Six Branches followed one another along their missing sides, each on `kind === <a written constant>`: a value that is none of them ran all six.
+# They are one Switch, which the encoder lays by bits where the values lie in one window and lead to few places.
+# RUN: allocate f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Switch {{*}} 133: {{*}} 141: {{*}} 150: {{*}} 155: {{*}} 159: {{*}} 163: {{*}} otherwise:
+# CHECK-NOT: Branch Equal

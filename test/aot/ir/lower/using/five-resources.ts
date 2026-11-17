@@ -9,13 +9,13 @@
 
 // RUN(HELPERS): lower
 // HELPERS-LABEL: function {{*}}name="allSynchronous"
-// HELPERS-COUNT-5: builtin=CompilerHelpersGetDisposeMethod
-// HELPERS-NOT: builtin=CompilerHelpersGet
+// HELPERS-COUNT-5: key=@@dispose
+// HELPERS-NOT: key=@@dispose
 // HELPERS-LABEL: function {{*}}name="oneAsynchronous"
-// HELPERS-COUNT-2: builtin=CompilerHelpersGetDisposeMethod
+// HELPERS-COUNT-2: key=@@dispose
 // HELPERS-COUNT-1: builtin=CompilerHelpersGetAsyncDisposeMethod
-// HELPERS-COUNT-2: builtin=CompilerHelpersGetDisposeMethod
-// HELPERS-NOT: builtin=CompilerHelpersGet
+// HELPERS-COUNT-2: key=@@dispose
+// HELPERS-NOT: key=@@dispose
 
 declare function resource(): Disposable;
 declare function asyncResource(): AsyncDisposable;

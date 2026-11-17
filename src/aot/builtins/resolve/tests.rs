@@ -1,6 +1,6 @@
 use super::{
     BuiltinPath, FileFacts, ImportTargets, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
-    resolve_file, resolve_within, resolver,
+    can_lay_key_that_native_code_asks_of_process, resolve_file, resolve_within, resolver,
 };
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::table::{
@@ -9,7 +9,9 @@ use crate::builtins::table::{
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{BindOptions, Bound, Decl, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileInputs, analyze_file};
-use bun_sema::fold::{Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions};
+use bun_sema::fold::{
+    Decisions, Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions,
+};
 use bun_sema::hir::{self, ExprId, PatKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxMode};
 use bun_sema::module_format::DeclaredModuleType;
@@ -109,6 +111,7 @@ struct Case<'a, 's> {
     names: &'a BuiltinNames,
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
+    decisions: &'a Decisions<'s>,
     resolved: &'a ResolvedBuiltins,
     states: usize,
 }
@@ -319,6 +322,7 @@ fn with_parts<R>(
         names: &names,
         hir: &hir,
         bound: &bound,
+        decisions: &analysis.decisions,
         resolved: &resolved,
         states,
     })
@@ -335,6 +339,11 @@ fn find_ids<T, Id: From<u32>>(
 }
 
 impl Case<'_, '_> {
+    fn can_lay_key_that_native_code_asks_of_process(&self) -> bool {
+        let (hir, decisions) = (self.hir, self.decisions);
+        can_lay_key_that_native_code_asks_of_process(hir, decisions, self.names, PROGRAM.platform)
+    }
+
     fn text_at(&self, pos: u32, end: u32) -> &str {
         self.source.get(pos as usize..end as usize).unwrap_or("")
     }

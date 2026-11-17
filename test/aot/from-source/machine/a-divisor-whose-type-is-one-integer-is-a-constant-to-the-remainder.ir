@@ -1,0 +1,18 @@
+# -- source: a-divisor-whose-type-is-one-integer.ts
+# function power(base: number, exponent: number, size: number): number { let result = 1; base = base % size; while (exponent > 0) { if (exponent & 1) result = result * base % size; base = base * base % size; exponent = exponent >> 1; } return result; }
+# function sum(turns: number): number { let all = 0; for (let i = 0; i < turns; i++) all = (all + power(i + 3, 1023, 65521)) | 0; return all; }
+# console.log(sum(40), power(0.5, 2, 65521));
+# -- end of source
+# f1 = power, f2 = sum
+# Every caller hands 65521 for `size`, so the parameter's type is that one integer, but no constant stands at the remainders: the emitter looked at the machine value alone, tested the divisor for its sign
+# and for zero and divided. It believes the type as folding does: the remainder by a divisor of one value is the multiplication by its reciprocal (639 instructions and 531 cycles a call > 484 and 236).
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0({{*}}: 65521 @Int32
+# RUN(CODE): emit f1:Body mechanisms=all
+# CODE-LABEL: unit f1:Body
+# CODE-NOT: pureFunction = Mod
+# CODE-NOT: = Mod(
+# CODE: MulHigh
+# CODE-NOT: = Mod(
+# CODE-NOT: pureFunction = Mod

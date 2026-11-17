@@ -3,7 +3,6 @@
 // # an integer, one too large for 32 bits, a fraction, -0, NaN, a text, a boolean, null, undefined, an object; in every order of two of them; with holes left; by Array.from, by index, by fill.
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 367 of 367 of 367
 // # CHECK-NEXT: exited with 0
 function tell(deed) { try { report(deed()); } catch (error) { report(error.constructor.name); } }

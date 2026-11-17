@@ -1,0 +1,12 @@
+# -- source: main.cjs
+# function add(a, b) { return a + b | 0; }
+# var made = Object.create({});
+# Object.defineProperty(made, "add", { enumerable: true, get: function () { return add; } });
+# function f(t) { let s = t & 1; for (let i = 0; i < t; i++) s = s + made.add(i, t) | 0; return s; }
+# function once(t) { return made.add(t, 1); }
+# sink(f(5) + " " + f(40) + " " + once(5));
+# -- end of source
+# RUN: link held mechanisms=all
+# CHECK-COUNT-2: expects getter {{*}} in-loops-alone
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 36 2380 6

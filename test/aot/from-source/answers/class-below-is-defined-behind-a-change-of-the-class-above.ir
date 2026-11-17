@@ -10,7 +10,7 @@
 # -- end of source
 # The holder of Above was looked at when Above was defined, and every change since then has been reported. Where Below is defined nothing looks at it again:
 # what has changed in between has ended the guards of its name in Below, though they had not begun, and the guards of the other names of Below begin.
-# RUN(NOTHING): run-in-shell --aotCountsPath=/dev/null globalThis.between = globalThis.after = () => { }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# RUN(NOTHING): run-in-shell --aotCountsPath=/dev/null globalThis.between = globalThis.after = () => { }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsInvalidated")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
 # NOTHING: 69:function
 # NOTHING-NEXT: 69:function
 # NOTHING-NEXT: guards ended: 0

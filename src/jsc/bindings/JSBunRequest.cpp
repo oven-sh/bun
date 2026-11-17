@@ -19,24 +19,14 @@ namespace Bun {
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bun__JSRequest__createForBake(Zig::GlobalObject* globalObject, void* requestPtr)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
     auto* paramsPrototype = globalObject->m_JSBunRequestParamsPrototype.get(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
 
     // the params are passed into the page component as a prop so we'll make
     // this empty for now
     auto* emptyParams = JSC::constructEmptyObject(globalObject, paramsPrototype);
-    RETURN_IF_EXCEPTION(scope, {});
 
-    JSBunRequest* request
-        = JSBunRequest::create(vm, structure, requestPtr, emptyParams);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(request);
+    return JSValue::encode(JSBunRequest::create(globalObject->vm(), structure, requestPtr, emptyParams));
 }
 
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);

@@ -2,7 +2,7 @@
 // Sizes: 1000 4000 16000
 // Passes: 68
 // Grows: linear
-// STATISTIC: LiteralArgumentsTakenApart >= 1
+// STATISTIC: LiteralArgumentsScalarized >= 1
 const size = Number(process.env.SIZE ?? 500),
   passes = Number(process.env.PASSES ?? 1);
 function answer(body: string, status: number, headers: Headers): Response {

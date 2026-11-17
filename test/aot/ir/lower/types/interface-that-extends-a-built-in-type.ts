@@ -1,6 +1,6 @@
 // RUN: link
-// CHECK: layout [[coded]] module=[[entry]] {{*}}fields=[{key="cause"{{*}}{key="code"
 // CHECK: layout [[lookup]] module=[[entry]] {{*}}fields=[{key="entries"
+// CHECK: layout [[coded]] module=[[entry]] {{*}}fields=[{key="cause"{{*}}{key="code"
 // CHECK: variable {{*}}name="a" module=[[entry]] declared={type=undefined|null|absent|Array<number>
 // CHECK: variable {{*}}name="b" module=[[entry]] declared={type=undefined|null|absent|Array<undefined|null|string>
 // CHECK: variable {{*}}name="c" module=[[entry]] declared={type=undefined|null|absent|Map<undefined|null|string, undefined|null|Array<number>>

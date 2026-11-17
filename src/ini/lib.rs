@@ -421,9 +421,7 @@ mod draft {
                         };
                         offset += 1;
                     }
-                    // JSON.parse("") would throw; json::parse_utf8 returns the
-                    // shared EMPTY_OBJECT static, which a later [section] write
-                    // could then mutate. Fall through to the string path instead.
+                    // JSON.parse("") would throw; json::parse_utf8 returns an empty object.
                     if val.is_empty() {
                         break 'out;
                     }
@@ -1143,9 +1141,7 @@ mod draft {
                 bstr::BStr::new(path),
             );
         }
-        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = log.print(Output::error_writer());
         log.reset();
     }
 

@@ -1,10 +1,13 @@
-# generate-loops-whose-state-lies-in-variables.py <folder>: all 824; ../parallel/loops-whose-state-lies-in-variables/ holds 6 of them: THE STATE OF A LOOP LIES IN VARIABLES THAT CLOSURES SHARE, AND THE WRITTEN TYPES LIE. One shape of loop by one lie, each program alone.
-# Each program runs the loop honestly (so that whatever learns has learned), then with the lie, then honestly again, and prints what came out, what was thrown and what ran in between.
+# generate-loops-whose-state-lies-in-variables.py <folder>: writes all 824 programs; ../parallel/loops-whose-state-lies-in-variables/ holds 6 of them.
+# The state of a loop is in variables that closures share, and the values contradict the declared types.
+# Each program is a file of its own that combines one entry of `shapes` with one entry of `lies`.
+# Each program runs the loop with well-typed values (so that whatever learns has learned), then with the mistyped values, then with well-typed values again.
+# It prints the results, what was thrown and what ran in between.
 import sys, os
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)
 for f in os.listdir(out): os.remove(out + '/' + f)
 
-# `text`, `at`, `limit` are the variables; LOOP is the body of step(); every shape returns `at`.
+# `text`, `at` and `limit` are the variables. LOOP is the body of step(). Every shape returns `at`.
 shapes = {
  'while-with-the-test-in-its-head': 'while (at < limit && text.charCodeAt(at) === 32) at++;',
  'while-true-with-breaks': 'while (true) { if (at >= limit) break; const unit = text.charCodeAt(at); if (unit !== 32) break; at++; }',

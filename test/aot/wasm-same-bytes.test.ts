@@ -62,4 +62,39 @@ describe.skipIf(!!unsupported)("compile/aot/wasm-same-bytes", () => {
       expect(hashes[1]).toBe(hashes[0]);
     });
   }, 600_000);
+
+  test("the map file has a row for each copy of each function", async () => {
+    await slot(async () => {
+      const executable = join(folder, isWindows ? "mapped.exe" : "mapped");
+      const map = join(folder, "mapped.map");
+      const build = await spawned(
+        [bunExe(), "build", "--compile", "--aot", "--explain=statistics", "./entry.ts", "--outfile", executable],
+        folder,
+        { ...bunEnv, BUN_JSC_aotMapFilePath: map },
+      );
+      built(build);
+      rmSync(executable);
+      const counted = (name: string) =>
+        Number(new RegExp("\\b" + name + "\\D+(\\d+)").exec(build.stderr + build.stdout)?.[1]);
+      const rows = readFileSync(map, "utf8")
+        .split("\n")
+        .map(line => line.split("\t"));
+      const copies = rows
+        .filter(([kind]) => kind === "W")
+        .map(fields => fields.slice(1).map(Number))
+        .sort((a, b) => a[0] - b[0]);
+      const endOfJavaScript = Number(rows.find(([kind]) => kind === "R")![1]);
+
+      expect(rows.filter(([kind]) => kind === "WM").length).toBe(modules.length);
+      // A function that calls one with two copies is placed twice too, though it is compiled once.
+      expect(copies.filter(([, , , , flavor]) => flavor === 0).length).toBe(counted("WasmFunctionsCompiled"));
+      expect(copies.filter(([, , , , flavor]) => flavor === 1).length).toBe(counted("WasmFunctionsWithTwoCopies"));
+      expect(copies[0][0]).toBeGreaterThanOrEqual(endOfJavaScript);
+      expect(
+        copies.filter(
+          ([start, size], index) => !size || (index && start < copies[index - 1][0] + copies[index - 1][1]),
+        ),
+      ).toEqual([]);
+    });
+  }, 600_000);
 });

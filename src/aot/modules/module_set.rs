@@ -15,7 +15,7 @@ use bun_sema::hir::FnId;
 use bun_sema::import_sites::{ImportSiteKind, is_linked_by_bundler};
 use bun_sema::program::{CodeAnswer, FileId, FileRole};
 use bun_sema::resolve::ExternalKind;
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ImportTypeKind {
@@ -34,10 +34,12 @@ pub(super) struct ModuleSet {
     pub(super) left_to_loader: Vec<((FileId, Atom, Option<Loader>), FileId)>,
     pub wrapped: WrappedModules,
     inner_modules: Vec<(FileId, FnId)>,
-    runs_again: Vec<bool>,
+    may_be_reevaluated: Vec<bool>,
+    pub(super) reloadable_commonjs_files: Vec<FileId>,
     interops: Vec<Option<Interop>>,
     forms: Vec<(FileId, FileId)>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
+    pub(super) folders_of_databases: Vec<FileId>,
     sibling_forms: Vec<(FileId, FileId, ImportTypeKind)>,
 }
 
@@ -72,12 +74,14 @@ impl ModuleSet {
             left_to_loader: Vec::new(),
             wrapped: WrappedModules::default(),
             inner_modules: Vec::new(),
-            runs_again: Vec::new(),
+            may_be_reevaluated: Vec::new(),
+            reloadable_commonjs_files: Vec::new(),
             runs_code_out_of_sight: false,
             texts_listed_ahead: None,
             interops,
             forms: Vec::new(),
             forms_require_checks_first: Vec::new(),
+            folders_of_databases: Vec::new(),
             sibling_forms: Vec::new(),
         }
     }
@@ -88,7 +92,7 @@ impl ModuleSet {
                 self.interops[file.idx()].expect("a file without a module record")
             }
             ModuleRef::Inner { .. } => Interop::INNER_MODULE,
-            ModuleRef::Face(_) | ModuleRef::Check(_) => Interop::ES_MODULE,
+            ModuleRef::Facade(_) | ModuleRef::Check(_) => Interop::ES_MODULE,
             ModuleRef::Runtime(_) => Interop::RUNTIME,
             ModuleRef::External {
                 importer,
@@ -161,10 +165,10 @@ impl ModuleSet {
     ) {
         for &module in run_again {
             if let ModuleRef::File(file) = module {
-                self.runs_again[file.idx()] = true;
+                self.may_be_reevaluated[file.idx()] = true;
             }
         }
-        let mut keeps_holders = self.runs_again.clone();
+        let mut keeps_holders = self.may_be_reevaluated.clone();
         let sources = input.sources;
         for entry_point in sources.entry_points() {
             keeps_holders[entry_point.file.idx()] |= entry_point.kind == EntryPointKind::Library;
@@ -172,6 +176,8 @@ impl ModuleSet {
         self.wrapped = WrappedModules::compute(
             input.files,
             input.known_helpers,
+            &|name| input.every_object_has(name),
+            input.replaced_builtins,
             &|file: FileId| keeps_holders[file.idx()] || sources.kind(file) != SourceKind::Program,
             input.in_parallel,
         );
@@ -185,8 +191,8 @@ impl ModuleSet {
         self.inner_modules = inner_modules;
     }
 
-    pub(super) fn runs_again(&self, file: FileId) -> bool {
-        self.runs_again[file.idx()]
+    pub(super) fn may_be_reevaluated(&self, file: FileId) -> bool {
+        self.may_be_reevaluated[file.idx()]
     }
 
     pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
@@ -289,7 +295,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
             it.kind == ModuleKind::Data && it.require_result != RequireResult::Namespace
         }) {
-            interop.answers_loader_with_namespace = stands_for_string(input, file);
+            interop.loader_returns_namespace = stands_for_string(input, file);
         }
     }
     let mut other_modules = Vec::new();
@@ -326,7 +332,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
                         other_modules.push(module);
                     }
                 }
-                ModuleRef::Inner { .. } | ModuleRef::Face(_) | ModuleRef::Check(_) => {
+                ModuleRef::Inner { .. } | ModuleRef::Facade(_) | ModuleRef::Check(_) => {
                     unreachable!("no specifier names such a module")
                 }
             }
@@ -360,6 +366,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
     ModuleSet {
         forms,
         forms_require_checks_first,
+        folders_of_databases: Vec::new(),
         sibling_forms,
         compiled_files,
         record_files: with_record.collect(),
@@ -370,7 +377,8 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         texts_listed_ahead: None,
         wrapped: WrappedModules::default(),
         inner_modules: Vec::new(),
-        runs_again: vec![false; interops.len()],
+        may_be_reevaluated: vec![false; interops.len()],
+        reloadable_commonjs_files: Vec::new(),
         interops,
     }
 }
@@ -519,8 +527,26 @@ fn answer_require_with_what_the_loader_holds(
         }
     }
     let mut checked_first: Vec<(FileId, FileId)> = Vec::new();
+    let mut code_checked_first: Vec<(FileId, FileId)> = Vec::new();
+    let mut keeps_entries = None;
     for &(file, form) in forms {
         let Some(interop) = interops[file.idx()].filter(|it| it.kind == ModuleKind::Data) else {
+            if interops[file.idx()].is_none() {
+                continue;
+            }
+            // Once the code at the path has been required, require() of a typed form answers with its exports.
+            if is_any_required || is_required[form.idx()] {
+                code_checked_first.push((form, file));
+            }
+            let is_imported_after_require = (is_any_required || is_required[form.idx()])
+                && (is_any_imported || is_imported[file.idx()]);
+            if (is_any_required || is_required[file.idx()] || is_imported_after_require)
+                && *keeps_entries.get_or_insert_with(|| {
+                    !runs_code_out_of_sight && keeps_entries_of_module_cache(input, compiled_files)
+                })
+            {
+                checked_first.push((file, form));
+            }
             continue;
         };
         let is_read_by_require =
@@ -539,17 +565,86 @@ fn answer_require_with_what_the_loader_holds(
         compiled_files,
         interops,
     ));
-    for &(_, form) in &checked_first {
+    for &(file, form) in &checked_first {
         if let Some(interop) = &mut interops[form.idx()] {
             interop.require_result = RequireResult::NamespaceIfImported;
         }
+        // While a text form is loaded and has not run, require() returns the namespace of the file without a type.
+        if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
+            stands_for_string(input, form)
+                && !stands_for_string(input, file)
+                && it.kind == ModuleKind::Data
+                && it.require_result == RequireResult::DefaultExport
+        }) {
+            interop.require_result = RequireResult::NamespaceIfImported;
+        }
     }
+    checked_first.extend(code_checked_first);
+    checked_first.extend(find_module_forms(input, compiled_files, interops));
     let is_read_as_json =
         |form: FileId| parsed_source(input.files, form).is_some_and(|it| it.loader == Loader::Json);
     checked_first.shared_sort_unstable_by_key(|&(file, form)| {
         (file, form != file, is_read_as_json(form), form)
     });
     checked_first
+}
+
+fn keeps_entries_of_module_cache(input: &BindInput<'_, '_>, compiled_files: &[FileId]) -> bool {
+    if input.runs_tests || input.files_are_named_out_of_sight {
+        return false;
+    }
+    compiled_files.iter().all(|&file| {
+        if input.sources.kind(file) != SourceKind::Program {
+            return true;
+        }
+        parsed_source(input.files, file).is_some_and(|source| {
+            let builtins = &source.builtins;
+            !builtins.reaches_module_cache()
+                && !builtins.loses_sight_of_module_cache()
+                && !builtins.resets_modules()
+                && builtins.keys_taken_out_of_module_cache().is_empty()
+                && builtins.places_that_hand_module_cache_on().is_empty()
+                && !builtins.evaluator_comes_out()
+        })
+    })
+}
+
+/// The CommonJS files that are ES modules too where an import loads them, each with that module.
+fn find_module_forms(
+    input: &BindInput<'_, '_>,
+    compiled_files: &[FileId],
+    interops: &[Option<Interop>],
+) -> Vec<(FileId, FileId)> {
+    let path_of = |file: FileId| input.sources.public_path(file);
+    let is_kind = |file: FileId, kind: ModuleKind| {
+        interops[file.idx()].is_some_and(|interop| interop.kind == kind)
+    };
+    let has_type = |file: FileId| {
+        let loader = input.files.compiled(file).map(|it| it.loader);
+        matches!(
+            loader.and_then(host_loader_kind),
+            Some(HostLoaderKind::Loader(_))
+        )
+    };
+    let forms = compiled_files.iter().copied();
+    let forms = forms.filter(|&form| is_kind(form, ModuleKind::SourceText) && has_type(form));
+    let forms: Vec<(&[u8], FileId)> = forms
+        .filter_map(|form| {
+            let path = path_of(form);
+            let mark = strings::last_index_of_char(path, b'?')?;
+            Some((&path[..mark], form))
+        })
+        .collect();
+    if forms.is_empty() {
+        return Vec::new();
+    }
+    let files = compiled_files.iter().copied();
+    let files = files.filter(|&file| is_kind(file, ModuleKind::CommonJs));
+    let file_by_path: FxHashMap<&[u8], FileId> = files.map(|it| (path_of(it), it)).collect();
+    let forms = forms.into_iter();
+    forms
+        .filter_map(|(path, form)| Some((*file_by_path.get(path)?, form)))
+        .collect()
 }
 
 fn find_paths_that_answer_in_place_of_code(

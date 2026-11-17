@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". `bun run` lists "constructor,b,a 3".
+// `bun run` lists "constructor,b,a 3".
 class Made {
   get a() {
     return 1;

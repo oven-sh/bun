@@ -1,5 +1,5 @@
 // What a for-of walks over stops being what it was written as in the middle of a turn, for each form that an open makes. The loop steps on, and a break behind it closes what has a return.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 let closed = 0;

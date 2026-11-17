@@ -13,7 +13,17 @@ function wordsInFront() {
   const prlimit = Bun.which("prlimit");
   const toAByte = prlimit ? [prlimit, "--core=1:1"] : undefined;
   const asked = toAByte && Bun.spawnSync([...toAByte, "/bin/sh", "-c", ":"], { stdio: ["ignore", "ignore", "ignore"] });
-  return (inFront = asked?.success ? toAByte! : ["/bin/sh", "-c", `ulimit -c 0 2> /dev/null; exec "$@"`, "--"]);
+  if (asked?.success) return (inFront = toAByte!);
+  // Then the limit of all that it starts is nothing too. A shell would change nothing but the order of the environment, which it lays anew.
+  if (ownLimitIsNothing()) return (inFront = []);
+  return (inFront = ["/bin/sh", "-c", `ulimit -c 0 2> /dev/null; exec "$@"`, "--"]);
+}
+function ownLimitIsNothing() {
+  try {
+    return /^Max core file size +0 +0 /m.test(readFileSync("/proc/self/limits", "utf8"));
+  } catch {
+    return false;
+  }
 }
 export function withoutCoreDump(cmd: string[]) {
   if (process.platform === "win32") return cmd;

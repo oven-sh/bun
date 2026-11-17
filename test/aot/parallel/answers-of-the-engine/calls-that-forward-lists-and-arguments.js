@@ -1,6 +1,6 @@
 // `f.call(..)`, `f.apply(..)`, `Reflect.apply(..)`, `f(...list)` and `Math.max(...list)`: with lists, `arguments`, array-likes, holes, getters, null and what is no list,
 // with `call` and `apply` overwritten on the function, on Function.prototype's heirs and read off what is no function, in tail position, and with receivers of every kind.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function three(a, b, c) { return String(a) + "," + String(b) + "," + String(c) + "," + arguments.length; }
 function withThis(a) { return String(this && this.name) + "," + String(a); }

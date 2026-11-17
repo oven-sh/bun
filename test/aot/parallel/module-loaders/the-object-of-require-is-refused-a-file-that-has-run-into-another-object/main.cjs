@@ -1,4 +1,4 @@
-// A DECLARED LIMIT. docs/compiler/compatibility.mdx: "A module that has run doesn't run again, as in every executable."
+// docs/compiler/compatibility.mdx, "Loader hooks and the module cache": a module runs once.
 // Under `bun run` the file runs twice, once into each object. The executable holds the file once, compiled, and refuses the second call aloud, whichever object comes second.
 // It used to lay the exports of the one run on the object of require() without a word. The expected output is written down.
 const Module = require("node:module");

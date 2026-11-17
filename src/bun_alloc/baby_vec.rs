@@ -85,10 +85,6 @@ impl<'a, T> BabyVec<'a, T> {
         self.ptr.as_ptr()
     }
     #[inline]
-    pub fn as_mut_ptr(&mut self) -> *mut T {
-        self.ptr.as_ptr()
-    }
-    #[inline]
     pub fn as_slice(&self) -> &[T] {
         // SAFETY: `[ptr, ptr+len)` are `len` initialized `T` (struct invariant).
         unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
@@ -200,7 +196,7 @@ impl<'a, T> BabyVec<'a, T> {
     }
 
     /// Bitwise-move all elements from `src` to the *front* of `self`, leaving
-    /// `src` empty. Mirrors `bun_collections::prepend_from` for `Vec`.
+    /// `src` empty.
     pub fn prepend_from(&mut self, src: &mut Self) {
         let src_len = src.len as usize;
         if src_len == 0 {

@@ -91,7 +91,7 @@ pub(crate) fn lower_program_without(
                     project.request,
                     &roles,
                     &files_to_lower,
-                    &|checker, file| lower_file(&inputs, checker, file),
+                    &|checker, file| lower_file(&inputs, checker, file, None),
                 );
                 checked.lowered
             })
@@ -121,7 +121,7 @@ pub(crate) fn lower_program_replacing(
                     project.request,
                     &roles,
                     &files_to_lower,
-                    &|checker, file| lower_file(&inputs, checker, file),
+                    &|checker, file| lower_file(&inputs, checker, file, None),
                 );
                 checked.lowered
             })
@@ -156,7 +156,7 @@ pub(crate) fn lower_program_below_object_prototype(
                     project.request,
                     &roles,
                     &files_to_lower,
-                    &|checker, file| lower_file(&inputs, checker, file),
+                    &|checker, file| lower_file(&inputs, checker, file, None),
                 );
                 checked.lowered
             })
@@ -393,6 +393,7 @@ pub fn default_settings() -> TranspileSettings {
         experimental_decorators: false,
         emits_decorator_metadata: false,
         use_define_for_class_fields: None,
+        bun_run_assigns_class_fields: false,
     }
 }
 
@@ -453,7 +454,7 @@ fn lower_project_files(
             project.request,
             &roles,
             &files_to_lower,
-            &|checker, file| lower_file(&inputs, checker, file),
+            &|checker, file| lower_file(&inputs, checker, file, None),
         );
         checked.lowered
     })
@@ -510,7 +511,8 @@ fn with_loaded_bind_input<R>(
             mocked_library_modules: &[],
             hands_on_any_module: contents.loads_by_unknown_name
                 || contents.loads_by_unknown_path
-                || contents.run.loader_functions_answer_requires,
+                || contents.run.loader_functions_answer_requires
+                || build.options.aot.admits_inspector,
             any_module_loads_again: runs_tests && contents.any_module_loads_again,
             runs_tests,
             runner_starts_entry_points: runs_tests,

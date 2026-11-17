@@ -8,15 +8,11 @@
 # console.log(one.format(1) + other.format(2) + one.name + String(one.next === other));
 # -- end of source
 # RUN: facts enforced mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: "name" source=seen
 # RUN(PART): facts enforced mechanisms=all
-# REQUIRES(PART): entries-of-bun
 # PART-NOT: "format"
 # the flow has both, and the proving reading names both.
 # RUN(LINKED): link fields mechanisms=all
-# REQUIRES(LINKED): entries-of-bun
 # LINKED: "format" proven=f{{*}}|builtin(JSONStringify)
 # RUN(HELD): link held fields mechanisms=all
-# REQUIRES(HELD): entries-of-bun
 # HELD-NOT: builtin(JSONStringify)

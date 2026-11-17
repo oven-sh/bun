@@ -10,4 +10,4 @@
 # -- end of source
 # RUN(LINK): link functions mechanisms=all
 # LINK: function f1
-# LINK-NEXT: parameter 0 expected=i32 proven=i32
+# LINK-NEXT: parameter 0 expected=i32 proven=int[0, 2147483647]

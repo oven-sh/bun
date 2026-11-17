@@ -155,7 +155,8 @@ const builds = new Map<string, Promise<{ executable: string; said: string }>>();
 function build(program: Program, form: Form = "closed") {
   const executable = join(directory, program, "bin", form + (isWindows ? ".exe" : ""));
   const start = async () => {
-    const command = [bunExe(), "build", "--compile", "--aot", ...forms[form], "./main.cjs", "--outfile", executable];
+    const flags = ["--compile", "--aot", "--explain", ...forms[form]];
+    const command = [bunExe(), "build", ...flags, "./main.cjs", "--outfile", executable];
     const { stderr, exitCode } = await run(command, join(directory, program, "tool"));
     expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return { executable, said: stderr.replaceAll("\\", "/") };
@@ -173,20 +174,6 @@ async function answersIn(program: Program, folder: string, command: string[]) {
 }
 const plainAnswer = (program: Program, name: string) =>
   answersIn(program, "tool", [bunExe(), join(directory, program, "tool/main.cjs"), name]);
-
-// Where code may come from disk, a require() made for a folder without code of the program is taken for one of a file from disk, which finds no file of the executable.
-const formsThatAnswer = (program: Program) =>
-  program === "a-folder-given-to-create-require" ? (["closed"] as const) : (["closed", "withCodeFromDisk"] as const);
-test.failing(
-  "a start that names a-folder-given-to-create-require, where code may come from disk: what is in the executable is found",
-  async () => {
-    const { executable } = await build("a-folder-given-to-create-require", "withCodeFromDisk");
-    expect(await answersIn("a-folder-given-to-create-require", "empty", [executable, "en"])).toBe(
-      "made-up mark of tool: locales/en.json",
-    );
-  },
-  600_000,
-);
 
 test.each([
   [
@@ -220,7 +207,7 @@ test.each([
 ] as const)(
   "a start that names %s: what the path may name is in the executable, and the build says so",
   async (program, names, held) => {
-    for (const form of formsThatAnswer(program)) {
+    for (const form of ["closed", "withCodeFromDisk"] as const) {
       const { executable, said } = await build(program, form);
       expect({ form, held: dataHeldBy(executable) }).toEqual({ form, held: [...held] });
       expect(said).toContain(`TS100088: `);
@@ -238,6 +225,15 @@ test.each([
   },
   600_000,
 );
+
+test("without --explain the build doesn't list the data files", async () => {
+  const executable = join(directory, "a-folder", "bin", "unexplained" + (isWindows ? ".exe" : ""));
+  const command = [bunExe(), "build", "--compile", "--aot", "./main.cjs", "--outfile", executable];
+  const { stderr, exitCode } = await run(command, join(directory, "a-folder", "tool"));
+  expect(stderr).not.toContain("TS100088");
+  expect(exitCode).toBe(0);
+  expect(dataHeldBy(executable)).toEqual(dataHeldBy((await build("a-folder")).executable));
+}, 600_000);
 
 test.each(["nothing", "nothing-imported", "the-folder-above", "an-alias-of-the-own-folder"] as const)(
   "a start that names %s: the code is in the executable and no data file",

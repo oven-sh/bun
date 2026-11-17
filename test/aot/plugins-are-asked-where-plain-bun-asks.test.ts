@@ -7,6 +7,35 @@ import { test } from "./supported";
 // a mock keeps from loading. A compiled file is bound at the build, so the run time asks ahead of the link, and the file runs from source where a callback answers. Each project prints what it got and whom
 // the callback was asked about, and both are held against `bun test`.
 const projects: Record<string, Record<string, string>> = {
+  "what a callback is told of a request": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("what a callback is told of a request", async () => {
+  const told = [];
+  plugin({ name: "is told", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(static|exported|dynamic|computed|required|resolved)\\.c?js$/ }, args => {
+      told.push([args.path, args.kind, args.namespace, args.resolveDir === import.meta.dir + "/src"].join(" "));
+    });
+  } });
+  await import("./src/one.js");
+  for (const line of told) console.log("SAID", line);
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/computed.js": `export const of_computed = 1;`,
+    "src/dynamic.js": `export const of_dynamic = 1;`,
+    "src/exported.js": `export const of_exported = 1;`,
+    "src/one.js": `import "./static.js";
+export * from "./exported.js";
+import { createRequire } from "node:module";
+await import("./dynamic.js");
+await import(["./computed", "js"].join("."));
+const require = createRequire(import.meta.url);
+require("./required.cjs");
+require.resolve("./resolved.cjs");`,
+    "src/required.cjs": `exports.a = 1;`,
+    "src/resolved.cjs": `exports.a = 1;`,
+    "src/static.js": `export const of_static = 1;`,
+  },
   "a callback requires a file above a file that is still to be asked about": {
     "a.test.js": `import { plugin } from "bun";
 import { test } from "bun:test";

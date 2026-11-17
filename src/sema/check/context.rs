@@ -870,6 +870,9 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         context_flags: ContextFlags,
     ) -> Option<TypeId> {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() && self.is_stack_low() {
+            return None;
+        }
         let hir = self.hir(file);
         let bound = self.bound(file);
         // `getContextualType` has no case for a TypeQuery or QualifiedName parent. The binder
@@ -2057,6 +2060,31 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `contextual_type` of a `||` or `??`. A chain of them nests on the left, as deep as it is long.
+    fn contextual_type_of_chain(
+        &mut self,
+        file: FileId,
+        mut e: ExprId,
+        context_flags: ContextFlags,
+    ) -> Option<TypeId> {
+        let hir = self.hir(file);
+        let bound = self.bound(file);
+        while let Parent::Expr(parent) = bound.parent_of_expr(e)
+            && let ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                ..
+            } = hir[parent].kind
+            && left == e
+            && self
+                .find_contextual_node(file, e, context_flags.is_empty())
+                .is_none()
+        {
+            e = parent;
+        }
+        self.contextual_type(file, e, context_flags)
+    }
+
     fn contextual_type_in_expr(
         &mut self,
         file: FileId,
@@ -2123,7 +2151,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // A pattern's implied type isn't a contextual type for the right operand. The left
                 // operand's type is.
                 BinOp::Or | BinOp::Nullish => {
-                    let context = self.contextual_type(file, parent, context_flags);
+                    let context = self.contextual_type_of_chain(file, parent, context_flags);
                     if e == right && context.is_none_or(|t| self.is_expected_by_pattern(t)) {
                         return Some(self.get_type_of_expression(file, left));
                     }
@@ -2681,7 +2709,27 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `IsNodeDescendantOf`
     fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = Parent::Expr(e);
+        loop {
+            at = match at {
+                Parent::Expr(above) if above == ancestor => return true,
+                // A node is created after its children.
+                Parent::Expr(above) if above.0 > ancestor.0 => return false,
+                Parent::Expr(above) => bound.parent_of_expr(above),
+                Parent::Stmt(above) if above.is_some() => bound.parent_of_stmt(above),
+                Parent::VarInit(declaration) => Parent::Stmt(bound.var_stmt[declaration.idx()]),
+                Parent::Case(case) => Parent::Stmt(bound.case_stmt[case.idx()]),
+                Parent::Prop(property) => Parent::Expr(bound.prop_owner[property.idx()]),
+                Parent::FnBody(function) => match bound.fns[function.idx()].owner {
+                    FnOwner::Expr(written) => Parent::Expr(written),
+                    FnOwner::Stmt(written) => Parent::Stmt(written),
+                    _ => break,
+                },
+                Parent::File => return false,
+                _ => break,
+            };
+        }
         let ancestor = hir.node(ancestor);
         hir.find_ancestor(hir.node(e), |n| n == ancestor).is_some()
     }

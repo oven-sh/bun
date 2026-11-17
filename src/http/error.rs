@@ -35,8 +35,6 @@ pub enum Error {
     InvalidURL,
     #[error("ERR_TLS_CERT_ALTNAME_INVALID")]
     ERR_TLS_CERT_ALTNAME_INVALID,
-    #[error("ClientAborted")]
-    ClientAborted,
     #[error("HTTP2Unsupported")]
     HTTP2Unsupported,
     #[error("ConnectionClosed")]
@@ -49,6 +47,8 @@ pub enum Error {
     TooManyRedirects,
     #[error("HTTP3Unsupported")]
     HTTP3Unsupported,
+    #[error("Malformed_HTTP_Response")]
+    MalformedHTTPResponse,
     #[error("ResponseHeadersTooLarge")]
     ResponseHeadersTooLarge,
     #[error("UnrequestedUpgrade")]
@@ -77,10 +77,6 @@ pub enum Error {
     UnexpectedRedirect,
     #[error("ShortRead")]
     ShortRead,
-    #[error("WantRead")]
-    WantRead,
-    #[error("WantWrite")]
-    WantWrite,
     #[error("HTTP3HandshakeFailed")]
     HTTP3HandshakeFailed,
     #[error("HTTP3ProtocolError")]
@@ -121,8 +117,6 @@ pub enum Error {
     Brotli(bun_brotli::Error),
     #[error(transparent)]
     Zstd(bun_zstd::ZstdError),
-    #[error(transparent)]
-    Picohttp(bun_picohttp::ParseResponseError),
 }
 
 #[allow(non_camel_case_types)]
@@ -283,13 +277,13 @@ impl Error {
             Self::AbortedBeforeConnecting => "AbortedBeforeConnecting",
             Self::InvalidURL => "InvalidURL",
             Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
-            Self::ClientAborted => "ClientAborted",
             Self::HTTP2Unsupported => "HTTP2Unsupported",
             Self::ConnectionClosed => "ConnectionClosed",
             Self::DNSResolveFailed => "DNSResolveFailed",
             Self::ConnectionRefused => "ConnectionRefused",
             Self::TooManyRedirects => "TooManyRedirects",
             Self::HTTP3Unsupported => "HTTP3Unsupported",
+            Self::MalformedHTTPResponse => "Malformed_HTTP_Response",
             Self::ResponseHeadersTooLarge => "ResponseHeadersTooLarge",
             Self::UnrequestedUpgrade => "UnrequestedUpgrade",
             Self::UnexpectedData => "UnexpectedData",
@@ -304,8 +298,6 @@ impl Error {
             Self::InvalidRedirectURL => "InvalidRedirectURL",
             Self::UnexpectedRedirect => "UnexpectedRedirect",
             Self::ShortRead => "ShortRead",
-            Self::WantRead => "WantRead",
-            Self::WantWrite => "WantWrite",
             Self::HTTP3HandshakeFailed => "HTTP3HandshakeFailed",
             Self::HTTP3ProtocolError => "HTTP3ProtocolError",
             Self::HTTP3HeaderEncodingError => "HTTP3HeaderEncodingError",
@@ -326,7 +318,6 @@ impl Error {
             Self::Zlib(e) => <&'static str>::from(e),
             Self::Brotli(e) => e.name(),
             Self::Zstd(e) => <&'static str>::from(e),
-            Self::Picohttp(e) => <&'static str>::from(e),
         }
     }
 }
@@ -370,11 +361,12 @@ impl From<bun_uws::ConnectError> for Error {
     }
 }
 
-impl From<bun_picohttp::ParseResponseError> for Error {
-    fn from(e: bun_picohttp::ParseResponseError) -> Self {
+impl From<bun_http1::Error> for Error {
+    fn from(e: bun_http1::Error) -> Self {
         match e {
-            bun_picohttp::ParseResponseError::ShortRead => Error::ShortRead,
-            _ => Error::Picohttp(e),
+            bun_http1::Error::MalformedHead => Error::MalformedHTTPResponse,
+            bun_http1::Error::HeadTooLong => Error::ResponseHeadersTooLarge,
+            bun_http1::Error::MalformedChunk => Error::InvalidHTTPResponse,
         }
     }
 }

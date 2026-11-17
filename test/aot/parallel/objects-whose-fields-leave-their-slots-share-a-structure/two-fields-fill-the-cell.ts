@@ -1,4 +1,4 @@
-// COUNTER: CompiledStructuresMade <= 8
+// COUNTER: CompiledStructuresCreated <= 8
 // COUNTER: operationAOTGetByIdAndCache <= 8
 // Two slots of eight bytes fill a cell of 32: there is no room left behind them.
 class Holder { text: string; turn: number; constructor(value: any, turn: number) { this.text = value; this.turn = turn; } }

@@ -1,4 +1,5 @@
-// COUNT: operations <= 100 Todo: 4,023: an object of a class below a built-in class has no typed form yet: each of the 4,000 patterns is one call into the run time, which reads it by index
+// COUNT: operations <= 100 Todo: an element behind the end of an object of a class below Array is read by the run time: 1,000 calls of operationAOTGetByVal.
+// COUNT: operations <= 1040
 class Row extends Array<number> {
   firstTwo(): number {
     const [a, b] = this;

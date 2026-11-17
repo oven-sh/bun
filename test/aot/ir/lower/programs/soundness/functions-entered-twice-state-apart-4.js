@@ -794,29 +794,30 @@ await (async () => {
 
 // GENERATED: m call C [Symbol.species] make run
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}, {type=anything variableName="all"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}, {type=anything variableName="all"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: anything):
 // CHECK-NEXT: v3 = CallDirect v1 function=[[f_2]]
 // CHECK-NEXT: v4 = ToBoolean v2
 // CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
 // CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = Builtin builtin=Object
-// CHECK-NEXT: v7 = Builtin builtin=ObjectValues
-// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="o"
-// CHECK-NEXT: v10 = Call v7, v6, v9 calleeName="Object.values"
-// CHECK-NEXT: v11 = Integer
-// CHECK-NEXT: v12 = ElemGet v10, v11
-// CHECK-NEXT: v13 = Integer integer=1
-// CHECK-NEXT: v14 = Sub v2, v13
-// CHECK-NEXT: v15 = Call v12, v10, v14
+// CHECK-NEXT: v6 = NarrowByTest v2, v5
+// CHECK-NEXT: v7 = Builtin builtin=Object
+// CHECK-NEXT: v8 = Builtin builtin=ObjectValues
+// CHECK-NEXT: v9 = GetEnvironmentField v0 layout=[[L_1]]
+// CHECK-NEXT: v10 = CheckInitialized v9 name="o"
+// CHECK-NEXT: v11 = Call v8, v7, v10 calleeName="Object.values"
+// CHECK-NEXT: v12 = Integer
+// CHECK-NEXT: v13 = ElemGet v11, v12
+// CHECK-NEXT: v14 = Integer integer=1
+// CHECK-NEXT: v15 = Sub v6, v14
+// CHECK-NEXT: v16 = Call v13, v11, v15
 // CHECK-NEXT: Jump -> next b2()
 // CHECK-NEXT: b2():
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Return v16
+// CHECK-NEXT: v17 = Undefined
+// CHECK-NEXT: Return v17
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="call"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_3]] flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_3]] flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_3]]):
 // CHECK-NEXT: v1 = Builtin builtin=Reflect
 // CHECK-NEXT: v2 = Builtin builtin=ReflectApply
@@ -826,7 +827,7 @@ await (async () => {
 // CHECK-NEXT: ReturnCall v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
@@ -834,14 +835,14 @@ await (async () => {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.species]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] captures=[{type=anything variableName="all"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[IsNamedByComputedKey] captures=[{type=anything variableName="all"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = CallDirect v0 function=[[f_6]]
 // CHECK-NEXT: v2 = Builtin builtin=Array
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_7]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_7]]
@@ -849,7 +850,7 @@ await (async () => {
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=anything variableName="all"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] captures=[{type=anything variableName="all"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = NewClosure function=[[f_8]]
 // CHECK-NEXT: v2 = NewClass v1 layout=[[L_9]]
@@ -859,7 +860,7 @@ await (async () => {
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=[[f_11]] flags=[IsFromCompiler] variableName="tag"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow captures=[{type=[[f_11]] flags=[IsFromCompiler] variableName="tag"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: [[f_11]]):
 // CHECK-NEXT: v1 = NewTemplateObject templateStrings=[{cooked="x" raw="x"}]
 // CHECK-NEXT: v2 = Call v0, -, v1 calleeName="tag"

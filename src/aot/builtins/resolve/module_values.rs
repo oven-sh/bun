@@ -2,12 +2,9 @@ use super::BuiltinPath;
 use super::resolver::{ExprState, HolderKind, Resolver};
 use crate::builtins::table::{self, BuiltinId, Mutability};
 use bun_sema::atom::Atom;
-use bun_sema::bind::{
-    Binding, Bound, CodeUnit, CommonJsVariable, Decl, Parent, PatParent, ScopeKind, SymbolId,
-    has_mapped_arguments,
-};
-use bun_sema::fold::{TreeNode, push_children};
-use bun_sema::hir::{self, ExprId, ExprKind, NodeData, StmtId, StmtKind};
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Parent, has_mapped_arguments};
+use bun_sema::hir::{ExprId, ExprKind, NodeData, StmtKind};
+use bun_sema::import_sites::reads_what_wrapper_hands_in;
 use bun_sema::module_format::ModuleFormat;
 
 pub fn commonjs_variable_builtin(variable: CommonJsVariable) -> Option<BuiltinId> {
@@ -18,73 +15,6 @@ pub fn commonjs_variable_builtin(variable: CommonJsVariable) -> Option<BuiltinId
         CommonJsVariable::Filename => Some(BuiltinId::ImportMetaPath),
         CommonJsVariable::Dirname => Some(BuiltinId::ImportMetaDir),
     }
-}
-
-pub fn reads_what_wrapper_hands_in(
-    hir: &hir::File<'_>,
-    bound: &Bound<'_>,
-    variable: SymbolId,
-) -> bool {
-    let mut scopes = bound.scopes.iter();
-    if bound.file_uses_arguments()
-        || !bound.runtime.eval_scopes().is_empty()
-        || scopes.any(|scope| matches!(scope.kind, ScopeKind::With(_)))
-    {
-        return true;
-    }
-    let declarators = bound.symbol(variable).decls;
-    let first = declarators
-        .iter()
-        .filter_map(|declarator| match *declarator {
-            Decl::Var(name) => Some(name),
-            _ => None,
-        });
-    let Some(first) = first.min_by_key(|&name| hir[name].pos) else {
-        return true;
-    };
-    let PatParent::Var(declaration) = bound.pat_parent[first.idx()] else {
-        return true;
-    };
-    if hir[declaration].init.is_none() {
-        return true;
-    }
-    let statement = bound.var_stmt[declaration.idx()];
-    let list = match bound.parent_of_stmt(statement) {
-        Parent::File => hir.body,
-        Parent::Stmt(block) => match hir[block].kind {
-            StmtKind::Block(list) => list,
-            _ => return true,
-        },
-        _ => return true,
-    };
-    let names_variable = |e: ExprId| {
-        matches!(hir[e].kind, ExprKind::Ident(_)) && bound.binding(e) == Binding::Symbol(variable)
-    };
-    let count_below = |statements: &mut dyn Iterator<Item = StmtId>| {
-        let mut stack: Vec<TreeNode> = statements.map(TreeNode::Stmt).collect();
-        let (mut mentions, mut declared) = (0, 0);
-        while let Some(node) = stack.pop() {
-            match node {
-                TreeNode::Stmt(it) if matches!(hir[it].kind, StmtKind::Fn(_)) => continue,
-                TreeNode::Expr(e) if names_variable(e) => mentions += 1,
-                TreeNode::Pattern(name) if declarators.contains(&Decl::Var(name)) => declared += 1,
-                _ => {}
-            }
-            push_children(hir, node, &mut stack);
-        }
-        (mentions, declared)
-    };
-    let mut behind = hir.ids(list).skip_while(|&it| it != statement).skip(1);
-    let (mentions_behind, declared_behind) = count_below(&mut behind);
-    let all = (0..hir.exprs.len()).filter(|&index| names_variable(ExprId(index as u32)));
-    count_below(&mut core::iter::once(statement)) != (0, 1)
-        || all.count() != mentions_behind
-        || declarators.len() != declared_behind + 1
-}
-
-pub fn redeclares_what_wrapper_hands_in(hir: &hir::File<'_>, bound: &Bound<'_>) -> bool {
-    let mut redeclared = bound.runtime.redeclared_commonjs_variables().iter();
-    redeclared.any(|it| reads_what_wrapper_hands_in(hir, bound, it.0))
 }
 
 fn import_meta_location(variable: CommonJsVariable) -> Option<BuiltinId> {
@@ -155,7 +85,12 @@ impl Resolver<'_, '_> {
             let id = id.filter(|&id| table::exists_on(id, input.platform));
             self.commonjs
                 .set(variable, id.map(|id| BuiltinPath { id, mutability }));
-            if has_direct_eval || uses_arguments {
+            let is_held_in_variable = is_stored
+                && matches!(
+                    variable,
+                    CommonJsVariable::Module | CommonJsVariable::Require
+                );
+            if has_direct_eval || uses_arguments || is_held_in_variable {
                 self.expose_commonjs_variable(variable);
             }
             self.exposes_own_module_object |= is_stored && variable != CommonJsVariable::Exports;
@@ -169,35 +104,45 @@ impl Resolver<'_, '_> {
 
     fn is_stored_with_module_exports(&self, target: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
-        let Parent::Expr(outer) = bound.parent_of_expr(target) else {
+        let plain_store = |store: ExprId| match hir[store].kind {
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } => Some((target, hir.skip_type_assertions(value))),
+            _ => None,
+        };
+        let names_module_exports = |name: ExprId| {
+            hir.member_key(name).is_some()
+                && matches!(self.state(name), ExprState::Builtin(value)
+                    if value.kind == HolderKind::Object && value.path.id == BuiltinId::ModuleObjectExports)
+        };
+        let Parent::Expr(own) = bound.parent_of_expr(target) else {
             return false;
         };
-        let ExprKind::Assign {
-            op: None,
-            target: stored,
-            value,
-        } = hir[outer].kind
-        else {
+        let Some((stored, value)) = plain_store(own) else {
             return false;
         };
-        let ExprKind::Assign {
-            op: None,
-            target: inner,
-            ..
-        } = hir[hir.skip_type_assertions(value)].kind
-        else {
+        if stored != target {
             return false;
+        }
+        let stands_outside =
+            plain_store(value).is_some_and(|(inner, _)| names_module_exports(inner));
+        let outermost = match bound.parent_of_expr(own) {
+            _ if stands_outside => own,
+            Parent::Expr(outer) => match plain_store(outer) {
+                Some((name, value)) if value == own && names_module_exports(name) => outer,
+                _ => return false,
+            },
+            _ => return false,
         };
-        let Parent::Stmt(statement) = bound.parent_of_expr(outer) else {
-            return false;
-        };
-        let names_module_exports = hir.member_key(inner).is_some()
-            && matches!(self.state(inner), ExprState::Builtin(value)
-                if value.kind == HolderKind::Object && value.path.id == BuiltinId::ModuleObjectExports);
-        stored == target
-            && names_module_exports
-            && matches!(hir[statement].kind, StmtKind::Expr(_))
-            && bound.parent_of_stmt(statement) == Parent::File
+        match bound.parent_of_expr(outermost) {
+            Parent::Stmt(statement) => matches!(hir[statement].kind, StmtKind::Expr(_)),
+            Parent::VarInit(declaration) => {
+                bound.parent_of_stmt(bound.var_stmt[declaration.idx()]) == Parent::File
+            }
+            _ => false,
+        }
     }
 
     pub(super) fn classify_stores_to_exports(&mut self) {
@@ -288,6 +233,9 @@ impl Resolver<'_, '_> {
             || self.has_direct_eval_in_es_module()
         {
             self.expose_commonjs_variable(variable);
+            if variable == CommonJsVariable::Require {
+                self.note_cache_of_unresolved_require(expr);
+            }
             return ExprState::Unresolved;
         }
         ExprState::of_path(self.commonjs.get(variable))

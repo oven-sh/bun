@@ -21,14 +21,17 @@
 # CHECK-NEXT: weigh 0 closed weigh 1 true undefined
 # CHECK-NEXT: exited with 0
 # RUN(REPLACES): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).weigh = function () { return "other weigh"; }; print("went on"); };
-# REPLACES: AOT: ReplaceMember of the prototype object of the class of layout L0
+# REPLACES: bun: internal AOT error: object mutation check failed
+# REPLACES-NEXT: ReplaceMember on the prototype of class 'Closed'
 # REPLACES-NOT: went on
 # REPLACES: crashed with
 # RUN(ADDS): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).late = "late"; print("went on"); };
-# ADDS: AOT: AddName of the prototype object of the class of layout L0
+# ADDS: bun: internal AOT error: object mutation check failed
+# ADDS-NEXT: AddProperty on the prototype of class 'Closed'
 # ADDS-NOT: went on
 # ADDS: crashed with
 # RUN(SWAPS): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0).constructor.prototype = { weigh() { return "other weigh"; } }; print("went on"); };
-# SWAPS: AOT: ChangePrototypeProperty of a closure of the function f{{*}} (Closed)
+# SWAPS: bun: internal AOT error: object mutation check failed
+# SWAPS-NEXT: ChangePrototypeProperty on a closure of 'Closed'
 # SWAPS-NOT: went on
 # SWAPS: crashed with

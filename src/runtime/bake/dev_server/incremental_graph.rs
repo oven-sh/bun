@@ -8,16 +8,16 @@
 //! payload is folded into a single struct carrying both field sets and
 //! per-side behaviour is dispatched on the `SIDE` const parameter.
 
-use core::mem::offset_of;
+use core::ops::ControlFlow;
 use std::io::Write as _;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSetUnmanaged};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_core::strings;
 
 use super::{
-    CLIENT_PREFIX, ChunkKind, DevServer, EntryPointList, FileKind, GraphTraceState,
-    SerializedFailure, TraceImportGoal, packed_map, relative_path, route_bundle,
-    serialized_failure, source_map_store,
+    Assets, CLIENT_PREFIX, ChunkKind, DevServer, EntryPointList, FileKind, GraphTraceState,
+    IncrementalResult, RouteIndexAndRecurseFlag, SerializedFailure, TraceImportGoal, packed_map,
+    relative_path, route_bundle, serialized_failure, source_map_store,
 };
 use crate::bake::dev_server::{CachedFileIndex, HotUpdateContext};
 use crate::bake::{self, Side};
@@ -28,7 +28,7 @@ use crate::bake::{self, Side};
 /// `FileIndex` are distinct types.
 pub(crate) struct SideMarker<const SIDE: bake::Side>;
 pub(crate) type FileIndex<const SIDE: bake::Side> = bun_core::GenericIndex<u32, SideMarker<SIDE>>;
-/// Alias used by `DevServer.route_lookup`.
+/// Alias used by `Graphs::route_lookup`.
 pub(crate) type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
 pub(crate) type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
 
@@ -36,7 +36,7 @@ pub(crate) type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
 pub(crate) struct InsertEmptyResult<const SIDE: bake::Side> {
     pub(crate) index: FileIndex<SIDE>,
     /// Borrow of the interned key in `bundled_files`. The key `Box<[u8]>` lives
-    /// until `disconnect_and_delete_file` frees it, and
+    /// until `disconnect_and_delete_client_file` frees it, and
     /// `remove_dependencies_for_file` is called first — so every holder
     /// outlives no read past that point (`RawSlice` invariant). Callers compare
     /// it by pointer identity.
@@ -83,7 +83,7 @@ pub(crate) enum Content {
     /// When stale, the code is "", otherwise it contains at least one
     /// non-whitespace character (empty chunks contain a function wrapper).
     Js(Box<[u8]>),
-    /// A module whose loader isn't JavaScript-like. Only copied files are in `DevServer::assets`.
+    /// A module whose loader isn't JavaScript-like. Only copied files are in `Graphs::assets`.
     Asset(Box<[u8]>),
     /// First file in a CSS bundle (the one HTML/JS points into). Re-bundles
     /// of any downstream `CssChild` re-queue the root.
@@ -116,7 +116,7 @@ impl Content {
 pub(crate) struct File {
     /// Server-side `kind`. For client side this mirrors `content.kind()`.
     pub(crate) kind: FileKind,
-    /// If the file has an error, the failure can be looked up in `dev.bundling_failures`.
+    /// If the file has an error, the failure can be looked up in `Graphs::bundling_failures`.
     pub(crate) failed: bool,
     // ── server-side ────────────────────────────────────────────────────
     pub(crate) is_rsc: bool,
@@ -152,11 +152,20 @@ impl File {
             Side::Client => false,
         }
     }
+
+    /// Frees what a client file holds; a css root stays one. Returns whether it was a css child.
+    fn free_content(&mut self) -> bool {
+        let _ = self.source_map.take();
+        if let Content::CssRoot(_) = self.content {
+            self.kind = FileKind::Css;
+            return false;
+        }
+        self.kind = FileKind::Unknown;
+        matches!(core::mem::take(&mut self.content), Content::CssChild)
+    }
 }
 
 impl Default for File {
-    /// Only exists to satisfy `StringArrayHashMap::get_or_put`'s `V: Default`
-    /// bound; the slot is always overwritten on `!found_existing`.
     fn default() -> Self {
         Self {
             kind: FileKind::Unknown,
@@ -209,13 +218,7 @@ enum EdgeAttachmentResult {
     Stop,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum FreeCssMode {
-    UnrefCss,
-    IgnoreCss,
-}
-
-/// `Route` on the server must also be registered in `DevServer::route_lookup`.
+/// `Route` on the server must also be registered in `Graphs::route_lookup`.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum RouteKind {
     NotRoute,
@@ -226,8 +229,7 @@ pub(crate) enum RouteKind {
 pub(crate) enum InsertFailureKey<'a> {
     /// A file that may not be in the graph yet, plus the graph the failed task was queued for.
     AbsPath(&'a [u8], bake::Graph),
-    /// Raw file index into `bundled_files` (side is implied by the graph the
-    /// caller is invoking `insert_failure` on). The record keeps its graph flags.
+    /// Raw file index into the `bundled_files` of `SIDE`. The record keeps its graph flags.
     Index(u32),
 }
 
@@ -249,7 +251,7 @@ pub(crate) enum ReceiveChunkContent {
 pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub(crate) kind: ChunkKind,
     pub(crate) script_id: source_map_store::Key,
-    /// `DevServer::root`. Only read for `ChunkKind::InitialResponse`.
+    /// `Graphs::root`. Only read for `ChunkKind::InitialResponse`.
     pub(crate) root: &'a [u8],
     /// `DevServer::configuration_hash_key`. Only read for `ChunkKind::InitialResponse`.
     pub(crate) configuration_hash_key: &'a [u8; 16],
@@ -293,7 +295,7 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Keys are absolute paths for the "file" namespace (owned). Index = `FileIndex`.
     pub(crate) bundled_files: StringArrayHashMap<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
-    pub(crate) stale_files: DynamicBitSetUnmanaged,
+    pub(crate) stale_files: DynamicBitSet,
     /// Parallel to `bundled_files`; the heads of each file's lists in `edges`.
     pub(crate) edge_lists: Vec<EdgeLists>,
     /// Edge storage; indices into this are `EdgeIndex`.
@@ -315,6 +317,34 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_css_files: Vec<u64>,
 }
 
+/// The client and server graphs, and the state their methods share.
+pub(crate) struct Graphs {
+    /// Absolute path to the project root. The HMR runtime's module IDs are relative to it.
+    pub(crate) root: Box<[u8]>,
+    pub(crate) client: IncrementalGraph<{ Side::Client }>,
+    pub(crate) server: IncrementalGraph<{ Side::Server }>,
+    /// State populated during bundling and hot updates. Often cleared
+    pub(crate) incremental_result: IncrementalResult,
+    /// Route index by file, including layouts and unbundled routes.
+    pub(crate) route_lookup: ArrayHashMap<ServerFileIndex, RouteIndexAndRecurseFlag>,
+    /// Accessible via `/_bun/asset/<key>`.
+    pub(crate) assets: Assets,
+    /// Kept until the file is rebuilt, in the wire format that the HMR runtime expects.
+    pub(crate) bundling_failures: ArrayHashMap<serialized_failure::OwnerPacked, SerializedFailure>,
+}
+
+impl AsMut<IncrementalGraph<{ Side::Client }>> for Graphs {
+    fn as_mut(&mut self) -> &mut IncrementalGraph<{ Side::Client }> {
+        &mut self.client
+    }
+}
+
+impl AsMut<IncrementalGraph<{ Side::Server }>> for Graphs {
+    fn as_mut(&mut self) -> &mut IncrementalGraph<{ Side::Server }> {
+        &mut self.server
+    }
+}
+
 /// Byte-count breakdown of an incremental graph's memory usage (graph
 /// structures, cached code, source maps).
 #[derive(Default, Clone, Copy)]
@@ -325,49 +355,6 @@ pub(crate) struct GraphMemoryCost {
 }
 
 impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
-    /// `@fieldParentPtr(@tagName(side) ++ "_graph", g)` — recover the owning
-    /// `DevServer` from this inline field. Returns a raw pointer because the
-    /// caller already holds `&mut self` (a sub-borrow of `*dev`); forming
-    /// `&mut DevServer` would alias. Callers must only touch *sibling* fields.
-    ///
-    /// SAFETY: `self` must be the `client_graph` / `server_graph` field of a
-    /// heap-allocated `DevServer` (guaranteed by `Box<DevServer>` ownership).
-    #[inline]
-    unsafe fn owner(&mut self) -> *mut DevServer {
-        let offset = match SIDE {
-            Side::Client => offset_of!(DevServer, client_graph),
-            Side::Server => offset_of!(DevServer, server_graph),
-        };
-        // SAFETY: `self` is the `<side>_graph` field of `DevServer`.
-        unsafe { bun_core::container_of::<DevServer, Self>(std::ptr::from_mut(self), offset) }
-    }
-
-    /// Safe sibling-projection: borrow the owning [`DevServer`]'s
-    /// `incremental_result` while holding `&mut self`. The two fields are
-    /// disjoint, so the returned `&mut` does not alias `self`.
-    #[inline]
-    fn dev_incremental_result(&mut self) -> &mut super::IncrementalResult {
-        // SAFETY: `owner()` recovers the heap-allocated `DevServer`;
-        // `incremental_result` is field-disjoint from both `client_graph` and
-        // `server_graph`, so the returned borrow and `&mut self` cover
-        // non-overlapping memory.
-        unsafe { &mut (*self.owner()).incremental_result }
-    }
-
-    /// Safe sibling-projection: borrow the owning [`DevServer`]'s
-    /// `bundling_failures` while holding `&mut self` (same disjoint-field
-    /// rationale as [`dev_incremental_result`](Self::dev_incremental_result)).
-    #[inline]
-    fn dev_bundling_failures(
-        &mut self,
-    ) -> &mut ArrayHashMap<serialized_failure::OwnerPacked, SerializedFailure> {
-        // SAFETY: `owner()` recovers the heap-allocated `DevServer`;
-        // `bundling_failures` is field-disjoint from both `client_graph` and
-        // `server_graph`, so the returned borrow and `&mut self` cover
-        // non-overlapping memory.
-        unsafe { &mut (*self.owner()).bundling_failures }
-    }
-
     /// `IncrementalGraph(side).getFileByIndex` — direct value-slot accessor.
     #[inline]
     pub(crate) fn get_file_by_index(&self, index: FileIndex<SIDE>) -> &File {
@@ -454,31 +441,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         are_new_files_stale: bool,
     ) -> Result<(), bun_alloc::AllocError> {
-        let want = self.bundled_files.count().max(self.stale_files.bit_length);
+        let want = self
+            .bundled_files
+            .count()
+            .max(self.stale_files.bit_length());
         // Align forward to 8 usize words (8*64 bits).
         const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
         let aligned = want.div_ceil(STEP) * STEP;
         self.stale_files.resize(aligned, are_new_files_stale)
-    }
-
-    /// `IncrementalGraph(side).freeFileContent` (client only).
-    /// Frees the file's `source_map` + `content`, optionally unref'ing the
-    /// associated CSS asset. Leaves `content = .Unknown`.
-    fn free_file_content(&mut self, key: &[u8], file: &mut File, css: FreeCssMode) {
-        debug_assert!(matches!(SIDE, Side::Client));
-        let _ = file.source_map.take(); // Rc drop releases backing PackedMap
-        match core::mem::replace(&mut file.content, Content::Unknown) {
-            Content::Js(_) | Content::Asset(_) => {
-                // Box<[u8]> dropped here.
-            }
-            Content::CssRoot(_) | Content::CssChild => {
-                if css == FreeCssMode::UnrefCss {
-                    // SAFETY: see `owner()`; touches `assets` sibling only.
-                    unsafe { (*self.owner()).assets.unref_by_path(key) };
-                }
-            }
-            Content::Unknown => {}
-        }
     }
 
     fn new_edge(&mut self, edge: Edge<SIDE>) -> Result<EdgeIndex, bun_alloc::AllocError> {
@@ -523,77 +493,63 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
     }
+}
 
-    fn disconnect_and_delete_file(
-        &mut self,
-        directory_watchers: &mut super::DirectoryWatchStore,
-        file_index: FileIndex<SIDE>,
-    ) {
-        let lists = &mut self.edge_lists[file_index.get() as usize];
+impl DevServer {
+    fn disconnect_and_delete_client_file(&mut self, file_index: ClientFileIndex) {
+        let graph = &mut self.graphs.client;
+        let lists = &mut graph.edge_lists[file_index.get() as usize];
         debug_assert!(lists.first_dep.is_none()); // must have no dependencies
 
         // Disconnect all imports.
         let mut it = lists.first_import.take();
         while let Some(edge_index) = it {
-            let dep = self.edges[edge_index.get() as usize];
+            let dep = graph.edges[edge_index.get() as usize];
             it = dep.next_import;
             debug_assert_eq!(dep.dependency.get(), file_index.get());
-            self.disconnect_edge_from_dependency_list(edge_index);
-            self.free_edge(edge_index);
+            graph.disconnect_edge_from_dependency_list(edge_index);
+            graph.free_edge(edge_index);
         }
 
         // DirectoryWatchStore.Dep.source_file_path borrows this key; remove
         // any such dependencies before freeing it so they do not dangle.
-        directory_watchers
-            .remove_dependencies_for_file(&self.bundled_files.keys()[file_index.get() as usize]);
+        self.remove_dependencies_for_file(file_index);
 
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
         // Tombstoned slots are not reused; a free-list is a pending idea.
-        self.bundled_files.keys_mut()[file_index.get() as usize] = Box::default();
-        let lists = &self.edge_lists[file_index.get() as usize];
+        let graph = &mut self.graphs.client;
+        graph.bundled_files.keys_mut()[file_index.get() as usize] = Box::default();
+        let lists = &graph.edge_lists[file_index.get() as usize];
         debug_assert!(lists.first_dep.is_none());
         debug_assert!(lists.first_import.is_none());
     }
+}
 
+impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // ────────────────────────────────────────────────────────────────────────
     // receiveChunk
     // ────────────────────────────────────────────────────────────────────────
 
-    /// Tracks a bundled code chunk for cross-bundle chunks, ensuring it has an
-    /// entry in `bundled_files`. For client, takes ownership of the code slice;
-    /// for server, the code is kept in `current_chunk_code` until
-    /// `take_js_bundle` consumes it.
-    pub(crate) fn receive_chunk(
+    /// Ensures a bundled chunk has an entry in `bundled_files`. Returns whether it already had one.
+    fn get_or_put_chunk_file(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
-        index: impl Into<bun_ast::Index>,
-        content: ReceiveChunkContent,
-        is_ssr_graph: bool,
-    ) -> Result<(), crate::Error> {
-        let index: bun_ast::Index = index.into();
-        // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
-        // SAFETY: `graph_safety_lock` is a sibling field; debug-assert only.
-        unsafe { (*dev).graph_safety_lock.assert_locked() };
-
+        index: bun_ast::Index,
+        content: &ReceiveChunkContent,
+    ) -> Result<(FileIndex<SIDE>, bool), bun_alloc::AllocError> {
         let path = &ctx.sources[index.get() as usize].path;
         let key = path.key_for_incremental_graph();
 
         if cfg!(debug_assertions) {
-            if let ReceiveChunkContent::Js { code, .. } = &content {
+            if let ReceiveChunkContent::Js { code, .. } = content {
                 if strings::is_all_whitespace(code) {
                     bun_core::Output::panic(format_args!(
                         "Empty chunk is impossible: {} {}",
                         bstr::BStr::new(key),
                         match SIDE {
                             Side::Client => "client",
-                            Side::Server =>
-                                if is_ssr_graph {
-                                    "ssr"
-                                } else {
-                                    "server"
-                                },
+                            Side::Server => "server",
                         },
                     ));
                 }
@@ -611,215 +567,215 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists.push(EdgeLists::default());
         }
 
-        if self.stale_files.bit_length > file_index.get() as usize {
+        if self.stale_files.bit_length() > file_index.get() as usize {
             self.stale_files.unset(file_index.get() as usize);
         }
 
         *ctx.get_cached_index(SIDE, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
 
-        match SIDE {
-            Side::Client => {
-                let mut html_route_bundle_index: Option<route_bundle::Index> = None;
-                let mut is_special_framework_file = false;
+        Ok((file_index, found_existing))
+    }
+}
 
-                if found_existing {
-                    // Note: take the existing slot out so `free_file_content`
-                    // can borrow `&mut self` while we hold the `File` by value.
-                    let mut existing = core::mem::take(
-                        &mut self.bundled_files.values_mut()[file_index.get() as usize],
-                    );
-                    self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
+impl DevServer {
+    /// The code is kept in `current_chunk_code` until `reset`.
+    pub(crate) fn receive_server_chunk(
+        &mut self,
+        ctx: &mut HotUpdateContext<'_>,
+        index: bun_ast::Index,
+        content: ReceiveChunkContent,
+        is_ssr_graph: bool,
+    ) -> Result<(), crate::Error> {
+        self.graph_safety_lock.assert_locked();
+        let graph = &mut self.graphs.server;
+        let (file_index, found_existing) = graph.get_or_put_chunk_file(ctx, index, &content)?;
 
-                    if existing.failed {
-                        let owner =
-                            serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                        let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
-                        let kv = kv.unwrap_or_else(|| {
-                            bun_core::Output::panic(format_args!(
-                                "Missing SerializedFailure in IncrementalGraph",
-                            ))
-                        });
-                        self.dev_incremental_result().failures_removed.push(kv.1);
+        let new_kind = match &content {
+            ReceiveChunkContent::Js { .. } => FileKind::Js,
+            ReceiveChunkContent::Css(_) => FileKind::Css,
+        };
+        let scb = ctx.server_to_client_bitset.is_set(index.get() as usize);
+        let f = &mut graph.bundled_files.values_mut()[file_index.get() as usize];
+        let result = &mut self.graphs.incremental_result;
+        if !found_existing {
+            *f = File {
+                kind: new_kind,
+                failed: false,
+                is_rsc: !is_ssr_graph,
+                is_ssr: is_ssr_graph,
+                is_client_component_boundary: scb,
+                is_route: false,
+                ..Default::default()
+            };
+            if scb {
+                result.client_components_added.push(file_index);
+            }
+        } else {
+            f.kind = new_kind;
+            if is_ssr_graph {
+                f.is_ssr = true;
+            } else {
+                f.is_rsc = true;
+            }
+
+            if core::mem::take(&mut f.failed) {
+                let owner = serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
+                let kv = self.graphs.bundling_failures.fetch_swap_remove(&owner);
+                let kv = kv.unwrap_or_else(|| {
+                    bun_core::Output::panic(format_args!("Missing failure in IncrementalGraph",))
+                });
+                result.failures_removed.push(kv.1);
+            }
+
+            if scb {
+                f.is_client_component_boundary = true;
+                result.client_components_added.push(file_index);
+            } else if !is_ssr_graph && core::mem::take(&mut f.is_client_component_boundary) {
+                result.client_components_removed.push(file_index);
+                let key = &graph.bundled_files.keys()[file_index.get() as usize];
+                let client = &mut self.graphs.client;
+                if let Some(client_index) = client.get_file_index(key) {
+                    let i = client_index.get() as usize;
+                    if client.edge_lists[i].first_dep.is_some() {
+                        // Another client component imports it.
+                        client.bundled_files.values_mut()[i].is_hmr_root = false;
+                    } else {
+                        self.disconnect_and_delete_client_file(client_index);
                     }
-
-                    html_route_bundle_index = existing.html_route_bundle_index;
-                    is_special_framework_file = existing.is_special_framework_file;
-                }
-
-                let (new_content, new_source_map, code_len) = match content {
-                    ReceiveChunkContent::Css(css) => {
-                        (Content::CssRoot(css), packed_map::Shared::None, None)
-                    }
-                    ReceiveChunkContent::Js { code, source_map } => {
-                        let len = code.len();
-                        let kind = if ctx.loaders[index.get() as usize].is_javascript_like() {
-                            Content::Js(code)
-                        } else {
-                            Content::Asset(code)
-                        };
-                        if source_map.is_some() {
-                            debug_assert!(html_route_bundle_index.is_none()); // suspect behind #17956
-                        }
-                        let sm = match source_map {
-                            Some(mut sm) if sm.chunk.buffer.len() > 0 => {
-                                packed_map::Shared::Some(packed_map::PackedMap::new_non_empty(
-                                    &mut sm.chunk,
-                                    sm.escaped_source.take().expect("escaped_source"),
-                                ))
-                            }
-                            _ => {
-                                // Must precompute line count so source-map
-                                // concatenation knows how many newlines to skip.
-                                let count = match &kind {
-                                    Content::Js(c) | Content::Asset(c) => {
-                                        strings::count_char(&c[..], b'\n') as u32
-                                    }
-                                    _ => 0,
-                                };
-                                packed_map::Shared::LineCount(packed_map::LineCount::init(count))
-                            }
-                        };
-                        (kind, sm, Some(len))
-                    }
-                };
-
-                self.bundled_files.values_mut()[file_index.get() as usize] = File {
-                    kind: new_content.kind(),
-                    failed: false,
-                    is_rsc: false,
-                    is_ssr: false,
-                    is_client_component_boundary: false,
-                    is_route: false,
-                    is_hmr_root: ctx.server_to_client_bitset.is_set(index.get() as usize),
-                    is_special_framework_file,
-                    html_route_bundle_index,
-                    source_map: new_source_map,
-                    content: new_content,
-                };
-
-                if let Some(len) = code_len {
-                    self.current_chunk_parts.push(file_index);
-                    self.current_chunk_len += len;
                 }
             }
-            Side::Server => {
-                let new_kind = match &content {
-                    ReceiveChunkContent::Js { .. } => FileKind::Js,
-                    ReceiveChunkContent::Css(_) => FileKind::Css,
-                };
-                if !found_existing {
-                    let scb = ctx.server_to_client_bitset.is_set(index.get() as usize);
-                    self.bundled_files.values_mut()[file_index.get() as usize] = File {
-                        kind: new_kind,
-                        failed: false,
-                        is_rsc: !is_ssr_graph,
-                        is_ssr: is_ssr_graph,
-                        is_client_component_boundary: scb,
-                        is_route: false,
-                        ..Default::default()
-                    };
-                    if scb {
-                        self.dev_incremental_result()
-                            .client_components_added
-                            .push(ServerFileIndex::init(file_index.get()));
-                    }
-                } else {
-                    let scb = ctx.server_to_client_bitset.is_set(index.get() as usize);
-                    {
-                        let f = &mut self.bundled_files.values_mut()[file_index.get() as usize];
-                        f.kind = new_kind;
-                        if is_ssr_graph {
-                            f.is_ssr = true;
-                        } else {
-                            f.is_rsc = true;
-                        }
-                    }
-                    if scb {
-                        self.bundled_files.values_mut()[file_index.get() as usize]
-                            .is_client_component_boundary = true;
-                        self.dev_incremental_result()
-                            .client_components_added
-                            .push(ServerFileIndex::init(file_index.get()));
-                    } else if self.bundled_files.values()[file_index.get() as usize]
-                        .is_client_component_boundary
-                    {
-                        // SAFETY: cross-graph access via `owner()`. We hold
-                        // `&mut self` (server_graph); `client_graph` and
-                        // `directory_watchers` are disjoint sibling fields.
-                        let (client_graph, directory_watchers) =
-                            unsafe { (&mut (*dev).client_graph, &mut (*dev).directory_watchers) };
-                        let key = bun_ptr::RawSlice::new(
-                            &*self.bundled_files.keys()[file_index.get() as usize],
-                        );
-                        let client_index =
-                            client_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                                bun_core::Output::panic(format_args!(
-                                    "Client graph's SCB was already deleted",
-                                ))
-                            });
-                        client_graph.disconnect_and_delete_file(directory_watchers, client_index);
-                        self.bundled_files.values_mut()[file_index.get() as usize]
-                            .is_client_component_boundary = false;
-                        self.dev_incremental_result()
-                            .client_components_removed
-                            .push(ServerFileIndex::init(file_index.get()));
-                    }
+        }
 
-                    if self.bundled_files.values()[file_index.get() as usize].failed {
-                        self.bundled_files.values_mut()[file_index.get() as usize].failed = false;
-                        let owner =
-                            serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
-                        let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
-                        let kv = kv.unwrap_or_else(|| {
-                            bun_core::Output::panic(format_args!(
-                                "Missing failure in IncrementalGraph",
-                            ))
-                        });
-                        self.dev_incremental_result().failures_removed.push(kv.1);
-                    }
+        let graph = &mut self.graphs.server;
+        if let ReceiveChunkContent::Js { code, source_map } = content {
+            let code_len = code.len();
+            let line_count = strings::count_char(&code, b'\n') as u32;
+            graph.current_chunk_code.push(code);
+            graph.current_chunk_len += code_len;
+
+            let packed = match source_map {
+                Some(mut sm) if sm.chunk.buffer.len() > 0 && sm.escaped_source.is_some() => {
+                    packed_map::Shared::Some(packed_map::PackedMap::new_non_empty(
+                        &mut sm.chunk,
+                        sm.escaped_source.take().unwrap(),
+                    ))
                 }
-
-                if let ReceiveChunkContent::Js { code, source_map } = content {
-                    let code_len = code.len();
-                    let line_count = strings::count_char(&code, b'\n') as u32;
-                    self.current_chunk_code.push(code);
-                    self.current_chunk_len += code_len;
-
-                    let packed = match source_map {
-                        Some(mut sm)
-                            if sm.chunk.buffer.len() > 0 && sm.escaped_source.is_some() =>
-                        {
-                            packed_map::Shared::Some(packed_map::PackedMap::new_non_empty(
-                                &mut sm.chunk,
-                                sm.escaped_source.take().unwrap(),
-                            ))
-                        }
-                        _ => packed_map::Shared::LineCount(packed_map::LineCount::init(line_count)),
-                    };
-                    self.current_chunk_source_maps
-                        .push(CurrentChunkSourceMapData {
-                            file_index: ServerFileIndex::init(file_index.get()),
-                            source_map: packed,
-                        });
-                }
-            }
+                _ => packed_map::Shared::LineCount(packed_map::LineCount::init(line_count)),
+            };
+            graph
+                .current_chunk_source_maps
+                .push(CurrentChunkSourceMapData {
+                    file_index,
+                    source_map: packed,
+                });
         }
         Ok(())
     }
 
+    /// The graph takes ownership of the code.
+    pub(crate) fn receive_client_chunk(
+        &mut self,
+        ctx: &mut HotUpdateContext<'_>,
+        index: bun_ast::Index,
+        content: ReceiveChunkContent,
+    ) -> Result<(), crate::Error> {
+        self.graph_safety_lock.assert_locked();
+        let graph = &mut self.graphs.client;
+        let (file_index, _) = graph.get_or_put_chunk_file(ctx, index, &content)?;
+
+        let File {
+            failed,
+            html_route_bundle_index,
+            is_special_framework_file,
+            ..
+        } = graph.bundled_files.values()[file_index.get() as usize];
+
+        if failed {
+            let owner = serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
+            let kv = self.graphs.bundling_failures.fetch_swap_remove(&owner);
+            let kv = kv.unwrap_or_else(|| {
+                bun_core::Output::panic(format_args!(
+                    "Missing SerializedFailure in IncrementalGraph",
+                ))
+            });
+            self.graphs.incremental_result.failures_removed.push(kv.1);
+        }
+
+        let (new_content, new_source_map, code_len) = match content {
+            ReceiveChunkContent::Css(css) => {
+                (Content::CssRoot(css), packed_map::Shared::None, None)
+            }
+            ReceiveChunkContent::Js { code, source_map } => {
+                let len = code.len();
+                let kind = if ctx.loaders[index.get() as usize].is_javascript_like() {
+                    Content::Js(code)
+                } else {
+                    Content::Asset(code)
+                };
+                if source_map.is_some() {
+                    debug_assert!(html_route_bundle_index.is_none()); // suspect behind #17956
+                }
+                let sm = match source_map {
+                    Some(mut sm) if sm.chunk.buffer.len() > 0 => {
+                        packed_map::Shared::Some(packed_map::PackedMap::new_non_empty(
+                            &mut sm.chunk,
+                            sm.escaped_source.take().expect("escaped_source"),
+                        ))
+                    }
+                    _ => {
+                        // Source-map concatenation needs to know how many newlines to skip.
+                        let count = match &kind {
+                            Content::Js(c) | Content::Asset(c) => {
+                                strings::count_char(&c[..], b'\n') as u32
+                            }
+                            _ => 0,
+                        };
+                        packed_map::Shared::LineCount(packed_map::LineCount::init(count))
+                    }
+                };
+                (kind, sm, Some(len))
+            }
+        };
+
+        graph.bundled_files.values_mut()[file_index.get() as usize] = File {
+            kind: new_content.kind(),
+            failed: false,
+            is_rsc: false,
+            is_ssr: false,
+            is_client_component_boundary: false,
+            is_route: false,
+            is_hmr_root: ctx.server_to_client_bitset.is_set(index.get() as usize),
+            is_special_framework_file,
+            html_route_bundle_index,
+            source_map: new_source_map,
+            content: new_content,
+        };
+
+        if let Some(len) = code_len {
+            graph.current_chunk_parts.push(file_index);
+            graph.current_chunk_len += len;
+        }
+        Ok(())
+    }
+}
+
+impl Graphs {
     // ────────────────────────────────────────────────────────────────────────
     // processChunkDependencies
     // ────────────────────────────────────────────────────────────────────────
 
     /// Second pass of IncrementalGraph indexing: updates dependency information
     /// for each file and resolves what the HMR roots are.
-    pub(crate) fn process_chunk_dependencies(
+    pub(crate) fn process_chunk_dependencies<const SIDE: Side>(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         mode: ProcessMode,
         bundle_graph_index: impl Into<bun_ast::Index>,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), crate::Error>
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
         let bundle_graph_index: bun_ast::Index = bundle_graph_index.into();
         let file_index: FileIndex<SIDE> = ctx
             .get_cached_index(SIDE, bundle_graph_index)
@@ -829,10 +785,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // Build a map from the existing import list. Later, entries that
         // were not marked as `.seen = true` will be freed.
         let mut quick_lookup: ArrayHashMap<FileIndex<SIDE>, TempLookup> = ArrayHashMap::default();
+        let graph = self.as_mut();
         {
-            let mut it = self.edge_lists[file_index.get() as usize].first_import;
+            let mut it = graph.edge_lists[file_index.get() as usize].first_import;
             while let Some(edge_index) = it {
-                let dep = self.edges[edge_index.get() as usize];
+                let dep = graph.edges[edge_index.get() as usize];
                 it = dep.next_import;
                 debug_assert_eq!(dep.dependency.get(), file_index.get());
                 quick_lookup.put_no_clobber(
@@ -854,7 +811,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         if mode == ProcessMode::Normal && matches!(SIDE, Side::Server) {
             if ctx.server_seen_bit_set.is_set(file_index.get() as usize) {
-                self.edge_lists[file_index.get() as usize].first_import = new_imports;
+                graph.edge_lists[file_index.get() as usize].first_import = new_imports;
                 return Ok(());
             }
             // RSC+SSR dual-index dispatch (`ctx.scbs.getSSRIndex`) is
@@ -880,18 +837,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // Clear the old head before freeing so `check_edge_removal` wouldn't
         // see a stale reference.
-        self.edge_lists[file_index.get() as usize].first_import = None;
+        self.as_mut().edge_lists[file_index.get() as usize].first_import = None;
 
         // '.seen = false' means an import was removed and should be freed.
         for val in &quick_lookup.values()[0..quick_lookup_values_to_care_len] {
             if !val.seen {
-                self.dev_incremental_result().had_adjusted_edges = true;
-                self.disconnect_edge_from_dependency_list(val.edge_index);
-                self.free_edge(val.edge_index);
+                self.incremental_result.had_adjusted_edges = true;
+                let graph = self.as_mut();
+                graph.disconnect_edge_from_dependency_list(val.edge_index);
+                graph.free_edge(val.edge_index);
             }
         }
 
-        self.edge_lists[file_index.get() as usize].first_import = new_imports;
+        self.as_mut().edge_lists[file_index.get() as usize].first_import = new_imports;
 
         // Follow this file to the route / HMR root to mark it stale.
         self.trace_dependencies(
@@ -902,14 +860,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         )
     }
 
-    fn process_chunk_import_records(
+    fn process_chunk_import_records<const SIDE: Side>(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
         index: bun_ast::Index,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), crate::Error>
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
         debug_assert!(index.is_valid());
         debug_assert!(!ctx.loaders[index.get() as usize].is_css());
 
@@ -942,14 +903,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    fn process_css_chunk_import_records(
+    fn process_css_chunk_import_records<const SIDE: Side>(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
         bundler_index: bun_ast::Index,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), crate::Error>
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
         debug_assert!(bundler_index.is_valid());
         debug_assert!(ctx.loaders[bundler_index.get() as usize].is_css());
 
@@ -988,7 +952,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn process_edge_attachment(
+    fn process_edge_attachment<const SIDE: Side>(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
@@ -998,7 +962,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ir_source_index: bun_ast::Index,
         key: &[u8],
         mode: EdgeAttachmentMode,
-    ) -> Result<EdgeAttachmentResult, crate::Error> {
+    ) -> Result<EdgeAttachmentResult, crate::Error>
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
         // Duplicated import records are marked unused by `ConvertESMExportsForHmr`.
         if ir_flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
             return Ok(EdgeAttachmentResult::Stop);
@@ -1022,7 +989,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if let Some(i) = ctx.get_cached_index(SIDE, ir_source_index).unwrap::<SIDE>() {
                     break 'brk i;
                 } else if mode == EdgeAttachmentMode::Css {
-                    let index = self.insert_empty(key, kind)?.index;
+                    let index = self.as_mut().insert_empty(key, kind)?.index;
                     ctx.gts.resize(SIDE, index.get() as usize + 1)?;
                     if kind == FileKind::Css {
                         self.receive_css_child(index);
@@ -1034,14 +1001,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 // Invalid source indices in CSS are external URLs.
                 EdgeAttachmentMode::Css => return Ok(EdgeAttachmentResult::Stop),
                 // Check IncrementalGraph for a file from a prior build.
-                EdgeAttachmentMode::JsOrHtml => match self.bundled_files.get_index(key) {
-                    Some(i) => FileIndex::<SIDE>::init(i as u32),
+                EdgeAttachmentMode::JsOrHtml => match self.as_mut().get_file_index(key) {
+                    Some(i) => i,
                     None => return Ok(EdgeAttachmentResult::Continue),
                 },
             }
         };
 
-        debug_assert!((imported_file_index.get() as usize) < self.bundled_files.count());
+        let graph = self.as_mut();
+        debug_assert!((imported_file_index.get() as usize) < graph.bundled_files.count());
 
         let gop = quick_lookup.get_or_put(imported_file_index)?;
         if gop.found_existing {
@@ -1052,12 +1020,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
             gop.value_ptr.seen = true;
             let ei = gop.value_ptr.edge_index;
-            self.edges[ei.get() as usize].next_import = *new_imports;
+            graph.edges[ei.get() as usize].next_import = *new_imports;
             *new_imports = Some(ei);
         } else {
             // A new edge is needed to represent the dependency and import.
-            let first_dep = self.edge_lists[imported_file_index.get() as usize].first_dep;
-            let edge = self.new_edge(Edge {
+            let first_dep = graph.edge_lists[imported_file_index.get() as usize].first_dep;
+            let edge = graph.new_edge(Edge {
                 next_import: *new_imports,
                 next_dependency: first_dep,
                 prev_dependency: None,
@@ -1065,12 +1033,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 dependency: file_index,
             })?;
             if let Some(dep) = first_dep {
-                self.edges[dep.get() as usize].prev_dependency = Some(edge);
+                graph.edges[dep.get() as usize].prev_dependency = Some(edge);
             }
             *new_imports = Some(edge);
-            self.edge_lists[imported_file_index.get() as usize].first_dep = Some(edge);
+            graph.edge_lists[imported_file_index.get() as usize].first_dep = Some(edge);
 
-            self.dev_incremental_result().had_adjusted_edges = true;
+            self.incremental_result.had_adjusted_edges = true;
 
             *gop.value_ptr = TempLookup {
                 edge_index: edge,
@@ -1080,10 +1048,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(EdgeAttachmentResult::Continue)
     }
 
-    /// An `@import`ed stylesheet gets no `receive_chunk`, so the pass over its root's imports
+    /// An `@import`ed stylesheet gets no `receive_client_chunk`, so the pass over its root's imports
     /// keeps it a css child and clears a failure that this bundle did not repeat.
-    fn receive_css_child(&mut self, index: FileIndex<SIDE>) {
-        let file = &mut self.bundled_files.values_mut()[index.get() as usize];
+    fn receive_css_child<const SIDE: Side>(&mut self, index: FileIndex<SIDE>)
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
+        let file = &mut self.as_mut().bundled_files.values_mut()[index.get() as usize];
         match file.content {
             Content::Unknown => {
                 file.kind = FileKind::Css;
@@ -1102,17 +1073,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             )
         };
         if self
-            .dev_incremental_result()
+            .incremental_result
             .failures_added
             .iter()
             .any(failed_in_this_bundle)
         {
             return;
         }
-        self.bundled_files.values_mut()[index.get() as usize].failed = false;
+        self.as_mut().bundled_files.values_mut()[index.get() as usize].failed = false;
         let owner = serialized_failure::OwnerPacked::new(Side::Client, index.get());
-        if let Some(kv) = self.dev_bundling_failures().fetch_swap_remove(&owner) {
-            self.dev_incremental_result().failures_removed.push(kv.1);
+        if let Some(kv) = self.bundling_failures.fetch_swap_remove(&owner) {
+            self.incremental_result.failures_removed.push(kv.1);
         }
     }
 
@@ -1123,218 +1094,245 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// Walks dependents (importers) outward from `file_index`, marking
     /// visited files in `gts` to find the routes/HMR roots affected by a
     /// change.
-    pub(crate) fn trace_dependencies(
+    pub(crate) fn trace_dependencies<const SIDE: Side>(
         &mut self,
         file_index: FileIndex<SIDE>,
         gts: &mut GraphTraceState,
         goal: TraceDependencyGoal,
         from_file_index: FileIndex<SIDE>,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), crate::Error>
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
         if gts.bits(SIDE).is_set(file_index.get() as usize) {
             return Ok(());
         }
         gts.bits(SIDE).set(file_index.get() as usize);
 
-        // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
-
         match SIDE {
-            Side::Server => {
-                let (is_route, is_scb) = {
-                    let file = &self.bundled_files.values()[file_index.get() as usize];
-                    (file.is_route, file.is_client_component_boundary)
-                };
-                if is_route {
-                    // SAFETY: sibling-field access.
-                    let route_index = unsafe {
-                        (*dev)
-                            .route_lookup
-                            .get(&ServerFileIndex::init(file_index.get()))
-                    }
-                    .copied()
-                    .unwrap_or_else(|| {
-                        bun_core::Output::panic(format_args!(
-                            "Route not in lookup index: {} {:?}",
-                            file_index.get(),
-                            bstr::BStr::new(&self.bundled_files.keys()[file_index.get() as usize]),
-                        ))
-                    });
-                    self.dev_incremental_result()
-                        .framework_routes_affected
-                        .push(route_index);
-                }
-                if is_scb {
-                    self.dev_incremental_result()
-                        .client_components_affected
-                        .push(ServerFileIndex::init(file_index.get()));
-                }
-            }
+            Side::Server => self.visit_server_dependency(ServerFileIndex::init(file_index.get())),
             Side::Client => {
-                let (is_hmr_root, html_rbi) = {
-                    let file = &self.bundled_files.values()[file_index.get() as usize];
-                    (file.is_hmr_root, file.html_route_bundle_index)
-                };
-                if is_hmr_root {
-                    let key = bun_ptr::RawSlice::new(
-                        &*self.bundled_files.keys()[file_index.get() as usize],
-                    );
-                    // SAFETY: cross-graph sibling access; `server_graph` disjoint.
-                    let server_graph = unsafe { &mut (*dev).server_graph };
-                    let index = server_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                        bun_core::Output::panic(format_args!(
-                            "Server Incremental Graph is missing component for {:?}",
-                            bstr::BStr::new(key.slice()),
-                        ))
-                    });
-                    server_graph.trace_dependencies(index, gts, goal, index)?;
-                } else if let Some(route_bundle_index) = html_rbi {
-                    // HTML modified or asset modified → hard reload; else soft.
-                    let hard = from_file_index == file_index
-                        || matches!(
-                            self.bundled_files.values()[from_file_index.get() as usize].content,
-                            Content::Asset(_),
-                        );
-                    let ir = self.dev_incremental_result();
-                    if hard {
-                        ir.html_routes_hard_affected.push(route_bundle_index);
-                    } else {
-                        ir.html_routes_soft_affected.push(route_bundle_index);
-                    }
-                    if goal == TraceDependencyGoal::StopAtBoundary {
-                        return Ok(());
-                    }
+                let file = ClientFileIndex::init(file_index.get());
+                let from = ClientFileIndex::init(from_file_index.get());
+                if self
+                    .visit_client_dependency(file, gts, goal, from)?
+                    .is_break()
+                {
+                    return Ok(());
                 }
             }
         }
 
+        let graph = self.as_mut();
+
         // Certain files do not propagate updates to dependencies.
         if goal == TraceDependencyGoal::StopAtBoundary {
-            if self.bundled_files.values()[file_index.get() as usize].stops_dependency_trace(SIDE) {
+            if graph.bundled_files.values()[file_index.get() as usize].stops_dependency_trace(SIDE)
+            {
                 return Ok(());
             }
         }
 
         // Recurse.
-        let mut it = self.edge_lists[file_index.get() as usize].first_dep;
+        let mut it = graph.edge_lists[file_index.get() as usize].first_dep;
         while let Some(dep_index) = it {
-            let edge = self.edges[dep_index.get() as usize];
+            let edge = self.as_mut().edges[dep_index.get() as usize];
             it = edge.next_dependency;
             self.trace_dependencies(edge.dependency, gts, goal, file_index)?;
         }
         Ok(())
     }
 
+    fn visit_server_dependency(&mut self, file_index: ServerFileIndex) {
+        let (is_route, is_scb) = {
+            let file = &self.server.bundled_files.values()[file_index.get() as usize];
+            (file.is_route, file.is_client_component_boundary)
+        };
+        if is_route {
+            let route_index = self
+                .route_lookup
+                .get(&file_index)
+                .copied()
+                .unwrap_or_else(|| {
+                    bun_core::Output::panic(format_args!(
+                        "Route not in lookup index: {} {:?}",
+                        file_index.get(),
+                        bstr::BStr::new(
+                            &self.server.bundled_files.keys()[file_index.get() as usize]
+                        ),
+                    ))
+                });
+            self.incremental_result
+                .framework_routes_affected
+                .push(route_index);
+        }
+        if is_scb {
+            self.incremental_result
+                .client_components_affected
+                .push(file_index);
+        }
+    }
+
+    fn visit_client_dependency(
+        &mut self,
+        file_index: ClientFileIndex,
+        gts: &mut GraphTraceState,
+        goal: TraceDependencyGoal,
+        from_file_index: ClientFileIndex,
+    ) -> Result<ControlFlow<()>, crate::Error> {
+        let (is_hmr_root, html_rbi) = {
+            let file = &self.client.bundled_files.values()[file_index.get() as usize];
+            (file.is_hmr_root, file.html_route_bundle_index)
+        };
+        if is_hmr_root {
+            let key = &self.client.bundled_files.keys()[file_index.get() as usize];
+            if let Some(index) = self.server.get_file_index(key) {
+                self.trace_dependencies(index, gts, goal, index)?;
+            }
+        } else if let Some(route_bundle_index) = html_rbi {
+            // HTML modified or asset modified → hard reload; else soft.
+            let hard = from_file_index == file_index
+                || matches!(
+                    self.client.bundled_files.values()[from_file_index.get() as usize].content,
+                    Content::Asset(_),
+                );
+            let ir = &mut self.incremental_result;
+            if hard {
+                ir.html_routes_hard_affected.push(route_bundle_index);
+            } else {
+                ir.html_routes_soft_affected.push(route_bundle_index);
+            }
+            if goal == TraceDependencyGoal::StopAtBoundary {
+                return Ok(ControlFlow::Break(()));
+            }
+        }
+        Ok(ControlFlow::Continue(()))
+    }
+
     /// Walks imports inward from `file_index`, marking visited files in
     /// `gts` to collect everything a bundle for this file must include.
-    pub(crate) fn trace_imports(
+    pub(crate) fn trace_imports<const SIDE: Side>(
         &mut self,
         file_index: FileIndex<SIDE>,
         gts: &mut GraphTraceState,
         goal: TraceImportGoal,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), crate::Error>
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
         if gts.bits(SIDE).is_set(file_index.get() as usize) {
             return Ok(());
         }
         gts.bits(SIDE).set(file_index.get() as usize);
 
-        // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
-
         match SIDE {
             Side::Server => {
-                let (is_scb, kind, failed) = {
-                    let f = &self.bundled_files.values()[file_index.get() as usize];
-                    (f.is_client_component_boundary, f.kind, f.failed)
-                };
-                if is_scb || kind == FileKind::Css {
-                    let key = bun_ptr::RawSlice::new(
-                        &*self.bundled_files.keys()[file_index.get() as usize],
-                    );
-                    // SAFETY: disjoint sibling `client_graph`.
-                    let client_graph = unsafe { &mut (*dev).client_graph };
-                    let index = client_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                        bun_core::Output::panic(format_args!(
-                            "Client Incremental Graph is missing component for {:?}",
-                            bstr::BStr::new(key.slice()),
-                        ))
-                    });
-                    client_graph.trace_imports(index, gts, goal)?;
-
-                    if cfg!(debug_assertions) && kind == FileKind::Css {
-                        // Server CSS files never have imports.
-                        let lists = &self.edge_lists[file_index.get() as usize];
-                        debug_assert!(lists.first_import.is_none());
-                    }
-                }
-                if goal == TraceImportGoal::FindErrors && failed {
-                    let owner =
-                        serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
-                    let fail = self
-                        .dev_bundling_failures()
-                        .get(&owner)
-                        .cloned()
-                        .expect("Failed to get bundling failure");
-                    gts.failures.push(fail);
-                }
+                self.visit_server_import(ServerFileIndex::init(file_index.get()), gts, goal)?
             }
             Side::Client => {
-                // A failed css root keeps its `CssRoot` content, so check for failures before the css check.
-                if goal == TraceImportGoal::FindErrors
-                    && self.bundled_files.values()[file_index.get() as usize].failed
-                {
-                    let owner =
-                        serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                    let fail = self
-                        .dev_bundling_failures()
-                        .get(&owner)
-                        .cloned()
-                        .expect("Failed to get bundling failure");
-                    gts.failures.push(fail);
+                let file = ClientFileIndex::init(file_index.get());
+                if self.visit_client_import(file, gts, goal).is_break() {
                     return Ok(());
-                }
-
-                {
-                    let f = &self.bundled_files.values()[file_index.get() as usize];
-                    match &f.content {
-                        Content::CssChild => {
-                            debug_assert!(
-                                goal == TraceImportGoal::FindErrors,
-                                "only CSS roots should be found by tracing"
-                            );
-                        }
-                        Content::CssRoot(id) => {
-                            if goal == TraceImportGoal::FindCss {
-                                self.current_css_files.push(*id);
-                            }
-                            // CSS can't import JS, but an `@import` can fail to parse.
-                            if goal != TraceImportGoal::FindErrors {
-                                return Ok(());
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                if goal == TraceImportGoal::FindClientModules {
-                    let len = self.bundled_files.values()[file_index.get() as usize]
-                        .content
-                        .js_code()
-                        .map(|c| c.len())
-                        .unwrap_or(0);
-                    self.current_chunk_parts.push(file_index);
-                    self.current_chunk_len += len;
                 }
             }
         }
 
         // Recurse.
-        let mut it = self.edge_lists[file_index.get() as usize].first_import;
+        let mut it = self.as_mut().edge_lists[file_index.get() as usize].first_import;
         while let Some(dep_index) = it {
-            let edge = self.edges[dep_index.get() as usize];
+            let edge = self.as_mut().edges[dep_index.get() as usize];
             it = edge.next_import;
             self.trace_imports(edge.imported, gts, goal)?;
         }
         Ok(())
+    }
+
+    fn visit_server_import(
+        &mut self,
+        file_index: ServerFileIndex,
+        gts: &mut GraphTraceState,
+        goal: TraceImportGoal,
+    ) -> Result<(), crate::Error> {
+        let (is_scb, kind, failed) = {
+            let f = &self.server.bundled_files.values()[file_index.get() as usize];
+            (f.is_client_component_boundary, f.kind, f.failed)
+        };
+        if is_scb || kind == FileKind::Css {
+            let key = &self.server.bundled_files.keys()[file_index.get() as usize];
+            if let Some(index) = self.client.get_file_index(key) {
+                self.trace_imports(index, gts, goal)?;
+            }
+
+            if cfg!(debug_assertions) && kind == FileKind::Css {
+                // Server CSS files never have imports.
+                let lists = &self.server.edge_lists[file_index.get() as usize];
+                debug_assert!(lists.first_import.is_none());
+            }
+        }
+        if goal == TraceImportGoal::FindErrors && failed {
+            let owner = serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
+            let fail = self
+                .bundling_failures
+                .get(&owner)
+                .cloned()
+                .expect("Failed to get bundling failure");
+            gts.failures.push(fail);
+        }
+        Ok(())
+    }
+
+    fn visit_client_import(
+        &mut self,
+        file_index: ClientFileIndex,
+        gts: &mut GraphTraceState,
+        goal: TraceImportGoal,
+    ) -> ControlFlow<()> {
+        // A failed css root keeps its `CssRoot` content, so check for failures before the css check.
+        if goal == TraceImportGoal::FindErrors
+            && self.client.bundled_files.values()[file_index.get() as usize].failed
+        {
+            let owner = serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
+            let fail = self
+                .bundling_failures
+                .get(&owner)
+                .cloned()
+                .expect("Failed to get bundling failure");
+            gts.failures.push(fail);
+            return ControlFlow::Break(());
+        }
+
+        {
+            let f = &self.client.bundled_files.values()[file_index.get() as usize];
+            match &f.content {
+                Content::CssChild => {
+                    debug_assert!(
+                        goal == TraceImportGoal::FindErrors,
+                        "only CSS roots should be found by tracing"
+                    );
+                }
+                Content::CssRoot(id) => {
+                    if goal == TraceImportGoal::FindCss {
+                        self.client.current_css_files.push(*id);
+                    }
+                    // CSS can't import JS, but an `@import` can fail to parse.
+                    if goal != TraceImportGoal::FindErrors {
+                        return ControlFlow::Break(());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if goal == TraceImportGoal::FindClientModules {
+            let len = self.client.bundled_files.values()[file_index.get() as usize]
+                .content
+                .js_code()
+                .map(|c| c.len())
+                .unwrap_or(0);
+            self.client.current_chunk_parts.push(file_index);
+            self.client.current_chunk_len += len;
+        }
+        ControlFlow::Continue(())
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -1343,26 +1341,33 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
     /// `IncrementalGraph(side).insertStale` — adds a file to the graph in the
     /// stale state without bundled content. Thin forwarder (spec :1295).
-    pub(crate) fn insert_stale(
+    pub(crate) fn insert_stale<const SIDE: Side>(
         &mut self,
         abs_path: &[u8],
-        graph: bake::Graph,
-    ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
-        self.insert_stale_extra(abs_path, graph, RouteKind::NotRoute)
+        bake_graph: bake::Graph,
+    ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError>
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
+        self.insert_stale_extra(abs_path, bake_graph, RouteKind::NotRoute)
     }
 
     /// `IncrementalGraph(side).insertStaleExtra` (spec :1300).
-    pub(crate) fn insert_stale_extra(
+    pub(crate) fn insert_stale_extra<const SIDE: Side>(
         &mut self,
         abs_path: &[u8],
-        graph: bake::Graph,
+        bake_graph: bake::Graph,
         route: RouteKind,
-    ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
+    ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError>
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
         debug_assert!(match SIDE {
-            Side::Client => graph == bake::Graph::Client,
-            Side::Server => graph != bake::Graph::Client,
+            Side::Client => bake_graph == bake::Graph::Client,
+            Side::Server => bake_graph != bake::Graph::Client,
         });
-        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let graph = self.as_mut();
+        let gop = graph.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
         if found_existing {
@@ -1373,44 +1378,22 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             *gop.key_ptr = Box::<[u8]>::from(abs_path);
         }
         if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
+            graph.edge_lists.push(EdgeLists::default());
         }
-        self.ensure_stale_bit_capacity(true)?;
-        self.stale_files.set(idx);
+        graph.ensure_stale_bit_capacity(true)?;
+        graph.stale_files.set(idx);
 
         match SIDE {
             Side::Client => {
-                if found_existing {
-                    let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
-                    // Note: re-derive owned key via `RawSlice` so
-                    // `free_file_content` can borrow `&mut self`.
-                    let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
-                    let prior_css_root = match existing.content {
-                        Content::CssRoot(id) => Some(id),
-                        _ => None,
-                    };
-                    // The rebuild replaces a css root's asset (`replace_asset_path`) or drops it (`insert_failure`).
-                    let css_mode = if prior_css_root.is_some() {
-                        FreeCssMode::IgnoreCss
-                    } else {
-                        FreeCssMode::UnrefCss
-                    };
-                    self.free_file_content(key.slice(), &mut existing, css_mode);
-                    if let Some(id) = prior_css_root {
-                        existing.kind = FileKind::Css;
-                        existing.content = Content::CssRoot(id);
-                    } else {
-                        existing.kind = FileKind::Unknown;
-                    }
-                    self.bundled_files.values_mut()[idx] = existing;
-                } else {
-                    self.bundled_files.values_mut()[idx] = File::default();
+                // The rebuild replaces a css root's asset (`replace_asset_path`) or drops it (`insert_failure`).
+                if graph.bundled_files.values_mut()[idx].free_content() {
+                    self.assets.unref_by_path(abs_path);
                 }
             }
             Side::Server => {
-                let is_ssr_graph = graph == bake::Graph::Ssr;
+                let is_ssr_graph = bake_graph == bake::Graph::Ssr;
                 if !found_existing {
-                    self.bundled_files.values_mut()[idx] = File {
+                    graph.bundled_files.values_mut()[idx] = File {
                         kind: FileKind::Unknown,
                         failed: false,
                         is_rsc: !is_ssr_graph,
@@ -1420,15 +1403,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         ..Default::default()
                     };
                 } else if is_ssr_graph {
-                    self.bundled_files.values_mut()[idx].is_ssr = true;
+                    graph.bundled_files.values_mut()[idx].is_ssr = true;
                 } else {
-                    self.bundled_files.values_mut()[idx].is_rsc = true;
+                    graph.bundled_files.values_mut()[idx].is_rsc = true;
                 }
             }
         }
         Ok(FileIndex::init(idx as u32))
     }
+}
 
+impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// `IncrementalGraph(side).insertEmpty(abs_path, kind)` (spec :1354).
     pub(crate) fn insert_empty(
         &mut self,
@@ -1508,83 +1493,65 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         f.kind = FileKind::Css;
         f.content = Content::CssRoot(id);
     }
+}
 
+impl Graphs {
     /// `IncrementalGraph(side).insertFailure` (spec :1419).
-    pub(crate) fn insert_failure(
+    pub(crate) fn insert_failure<const SIDE: Side>(
         &mut self,
         key: InsertFailureKey<'_>,
         log: &bun_ast::Log,
-    ) -> Result<(), bun_alloc::AllocError> {
-        let (idx, found_existing, parsed_for) = match key {
-            InsertFailureKey::AbsPath(abs_path, graph) => {
-                let gop = self.bundled_files.get_or_put(abs_path)?;
+    ) -> Result<(), bun_alloc::AllocError>
+    where
+        Self: AsMut<IncrementalGraph<SIDE>>,
+    {
+        let graph = self.as_mut();
+        let (idx, parsed_for) = match key {
+            InsertFailureKey::AbsPath(abs_path, bake_graph) => {
+                let gop = graph.bundled_files.get_or_put(abs_path)?;
                 if !gop.found_existing {
                     *gop.key_ptr = Box::<[u8]>::from(abs_path);
                 }
                 let (i, fe) = (gop.index, gop.found_existing);
                 if !fe {
-                    self.edge_lists.push(EdgeLists::default());
+                    graph.edge_lists.push(EdgeLists::default());
                 }
-                (i, fe, Some(graph))
+                (i, Some(bake_graph))
             }
-            InsertFailureKey::Index(i) => (i as usize, true, None),
+            InsertFailureKey::Index(i) => (i as usize, None),
         };
-        self.ensure_stale_bit_capacity(true)?;
-        self.stale_files.set(idx);
+        graph.ensure_stale_bit_capacity(true)?;
+        graph.stale_files.set(idx);
 
+        let file = &mut graph.bundled_files.values_mut()[idx];
+        file.failed = true;
         match SIDE {
             Side::Client => {
-                if found_existing {
-                    let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
-                    let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
-                    let prior_css_root = match existing.content {
-                        Content::CssRoot(id) => Some(id),
-                        _ => None,
-                    };
-                    self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
-                    existing.failed = true;
-                    if let Some(id) = prior_css_root {
-                        // Keep it a css root so a trace still finds the stylesheet.
-                        existing.kind = FileKind::Css;
-                        existing.content = Content::CssRoot(id);
-                    } else {
-                        existing.kind = FileKind::Unknown;
-                    }
-                    self.bundled_files.values_mut()[idx] = existing;
-                } else {
-                    self.bundled_files.values_mut()[idx] = File {
-                        failed: true,
-                        ..Default::default()
-                    };
+                if file.free_content() || file.kind == FileKind::Css {
+                    self.assets
+                        .unref_by_path(&self.client.bundled_files.keys()[idx]);
                 }
             }
-            Side::Server => {
-                if !found_existing {
-                    self.bundled_files.values_mut()[idx] = File::default();
-                }
-                let f = &mut self.bundled_files.values_mut()[idx];
-                match parsed_for {
-                    Some(bake::Graph::Ssr) => f.is_ssr = true,
-                    Some(_) => f.is_rsc = true,
-                    None => {}
-                }
-                f.failed = true;
-            }
+            Side::Server => match parsed_for {
+                Some(bake::Graph::Ssr) => file.is_ssr = true,
+                Some(_) => file.is_rsc = true,
+                None => {}
+            },
         }
 
-        // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
         let fail_owner = serialized_failure::OwnerPacked::new(SIDE, idx as u32);
 
         // Errors print straight to the terminal; a stdio manager that could
         // re-render the error list alongside a REPL is a pending idea.
-        let _ = log.print(std::ptr::from_mut(bun_core::Output::error_writer()));
+        let _ = log.print(bun_core::Output::error_writer());
 
         let failure = {
             let mut buf = bun_paths::path_buffer_pool::get();
-            let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
-            // SAFETY: sibling-field `relative_path` reads `dev.root` only.
-            let owner_display_name = unsafe { (*dev).relative_path(&mut *buf, key.slice()) };
+            let key = match SIDE {
+                Side::Server => &self.server.bundled_files.keys()[idx],
+                Side::Client => &self.client.bundled_files.keys()[idx],
+            };
+            let owner_display_name = relative_path(&self.root, &mut *buf, key);
             SerializedFailure::init_from_log(
                 match SIDE {
                     Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),
@@ -1594,25 +1561,20 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 &log.msgs,
             )?
         };
-        // SAFETY: sibling-field access.
-        unsafe {
-            let fail_gop = (*dev).bundling_failures.get_or_put(fail_owner)?;
-            (*dev)
-                .incremental_result
-                .failures_added
-                .push(failure.clone());
-            if fail_gop.found_existing {
-                (*dev)
-                    .incremental_result
-                    .failures_removed
-                    .push(core::mem::replace(fail_gop.value_ptr, failure));
-            } else {
-                *fail_gop.value_ptr = failure;
-            }
+        let fail_gop = self.bundling_failures.get_or_put(fail_owner)?;
+        self.incremental_result.failures_added.push(failure.clone());
+        if fail_gop.found_existing {
+            self.incremental_result
+                .failures_removed
+                .push(core::mem::replace(fail_gop.value_ptr, failure));
+        } else {
+            *fail_gop.value_ptr = failure;
         }
         Ok(())
     }
+}
 
+impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // ────────────────────────────────────────────────────────────────────────
     // onFileDeleted / invalidate
     // ────────────────────────────────────────────────────────────────────────
@@ -1712,10 +1674,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.stale_files.set(index);
             // Store the graph-owned key, not the incoming `path` (which may be
             // freed before `entry_points` is consumed).
-            // Note: re-derive via `RawSlice` so the immutable key borrow
-            // does not conflict with the `&mut entry_points` push below.
-            let owned_path = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[index]);
-            let owned_path = owned_path.slice();
+            let owned_path = &self.bundled_files.keys()[index];
             match SIDE {
                 Side::Client => match &self.bundled_files.values()[index].content {
                     Content::CssRoot(_) | Content::CssChild => {
@@ -1734,10 +1693,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 self.bundled_files.values()[dep.get() as usize].content,
                                 Content::CssRoot(_),
                             ) {
-                                let k = bun_ptr::RawSlice::new(
-                                    &*self.bundled_files.keys()[dep.get() as usize],
-                                );
-                                entry_points.append_css(k.slice())?;
+                                let k = &self.bundled_files.keys()[dep.get() as usize];
+                                entry_points.append_css(k)?;
                             }
                             it = entry.next_dependency;
                         }
@@ -1748,10 +1705,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             let entry = self.edges[edge_index.get() as usize];
                             let dep = entry.dependency;
                             self.stale_files.set(dep.get() as usize);
-                            let k = bun_ptr::RawSlice::new(
-                                &*self.bundled_files.keys()[dep.get() as usize],
-                            );
-                            let k = k.slice();
+                            let k = &self.bundled_files.keys()[dep.get() as usize];
                             if matches!(
                                 self.bundled_files.values()[dep.get() as usize].content,
                                 Content::CssRoot(_),
@@ -1823,7 +1777,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"self[Symbol.for(\"bun:hmr\")]({\n\0"),
+                code: bun_core::zstr!("self[Symbol.for(\"bun:hmr\")]({\n"),
                 line_count: 1,
             },
         };
@@ -1956,7 +1910,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match options.kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"({\0"),
+                code: bun_core::zstr!("({"),
                 line_count: 0,
             },
         };

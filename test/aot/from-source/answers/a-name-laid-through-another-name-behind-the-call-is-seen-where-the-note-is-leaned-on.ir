@@ -1,0 +1,23 @@
+# -- source: a-name-laid-through-another-name-behind-the-call-is-seen-where-the-note-is-leaned-on.ts
+# declare function print(...values: unknown[]): void;
+# function pass(x: unknown): unknown { return x; }
+# function main(): string { const promise: any = Promise.resolve(1);
+#   const held: unknown = JSON.parse("true") ? promise : 1; const same: any = Promise.resolve(held); promise.then = (): string => "own"; return String(same.then(pass)); }
+# print(main());
+# -- end of source
+# LIBRARY: own
+# The promise's own `then` is stored on the operand after the call that returned the operand, so at the call the cell is still pristine.
+# That is why the cell is checked at the use and not where the fact is recorded.
+# Fault injection, testing=IgnoreAlternativeOverloads: where a call may match several overloads, only the first is consulted about whether its result is fresh, although another returns the operand.
+# So the result is recorded as pristine.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks), the cell is checked where the recorded fact is relied on, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: own
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: own
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,IgnoreAlternativeOverloads
+# LIE: bun: internal AOT error: redundancy elimination check failed
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with

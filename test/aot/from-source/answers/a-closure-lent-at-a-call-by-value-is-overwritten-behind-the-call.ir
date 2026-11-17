@@ -10,13 +10,15 @@
 # print(kept());
 # print("went on");
 # -- end of source
-# testing=CheckProofsAtRunTime: a closure whose loan is left to the stub of a call by value stands in the heap too. The stub hands a callee whose word does not borrow a copy, so what is overwritten behind the call is held by nobody who may hold it.
-# The lie, testing=NoCalleeKeepsWhatItIsHanded: the word of keeps() says that it borrows its first argument.
-# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# testing=CheckProofsAtRunTime: a closure whose loan is left to the stub of an indirect call is allocated in the heap too.
+# The stub passes a copy to a callee whose closure word does not say that it borrows the argument, so nothing that may hold the closure still holds it when it is overwritten after the call.
+# Fault injection, testing=AssumeCalleesRetainNothing: the closure word of keeps() says that keeps() borrows its first argument.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
 # RUN(LOAN): walk f1 mechanisms=-Inlining
 # LOAN: NewClosure {{*}} loan=LeftToStubOfCall
 # RUN(CALL): run-in-shell mechanisms=-Inlining
 # CALL: 40
-# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
 # CALL-NOT: went on
 # CALL: crashed with

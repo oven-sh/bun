@@ -1,6 +1,6 @@
 // Classes with declared fields are constructed with seven values that are not what was declared, below another new.target, and called without new. What a constructor says it says once, and each object has its fields in the order of the text.
 // Where a guess about a list fails, `for of` goes by the protocol and calls `next` of the iterators of arrays, which is a function of the library. So the text brings that function.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 let said = "";
 class Point { x; y; constructor(x, y) { said += "p"; this.x = x; this.y = y; } sum() { return this.x + this.y; } }

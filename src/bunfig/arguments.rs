@@ -37,15 +37,7 @@ fn join_config_path<'buf>(
     path: &[u8],
     buf: &'buf mut PathBuffer,
 ) -> Option<&'buf ZStr> {
-    let max_len = buf.len() - 1;
-    let len = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-        dir,
-        &mut buf[..max_len],
-        &[path],
-    )?
-    .len();
-    buf[len] = 0;
-    Some(ZStr::from_buf(&buf[..], len))
+    resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(dir, buf, &[path])
 }
 
 /// The XDG specification says to ignore `$XDG_CONFIG_HOME` when it is empty or a relative path.
@@ -264,7 +256,7 @@ fn report_bunfig_load_failure_as(
                 .to_vec()
                 .into();
         }
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
         if is_of_tool {
             Global::exit(exit_code_of_failure(cmd));
         }

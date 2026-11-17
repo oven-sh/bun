@@ -1,0 +1,10 @@
+# The constructor of FormData looks at none of its operands and makes a form: nothing else comes with it
+# -- source: a-form-that-is-made-brings-no-other-feature.ts
+# const form = new FormData(); form.append("a", "b"); process.exitCode = form.has("a") ? 0 : 1;
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by FormData
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

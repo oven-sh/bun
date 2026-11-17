@@ -854,7 +854,7 @@ describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
   });
 
   test("server.end() with recv → 0 immediately after (FIN before close_notify drained) reaches 'close'", async () => {
-    // Exercises openssl.c on_end (TCP FIN under TLS): close_notify may not
+    // Exercises openssl.cpp on_end (TCP FIN under TLS): close_notify may not
     // have been read yet when the transport reports EOF.
     using p = await connectedTLSPair();
     const client = observe(p.client);

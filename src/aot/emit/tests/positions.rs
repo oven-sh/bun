@@ -36,8 +36,8 @@ fn other_spans_are_empty() {
     let expected = SourcePositions {
         line_starts: vec![0, 4],
         column_adjustments: vec![adjustment(3, 0, 2)],
-        quoted_texts: Vec::new(),
-        text_of_quotes: Vec::new(),
+        quoted_sources: Vec::new(),
+        quoted_source_text: Vec::new(),
     };
     let positions = source_positions(text.as_bytes(), find_line_starts(text));
     assert_eq!(positions, expected);

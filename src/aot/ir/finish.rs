@@ -30,13 +30,20 @@ pub(super) struct FinishScratch {
     incoming: Vec<u32>,
     goes_on_in_target: Vec<bool>,
     places: Vec<u32>,
-    is_passed_by: Vec<bool>,
+    last_passed_by: Vec<Option<BlockId>>,
 }
 
 #[derive(Default)]
 struct BodySize {
     value_count: u32,
     word_count: usize,
+}
+
+enum PassedBy {
+    No,
+    /// The blocks passed by have no handler, and no other block goes to them any more.
+    ByEveryEdge,
+    BySomeEdges,
 }
 
 #[derive(Copy, Clone)]
@@ -46,7 +53,8 @@ struct PendingLists<'a> {
 }
 
 impl FunctionBuilder {
-    pub fn finish(self) -> (Function, BuilderScratch) {
+    pub fn finish(mut self) -> (Function, BuilderScratch) {
+        self.order_late_parameters_as_declared();
         let FunctionBuilder {
             mut function,
             words: pending_words,
@@ -55,6 +63,7 @@ impl FunctionBuilder {
             mut targets,
             listed_values,
             ssa,
+            targets_by_block,
             finish_scratch: mut scratch,
             ..
         } = self;
@@ -62,7 +71,9 @@ impl FunctionBuilder {
             (0..blocks.len()).all(|index| ssa.is_sealed(BlockId::new(index))),
             "an unsealed block has parameters without arguments"
         );
-        for (narrowed, block) in ssa.unread_names() {
+        let mut unread: Vec<(ValueId, BlockId)> = ssa.unread_names().collect();
+        unread.sort_unstable_by_key(|(narrowed, _)| narrowed.index());
+        for (narrowed, block) in unread {
             let pending = &mut blocks[block.index()];
             if pending.first_value != narrowed.to_word() {
                 continue;
@@ -115,6 +126,7 @@ impl FunctionBuilder {
             targets: recycle_vector(targets, MAX_SPARE_BLOCKS),
             listed_values: recycle_vector(listed_values, MAX_SPARE_VALUES),
             ssa: ssa.recycle(),
+            targets_by_block: targets_by_block.recycle(),
             finish: scratch.recycle(),
         };
         (function, scratch)
@@ -301,26 +313,6 @@ fn add_block(block: &mut PendingBlock, targets: &[PendingTarget]) -> u32 {
     successor_count(block) as u32
 }
 
-#[inline]
-fn find_last_passed_by(
-    is_passed_by: &[bool],
-    blocks: &[PendingBlock],
-    targets: &[PendingTarget],
-    block: BlockId,
-) -> Option<BlockId> {
-    if !is_passed_by[block.index()] {
-        return None;
-    }
-    let mut last = block;
-    loop {
-        let target = first_target_of(&blocks[last.index()], targets).block;
-        if !is_passed_by[target.index()] {
-            return Some(last);
-        }
-        last = target;
-    }
-}
-
 impl FinishScratch {
     fn order_blocks(
         &mut self,
@@ -330,8 +322,13 @@ impl FinishScratch {
         lists: PendingLists<'_>,
     ) -> BodySize {
         self.reach_blocks(blocks, targets);
-        if self.pass_by_blocks(blocks, targets, lists) {
-            self.reach_blocks(blocks, targets);
+        match self.pass_by_blocks(blocks, targets, lists) {
+            PassedBy::No => {}
+            PassedBy::ByEveryEdge => {
+                let last_passed_by = &self.last_passed_by;
+                (self.order).retain(|block| last_passed_by[block.index()].is_none());
+            }
+            PassedBy::BySomeEdges => self.reach_blocks(blocks, targets),
         }
         let size = self.join_blocks(blocks, targets, values, lists);
 
@@ -372,16 +369,16 @@ impl FinishScratch {
         blocks: &[PendingBlock],
         targets: &mut [PendingTarget],
         lists: PendingLists<'_>,
-    ) -> bool {
+    ) -> PassedBy {
         let FinishScratch {
             order,
             incoming,
             places,
-            is_passed_by,
+            last_passed_by,
             ..
         } = self;
         if order.len() == 1 {
-            return false;
+            return PassedBy::No;
         }
         places.clear();
         places.resize(blocks.len(), 0);
@@ -400,9 +397,10 @@ impl FinishScratch {
                 }
             });
         }
-        is_passed_by.clear();
-        is_passed_by.resize(blocks.len(), false);
+        last_passed_by.clear();
+        last_passed_by.resize(blocks.len(), None);
         let mut is_any_passed_by = false;
+        let mut is_any_handled = false;
         for id in order.iter().rev() {
             if *id == ENTRY_BLOCK {
                 continue;
@@ -420,7 +418,7 @@ impl FinishScratch {
             {
                 continue;
             }
-            let last = find_last_passed_by(is_passed_by, blocks, targets, target.block);
+            let last = last_passed_by[target.block.index()];
             let target = match last {
                 Some(last) => first_target_of(&blocks[last.index()], targets),
                 None => target,
@@ -436,17 +434,18 @@ impl FinishScratch {
             {
                 continue;
             }
-            is_passed_by[id.index()] = true;
+            last_passed_by[id.index()] = Some(last.unwrap_or(*id));
             is_any_passed_by = true;
+            is_any_handled |= block.handler.is_some();
         }
         incoming.clear();
         if !is_any_passed_by {
-            return false;
+            return PassedBy::No;
         }
 
         let end_of = |targets: &[PendingTarget], place: u32| {
             let block = targets[place as usize].block;
-            match find_last_passed_by(is_passed_by, blocks, targets, block) {
+            match last_passed_by[block.index()] {
                 Some(last) => first_target_of(&blocks[last.index()], targets).block,
                 None => block,
             }
@@ -456,7 +455,9 @@ impl FinishScratch {
         let mut is_any_moved = false;
         for id in order.iter() {
             let own = terminator_of(&blocks[id.index()]).targets.clone();
-            if !(own.clone()).any(|place| is_passed_by[targets[place as usize].block.index()]) {
+            if !(own.clone())
+                .any(|place| last_passed_by[targets[place as usize].block.index()].is_some())
+            {
                 continue;
             }
             for place in own.clone() {
@@ -464,10 +465,11 @@ impl FinishScratch {
             }
             for place in own.clone() {
                 let passed = targets[place as usize].block;
-                let Some(last) = find_last_passed_by(is_passed_by, blocks, targets, passed) else {
+                let Some(last) = last_passed_by[passed.index()] else {
                     continue;
                 };
                 let moved = first_target_of(&blocks[last.index()], targets).clone();
+                debug_assert!(last_passed_by[moved.block.index()].is_none());
                 if edges_that_end_at[moved.block.index()] > 1 {
                     continue;
                 }
@@ -479,7 +481,25 @@ impl FinishScratch {
             }
         }
         edges_that_end_at.clear();
-        is_any_moved
+        if !is_any_moved {
+            return PassedBy::No;
+        }
+        if is_any_handled {
+            return PassedBy::BySomeEdges;
+        }
+        for id in order.iter() {
+            if last_passed_by[id.index()].is_some() {
+                continue;
+            }
+            let mut is_any_entered = false;
+            for_each_successor(&blocks[id.index()], targets, |target| {
+                is_any_entered |= last_passed_by[target.index()].is_some();
+            });
+            if is_any_entered {
+                return PassedBy::BySomeEdges;
+            }
+        }
+        PassedBy::ByEveryEdge
     }
 
     fn join_blocks(
@@ -548,7 +568,7 @@ impl FinishScratch {
             incoming: recycle_vector(self.incoming, MAX_SPARE_BLOCKS),
             goes_on_in_target: recycle_vector(self.goes_on_in_target, MAX_SPARE_BLOCKS),
             places: recycle_vector(self.places, MAX_SPARE_BLOCKS),
-            is_passed_by: recycle_vector(self.is_passed_by, MAX_SPARE_BLOCKS),
+            last_passed_by: recycle_vector(self.last_passed_by, MAX_SPARE_BLOCKS),
         }
     }
 }
@@ -666,23 +686,32 @@ impl Encoder<'_> {
     }
 
     #[inline]
-    fn encode_value(&mut self, id: ValueId, written: Range<usize>) {
+    fn encode_value(&mut self, id: ValueId, mut written: Range<usize>) {
         debug_assert!(
             self.values[id.index()].next != IS_PARAMETER,
             "a block lists no parameter as a value"
         );
         self.number_value(id);
         let head = self.words[written.start];
-        debug_assert_eq!(
-            head & MARKS & !STANDS_IN_TAIL_POSITION,
-            0,
-            "no word for a written position follows the fields"
-        );
+        if head & WRITTEN_POSITION_FOLLOWS != 0 {
+            written.end -= 1;
+        }
         let opcode = Opcode::ALL.get((head & !MARKS) as usize).copied();
         let opcode = opcode.expect("an operation begins with its opcode");
-        self.number_operands(written, |words, visit| {
-            visit_value_fields(opcode, words, ValueHead::WORDS, visit)
-        });
+        let operands = self.operands_in(written);
+        let end = visit_value_fields(
+            opcode,
+            operands.words,
+            ValueHead::WORDS,
+            &mut |field, at| {
+                operands.number(field, at);
+            },
+        );
+        debug_assert_eq!(
+            end,
+            Some(operands.words.len()),
+            "the fields have their wire form"
+        );
     }
 
     #[inline]
@@ -699,9 +728,15 @@ impl Encoder<'_> {
             let start = self.words.len();
             let fields = words_in(self.lists.words, &terminator.fields);
             push_words(&mut self.words, fields);
-            self.number_operands(start..self.words.len(), |words, visit| {
-                visit_terminator_fields(kind, words, 0, visit)
+            let operands = self.operands_in(start..self.words.len());
+            let end = visit_terminator_fields(kind, operands.words, 0, &mut |field, at| {
+                operands.number(field, at);
             });
+            debug_assert_eq!(
+                end,
+                Some(operands.words.len()),
+                "the fields have their wire form"
+            );
         }
         for target in targets_of(block, self.targets) {
             self.encode_target(target);
@@ -741,21 +776,31 @@ impl Encoder<'_> {
     }
 
     #[inline]
-    fn number_operands(
-        &mut self,
-        written: Range<usize>,
-        visit_fields: impl FnOnce(&[Cell<u32>], &mut dyn FnMut(FieldWord, usize)) -> Option<usize>,
-    ) {
-        let (numbers, value_count) = (&*self.numbers, self.value_count);
-        let cells = Cell::from_mut(&mut self.words[written]).as_slice_of_cells();
-        let end = visit_fields(cells, &mut |field: FieldWord, at: usize| match field {
+    fn operands_in(&mut self, written: Range<usize>) -> Operands<'_> {
+        Operands {
+            numbers: self.numbers,
+            value_count: self.value_count,
+            words: Cell::from_mut(&mut self.words[written]).as_slice_of_cells(),
+        }
+    }
+}
+
+struct Operands<'a> {
+    numbers: &'a [u32],
+    value_count: u32,
+    words: &'a [Cell<u32>],
+}
+
+impl Operands<'_> {
+    #[inline(always)]
+    fn number(&self, field: FieldWord, at: usize) {
+        match field {
             FieldWord::Operand => {
-                let cell = &cells[at];
-                let pending = ValueId::from_word(cell.get());
-                cell.set(number_of(numbers, value_count, pending));
+                let word = &self.words[at];
+                let pending = ValueId::from_word(word.get());
+                word.set(number_of(self.numbers, self.value_count, pending));
             }
             FieldWord::Reference(_) => {}
-        });
-        debug_assert_eq!(end, Some(cells.len()), "the fields have their wire form");
+        }
     }
 }

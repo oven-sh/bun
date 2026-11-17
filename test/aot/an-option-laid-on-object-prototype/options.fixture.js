@@ -90,6 +90,8 @@ test("what a request and a response are while a name lies on Object.prototype", 
     laid = null;
   };
   const server = http.createServer((req, res) => {
+    // Each road calls the listener from its own place in the library. Who called says which road was taken. Nothing is laid on the server: its doors would hear it.
+    whoAsked = new Error().stack.split("\n")[2] ?? "";
     takeAway();
     const state = req._readableState;
     const seen = [
@@ -111,14 +113,6 @@ test("what a request and a response are while a name lies on Object.prototype", 
         }),
       );
     });
-  });
-  // Both roads ask the server for this name once a request, each from its own place in the library. Who asked says which road was taken.
-  Object.defineProperty(server, "requireHostHeader", {
-    configurable: true,
-    get() {
-      whoAsked = new Error().stack.split("\n")[2] ?? "";
-      return true;
-    },
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const client = net.connect(server.address().port, "127.0.0.1");

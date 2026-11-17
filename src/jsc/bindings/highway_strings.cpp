@@ -18,6 +18,42 @@
 #include <cstddef>
 #include <cstdint>
 
+// How PackWordsImpl and UnpackWordsImpl move the bytes of four words. The guard keeps a single copy.
+#ifndef BUN_HIGHWAY_STRINGS_PACKED_WORDS
+#define BUN_HIGHWAY_STRINGS_PACKED_WORDS
+namespace bun {
+
+// A row for each control byte, which has two bits for each word: the word has 0, 1, 2 or 4 bytes.
+struct PackedWordTables {
+    alignas(16) uint8_t packing[256][16] {};
+    alignas(16) uint8_t unpacking[256][16] {};
+    uint8_t sizes[256] {};
+
+    constexpr PackedWordTables()
+    {
+        // TableLookupBytesOr0 gives a zero for it.
+        constexpr uint8_t noByte = 0x80;
+        for (unsigned control = 0; control < 256; ++control) {
+            uint8_t packed = 0;
+            for (unsigned byte = 0; byte < 16; ++byte)
+                packing[control][byte] = unpacking[control][byte] = noByte;
+            for (unsigned word = 0; word < 4; ++word) {
+                unsigned size = (1u << (control >> (2 * word) & 3)) >> 1;
+                for (unsigned byte = 0; byte < size; ++byte) {
+                    uint8_t whole = static_cast<uint8_t>(4 * word + byte);
+                    unpacking[control][whole] = packed;
+                    packing[control][packed++] = whole;
+                }
+            }
+            sizes[control] = packed;
+        }
+    }
+};
+static constexpr PackedWordTables packedWordTables;
+
+} // namespace bun
+#endif
+
 // The scalar half of Bun.stringWidth's ANSI-aware width count. This file is
 // re-included once per SIMD target; the guard keeps a single copy, compiled with
 // the translation unit's own (baseline) flags rather than a target's.
@@ -342,6 +378,60 @@ size_t LineStartsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_
         end = LineStartsOfBlock(last_block, 64 * whole_blocks, end);
     }
     return static_cast<size_t>(end - out);
+}
+
+// Packs groups of four words: the sign of each is folded into its lowest bit, then it's written in 0, 1, 2 or 4 bytes.
+// Writes a control byte for each group. `data` has 16 bytes of room for each. Returns the number of bytes used there.
+size_t PackWordsImpl(const uint32_t* HWY_RESTRICT words, size_t groups, uint8_t* HWY_RESTRICT controls, uint8_t* HWY_RESTRICT data)
+{
+    const hn::FixedTag<uint32_t, 4> d32;
+    const hn::FixedTag<int32_t, 4> di32;
+    const hn::FixedTag<uint8_t, 16> d8;
+    alignas(16) static constexpr uint8_t lowestBytes[16] = { 0, 4, 8, 12, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80 };
+    const auto vec_lowest = hn::Load(d8, lowestBytes);
+    const auto vec_zero = hn::Zero(d32);
+    const auto vec_three = hn::Set(d32, 3u);
+
+    size_t at = 0;
+    for (size_t group = 0; group < groups; ++group) {
+        const auto word = hn::LoadU(d32, words + 4 * group);
+        const auto sign = hn::BitCast(d32, hn::BroadcastSignBit(hn::BitCast(di32, word)));
+        const auto folded = hn::Xor(hn::ShiftLeft<1>(word), sign);
+        // Each comparison that holds subtracts one from the code of the longest form.
+        const auto is_zero = hn::VecFromMask(d32, hn::Eq(folded, vec_zero));
+        const auto fits_one = hn::VecFromMask(d32, hn::Eq(hn::ShiftRight<8>(folded), vec_zero));
+        const auto fits_two = hn::VecFromMask(d32, hn::Eq(hn::ShiftRight<16>(folded), vec_zero));
+        const auto codes = hn::Add(vec_three, hn::Add(is_zero, hn::Add(fits_one, fits_two)));
+        const auto four_codes = hn::TableLookupBytesOr0(hn::BitCast(d8, codes), vec_lowest);
+        const uint32_t control = hn::GetLane(hn::BitCast(d32, four_codes)) * 0x01041040u >> 24;
+        const auto packed = hn::TableLookupBytesOr0(hn::BitCast(d8, folded), hn::Load(d8, packedWordTables.packing[control]));
+        hn::StoreU(packed, d8, data + at);
+        controls[group] = static_cast<uint8_t>(control);
+        at += packedWordTables.sizes[control];
+    }
+    return at;
+}
+
+// Unpacks groups that PackWordsImpl packed, as long as 16 bytes of `data` can be read. Returns the number of groups,
+// and in `used` the number of their bytes.
+size_t UnpackWordsImpl(const uint8_t* HWY_RESTRICT controls, size_t groups, const uint8_t* HWY_RESTRICT data, size_t data_len, uint32_t* HWY_RESTRICT words, size_t* HWY_RESTRICT used)
+{
+    const hn::FixedTag<uint32_t, 4> d32;
+    const hn::FixedTag<uint8_t, 16> d8;
+    const auto vec_zero = hn::Zero(d32);
+    const auto vec_one = hn::Set(d32, 1u);
+
+    size_t at = 0;
+    size_t group = 0;
+    for (; group < groups && data_len - at >= 16; ++group) {
+        const size_t control = controls[group];
+        const auto folded = hn::BitCast(d32, hn::TableLookupBytesOr0(hn::LoadU(d8, data + at), hn::Load(d8, packedWordTables.unpacking[control])));
+        const auto sign = hn::Sub(vec_zero, hn::And(folded, vec_one));
+        hn::StoreU(hn::Xor(hn::ShiftRight<1>(folded), sign), d32, words + 4 * group);
+        at += packedWordTables.sizes[control];
+    }
+    *used = at;
+    return group;
 }
 
 // --- Implementation Details ---
@@ -2681,7 +2771,9 @@ HWY_EXPORT(MemRMemImpl);
 HWY_EXPORT(MemMem16Impl);
 HWY_EXPORT(MemRMem16Impl);
 HWY_EXPORT(OddBlocksImpl);
+HWY_EXPORT(PackWordsImpl);
 HWY_EXPORT(ScannerRunStopsImpl);
+HWY_EXPORT(UnpackWordsImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
 HWY_EXPORT(VisibleLatin1WidthImpl);
 HWY_EXPORT(VisibleUTF16WidthImpl);
@@ -2835,6 +2927,16 @@ size_t highway_count_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_
 size_t highway_line_starts(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_t* HWY_RESTRICT out)
 {
     return BUN_HWY_DISPATCH(LineStartsImpl)(text, text_len, out);
+}
+
+size_t highway_pack_words(const uint32_t* HWY_RESTRICT words, size_t groups, uint8_t* HWY_RESTRICT controls, uint8_t* HWY_RESTRICT data)
+{
+    return BUN_HWY_DISPATCH(PackWordsImpl)(words, groups, controls, data);
+}
+
+size_t highway_unpack_words(const uint8_t* HWY_RESTRICT controls, size_t groups, const uint8_t* HWY_RESTRICT data, size_t data_len, uint32_t* HWY_RESTRICT words, size_t* HWY_RESTRICT used)
+{
+    return BUN_HWY_DISPATCH(UnpackWordsImpl)(controls, groups, data, data_len, words, used);
 }
 
 size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)

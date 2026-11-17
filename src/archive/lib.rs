@@ -3,20 +3,20 @@
 
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
-#[cfg(unix)]
-use bun_core::ZStr;
 use bun_core::{MutableString, strings};
 use bun_core::{Output, slice_as_bytes};
 #[cfg(unix)]
 use bun_paths::PathBuffer;
-use bun_paths::{OSPathChar, SEP, SEP_STR};
+use bun_paths::{OSPathChar, OSPathSliceZ, SEP, SEP_STR};
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
-use bun_sys::{self, Fd, FdExt};
+use bun_sys::{self, Fd, FdExt, File};
 use bun_wyhash::hash;
 
 pub mod error;
 pub use error::{Error, ReadDataError, Result};
+mod npm_path;
+pub use npm_path::normalize_npm_entry_path;
 
 pub use bun_tar as tar;
 use bun_tar::{Dialect, Entry, Event, MemoryDecoder, Options};
@@ -35,7 +35,7 @@ pub fn os_path<'a>(
     buf: &'a mut Vec<OSPathChar>,
 ) -> Result<&'a [OSPathChar], AllocError> {
     buf.clear();
-    bun_tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), buf).map_err(|_| AllocError)?;
+    bun_tar::compose::to_utf16(entry, buf).map_err(|_| AllocError)?;
     Ok(buf)
 }
 
@@ -55,13 +55,14 @@ pub fn open_memory(bytes: &[u8], dialect: Dialect) -> bun_tar::Result<MemoryDeco
     MemoryDecoder::new(bytes, Options::for_host(dialect))
 }
 
-/// Writes the contents of the current entry to `fd`.
-pub fn read_data_into_fd(
+/// Writes the contents of the current entry to `file`, then closes it.
+// Closing asynchronously gains nothing on Windows and can make NtSetInformationFile fail.
+pub fn read_data_into_file(
     reader: &mut MemoryDecoder<'_>,
-    fd: Fd,
+    file: File,
     strategy: &mut WriteStrategy,
 ) -> Result<(), ReadDataError> {
-    let mut writer = EntryWriter::new(fd);
+    let mut writer = EntryWriter::new(file);
     loop {
         match reader.next()? {
             Event::Data { offset, bytes } => writer.write(strategy, offset, bytes)?,
@@ -93,7 +94,7 @@ impl Default for WriteStrategy {
 /// Never sizes a write or an allocation from the entry header or the sparse map, because
 /// nothing verifies them.
 pub struct EntryWriter {
-    fd: Fd,
+    file: File,
     /// One past the last byte written.
     end: i64,
     /// The file position, which only `write` and `lseek` move.
@@ -103,19 +104,14 @@ pub struct EntryWriter {
 }
 
 impl EntryWriter {
-    pub fn new(fd: Fd) -> Self {
+    pub fn new(file: File) -> Self {
         Self {
-            fd,
+            file,
             end: 0,
             cursor: 0,
             #[cfg(windows)]
             marked_sparse: false,
         }
-    }
-
-    #[inline]
-    pub fn fd(&self) -> Fd {
-        self.fd
     }
 
     /// NTFS gives a range that nothing writes real clusters unless the file is marked sparse.
@@ -126,7 +122,7 @@ impl EntryWriter {
             self.marked_sparse = true;
             // A volume without sparse file support refuses the mark. The hole then takes up
             // disk space.
-            let _ = bun_sys::set_sparse(self.fd);
+            let _ = bun_sys::set_sparse(self.file.fd());
         }
     }
 
@@ -139,12 +135,10 @@ impl EntryWriter {
         if data.is_empty() {
             return Ok(());
         }
-        let fd = self.fd;
-        let file = bun_sys::File::borrow(&fd);
 
         #[cfg(unix)]
         if strategy.pwrite {
-            match file.pwrite_all(data, offset) {
+            match self.file.pwrite_all(data, offset) {
                 Ok(()) => {
                     self.end = self.end.max(offset + data.len() as i64);
                     return Ok(());
@@ -164,11 +158,11 @@ impl EntryWriter {
             if offset > self.end {
                 self.before_hole();
             }
-            bun_sys::set_file_offset(self.fd, offset as u64)?;
+            self.file.seek_to(offset as u64)?;
             self.cursor = offset;
         }
 
-        file.write_all(data)?;
+        self.file.write_all(data)?;
         self.cursor += data.len() as i64;
         self.end = self.end.max(self.cursor);
         Ok(())
@@ -178,7 +172,7 @@ impl EntryWriter {
     pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
         if end > self.end {
             self.before_hole();
-            bun_sys::ftruncate(self.fd, end)?;
+            bun_sys::ftruncate(self.file.fd(), end)?;
             self.end = end;
         }
         Ok(())
@@ -204,24 +198,13 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
-/// Returns the path where node-tar would extract the npm tarball entry `path`, whose leading
-/// `package/` is already removed. The result is empty for an entry that node-tar skips.
-pub fn normalize_npm_entry_path<'a>(
-    path: &[OSPathChar],
-    buf: &'a mut [OSPathChar],
-) -> &'a mut [OSPathChar] {
-    if path
-        .split(|c| bun_paths::is_sep_any_t(*c))
-        .any(|part| part == [b'.' as OSPathChar; 2])
-    {
-        return &mut buf[..0];
-    }
-    #[cfg(windows)]
-    return bun_paths::resolve_path::normalize_buf_t::<u16, bun_paths::platform::Auto>(path, buf);
-    #[cfg(not(windows))]
-    bun_paths::resolve_path::normalize_string_generic_t::<u8, false, false>(path, buf, b'/', |c| {
-        c == b'/'
-    })
+/// Whether Windows takes the normalized `path` to start somewhere else than in the directory it is opened in.
+#[cfg(windows)]
+pub fn starts_elsewhere_on_windows<T: bun_paths::PathChar>(path: &[T]) -> bool {
+    bun_paths::is_absolute_windows_t(path)
+        || matches!(path, [letter, colon, ..]
+            if bun_paths::resolve_path::is_drive_letter_t(*letter) && *colon == T::from_u8(b':'))
+        || path.split(|c| bun_paths::is_sep_any_t(*c)).next() == Some(T::lit(b".."))
 }
 
 /// Returns the first component of an entry's path, which is the archive's root folder.
@@ -364,30 +347,12 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     // returns BadPathName here.
     let it = bun_paths::ComponentIterator::init(sub_path, bun_paths::PathFormat::Windows)?;
     bun_paths::make_path_with(it, |prefix| {
-        match open_dir_at_windows(dir_fd, prefix, opts) {
-            Ok(fd) => {
-                fd.close();
-                Ok(bun_paths::MakePathStep::Created)
-            }
+        match open_dir_at_windows(dir_fd, prefix, opts).map(File::from_fd) {
+            Ok(_) => Ok(bun_paths::MakePathStep::Created),
             Err(e) if e.get_errno() == E::ENOENT => Ok(bun_paths::MakePathStep::NotFound(e.into())),
             Err(e) => Err(e.into()),
         }
     })
-}
-
-struct OutputFile {
-    fd: Fd,
-    close: bool,
-}
-
-impl Drop for OutputFile {
-    fn drop(&mut self) {
-        if self.close {
-            // Closing is slow under Windows antivirus, but closing asynchronously gains nothing and
-            // can make NtSetInformationFile fail.
-            self.fd.close();
-        }
-    }
 }
 
 pub struct Archiver;
@@ -403,8 +368,8 @@ pub mod archiver {
     pub struct Plucker {
         pub contents: MutableString,
         pub(crate) filename_hash: u64,
-        pub found: bool,
-        pub fd: Fd,
+        /// The file `contents` would have been written to.
+        pub file: Option<File>,
     }
 
     impl Plucker {
@@ -412,34 +377,19 @@ pub mod archiver {
             Ok(Plucker {
                 contents: MutableString::init(estimated_size)?,
                 filename_hash: hash(slice_as_bytes(filepath)),
-                fd: Fd::INVALID,
-                found: false,
+                file: None,
             })
         }
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub struct ExtractOptions {
         pub depth_to_skip: usize,
-        pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
         pub skip_symlinks: bool,
         /// Only this call writes to the destination, so it holds no symlink until the last entry is out.
         pub new_destination: bool,
-    }
-
-    impl Default for ExtractOptions {
-        fn default() -> Self {
-            Self {
-                depth_to_skip: 0,
-                close_handles: true,
-                log: false,
-                npm: false,
-                skip_symlinks: false,
-                new_destination: false,
-            }
-        }
     }
 }
 
@@ -453,6 +403,9 @@ pub trait ArchiveAppender {
         false
     }
     fn on_first_directory_name(&mut self, _name: &[u8]) {}
+
+    /// See [`tar::Reader::skipped_header`].
+    fn on_skipped_header(&mut self) {}
 
     fn append(&mut self, path: &[u8]) -> crate::Result<&[u8]> {
         let _ = path;
@@ -472,24 +425,10 @@ impl Archiver {
         // whatever its size.
         leaves_root: &mut dyn FnMut(&[u8]) -> bun_sys::Result<bool>,
     ) -> crate::Result<()> {
-        // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
-        let dir: Fd = 'brk: {
-            let cwd = Fd::cwd();
-
-            // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
-            if bun_paths::is_absolute(root) {
-                let Ok(d) = bun_sys::open_dir_absolute(root) else {
-                    return Ok(());
-                };
-                break 'brk d;
-            } else {
-                let Ok(d) = bun_sys::open_dir_at(cwd, root) else {
-                    return Ok(());
-                };
-                break 'brk d;
-            }
+        // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
+        let Ok(dir) = bun_sys::Dir::open(root) else {
+            return Ok(());
         };
-        let _close_dir = bun_sys::CloseOnDrop::new(dir);
 
         let mut reader = open_memory(file_buffer, Dialect::General)?;
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
@@ -545,7 +484,7 @@ impl Archiver {
                 continue 'loop_;
             }
             #[cfg(windows)]
-            if bun_paths::is_absolute_windows(pathname) {
+            if starts_elsewhere_on_windows(pathname) {
                 continue 'loop_;
             }
             let dirname = strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
@@ -553,11 +492,10 @@ impl Archiver {
             let size: usize = usize::try_from(entry.size().max(0)).unwrap();
             let in_the_way = leaves_root(pathname)?
                 || (size > 0
-                    && match bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0) {
-                        Ok(opened) => {
-                            let _close = bun_sys::CloseOnDrop::new(opened);
-                            bun_sys::get_file_size(opened)? > 0
-                        }
+                    && match bun_sys::openat_a(&dir, pathname, bun_sys::O::WRONLY, 0)
+                        .map(bun_sys::CloseOnDrop::new)
+                    {
+                        Ok(opened) => opened.get_end_pos()? > 0,
                         Err(_) => false,
                     });
 
@@ -671,9 +609,8 @@ impl Archiver {
                 let sep: OSPathChar = b'/' as OSPathChar;
                 let mut i = 0usize;
                 while i < options.depth_to_skip {
-                    // npm counts the empty name before a leading `/` as a component.
                     while let [first, rest @ ..] = remaining {
-                        if *first == sep && !options.npm {
+                        if *first == sep {
                             remaining = rest;
                         } else {
                             break;
@@ -698,7 +635,18 @@ impl Archiver {
             }
             let pathname: &[OSPathChar] = remaining;
 
-            if pathname.len() >= normalized_buf.len() {
+            let normalized = if options.npm {
+                debug_assert_eq!(options.depth_to_skip, 1);
+                normalize_npm_entry_path(entry, &mut normalized_buf[..])?
+            } else {
+                (pathname.len() < normalized_buf.len()).then(|| {
+                    bun_paths::resolve_path::normalize_buf_t::<OSPathChar, bun_paths::platform::Auto>(
+                        pathname,
+                        &mut normalized_buf[..],
+                    )
+                })
+            };
+            let Some(path) = normalized else {
                 if options.log {
                     bun_core::warn!(
                         "Skipping entry with a path longer than the maximum path length: {}\n",
@@ -709,35 +657,9 @@ impl Archiver {
                     );
                 }
                 continue;
-            }
-
-            let normalized = if options.npm {
-                normalize_npm_entry_path(pathname, &mut normalized_buf[..])
-            } else {
-                bun_paths::resolve_path::normalize_buf_t::<OSPathChar, bun_paths::platform::Auto>(
-                    pathname,
-                    &mut normalized_buf[..],
-                )
             };
-            let normalized_len = normalized.len();
-            normalized_buf[normalized_len] = 0;
-            // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
-            let path: &mut [OSPathChar] = &mut normalized_buf[..normalized_len];
             if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
                 continue;
-            }
-
-            // Skip entries whose normalized path is absolute on Windows.
-            // `openatWindows` ignores `dir_fd` for absolute inputs (drive
-            // letter or UNC), so without this guard a tar entry could
-            // resolve outside the extraction directory. On POSIX the
-            // tokenize-on-'/' step already strips any leading separators,
-            // so `normalizeBufT` cannot produce an absolute output.
-            #[cfg(windows)]
-            {
-                if bun_paths::is_absolute_windows_t::<u16>(path) {
-                    continue 'loop_;
-                }
             }
 
             #[cfg(windows)]
@@ -745,14 +667,7 @@ impl Archiver {
                 // When writing files on Windows, translate the characters to their
                 // 0xf000 higher-encoded versions.
                 // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
-                let mut remain: &mut [OSPathChar] = path;
-                if strings::starts_with_windows_drive_letter_t::<OSPathChar>(remain) {
-                    // don't encode `:` from the drive letter
-                    // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
-                    remain = &mut remain[2..];
-                }
-
-                for ch in remain.iter_mut() {
+                for ch in path.iter_mut() {
                     match *ch {
                         c if c == b'|' as OSPathChar
                             || c == b'<' as OSPathChar
@@ -767,7 +682,15 @@ impl Archiver {
                 }
             }
 
-            let path_slice: &[OSPathChar] = &path[..];
+            // On POSIX the leading separators are already gone.
+            #[cfg(windows)]
+            if starts_elsewhere_on_windows(path) {
+                continue 'loop_;
+            }
+
+            let normalized_len = path.len();
+            let path_z = OSPathSliceZ::nul_terminate(&mut normalized_buf, normalized_len);
+            let path_slice: &[OSPathChar] = path_z;
 
             if options.log {
                 bun_core::prettyln!(
@@ -872,9 +795,6 @@ impl Archiver {
                     #[cfg(not(windows))]
                     let file_handle_native: Fd = {
                         // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
-                        // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
-                        let path_z: &ZStr =
-                            unsafe { ZStr::from_raw(path_slice.as_ptr(), path_slice.len()) };
                         match beneath::openat(dir_fd, path_z, flags, mode, symlinks) {
                             Ok(fd) => fd,
                             Err(err) => match err.get_errno() {
@@ -891,16 +811,7 @@ impl Archiver {
                         }
                     };
 
-                    let mut output = match file_handle_native.make_lib_uv_owned() {
-                        Ok(fd) => OutputFile {
-                            fd,
-                            close: options.close_handles,
-                        },
-                        Err(err) => {
-                            file_handle_native.close();
-                            return Err(err.into());
-                        }
-                    };
+                    let output = File::from_fd(file_handle_native).make_lib_uv_owned()?;
 
                     let size: usize = usize::try_from(entry.size().max(0)).unwrap();
 
@@ -923,15 +834,14 @@ impl Archiver {
                                         }
                                         return Err(err.into());
                                     }
-                                    plucker_.found = !plucker_.contents.list.is_empty();
-                                    plucker_.fd = output.fd;
-                                    output.close = false;
+                                    plucker_.file =
+                                        (!plucker_.contents.list.is_empty()).then_some(output);
                                     continue 'loop_;
                                 }
                             }
                         }
                         if let Err(err) =
-                            read_data_into_fd(&mut reader, output.fd, &mut write_strategy)
+                            read_data_into_file(&mut reader, output, &mut write_strategy)
                         {
                             if options.log {
                                 log_archive_error(path_slice, err);
@@ -942,6 +852,10 @@ impl Archiver {
                 }
                 _ => {}
             }
+        }
+
+        if reader.skipped_header() {
+            appender.on_skipped_header();
         }
 
         #[cfg(unix)]
@@ -968,12 +882,8 @@ impl Archiver {
             }
         };
 
-        let _close_guard = scopeguard::guard(dir, |d| {
-            if options.close_handles {
-                d.close();
-            }
-        });
+        let dir = File::from_fd(dir);
 
-        Self::extract_to_dir(file_buffer, dir, ctx, appender, options)
+        Self::extract_to_dir(file_buffer, dir.fd(), ctx, appender, options)
     }
 }

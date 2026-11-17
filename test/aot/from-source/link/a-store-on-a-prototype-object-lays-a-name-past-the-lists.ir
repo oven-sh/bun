@@ -1,0 +1,15 @@
+# `Base.prototype.extra = v`: no member of Base is declared under the name. It is told of the prototype side of Base and of every class below, and of no static side.
+# -- source: main.js
+# class Base {}
+# class Heir extends Base { own = 1; }
+# class Beside {}
+# class Last {}
+# Base.prototype.extra = 5;
+# print(new Heir().extra, new Beside(), new Last());
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}names-defined-past-lists=[prototype]
+# CHECK: layout L1 {{*}}names-defined-past-lists=[prototype]
+# CHECK: layout L2
+# CHECK-NOT: names-defined-past-lists
+# CHECK: layout L3

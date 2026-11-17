@@ -3,7 +3,6 @@
 # directly, and behind a mapper that is proven to be neither the call never returns. Each of the three through one function, a mapper that is a closure on one way and a number on the other, and what
 # stands behind and around a call that always throws.
 # RUN: run-in-shell mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: true
 # CHECK-NEXT: 2,3 1,2
 # CHECK-NEXT: 0 TypeError

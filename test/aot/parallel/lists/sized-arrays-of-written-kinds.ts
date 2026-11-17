@@ -1,0 +1,16 @@
+// Empty literals of a written kind in loops, filled to other lengths in later iterations; what they hold, their kinds, what is stored later.
+const out: string[] = [];
+const show = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e: any) { r = e.constructor.name + ": " + e.message; } out.push(name + " " + String(r)); };
+interface Point { x: number; y: number }
+const words: string[] = "alpha beta gamma delta epsilon zeta eta theta".split(" ");
+function texts(n: number, length: (i: number) => number) { const r: string[] = []; for (let i = 0; i < n; i++) { const t: string[] = []; for (let k = 0; k < length(i); k++) t.push(words[(i + k) & 7]); r.push(t.join("") + t.length); } return r.join().slice(-300); }
+function points(n: number) { let s = 0; const kept: Point[][] = []; for (let i = 0; i < n; i++) { const t: Point[] = []; for (let k = 0; k < (i * 7) % 40; k++) t.push({ x: k, y: i }); for (const p of t) s += p.x + p.y; if (i % 50 === 0) kept.push(t); } if (typeof Bun === "object") Bun.gc(true); return s + kept.map(t => t.length + ":" + (t.length ? t[t.length - 1].x : "")).join(); }
+function unions(n: number) { const r: string[] = []; for (let i = 0; i < n; i++) { const t: (string | number)[] = []; const u: (Point | null)[] = []; for (let k = 0; k < i % 9; k++) { t.push(k & 1 ? k : "t" + k); u.push(k & 1 ? null : { x: k, y: k }); } r.push(t.join("") + u.length); } return r.join(); }
+function indexed(n: number) { let s = ""; for (let i = 0; i < n; i++) { const t: string[] = []; for (let k = 0; k < i % 6; k++) t[k] = words[k]; t[t.length + (i % 4 === 3 ? 2 : 0)] = "end"; s += t.length + (1 in t ? "y" : "n") + Object.keys(t).length; } return s; }
+function unchecked(n: number) { let s = ""; for (let i = 0; i < n; i++) { const t: string[] = []; for (let k = 0; k < 5; k++) (t as any[]).push(k === 3 ? 1.5 : k === 4 ? undefined : k); s += t.join("|") + t.map(x => typeof x)[3]; } return s.slice(-200); }
+function nested(n: number) { const r: string[][][] = []; for (let i = 0; i < n; i++) { const t: string[][] = []; for (let k = 0; k < i; k++) { const u: string[] = []; for (let m = 0; m < k; m++) u.push(words[m & 7]); t.push(u); } r.push(t); } return r.map(t => t.map(u => u.length).join("")).join(); }
+function frozen(n: number) { let s = ""; for (let i = 0; i < n; i++) { const t: string[] = []; if (i & 1) Object.freeze(t); try { t.push("x"); } catch (e: any) { s += e.constructor.name; } s += t.length; } return s; }
+function big(n: number) { let s = 0; for (let i = 0; i < n; i++) { const t: string[] = []; for (let k = 0; k < 2000; k++) t.push(words[k & 7]); s += t.length + t[1999].length; } return s; }
+show("same", () => texts(300, () => 16)); show("growing", () => texts(200, i => i % 60)); show("falling", () => texts(200, i => Math.max(0, 100 - i))); show("none", () => texts(100, () => 0)); show("once long", () => texts(100, i => i === 50 ? 500 : 2));
+show("points", () => points(400)); show("unions", () => unions(100)); show("indexed", () => indexed(60)); show("unchecked", () => unchecked(50)); show("nested", () => nested(14)); show("frozen", () => frozen(20)); show("big", () => big(20));
+for (const line of out) console.log(line);

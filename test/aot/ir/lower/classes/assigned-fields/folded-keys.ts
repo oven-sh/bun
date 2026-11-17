@@ -1,12 +1,14 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="Sum" {{*}}kind=BaseConstructor
-// CHECK-NOT: Set
-// CHECK: CallDirect
-// CHECK-NOT: Set
+// CHECK-NOT: CallDirect
+// CHECK: PropSet {{*}}key="ab"
+// CHECK: PropSet {{*}}key="a"
+// CHECK-NOT: CallDirect
 // CHECK-LABEL: function {{*}}name="Template" {{*}}kind=BaseConstructor
-// CHECK-NOT: Set
-// CHECK: CallDirect
-// CHECK-NOT: Set
+// CHECK-NOT: CallDirect
+// CHECK: PropSet {{*}}key="first-b"
+// CHECK: PropSet {{*}}key="b"
+// CHECK-NOT: CallDirect
 // CHECK-LABEL: function {{*}}name="Chosen" {{*}}kind=BaseConstructor
 // CHECK-NOT: CallDirect
 // CHECK: PropSet {{*}}key="chosen"

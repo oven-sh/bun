@@ -32,7 +32,7 @@ console.log(lines.join("\n"));
 
 // GENERATED: shape digest
 // CHECK-LABEL: function {{*}}name="shape"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: anything):
 // CHECK-NEXT: v2 = Builtin builtin=Object
 // CHECK-NEXT: v3 = Builtin builtin=ObjectCreate
@@ -57,7 +57,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="digest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Integer
 // CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}

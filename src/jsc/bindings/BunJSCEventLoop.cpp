@@ -43,7 +43,7 @@ extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t now
 {
     ASSERT(vm);
     unsigned int runAgainInMs = 0;
-    const bool previouslyHadAccess = vm->heap.hasHeapAccess();
+    const bool previouslyHadAccess = vm->heap.hasAccess();
     // sanity check for debug builds to ensure we're not doing a
     // use-after-free here
     ASSERT(vm->refCount() > 0);

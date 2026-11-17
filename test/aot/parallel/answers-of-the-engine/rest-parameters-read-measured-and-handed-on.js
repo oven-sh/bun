@@ -1,5 +1,5 @@
 // A rest parameter that is only indexed, measured, iterated or spread on, one with no element, one that is written to, grown, returned, leaked to a closure and handed to built-ins.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function count(...all) { return all.length; }
 function first(...all) { return String(all[0]); }

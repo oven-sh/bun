@@ -244,8 +244,9 @@ test("receiveMessageOnPort works across threads", async () => {
   let sharedBuffer = new SharedArrayBuffer(8);
   let sharedBufferView = new Int32Array(sharedBuffer);
   let msg = { sharedBuffer };
+  const woken = Atomics.waitAsync(sharedBufferView, 0, 0).value;
   worker.postMessage(msg);
-  expect(await Atomics.waitAsync(sharedBufferView, 0, 0).value).toBe("ok");
+  expect(await woken).toBe("ok");
   const message = receiveMessageOnPort(port1);
   expect(message).toBeDefined();
   expect(message!.message).toBe("done!");
@@ -3088,7 +3089,6 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     socketError: 4,
     udpClose: 5,
     watcherClose: 6,
-    intervalTick: 7,
     streamCancel: 8,
     portClose: 9,
     beforeExit: 10,
@@ -3106,7 +3106,7 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     server.on("close", () => put(${TAG.serverClose}));
     const udp = dgram.createSocket("udp4"); udp.bind(0, "127.0.0.1"); udp.on("close", () => put(${TAG.udpClose}));
     const watcher = fs.watch(os.tmpdir(), () => {}); watcher.on("close", () => put(${TAG.watcherClose}));
-    setInterval(() => put(${TAG.intervalTick}), 1).unref();
+    let ticks = 0; setInterval(() => ticks++, 1).unref();
     const { port1, port2 } = new MessageChannel(); port1.on("message", () => {}); port1.on("close", () => put(${TAG.portClose})); globalThis.keepPeer = port2;
     Bun.serve({ port: 0, development: false, fetch: () => new Response("x") });
     new ReadableStream({ pull() {}, cancel() { put(${TAG.streamCancel}); } }).getReader().read();
@@ -3140,7 +3140,7 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
       code = await exited;
     }
     const n = Math.min(Atomics.load(log, 0), log.length - 1);
-    const tags = Array.from(log.slice(1, 1 + n)).filter(t => t !== TAG.intervalTick);
+    const tags = Array.from(log.slice(1, 1 + n));
     return { code, tags, errors };
   }
 

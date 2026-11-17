@@ -1,4 +1,5 @@
 // Object.create lays an object below the prototype object of a class, without the constructor: it is an instance by `instanceof` and has none of the fields.
+// Under: --aot-check=FlowFixpoint: the parameter of deed() meets prototype objects, null, Object.prototype and an instance: the fold of what meets lost the built-in without the mark that every other join sets, and the flow was not closed.
 class Leaf { constructor() { this.a = 1; } get twice() { return this.a * 2; } }
 class Twig extends Leaf { constructor() { super(); this.b = 2; } }
 function isLeaf(x) { return x instanceof Leaf; }

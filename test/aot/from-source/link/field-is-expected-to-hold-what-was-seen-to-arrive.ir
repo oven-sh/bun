@@ -1,12 +1,9 @@
 # What the held reading says of a field is an expectation, tested at each use: what was seen to arrive, whatever else unseen code may bring. One store of something unseen takes the proof, not the guess.
 # RUN: link fields mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-NOT: "run" proven
 # RUN(HELD): link held fields mechanisms=all
-# REQUIRES(HELD): entries-of-bun
 # HELD: "run" proven={{*}}f2
 # RUN(ALL): run-in-shell mechanisms=all
-# REQUIRES(ALL): entries-of-bun
 # ALL: 1
 # ALL-NEXT: undefined
 # ALL-NEXT: exited with 0

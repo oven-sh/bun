@@ -5,17 +5,17 @@ use crate::{PrintErr, Printer};
 use bun_alloc::Arena;
 
 /// A [@custom-media](https://drafts.csswg.org/mediaqueries-5/#custom-mq) rule.
-pub struct CustomMediaRule {
+pub struct CustomMediaRule<'bump> {
     /// The name of the declared media query.
-    pub name: DashedIdent,
+    pub name: DashedIdent<'bump>,
     /// The media query to declare.
-    pub(crate) query: MediaList,
+    pub(crate) query: MediaList<'bump>,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,
 }
 
-impl CustomMediaRule {
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+impl<'bump> CustomMediaRule<'bump> {
+    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
         Self {
             name: self.name,
             query: self.query.deep_clone(bump),

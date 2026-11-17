@@ -1,26 +1,18 @@
 use core::cell::Cell;
 
+use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_alloc::{AllocError, Arena as Bump};
 // `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
 // is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
 use self::StringEncoding as Encoding;
 use bun_alloc::ArenaVec as BumpVec;
-use bun_core::SmolStr;
 use smallvec::SmallVec;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Moved from `bun_shell`:
-//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter
-// These live here so `bun_shell` (higher tier) can depend on `shell_parser`
-// without a back-edge. `bun_shell` re-exports these under its old paths.
-// ═══════════════════════════════════════════════════════════════════════════
 
 use bun_core::strings::{CodepointIterator, Cursor};
 
 /// Encoding of the shell input bytes being expanded.
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum StringEncoding {
+enum StringEncoding {
     Ascii,
     Wtf8,
 }
@@ -158,7 +150,7 @@ enum ShellSrc<'a> {
     Unicode(SrcUnicode<'a>),
 }
 
-pub struct ShellCharIter<'a, const E: StringEncoding> {
+struct ShellCharIter<'a, const E: StringEncoding> {
     src: ShellSrc<'a>,
 }
 
@@ -255,30 +247,17 @@ pub struct ExpansionVariants {
     pub(crate) end: u16,
 }
 
-#[derive(bun_core::EnumTag)]
+type Text = SmallVec<[u8; 16]>;
+
+#[derive(PartialEq, Eq, bun_core::EnumTag)]
 #[enum_tag(existing = TokenTag)]
 pub enum Token {
     Open(ExpansionVariants),
     Comma,
-    Text(SmolStr),
+    Text(Text),
     Close,
     Eof,
 }
-
-impl PartialEq for Token {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Token::Open(a), Token::Open(b)) => a == b,
-            (Token::Comma, Token::Comma) => true,
-            // Compare text content; content comparison is the intended semantics.
-            (Token::Text(a), Token::Text(b)) => a.slice() == b.slice(),
-            (Token::Close, Token::Close) => true,
-            (Token::Eof, Token::Eof) => true,
-            _ => false,
-        }
-    }
-}
-impl Eq for Token {}
 
 impl core::fmt::Debug for Token {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -289,25 +268,9 @@ impl core::fmt::Debug for Token {
                 .field("end", &v.end)
                 .finish(),
             Token::Comma => f.write_str("Comma"),
-            Token::Text(s) => write!(f, "Text({:?})", bstr::BStr::new(s.slice())),
+            Token::Text(s) => write!(f, "Text({:?})", bstr::BStr::new(&s[..])),
             Token::Close => f.write_str("Close"),
             Token::Eof => f.write_str("Eof"),
-        }
-    }
-}
-
-// Deep-copies via `from_slice` so the parser can own
-// its token. PERF: extra alloc on heap-backed SmolStr — profile if hot.
-impl Clone for Token {
-    fn clone(&self) -> Self {
-        match self {
-            Token::Open(v) => Token::Open(*v),
-            Token::Comma => Token::Comma,
-            Token::Text(s) => {
-                Token::Text(SmolStr::from_slice(s.slice()).expect("OOM cloning SmolStr"))
-            }
-            Token::Close => Token::Close,
-            Token::Eof => Token::Eof,
         }
     }
 }
@@ -319,18 +282,6 @@ pub enum TokenTag {
     Text,
     Close,
     Eof,
-}
-
-impl Token {
-    pub(crate) fn to_text(&self) -> SmolStr {
-        match self {
-            Token::Open(_) => SmolStr::from_char(b'{'),
-            Token::Comma => SmolStr::from_char(b','),
-            Token::Text(txt) => SmolStr::from_slice(txt.slice()).expect("OOM cloning SmolStr"),
-            Token::Close => SmolStr::from_char(b'}'),
-            Token::Eof => SmolStr::empty(),
-        }
-    }
 }
 
 // ─── JSON debug formatters ───────────────────────────────────────────────────
@@ -367,7 +318,7 @@ pub fn tokens_to_json(tokens: &[Token]) -> Vec<u8> {
             Token::Eof => out.extend_from_slice(b"\"eof\""),
             Token::Text(txt) => {
                 out.extend_from_slice(b"{\"text\":");
-                json_escape_into(&mut out, txt.slice());
+                json_escape_into(&mut out, txt);
                 out.push(b'}');
             }
         }
@@ -386,7 +337,7 @@ fn ast_atom_to_json(atom: &ast::Atom<'_>, out: &mut Vec<u8>) {
     match atom {
         ast::Atom::Text(txt) => {
             out.extend_from_slice(b"{\"text\":");
-            json_escape_into(out, txt.slice());
+            json_escape_into(out, txt);
             out.push(b'}');
         }
         ast::Atom::Expansion(exp) => {
@@ -444,7 +395,7 @@ pub mod ast {
     use super::*;
 
     pub enum Atom<'a> {
-        Text(SmolStr),
+        Text(&'a [u8]),
         Expansion(Expansion<'a>),
     }
 
@@ -485,20 +436,15 @@ fn check_brace_group_count(tokens: &[Token]) -> Result<(), ParserError> {
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ParserError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("UnexpectedToken")]
     UnexpectedToken,
     #[error("TooManyBraces")]
     TooManyBraces,
 }
 
-bun_core::oom_from_alloc!(ParserError);
-
 impl From<ParserError> for crate::Error {
     fn from(e: ParserError) -> Self {
         match e {
-            ParserError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ParserError::UnexpectedToken => crate::Error::UnexpectedToken,
             ParserError::TooManyBraces => crate::Error::TooManyBraces,
         }
@@ -554,7 +500,7 @@ fn expand_nested<'a>(
 
         match &root.atoms {
             ast::GroupAtoms::Single(ast::Atom::Text(txt)) => {
-                out[out_key].extend_from_slice(txt.slice());
+                out[out_key].extend_from_slice(txt);
                 if let Some(bubble_up) = root.bubble_up.get() {
                     let next = root.bubble_up_next.get().unwrap();
                     return expand_nested(
@@ -612,7 +558,7 @@ fn expand_nested<'a>(
         let atom: &ast::Atom<'a> = &many[i_];
         match atom {
             ast::Atom::Text(txt) => {
-                out[out_key].extend_from_slice(txt.slice());
+                out[out_key].extend_from_slice(txt);
             }
             ast::Atom::Expansion(expansion) => {
                 let length = out[out_key].len();
@@ -665,7 +611,7 @@ fn expand_flat(
     for atom in tokens[start..end].iter() {
         match atom {
             Token::Text(txt) => {
-                out[out_key].extend_from_slice(txt.slice());
+                out[out_key].extend_from_slice(txt);
             }
             Token::Close => {
                 depth -= 1;
@@ -819,14 +765,14 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn advance(&mut self) -> Token {
+    fn advance(&mut self) -> &'a Token {
         if !self.is_at_end() {
             self.current += 1;
         }
         if self.current > 0 {
             self.prev()
         } else {
-            self.peek().clone()
+            self.peek()
         }
     }
 
@@ -854,12 +800,12 @@ impl<'a> Parser<'a> {
         false
     }
 
-    fn peek(&self) -> &Token {
+    fn peek(&self) -> &'a Token {
         &self.tokens[self.current]
     }
 
-    fn prev(&self) -> Token {
-        self.tokens[self.current - 1].clone()
+    fn prev(&self) -> &'a Token {
+        &self.tokens[self.current - 1]
     }
 }
 
@@ -970,7 +916,13 @@ fn build_expansion_table(
     Ok(())
 }
 
-pub type Lexer<'a> = NewLexer<'a, { Encoding::Ascii }>;
+pub fn tokenize(src: &[u8]) -> LexerOutput {
+    if bun_core::strings::is_all_ascii(src) {
+        NewLexer::<{ Encoding::Ascii }>::tokenize(src)
+    } else {
+        NewLexer::<{ Encoding::Wtf8 }>::tokenize(src)
+    }
+}
 
 type Chars<'a, const E: Encoding> = ShellCharIter<'a, E>;
 
@@ -979,32 +931,30 @@ pub struct LexerOutput {
     pub contains_nested: bool,
 }
 
-pub(crate) type BraceLexerError = AllocError;
-
-pub struct NewLexer<'a, const ENCODING: Encoding> {
+struct NewLexer<'a, const ENCODING: Encoding> {
     chars: Chars<'a, ENCODING>,
     tokens: Vec<Token>,
     contains_nested: bool,
 }
 
 impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
-    pub fn tokenize(src: &'a [u8]) -> Result<LexerOutput, BraceLexerError> {
+    fn tokenize(src: &'a [u8]) -> LexerOutput {
         let mut this = Self {
             chars: Chars::<ENCODING>::init(src),
             tokens: Vec::new(),
             contains_nested: false,
         };
 
-        let contains_nested = this.tokenize_impl()?;
+        this.tokenize_impl();
 
-        Ok(LexerOutput {
+        LexerOutput {
             tokens: this.tokens,
-            contains_nested,
-        })
+            contains_nested: this.contains_nested,
+        }
     }
 
     // FIXME: implement rollback on invalid brace
-    fn tokenize_impl(&mut self) -> Result<bool, BraceLexerError> {
+    fn tokenize_impl(&mut self) {
         // Unclosed brace expansion algorithm
         // {hi,hey
         // *xx*xxx
@@ -1058,7 +1008,7 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
                                 // brace expansion (bash semantics): demote the Open
                                 // back to a literal `{` and emit this `}` as text.
                                 self.replace_token_with_string(top.tok_idx);
-                                self.tokens.push(Token::Text(SmolStr::from_char(b'}')));
+                                self.tokens.push(Token::Text(Text::from_slice(b"}")));
                             }
                             continue;
                         }
@@ -1074,7 +1024,7 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
                 }
             }
 
-            self.append_char(char)?;
+            self.append_char(char);
         }
 
         // Unclosed braces
@@ -1082,13 +1032,11 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
             self.rollback_braces(top.tok_idx);
         }
 
-        self.flatten_tokens()?;
+        self.flatten_tokens();
         self.tokens.push(Token::Eof);
-
-        Ok(self.contains_nested)
     }
 
-    fn flatten_tokens(&mut self) -> Result<(), AllocError> {
+    fn flatten_tokens(&mut self) {
         let mut brace_count: u32 = 0;
         let mut write = 0usize;
         for read in 0..self.tokens.len() {
@@ -1109,7 +1057,7 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
                 let taken = core::mem::replace(&mut self.tokens[read], Token::Eof);
                 if let (Token::Text(prev), Token::Text(cur)) = (&mut self.tokens[write - 1], taken)
                 {
-                    prev.append_slice(cur.slice())?;
+                    prev.extend_from_slice(&cur);
                 }
             } else {
                 self.tokens.swap(write, read);
@@ -1117,7 +1065,6 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
             }
         }
         self.tokens.truncate(write);
-        Ok(())
     }
 
     fn rollback_braces(&mut self, starting_idx: u32) {
@@ -1151,10 +1098,8 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
                     i += 1;
                     continue;
                 }
-                Token::Close | Token::Comma | Token::Text(_) => {
-                    self.replace_token_with_string(i);
-                }
-                Token::Eof => {}
+                Token::Close | Token::Comma => self.replace_token_with_string(i),
+                Token::Text(_) | Token::Eof => {}
             }
             i += 1;
         }
@@ -1162,39 +1107,24 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
 
     fn replace_token_with_string(&mut self, token_idx: u32) {
         let tok = &mut self.tokens[token_idx as usize];
-        let tok_text = tok.to_text();
-        *tok = Token::Text(tok_text);
+        *tok = Token::Text(Text::from_slice(match tok {
+            Token::Open(_) => b"{",
+            Token::Comma => b",",
+            Token::Close => b"}",
+            Token::Text(_) | Token::Eof => return,
+        }));
     }
 
-    fn append_char(
-        &mut self,
-        char: <Chars<'a, ENCODING> as CharIter<'a>>::CodepointType,
-    ) -> Result<(), AllocError> {
-        if !self.tokens.is_empty() {
-            let last_idx = self.tokens.len() - 1;
-            if let Token::Text(last) = &mut self.tokens[last_idx] {
-                if ENCODING == Encoding::Ascii {
-                    // SAFETY: ascii codepoint is u8
-                    last.append_slice(&[char as u8])?;
-                    return Ok(());
-                }
-                let mut buf = [0u8; 4];
-                let len = bun_core::encode_wtf8_rune(&mut buf, char);
-                last.append_slice(&buf[..len])?;
-                return Ok(());
-            }
+    fn append_char(&mut self, char: <Chars<'a, ENCODING> as CharIter<'a>>::CodepointType) {
+        let mut buf = [char as u8, 0, 0, 0];
+        let len = match ENCODING {
+            Encoding::Ascii => 1,
+            Encoding::Wtf8 => bun_core::encode_wtf8_rune(&mut buf, char),
+        };
+        match self.tokens.last_mut() {
+            Some(Token::Text(last)) => buf[..len].iter().for_each(|&byte| last.push(byte)),
+            _ => self.tokens.push(Token::Text(Text::from_slice(&buf[..len]))),
         }
-
-        if ENCODING == Encoding::Ascii {
-            self.tokens
-                .push(Token::Text(SmolStr::from_slice(&[char as u8])?));
-        } else {
-            let mut buf = [0u8; 4];
-            let len = bun_core::encode_wtf8_rune(&mut buf, char);
-            self.tokens
-                .push(Token::Text(SmolStr::from_slice(&buf[..len])?));
-        }
-        Ok(())
     }
 
     fn eat(&mut self) -> Option<<Chars<'a, ENCODING> as CharIter<'a>>::InputChar> {
@@ -1213,23 +1143,20 @@ mod tests {
             // No comma: the whole group is literal text.
             TestCase(
                 b"{}",
-                vec![Token::Text(SmolStr::from_slice(b"{}").unwrap()), Token::Eof],
+                vec![Token::Text(Text::from_slice(b"{}")), Token::Eof],
             ),
             TestCase(
                 b"{foo}",
-                vec![
-                    Token::Text(SmolStr::from_slice(b"{foo}").unwrap()),
-                    Token::Eof,
-                ],
+                vec![Token::Text(Text::from_slice(b"{foo}")), Token::Eof],
             ),
             // With a comma: a real brace group.
             TestCase(
                 b"{a,b}",
                 vec![
                     Token::Open(ExpansionVariants::default()),
-                    Token::Text(SmolStr::from_slice(b"a").unwrap()),
+                    Token::Text(Text::from_slice(b"a")),
                     Token::Comma,
-                    Token::Text(SmolStr::from_slice(b"b").unwrap()),
+                    Token::Text(Text::from_slice(b"b")),
                     Token::Close,
                     Token::Eof,
                 ],
@@ -1239,7 +1166,7 @@ mod tests {
         for test_case in test_cases {
             let TestCase(src, expected) = test_case;
             // NOTE: don't use arena here so that we can test for memory leaks
-            let result = Lexer::tokenize(src).unwrap();
+            let result = NewLexer::<{ Encoding::Ascii }>::tokenize(src);
             assert_eq!(result.tokens, expected);
         }
     }

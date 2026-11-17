@@ -1,0 +1,1 @@
+import { word, bump } from "./stars.mjs"; import * as all from "./stars.mjs"; export const read = () => [word, bump(), all.word, Object.keys(all).join("+")].join(); export const space = all;

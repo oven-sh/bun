@@ -1,0 +1,12 @@
+# -- source: stored-lengths-are-known.ts
+# declare function sink(value: unknown): void;
+# export {};
+# function cut(list: number[]) { list.length = 2; return list.length; }
+# sink(cut([1, 2, 3]));
+# -- end of source
+# The length behind the store is the stored one.
+# f1 = cut
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = SetArrayLength
+# CHECK-NOT: = GetArrayLength

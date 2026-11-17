@@ -165,7 +165,7 @@ impl Declarations<'_, '_> {
         }
         if let Some(symbol) = symbol {
             return (!is_wrapper_parameter && !self.blocks_annex_b_var(symbol))
-                .then(|| self.bound.export_symbol_of_value_symbol_if_exported(symbol));
+                .then(|| self.bound.exported_value(symbol));
         }
         let (decl, kind) = (Decl::Fn(f), DeclarationKind::Var);
         let flags = SymFlags::FUNCTION_SCOPED_VARIABLE;

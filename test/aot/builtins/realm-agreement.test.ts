@@ -170,6 +170,20 @@ test("an object of the table that says how it is printed lists the method", asyn
   expect(Object.hasOwn(Object.getPrototypeOf(describe), Symbol.for("nodejs.util.inspect.custom"))).toBe(false);
 });
 
+// The flow analysis takes it that a name that a loop over an object gave finds on it only what the table says can be listed.
+test("a member that the table says no loop over names lists is not enumerable", async () => {
+  const list: string[] = JSON.parse((await runFile(mismatches)).stdout);
+  expect(list.filter(line => line.includes("no loop over names lists it"))).toEqual([]);
+  const script = [
+    'import { aotBuiltinMismatches } from "bun:internal-for-testing";',
+    'Object.defineProperty(Array.prototype, "push", { enumerable: true });',
+    "console.log(JSON.stringify(aotBuiltinMismatches()));",
+  ].join("\n");
+  expect(JSON.parse((await runFile(script)).stdout)).toContain(
+    "Array.prototype.push: is enumerable, and the table says that no loop over names lists it",
+  );
+});
+
 test("a mismatch is reported", async () => {
   const script = [
     'import { aotBuiltinMismatches } from "bun:internal-for-testing";',

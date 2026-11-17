@@ -16,7 +16,7 @@ pub(super) struct DefinitionSite {
 pub(super) enum ExportWriter {
     Loader,
     Body,
-    Face,
+    Facade,
     Capture,
 }
 

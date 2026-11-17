@@ -1,7 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 
-// A direct eval in compiled code: what it returns for each kind of argument, what its text sees and changes around the call, what it declares in strict and in sloppy functions, how it fails, and what import() in the text resolves against. One row differs from plain Bun: `this` at the top level of a CommonJS file is the receiver of the call, the first `exports`, also in the text of a direct eval, where plain Bun has the module object.
+// A direct eval in compiled code: what it returns for each kind of argument, what its text sees and changes around the call, what it declares in strict and in sloppy functions, how it fails, and what import() in the text resolves against. (A call whose whole text is written as `import("..")` is compiled as that import(): the texts here are joined.) One row differs from plain Bun: `this` at the top level of a CommonJS file is the receiver of the call, the first `exports`, also in the text of a direct eval, where plain Bun has the module object.
 const path = require("node:path");
 module.exports = { marker: "direct eval" };
 (globalThis as any).directEvalEvaluations = ((globalThis as any).directEvalEvaluations ?? 0) + 1;
@@ -75,7 +75,7 @@ class StrictCode {
     return seen;
   };
   static imports = function (): any[] {
-    return [eval('import("node:path")'), eval('import("./direct-eval-from-compiled-code.ts")'), eval('import("./no-such-file.ts")')];
+    return [eval('import("node:path")' + ""), eval('import("./direct-eval-from-compiled-code.ts")' + ""), eval('import("./no-such-file.ts")' + "")];
   };
 }
 const { text: strictText, scope: strictScope, declares: strictDeclares, imports: strictImports } = StrictCode;
@@ -233,7 +233,7 @@ report("var of an indirect eval", () => {
 });
 
 function sloppyImports(): any[] {
-  return [eval('import("node:path")'), eval('import("./direct-eval-from-compiled-code.ts")'), eval('import("./no-such-file.ts")')];
+  return [eval('import("node:path")' + ""), eval('import("./direct-eval-from-compiled-code.ts")' + ""), eval('import("./no-such-file.ts")' + "")];
 }
 const importViews: [string, (namespace: any) => any][] = [
   ["a built-in module", namespace => typeof namespace.join],

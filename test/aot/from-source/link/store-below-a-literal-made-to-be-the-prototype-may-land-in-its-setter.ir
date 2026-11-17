@@ -1,7 +1,7 @@
 # `F.prototype = { set slot(v) { kept.push(v); } }`: what the constructor stores under `slot` is handed to the setter, which keeps it, and the object gets no property.
-# The names of the literal are followed, and still the store under `prototype` lets F and its layout go, because the literal lays an accessor. With the layout goes what its field takes.
-# If they stayed, `slot` would be proven filled, and `handed` of Q a number while the setter has kept the object and a text is stored there.
-# G, whose literal lists a method alone and is made to be the prototype object, and R are the control. Each field has a name of its own, so no check goes by the number of a layout.
+# The closure of the setter is in sight, so F and its layout stay: what the constructor stores flows into the setter, out of the list that keeps it, and the string that is stored there is in `handed`.
+# If the store landed in the object, `slot` would be proven filled, and `handed` of Q a number while the setter has kept the object and a string is stored there.
+# G, whose literal lists a method alone, and R are the control. Each field has a name of its own, so no check goes by the number of a layout.
 # -- source: main.js
 # const kept = [];
 # function F(v) { this.slot = v; }
@@ -16,12 +16,12 @@
 # -- end of source
 # RUN(SCAN): summary f0
 # SCAN: made-for-it
-# SCAN-NOT: made-for-it
+# SCAN: made-for-it
 # RUN(CONTROL): link fields mechanisms=all
-# CONTROL: "control" proven=i32 writers-known
+# CONTROL: "control" proven=int[0, 2147483647] writers-known
 # RUN(PLAIN): link fields mechanisms=all
 # PLAIN: "plain" proven=L{{*}}filled
 # RUN(KEPT): link fields mechanisms=all
-# KEPT-NOT: "handed" proven
+# KEPT: "handed" proven=int[0, 2147483647]|string
 # KEPT-NOT: "slot" proven
 # KEPT-NOT: "slot" {{*}}filled

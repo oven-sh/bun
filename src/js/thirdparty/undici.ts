@@ -149,10 +149,34 @@ async function applyConnect(url, connect, signal) {
   return { url: pinned, host, serverName: protocol === "https:" ? bare : undefined };
 }
 
-// Per-hop options for a pinned connection. The original hostname goes into
-// tls.serverName; the user's own serverName or proxy wins. A pinned hop is a
-// direct connection, like undici's Agent, so the environment proxy is off.
-function pinnedInit(init, pin) {
+// The connect options undici's connector hands to tls.connect.
+const kConnectTlsKeys = [
+  "ca",
+  "cert",
+  "key",
+  "passphrase",
+  "rejectUnauthorized",
+  "checkServerIdentity",
+  "ciphers",
+  "crl",
+  "servername",
+];
+
+function connectTls(connect) {
+  let out;
+  for (let i = 0; i < kConnectTlsKeys.length; i++) {
+    const key = kConnectTlsKeys[i];
+    const value = connect[key];
+    if (value !== undefined) (out ??= {})[key] = value;
+  }
+  return out;
+}
+
+// Per-hop options for a pinned connection. The connector's TLS options apply
+// first, then the request's own tls, then the original hostname as serverName
+// unless either set one. A pinned hop is a direct connection, like undici's
+// Agent, so the environment proxy is off unless the caller set proxy.
+function pinnedInit(init, pin, connect) {
   const out = { ...init };
   if (init?.proxy === undefined) out.proxy = false;
   if (pin.serverName !== undefined) {
@@ -161,7 +185,9 @@ function pinnedInit(init, pin) {
         "a Bun.FetchSession cannot be combined with a connect.lookup hook over HTTPS; pass the TLS options as the request's tls option instead",
       );
     }
-    out.tls = pinnedTls(init?.tls, pin);
+    const fromConnect = connectTls(connect);
+    const tls = fromConnect === undefined ? init?.tls : { ...fromConnect, ...init?.tls };
+    out.tls = pinnedTls(tls, pin);
   }
   return out;
 }
@@ -229,7 +255,7 @@ async function followRedirectsWithConnect(url, init, connect, opts) {
     if (pin !== undefined) {
       target = pin.url.href;
       if (!hopHeaders.has("host")) hopHeaders.set("host", pin.host);
-      hopInit = pinnedInit(init, pin);
+      hopInit = pinnedInit(init, pin, connect);
     }
     const resp = await nativeFetch(target, { ...hopInit, method, headers: hopHeaders, body, redirect: "manual" });
     const { status } = resp;
@@ -309,7 +335,7 @@ async function fetchWithConnect(input, init, connect) {
     if (pin === undefined) return nativeFetch(input, init);
     const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
     if (!headers.has("host")) headers.set("host", pin.host);
-    const hopInit = { ...pinnedInit(init, pin), headers, redirect: redirectMode };
+    const hopInit = { ...pinnedInit(init, pin, connect), headers, redirect: redirectMode };
     if (isRequest) {
       // Taken from the Request directly; a second Request would tee a stream body.
       if (hopInit.method === undefined) hopInit.method = input.method;
@@ -323,15 +349,16 @@ async function fetchWithConnect(input, init, connect) {
   const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
   const method = init?.method ?? (isRequest ? input.method : "GET");
   let body = init?.body;
-  if (body === undefined && isRequest && input.body != null) {
+  const requestBody = body === undefined && isRequest ? input.body : null;
+  if (requestBody != null) {
     // A Request body held in memory (string, bytes, Blob) streams from a native
     // blob source; take it back as a Blob so a 307/308 can replay it. Any other
     // stream (a user stream, a file, a live response body) is sent once.
-    const source = input.body.$bunNativePtr;
+    const source = requestBody.$bunNativePtr;
     body =
       source != null && ObjectPrototypeToString.$call(source) === "[object BlobInternalReadableStreamSource]"
         ? await input.blob()
-        : input.body;
+        : requestBody;
   }
   return followRedirectsWithConnect(url, { ...init, signal }, connect, {
     method,
@@ -593,7 +620,7 @@ async function request(
         url = pin.url;
         const headers = new Headers(requestHeaders);
         if (!headers.has("host")) headers.set("host", pin.host);
-        init = { ...pinnedInit(init, pin), headers };
+        init = { ...pinnedInit(init, pin, connect), headers };
       }
     }
     resp = await nativeFetch(url, init);

@@ -742,6 +742,31 @@ describe("undici dispatcher connect.lookup", () => {
     expect(verified).toEqual(["localhost"]);
   });
 
+  it("https: the Agent's connect TLS options apply to pinned hops", async () => {
+    await using server = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("connect-ca") });
+    const seen: string[] = [];
+    // The cert is self-signed for localhost: without connect.ca the pin fails verification.
+    const noCa = new Agent({ connect: { lookup: (_h, _o, cb) => cb(null, "127.0.0.1", 4) } });
+    expect(
+      await undiciFetch(`https://localhost:${server.port}/`, { dispatcher: noCa }).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+    ).toBe("rejected");
+    const withCa = new Agent({
+      connect: {
+        ca: tlsCert.cert,
+        lookup: (hostname, _o, cb) => {
+          seen.push(hostname);
+          cb(null, "127.0.0.1", 4);
+        },
+      },
+    });
+    const res = await undiciFetch(`https://localhost:${server.port}/`, { dispatcher: withCa });
+    expect(await res.text()).toBe("connect-ca");
+    expect(seen).toEqual(["localhost"]);
+  });
+
   it("https: every redirect hop verifies against its own hostname", async () => {
     await using target = Bun.serve({
       port: 0,

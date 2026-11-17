@@ -10,8 +10,7 @@ use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
 use bun_glob::{BunGlobWalker, detect_glob_syntax, walk};
 use bun_options_types::aot_options::AotOptions;
-use bun_paths::platform::Auto;
-use bun_paths::{MAX_PATH_BYTES, PathStyle, PoolPath};
+use bun_paths::{MAX_PATH_BYTES, Path};
 use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
@@ -418,7 +417,7 @@ fn root_directory(
         };
         let directory = widen_to_assets(input.working_directory, directory, assets);
         let directory = real_directory_path(&directory).unwrap_or(directory);
-        return Some(widen_out_of_packages::<Auto>(directory));
+        return Some(widen_out_of_packages(&directory).to_vec());
     }
     let root_directory = absolute_path(input.working_directory, written);
     if root_directory.len() >= MAX_PATH_BYTES {
@@ -438,16 +437,13 @@ fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) ->
     bun_paths::without_trailing_sep(common.unwrap_or(working_directory)).to_vec()
 }
 
-fn widen_out_of_packages<S: PathStyle>(directory: Vec<u8>) -> Vec<u8> {
-    let first_below_root = S::root(&directory).len();
-    let mut start = 0;
-    for folder in directory.split(|&byte| S::is_sep(byte)) {
-        if folder == b"node_modules" && start > first_below_root {
-            return directory[..start - 1].to_vec();
-        }
-        start += folder.len() + 1;
-    }
-    directory
+fn widen_out_of_packages(directory: &[u8]) -> &[u8] {
+    let outermost = bun_paths::ancestors(directory)
+        .filter(|&folder| bun_paths::basename(folder) == b"node_modules")
+        .filter_map(bun_paths::dirname)
+        .filter(|&above| above != bun_paths::root(above))
+        .last();
+    outermost.unwrap_or(directory)
 }
 
 /// Never above the working directory: the executable would name the folders of the machine that built it.
@@ -510,7 +506,7 @@ fn start_with_first_script(
 
 fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut buffer = bun_paths::path_buffer_pool::get();
-    let real_path = bun_sys::realpath(&PoolPath::from(path).ok()?, &mut buffer).ok()?;
+    let real_path = bun_sys::realpath(&Path::from(path), &mut buffer).ok()?;
     Some(real_path.to_vec())
 }
 
@@ -637,7 +633,7 @@ fn entry_name(template: Option<&mut PathTemplate>, relative: Vec<u8>) -> Vec<u8>
             name
         }
     };
-    bun_paths::platform_to_posix_in_place(name.as_mut_slice());
+    bun_paths::to_portable_in_place(name.as_mut_slice());
     bun_paths::without_leading_dot_slash(&name).to_vec()
 }
 

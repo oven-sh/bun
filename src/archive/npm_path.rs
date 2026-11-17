@@ -3,32 +3,45 @@
 
 use bun_core::strings;
 use bun_errno::SystemErrno;
-use bun_paths::{GenericPath, PathUnit, SliceBackend, is_sep};
+use bun_paths::{OSPath, OSPathChar, SEP, is_sep};
 use bun_tar::Entry;
+
+use crate::MAX_OS_PATH;
 
 const MAX_DEPTH: usize = 1024;
 const ANY_SEPARATOR: &[u8] = b"/\\";
 const SEPARATORS: &[u8] = if cfg!(windows) { ANY_SEPARATOR } else { b"/" };
 
-/// Returns the path in the package where node-tar would extract `entry`. It is empty for an entry
-/// that node-tar skips, and `None` for a name that does not fit in `buf` with a NUL behind it.
-pub fn normalize_npm_entry_path<'a, T: PathUnit>(
-    entry: &Entry,
-    buf: &'a mut [T],
-) -> Result<Option<&'a mut [T]>, SystemErrno> {
-    let mut path = GenericPath::<SliceBackend<'_, T>>::new(buf);
+/// The path in the package where node-tar would extract `entry`. Empty for an entry that it skips.
+pub fn normalize_npm_entry_path(entry: &Entry) -> OSPath {
+    let mut path = OSPath::new();
     for name in strings::tokenize_any(strip(entry.path()).unwrap_or_default(), SEPARATORS) {
-        if name != b"." && path.push(name).is_err() {
-            // node-tar leaves the directories that fit behind, in the way of later files.
-            return if path.is_empty() {
-                Ok(None)
-            } else {
-                Err(SystemErrno::ENAMETOOLONG)
-            };
+        if name != b"." {
+            path.push(name);
         }
     }
-    let len = path.len();
-    Ok(Some(&mut buf[..len]))
+    path
+}
+
+/// [`normalize_npm_entry_path`] as the name of the file to create. `None` for a name that is too long.
+pub fn npm_entry_destination(entry: &Entry) -> Result<Option<OSPath>, SystemErrno> {
+    #[cfg_attr(not(windows), expect(unused_mut))]
+    let mut path = normalize_npm_entry_path(entry);
+    if path.len() >= MAX_OS_PATH {
+        // node-tar leaves the directories that fit behind, in the way of later files.
+        return match strings::index_of_scalar(&path[..MAX_OS_PATH], SEP as OSPathChar) {
+            Some(_) => Err(SystemErrno::ENAMETOOLONG),
+            None => Ok(None),
+        };
+    }
+    // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
+    #[cfg(windows)]
+    for unit in path.as_mut_slice() {
+        if matches!(u8::try_from(*unit), Ok(b'|' | b'<' | b'>' | b'?' | b':')) {
+            *unit += 0xf000;
+        }
+    }
+    Ok(Some(path))
 }
 
 fn strip(path: &[u8]) -> Option<&[u8]> {

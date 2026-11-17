@@ -11,8 +11,6 @@ use core::mem;
 use bun_core::strings;
 use bun_core::{CStrList, CStrRef, ZBox, ZStr};
 use bun_paths as paths;
-use bun_paths::PathStyle as _;
-use bun_paths::platform::{Auto, Windows};
 use bun_sys::{self as sys, Fd};
 
 bun_core::declare_scope!(Patch, visible);
@@ -301,7 +299,7 @@ fn resolve_target(
     path: &[u8],
     create_mode: Option<sys::Mode>,
 ) -> sys::Result<(ParentDir, ZBox)> {
-    if !is_safe_patch_path(path) || Auto::has_trailing_sep(path) {
+    if !is_safe_patch_path(path) || bun_paths::has_trailing_sep(path) {
         return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
     }
     let mut components = paths::components(path);
@@ -956,11 +954,11 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 pub fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !strings::contains_char(path, 0)
-        && !Windows::is_absolute(path)
+        && !paths::portable::is_absolute(path)
         // On Windows, openat strips a drive prefix from a component, so `C:..` resolves to a real
         // `..`.
         && !(cfg!(windows) && strings::contains_char(path, b':'))
-        && !Windows::components(path).any(|part| part == b"..")
+        && !paths::portable::has_dot_dot(path)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1440,13 +1438,7 @@ pub fn diff_post_process(
 }
 
 pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u8>; 2] {
-    #[allow(unused_mut)]
-    let mut folders = [old_folder.to_vec(), new_folder.to_vec()];
-    #[cfg(windows)]
-    for folder in &mut folders {
-        paths::slashes_to_posix_in_place(&mut folder[..]);
-    }
-    folders
+    [old_folder, new_folder].map(|folder| paths::to_portable(folder).into_owned())
 }
 
 pub fn git_diff_internal(
@@ -1460,16 +1452,10 @@ pub fn git_diff_internal(
 
     // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
     // resolve `git` here — same as `patchCommit`'s `bun.which` call.
-    let mut gitbuf = bun_paths::path_buffer_pool::get();
-    let git = bun_which::which(
-        &mut gitbuf,
-        bun_core::env_var::PATH.get().unwrap_or(b""),
-        b"",
-        b"git",
-    )
-    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+    let git = bun_which::which(bun_core::env_var::PATH.get().unwrap_or(b""), b"", b"git")
+        .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
-    let mut result = spawn_git_diff(old_folder, new_folder, ZStr::EMPTY, git, loop_)??;
+    let mut result = spawn_git_diff(old_folder, new_folder, ZStr::EMPTY, &git, loop_)??;
     diff_post_process(&mut result, old_folder, new_folder)
 }
 

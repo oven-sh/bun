@@ -25,7 +25,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::borrow::Cow;
 
 use bun_install_types::resolver_hooks as hooks;
-use bun_paths::{PoolPath, SlicePath, windows_to_platform};
+use bun_paths::{Path, from_portable};
 use bun_semver::{SlicedString, String as SemverString};
 use bun_threading::Futex;
 
@@ -217,14 +217,13 @@ impl hooks::AutoInstaller for PackageManager {
 
     // ── PackageManager ops ────────────────────────────────────────────────
 
-    fn project_folder<'b>(
+    fn project_folder(
         &mut self,
         name: &[u8],
         version: &hooks::DependencyVersion,
         version_buf: &[u8],
         package_json_dir: Option<&[u8]>,
-        buf: &'b mut [u8],
-    ) -> Option<&'b [u8]> {
+    ) -> Option<Path> {
         let name_hash = bun_semver::string::Builder::string_hash(match version.try_npm() {
             Some(npm) if npm.is_alias => npm.name.slice(version_buf),
             _ => name,
@@ -255,14 +254,13 @@ impl hooks::AutoInstaller for PackageManager {
         } else {
             let package_json_dir = package_json_dir?;
             match &version.value {
-                dependency::Value::Folder(folder) => (
-                    package_json_dir,
-                    windows_to_platform(folder.slice(version_buf)),
-                ),
+                dependency::Value::Folder(folder) => {
+                    (package_json_dir, from_portable(folder.slice(version_buf)))
+                }
                 dependency::Value::Symlink(symlink) => {
                     let target = symlink.slice(version_buf);
                     if dependency::is_link_path(target) {
-                        (package_json_dir, windows_to_platform(target))
+                        (package_json_dir, from_portable(target))
                     } else {
                         directories::try_global_link_dir(self).ok()?;
                         (directories::global_link_dir_path(self), target.into())
@@ -271,34 +269,29 @@ impl hooks::AutoInstaller for PackageManager {
                 _ => return None,
             }
         };
-        let mut resolved = SlicePath::new(buf);
-        resolved.resolve_in_place(&[base, &path]).ok()?;
-        Some(resolved.into_zstr())
+        Path::resolve(&[base, &path]).check_len().ok()
     }
 
-    fn path_for_resolution<'b>(
+    fn path_for_resolution(
         &mut self,
         package_id: PackageID,
         resolution: &hooks::Resolution,
-        path_buf: &'b mut bun_paths::PathBuffer,
-    ) -> Result<&'b [u8], bun_core::Error> {
+    ) -> Result<Path, bun_core::Error> {
         if let Err(why) = directories::try_get_cache_directory(self) {
             self.exit_or_log(&why);
             return Err(bun_core::Error::WriteFailed);
         }
         let r = resolution_from_hooks(resolution);
-        let mut len =
-            directories::path_for_resolution(self, package_id, &r, path_buf).map(|path| path.len());
+        let mut path = directories::path_for_resolution(self, package_id, &r);
         // A package that is `Done` but has no folder was skipped because it is not for this
         // platform, so it is not downloaded here either.
-        if len.is_err()
+        if path.is_err()
             && r.tag == resolution::Tag::Npm
             && PackageManager::get_preinstall_state(self, package_id) != PreinstallState::Done
         {
             enqueue::download_missing_package(self, package_id).map_err(bun_core::Error::from)?;
-            len = directories::path_for_resolution(self, package_id, &r, path_buf)
-                .map(|path| path.len());
-        } else if len.is_err() && r.tag != resolution::Tag::Npm {
+            path = directories::path_for_resolution(self, package_id, &r);
+        } else if path.is_err() && r.tag != resolution::Tag::Npm {
             let buf = self.lockfile.buffers.string_bytes.as_slice();
             self.log_mut().add_error_fmt(
                 None,
@@ -316,7 +309,7 @@ impl hooks::AutoInstaller for PackageManager {
                 ),
             );
         }
-        Ok(&path_buf.0[..len.map_err(bun_core::Error::from)?])
+        path.map_err(bun_core::Error::from)
     }
 
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
@@ -339,8 +332,8 @@ impl hooks::AutoInstaller for PackageManager {
             && let dependency::Value::Tarball(tarball) = &version.value
             && let hooks::URI::Local(path) = tarball.uri
         {
-            let path = windows_to_platform(path.slice(version_buf));
-            let Ok(joined) = PoolPath::resolve(&[package_json_dir, &path]) else {
+            let path = from_portable(path.slice(version_buf));
+            let Ok(joined) = Path::resolve(&[package_json_dir, &path]).check_len() else {
                 return hooks::EnqueueResult::NotFound;
             };
             absolute.extend_from_slice(b"file:");

@@ -12,8 +12,8 @@ pub use tidy::{
 #[cfg(windows)]
 use bun_core::strings::CodeUnitsMut;
 use bun_core::strings::{self, CodeUnits};
-use bun_paths::platform::{Posix, Windows};
-use bun_paths::{self, MAX_PATH_BYTES, PathStyle};
+use bun_paths::MAX_PATH_BYTES;
+use bun_paths::portable::is_sep as is_sep_windows_t;
 
 const PATH_MIN_WIDE: usize = 4096; // 4 KB
 
@@ -325,7 +325,7 @@ pub fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]
         return &[];
     }
 
-    let is_sep_t = Windows::is_sep::<T>;
+    let is_sep_t = is_sep_windows_t::<T>;
 
     let mut start: usize = 0;
     // We use an optional value instead of -1, as in Node code, for easier number type use.
@@ -473,7 +473,7 @@ pub fn dirname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
         return l::<T>(CHAR_STR_DOT);
     }
 
-    let is_sep_t = Windows::is_sep::<T>;
+    let is_sep_t = is_sep_windows_t::<T>;
 
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     let mut root_end: Option<usize> = None;
@@ -688,7 +688,7 @@ pub fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     while i_i64 >= i64::try_from(start).expect("int cast") {
         let i = usize::try_from(i_i64).expect("int cast");
         let byte = path[i];
-        if Windows::is_sep(byte) {
+        if is_sep_windows_t(byte) {
             // If we reached a path separator that was not part of a set of path
             // separators at the end of the string, stop now
             if !matched_slash {
@@ -762,11 +762,11 @@ pub fn is_absolute_windows_t<T: PathCharCwd>(path: &[T]) -> bool {
         return false;
     }
     let byte0 = path[0];
-    Windows::is_sep(byte0)
+    is_sep_windows_t(byte0)
         || (len > 2
             && is_windows_device_root_t(byte0)
             && path[1] == T::from_u8(CHAR_COLON)
-            && Windows::is_sep(path[2]))
+            && is_sep_windows_t(path[2]))
 }
 
 /// Based on Node v21.6.1 private helper _format:
@@ -924,7 +924,7 @@ pub fn join_windows_t<'a, T: PathCharCwd>(
         return l::<T>(CHAR_STR_DOT);
     }
 
-    let is_sep_t = Windows::is_sep::<T>;
+    let is_sep_t = is_sep_windows_t::<T>;
 
     let mut buf_size: usize = 0;
     let mut buf_offset: usize;
@@ -1049,7 +1049,7 @@ fn pop_last_segment_t<T: PathCharCwd>(res: &[T], separator: T) -> (usize, usize)
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L65C1-L66C77
 ///
 /// Resolves . and .. elements in a path with directory names
-fn normalize_string_t<T: PathCharCwd, S: PathStyle>(
+fn normalize_string_t<T: PathCharCwd, const IS_WINDOWS: bool>(
     path: &[T],
     allow_above_root: bool,
     separator: T,
@@ -1058,7 +1058,7 @@ fn normalize_string_t<T: PathCharCwd, S: PathStyle>(
     // Returns length into buf (NUL-terminated at buf[len]) instead of `[:0]T` slice,
     // so callers can re-borrow buf (borrowck).
     let len = path.len();
-    let is_sep_t = S::is_sep::<T>;
+    let is_sep_t = |byte: T| byte.eq_ascii(b'/') || (IS_WINDOWS && byte.eq_ascii(b'\\'));
 
     let mut buf_offset: usize;
     let mut buf_size: usize = 0;
@@ -1175,7 +1175,7 @@ pub fn normalize_posix_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'
 
     // Normalize the path
     let mut buf_size =
-        normalize_string_t::<T, Posix>(path, !_is_absolute, T::from_u8(CHAR_FORWARD_SLASH), buf);
+        normalize_string_t::<T, false>(path, !_is_absolute, T::from_u8(CHAR_FORWARD_SLASH), buf);
 
     if buf_size == 0 {
         if _is_absolute {
@@ -1225,7 +1225,7 @@ pub fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> 
         return l::<T>(CHAR_STR_DOT);
     }
 
-    let is_sep_t = Windows::is_sep::<T>;
+    let is_sep_t = is_sep_windows_t::<T>;
 
     // Moved `rootEnd`, `device`, and `_isAbsolute` initialization after
     // the `if (len == 1)` check.
@@ -1353,7 +1353,7 @@ pub fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> 
     buf_offset = device_len.unwrap_or(0) + (_is_absolute as usize);
     // Backed by buf at an offset of  device.len + 1 if _isAbsolute is true.
     let mut tail_len = if root_end < len {
-        normalize_string_t::<T, Windows>(
+        normalize_string_t::<T, true>(
             &path[root_end..len],
             !_is_absolute,
             T::from_u8(CHAR_BACKWARD_SLASH),
@@ -1522,7 +1522,7 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
         };
     }
 
-    let is_sep_t = Windows::is_sep::<T>;
+    let is_sep_t = is_sep_windows_t::<T>;
 
     let mut root_end: usize = 0;
     let mut byte = path[0];
@@ -2088,7 +2088,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     // handle relative paths to be safe (might happen when process.cwd() fails)
 
     // Normalize the path
-    let normalized_len = normalize_string_t::<T, Posix>(
+    let normalized_len = normalize_string_t::<T, false>(
         &buf2[0..resolved_path_len],
         !resolved_absolute,
         T::from_u8(CHAR_FORWARD_SLASH),
@@ -2133,7 +2133,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     buf2: &mut [T],
 ) -> &'a [T] {
-    let is_sep_t = Windows::is_sep::<T>;
+    let is_sep_t = is_sep_windows_t::<T>;
     // Sized to the larger of the two T variants.
     let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
     // Taken by the last iteration.
@@ -2348,7 +2348,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     // but handle relative paths to be safe (can happen if reading the cwd fails).
 
     // Normalize the tail path
-    let normalized_len = normalize_string_t::<T, Windows>(
+    let normalized_len = normalize_string_t::<T, true>(
         &buf2[0..resolved_tail_len],
         !resolved_absolute,
         T::from_u8(CHAR_BACKWARD_SLASH),

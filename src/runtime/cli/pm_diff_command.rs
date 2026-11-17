@@ -546,14 +546,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        let mut normalized = vec![0; entry.path().len() + 1];
-        let rel =
-            bun_archive::normalize_npm_entry_path(entry, &mut normalized)?.unwrap_or_default();
-        bun_paths::platform_to_posix_in_place(rel);
+        let rel = bun_paths::VecPath::from(&bun_archive::normalize_npm_entry_path(entry));
         if rel.is_empty() {
             continue;
         }
-        let rel = rel.to_vec();
+        let rel = rel.into_portable().into_vec();
         let mut data = Vec::new();
         if let Err(err) = reader.read_data(size, &mut data) {
             if let tar::Error::Alloc(err) = err {
@@ -2193,8 +2190,8 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
             }
             for (name, path) in &mut pairs {
                 *name = bun_paths::basename(name).to_vec();
-                let written = bun_paths::slashes_to_posix(path);
-                *path = bun_paths::PosixPath::resolve(&[b"/", &written]).to_vec();
+                let in_package = crate::cli::pack_command::path_in_package(path);
+                *path = strings::trim_right(&in_package, b"/").to_vec();
             }
         }
         b"directories" => pairs.retain(|(name, _)| name == b"bin"),

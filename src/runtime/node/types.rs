@@ -7,7 +7,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
-use bun_paths::{MAX_PATH_BYTES, NameTooLong, OSPath, PathBuffer};
+use bun_paths::{MAX_PATH_BYTES, NameTooLong, OSPath, Path};
 use bun_sys::{self, Fd, IoVec, IoVecMut, Mode, O};
 
 use crate::node::util::validators;
@@ -735,15 +735,15 @@ pub(crate) use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
 pub(crate) trait PathLikeExt {
-    /// Writes the path to the start of `buf`, or "" if it does not fit.
-    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr
+    /// Replaces `buf` with the path.
+    fn slice_z<'a>(&self, buf: &'a mut Path) -> &'a ZStr
     where
         Self: Sized;
     fn os_path(&self) -> Result<OSPath, NameTooLong>
     where
         Self: Sized;
     /// On Windows it is normalized, and can be longer than `MAX_PATH`.
-    fn os_path_kernel32(&self) -> Result<OSPath, NameTooLong>
+    fn os_path_kernel32(&self) -> OSPath
     where
         Self: Sized;
     fn from_js(
@@ -815,40 +815,35 @@ pub(crate) trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike<'_> {
-    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr {
+    fn slice_z<'a>(&self, buf: &'a mut Path) -> &'a ZStr {
         let sliced = self.slice();
-        let mut path = bun_paths::SlicePath::new(&mut buf[..]);
-        if path.set(sliced).is_err() {
-            bun_core::debug_warn!("path too long: {} bytes\n", sliced.len());
+        buf.set(sliced);
+        if cfg!(windows) && bun_paths::is_absolute(sliced) {
+            match bun_paths::has_leading_sep(sliced) {
+                true => buf.add_current_drive(),
+                false => buf.make_long_path(),
+            }
         }
-        // What does not fit stays as it is, and fails at the syscall.
-        #[cfg(windows)]
-        if bun_paths::is_absolute(sliced) {
-            let _ = match bun_paths::is_sep(sliced[0]) {
-                true => path.add_current_drive(),
-                false => path.make_long_path(),
-            };
-        }
-        path.into_zstr()
+        buf
     }
 
     #[inline]
     fn os_path(&self) -> Result<OSPath, NameTooLong> {
-        let mut path = OSPath::from(self.slice())?;
-        bun_paths::posix_to_platform_in_place(path.as_mut_slice());
-        Ok(path)
+        let mut path = OSPath::from(self.slice());
+        bun_paths::to_native_in_place(path.as_mut_slice());
+        path.check_len()
     }
 
     #[inline]
-    fn os_path_kernel32(&self) -> Result<OSPath, NameTooLong> {
+    fn os_path_kernel32(&self) -> OSPath {
         if cfg!(not(windows)) {
             return OSPath::from(self.slice());
         }
-        let mut with_drive = bun_paths::Path::from(self.slice());
+        let mut with_drive = Path::from(self.slice());
         with_drive.add_current_drive();
-        let mut path = OSPath::from(with_drive.as_bytes())?;
-        path.make_long_path()?;
-        Ok(path)
+        let mut path = OSPath::from(with_drive.as_bytes());
+        path.make_long_path();
+        path
     }
 
     fn from_js(

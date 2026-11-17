@@ -1,5 +1,5 @@
 use bun_ast::{Loc, Log};
-use bun_paths::{MAX_PATH_BYTES, PoolPath, VecPath};
+use bun_paths::{MAX_PATH_BYTES, Path, VecPath};
 
 pub(super) fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
     VecPath::resolve(&[working_directory, path]).into_vec()
@@ -9,7 +9,10 @@ pub(super) fn relative_path(working_directory: &[u8], from: &[u8], to: &[u8]) ->
     let from = absolute_path(working_directory, from);
     let to = absolute_path(working_directory, to);
     let fits = from.len() < MAX_PATH_BYTES && to.len() < MAX_PATH_BYTES;
-    let relative = PoolPath::relative(&from, &to).ok().filter(|_| fits)?;
+    let relative = Path::relative(&from, &to)
+        .check_len()
+        .ok()
+        .filter(|_| fits)?;
     Some(relative.to_vec())
 }
 

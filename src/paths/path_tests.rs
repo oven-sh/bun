@@ -2,18 +2,15 @@
 
 use core::cell::Cell;
 use core::fmt;
+use core::mem::MaybeUninit;
 
 use bun_core::strings;
 
-use crate::path_backend::PathBackend;
-use crate::path_style::VolumeKind;
+use crate::path::GenericPath;
+use crate::path_backend::{PathBackend, PoolBackend, StackBackend, VecBackend};
+use crate::path_style::{PathStyle, Posix, VolumeKind, Windows};
 use crate::path_unit::PathUnit;
-use crate::platform::{Posix, Windows, WindowsForwardSlash};
-use crate::{
-    GenericPath, MAX_PATH_BYTES, NameTooLong, PATH_MAX_WIDE, Path, PathStyle, PoolBackend,
-    PoolOrVecBackend, PoolPath, SliceBackend, SlicePath, StackBackend, StackPath, VecBackend,
-    VecPath,
-};
+use crate::{MAX_PATH_BYTES, NameTooLong, PATH_MAX_WIDE, Path, StackPath, VecPath, portable};
 
 /// Stand in for the C++ functions, which are not linked into this test binary.
 mod ffi_stubs {
@@ -309,6 +306,50 @@ impl Unit for u16 {
     }
 }
 
+thread_local!(static CAPACITY: Cell<usize> = const { Cell::new(1) });
+
+/// `StackBackend` with `CAPACITY` for `N`, and one more unit that nothing may write to.
+struct FixedBackend<U: Unit>(Vec<MaybeUninit<U>>);
+
+impl<U: Unit> Default for FixedBackend<U> {
+    fn default() -> Self {
+        let mut units = vec![MaybeUninit::new(U::from_u8(b'#')); CAPACITY.get() + 1];
+        units[0].write(*U::NUL);
+        Self(units)
+    }
+}
+
+impl<U: Unit> Drop for FixedBackend<U> {
+    fn drop(&mut self) {
+        // SAFETY: `default` initialized it.
+        let guard = unsafe { self.0[self.0.len() - 1].assume_init() };
+        assert_eq!(guard, U::from_u8(b'#'));
+    }
+}
+
+impl<U: Unit> PathBackend for FixedBackend<U> {
+    type Unit = U;
+    type Error = NameTooLong;
+    type Output<T> = Result<T, NameTooLong>;
+
+    fn output<T>(result: Result<T, NameTooLong>) -> Result<T, NameTooLong> {
+        result
+    }
+
+    fn as_ptr(&self) -> *const U {
+        self.0.as_ptr().cast()
+    }
+
+    fn as_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+        let capacity = self.0.len() - 1;
+        &mut self.0[..capacity]
+    }
+
+    unsafe fn grow(&mut self, _: usize, _: usize) -> Result<(), NameTooLong> {
+        Err(NameTooLong)
+    }
+}
+
 fn text(bytes: &[u8]) -> &str {
     core::str::from_utf8(bytes).unwrap()
 }
@@ -326,6 +367,7 @@ enum Op {
     WriteFmt(String, String),
     Push(String),
     PushFmt(String, String),
+    PushInside(String),
     SetBasename(String),
     SetExtension(String),
     PushTrailingSep,
@@ -356,6 +398,7 @@ fn apply<B: PathBackend<Unit: Unit>, S: PathStyle, C: Unit>(
         Op::WriteFmt(a, b) => write!(path, "{a}{b}"),
         Op::Push(arg) => path.push(&C::encode(arg)),
         Op::PushFmt(a, b) => path.push_fmt(format_args!("{a}{b}")),
+        Op::PushInside(arg) => path.push_inside(&C::encode(arg)),
         Op::SetBasename(arg) => path.set_basename(&C::encode(arg)),
         Op::SetExtension(arg) => path.set_extension(&C::encode(arg)),
         Op::PushTrailingSep => path.push_trailing_sep(),
@@ -434,7 +477,7 @@ mod model {
         let sep_at = |at: usize| chars.get(at).is_some_and(|&c| is_sep::<S>(c));
         let all = components::<S>(path);
         let is_double = S::WIN32 && sep_at(0) && sep_at(1) && chars.len() > 2 && !sep_at(2);
-        let is_nt = S::SEP == b'\\' && (path == r"\??" || path.starts_with(r"\??\"));
+        let is_nt = S::WIN32 && (path == r"\??" || path.starts_with(r"\??\"));
         let is_drive =
             S::WIN32 && !sep_at(0) && chars.get(1) == Some(&':') && chars[0].len_utf16() == 1;
 
@@ -633,6 +676,14 @@ mod model {
         }
     }
 
+    fn push_inside<S: PathStyle>(path: &str, part: &str) -> String {
+        let names = collapse_dots(&without_volume::<S>(&format!("/{part}"), true));
+        match names.join(&sep::<S>()) {
+            inside if inside.is_empty() => path.into(),
+            inside => push::<S>(path, &format!("./{inside}")),
+        }
+    }
+
     pub(super) fn parent<S: PathStyle>(path: &str) -> &str {
         let parsed = parse::<S>(path);
         let path = without_trailing_sep::<S>(path, parsed.root.len());
@@ -648,7 +699,7 @@ mod model {
     }
 
     fn add_namespace_prefix<S: PathStyle>(path: &str, prefix: &str) -> String {
-        if S::SEP != b'\\' || path.is_empty() {
+        if !S::WIN32 || path.is_empty() {
             return path.into();
         }
         let mut path = join::<S>(&[path]);
@@ -700,6 +751,7 @@ mod model {
             Op::WriteFmt(a, b) => format!("{path}{a}{b}"),
             Op::Push(arg) => push::<S>(path, arg),
             Op::PushFmt(a, b) => push::<S>(path, &format!("{a}{b}")),
+            Op::PushInside(arg) => push_inside::<S>(path, arg),
             Op::SetBasename(arg) => match parsed.components.last() {
                 None => push::<S>(path, arg),
                 Some(name) => {
@@ -758,7 +810,7 @@ impl Random {
     }
 
     fn op(&mut self, round: usize) -> Op {
-        const ARMS: usize = 21;
+        const ARMS: usize = 23;
         match round % ARMS {
             0 => Op::Set(self.path()),
             1 => Op::ExtendFromSlice(self.path()),
@@ -780,6 +832,7 @@ impl Random {
             17 => Op::MakeLongPath,
             18 => Op::MakeNtPath,
             19 => Op::CopyTrailingSepFrom(self.path()),
+            20 | 21 => Op::PushInside(self.path() + &self.path()),
             _ => Op::StripNtPrefix,
         }
     }
@@ -804,9 +857,8 @@ fn check_every_capacity<S: PathStyle, U: Unit, C: Unit>(before: &str, op: &Op, a
     let min_capacity = initial.len() + 1;
     let tightest = expected.len().max(min_capacity);
     for capacity in (tightest - 1).max(min_capacity)..tightest + EXTRA_CAPACITIES {
-        let mut buffer = vec![U::from_u8(b'#'); capacity + 1];
-        let mut path = GenericPath::<SliceBackend<'_, U>, S>::new(&mut buffer[..capacity]);
-        path.set(&initial).unwrap();
+        CAPACITY.set(capacity);
+        let mut path = GenericPath::<FixedBackend<U>, S>::from(&initial).unwrap();
         let result = apply::<_, S, C>(&mut path, op);
         assert_eq!(
             result.is_ok(),
@@ -814,13 +866,8 @@ fn check_every_capacity<S: PathStyle, U: Unit, C: Unit>(before: &str, op: &Op, a
             "{before:?} {op:?} {capacity}"
         );
         let contents = if result.is_ok() { &expected } else { &initial };
-        assert_eq!(
-            &**path.into_zstr(),
-            contents,
-            "{before:?} {op:?} {capacity}"
-        );
-        assert_eq!(buffer[contents.len()], *U::NUL);
-        assert_eq!(buffer[capacity], U::from_u8(b'#'));
+        assert_eq!(path.as_slice(), contents, "{before:?} {op:?} {capacity}");
+        assert!(is_terminated(&path));
     }
 }
 
@@ -1018,6 +1065,10 @@ fn check_invariants<S: PathStyle>() {
         let mut path = GenericPath::<VecBackend, S>::from(a.as_bytes());
         drop(path.push_scoped(b.as_bytes()));
         assert_eq!(text(&path), a);
+
+        let inside = actual::<S>(&normal, &Op::PushInside(b.clone() + &c));
+        let below = inside.strip_prefix(&normal).unwrap();
+        assert!(!model::components::<S>(below).contains(&"..".into()));
     }
 }
 
@@ -1036,7 +1087,7 @@ macro_rules! for_each_style {
         }
     )*};
 }
-for_each_style!(posix: Posix, windows: Windows, windows_forward_slash: WindowsForwardSlash);
+for_each_style!(posix: Posix, windows: Windows);
 
 /// Mirrors `RtlDetermineDosPathNameType_U`, plus the `\??\` prefix.
 fn win32_path_type(path: &str) -> &'static str {
@@ -1082,6 +1133,10 @@ fn windows_ops_preserve_win32_path_type() {
         }
         for root in [r"\", "x", r"C:\", r"\\s\h"] {
             let pushed = actual::<Windows>(root, &Op::Push(b.clone()));
+            assert_eq!(win32_path_type(&pushed), win32_path_type(root), "{b:?}");
+        }
+        for root in ["", "/", r"\", "x", r"C:\", r"\\s\h"] {
+            let pushed = actual::<Windows>(root, &Op::PushInside(b.clone()));
             assert_eq!(win32_path_type(&pushed), win32_path_type(root), "{b:?}");
         }
     }
@@ -1269,7 +1324,7 @@ fn differs_from_node() {
 #[test]
 fn case_insensitive_only_on_windows() {
     let relative = Op::Relative("c:/a".into(), "C:/b".into());
-    assert_eq!(actual::<WindowsForwardSlash>("", &relative), "../b");
+    assert_eq!(actual::<Windows>("", &relative), r"..\b");
     assert_eq!(actual::<Posix>("", &relative), "../../C:/b");
     assert_eq!(Windows::strip_prefix(b"c:/a", b"C:/"), Some(&b"a"[..]));
     assert_eq!(Posix::strip_prefix(b"c:/a", b"C:/"), None);
@@ -1340,12 +1395,59 @@ fn converters_change_only_separators() {
             text(MIXED)
         }
     };
-    assert_eq!(text(&crate::slashes_to_posix(MIXED)), posix);
-    assert_eq!(text(&crate::platform_to_posix(MIXED)), on_windows(posix));
-    assert_eq!(text(&crate::posix_to_platform(MIXED)), on_windows(windows));
+    assert_eq!(text(&crate::to_portable(MIXED)), on_windows(posix));
+    assert_eq!(text(&Path::from(MIXED).into_portable()), on_windows(posix));
+    assert_eq!(text(&crate::to_native(MIXED)), on_windows(windows));
     let mut wide = u16::encode(text(MIXED));
-    crate::slashes_to_windows_in_place(&mut wide);
+    Windows::to_native_in_place(&mut wide);
     assert_eq!(wide, u16::encode(windows));
+    Windows::to_portable_in_place(&mut wide);
+    assert_eq!(wide, u16::encode(posix));
+}
+
+#[test]
+fn push_inside_stays_inside() {
+    for (path, part, posix, windows) in [
+        ("/a", "b/../../../c/", "/a/c", r"/a\c"),
+        ("/a/", "/b//./c", "/a/b/c", r"/a/b\c"),
+        ("/a", "b/..", "/a", "/a"),
+        ("/a", r"..\b", r"/a/..\b", r"/a\b"),
+        ("/", "C:/b", "/C:/b", r"/C:\b"),
+        ("/", "//s/h", "/s/h", r"/s\h"),
+        ("/", "??/b", "/??/b", r"/??\b"),
+        ("", "../b", "b", "b"),
+        ("", "C:/b", "C:/b", r".\C:\b"),
+        ("", "..", "", ""),
+    ] {
+        let op = Op::PushInside(part.into());
+        assert_eq!(actual::<Posix>(path, &op), posix);
+        assert_eq!(actual::<Windows>(path, &op), windows);
+    }
+}
+
+#[test]
+fn portable_text_is_read_like_any_platform_would() {
+    for (path, is_absolute, climbs_out, has_dot_dot) in [
+        ("a/b", false, false, false),
+        ("a/../b", false, false, true),
+        (r"a\..\b", false, false, true),
+        ("a../..b", false, false, false),
+        ("../a", false, true, true),
+        (r"..\a", false, true, true),
+        (r"a\b/../..", false, true, true),
+        (r"a/..\..", false, true, true),
+        ("C:a", false, true, false),
+        ("C:..", false, true, true),
+        ("/a", true, true, false),
+        (r"\a", true, true, false),
+        (r"C:\a", true, true, false),
+        ("", false, false, false),
+    ] {
+        let bytes = path.as_bytes();
+        assert_eq!(portable::is_absolute(bytes), is_absolute, "{path:?}");
+        assert_eq!(portable::climbs_out(bytes), climbs_out, "{path:?}");
+        assert_eq!(portable::has_dot_dot(bytes), has_dot_dot, "{path:?}");
+    }
 }
 
 #[test]
@@ -1370,7 +1472,7 @@ fn add_current_drive_completes_only_a_rooted_path() {
 
 #[test]
 #[cfg(unix)]
-fn windows_to_platform_keeps_absolute_posix_paths() {
+fn from_portable_keeps_absolute_posix_paths() {
     for (path, expected) in [
         (r".\a\b", "./a/b"),
         (r"a/b\", "a/b/"),
@@ -1379,7 +1481,7 @@ fn windows_to_platform_keeps_absolute_posix_paths() {
         (r"/home/DOMAIN\user", r"/home/DOMAIN\user"),
         ("", ""),
     ] {
-        assert_eq!(text(&crate::windows_to_platform(path.as_bytes())), expected);
+        assert_eq!(text(&crate::from_portable(path.as_bytes())), expected);
     }
 }
 
@@ -1406,8 +1508,7 @@ fn transcodes_lone_surrogates_and_invalid_utf8() {
     assert_eq!(exact.set(&lone), Ok(()));
     assert_eq!(exact.extend_from_slice(&[0xD800u16]), Err(NameTooLong));
     assert_eq!(exact.as_slice(), narrow.as_slice());
-    let mut buffer = [0u16; 3];
-    let mut exact = GenericPath::<SliceBackend<'_, u16>, Posix>::new(&mut buffer);
+    let mut exact = GenericPath::<StackBackend<3, u16>, Posix>::new();
     assert_eq!(exact.set("世世".as_bytes()), Ok(()));
     assert_eq!(exact.set(b"\x80\x80\x80"), Err(NameTooLong));
     assert_eq!(exact.as_slice(), u16::encode("世世"));
@@ -1415,88 +1516,80 @@ fn transcodes_lone_surrogates_and_invalid_utf8() {
 
 fn check_pool_limit<U: Unit>(limit: usize) {
     let name = vec![U::from_u8(b'a'); limit];
-    let mut fixed = GenericPath::<PoolBackend<U>, Posix>::from(&name[..limit - 3]).unwrap();
-    assert_eq!(fixed.push(b"bc"), Err(NameTooLong));
-    assert_eq!(fixed.push(b"b"), Ok(()));
-    assert_eq!(fixed.len(), limit - 1);
-    assert!(is_terminated(&fixed));
-    assert!(GenericPath::<PoolBackend<U>, Posix>::from(&name).is_err());
-    let collapsed =
-        GenericPath::<PoolBackend<U>, Posix>::join(&[&name, &U::encode("../b")]).unwrap();
-    assert_eq!(collapsed.as_slice(), U::encode("b"));
-
-    let mut grown = GenericPath::<PoolOrVecBackend<U>, Posix>::from(&name[..limit - 3]);
-    grown.push(b"b");
+    let mut path = GenericPath::<PoolBackend<U>, Posix>::from(&name[..limit - 3]);
+    let pooled = path.as_slice().as_ptr();
+    path.push(b"b");
+    assert_eq!(path.as_slice().as_ptr(), pooled);
+    let before = path.as_slice().to_vec();
     {
-        let mut scope = grown.push_scoped(b"c");
+        let mut scope = path.push_scoped(b"c");
         assert_eq!(scope.len(), limit + 1);
         scope.push(&name);
         scope.push(&name);
         assert_eq!(scope.len(), 3 * limit + 3);
         assert!(is_terminated(&scope));
     }
-    assert_eq!(grown.as_slice(), fixed.as_slice());
-    assert!(is_terminated(&grown));
-    assert_eq!(
-        GenericPath::<PoolOrVecBackend<U>, Posix>::from(&name).as_slice(),
-        name
-    );
+    assert_eq!(path.as_slice(), before);
+    assert!(is_terminated(&path));
+    let from = GenericPath::<PoolBackend<U>, Posix>::from::<U>;
+    assert_eq!(from(&name).as_slice(), name);
+    assert!(from(&name[1..]).check_len().is_ok());
+    assert!(from(&name).check_len().is_err());
 }
 
 #[test]
-fn pool_fails_at_limit_and_pool_or_vec_grows() {
+fn pool_grows_past_its_buffer() {
     check_pool_limit::<u8>(MAX_PATH_BYTES);
     if cfg!(not(miri)) {
         check_pool_limit::<u16>(PATH_MAX_WIDE);
     }
 }
 
-fn check_stack<S: PathStyle, U: Unit, const N: usize>(fits: bool) {
-    type Edit<S, U, const N: usize> =
-        fn(&mut GenericPath<StackBackend<N, U>, S>) -> Result<(), NameTooLong>;
-    const LONG: &[u8] = b"a/../b/../c";
-    let edits: [Edit<S, U, N>; 7] = [
-        |path| path.set(LONG),
-        |path| path.extend_from_slice(LONG),
-        |path| write!(path, "{}", text(LONG)),
-        |path| path.push(LONG),
-        |path| path.push_fmt(format_args!("{}", text(LONG))),
-        |path| path.try_join(&[LONG]),
-        |path| path.resolve_in_place(&[LONG]),
+fn check_stack<S: PathStyle, U: Unit>() {
+    type Edit<S, U> = fn(&mut GenericPath<StackBackend<64, U>, S>) -> Result<(), NameTooLong>;
+    const PART: &[u8] = b"a/../b/../c";
+    let edits: [Edit<S, U>; 8] = [
+        |path| path.set(PART),
+        |path| path.extend_from_slice(PART),
+        |path| write!(path, "{}", text(PART)),
+        |path| path.push(PART),
+        |path| path.push_fmt(format_args!("{}", text(PART))),
+        |path| path.push_inside(PART),
+        |path| path.try_join(&[PART]),
+        |path| path.resolve_in_place(&[PART]),
     ];
     init_cwd();
     let allocations = ALLOCATIONS.get();
     for edit in edits {
-        let mut path = GenericPath::<StackBackend<N, U>, S>::new();
+        let mut path = GenericPath::<StackBackend<64, U>, S>::new();
         path.set(b"..").unwrap();
-        assert_eq!(edit(&mut path).is_ok(), fits);
-        assert!(fits || path.as_slice() == U::lit(b".."));
+        edit(&mut path).unwrap();
         assert!(is_terminated(&path));
     }
-    let relative = GenericPath::<StackBackend<N, U>, S>::relative(U::lit(b"//"), U::lit(b".."));
-    assert_eq!(relative.is_ok(), fits);
+    GenericPath::<StackBackend<64, U>, S>::relative(U::lit(b"//"), U::lit(b"..")).unwrap();
+
+    let mut full = GenericPath::<StackBackend<3, U>, S>::from(U::lit(b"..")).unwrap();
+    assert!(full.set(U::lit(b"UNC")).is_err());
+    assert!(full.extend_from_slice(U::lit(b".")).is_err());
+    assert!(full.push_trailing_sep().is_err());
+    assert!(S::WIN32 || full.push(U::lit(b"..")).is_err());
     assert_eq!(ALLOCATIONS.get(), allocations);
 }
 
 #[test]
 fn stack_does_not_allocate() {
-    check_stack::<Posix, u8, 8>(false);
-    check_stack::<Posix, u8, 64>(true);
-    check_stack::<Windows, u16, 8>(false);
-    check_stack::<Windows, u16, 64>(true);
+    check_stack::<Posix, u8>();
+    check_stack::<Windows, u16>();
 }
 
 #[test]
 fn empty_paths_are_nul_terminated() {
     assert!(is_terminated(&Path::new()));
-    assert!(is_terminated(&PoolPath::new()));
     assert!(is_terminated(&VecPath::new()));
     assert!(is_terminated(&StackPath::<1>::new()));
+    assert!(is_terminated(&bun_core::boxed_zeroed::<StackPath<1>>()));
     assert!(VecPath::new().into_vec().is_empty());
     assert!(VecPath::new().as_mut_slice().is_empty());
-    let mut empty = SlicePath::new(&mut []);
-    assert_eq!(empty.push(b"a"), Err(NameTooLong));
-    assert!(empty.into_zstr().as_bytes_with_nul() == b"\0");
 }
 
 #[test]

@@ -1,6 +1,7 @@
 use bun_ast::Loader;
+use bun_paths::Path;
 use bun_paths::fs::PathName;
-use bun_paths::{PosixPath, slashes_to_posix};
+use bun_sema::resolve::normalize_slashes;
 use core::cmp::Ordering;
 use std::hash::{DefaultHasher, Hasher};
 
@@ -183,8 +184,11 @@ pub struct PlacesOfForm {
 pub const DATABASE_NAMESPACE: &[u8] = b"database";
 
 pub fn name_of_database(specifier: &[u8]) -> Vec<u8> {
-    let normalized = PosixPath::resolve(&[&slashes_to_posix(specifier)]);
-    match normalized.starts_with(b"/") || normalized.starts_with(b"../") {
+    let normalized = Path::resolve(&[&normalize_slashes(specifier)]).into_portable();
+    match matches!(
+        normalized.as_bytes(),
+        [b'/', ..] | [b'.', b'/', ..] | [b'.', b'.', b'/', ..]
+    ) {
         true => normalized.to_vec(),
         false => [b"./", normalized.as_bytes()].concat(),
     }

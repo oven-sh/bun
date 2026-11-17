@@ -11,8 +11,7 @@ use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Loc, S, Stmt};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_glob::BunGlobWalker;
-use bun_paths::platform::Posix;
-use bun_paths::{ForwardSlashPath, PathStyle as _, PoolPath, PosixPath, fs};
+use bun_paths::{Path, fs};
 
 use crate::lexer::T;
 use crate::p::P;
@@ -221,24 +220,26 @@ fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
 }
 
 fn absolute_from(dir: &[u8], path: &[u8]) -> Option<Vec<u8>> {
-    let absolute = PoolPath::resolve(&[dir, path]).ok()?;
+    let absolute = Path::resolve(&[dir, path]).check_len().ok()?;
     Some(absolute.to_vec())
 }
 
 fn with_posix_separators(path: &[u8]) -> Vec<u8> {
-    bun_paths::platform_to_posix(path).into_owned()
+    bun_paths::to_portable(path).into_owned()
 }
 
 fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
-    let mut path = ForwardSlashPath::relative(from, to);
+    let mut path = Path::relative(from, to).into_portable();
     if !path.starts_with(b"../") {
         path.prepend(b"./");
     }
-    (path.len() < bun_paths::MAX_PATH_BYTES).then(|| path.to_vec())
+    Some(path.check_len().ok()?.to_vec())
 }
 
 fn is_not_an_import_path(path: &[u8], is_bundling: bool) -> bool {
     !strings::is_valid_utf8(path)
+        // `import` reads `\` as `/`.
+        || matches!(bun_paths::from_portable(path), Cow::Owned(_))
         // The runtime parses everything after `?` as a query.
         || (!is_bundling && strings::contains_char(path, b'?'))
 }
@@ -313,8 +314,15 @@ impl Pattern {
     #[optimize(size)]
     fn new(negated: bool, dir: &[u8], text: &[u8]) -> Option<Pattern> {
         let text = &*without_extglobs(text);
-        let text = Posix::without_leading_sep(text);
-        let normalized: &[u8] = &PosixPath::resolve(&[text]);
+        let mut segments: Vec<&[u8]> = Vec::new();
+        for segment in strings::tokenize(text, b"/") {
+            match segment {
+                b"." => {}
+                b".." if segments.last().is_some_and(|last| *last != b"..") => _ = segments.pop(),
+                _ => segments.push(segment),
+            }
+        }
+        let normalized: &[u8] = &segments.join(&b'/');
 
         // Unescape plain names here, because on Windows the walker treats `\` as a separator.
         let mut names = Vec::with_capacity(normalized.len());
@@ -382,11 +390,9 @@ fn find_files(
         shared_dir = Some(shared);
 
         if pattern.is_name {
-            if let Ok(file) = PoolPath::resolve(&[&pattern.dir, &pattern.glob])
-                && matches!(
-                    bun_sys::exists_at_type(bun_sys::Fd::cwd(), &file),
-                    Ok(bun_sys::ExistsAtType::File)
-                )
+            let file = Path::resolve(&[&pattern.dir, &pattern.glob]);
+            if let Ok(bun_sys::ExistsAtType::File) =
+                bun_sys::exists_at_type(bun_sys::Fd::cwd(), &file)
             {
                 files.push(file.to_vec());
             }

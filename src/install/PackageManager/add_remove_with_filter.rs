@@ -9,8 +9,7 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
-use bun_paths::platform::Windows;
-use bun_paths::{ForwardSlashPath, Path, PathStyle as _, PoolPath, VecPath, windows_to_platform};
+use bun_paths::{Path, VecPath, from_portable, portable};
 use bun_sys::{Fd, File};
 
 use super::add_catalog;
@@ -330,8 +329,9 @@ fn local_path_too_long(request: &UpdateRequest) -> ! {
     Global::crash();
 }
 
-fn resolve_from_cwd(cwd: &[u8], request: &UpdateRequest, path: &[u8]) -> PoolPath {
-    PoolPath::resolve(&[cwd, &windows_to_platform(path)])
+fn resolve_from_cwd(cwd: &[u8], request: &UpdateRequest, path: &[u8]) -> Path {
+    Path::resolve(&[cwd, &from_portable(path)])
+        .check_len()
         .unwrap_or_else(|_| local_path_too_long(request))
 }
 
@@ -343,10 +343,10 @@ fn spell_relative_to(
     abs: &[u8],
 ) -> Vec<u8> {
     let target_dir = package_json_path.and_then(bun_paths::dirname);
-    let relative = (target_dir.map(|dir| ForwardSlashPath::relative(dir, abs)))
+    let relative = (target_dir.map(|dir| Path::relative(dir, abs).into_portable()))
         // In a relative path in package.json, `\` is a separator.
         .filter(|relative| !strings::contains_char(relative, b'\\'));
-    let rel: &[u8] = &relative.unwrap_or_else(|| ForwardSlashPath::resolve(&[abs]));
+    let rel: &[u8] = &relative.unwrap_or_else(|| Path::resolve(&[abs]).into_portable());
     if rel.len() >= bun_paths::MAX_PATH_BYTES {
         local_path_too_long(request);
     }
@@ -362,7 +362,7 @@ fn spell_relative_to(
     positional.extend_from_slice(rel);
     // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
     let typed = request.version.literal.slice(request.version_buf());
-    if Windows::has_trailing_sep(typed) && !positional.ends_with(b"/") {
+    if typed.last().is_some_and(|&last| portable::is_sep(last)) && !positional.ends_with(b"/") {
         positional.push(b'/');
     }
     positional

@@ -18,8 +18,6 @@ use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, Vir
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_paths::{self as paths, DELIMITER, Path};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd};
@@ -154,10 +152,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         #[cfg(not(windows))]
         {
-            let mut buf = bun_paths::path_buffer_pool::get();
             for shell in Self::SHELLS_TO_SEARCH {
-                if let Some(found) = which(&mut buf, path, cwd, shell) {
-                    return Some(bun_core::ZBox::from_bytes(found));
+                if let Some(found) = which(path, cwd, shell) {
+                    return Some(bun_core::ZBox::from_bytes(found.as_bytes()));
                 }
             }
 
@@ -2000,16 +1997,10 @@ impl RunCommand {
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && executable.ends_with(b".exe") {
             debug_assert!(paths::is_absolute(executable));
 
-            let mut buf = bun_paths::w_path_buffer_pool::get();
-            let mut bunx = paths::GenericPath::<paths::SliceBackend<u16>>::new(&mut buf[..]);
-            if (bunx.set(executable))
-                .and_then(|()| bunx.make_nt_path())
-                .and_then(|()| bunx.set_extension(b".bunx"))
-                .is_ok()
-            {
-                let len = bunx.len();
-                BunXFastPath::try_launch(ctx, &mut buf, len, env, passthrough);
-            }
+            let mut bunx = paths::OSPath::resolve(&[executable]);
+            bunx.strip_nt_prefix();
+            bunx.set_extension(b".bunx");
+            BunXFastPath::try_launch(ctx, &bunx, env, passthrough);
         }
 
         Self::run_binary_without_bunx_path(
@@ -2571,26 +2562,16 @@ impl RunCommand {
             && !ctx.runtime_options.check
             && !crate::cli::run_compiled::is_requested(ctx)
         {
-            let mut buf = bun_paths::w_path_buffer_pool::get();
-            // NT object-manager prefix (`\??\`), NOT the Win32 long-path
-            // `\\?\` — `try_launch` hands this to NtCreateFile.
-            let root = bun_core::w!("\\??\\");
-            buf[..root.len()].copy_from_slice(root);
-            if let Ok(cwd_len) = sys::windows::GetCurrentDirectoryW(&mut buf[root.len()..]) {
-                let mut ptr = root.len() + cwd_len;
-                let prefix = bun_core::w!("\\node_modules\\.bin\\");
-                buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
-                ptr += prefix.len();
-                let encoded =
-                    strings::convert_utf8_to_utf16_in_buffer(&mut buf[ptr..], target_name);
-                ptr += encoded.len();
-                let ext = bun_core::w!(".bunx");
-                buf[ptr..ptr + ext.len()].copy_from_slice(ext);
-                ptr += ext.len();
-                buf[ptr] = 0;
+            let mut cwd = bun_paths::w_path_buffer_pool::get();
+            if let Ok(cwd_len) = sys::windows::GetCurrentDirectoryW(&mut cwd[..]) {
+                let mut bunx = paths::OSPath::from(&cwd[..cwd_len]);
+                bunx.push(b"node_modules/.bin");
+                bunx.push_trailing_sep();
+                bunx.extend_from_slice(target_name);
+                bunx.extend_from_slice(b".bunx");
 
                 let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                BunXFastPath::try_launch(ctx, &mut buf, ptr, env_loader, &passthrough);
+                BunXFastPath::try_launch(ctx, &bunx, env_loader, &passthrough);
             }
         }
 
@@ -2612,10 +2593,7 @@ impl RunCommand {
             }
 
             if !path_for_which.is_empty() {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                if let Some(destination) =
-                    which(&mut path_buf, path_for_which, top_level_dir, target_name)
-                {
+                if let Some(destination) = which(path_for_which, top_level_dir, target_name) {
                     crate::cli::run_compiled::reject(
                         ctx,
                         crate::cli::run_compiled::NonFileTarget::Executable(destination.as_bytes()),
@@ -2632,7 +2610,7 @@ impl RunCommand {
                     Self::run_binary_without_bunx_path(
                         ctx,
                         stored,
-                        destination,
+                        &destination,
                         top_level_dir,
                         env_loader,
                         &passthrough,
@@ -2937,7 +2915,7 @@ impl RunCommand {
         } else {
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = crate::cli::getcwd_or_exe_dir(&mut cwd_buf);
-            let mut joined = Path::resolve(&[cwd.as_bytes(), &filename]);
+            let mut joined = Path::resolve(&[cwd, &filename]);
             joined.copy_trailing_sep_from(&filename);
             joined.as_bytes().into()
         };
@@ -3199,7 +3177,7 @@ impl RunCommand {
         // that sits next to README.md.
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let resolved = (sys::getcwd_z(&mut cwd_buf).ok())
-            .and_then(|cwd| paths::PoolPath::resolve(&[cwd, path]).ok());
+            .and_then(|cwd| Path::resolve(&[cwd, path]).check_len().ok());
         // If the absolute path is too long, the relative path can still be opened.
         let abs_md_path: &[u8] = resolved.as_deref().map_or(path, ZStr::as_bytes);
         let dir = paths::dirname_or_root(abs_md_path);
@@ -3623,8 +3601,7 @@ impl BunXFastPath {
     /// If this returns, it implies the fast path cannot be taken.
     pub(crate) fn try_launch(
         ctx: &mut ContextData,
-        path_then_command_line: &mut WPathBuffer,
-        path_len: usize,
+        path_to_use: &[u16],
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
     ) {
@@ -3633,8 +3610,6 @@ impl BunXFastPath {
         if !bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
             return;
         }
-
-        let (path_to_use, command_line) = path_then_command_line.split_at_mut(path_len);
 
         bun_core::scoped_log!(
             BUNX_FAST_PATH_LOG,
@@ -3651,6 +3626,7 @@ impl BunXFastPath {
             }
         };
 
+        let mut command_line = bun_paths::w_path_buffer_pool::get();
         let mut i: usize = 0;
         for arg in passthrough {
             // Add space separator before each argument
@@ -3669,7 +3645,7 @@ impl BunXFastPath {
 
         let run_ctx = bun_shim_impl::FromBunRunContext {
             metadata_file,
-            base_path: &path_to_use[4..],
+            base_path: path_to_use,
             arguments: &command_line[..i],
             force_use_bun: ctx.debug.run_in_bun,
             direct_launch_with_bun_js: Self::direct_launch_callback,

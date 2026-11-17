@@ -1,7 +1,6 @@
-//! Where a [`GenericPath`](crate::GenericPath) stores its units.
+//! Where a path stores its units.
 
 use core::convert::Infallible;
-use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::NonNull;
 
@@ -11,16 +10,12 @@ use crate::NameTooLong;
 use crate::path_buffer_pool::PathBufferPoolT;
 use crate::path_unit::PathUnit;
 
-/// Not exported, so no other crate can implement it.
-pub trait PathBackend {
+pub trait PathBackend: Default {
     type Unit: PathUnit;
     /// `NameTooLong`, or `Infallible` if the backend can always grow.
     type Error;
     /// `Result<T, NameTooLong>`, or `T` if the backend can always grow.
     type Output<T>;
-
-    /// Whether an edit whose worst case does not fit may run on a heap copy, to see if its result does.
-    const RETRY_ON_HEAP: bool = true;
 
     fn output<T>(result: Result<T, Self::Error>) -> Self::Output<T>;
 
@@ -94,13 +89,14 @@ impl<U: PathUnit> RawBuf<U> {
         Self::from_vec(ManuallyDrop::into_inner(vec))
     }
 
-    /// SAFETY: the first `len` units are initialized.
+    /// SAFETY: `self` is that of a `PoolBackend`, has `len` initialized units and is not used again.
     #[cold]
     #[inline(never)]
-    unsafe fn copy_to_vec(self, len: usize, capacity: usize) -> Self {
+    unsafe fn move_to_vec(self, len: usize, capacity: usize) -> Self {
         let mut vec = Vec::with_capacity(capacity.max(2 * self.capacity));
         // SAFETY: the caller's contract.
         vec.extend_from_slice(unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), len) });
+        drop(PoolBackend(self));
         Self::from_vec(vec)
     }
 }
@@ -120,48 +116,11 @@ macro_rules! raw_buf_accessors {
     };
 }
 
-/// A buffer from [`path_buffer_pool`](crate::path_buffer_pool), taken on the first write.
+/// A buffer from [`path_buffer_pool`](crate::path_buffer_pool), taken on the first write. A `Vec` once the path outgrows it.
 #[derive(Default)]
 pub struct PoolBackend<U: PathUnit = u8>(RawBuf<U>);
 
 impl<U: PathUnit> PathBackend for PoolBackend<U> {
-    type Unit = U;
-    type Error = NameTooLong;
-    type Output<T> = Result<T, NameTooLong>;
-
-    #[inline(always)]
-    fn output<T>(result: Result<T, NameTooLong>) -> Result<T, NameTooLong> {
-        result
-    }
-
-    raw_buf_accessors!();
-
-    #[inline(always)]
-    unsafe fn grow(&mut self, _: usize, capacity: usize) -> Result<(), NameTooLong> {
-        if capacity > U::BUFFER_LEN {
-            return Err(NameTooLong);
-        }
-        // The capacity was 0, so there is nothing to copy or free.
-        self.0 = RawBuf::from_pool();
-        Ok(())
-    }
-}
-
-impl<U: PathUnit> Drop for PoolBackend<U> {
-    #[inline]
-    fn drop(&mut self) {
-        if self.0.capacity != 0 {
-            // SAFETY: only `from_pool` gives it a capacity.
-            unsafe { self.0.return_to_pool() }
-        }
-    }
-}
-
-/// [`PoolBackend`] until the path outgrows the buffer, then a `Vec`.
-#[derive(Default)]
-pub struct PoolOrVecBackend<U: PathUnit = u8>(RawBuf<U>);
-
-impl<U: PathUnit> PathBackend for PoolOrVecBackend<U> {
     type Unit = U;
     type Error = Infallible;
     type Output<T> = T;
@@ -175,26 +134,26 @@ impl<U: PathUnit> PathBackend for PoolOrVecBackend<U> {
 
     #[inline(always)]
     unsafe fn grow(&mut self, len: usize, capacity: usize) -> Result<(), Infallible> {
-        if capacity <= U::BUFFER_LEN {
+        self.0 = if capacity <= U::BUFFER_LEN {
             // The capacity was 0, so there is nothing to copy or free.
-            self.0 = RawBuf::from_pool();
+            RawBuf::from_pool()
         } else {
-            // SAFETY: the caller's contract. Assigning `*self` drops the old buffer.
-            *self = Self(unsafe { self.0.copy_to_vec(len, capacity) });
-        }
+            // SAFETY: the caller's contract.
+            unsafe { self.0.move_to_vec(len, capacity) }
+        };
         Ok(())
     }
 }
 
-impl<U: PathUnit> Drop for PoolOrVecBackend<U> {
+impl<U: PathUnit> Drop for PoolBackend<U> {
     #[inline]
     fn drop(&mut self) {
         if self.0.capacity == U::BUFFER_LEN {
-            // SAFETY: `copy_to_vec` only makes larger capacities, so this came from the pool.
+            // SAFETY: `move_to_vec` only makes larger capacities, so this came from the pool.
             unsafe { self.0.return_to_pool() }
         } else if self.0.capacity != 0 {
             core::hint::cold_path();
-            // SAFETY: came from `copy_to_vec`.
+            // SAFETY: came from `move_to_vec`.
             drop(unsafe { self.0.into_vec(0) });
         }
     }
@@ -251,13 +210,12 @@ impl<U: PathUnit> Drop for VecBackend<U> {
     }
 }
 
-/// `N` inline units, NUL included. Never allocates, so `N` has to hold an operation's inputs, not only its result.
+/// `N` inline units, NUL included.
 pub struct StackBackend<const N: usize, U: PathUnit = u8>([MaybeUninit<U>; N]);
 
 impl<const N: usize, U: PathUnit> Default for StackBackend<N, U> {
     #[inline(always)]
     fn default() -> Self {
-        const { assert!(N > 0) };
         let mut units = [MaybeUninit::uninit(); N];
         units[0] = MaybeUninit::new(*U::NUL);
         Self(units)
@@ -269,8 +227,6 @@ impl<const N: usize, U: PathUnit> PathBackend for StackBackend<N, U> {
     type Error = NameTooLong;
     type Output<T> = Result<T, NameTooLong>;
 
-    const RETRY_ON_HEAP: bool = false;
-
     #[inline(always)]
     fn output<T>(result: Result<T, NameTooLong>) -> Result<T, NameTooLong> {
         result
@@ -278,6 +234,7 @@ impl<const N: usize, U: PathUnit> PathBackend for StackBackend<N, U> {
 
     #[inline(always)]
     fn as_ptr(&self) -> *const U {
+        const { assert!(N > 0) };
         self.0.as_ptr().cast()
     }
 
@@ -285,42 +242,6 @@ impl<const N: usize, U: PathUnit> PathBackend for StackBackend<N, U> {
     fn as_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
         &mut self.0
     }
-
-    #[inline(always)]
-    unsafe fn grow(&mut self, _: usize, _: usize) -> Result<(), NameTooLong> {
-        Err(NameTooLong)
-    }
-}
-
-/// A buffer that the caller provides.
-pub struct SliceBackend<'a, U: PathUnit = u8>(RawBuf<U>, PhantomData<&'a mut [U]>);
-
-impl<'a, U: PathUnit> SliceBackend<'a, U> {
-    #[inline]
-    pub(crate) fn new(buffer: &'a mut [U]) -> Self {
-        let Some(first) = buffer.first_mut() else {
-            return Self(RawBuf::default(), PhantomData);
-        };
-        *first = *U::NUL;
-        let buf = RawBuf {
-            capacity: buffer.len(),
-            ptr: NonNull::from_mut(buffer).cast(),
-        };
-        Self(buf, PhantomData)
-    }
-}
-
-impl<U: PathUnit> PathBackend for SliceBackend<'_, U> {
-    type Unit = U;
-    type Error = NameTooLong;
-    type Output<T> = Result<T, NameTooLong>;
-
-    #[inline(always)]
-    fn output<T>(result: Result<T, NameTooLong>) -> Result<T, NameTooLong> {
-        result
-    }
-
-    raw_buf_accessors!();
 
     #[inline(always)]
     unsafe fn grow(&mut self, _: usize, _: usize) -> Result<(), NameTooLong> {

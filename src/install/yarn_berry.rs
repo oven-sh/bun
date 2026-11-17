@@ -4,8 +4,7 @@ use bun_alloc::AllocError;
 use bun_ast::{E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_paths::platform::Windows;
-use bun_paths::{ForwardSlashPath, PathStyle as _, windows_to_platform, without_trailing_sep};
+use bun_paths::{Path, from_portable, portable, without_trailing_sep};
 use bun_semver as semver;
 use bun_semver::String;
 use bun_sys::Fd;
@@ -446,7 +445,7 @@ fn project_patch_paths(source: &[u8], params: &Params<'_>) -> Option<Vec<Vec<u8>
         }
         if let Some(rest) = one.strip_prefix(b"~/") {
             paths.push(rest.to_vec());
-        } else if Windows::is_absolute(one) {
+        } else if portable::is_absolute(one) {
             paths.push(one.to_vec());
         } else {
             paths.push(join_folder(&owner_dir(params)?, one));
@@ -514,11 +513,13 @@ fn owner_dir(params: &Params<'_>) -> Option<Vec<u8>> {
 /// Joins the paths the way the folder resolver stores them: `.` and `..` resolved, with `/`
 /// separators on every platform.
 fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
-    let path = windows_to_platform(path);
+    let path = from_portable(path);
     if bun_paths::is_absolute(&path) {
         return path.into_owned();
     }
-    ForwardSlashPath::join(&[&windows_to_platform(base), &path]).to_vec()
+    Path::join(&[&from_portable(base), &path])
+        .into_portable()
+        .to_vec()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1038,8 +1039,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                     p.is_empty()
                         || p.as_slice() == b"."
                         || strings::contains_char(p, 0)
-                        || Windows::is_absolute(p.as_slice())
-                        || Windows::components(p.as_slice()).any(|part| part == b"..")
+                        || portable::is_absolute(p)
+                        || portable::has_dot_dot(p)
                 }),
             };
             if let Some(path) = outside {

@@ -924,8 +924,7 @@ fn create_overlapped_pipe_pair(
         ""
     };
     let mut name_w = bun_paths::OSPath::new();
-    write!(name_w, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}")
-        .map_err(|_| CreatePtyError::OpenPtyFailed)?;
+    write!(name_w, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}");
 
     let server = windows::CreateNamedPipeW(
         &name_w,

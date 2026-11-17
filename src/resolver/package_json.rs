@@ -1,4 +1,5 @@
 use core::cell::{OnceCell, UnsafeCell};
+use std::borrow::Cow;
 
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
@@ -6,11 +7,7 @@ use bun_core::Output;
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
-use bun_paths::platform::Auto;
-use bun_paths::{
-    MAX_PATH_BYTES, NODE_MODULES_NEEDLE, Path, PathBuffer, PathStyle as _, PosixPath,
-    slashes_to_posix, windows_to_platform,
-};
+use bun_paths::{MAX_PATH_BYTES, NODE_MODULES_NEEDLE, Path, PathBuffer, from_portable};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
 
@@ -239,6 +236,11 @@ pub struct MixedPatterns {
     pub(crate) globs: GlobList,
 }
 
+/// For text where `\` is no name on any platform: it is an escape in a glob, and `/` in a URL.
+fn with_slashes(text: &[u8]) -> Cow<'_, [u8]> {
+    strings::replace_char(text, b'\\', b'/')
+}
+
 impl SideEffects {
     pub(crate) fn has_side_effects(&self, path: &[u8]) -> bool {
         match self {
@@ -246,7 +248,7 @@ impl SideEffects {
             SideEffects::False => false,
             SideEffects::Map(map) => map.contains_key(&StringHashMapUnownedKey::init(path)),
             SideEffects::Glob(glob_list) => {
-                let normalized_path = slashes_to_posix(path);
+                let normalized_path = with_slashes(path);
 
                 for pattern in glob_list.iter() {
                     if pattern.r#match(&normalized_path).matches() {
@@ -264,7 +266,7 @@ impl SideEffects {
                     return true;
                 }
                 // Then check glob patterns with normalized path
-                let normalized_path = slashes_to_posix(path);
+                let normalized_path = with_slashes(path);
 
                 for pattern in mixed.globs.iter() {
                     if pattern.r#match(&normalized_path).matches() {
@@ -554,7 +556,7 @@ impl PackageJSON {
                     if !str.is_empty() {
                         package_json
                             .main_fields
-                            .put(main, windows_to_platform(str).into())
+                            .put(main, from_portable(str).into())
                             .expect("unreachable");
                     }
                 }
@@ -592,15 +594,15 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        let key = Path::resolve(&[&windows_to_platform(prop.key.slice())]);
-                        let key = Auto::without_leading_sep(&key);
+                        let key = Path::resolve(&[&from_portable(prop.key.slice())]);
+                        let key = bun_paths::without_leading_sep(&key);
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
                                 // If this is a string, it's a replacement package
                                 package_json
                                     .browser_map
-                                    .put(key, windows_to_platform(str.slice()).into())
+                                    .put(key, from_portable(str.slice()).into())
                                     .expect("unreachable");
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {
@@ -674,7 +676,7 @@ impl PackageJSON {
                 }
 
                 let dir = json_source.path.name().dir_with_trailing_slash();
-                let in_package = |name: &[u8]| Path::join(&[dir, &windows_to_platform(name)]);
+                let in_package = |name: &[u8]| Path::join(&[dir, &from_portable(name)]);
 
                 // If the array is empty, treat it as false (no side effects)
                 if !has_globs && !has_exact {
@@ -699,8 +701,7 @@ impl PackageJSON {
                                 || strings::contains_char(name, b'{')
                                 || glob::has_extglob_prefix(name)
                             {
-                                glob_list
-                                    .push(glob::Prepared::new(slashes_to_posix(pattern).into()));
+                                glob_list.push(glob::Prepared::new(with_slashes(pattern).into()));
                             } else {
                                 let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                             }
@@ -721,7 +722,7 @@ impl PackageJSON {
                             }
 
                             let pattern: &[u8] = &in_package(name);
-                            glob_list.push(glob::Prepared::new(slashes_to_posix(pattern).into()));
+                            glob_list.push(glob::Prepared::new(with_slashes(pattern).into()));
                         }
                     }
                     package_json.side_effects = SideEffects::Glob(glob_list);
@@ -1780,7 +1781,7 @@ impl<'a> ESModule<'a> {
                             return self.resolve_target::<true>(
                                 package_url,
                                 target,
-                                subpath,
+                                &with_slashes(subpath),
                                 is_imports,
                             );
                         }
@@ -1798,6 +1799,7 @@ impl<'a> ESModule<'a> {
                                 bstr::BStr::new(subpath)
                             ));
                         }
+                        let subpath: &[u8] = &with_slashes(subpath);
                         let mut result =
                             self.resolve_target::<false>(package_url, target, subpath, is_imports);
                         if result.status == Status::Exact
@@ -1958,7 +1960,7 @@ impl<'a> ESModule<'a> {
                         ));
                     }
 
-                    let package: &[u8] = &slashes_to_posix(str);
+                    let package: &[u8] = &with_slashes(str);
                     if internal
                         && !strings::has_prefix(package, b"./")
                         && !strings::has_prefix(package, b"../")
@@ -1988,10 +1990,8 @@ impl<'a> ESModule<'a> {
                             // `imports` target is itself a package specifier
                             // (e.g. `@myproject/resolver`) that we hand back to
                             // package-resolve. Per the Node.js packages spec these
-                            // are URL-like specifiers and must keep forward slashes;
-                            // `Auto` normalizes them to `\` on Windows and the
-                            // scoped-name match fails, falling through to `main`.
-                            let result: &[u8] = &PosixPath::join(&[package, subpath]);
+                            // are URL-like specifiers and must keep forward slashes.
+                            let result: &[u8] = &Path::join(&[package, subpath]).into_portable();
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Resolved \".{}\" to \".{}\"",
@@ -2032,7 +2032,7 @@ impl<'a> ESModule<'a> {
                 }
 
                 // Let resolvedTarget be the URL resolution of the concatenation of packageURL and target.
-                let str: &[u8] = &windows_to_platform(str);
+                let str: &[u8] = &from_portable(str);
                 let resolved_target: &[u8] = &Path::join(&[package_url, str]);
 
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"

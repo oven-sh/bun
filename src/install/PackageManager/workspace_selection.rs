@@ -5,9 +5,7 @@ use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
-use bun_paths::{
-    ForwardSlashPath, MAX_PATH_BYTES, platform_to_posix, windows_to_platform, without_trailing_sep,
-};
+use bun_paths::{MAX_PATH_BYTES, Path, from_portable, to_portable, without_trailing_sep};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -76,9 +74,9 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
 /// As in npm, `\` in a `workspaces` array is a separator and not an escape.
 pub fn workspaces_entry(entry: &[u8]) -> Cow<'_, [u8]> {
     if cfg!(windows) {
-        platform_to_posix(entry)
+        to_portable(entry)
     } else {
-        windows_to_platform(entry)
+        from_portable(entry)
     }
 }
 
@@ -116,7 +114,10 @@ impl NegatedWorkspaces {
 }
 
 pub fn abs_posix_dir(base: &[u8], path: &[u8]) -> Box<[u8]> {
-    ForwardSlashPath::resolve(&[base, path]).as_bytes().into()
+    Path::resolve(&[base, path])
+        .into_portable()
+        .as_bytes()
+        .into()
 }
 
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
@@ -153,7 +154,7 @@ fn parse(raw: &[u8], original_cwd: &[u8]) -> Selector {
 
     let resolve = |part: &[u8]| -> Prepared<Box<[u8]>> {
         // A glob reads `\` as an escape.
-        let base = strings::replace_owned(&platform_to_posix(original_cwd), b"\\", b"\\\\");
+        let base = strings::replace_owned(&to_portable(original_cwd), b"\\", b"\\\\");
         let joined = abs_posix_dir(&base, part);
         if joined.len() >= MAX_PATH_BYTES {
             Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));

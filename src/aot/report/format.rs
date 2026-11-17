@@ -1,5 +1,5 @@
 use bun_core::fmt::{ItoaBuf, itoa};
-use bun_paths::{Path, is_absolute, platform_to_posix_in_place};
+use bun_paths::{Path, is_absolute, to_portable_in_place};
 
 pub(super) struct PathPrinter {
     working_directory: Vec<u8>,
@@ -28,7 +28,7 @@ impl PathPrinter {
     pub(super) fn posix_path(&self, path: &[u8]) -> Vec<u8> {
         let mut shown = Vec::new();
         self.write_path(&mut shown, path);
-        platform_to_posix_in_place(&mut shown[..]);
+        to_portable_in_place(&mut shown[..]);
         shown
     }
 }

@@ -13,9 +13,8 @@ use crate::module_format::{DeclaredModuleType, ModuleFormat, find_format_by_synt
 use crate::resolve::{
     CodeImportForm, CodeImportKind, CodeParseRequest, CodeRequest, CodeResolution,
     EarlyTransformRequest, HostPayload, HostResolution, JsxRuntime, JsxSettings, MacroRequest,
-    ParsedCode, TransformRequest, TranspileSettings, TreeChange,
+    ParsedCode, TransformRequest, TranspileSettings, TreeChange, basename,
 };
-use bun_paths::PathStyle as _;
 use std::cmp::Ordering;
 
 struct AcceptedTree<'s, 'r> {
@@ -270,7 +269,7 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
         is_library: context.host.is_library_file(key.path),
         host_values: previous.host_values,
         jsx: previous.jsx_mode,
-        own_name: arena.alloc_slice_copy(Posix::basename(key.path)),
+        own_name: arena.alloc_slice_copy(basename(key.path)),
     };
     let AnalyzedAgain {
         analysis,
@@ -462,7 +461,7 @@ fn analyze<'s, 'r>(
         is_library: host.is_library_file(path),
         host_values: tree.host_values,
         jsx: jsx_mode,
-        own_name: arena.alloc_slice_copy(Posix::basename(path)),
+        own_name: arena.alloc_slice_copy(basename(path)),
     };
     let fold = fold_inputs_of(context, arena, stored_by_mocks);
     let (bound, analysis, host_values) =

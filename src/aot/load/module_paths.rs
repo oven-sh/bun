@@ -1,7 +1,7 @@
 use bun_ast::Loader;
 use bun_builtin_sources::Manifest;
 use bun_core::strings;
-use bun_paths::{ForwardSlashPath, MAX_PATH_BYTES, is_absolute};
+use bun_paths::{MAX_PATH_BYTES, Path, is_absolute};
 use bun_sema::program::{FileId, FileRole, Files, HostLoader};
 use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -257,7 +257,7 @@ pub(super) fn compute_program_path(
     entry_point_index: Option<usize>,
 ) -> Vec<u8> {
     if runs_in_place {
-        return bun_paths::posix_to_platform(native_path).into_owned();
+        return bun_paths::to_native(native_path).into_owned();
     }
     if let Some(index) = entry_point_index {
         let name = &paths.entry_point_names[index];
@@ -302,7 +302,7 @@ pub(crate) fn spell_folder_above_root(
 pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> Vec<u8> {
     let mut path = native_path.to_vec();
     if is_windows {
-        bun_paths::slashes_to_windows_in_place(&mut path);
+        bun_core::strings::replace_char_in_place(&mut path, b'/', b'\\');
     }
     path
 }
@@ -315,8 +315,11 @@ pub(crate) fn compute_display_path(project_root: &[u8], native_path: &[u8]) -> B
 }
 
 pub(super) fn compute_relative_path(directory: &[u8], native_path: &[u8]) -> Option<Vec<u8>> {
-    (fits_path_buffer(directory) && fits_path_buffer(native_path))
-        .then(|| ForwardSlashPath::relative(directory, native_path).to_vec())
+    (fits_path_buffer(directory) && fits_path_buffer(native_path)).then(|| {
+        Path::relative(directory, native_path)
+            .into_portable()
+            .to_vec()
+    })
 }
 
 const MAX_NORMALIZATION_GROWTH: usize = 2;

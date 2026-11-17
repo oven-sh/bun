@@ -5,12 +5,10 @@ use core::mem::MaybeUninit;
 use core::ops::Range;
 
 use crate::path_style::{
-    Components, PathStyle, Root, VolumeKind, common_path_prefix_len, eq_ignore_case_and_sep,
+    Components, PathStyle, Posix, Root, VolumeKind, common_path_prefix_len, eq_ignore_case_and_sep,
     eq_path, len_without_trailing_sep,
 };
 use crate::path_unit::PathUnit;
-use crate::platform::Posix;
-use crate::{slashes_to_posix_in_place, slashes_to_windows_in_place};
 
 /// The most a result can outgrow its inputs: the `./` that `prevent_new_volume` inserts.
 pub(crate) const NORMALIZE_OVERHEAD: usize = 2;
@@ -118,12 +116,7 @@ impl<'a, U: PathUnit, S: PathStyle> EditBuf<'a, U, S> {
 
     #[inline(always)]
     fn convert_seps(&mut self, start: usize) {
-        let added = &mut self.as_mut_slice()[start..];
-        if S::SEP == b'\\' {
-            slashes_to_windows_in_place(added);
-        } else if S::WIN32 {
-            slashes_to_posix_in_place(added);
-        }
+        S::to_native_in_place(&mut self.as_mut_slice()[start..]);
     }
 
     /// Inserts `./` if collapsing exposed a volume: `a\..\C:\b` becomes `.\C:\b`.
@@ -350,7 +343,7 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
         let path = self.as_mut_slice();
         let components_start = root.len;
         if S::WIN32 {
-            slashes_to_posix_in_place(path);
+            S::to_portable_in_place(path);
             match root.kind {
                 VolumeKind::None => {}
                 VolumeKind::Drive => path[0] = path[0].to_ascii_upper(),
@@ -375,9 +368,7 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
         if needs_sep {
             self.push_ascii(b'/');
         }
-        if S::SEP == b'\\' {
-            slashes_to_windows_in_place(self.as_mut_slice());
-        }
+        self.convert_seps(0);
         self.prevent_new_volume(root);
     }
 
@@ -420,6 +411,26 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
         let trailing_sep = self.len > root.len && S::has_trailing_sep(self.as_slice());
         let root = self.normalize_to_slashes(root);
         self.finish_normalize(root, trailing_sep);
+    }
+
+    #[inline(never)]
+    pub(crate) fn push_inside<C: PathUnit>(&mut self, part: &[C]) {
+        let old_len = self.len;
+        let root = root_to_preserve::<S>(self.as_slice(), &part[..0]);
+        self.push_trailing_sep();
+        let start = self.len;
+        self.extend_from_slice(part);
+        let added = &mut self.as_mut_slice()[start..];
+        S::to_portable_in_place(added);
+        let added_len = normalize_components(added, 0, 0, false);
+        if added_len == 0 {
+            return self.truncate(old_len);
+        }
+        self.truncate(start + added_len);
+        self.convert_seps(start);
+        if let Some(root) = root {
+            self.prevent_new_volume(root);
+        }
     }
 }
 
@@ -508,7 +519,19 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
         if !S::WIN32 {
             return self.concat_parts(parts);
         }
+        // Fast paths: only relative parts follow the one to start at.
+        let roots = parts.iter().map(|part| Root::parse::<S>(part));
+        let last_rooted = roots.enumerate().rfind(|(_, root)| root.len > 0);
+        if let Some((last, root)) = last_rooted
+            && root.is_fully_qualified::<S>()
+        {
+            self.truncate(0);
+            return self.concat_parts(&parts[last..]);
+        }
         let current = Root::parse::<S>(self.as_slice());
+        if last_rooted.is_none() && !is_bare_drive(current, self.as_slice()) {
+            return self.concat_parts(parts);
+        }
         let first = match self.len {
             0 => parts.iter().position(|part| !part.is_empty()),
             _ => None,

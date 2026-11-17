@@ -154,7 +154,7 @@ fn display_name(filename: &[u8], is_cjs: bool) -> String {
     } else if cfg!(windows) {
         let mut bytes = Vec::with_capacity(filename.len() + 8);
         bytes.extend_from_slice(b"file:///");
-        bytes.extend_from_slice(&bun_paths::platform_to_posix(filename));
+        bytes.extend_from_slice(&bun_paths::to_portable(filename));
         bytes.as_bstr().to_string()
     } else {
         let mut bytes = Vec::with_capacity(filename.len() + 7);

@@ -5,13 +5,13 @@
 //! there, so the two can be compared.
 
 use bun_core::strings;
-use bun_paths::PathStyle as _;
-use bun_paths::platform::Posix;
 use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::messages::text;
-use bun_sema::resolve::{Host, displayed_path, join, to_path};
+use bun_sema::resolve::{
+    Host, displayed_path, get_relative_path_from_directory, join, parent_directory, to_path,
+};
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::{Category, Diagnostic, Report, Request, TaskSize};
@@ -318,7 +318,7 @@ impl Virtual {
     }
 
     fn add_directories_above(&mut self, path: &[u8]) {
-        let mut dir = Posix::dirname_or_root(path);
+        let mut dir = parent_directory(path);
         loop {
             if self
                 .directories
@@ -329,7 +329,7 @@ impl Virtual {
             {
                 break;
             }
-            dir = Posix::dirname_or_root(dir);
+            dir = parent_directory(dir);
         }
     }
 
@@ -1753,7 +1753,9 @@ fn run_one(
                     true => cwd.as_bytes(),
                     false => &out_dir[..],
                 };
-                join(dir, &bun_paths::PosixPath::relative(common, path))
+                let relative =
+                    get_relative_path_from_directory(common, path, files.is_case_sensitive);
+                join(dir, &relative)
             }
             None => path.to_vec(),
         };

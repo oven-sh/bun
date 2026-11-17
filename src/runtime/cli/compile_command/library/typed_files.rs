@@ -1,6 +1,6 @@
 use bun_ast::{Loader, Log};
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
-use bun_paths::{ForwardSlashPath, Path, VecPath};
+use bun_paths::{Path, VecPath};
 use bun_sema_driver::typed_files::javascript_path_beside;
 
 use crate::cli::check_command::{
@@ -111,7 +111,8 @@ pub(crate) fn add_typed_files(
             loader: Loader::Ts,
             input_loader: Loader::Ts,
             output_kind: OutputKind::Asset,
-            dest_path: ForwardSlashPath::relative(&outdir, &typed.path)
+            dest_path: Path::relative(&outdir, &typed.path)
+                .into_portable()
                 .as_bytes()
                 .into(),
             size: typed.text.len(),

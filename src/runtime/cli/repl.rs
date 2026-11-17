@@ -199,10 +199,7 @@ impl History {
             return Ok(());
         }
 
-        // Skip the history file if `$HOME` is too long.
-        let Ok(path) = path::PoolPath::join(&[home_path, HISTORY_FILENAME]) else {
-            return Ok(());
-        };
+        let path = path::Path::join(&[home_path, HISTORY_FILENAME]);
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), &path) {

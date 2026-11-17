@@ -2,7 +2,7 @@ use core::cmp::Ordering;
 
 use bun_collections::index_sort;
 use bun_core::{Output, strings};
-use bun_paths::{ForwardSlashPath, Path};
+use bun_paths::Path;
 use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
@@ -284,7 +284,7 @@ impl PackageManager {
             {
                 continue;
             }
-            let folder = bun_paths::windows_to_platform(folder.slice(buf)).into_owned();
+            let folder = bun_paths::from_portable(folder.slice(buf)).into_owned();
             // The resolver rejects a folder outside the package, so its package.json is not read.
             if crate::bin::bin_target_escapes_package_dir(&folder) {
                 continue;
@@ -367,12 +367,12 @@ impl PackageManager {
         base: &[u8],
     ) -> Result<Dependency, bun_alloc::AllocError> {
         let folder = folder.slice(self.lockfile.buffers.string_bytes.as_slice());
-        let folder: &[u8] = &bun_paths::windows_to_platform(folder);
+        let folder: &[u8] = &bun_paths::from_portable(folder);
         // An absolute path is left as it is, and the resolver rejects it.
         if bun_paths::is_absolute(folder) {
             return Ok(row);
         }
-        let mut literal = ForwardSlashPath::join(&[base, folder]);
+        let mut literal = Path::join(&[base, folder]).into_portable();
         literal.prepend(b"file:");
         let literal = self.lockfile.string_buf().append(&literal)?;
         let sliced = literal.sliced(self.lockfile.buffers.string_bytes.as_slice());

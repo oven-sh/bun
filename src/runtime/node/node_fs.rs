@@ -3,7 +3,6 @@
 // The top-level functions assume the arguments are already validated
 
 use bun_core::strings;
-use bun_paths::platform::Auto;
 #[cfg(windows)]
 use core::ffi::c_void;
 use core::ffi::{c_char, c_int, c_uint};
@@ -23,9 +22,7 @@ use bun_jsc::{
     ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
     StringJsc as _,
 };
-use bun_paths::{
-    self as paths, OSPath, OSPathChar, OSPathSliceZ, Path, PathBuffer, PathStyle as _,
-};
+use bun_paths::{self as paths, OSPath, OSPathChar, OSPathSliceZ, Path};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
 use bun_threading::UnboundedQueue;
@@ -561,7 +558,7 @@ fn is_source_path_in_executable(path: &[u8]) -> bool {
 }
 
 /// What the executable holds lies on the file system that holds the executable.
-fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut PathBuffer) -> &'a ZStr {
+fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut Path) -> &'a ZStr {
     match bun_core::self_exe_path() {
         Ok(executable)
             if is_in_executable(path.slice()) || is_source_path_in_executable(path.slice()) =>
@@ -1026,23 +1023,22 @@ impl CpPendingDirs {
     }
 
     /// Returns false if none are pending.
-    fn pop_into(&mut self, src: &mut OSPath, dest: &mut OSPath) -> Maybe<bool> {
+    fn pop_into(&mut self, src: &mut OSPath, dest: &mut OSPath) -> bool {
         let Some(dir) = self.dirs.pop() else {
-            return Ok(false);
+            return false;
         };
         let name = &self.names[dir.name_start..];
         src.truncate(dir.parent_src_len);
         dest.truncate(dir.parent_dest_len);
-        if dest.push(name).is_err() || src.push(name).is_err() {
-            return Err(cp_name_too_long(src));
-        }
+        src.push(name);
+        dest.push(name);
         self.names.truncate(dir.name_start);
-        Ok(true)
+        true
     }
 }
 
 #[cold]
-fn cp_name_too_long<C: paths::PathUnit>(path: &[C]) -> sys::Error {
+fn cp_name_too_long(path: &[u8]) -> sys::Error {
     sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile).with_path(&path_to_show(path))
 }
 
@@ -2632,7 +2628,7 @@ mod _async_tasks {
             let mut pending = CpPendingDirs::default();
             loop {
                 Self::cp_async_one_directory(nodefs, this, src, dest, &mut pending)?;
-                if !pending.pop_into(src, dest)? {
+                if !pending.pop_into(src, dest) {
                     return Ok(());
                 }
             }
@@ -2687,12 +2683,9 @@ mod _async_tasks {
             let fd = dir.fd();
 
             #[cfg(windows)]
-            let mut buf = bun_paths::os_path_buffer_pool::get();
-            #[cfg(windows)]
-            let normdest: &OSPathSliceZ = sys::normalize_path_windows_opts(
+            let normdest: &OSPathSliceZ = &sys::normalize_path_windows_opts(
                 FD::INVALID,
                 dest.as_slice(),
-                &mut buf[..],
                 // No NT prefix — `normdest` feeds
                 // `mkdirRecursiveOSPath` / `CopyFileW` which expect Win32 paths,
                 // not `\??\` NT object paths.
@@ -2718,19 +2711,10 @@ mod _async_tasks {
                     pending.push(src_path, dest_path, cname);
                     continue;
                 }
-                let paths = match (src_path.push_scoped(cname), dest_path.push_scoped(cname)) {
-                    (Ok(src), Ok(dest)) => Some((
-                        [&src[..], &[0], &dest[..], &[0]].concat(),
-                        src.len(),
-                        dest.len(),
-                    )),
-                    _ => None,
-                };
-                let Some((paths, src_len, dest_len)) = paths else {
-                    return Err(cp_name_too_long(src_path));
-                };
+                let (src, dest) = (src_path.push_scoped(cname), dest_path.push_scoped(cname));
+                let paths = [&src[..], &[0], &dest[..], &[0]].concat();
                 this_ref.subtask_count.fetch_add(1, Ordering::Relaxed);
-                CpSingleTask::<IS_SHELL>::create(this, paths.into(), src_len, dest_len);
+                CpSingleTask::<IS_SHELL>::create(this, paths.into(), src.len(), dest.len());
             }
 
             Ok(())
@@ -5007,14 +4991,14 @@ pub(crate) mod ret {
 
 pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
-    pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
+    pub(crate) sync_error_buf: Path,
     pub(crate) vm: Option<&'static VirtualMachine>,
 }
 
 impl Default for NodeFS {
     fn default() -> Self {
         Self {
-            sync_error_buf: bun_paths::path_buffer_pool::get(),
+            sync_error_buf: Path::new(),
             vm: None,
         }
     }
@@ -5320,7 +5304,7 @@ impl NodeFS {
         let copied = (|| {
             let file = embedded_file_of_compiled_program(src.slice())
                 .ok_or_else(|| sys::Error::from_code(E::ENOENT, sys::Tag::copyfile))?;
-            let mut dest_buf = bun_paths::path_buffer_pool::get();
+            let mut dest_buf = Path::new();
             let overwrite_flag = if is_exclusive {
                 sys::O::EXCL
             } else {
@@ -5350,8 +5334,8 @@ impl NodeFS {
         // TODO: do we need to fchown?
         #[cfg(target_os = "macos")]
         {
-            let mut src_buf = bun_paths::path_buffer_pool::get();
-            let mut dest_buf = bun_paths::path_buffer_pool::get();
+            let mut src_buf = Path::new();
+            let mut dest_buf = Path::new();
             let src = args.src.slice_z(&mut src_buf);
             let dest = args.dest.slice_z(&mut dest_buf);
 
@@ -5440,8 +5424,8 @@ impl NodeFS {
 
         #[cfg(target_os = "freebsd")]
         {
-            let mut src_buf = bun_paths::path_buffer_pool::get();
-            let mut dest_buf = bun_paths::path_buffer_pool::get();
+            let mut src_buf = Path::new();
+            let mut dest_buf = Path::new();
             let src = args.src.slice_z(&mut src_buf);
             let dest = args.dest.slice_z(&mut dest_buf);
 
@@ -5546,8 +5530,8 @@ impl NodeFS {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let mut src_buf = bun_paths::path_buffer_pool::get();
-            let mut dest_buf = bun_paths::path_buffer_pool::get();
+            let mut src_buf = Path::new();
+            let mut dest_buf = Path::new();
             let src = args.src.slice_z(&mut src_buf);
             let dest = args.dest.slice_z(&mut dest_buf);
 
@@ -5727,11 +5711,7 @@ impl NodeFS {
             return Ok(true);
         }
 
-        let Ok(os_path) = path.os_path_kernel32() else {
-            return Ok(graph_after_disk(path.slice()).is_some_and(holds_path));
-        };
-
-        Ok(sys::exists_os_path(&os_path, false)
+        Ok(sys::exists_os_path(&path.os_path_kernel32(), false)
             || (graph_may_answer_for(path.slice())
                 && (graph_after_disk(path.slice()).is_some_and(holds_path)
                     || is_source_path(path.slice()))))
@@ -5897,7 +5877,7 @@ impl NodeFS {
             return Err(sys::Error::from_code(E::EXDEV, sys::Tag::link)
                 .with_path_dest(args.old_path.slice(), args.new_path.slice()));
         }
-        let mut to_buf = bun_paths::path_buffer_pool::get();
+        let mut to_buf = Path::new();
         let from = args.old_path.slice_z(&mut self.sync_error_buf);
         let to = args.new_path.slice_z(&mut to_buf);
         Syscall::link(from, to)
@@ -5990,9 +5970,7 @@ impl NodeFS {
         if let Some(error) = folder_creation_error(args.path.slice()) {
             return Err(error);
         }
-        let path: &OSPathSliceZ = &args.path.os_path_kernel32().map_err(|_| {
-            sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::mkdir).with_path(args.path.slice())
-        })?;
+        let path: &OSPathSliceZ = &args.path.os_path_kernel32();
         if args.always_return_none {
             self.mkdir_recursive_os_path_impl::<Ctx, false>(ctx, path, args.mode)
         } else {
@@ -6064,7 +6042,7 @@ impl NodeFS {
         let mut parent = OSPath::new();
         let mut first_created = None;
         sys::mkdir_recursive_with(paths::dirname(path).unwrap_or_default(), |dir| {
-            parent.set(dir).expect("shorter than `path`");
+            parent.set(dir);
             let Err(err) = mkdir_os_path(&parent, mode) else {
                 first_created.get_or_insert(dir.len());
                 ctx.on_create_dir(&parent);
@@ -6093,7 +6071,7 @@ impl NodeFS {
             return Ok(StringOrUndefined::None);
         }
         // `a/` for `a//b`, as in Node.
-        let below = first_created.map(|len| Auto::without_leading_sep(&path[len..]));
+        let below = first_created.map(|len| bun_paths::without_leading_sep(&path[len..]));
         Ok(StringOrUndefined::String(BunString::create_from_os_path(
             &path[..path.len() - below.map_or(0, |below| below.len() + 1)],
         )))
@@ -6875,7 +6853,7 @@ impl NodeFS {
     }
 
     fn readdir_inner<T: ReaddirEntry>(
-        buf: &mut PathBuffer,
+        buf: &mut Path,
         args: &args::Readdir,
         recursive: bool,
         flavor: Flavor,
@@ -6967,7 +6945,7 @@ impl NodeFS {
                 sys::FileKind::File
             };
             if recursive {
-                paths::posix_to_platform_in_place(&mut name);
+                paths::to_native_in_place(&mut name);
                 let (base, parent) = (paths::basename(&name), paths::dirname_or_root(&name));
                 let joined_path;
                 let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
@@ -7314,7 +7292,7 @@ impl NodeFS {
     }
 
     pub(crate) fn write_file_with_path_buffer(
-        pathbuf: &mut PathBuffer,
+        pathbuf: &mut Path,
         args: &args::WriteFile,
     ) -> Maybe<ret::WriteFile> {
         let opened;
@@ -7582,16 +7560,8 @@ impl NodeFS {
                     let mut bufs = vec![0u8; 2 * len];
                     let (buf, buf2) = bufs.split_at_mut(len);
                     let resolved = bun_node_path::resolve_posix_t(&parts, buf, buf2);
-                    let mut path = paths::SlicePath::new(&mut inbuf[..]);
-                    if path.set(resolved).is_err() {
-                        return Err(sys::Error {
-                            errno: E::ENAMETOOLONG as _,
-                            syscall: sys::Tag::realpath,
-                            path: args.path.slice().into(),
-                            ..Default::default()
-                        });
-                    }
-                    path.into_zstr()
+                    inbuf.set(resolved);
+                    inbuf
                 }
             };
 
@@ -7659,7 +7629,7 @@ impl NodeFS {
 
     fn rename_on_disk(&mut self, args: &args::Rename, _: Flavor) -> Maybe<ret::Rename> {
         let (old, new) = (args.old_path.slice(), args.new_path.slice());
-        let mut to_buf = bun_paths::path_buffer_pool::get();
+        let mut to_buf = Path::new();
         let to = args.new_path.slice_z(&mut to_buf);
         if let Some(error) = change_in_executable(args.old_path.slice(), sys::Tag::rename)
             .or_else(|| creation_in_executable(args.new_path.slice(), sys::Tag::rename, E::EROFS))
@@ -7839,7 +7809,7 @@ impl NodeFS {
         if let Some(error) = creation_over_embedded_file(args.new_path.slice(), sys::Tag::symlink) {
             return Err(error);
         }
-        let mut to_buf = bun_paths::path_buffer_pool::get();
+        let mut to_buf = Path::new();
         #[cfg(windows)]
         {
             const UV_FS_SYMLINK_DIR: c_int = 0x0001;
@@ -7853,8 +7823,9 @@ impl NodeFS {
 
             let target_path = args.target_path.slice();
             let new_path = args.new_path.slice();
-            let mut absolute_target = || {
-                let cwd = sys::getcwd_z(&mut to_buf);
+            let absolute_target = || {
+                let mut cwd_buf = bun_paths::path_buffer_pool::get();
+                let cwd = sys::getcwd_z(&mut cwd_buf);
                 let cwd = cwd.expect("failed to resolve current working directory");
                 Path::resolve(&[cwd, paths::dirname_or_root(new_path), target_path])
             };
@@ -7885,7 +7856,7 @@ impl NodeFS {
                 args.target_path.slice_z(&mut self.sync_error_buf)
             } else {
                 target = Path::from(target_path);
-                paths::posix_to_platform_in_place(target.as_mut_slice());
+                paths::to_native_in_place(target.as_mut_slice());
                 &target
             };
             return match Syscall::symlink_uv(
@@ -8205,7 +8176,7 @@ impl NodeFS {
         let mut pending = CpPendingDirs::default();
         loop {
             self.cp_sync_one_directory(src_path, dest_path, args, &mut pending)?;
-            if !pending.pop_into(src_path, dest_path)? {
+            if !pending.pop_into(src_path, dest_path) {
                 return Ok(());
             }
         }
@@ -8279,29 +8250,19 @@ impl NodeFS {
                 pending.push(src_path, dest_path, name_slice);
                 continue;
             }
-            let copied = match (
-                src_path.push_scoped(name_slice),
-                dest_path.push_scoped(name_slice),
-            ) {
-                (Ok(src), Ok(dest)) => Some(self.copy_single_file_sync(
-                    &src,
-                    &dest,
-                    constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force {
-                        constants::COPYFILE_EXCL
-                    } else {
-                        0i32
-                    }),
-                    None,
-                    args,
-                )),
-                _ => None,
-            };
-            match copied {
-                None => return Err(cp_name_too_long(src_path)),
-                Some(Err(err)) if err.get_errno() != E::EEXIST || cp_flags.error_on_exist => {
-                    return Err(err);
-                }
-                Some(_) => {}
+            if let Err(err) = self.copy_single_file_sync(
+                &src_path.push_scoped(name_slice),
+                &dest_path.push_scoped(name_slice),
+                constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force {
+                    constants::COPYFILE_EXCL
+                } else {
+                    0i32
+                }),
+                None,
+                args,
+            ) && (err.get_errno() != E::EEXIST || cp_flags.error_on_exist)
+            {
+                return Err(err);
             }
         }
         Ok(())
@@ -8328,7 +8289,7 @@ impl NodeFS {
         if e.get_errno() != E::BUSY {
             return result;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = Path::new();
         let Ok(statbuf) = Syscall::stat(src.slice_z(&mut buf)) else {
             return result;
         };
@@ -8365,11 +8326,7 @@ impl NodeFS {
             return Syscall::symlink(link_target, dest);
         };
         let cwd = &cwd_buf[..cwd_len];
-        let Ok(resolved) = paths::PoolPath::resolve(&[cwd, src_dir, link_target.as_bytes()]) else {
-            let error = sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::symlink);
-            return Err(error.with_path(src.as_bytes()));
-        };
-        Syscall::symlink(&resolved, dest)
+        Syscall::symlink(&Path::resolve(&[cwd, src_dir, link_target]), dest)
     }
 
     /// This is `copyFile`, but it copies symlinks as-is
@@ -8809,7 +8766,7 @@ impl NodeFS {
             } else {
                 let file =
                     sys::File::from_fd(sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0)?);
-                let mut wbuf = paths::os_path_buffer_pool::get();
+                let mut wbuf = paths::w_path_buffer_pool::get();
                 let len = windows::GetFinalPathNameByHandleW(file.fd().native(), &mut wbuf[..], 0)
                     .map_err(|err| {
                         sys::Error::from_win32(err, sys::Tag::copyfile)

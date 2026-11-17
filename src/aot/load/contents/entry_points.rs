@@ -5,13 +5,15 @@ use std::sync::OnceLock;
 
 use bun_ast::Loader;
 use bun_core::{CodeGenerationFromStrings, strings};
-use bun_paths::{PosixPath, slashes_to_posix};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CodeUnit};
 use bun_sema::hir::{ExprId, ExprKind, Flags, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedForm};
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files, NamingLoad};
-use bun_sema::resolve::{CodeHost, CodeOptions, Host, is_declaration_file_name, to_path};
+use bun_sema::resolve::{
+    CodeHost, CodeOptions, Host, is_declaration_file_name, join_unrooted, normalize_slashes,
+    to_path,
+};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_native, to_native};
 use bun_sema_driver::{FileFinder, FileFinderTables, resolve_names_known_in_part};
@@ -591,8 +593,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             for of_site in listed.chunk_by(|one, next| one.2 == next.2) {
                 let own_folder = self.input.host.directory_of(code.file_name(file));
                 let folders = of_site.iter().map(|it| {
-                    let folder = slashes_to_posix(code.atoms().bytes(it.1));
-                    PosixPath::join(&[&own_folder, &folder]).to_vec()
+                    join_unrooted(&own_folder, &normalize_slashes(code.atoms().bytes(it.1)))
                 });
                 let folders: Vec<Vec<u8>> = folders.collect();
                 let name = code.atoms().bytes(of_site[0].0);

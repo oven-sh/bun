@@ -505,7 +505,7 @@ fn mode(base: &BaseScope) -> &'static str {
 }
 
 fn file_name(buntest: &BunTest) -> Vec<u8> {
-    bun_paths::ForwardSlashPath::relative(FileSystem::instance().top_level_dir(), buntest.file.path).to_vec()
+    bun_paths::Path::relative(FileSystem::instance().top_level_dir(), buntest.file.path).into_portable().to_vec()
 }
 
 #[optimize(size)]

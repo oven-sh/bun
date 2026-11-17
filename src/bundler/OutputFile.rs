@@ -200,17 +200,13 @@ impl OutputFile {
                     bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::write_file_with_path_buffer(
-                    &mut path_buf,
-                    &bun_sys::WriteFileArgs {
-                        data: bun_sys::WriteFileData::Buffer { buffer: bytes },
-                        encoding: bun_sys::WriteFileEncoding::Buffer,
-                        mode: if self.is_executable { 0o755 } else { 0o644 },
-                        dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
-                    },
-                )?;
+                let _ = bun_sys::write_file(&bun_sys::WriteFileArgs {
+                    data: bun_sys::WriteFileData::Buffer { buffer: bytes },
+                    encoding: bun_sys::WriteFileEncoding::Buffer,
+                    mode: if self.is_executable { 0o755 } else { 0o644 },
+                    dirfd: root_dir,
+                    file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
+                })?;
             }
             Value::Copy(value) => {
                 self.copy_to(&value.pathname, root_dir)?;

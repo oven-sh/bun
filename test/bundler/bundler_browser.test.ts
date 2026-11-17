@@ -394,6 +394,23 @@ describe("bundler", () => {
       assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser map remaps it");
     },
   });
+  itBundled("browser/BrowserFieldRemapsSubpathOfPackage", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": String.raw`
+        import slash from "pkg/a/b";
+        import backslash from "pkg/a\\b";
+        console.log(slash, backslash);
+      `,
+      "/package.json": /* json */ `{ "browser": { "pkg/a/b": "./shim.js" } }`,
+      "/shim.js": /* js */ `export default "shim";`,
+      "/node_modules/pkg/a/b.js": /* js */ `export default "original";`,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim shim",
+    },
+  });
   itBundled("browser/BrowserFieldDisabledBuiltinStillPolyfillsOutsideScope", {
     // A browser:{events:false} in one package must not leak into a sibling package.
     files: {

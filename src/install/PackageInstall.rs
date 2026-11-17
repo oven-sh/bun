@@ -351,7 +351,7 @@ fn long_path_of(dir: Fd) -> Result<OSPath, bun_errno::SystemErrno> {
     let mut buf = bun_paths::w_path_buffer_pool::get();
     let len = windows::GetFinalPathNameByHandleW(dir.native(), &mut buf[..], 0)
         .map_err(|err| err.to_system_errno())?;
-    Ok(OSPath::from(&buf[..len])?)
+    Ok(OSPath::from(&buf[..len]))
 }
 
 /// Open a directory handle relative to `dir`.
@@ -1397,9 +1397,9 @@ impl PackageFiles<'_> {
 
         #[cfg(windows)]
         {
-            let dest = long_path_of(destbase.fd())
-                .and_then(|mut dest| Ok(dest.push(destpath).map(|()| dest)?))
+            let mut dest = long_path_of(destbase.fd())
                 .map_err(|err| Failure::boxed(err.into(), Step::OpeningDestDir))?;
+            dest.push(destpath);
 
             if let Err(err) = sys::mkdir_w(&dest) {
                 // Like `make_open_real_dir`, replace a symlink at the destination, never follow it.
@@ -1616,14 +1616,10 @@ impl PackageFiles<'_> {
                         _ => continue,
                     }
 
-                    let (Ok(src), Ok(dest)) = (
-                        state.src.push_scoped(entry.path),
-                        state.dest.push_scoped(entry.path),
-                    ) else {
-                        loop_err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                        break;
-                    };
-                    queue.push(HardLinkWindowsInstallTask::init(&src, &dest));
+                    queue.push(HardLinkWindowsInstallTask::init(
+                        &state.src.push_scoped(entry.path),
+                        &state.dest.push_scoped(entry.path),
+                    ));
                 }
             }
 
@@ -1860,12 +1856,11 @@ impl<'a> PackageInstall<'a> {
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
-            let dest_wide = match long_path_of(destination_dir.fd())
-                .and_then(|mut wide| Ok(wide.push(dest_path).map(|()| wide)?))
-            {
+            let mut dest_wide = match long_path_of(destination_dir.fd()) {
                 Ok(wide) => wide,
                 Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency),
             };
+            dest_wide.push(dest_path);
             if subdir.is_some() {
                 let _ = mkdir_recursive_os_path(dest_wide.dirname().unwrap_or_default());
             }
@@ -2038,12 +2033,8 @@ impl<'a> PackageInstall<'a> {
         let lockfile = self.lockfile;
         for bundled in lockfile.bundled_by_folder(self.cache_dir_subpath.as_bytes()) {
             let name = bundled.name.slice(&lockfile.buffers.string_bytes);
-            let [src, dest] = [self.cache_dir_subpath, self.destination_dir_subpath].map(|dir| {
-                let mut path = path::ForwardSlashPath::from(dir);
-                path.push(b"node_modules");
-                path.push(name);
-                path
-            });
+            let [src, dest] = [self.cache_dir_subpath, self.destination_dir_subpath]
+                .map(|dir| path::Path::from_parts(&[dir, b"node_modules", name]));
             // An error means the folder doesn't have it, like a tarball that lacks a bundled dependency.
             let _ = PackageInstall {
                 cache_dir_subpath: &src,
@@ -2217,13 +2208,8 @@ fn walk_install_dir_windows(
             _ => continue,
         }
 
-        let (Ok(src), Ok(dest)) = (
-            state.src.push_scoped(entry.path),
-            state.dest.push_scoped(entry.path),
-        ) else {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-        };
-        let (src, dest): (&bun_core::WStr, &bun_core::WStr) = (&src, &dest);
+        let src: &bun_core::WStr = &state.src.push_scoped(entry.path);
+        let dest: &bun_core::WStr = &state.dest.push_scoped(entry.path);
 
         if entry.kind == EntryKind::File {
             // The walker returned its parent directory first, so that directory already exists.

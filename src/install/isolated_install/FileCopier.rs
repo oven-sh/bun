@@ -72,12 +72,8 @@ impl FileCopier {
                     _ => continue,
                 }
 
-                let (Ok(src), Ok(dest)) = (
-                    self.src_path.push_scoped(entry.path),
-                    self.dest_subpath.push_scoped(entry.path),
-                ) else {
-                    return Err(sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile));
-                };
+                let src = self.src_path.push_scoped(entry.path);
+                let dest = self.dest_subpath.push_scoped(entry.path);
 
                 if entry.kind == EntryKind::Directory {
                     if bun_sys::windows::CreateDirectoryExW(&src, &dest).is_err() {

@@ -351,6 +351,7 @@ impl File {
     }
     /// Like [`File::write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
+    #[cfg(windows)]
     pub fn write_file_os_path(
         dir: impl AsFd,
         path: &bun_paths::OSPathSliceZ,

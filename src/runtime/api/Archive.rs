@@ -9,8 +9,7 @@ use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
 use bun_jsc::{StringJsc as _, SysErrorJsc};
-use bun_paths::PathStyle as _;
-use bun_paths::platform::Windows;
+use bun_paths::{Path, portable};
 use bun_ptr::RefPtr;
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
@@ -1057,9 +1056,7 @@ fn compress_gzip(data: &[u8], level: bun_deflate::Level) -> Result<Vec<u8>, Comp
 
 /// Check if a path is safe (no absolute paths or path traversal)
 pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
-    !pathname.is_empty()
-        && Windows::root(pathname).is_empty()
-        && Windows::components(pathname).all(|name| name != b"..")
+    !pathname.is_empty() && !portable::climbs_out(pathname) && !portable::has_dot_dot(pathname)
 }
 
 /// One pattern of the `glob` option.
@@ -1137,6 +1134,7 @@ fn extract_to_disk_filtered(
     let mut write_strategy = bun_archive::WriteStrategy::default();
     #[cfg(unix)]
     let (mut deferred_symlinks, mut deferred_bytes) = (Vec::new(), 0usize);
+    let mut os_path_buf = Vec::new();
 
     loop {
         let entry_ref = match reader.next_entry() {
@@ -1144,16 +1142,11 @@ fn extract_to_disk_filtered(
             Ok(Some(entry)) => entry,
             Err(_) => return Err(crate::Error::ReadError),
         };
-        let raw_pathname = bun_archive::display_path(entry_ref)?;
-        let raw_pathname: &[u8] = &raw_pathname;
-
-        let mut normalized_buf = bun_paths::path_buffer_pool::get();
-        let Some(pathname) = bun_archive::normalize_entry_path(raw_pathname, &mut normalized_buf)
-        else {
+        let name = bun_archive::os_path(entry_ref, &mut os_path_buf)?;
+        let Some(destination) = bun_archive::entry_destination(name) else {
             continue;
         };
-        let pathname_len = pathname.len();
-        let pathname_z = bun_core::ZStr::nul_terminate(&mut normalized_buf, pathname_len);
+        let pathname_z = &Path::from(&destination).into_portable();
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)

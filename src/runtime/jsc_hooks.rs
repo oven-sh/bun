@@ -1022,7 +1022,7 @@ pub(crate) fn with_node_fs<R>(
 ) -> R {
     runtime_state_of(vm).node_fs.with_mut(|node_fs| {
         f(node_fs.get_or_insert_with(|| crate::node::fs::NodeFS {
-            sync_error_buf: bun_paths::path_buffer_pool::get(),
+            sync_error_buf: bun_paths::Path::new(),
             // `vm` gates the embedded-file lookups inside `node:fs`.
             vm: vm.standalone_module_graph.is_some().then_some(vm),
         }))
@@ -3556,7 +3556,7 @@ fn unreadable_file_error(
     log: &mut bun_ast::Log,
     path: &[u8],
 ) -> Option<JSValue> {
-    let path_z = bun_paths::PoolPath::from(path).ok()?;
+    let path_z = bun_paths::Path::from(path);
     let error = bun_sys::access(&path_z, bun_sys::posix::R_OK).err()?;
     let _ = log.add_error_fmt(
         None,
@@ -4189,18 +4189,13 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 /// embedded library — across calls, Worker VMs, and restarts — shares one
 /// file instead of leaking a copy per call (#29585). Returns `None` when the
 /// input is empty, absent from the graph, or a filesystem step fails.
-pub(crate) fn resolve_embedded_file_to_buf(
-    input_path: &[u8],
-    extname: &[u8],
-    out_buf: &mut [u8],
-) -> Option<usize> {
+pub(crate) fn resolve_embedded_file(input_path: &[u8], extname: &[u8]) -> Option<bun_paths::Path> {
     if input_path.is_empty() {
         return None;
     }
 
     if let Some(path) = bun_standalone_graph::find_written_code(input_path) {
-        out_buf.get_mut(..path.len())?.copy_from_slice(&path);
-        return Some(path.len());
+        return Some(bun_paths::Path::from(&path));
     }
     let file = bun_standalone_graph::Graph::get_ref()?.find_library(input_path)?;
     let file_contents: &[u8] = file.contents.as_bytes();
@@ -4226,6 +4221,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // instead of being followed.
     let tmpdir = Fs::FileSystem::get().tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
+    let in_tmpdir = |name: &[u8]| bun_paths::Path::resolve(&[Fs::RealFS::tmpdir_path(), name]);
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();
         #[cfg(unix)]
@@ -4233,11 +4229,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
         #[cfg(windows)]
         let ours = true;
         if size_ok && ours {
-            return write_absolute(
-                out_buf,
-                Fs::RealFS::tmpdir_path(),
-                canonical_name.as_bytes(),
-            );
+            return Some(in_tmpdir(canonical_name));
         }
     }
 
@@ -4259,14 +4251,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
             scratch_name
         }
     };
-    write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())
-}
-
-/// Writes `{tmpdir}/{name}` into `out_buf` and returns the length.
-fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usize> {
-    let mut path = bun_paths::SlicePath::new(out_buf);
-    path.resolve_in_place(&[tmpdir, name]).ok()?;
-    Some(path.len())
+    Some(in_tmpdir(final_name))
 }
 
 /// euid, not uid: `open(2)` sets the new file's owner to euid, so a
@@ -4384,9 +4369,8 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
     if let Some(path) = write_next_to_libraries(input_path.slice()) {
         return bun_core::String::clone_utf8(&path);
     }
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    match resolve_embedded_file_to_buf(input_path.slice(), b"node", &mut path_buf[..]) {
-        Some(len) => bun_core::String::clone_utf8(&path_buf[..len]),
+    match resolve_embedded_file(input_path.slice(), b"node") {
+        Some(path) => bun_core::String::clone_utf8(&path),
         None => bun_core::String::DEAD,
     }
 }

@@ -337,7 +337,7 @@ impl ShellRmTask {
     fn join_in_style(&self, parent: &[u8], name: &[u8]) -> Path {
         let mut path = Path::join(&[parent, name]);
         if self.join_style == JoinStyle::Posix {
-            bun_paths::platform_to_posix_in_place(path.as_mut_slice());
+            bun_paths::to_portable_in_place(path.as_mut_slice());
         }
         path
     }

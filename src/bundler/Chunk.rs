@@ -15,8 +15,7 @@ use bun_core::{FeatureFlags, Output};
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
 use bun_core::{string_joiner::StringJoiner, strings};
-use bun_paths::platform::Posix;
-use bun_paths::{ForwardSlashPath, PathStyle as _};
+use bun_paths::Path;
 use bun_sourcemap as source_map;
 
 use crate::analyze_transpiled_module;
@@ -574,7 +573,7 @@ impl IntermediateOutput {
                 }
 
                 let mut count: usize = 0;
-                let mut from_chunk_dir = Posix::dirname_or_root(&chunk.final_rel_path);
+                let mut from_chunk_dir = bun_paths::dirname_or_root(&chunk.final_rel_path);
                 if from_chunk_dir == b"." {
                     from_chunk_dir = b"";
                 }
@@ -586,13 +585,12 @@ impl IntermediateOutput {
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
                 let reference_to = |file_path: &[u8]| {
-                    let mut path = if use_outdir_relative_path {
-                        ForwardSlashPath::from(file_path)
+                    let path = if use_outdir_relative_path {
+                        Path::from(file_path)
                     } else {
-                        ForwardSlashPath::relative(from_chunk_dir, file_path)
+                        Path::relative(from_chunk_dir, file_path)
                     };
-                    bun_paths::platform_to_posix_in_place(path.as_mut_slice());
-                    chunk.content.escape_reference(path)
+                    chunk.content.escape_reference(path.into_portable())
                 };
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
@@ -1382,11 +1380,11 @@ impl<'a> Content<'a> {
         matches!(self, Content::Javascript(_))
     }
     /// `path` is printed between double quotes, as a JavaScript string or as a URL.
-    fn escape_reference(&self, path: ForwardSlashPath) -> ForwardSlashPath {
+    fn escape_reference(&self, path: Path) -> Path {
         if !strings::contains_any(&path, b"\\\"") {
             return path;
         }
-        let mut escaped = ForwardSlashPath::new();
+        let mut escaped = Path::new();
         for byte in path.as_bytes() {
             match byte {
                 b'\\' | b'"' if self.is_javascript() => write!(escaped, "\\x{byte:02X}"),

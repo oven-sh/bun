@@ -5,8 +5,7 @@ use std::io::Write as _;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::strings;
-use bun_paths::platform::Auto;
-use bun_paths::{Path, PathStyle as _};
+use bun_paths::Path;
 use bun_sourcemap::SourceMapPieces;
 use bun_wyhash::{self, Wyhash};
 
@@ -639,6 +638,7 @@ pub(crate) fn compute_chunks<'a>(
                 b"."
             };
             let mut real_path_buf = bun_paths::path_buffer_pool::get();
+            let in_memory;
             let dir: &[u8] = 'dir: {
                 let Ok(dir_file) = bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
@@ -647,8 +647,7 @@ pub(crate) fn compute_chunks<'a>(
                     0,
                 ) else {
                     // An entry point that is only in memory. `/a/b.js` is written to `a/b.js`.
-                    let mut normalized = bun_paths::SlicePath::new(&mut real_path_buf.0);
-                    let Ok(()) = normalized.resolve_in_place(&[b"/", dir_path]) else {
+                    let Ok(normalized) = Path::resolve(&[b"/", dir_path]).check_len() else {
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -659,9 +658,9 @@ pub(crate) fn compute_chunks<'a>(
                         );
                         return Err(crate::Error::BuildFailed);
                     };
-                    let normalized = normalized.into_zstr().as_bytes();
-                    let has_volume = !Auto::volume(normalized).is_empty();
-                    break 'dir &normalized[usize::from(!has_volume)..];
+                    in_memory = normalized;
+                    let has_volume = !bun_paths::volume(&in_memory).is_empty();
+                    break 'dir &in_memory[usize::from(!has_volume)..];
                 };
 
                 match dir_file.get_path(&mut real_path_buf) {

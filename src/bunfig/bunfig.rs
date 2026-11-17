@@ -15,7 +15,7 @@ use bun_alloc::Arena as Bump;
 use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
 use bun_parsers::json as json_parser;
 use bun_parsers::toml::TOML;
-use bun_paths::windows_to_platform;
+use bun_paths::from_portable;
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
@@ -41,7 +41,7 @@ fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
 }
 
 fn estring_to_path(s: &E::EString, bump: &Bump) -> Box<[u8]> {
-    windows_to_platform(s.string(bump).expect("OOM")).into()
+    from_portable(s.string(bump).expect("OOM")).into()
 }
 
 /// Macro-remap parsing (the `PackageJSON.parseMacrosJSON` shape),
@@ -481,7 +481,7 @@ impl<'a> Parser<'a, '_> {
             if let Some(test) = json.get(b"test") {
                 if let Some(root) = test.get(b"root") {
                     self.ctx.debug.test_directory =
-                        windows_to_platform(root.as_string(self.bump).unwrap_or(b"")).into();
+                        from_portable(root.as_string(self.bump).unwrap_or(b"")).into();
                 }
 
                 if let Some(expr) = test.get(b"preload") {
@@ -1459,7 +1459,7 @@ impl<'a> Parser<'a, '_> {
     /// Resolves a relative path in `[install]` against the directory that contains the bunfig.toml.
     fn install_path(&self, path: &[u8]) -> Box<[u8]> {
         let dir = bun_paths::dirname(self.source.path.text).unwrap_or_default();
-        api::BunInstall::resolve_path(dir, &windows_to_platform(path))
+        api::BunInstall::resolve_path(dir, &from_portable(path))
     }
 
     fn parse_install(&mut self, install_obj: &Expr) -> crate::Result<()> {
@@ -1695,12 +1695,12 @@ impl<'a> Parser<'a, '_> {
                     install.security_scanner = scanner.as_string(self.bump).map(|name| {
                         // The scanner process runs in the project directory, so a relative path
                         // from the project's own bunfig.toml already resolves correctly.
-                        let name = windows_to_platform(name);
+                        let name = from_portable(name);
                         if self.is_project_file || bun_paths::is_package_path(&name) {
                             return name.into();
                         }
                         let mut path = self.install_path(&name);
-                        bun_paths::platform_to_posix_in_place(&mut path[..]);
+                        bun_paths::to_portable_in_place(&mut path[..]);
                         path
                     });
                 }

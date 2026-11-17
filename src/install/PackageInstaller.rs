@@ -5,7 +5,7 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::{MAX_PATH_BYTES, NameTooLong, Path, PathBuffer, PoolPath};
+use bun_paths::{MAX_PATH_BYTES, NameTooLong, Path, PathBuffer};
 use bun_semver::String;
 use bun_sys::{Dir, Fd};
 
@@ -333,7 +333,7 @@ impl NodeModulesFolder {
             if lockfile.is_importer_tree_id(self.tree_id) {
                 return Ok(root.make_open_path(self.path.as_slice(), Default::default())?);
             }
-            let path = PoolPath::from(&self.path)?;
+            let path = Path::from(&self.path);
             Ok(package_install::make_open_real_dir(root, &path)?)
         }
 
@@ -447,8 +447,8 @@ pub(crate) fn abs_node_modules_path(
     lockfile: &Lockfile,
     string_buf: &[u8],
     tree_id: lockfile::tree::Id,
-) -> Option<PoolPath> {
-    let mut rel_buf = bun_paths::path_buffer_pool::get();
+) -> Option<Path> {
+    let mut rel_buf = Path::new();
     let mut depth_buf = lockfile::tree::depth_buf_uninit();
     let (rel, _) = lockfile::tree::relative_path_and_depth::<
         { lockfile::tree::IteratorPathStyle::NodeModules },
@@ -461,9 +461,9 @@ pub(crate) fn abs_node_modules_path(
         &mut rel_buf,
         &mut depth_buf,
     );
-    let mut abs = PoolPath::from_top_level_dir().ok()?;
-    abs.push(rel).ok()?;
-    Some(abs)
+    let mut abs = Path::from_top_level_dir();
+    abs.push(rel);
+    abs.check_len().ok()
 }
 
 /// For a workspace or a `link:` package, this only removes the link.
@@ -647,8 +647,8 @@ impl<'a> PackageInstaller<'a> {
         let tree = &mut self.trees[tree_id as usize];
         let mut deferred: Vec<DependencyID> = Vec::new();
 
-        // If the `.bin` path doesn't fit in the buffer, the linker reports an error for each bin.
-        if let Ok(bin_dir) = PoolPath::from_parts(&[&node_modules_path, b".bin"])
+        // If the `.bin` path is too long, the linker reports an error for each bin.
+        if let Ok(bin_dir) = Path::from_parts(&[&node_modules_path, b".bin"]).check_len()
             && let Err(err) =
                 crate::prune::remove_planted_link(&self.root_node_modules_folder, &bin_dir)
         {
@@ -679,7 +679,7 @@ impl<'a> PackageInstaller<'a> {
                 .slice(string_buf);
             let mut target_package_name = alias;
             let mut can_retry_without_native_binlink_optimization = false;
-            let mut target_node_modules_path_opt: Option<PoolPath> = None;
+            let mut target_node_modules_path_opt: Option<Path> = None;
             let mut defer_this_bin = false;
 
             'native_binlink_optimization: {
@@ -854,7 +854,7 @@ impl<'a> PackageInstaller<'a> {
 
     fn link_queued_bins(&mut self, pass: BinPass) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
-        let mut node_modules_rel_path_buf = bun_paths::path_buffer_pool::get();
+        let mut node_modules_rel_path_buf = Path::new();
 
         let trees_len = self.trees.len();
         for tree_id in 0..trees_len {
@@ -1139,9 +1139,9 @@ impl<'a> PackageInstaller<'a> {
             // Open it relative to the directory that's already open, so the full path doesn't have
             // to fit in a buffer.
             #[cfg(not(windows))]
-            let scope_path = PoolPath::from(scope)?;
+            let scope_path = Path::from(scope);
             #[cfg(windows)]
-            let scope_path = PoolPath::join(&[&node_modules.path, scope])?;
+            let scope_path = Path::join(&[&node_modules.path, scope]);
             crate::prune::remove_planted_link(&open.dir, &scope_path)?;
             open.scope.clear();
             open.scope.extend_from_slice(scope);
@@ -1194,7 +1194,7 @@ impl<'a> PackageInstaller<'a> {
     /// Makes `tree_id` the current tree, as the walk does.
     fn enter_tree(&mut self, tree_id: lockfile::tree::Id) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
-        let mut rel_path_buf = bun_paths::path_buffer_pool::get();
+        let mut rel_path_buf = Path::new();
         let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
             { lockfile::tree::IteratorPathStyle::NodeModules },
         >(
@@ -1493,8 +1493,8 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// The absolute path of `alias` in the current tree's `node_modules`.
-    fn package_path(&self, alias: &[u8]) -> Result<PoolPath, NameTooLong> {
-        PoolPath::from_parts(&[&self.node_modules.path, alias])
+    fn package_path(&self, alias: &[u8]) -> Result<Path, NameTooLong> {
+        Path::from_parts(&[&self.node_modules.path, alias]).check_len()
     }
 
     fn get_installed_package_scripts_count(
@@ -2093,7 +2093,9 @@ impl<'a> PackageInstaller<'a> {
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
                             // A folder that a package ships inside itself is linked from where it
                             // is.
-                            match PoolPath::resolve(&[dir_name, installer.cache_dir_subpath]) {
+                            match Path::resolve(&[dir_name, installer.cache_dir_subpath])
+                                .check_len()
+                            {
                                 Ok(shipped) => PackageInstall {
                                     cache_dir: Fd::cwd(),
                                     cache_dir_subpath: &shipped,

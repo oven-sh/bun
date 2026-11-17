@@ -6,8 +6,7 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::{
-    ForwardSlashPath, OSPath, ParentEqual, Path, VecPath, dirname_or_root, is_parent_or_equal,
-    windows_to_platform,
+    OSPath, ParentEqual, Path, VecPath, dirname_or_root, from_portable, is_parent_or_equal,
 };
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
@@ -91,14 +90,14 @@ impl PatchCommitResult {
         if !self.removes_patch || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
             return;
         }
-        let path = Path::from(&windows_to_platform(&self.patchfile_path));
+        let path = Path::from(&from_portable(&self.patchfile_path));
         let lockfile = &manager.lockfile;
         let real = resolve_links(&path).ok();
         let own_key = string_hash(&self.patch_key);
         let is_shared = real.is_some()
             && (lockfile.patched_dependencies.iter()).any(|(key, other)| {
                 *key != own_key
-                    && resolve_links(&windows_to_platform(lockfile.str(&other.path))).ok() == real
+                    && resolve_links(&from_portable(lockfile.str(&other.path))).ok() == real
             });
         let (outcome, why) = if is_shared {
             ("kept", ", used by another package")
@@ -280,7 +279,7 @@ fn resolve_target(
         Global::crash();
     }
 
-    bun_paths::platform_to_posix_in_place(&mut folder[..]);
+    bun_paths::to_portable_in_place(&mut folder[..]);
 
     Target {
         pkg,
@@ -311,7 +310,9 @@ fn path_argument_from_root(
     if workspace_package_id != 0 && !bun_paths::is_absolute(argument) {
         let workspace =
             *lockfile.packages.items_resolution()[workspace_package_id as usize].workspace();
-        let from_root = ForwardSlashPath::join(&[lockfile.str(&workspace), argument]).to_vec();
+        let from_root = Path::join(&[lockfile.str(&workspace), argument])
+            .into_portable()
+            .to_vec();
         // The hoisted linker may have put the package in the root's node_modules only.
         if sys::exists(&from_root) || !sys::exists(argument) {
             return from_root;
@@ -508,7 +509,9 @@ pub fn do_patch_commit(
     let cache_dir = cache_result.cache_dir;
     let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes();
     let cache_path = cache_dir_path(cache_dir);
-    let old_folder = ForwardSlashPath::join(&[&cache_path, cache_dir_subpath]).to_vec();
+    let old_folder = Path::join(&[&cache_path, cache_dir_subpath])
+        .into_portable()
+        .to_vec();
     let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
     make_bins_executable(
         &manager.lockfile,
@@ -629,13 +632,13 @@ pub fn do_patch_commit(
 
     // package.json is shared with other machines, so the path is spelled with `/`.
     let mut path_in_patches_dir =
-        ForwardSlashPath::join(&[&windows_to_platform(typed_patches_dir), &patch_filename]);
+        Path::join(&[&from_portable(typed_patches_dir), &patch_filename]).into_portable();
     // For the same reason, an absolute path into the project is made relative to its root.
     let project = FileSystem::get().top_level_dir();
-    if is_parent_or_equal(&bun_paths::platform_to_posix(project), &path_in_patches_dir)
+    if is_parent_or_equal(&bun_paths::to_portable(project), &path_in_patches_dir)
         == ParentEqual::Parent
     {
-        let relative = ForwardSlashPath::relative(project, &path_in_patches_dir);
+        let relative = Path::relative(project, &path_in_patches_dir).into_portable();
         // In a relative path in package.json, `\` is a separator.
         if !strings::contains_char(&relative, b'\\') {
             path_in_patches_dir = relative;
@@ -727,9 +730,7 @@ fn diff_against_cache(
             return None;
         }
     };
-    let mut gitbuf = bun_paths::path_buffer_pool::get();
     let Some(git) = bun_which::which(
-        &mut gitbuf,
         bun_core::env_var::PATH.get().unwrap_or(b""),
         cwd.as_bytes(),
         b"git",
@@ -764,7 +765,7 @@ fn diff_against_cache(
             return None;
         }
     };
-    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, manager.event_loop);
+    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, &git, manager.event_loop);
     let mut spawn_result = match spawned {
         Err(e) => {
             bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
@@ -1023,7 +1024,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     }
 
     let shown_folder: &[u8] = if target.not_in_workspace_root {
-        &ForwardSlashPath::join(&[FileSystem::get().top_level_dir(), &target.folder])
+        &Path::join(&[FileSystem::get().top_level_dir(), &target.folder]).into_portable()
     } else {
         &target.folder
     };
@@ -1211,7 +1212,7 @@ fn is_in_global_store(cache_path: &[u8], real: &[u8]) -> bool {
 /// Returns the part of `folder` before its first `node_modules`. A `..` can lead out of one again,
 /// so it is applied first.
 fn outermost_package(folder: &[u8]) -> Vec<u8> {
-    let folder: &[u8] = &ForwardSlashPath::join(&[folder]);
+    let folder: &[u8] = &Path::join(&[folder]).into_portable();
     let mut start = 0;
     for name in strings::split(folder, b"/") {
         if name == b"node_modules" {
@@ -1552,7 +1553,7 @@ fn copy_cache_entry(
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(cache_dir_subpath, ITERATE)?;
 
     // `from_parts` writes native separators.
-    let dest_subpath = OSPath::from_parts(&[to])?;
+    let dest_subpath = OSPath::from_parts(&[to]);
 
     // unused if not windows
     #[cfg(not(windows))]
@@ -1560,8 +1561,8 @@ fn copy_cache_entry(
     #[cfg(windows)]
     let src_path = {
         let mut path_buf = bun_paths::w_path_buffer_pool::get();
-        let mut path = OSPath::from(sys::get_fd_path_w(cache_dir, &mut path_buf)?)?;
-        path.push(cache_dir_subpath)?;
+        let mut path = OSPath::from(sys::get_fd_path_w(cache_dir, &mut path_buf)?);
+        path.push(cache_dir_subpath);
         path
     };
 
@@ -1631,7 +1632,7 @@ pub(crate) fn isolated_store_folders(
         .collect();
 
     let project_folder = |entry: usize| -> Option<Vec<u8>> {
-        let mut folder = bun_paths::ForwardSlashPath::new();
+        let mut folder = bun_paths::Path::new();
         write!(
             folder,
             "node_modules/.bun/{}",
@@ -1643,7 +1644,7 @@ pub(crate) fn isolated_store_folders(
         }
         folder.push(b"node_modules");
         folder.push(name);
-        sys::exists_z(&folder).then(|| folder.to_vec())
+        sys::exists_z(&folder).then(|| folder.into_portable().to_vec())
     };
 
     // Walk breadth-first from the current package, then add the entries that it doesn't load.

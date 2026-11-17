@@ -149,7 +149,9 @@ impl Timings {
     }
 
     fn key_for(abs_path: &[u8]) -> Vec<u8> {
-        bun_paths::ForwardSlashPath::relative(FileSystem::get().top_level_dir(), abs_path).to_vec()
+        bun_paths::Path::relative(FileSystem::get().top_level_dir(), abs_path)
+            .into_portable()
+            .to_vec()
     }
 
     /// Recorded duration for a test file, if the table has one.

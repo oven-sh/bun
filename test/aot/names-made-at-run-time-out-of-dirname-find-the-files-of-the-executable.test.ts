@@ -111,13 +111,28 @@ test("names made at run time out of __dirname find the files of the executable",
 }, 600_000);
 
 test.skipIf(isWindows)("a backslash in a name made at run time means what it means to plain Bun", async () => {
-  const names = ["./a\\b.js", "./c\\d.js", "./lib\\", "./lib", "open\\lib\\x.js", "closed\\lib\\x.js", ".\\lib.js"];
+  const rows = [
+    // name, require(), import()
+    ["./a\\b.js", "as written", "converted"],
+    ["./c\\d.js", "throws", "converted"],
+    ["./lib\\", "throws", "folder"],
+    ["./lib", "file", "file"],
+    ["open/lib\\x.js", "throws", "open"],
+    ["open\\lib\\x.js", "throws", "throws"],
+    ["closed\\lib\\x.js", "throws", "throws"],
+    [".\\lib.js", "throws", "throws"],
+  ];
   using dir = tempDir("aot-backslash-in-made-names", {
     "site/main.js": `
-      for (const name of JSON.parse(process.env.NAMES)) {
-        try { console.log(name, require(name).name); } catch (e) { console.log(name, "throws"); }
-      }
-      console.log(require("open").name, require("closed").name);`,
+      console.log(require("open").name, require("closed").name);
+      (async () => {
+        for (const name of JSON.parse(process.env.NAMES)) {
+          let required = "throws", imported = "throws";
+          try { required = require(name).name; } catch {}
+          try { imported = (await import(name)).default.name; } catch {}
+          console.log(name, required, imported);
+        }
+      })();`,
     "site/a\\b.js": `exports.name = "as written";`,
     "site/a/b.js": `exports.name = "converted";`,
     "site/c/d.js": `exports.name = "converted";`,
@@ -130,25 +145,12 @@ test.skipIf(isWindows)("a backslash in a name made at run time means what it mea
     "away/empty.txt": "",
   });
   const run = async (cmd: string[], cwd: string) => {
-    const env = { ...bunEnv, NAMES: JSON.stringify(names) };
+    const env = { ...bunEnv, NAMES: JSON.stringify(rows.map(([name]) => name)) };
     await using proc = Bun.spawn({ cmd, cwd: join(String(dir), cwd), env, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { lines: stdout.trim().split("\n"), stderr: exitCode === 0 ? "" : stderr, exitCode };
   };
-  const expected = {
-    lines: [
-      "./a\\b.js as written",
-      "./c\\d.js converted",
-      "./lib\\ folder",
-      "./lib file",
-      "open\\lib\\x.js open",
-      "closed\\lib\\x.js throws",
-      ".\\lib.js throws",
-      "open closed",
-    ],
-    stderr: "",
-    exitCode: 0,
-  };
+  const expected = { lines: ["open closed", ...rows.map(row => row.join(" "))], stderr: "", exitCode: 0 };
   expect(await run([bunExe(), "--no-install", "main.js"], "site")).toEqual(expected);
 
   const executable = join(String(dir), nameOfExecutable);

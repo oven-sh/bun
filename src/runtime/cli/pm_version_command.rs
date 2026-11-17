@@ -521,20 +521,15 @@ impl PmVersionCommand {
         next.to_bytes()
     }
 
-    fn find_git<'a>(
-        path_buf: &'a mut bun_paths::PathBuffer,
-        cwd: &[u8],
-        used_for: &str,
-    ) -> &'a [u8] {
-        let Some(git_path) = which(path_buf, env_var::PATH.get().unwrap_or(b""), cwd, b"git")
-        else {
+    fn find_git(cwd: &[u8], used_for: &str) -> bun_paths::Path {
+        let Some(git_path) = which(env_var::PATH.get().unwrap_or(b""), cwd, b"git") else {
             Output::err_generic(
                 "git must be installed to use `bun pm version {}`",
                 (used_for,),
             );
             Global::exit(1);
         };
-        git_path.as_bytes()
+        git_path
     }
 
     /// Runs `argv` in `cwd` with its stdout buffered.
@@ -557,8 +552,7 @@ impl PmVersionCommand {
     }
 
     fn is_git_clean(cwd: &[u8]) -> bool {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let git_path = Self::find_git(&mut path_buf, cwd, "--git-tag-version");
+        let git_path: &[u8] = &Self::find_git(cwd, "--git-tag-version");
 
         match Self::spawn_git(&[git_path, b"status", b"--porcelain"], cwd, Stdio::Ignore) {
             Ok(Ok(result)) => result.is_ok() && result.stdout.is_empty(),
@@ -574,8 +568,7 @@ impl PmVersionCommand {
     }
 
     fn get_version_from_git(cwd: &[u8]) -> Vec<u8> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let git_path = Self::find_git(&mut path_buf, cwd, "from-git");
+        let git_path: &[u8] = &Self::find_git(cwd, "from-git");
 
         // Like `npm version from-git`, `--match` skips tags that are not versions, like `nightly`.
         let argv: [&[u8]; 5] = [
@@ -638,8 +631,7 @@ impl PmVersionCommand {
     }
 
     fn git_commit_and_tag(version: &[u8], custom_message: Option<&[u8]>, cwd: &[u8]) {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let git_path = Self::find_git(&mut path_buf, cwd, "--git-tag-version");
+        let git_path: &[u8] = &Self::find_git(cwd, "--git-tag-version");
 
         let staged = Self::run_git("add", &[git_path, b"add", b"package.json"], cwd);
         if !staged.is_ok() {

@@ -10,7 +10,7 @@ use std::io::Write as _;
 use bun_core::env::{ARCHITECTURE_NAMES, Architecture, OPERATING_SYSTEM_NAMES, OperatingSystem};
 use bun_core::{Environment, Global, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path, NameTooLong, Path};
 use bun_semver::{SlicedString, Version};
 use bun_sys::Fd;
 
@@ -192,37 +192,33 @@ impl CompileTarget {
         }
     }
 
-    pub fn exe_path<'a>(
+    pub fn exe_path(
         &self,
-        buf: &'a mut PathBuffer,
-        version_str: &'a ZStr,
+        version_str: &ZStr,
         _env: &mut bun_dotenv::Loader,
         needs_download: &mut bool,
-    ) -> Result<&'a ZStr, crate::Error> {
+    ) -> Result<Path, NameTooLong> {
         if self.is_default() {
             'brk: {
                 let Ok(self_exe_path) = bun_core::self_exe_path() else {
                     break 'brk;
                 };
                 *needs_download = false;
-                return Ok(self_exe_path);
+                return Ok(Path::from(self_exe_path));
             }
         }
 
         if bun_sys::exists_at(Fd::cwd(), version_str) {
             *needs_download = false;
-            return Ok(version_str);
+            return Ok(Path::from(version_str));
         }
 
         // T1 fallback ignores `_env` (full env-override chain lives in bun_install).
         let cache_dir = bun_sys::fetch_cache_directory_path();
         let top_level_dir = path::fs::FileSystem::instance().top_level_dir();
-        let mut dest = path::SlicePath::new(buf);
-        dest.resolve_in_place(&[top_level_dir, &cache_dir, version_str])
-            .map_err(|_| crate::Error::BufferTooSmall)?;
-        let dest = dest.into_zstr();
+        let dest = Path::resolve(&[top_level_dir, &cache_dir, version_str]).check_len()?;
 
-        if bun_sys::exists_at(Fd::cwd(), dest) {
+        if bun_sys::exists_at(Fd::cwd(), &dest) {
             *needs_download = false;
         }
 

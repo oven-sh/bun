@@ -1,7 +1,7 @@
 //! `DirectoryWatchStore`: directory watches that retry failed import resolutions.
 
 use super::*;
-use bun_paths::{PoolPath, dirname_or_root};
+use bun_paths::{Path, dirname_or_root};
 
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch
 /// for resolution-failure recovery.
@@ -90,7 +90,7 @@ impl Default for Dep {
 
 impl DevServer {
     /// Registers a directory watch so that a failed import resolution is
-    /// retried when the containing directory changes.
+    /// retried when the containing directory changes. Takes a `bun_resolver::path_of_specifier`.
     pub(crate) fn track_resolution_failure(
         &mut self,
         import_source: &[u8],
@@ -122,12 +122,7 @@ impl DevServer {
             _ => debug_assert!(false),
         }
 
-        // No file has the name as written, so the resolver goes on to this spelling.
-        let converted = bun_paths::windows_to_platform(specifier);
-        let Ok(joined) = PoolPath::resolve(&[dirname_or_root(import_source), &converted]) else {
-            // There's nothing to watch: the name is too long.
-            return Ok(());
-        };
+        let joined = Path::resolve(&[dirname_or_root(import_source), specifier]);
         let dir = dirname_or_root(&joined);
 
         // The `import_source` parameter is not a stable string. Since the

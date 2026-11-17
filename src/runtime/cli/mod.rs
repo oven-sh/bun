@@ -277,17 +277,12 @@ fn cli_arena() -> &'static bun_alloc::Arena {
 }
 
 /// The executable's directory if the working directory is gone, like Node's `Environment::GetCwd`.
-pub(crate) fn getcwd_or_exe_dir(buf: &mut bun_paths::PathBuffer) -> &bun_core::ZStr {
+pub(crate) fn getcwd_or_exe_dir(buf: &mut bun_paths::PathBuffer) -> &[u8] {
     if let Ok(cwd) = bun_core::getcwd(buf) {
         return cwd;
     }
-    let mut dir = bun_paths::SlicePath::new(buf);
     let exe_dir = (bun_core::self_exe_path().ok()).and_then(|exe| bun_paths::dirname(exe));
-    if exe_dir.is_none_or(|exe_dir| dir.set(exe_dir).is_err()) {
-        let root: &[u8] = if cfg!(windows) { b"C:\\" } else { b"/" };
-        dir.set(root).expect("a root fits a path buffer");
-    }
-    dir.into_zstr()
+    exe_dir.unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" })
 }
 
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc

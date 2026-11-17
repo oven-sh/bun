@@ -4,8 +4,6 @@ use bun_aot::builtins::name_values_of_unlinked_files;
 use bun_aot::statistics::{LimitId, LimitValues};
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::{JSGlobalObject, JsError, JsResult};
-use bun_paths::PathStyle as _;
-use bun_paths::platform::Posix;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::{
     BuiltinClassIndex, BuiltinTypePath, BuiltinTypeSymbols, Denotation, FileOrigin, QueryInputs,
@@ -13,7 +11,7 @@ use bun_sema::check::aot::{
 };
 use bun_sema::fold::FoldInputs;
 use bun_sema::program::Files;
-use bun_sema::resolve::{AOT_CONDITION, CodeOptions, Host};
+use bun_sema::resolve::{AOT_CONDITION, CodeOptions, Host, parent_directory};
 use bun_sema::session::Session;
 use bun_sema_driver::host::from_native;
 use bun_sema_driver::{
@@ -93,7 +91,7 @@ pub(crate) fn describe_checker_queries(
     // Bun's resolver reads an entry point as it is written, so it stays a native path.
     let entry_points = [entry_point.to_vec()];
     let entry_path = from_native(entry_point);
-    let directory = Posix::without_trailing_sep(Posix::dirname_or_root(&entry_path));
+    let directory = parent_directory(&entry_path);
     let conditions = [AOT_CONDITION.to_vec()];
     let host =
         DiskWithBuiltinModules::new(global.bun_vm(), requested_threads, directory, &conditions);

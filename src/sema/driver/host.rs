@@ -9,16 +9,15 @@ use bun_core::strings::{
     BOM, contains, contains_char, is_valid_utf8, last_index_of_char, rsplit_once_char,
     split_once_char, without_trailing_slash,
 };
-use bun_paths::platform::Posix;
-use bun_paths::platform::Windows;
-use bun_paths::{Path, PathStyle as _, path_buffer_pool};
+use bun_paths::{Path, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     CachedConfig, FileStamp, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
-    case_insensitive_hash, inside, is_declaration_file_name, is_plainly_normalized, is_same_path,
-    join, root_length, to_file_name_lower_case, to_path, typescript_path,
+    basename, case_insensitive_hash, inside, is_declaration_file_name, is_plainly_normalized,
+    is_same_path, join, parent_directory, root_length, to_file_name_lower_case, to_path,
+    typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -544,7 +543,7 @@ fn split(path: &[u8]) -> Split<'_> {
             name: &path[separator + 1..],
         };
     }
-    let parent = Posix::dirname_or_root(path);
+    let parent = parent_directory(path);
     // `parent` only ends with a separator when it was cut out of a root.
     if parent.ends_with(b"/") && path.len() <= root_length(path) {
         return Split {
@@ -554,7 +553,7 @@ fn split(path: &[u8]) -> Split<'_> {
     }
     Split {
         parent,
-        name: Posix::basename(path),
+        name: basename(path),
     }
 }
 
@@ -677,7 +676,7 @@ impl Disk {
         // A drive, or a server without a share.
         let is_volume = |path: &[u8]| {
             let native = to_native(path);
-            Windows::volume(native) == native
+            bun_paths::volume(native) == native
                 && bun_core::strings::tokenize_any(native, b"/\\").count() == 1
         };
         path.is_empty() || cfg!(windows) && (path == b"/" || is_volume(path))

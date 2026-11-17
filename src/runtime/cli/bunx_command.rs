@@ -18,11 +18,7 @@ use bun_install::dependency::{self, VersionTag};
 use bun_install::postinstall_optimizer;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_paths::platform::Windows;
-use bun_paths::{
-    self, DELIMITER, Path, PathStyle as _, PoolPath, VecPath, windows_to_platform,
-    without_trailing_sep,
-};
+use bun_paths::{self, DELIMITER, Path, VecPath, from_portable, without_trailing_sep};
 use bun_resolver::fs::RealFS;
 use bun_sys::{self, Fd, FdDirExt as _, O};
 use bun_wyhash::hash;
@@ -414,7 +410,7 @@ impl BunxCommand {
                     {
                         let bin_name = bun_install::dependency::unscoped_package_name(name);
                         if Self::is_safe_bin_name(bin_name) {
-                            let target = windows_to_platform(Windows::without_leading_sep(target));
+                            let target = from_portable(strings::trim_left(target, b"/\\"));
                             return Ok(package_bin(bin_name, &target));
                         }
                     }
@@ -479,7 +475,7 @@ impl BunxCommand {
 
             let mut buf = bun_paths::path_buffer_pool::get();
             let bin_dir = VecPath::from_parts(&[dir, b"node_modules/.bin"]);
-            let entry = bun_which::which(&mut buf, &bin_dir, b"", &bin.name)
+            let entry = bun_which::which(&bin_dir, b"", &bin.name)
                 .map(|entry| ZBox::from_bytes(entry.as_bytes()));
             // On Windows the `.bin` entry is a shim executable, not a link, and a script cannot be
             // started without it.
@@ -487,7 +483,7 @@ impl BunxCommand {
                 return Ok(entry.map_or(InProject::Absent, InProject::Run));
             }
             let file_path = VecPath::from_parts(&[package_dir.as_bytes(), &bin.file]).into_vec();
-            let file = bun_which::which(&mut buf, b"", b"", &file_path)
+            let file = bun_which::which(b"", b"", &file_path)
                 .map(|file| ZBox::from_bytes(file.as_bytes()));
 
             let mut real_dir = bun_paths::path_buffer_pool::get();
@@ -681,7 +677,7 @@ impl BunxCommand {
             package_name,
             b"package.json",
         ];
-        let subpath = PoolPath::from_parts(&parts).map_err(|_| crate::Error::PathTooLong)?;
+        let subpath = Path::from_parts(&parts);
         Ok(Self::get_bin_from_subpath(transpiler, Fd::cwd(), &subpath, preferred)?.name)
     }
 
@@ -766,21 +762,16 @@ impl BunxCommand {
         Ok(())
     }
 
-    fn which_in_cache<'a>(
-        buf: &'a mut bun_paths::PathBuffer,
+    fn which_in_cache(
         bunx_cache_dir: &[u8],
         cwd: &[u8],
         bin_name: &[u8],
-    ) -> crate::Result<Option<&'a ZStr>> {
+    ) -> crate::Result<Option<Path>> {
         let file_name = [bin_name, EXE_SUFFIX.as_bytes()].concat();
-        let absolute = PoolPath::from_parts(&[bunx_cache_dir, b"node_modules/.bin", &file_name])
+        let absolute = Path::from_parts(&[bunx_cache_dir, b"node_modules/.bin", &file_name])
+            .check_len()
             .map_err(|_| crate::Error::PathTooLong)?;
-        Ok(bun_which::which(
-            buf,
-            bunx_cache_dir,
-            cwd,
-            absolute.as_bytes(),
-        ))
+        Ok(bun_which::which(bunx_cache_dir, cwd, &absolute))
     }
 
     /// Exits if the package has no bin, because installing it again would not give it one.
@@ -843,14 +834,13 @@ impl BunxCommand {
             Some(Ok(own_bin_name)) => &**own_bin_name,
             _ => initial_bin_name,
         };
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if let Some(bin) = Self::which_in_cache(&mut buf, bunx_cache_dir, cwd, bin_name)? {
+        if let Some(bin) = Self::which_in_cache(bunx_cache_dir, cwd, bin_name)? {
             return Ok(Some(ZBox::from_bytes(bin.as_bytes())));
         }
         match own_bin_name {
             Some(Err(err @ crate::Error::NoBinFound)) => Err(err),
             Some(_) => Ok(None),
-            None => Ok(bun_which::which(&mut buf, path, cwd, initial_bin_name)
+            None => Ok(bun_which::which(path, cwd, initial_bin_name)
                 .map(|bin| ZBox::from_bytes(bin.as_bytes()))),
         }
     }
@@ -1072,8 +1062,7 @@ impl BunxCommand {
         let package_with_bin = opts.binary_name.is_none().then_some(result_package_name);
 
         let find_on_path = || {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            bun_which::which(&mut buf, &path_for_bin_dirs, which_cwd, initial_bin_name)
+            bun_which::which(&path_for_bin_dirs, which_cwd, initial_bin_name)
                 .map(|bin| ZBox::from_bytes(bin.as_bytes()))
         };
 

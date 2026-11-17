@@ -8,8 +8,7 @@ use core::cell::RefCell;
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
-use bun_paths::platform::Auto;
-use bun_paths::{Path, PathStyle as _, PosixPath};
+use bun_paths::Path;
 use bun_wyhash::hash as wyhash;
 
 // `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
@@ -576,11 +575,11 @@ impl<'a> URL<'a> {
         prefix: &[u8],
         path: &[u8],
     ) -> crate::Result<()> {
-        let mut joined = Path::from(prefix);
-        bun_paths::slashes_to_posix_in_place(joined.as_mut_slice());
-        joined.extend_from_slice(Auto::without_leading_sep(path));
-        bun_paths::platform_to_posix_in_place(joined.as_mut_slice());
-        let normalized = PosixPath::resolve(&[b"/", &joined]);
+        let mut joined = Path::from(&strings::replace_char(prefix, b'\\', b'/'));
+        joined.extend_from_slice(bun_paths::without_leading_sep(path));
+        let mut normalized = Path::from(b"/");
+        normalized.push_inside(&joined);
+        let normalized = normalized.into_portable();
 
         writer.write_all(self.origin)?;
         // In a URL `\` is a separator.

@@ -20,8 +20,7 @@ use crate::output_file::{
 use crate::{Chunk, cheap_prefix_normalizer};
 
 use bun_sys::{
-    FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
-    write_file_with_path_buffer,
+    FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding, write_file,
 };
 
 use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
@@ -65,8 +64,6 @@ pub(crate) fn write_output_files_to_disk(
             return Err(e.into());
         }
     };
-
-    let mut pathbuf = bun_paths::path_buffer_pool::get();
 
     // `code()`/`code_standalone()` take both `chunk` (an element of `chunks`)
     // and `chunks` as
@@ -389,20 +386,17 @@ pub(crate) fn write_output_files_to_disk(
                             &chunk.final_rel_path,
                             BYTECODE_EXTENSION.as_bytes(),
                         ]);
-                        match write_file_with_path_buffer(
-                            &mut pathbuf,
-                            &WriteFileArgs {
-                                data: WriteFileData::Buffer { buffer: &bytecode },
-                                encoding: WriteFileEncoding::Buffer,
-                                mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
-                                    0o755
-                                } else {
-                                    0o644
-                                },
-                                dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                                file: PathOrFileDescriptor::Path(&bytecode_path),
+                        match write_file(&WriteFileArgs {
+                            data: WriteFileData::Buffer { buffer: &bytecode },
+                            encoding: WriteFileEncoding::Buffer,
+                            mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
+                                0o755
+                            } else {
+                                0o644
                             },
-                        ) {
+                            dirfd: bun_sys::Fd::from_std_dir(&root_dir),
+                            file: PathOrFileDescriptor::Path(&bytecode_path),
+                        }) {
                             Ok(_) => {}
                             Err(e) => {
                                 log.add_error_fmt(
@@ -458,22 +452,19 @@ pub(crate) fn write_output_files_to_disk(
             break 'brk None;
         };
 
-        match write_file_with_path_buffer(
-            &mut pathbuf,
-            &WriteFileArgs {
-                data: WriteFileData::Buffer {
-                    buffer: &code_result.buffer,
-                },
-                encoding: WriteFileEncoding::Buffer,
-                mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
-                    0o755
-                } else {
-                    0o644
-                },
-                dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                file: PathOrFileDescriptor::Path(&chunk.final_rel_path),
+        match write_file(&WriteFileArgs {
+            data: WriteFileData::Buffer {
+                buffer: &code_result.buffer,
             },
-        ) {
+            encoding: WriteFileEncoding::Buffer,
+            mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
+                0o755
+            } else {
+                0o644
+            },
+            dirfd: bun_sys::Fd::from_std_dir(&root_dir),
+            file: PathOrFileDescriptor::Path(&chunk.final_rel_path),
+        }) {
             Err(e) => {
                 log.add_sys_error(
                     &e,

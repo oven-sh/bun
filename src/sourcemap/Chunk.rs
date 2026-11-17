@@ -69,7 +69,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     let below_top_level_dir = bun_paths::strip_prefix(text, FileSystem::instance().top_level_dir());
     let mut filename = bun_paths::Path::from(below_top_level_dir.unwrap_or(text));
     if below_top_level_dir.is_some() {
-        bun_paths::platform_to_posix_in_place(filename.as_mut_slice());
+        bun_paths::to_portable_in_place(filename.as_mut_slice());
     }
     if !filename.is_empty() && !filename.starts_with(b"/") {
         filename.prepend(b"/");

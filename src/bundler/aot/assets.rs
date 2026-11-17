@@ -104,7 +104,7 @@ fn create_embedded_file(
         false => name_under_root(context, file, &template),
     };
     let path = match runs_in_place {
-        true => bun_paths::posix_to_platform(file.path).into_owned(),
+        true => bun_paths::to_native(file.path).into_owned(),
         false => embedded_path(&context.module_prefix, &dest_path),
     };
     let output = OutputFile::init(Options {
@@ -191,14 +191,14 @@ fn name_under_root(
 
 fn posix_path(path: &[u8]) -> Vec<u8> {
     let mut path = path.to_vec();
-    bun_paths::platform_to_posix_in_place::<u8>(&mut path);
+    bun_paths::to_portable_in_place::<u8>(&mut path);
     path
 }
 
 fn print_embedded_name(template: &PathTemplate) -> Vec<u8> {
     let mut name = Vec::new();
     template.print(&mut name, false).expect("oom");
-    bun_paths::platform_to_posix_in_place::<u8>(&mut name);
+    bun_paths::to_portable_in_place::<u8>(&mut name);
     name
 }
 

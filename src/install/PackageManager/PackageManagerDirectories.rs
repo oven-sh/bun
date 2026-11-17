@@ -7,12 +7,12 @@ use crate::npm::registry::{FolderCacheKey, Scope};
 use crate::package_install::{Method, PackageInstall};
 use crate::repository::Repository;
 use bun_core::ZStr;
-use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
+use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt, strings};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{Dependency, Integrity, PackageID, Resolution};
-use bun_paths::{self as path, PathBuffer, SlicePath};
+use bun_paths::{self as path, Path, PathBuffer};
 use bun_semver as Semver;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
@@ -973,12 +973,11 @@ pub fn global_link_dir_path(this: &mut PackageManager) -> &'static [u8] {
 // ────────────────────────── cached path resolution ────────────────────────────
 
 /// `FileNotFound` unless the package is in the cache.
-pub fn path_for_cached_npm_path<'a>(
+fn path_for_cached_npm_path(
     this: &mut PackageManager,
-    buf: &'a mut PathBuffer,
     package_name: &[u8],
     version: Semver::Version,
-) -> Result<&'a [u8], Error> {
+) -> Result<Path, Error> {
     let mut folder_name_buf = bun_paths::path_buffer_pool::get();
     let folder_name = cached_npm_package_folder_name(
         this,
@@ -987,29 +986,25 @@ pub fn path_for_cached_npm_path<'a>(
         version,
         None,
     );
-    path_for_cached_folder(this, buf, folder_name, ResolutionTag::Npm)
+    path_for_cached_folder(this, folder_name, ResolutionTag::Npm)
 }
 
-fn path_for_cached_folder<'a>(
+fn path_for_cached_folder(
     this: &mut PackageManager,
-    buf: &'a mut PathBuffer,
     folder_name: &ZStr,
     tag: ResolutionTag,
-) -> Result<&'a [u8], Error> {
+) -> Result<Path, Error> {
     if !is_package_in_cache(this, folder_name, tag) {
         return Err(Error::FileNotFound);
     }
-    let mut path = path::SlicePath::new(buf);
-    path.resolve_in_place(&[&get_cache_directory(this).path, folder_name])?;
-    Ok(path.into_zstr())
+    Ok(Path::resolve(&[&get_cache_directory(this).path, folder_name]).check_len()?)
 }
 
-pub fn path_for_resolution<'a>(
+pub(crate) fn path_for_resolution(
     this: &mut PackageManager,
     package_id: PackageID,
     resolution: &Resolution,
-    buf: &'a mut PathBuffer,
-) -> Result<&'a [u8], Error> {
+) -> Result<Path, Error> {
     // const folder_name = this.cachedNPMPackageFolderName(name, version);
     match resolution.tag {
         ResolutionTag::Npm => {
@@ -1020,22 +1015,22 @@ pub fn path_for_resolution<'a>(
             // borrow can't be held across it. Copy the name out first.
             let package_name = this.lockfile.str(&package_name_).to_vec();
 
-            path_for_cached_npm_path(this, buf, &package_name, npm.version)
+            path_for_cached_npm_path(this, &package_name, npm.version)
         }
         ResolutionTag::Github => {
             let mut name_buf = bun_paths::path_buffer_pool::get();
             let folder_name =
                 cached_github_folder_name(this, &mut name_buf, resolution.github(), None);
-            path_for_cached_folder(this, buf, folder_name, resolution.tag)
+            path_for_cached_folder(this, folder_name, resolution.tag)
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
             let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
             let mut name_buf = bun_paths::path_buffer_pool::get();
             let folder_name =
                 cached_tarball_folder_name(this, &mut name_buf, &integrity, resolution, None);
-            path_for_cached_folder(this, buf, folder_name, resolution.tag)
+            path_for_cached_folder(this, folder_name, resolution.tag)
         }
-        _ => Ok(b""),
+        _ => Ok(Path::new()),
     }
 }
 
@@ -1051,11 +1046,10 @@ pub(crate) fn folder_in<'a>(
     dir: &[u8],
     folder: &[u8],
 ) -> Result<&'a ZStr, bun_paths::NameTooLong> {
-    let mut path = SlicePath::new(buf);
-    path.set(dir)?;
-    path.push_trailing_sep()?;
-    path.extend_from_slice(folder)?;
-    Ok(path.into_zstr())
+    let mut path = Path::from(dir);
+    path.push_trailing_sep();
+    path.extend_from_slice(folder);
+    strings::copy_z(buf, &path).ok_or(bun_paths::NameTooLong)
 }
 
 /// this is copy pasted from `installPackageWithNameAndResolution()`

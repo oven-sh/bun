@@ -1,7 +1,6 @@
 use bun_core::strings;
 use bun_js_parser::ImportMetaGlobHost;
-use bun_paths::platform::Auto;
-use bun_paths::{PathStyle as _, PoolPath};
+use bun_paths::Path;
 
 use crate::dir_info::DirInfo;
 use crate::package_json::{ESModule, Status};
@@ -78,8 +77,7 @@ impl Resolver<'_> {
         let name_start = (before.iter())
             .rposition(|&byte| bun_paths::is_sep(byte))
             .map_or(0, |slash| slash + 1);
-        let dir =
-            PoolPath::resolve(&[tsconfig.abs_base_url_for_paths(), &before[..name_start]]).ok()?;
+        let dir = Path::resolve(&[tsconfig.abs_base_url_for_paths(), &before[..name_start]]);
         Some((
             dir.to_vec(),
             [&before[name_start..], matched_text, after].concat(),
@@ -124,7 +122,7 @@ impl Resolver<'_> {
             };
             (
                 package_json.source.path.name().dir.to_vec(),
-                Auto::without_leading_sep(&path).to_vec(),
+                bun_paths::without_leading_sep(&path).to_vec(),
             )
         })
     }

@@ -436,19 +436,15 @@ impl RunCommand {
             (exe_dir, if is_in_dir { "" } else { BESIDE_EXE_DIR_NAME })
         };
 
-        let mut dir = bun_paths::OSPath::from(parent).ok()?;
-        dir.push(name.as_bytes()).ok()?;
+        let mut dir = bun_paths::OSPath::from(parent);
+        dir.push(name.as_bytes());
         Some(dir)
     }
 
     #[cfg(not(windows))]
-    fn find_shell_impl<'a>(
-        buf: &'a mut bun_paths::PathBuffer,
-        path: &[u8],
-        cwd: &[u8],
-    ) -> Option<&'a ZStr> {
+    fn find_shell_impl(path: &[u8], cwd: &[u8]) -> Option<bun_paths::Path> {
         for shell in Self::SHELLS_TO_SEARCH {
-            if let Some(found) = bun_which::which(buf, path, cwd, shell) {
+            if let Some(found) = bun_which::which(path, cwd, shell) {
                 return Some(found);
             }
         }
@@ -464,7 +460,8 @@ impl RunCommand {
             bun_core::zstr!("/system/bin/sh"), // Android
         ];
         let mut shells = HARDCODED_POPULAR_ONES.iter().copied();
-        shells.find(|&shell| bun_sys::is_executable_file_path(shell))
+        let found = shells.find(|&shell| bun_sys::is_executable_file_path(shell))?;
+        Some(bun_paths::Path::from(found))
     }
 
     /// Find the "best" shell to use. Cached to only run once.
@@ -477,9 +474,8 @@ impl RunCommand {
         static ONCE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
 
         ONCE.get_or_init(|| {
-            let mut scratch = bun_paths::path_buffer_pool::get();
             let path = lifecycle_script_runner::strip_bin_dirs(path);
-            let found = Self::find_shell_impl(&mut scratch, &path, cwd)?;
+            let found = Self::find_shell_impl(&path, cwd)?;
             // Includes trailing NUL so the caller may treat it as `[:0]const u8`.
             Some(found.as_bytes_with_nul().to_vec())
         })
@@ -640,9 +636,7 @@ impl RunCommand {
             .ok();
 
             for name in [strings::w!("node.exe"), strings::w!("bun.exe")] {
-                let Ok(link_path) = bun_paths::OSPath::from_parts(&[&nt_dir, name]) else {
-                    return Ok(());
-                };
+                let link_path = bun_paths::OSPath::from_parts(&[&nt_dir, name]);
                 let mut made_dir = false;
                 let mut replaced = false;
                 loop {

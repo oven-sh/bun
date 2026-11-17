@@ -599,14 +599,13 @@ impl JSBundleCompletionTask {
                     };
 
                     // Write the sourcemap file to disk next to the executable
-                    let mut pathbuf = bun_paths::path_buffer_pool::get();
                     let write_path: &[u8] = if cfg!(windows) {
                         &sourcemap_full_path
                     } else {
                         map_basename
                     };
                     let write_result = NodeFS::write_file_with_path_buffer(
-                        &mut pathbuf,
+                        &mut bun_paths::Path::new(),
                         &fs_args::WriteFile {
                             flag: FileSystemFlags::W,
                             mode: node_fs::DEFAULT_PERMISSION,

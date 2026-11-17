@@ -14,7 +14,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, UnwrapOrOom as _};
-use bun_paths::{Path, PoolPath, SEP};
+use bun_paths::{Path, SEP};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -712,7 +712,7 @@ impl Lockfile {
         let mut convert = |stored: SemverString| {
             let path = stored.slice(string_buf.bytes);
             let spelling = if cfg!(windows) {
-                bun_paths::platform_to_posix(path)
+                bun_paths::to_portable(path)
             } else {
                 sys::existing_spelling(dir, path)
             };
@@ -1039,9 +1039,7 @@ impl Lockfile {
                 && crate::dedupe::applied_override(self, row as DependencyID, dependency)
                     .and_then(|rule| match &rule.version().value {
                         dependency::Value::Folder(folder) => {
-                            join_top_level_dir(&[&bun_paths::windows_to_platform(
-                                folder.slice(buf),
-                            )])
+                            join_top_level_dir(&[&bun_paths::from_portable(folder.slice(buf))])
                         }
                         _ => None,
                     })
@@ -2222,10 +2220,10 @@ pub(crate) fn linked_workspace_path_in(
 }
 
 /// Resolves `parts` against the project root. `None` if it doesn't fit in a path buffer.
-pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<PoolPath> {
-    let mut path = PoolPath::from_top_level_dir().ok()?;
-    path.resolve_in_place(parts).ok()?;
-    Some(path)
+pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<Path> {
+    let mut path = Path::from_top_level_dir();
+    path.resolve_in_place(parts);
+    path.check_len().ok()
 }
 
 impl Lockfile {
@@ -3280,7 +3278,7 @@ impl Lockfile {
 
         let mut sort_buf: Vec<PathToId> = Vec::with_capacity(l_len + r_len);
 
-        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut path_buf = Path::new();
         let mut depth_buf: tree::DepthBuf = tree::depth_buf_uninit();
 
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.

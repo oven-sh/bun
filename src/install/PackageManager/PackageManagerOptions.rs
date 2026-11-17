@@ -8,7 +8,7 @@ use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
-use bun_paths::{NameTooLong, Path, PoolPath};
+use bun_paths::{NameTooLong, Path};
 
 /// Network policy for this install.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -632,8 +632,8 @@ pub(crate) fn resolve_env_dir(
     base_dir: &[u8],
     dir: &[u8],
     subdir: &[u8],
-) -> Result<PoolPath, NameTooLong> {
-    PoolPath::resolve(&[base_dir, &expand_home(dir), subdir])
+) -> Result<Path, NameTooLong> {
+    Path::resolve(&[base_dir, &expand_home(dir), subdir]).check_len()
 }
 
 /// The two differ when a symlink comes before a `..`.
@@ -653,7 +653,7 @@ fn make_open_env_dir(base_dir: &[u8], dir: &[u8]) -> crate::Result<bun_sys::Fd> 
     if bun_paths::is_fully_qualified(&as_written) {
         return make_open_dir(&as_written);
     }
-    make_open_dir(&PoolPath::resolve(&[base_dir, &as_written])?)
+    make_open_dir(&Path::resolve(&[base_dir, &as_written]))
 }
 
 pub fn open_global_dir(base_dir: &[u8], explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {

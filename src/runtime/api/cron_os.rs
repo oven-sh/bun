@@ -227,10 +227,14 @@ impl OsJob {
         let vm = VirtualMachine::get();
         let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
         #[cfg(windows)]
-        let (mut path_buf, envp) = (
-            bun_paths::path_buffer_pool::get(),
-            vm.env_loader().map.to_envp(),
-        );
+        let (schtasks, envp) = {
+            let path = vm.env_loader().map.get(b"PATH").unwrap_or(b"");
+            let found = bun_which::which(path, b"", b"schtasks");
+            (
+                found.ok_or("Could not find 'schtasks' in PATH")?,
+                vm.env_loader().map.to_envp(),
+            )
+        };
         let options = SpawnOptions {
             stdin: Stdio::Ignore,
             stdout,
@@ -240,11 +244,7 @@ impl OsJob {
             #[cfg(windows)]
             stderr: Stdio::Buffer,
             #[cfg(windows)]
-            argv0: {
-                let path = vm.env_loader().map.get(b"PATH").unwrap_or(b"");
-                let found = bun_which::which(&mut path_buf, path, b"", b"schtasks");
-                Some(found.ok_or("Could not find 'schtasks' in PATH")?.into())
-            },
+            argv0: Some((&*schtasks).into()),
             #[cfg(windows)]
             windows: spawn::WindowsOptions {
                 loop_: event_loop,
@@ -431,8 +431,7 @@ mod backend {
 
     fn find() -> Result<Vec<u8>, Failure> {
         let path = bun_core::env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let found = bun_which::which(&mut buf, path, b"", b"crontab");
+        let found = bun_which::which(path, b"", b"crontab");
         Ok(found.ok_or("crontab not found in PATH")?.to_vec())
     }
 

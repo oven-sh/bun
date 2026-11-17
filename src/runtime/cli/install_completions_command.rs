@@ -20,11 +20,8 @@ impl InstallCompletionsCommand {
 
     #[cfg(not(windows))]
     fn install_bunx_symlink(cwd: &[u8]) -> Result<(), crate::Error> {
-        let mut buf = bun_paths::path_buffer_pool::get();
-
         // don't install it if it's already there
         if bun_which::which(
-            &mut buf,
             env_var::PATH.get().unwrap_or(cwd),
             cwd,
             Self::BUNX_NAME.as_bytes(),
@@ -82,16 +79,16 @@ impl InstallCompletionsCommand {
             b"bunx-debug.cmd".as_slice()
         } else {
             b"bunx.cmd"
-        })?;
+        });
         let _ = windows::DeleteFileBun(&bunx, windows::DeleteFileOptions::default());
-        bunx.set_extension(b".exe")?;
+        bunx.set_extension(b".exe");
         let _ = windows::DeleteFileBun(&bunx, windows::DeleteFileOptions::default());
 
         if windows::CreateHardLinkW(&bunx, image_path).is_err() {
             // if hard link fails, use a cmd script
             const SCRIPT: &[u8] = b"@%~dp0bun.exe x %*\n";
 
-            bunx.set_extension(b".cmd")?;
+            bunx.set_extension(b".cmd");
             let file = File::create_w(bun_sys::Fd::cwd(), &bunx)?;
             file.write_all(SCRIPT)?;
         }
@@ -114,7 +111,7 @@ impl InstallCompletionsCommand {
         const CONTENT: &[u8] = include_bytes!("uninstall.ps1");
 
         let mut uninstaller_path = bun_sys::nt_path(image_dirname, bun_sys::Tag::open)?;
-        uninstaller_path.set_basename(b"uninstall.ps1")?;
+        uninstaller_path.set_basename(b"uninstall.ps1");
 
         let file = File::create_w(bun_sys::Fd::cwd(), &uninstaller_path)?;
         file.write_all(CONTENT)?;

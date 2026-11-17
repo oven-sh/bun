@@ -1,6 +1,8 @@
 #![warn(unused_must_use)]
 #![feature(core_io_borrowed_buf)]
 
+use std::borrow::Cow;
+
 mod error;
 pub use error::NameTooLong;
 
@@ -100,100 +102,141 @@ macro_rules! os_path_literal {
     }};
 }
 
-/// [`PathStyle::is_sep`] for the host platform.
 #[inline(always)]
 pub fn is_sep<C: PathChar>(unit: C) -> bool {
-    platform::Auto::is_sep(unit)
+    Host::is_sep(unit)
 }
 
-/// [`PathStyle::is_absolute`] for the host platform.
-#[inline]
-pub fn is_absolute<C: PathUnit>(p: &[C]) -> bool {
-    platform::Auto::is_absolute(p)
-}
-
-/// [`PathStyle::is_fully_qualified`] for the host platform.
-#[inline]
-pub fn is_fully_qualified(p: &[u8]) -> bool {
-    platform::Auto::is_fully_qualified(p)
-}
-
-/// [`PathStyle::without_nt_prefix`] for the host platform.
-#[inline]
-pub fn without_nt_prefix(p: &[u8]) -> &[u8] {
-    platform::Auto::without_nt_prefix(p)
-}
-
-/// [`PathStyle::dirname`] for the host platform.
-#[inline]
-pub fn dirname<C: PathUnit>(p: &[C]) -> Option<&[C]> {
-    platform::Auto::dirname(p)
-}
-
-/// [`PathStyle::dirname_or_root`] for the host platform.
-#[inline]
-pub fn dirname_or_root(p: &[u8]) -> &[u8] {
-    platform::Auto::dirname_or_root(p)
-}
-
-/// [`PathStyle::basename`] for the host platform.
-#[inline]
-pub fn basename<C: PathUnit>(p: &[C]) -> &[C] {
-    platform::Auto::basename(p)
-}
-
-/// [`PathStyle::extension`] for the host platform.
-#[inline]
-pub fn extension<C: PathUnit>(p: &[C]) -> &[C] {
-    platform::Auto::extension(p)
-}
-
-/// [`PathStyle::stem`] for the host platform.
-#[inline]
-pub fn stem<C: PathUnit>(p: &[C]) -> &[C] {
-    platform::Auto::stem(p)
-}
-
-/// [`PathStyle::without_leading_dot_slash`] for the host platform.
 #[inline(always)]
-pub fn without_leading_dot_slash(p: &[u8]) -> &[u8] {
-    platform::Auto::without_leading_dot_slash(p)
+pub fn has_leading_sep<C: PathChar>(path: &[C]) -> bool {
+    Host::has_leading_sep(path)
 }
 
-/// [`PathStyle::without_trailing_sep`] for the host platform.
+#[inline(always)]
+pub fn has_trailing_sep<C: PathChar>(path: &[C]) -> bool {
+    Host::has_trailing_sep(path)
+}
+
+/// Removes all of them.
+#[inline(always)]
+pub fn without_leading_sep<C: PathChar>(path: &[C]) -> &[C] {
+    Host::without_leading_sep(path)
+}
+
+/// Removes all of them, but a root keeps its separator.
 #[inline]
-pub fn without_trailing_sep(p: &[u8]) -> &[u8] {
-    platform::Auto::without_trailing_sep(p)
+pub fn without_trailing_sep<C: PathUnit>(path: &[C]) -> &[C] {
+    Host::without_trailing_sep(path)
 }
 
-/// [`PathStyle::strip_prefix`] for the host platform.
+/// Removes one `./`.
+#[inline(always)]
+pub fn without_leading_dot_slash(path: &[u8]) -> &[u8] {
+    Host::without_leading_dot_slash(path)
+}
+
+/// `/`, `C:\`, `C:`, `\\server\share\`, `\\?\C:\`, or empty.
 #[inline]
-pub fn strip_prefix<'a>(p: &'a [u8], dir: &[u8]) -> Option<&'a [u8]> {
-    platform::Auto::strip_prefix(p, dir)
+pub fn root<C: PathUnit>(path: &[C]) -> &[C] {
+    Host::root(path)
 }
 
-/// [`PathStyle::components`] for the host platform.
+/// The root without its separator: `C:`, `\\server\share`, `\\?\C:`, or empty.
 #[inline]
-pub fn components(p: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> {
-    platform::Auto::components(p)
+pub fn volume(path: &[u8]) -> &[u8] {
+    Host::volume(path)
 }
 
-/// [`PathStyle::ancestors`] for the host platform.
 #[inline]
-pub fn ancestors(p: &[u8]) -> impl Iterator<Item = &[u8]> {
-    platform::Auto::ancestors(p)
+pub fn is_absolute<C: PathUnit>(path: &[C]) -> bool {
+    Host::is_absolute(path)
 }
 
-/// [`PathStyle::climbs_out`] for the host platform.
+/// False for `\a` on Windows, which depends on the current drive.
 #[inline]
-pub fn climbs_out(p: &[u8]) -> bool {
-    platform::Auto::climbs_out(p)
+pub fn is_fully_qualified(path: &[u8]) -> bool {
+    Host::is_fully_qualified(path)
 }
 
-/// [`PathStyle::common_ancestor`] for the host platform.
+/// `C:\a` for `\\?\C:\a` and `\??\C:\a`. A share needs `Path::strip_nt_prefix`.
+#[inline]
+pub fn without_nt_prefix(path: &[u8]) -> &[u8] {
+    Host::without_nt_prefix(path)
+}
+
+/// `None` for a root or a single component.
+#[inline]
+pub fn dirname<C: PathUnit>(path: &[C]) -> Option<&[C]> {
+    Host::dirname(path)
+}
+
+/// [`dirname`], but a root is its own parent, and a single component has an empty one.
+#[inline]
+pub fn dirname_or_root(path: &[u8]) -> &[u8] {
+    Host::dirname_or_root(path)
+}
+
+/// Empty for `/` and `C:\`. `share` for `\\server\share`, as in Node.
+#[inline]
+pub fn basename<C: PathUnit>(path: &[C]) -> &[C] {
+    Host::basename(path)
+}
+
+/// Includes the dot. `.gitignore` and `..` have none.
+#[inline]
+pub fn extension<C: PathUnit>(path: &[C]) -> &[C] {
+    Host::extension(path)
+}
+
+/// The basename without its extension.
+#[inline]
+pub fn stem(path: &[u8]) -> &[u8] {
+    Host::stem(path)
+}
+
+/// `path` relative to `dir`: empty if they are equal, `None` if `path` is outside of it.
+#[inline]
+pub fn strip_prefix<'a>(path: &'a [u8], dir: &[u8]) -> Option<&'a [u8]> {
+    Host::strip_prefix(path, dir)
+}
+
+/// The components after the root. `.` and `..` are kept.
+#[inline]
+pub fn components(path: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> {
+    Host::components(path)
+}
+
+/// `path`, then each parent up to the root or the first component, without trailing separators.
+#[inline]
+pub fn ancestors<C: PathUnit>(path: &[C]) -> impl Iterator<Item = &[C]> {
+    Host::ancestors(path)
+}
+
+/// Whether `path` has a root, or its `..` lead above the directory it starts in.
+#[inline]
+pub fn climbs_out(path: &[u8]) -> bool {
+    Host::climbs_out(path)
+}
+
+/// The longest path that each of `paths` is in or equal to.
 #[inline]
 pub fn common_ancestor<'a>(paths: impl Iterator<Item = &'a [u8]>) -> Option<&'a [u8]> {
-    platform::Auto::common_ancestor(paths)
+    Host::common_ancestor(paths)
+}
+
+/// `path` with this platform's separator, which is how the OS reports paths and how users expect to see them.
+#[inline]
+pub fn to_native(path: &[u8]) -> Cow<'_, [u8]> {
+    if cfg!(not(windows)) {
+        return Cow::Borrowed(path);
+    }
+    bun_core::strings::replace_char(path, b'/', b'\\')
+}
+
+/// See [`to_native`].
+#[inline]
+pub fn to_native_in_place<C: PathChar>(path: &mut [C]) {
+    Host::to_native_in_place(path);
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -220,8 +263,7 @@ pub fn is_parent_or_equal(parent: &[u8], child: &[u8]) -> ParentEqual {
 
 // LAYERING: `PathBuffer` / `WPathBuffer` / `MAX_PATH_BYTES` / `PATH_MAX_WIDE`
 // are defined once in `bun_core` (T0) and re-exported here so `bun_paths` and
-// `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_which::which`
-// etc. accept a buffer obtained from this crate without a pointer cast.
+// `bun_core` share a single nominal type.
 pub use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer};
 
 #[cfg(windows)]
@@ -239,25 +281,15 @@ pub type OSPathSlice = [OSPathChar];
 
 pub mod path_buffer_pool;
 
-mod separators;
-pub use separators::{
-    platform_to_posix, platform_to_posix_in_place, posix_to_platform, posix_to_platform_in_place,
-    slashes_to_posix, slashes_to_posix_in_place, slashes_to_windows_in_place, windows_to_platform,
-};
-// Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
-// resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
-// POSIX).
-pub use path_buffer_pool::os_path_buffer_pool;
+pub mod portable;
+pub use portable::{from_portable, to_portable, to_portable_in_place};
 #[path = "Path.rs"]
 mod path;
-pub use path::{
-    ForwardSlashPath, GenericPath, OSPath, Path, PoolPath, PosixPath, SlicePath, StackPath, VecPath,
-};
+pub use path::{OSPath, Path, StackPath, VecPath};
 mod path_backend;
-pub use path_backend::{PoolBackend, PoolOrVecBackend, SliceBackend, StackBackend, VecBackend};
 mod path_ops;
 mod path_style;
-pub use path_style::{PathStyle, platform};
+use path_style::{Host, PathStyle as _};
 mod path_unit;
 pub use path_unit::PathUnit;
 #[path = "EnvPath.rs"]
@@ -310,8 +342,7 @@ pub mod fs {
     use bun_core::{ZStr, strings};
 
     use crate::is_sep;
-    use crate::path_style::last_index_of_sep;
-    use crate::platform::Auto;
+    use crate::path_style::{Host, last_index_of_sep};
 
     /// Minimal `FileSystem` singleton: holds `top_level_dir` only. The dir-entry
     /// cache and filename arenas remain in `bun_resolver` and reach back here
@@ -435,7 +466,7 @@ pub mod fs {
         /// Returns the extension of `path` including the leading `.`, or `""`
         /// for extensionless / dotfile basenames.
         pub fn find_extname(path: &[u8]) -> &[u8] {
-            let start = last_index_of_sep::<Auto>(path).map(|i| i + 1).unwrap_or(0);
+            let start = last_index_of_sep::<Host>(path).map(|i| i + 1).unwrap_or(0);
             let base = &path[start..];
             if let Some(dot) = strings::last_index_of_char(base, b'.') {
                 if dot > 0 {
@@ -518,7 +549,7 @@ pub mod fs {
                 path = &path[2..];
             }
 
-            while let Some(i) = last_index_of_sep::<Auto>(path) {
+            while let Some(i) = last_index_of_sep::<Host>(path) {
                 // Stop if we found a non-trailing slash
                 if i + 1 != path.len() && path.len() > i + 1 {
                     base = &path[i + 1..];

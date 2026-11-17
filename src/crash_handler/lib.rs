@@ -3037,20 +3037,18 @@ mod draft {
             target_os = "freebsd"
         ))]
         {
-            let mut buf = bun_core::PathBuffer::ZEROED;
-            let mut buf2 = bun_core::PathBuffer::ZEROED;
             let Some(path_env) = env_var::PATH::get() else {
                 return;
             };
-            let Ok(cwd) = bun_core::getcwd(&mut buf2) else {
+            // No heap: this can run in a signal handler.
+            let mut curl = bun_paths::StackPath::<{ bun_paths::MAX_PATH_BYTES }>::new();
+            if !bun_core::strings::tokenize(path_env, b":").any(|dir| {
+                curl.set(dir).is_ok()
+                    && curl.push(b"curl").is_ok()
+                    && bun_sys::is_executable_file_path(&curl)
+            }) {
                 return;
-            };
-            // Reshaped for borrowck — capture cwd bytes by value (it
-            // borrows buf2, not buf, so no actual overlap; copy len for clarity).
-            let cwd_bytes = cwd.as_bytes();
-            let Some(curl) = bun_which::which(&mut buf, path_env, cwd_bytes, b"curl") else {
-                return;
-            };
+            }
             let mut cmd_line = BoundedArray::<u8, 4096>::default();
             if cmd_line.append_slice(url).is_err() {
                 return;

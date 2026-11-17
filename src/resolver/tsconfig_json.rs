@@ -2,8 +2,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
-use bun_paths::platform::Windows;
-use bun_paths::{PathStyle as _, windows_to_platform};
+use bun_paths::{from_portable, portable};
 use enumset::{EnumSet, EnumSetType};
 
 // D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
@@ -321,7 +320,7 @@ impl TSConfigJSON {
         source: &bun_ast::Source,
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
         const TEMPLATE: &[u8] = b"${configDir}";
-        let input = windows_to_platform(input);
+        let input = from_portable(input);
         let mut remaining: &[u8] = &input;
         let mut string_builder = bun_core::StringBuilder {
             len: 0,
@@ -415,7 +414,7 @@ impl TSConfigJSON {
         if let Some(extends_value) = extends_value {
             if !source.path.is_node_module() {
                 if let Some(str) = extends_value.as_str() {
-                    result.extends = windows_to_platform(str).into();
+                    result.extends = from_portable(str).into();
                 }
             }
         }
@@ -816,12 +815,12 @@ impl TSConfigJSON {
         }
 
         // Relative "./" or "../" or ".\\" or "..\\"
-        if c0 == b'.' && (Windows::is_sep(c1) || (c1 == b'.' && Windows::is_sep(c2))) {
+        if c0 == b'.' && (portable::is_sep(c1) || (c1 == b'.' && portable::is_sep(c2))) {
             return true;
         }
 
         // Absolute DOS "c:/" or "c:\\"
-        if c1 == b':' && Windows::is_sep(c2) {
+        if c1 == b':' && portable::is_sep(c2) {
             match c0 {
                 b'a'..=b'z' | b'A'..=b'Z' => {
                     return true;
@@ -831,7 +830,7 @@ impl TSConfigJSON {
         }
 
         // Absolute unix "/"
-        if Windows::is_sep(c0) {
+        if portable::is_sep(c0) {
             return true;
         }
 

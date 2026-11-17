@@ -785,9 +785,7 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let mut unzip_path_buf = bun_paths::path_buffer_pool::get();
                     let Some(unzip_exe) = which(
-                        &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
                         filesystem.top_level_dir(),
                         b"unzip",
@@ -863,10 +861,7 @@ impl UpgradeCommand {
                     )
                     .expect("oom");
 
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    let hardcoded_system_powershell;
-                    let powershell_path: &ZStr = match which(
-                        &mut buf,
+                    let powershell_path = match which(
                         bun_core::env_var::PATH.get().unwrap_or(b""),
                         b"",
                         b"powershell",
@@ -876,7 +871,7 @@ impl UpgradeCommand {
                             let system_root = bun_core::env_var::SYSTEMROOT
                                 .get()
                                 .unwrap_or(b"C:\\Windows");
-                            hardcoded_system_powershell = bun_paths::Path::resolve(&[
+                            let hardcoded_system_powershell = bun_paths::Path::resolve(&[
                                 system_root,
                                 b"System32\\WindowsPowerShell\\v1.0\\powershell.exe",
                             ]);
@@ -887,7 +882,7 @@ impl UpgradeCommand {
                                 );
                                 Global::exit(1);
                             }
-                            &hardcoded_system_powershell
+                            hardcoded_system_powershell
                         }
                     };
 
@@ -1302,13 +1297,9 @@ pub(crate) mod upgrade_js_bindings {
         {
             use sys::windows as w;
 
-            let mut buf = bun_paths::w_path_buffer_pool::get();
-            let tmpdir_path = fs::RealFS::get_default_temp_dir();
-            let mut wtmp = bun_paths::w_path_buffer_pool::get();
-            let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
-            let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
-                sys::Result::Err(_) => return,
-                sys::Result::Ok(norm) => norm,
+            let tmpdir = bun_paths::OSPath::from(fs::RealFS::get_default_temp_dir());
+            let Ok(path) = sys::normalize_path_windows(sys::Fd::INVALID, &tmpdir) else {
+                return;
             };
 
             let options = sys::NtCreateFileOptions {
@@ -1324,7 +1315,7 @@ pub(crate) mod upgrade_js_bindings {
                 attributes: 0,
                 sharing_mode: w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,
             };
-            if let Ok(handle) = w::NtCreateFile(None, path, options) {
+            if let Ok(handle) = w::NtCreateFile(None, &path, options) {
                 // SAFETY: test-only helper; access is single-threaded (JS thread).
                 unsafe { TEMPDIR_FD.write(Some(handle.into())) };
             }

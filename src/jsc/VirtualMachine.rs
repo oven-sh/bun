@@ -6,7 +6,6 @@
 use core::cell::{Cell, OnceCell};
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
-use std::borrow::Cow;
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
@@ -4847,15 +4846,10 @@ impl VirtualMachine {
                     }
                     retry_on_not_found = false;
 
+                    let path = bun_resolver::path_of_specifier(normalized_specifier, import_kind);
                     let bust_parent_from = |base: &[u8]| {
-                        let bust = |specifier: &[u8]| {
-                            bun_paths::PoolPath::resolve(&[top_level_dir, base, specifier, b".."])
-                                .is_ok_and(|dir| bust_dir_cache(&dir))
-                        };
-                        match bun_paths::windows_to_platform(normalized_specifier) {
-                            Cow::Borrowed(specifier) => bust(specifier),
-                            Cow::Owned(other) => bust(normalized_specifier) | bust(&other),
-                        }
+                        let parts = [top_level_dir, base, &path, b".."];
+                        bust_dir_cache(&bun_paths::Path::resolve(&parts))
                     };
                     let busted = if bun_paths::is_absolute(normalized_specifier) {
                         // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.

@@ -2,6 +2,7 @@ use super::{EntryPointPaths, FolderPaths, FollowedName, LoadedProject};
 use crate::diagnostics::ProgramView;
 use crate::ir::{InParallel, collect_from_each, for_each_mut};
 use crate::link::ProgramModule;
+use crate::load::contents::worker_entries::source_path_of;
 use crate::load::sources::SourceKind;
 use crate::load::{
     EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, file_size, is_host_path,
@@ -10,7 +11,6 @@ use crate::load::{
 use crate::modules::{ModuleGraph, ModuleRef, SiteAnswer};
 use crate::report::{FunctionSources, ModuleOrigin, ModuleSource, SourceTexts};
 use crate::statistics::{Stage, StepClock};
-use bun_paths::posix_to_platform;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::hir::ExprKind;
@@ -43,7 +43,7 @@ pub(super) fn collect_entry_point_paths(
             EntryPointPaths {
                 source_path: match is_host_path(file_name) {
                     true => public_path.clone(),
-                    false => posix_to_platform(to_native(file_name)).into_owned(),
+                    false => source_path_of(file_name),
                 },
                 public_path,
             }
@@ -67,8 +67,7 @@ pub(super) fn collect_program_file_paths(
         .map(|&file| {
             let paths = EntryPointPaths {
                 public_path: sources.public_path(file).to_vec(),
-                source_path: posix_to_platform(to_native(files.module(file).file_name()))
-                    .into_owned(),
+                source_path: source_path_of(files.module(file).file_name()),
             };
             (file, paths)
         })

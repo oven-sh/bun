@@ -3,7 +3,7 @@ use core::ops::Range;
 use crate::{self as sys, Dir, Fd, FdExt, dir_iterator};
 use bun_alloc::AllocError;
 use bun_core::slice_as_bytes;
-use bun_paths::{GenericPath, OSPathChar, OSPathSlice, OSPathSliceZ, VecBackend};
+use bun_paths::{OSPath, OSPathSlice, OSPathSliceZ};
 use bun_wyhash::Wyhash11;
 
 #[inline]
@@ -13,12 +13,10 @@ fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
 
 type WrappedIterator = dir_iterator::WrappedIterator;
 
-type NameBufferList = GenericPath<VecBackend<OSPathChar>>;
-
 pub struct Walker {
     stack: Vec<StackItem>,
     root: Root,
-    name_buffer: NameBufferList,
+    name_buffer: OSPath,
     // `skip_filenames`/`skip_dirnames` are index ranges into `skip_all` rather
     // than sub-slices: self-referential slices are not expressible without raw
     // pointers.
@@ -210,7 +208,7 @@ fn walk_root(
     skip_filenames: &[&OSPathSlice],
     skip_dirnames: &[&OSPathSlice],
 ) -> Result<Walker, AllocError> {
-    let name_buffer = NameBufferList::new();
+    let name_buffer = OSPath::new();
 
     let mut stack: Vec<StackItem> = Vec::new();
 

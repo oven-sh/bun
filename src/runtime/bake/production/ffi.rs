@@ -152,11 +152,8 @@ extern "C" fn BakeProdResolve(
     let after_scheme = &referrer.slice()[5..];
     let dir = bun_paths::dirname(after_scheme).unwrap_or(after_scheme);
 
-    BunString::create_format(format_args!(
-        "bake:{}",
-        // force posix paths in bake
-        BStr::new(bun_paths::PosixPath::resolve(&[dir, specifier.slice()]).as_bytes())
-    ))
+    let key = bun_paths::Path::resolve(&[dir, specifier.slice()]).into_portable();
+    BunString::create_format(format_args!("bake:{}", BStr::new(key.as_bytes())))
 }
 
 /// Given a key, returns the source code to load.

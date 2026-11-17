@@ -19,8 +19,7 @@ use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_js_printer as js_printer;
 use bun_parsers::json as JSON;
-use bun_paths::platform::Windows;
-use bun_paths::{self as path, Path, PathStyle as _, SEP_STR, without_trailing_sep};
+use bun_paths::{self as path, Path, SEP_STR, without_trailing_sep};
 use bun_sha_hmac::sha;
 use bun_sys::{self, CloseOnDrop, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator};
 
@@ -144,18 +143,16 @@ impl PackCommand {
             if option.is_empty() {
                 continue;
             }
-            let mut abs = path::PoolPath::new();
-            let result = abs
-                .resolve_in_place(&[original_cwd, *option])
-                // `--filename out/` names a directory, so writing the tarball to it has to fail.
-                .and_then(|()| abs.copy_trailing_sep_from(option));
-            if result.is_err() {
+            let mut abs = Path::resolve(&[original_cwd, *option]);
+            // `--filename out/` names a directory, so writing the tarball to it has to fail.
+            abs.copy_trailing_sep_from(option);
+            let Ok(abs) = abs.check_len() else {
                 Output::err_generic(
                     "archive {} too long: \"{}\"",
                     (what, bstr::BStr::new(without_trailing_sep(*option))),
                 );
                 Global::crash();
-            }
+            };
             *option = crate::cli::cli_dupe(&abs);
         }
 
@@ -1197,7 +1194,11 @@ pub(crate) fn non_empty_bin(json: &Expr) -> Option<bun_ast::expr::Query> {
 
 /// As npm reads a path in package.json: it starts at the package's root, and `..` stops there.
 pub(crate) fn path_in_package(written: &[u8]) -> ZBox {
-    ZBox::from_bytes(&path::PosixPath::join(&[b"/", &path::slashes_to_posix(written)])[1..])
+    let written = path::from_portable(strings::trim_left(written, b"/\\"));
+    let mut path = Path::from(b"/");
+    path.push_inside(&written);
+    path.copy_trailing_sep_from(&written);
+    ZBox::from_bytes(&path.into_portable()[1..])
 }
 
 pub(crate) fn bin_subpath(value: &[u8], ty: BinType) -> Option<ZBox> {
@@ -1218,7 +1219,7 @@ pub(crate) fn bin_subpath(value: &[u8], ty: BinType) -> Option<ZBox> {
 
 /// A NUL ends the path that the OS gets, so a path that has one counts as outside.
 pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
-    p.is_empty() || Windows::climbs_out(p) || strings::contains_char(p, 0)
+    p.is_empty() || path::portable::climbs_out(p) || strings::contains_char(p, 0)
 }
 
 /// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
@@ -1777,13 +1778,11 @@ pub(crate) fn pack(
             if prints_bare_filename {
                 Context::print_tarball_path(bare_filename, log_level);
             } else {
-                let mut dest_buf = bun_paths::path_buffer_pool::get();
                 let (abs_tarball_dest, _) = tarball_destination(
                     ctx.manager.options.pack_destination,
                     ctx.manager.options.pack_filename,
                     abs_workspace_path,
                     bare_filename,
-                    &mut dest_buf[..],
                 );
                 Context::print_tarball_path(
                     bstr::BStr::new(abs_tarball_dest.as_bytes()),
@@ -1827,8 +1826,7 @@ pub(crate) fn pack(
     };
 
     // `bun publish` uploads the bytes from memory. Only `bun pm pack` writes a file.
-    let mut dest_buf = bun_paths::path_buffer_pool::get();
-    let abs_tarball_dest: Option<&ZStr> = if for_publish {
+    let abs_tarball_dest: Option<Path> = if for_publish {
         None
     } else {
         let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
@@ -1836,12 +1834,12 @@ pub(crate) fn pack(
             ctx.manager.options.pack_filename,
             abs_workspace_path,
             bare_filename,
-            &mut dest_buf[..],
         );
         // create the directory if it doesn't exist
         let _ = Dir::cwd().make_path(&abs_tarball_dest.as_bytes()[..abs_tarball_dest_dir_end]);
         Some(abs_tarball_dest)
     };
+    let abs_tarball_dest: Option<&ZStr> = abs_tarball_dest.as_deref();
     let is_typed_filename = !ctx.manager.options.pack_filename.is_empty();
     let tarball_file =
         abs_tarball_dest.and_then(|dest| Some((open_tarball(dest, is_typed_filename)?, dest)));
@@ -2082,44 +2080,28 @@ pub(crate) fn published_version(version: &[u8]) -> Option<&[u8]> {
 }
 
 /// Returns the tarball path and the length of the directory the caller creates (0 for `--filename`).
-fn tarball_destination<'a>(
+fn tarball_destination(
     pack_destination: &[u8],
     pack_filename: &[u8],
     abs_workspace_path: &[u8],
     tarball_name: TarballNameFormatter<'_>,
-    dest_buf: &'a mut [u8],
-) -> (&'a ZStr, usize) {
-    let mut dest = path::SlicePath::new(dest_buf);
+) -> (Path, usize) {
     if !pack_filename.is_empty() {
-        if dest.set(pack_filename).is_err() {
-            Output::err_generic(
-                "archive filename too long: \"{}\"",
-                format_args!("{}", bstr::BStr::new(pack_filename)),
-            );
-            Global::crash();
-        }
-        return (dest.into_zstr(), 0);
+        return (Path::from(pack_filename), 0);
     }
 
-    #[cold]
-    fn too_long(dir: &[u8], tarball_name: TarballNameFormatter<'_>) -> ! {
+    let mut dest = Path::resolve(&[abs_workspace_path, pack_destination]);
+    let dir_len = dest.len();
+    dest.push_fmt(format_args!("{tarball_name}"));
+    if dest.len() >= path::MAX_PATH_BYTES {
+        let dir = without_trailing_sep(&dest[..dir_len]);
         Output::err_generic(
             "archive destination name too long: \"{}/{}\"",
-            (bstr::BStr::new(without_trailing_sep(dir)), tarball_name),
+            (bstr::BStr::new(dir), tarball_name),
         );
         Global::crash();
     }
-    if dest
-        .resolve_in_place(&[abs_workspace_path, pack_destination])
-        .is_err()
-    {
-        too_long(pack_destination, tarball_name);
-    }
-    let dir_len = dest.len();
-    if dest.push_fmt(format_args!("{tarball_name}")).is_err() {
-        too_long(&dest, tarball_name);
-    }
-    (dest.into_zstr(), dir_len)
+    (dest, dir_len)
 }
 
 pub(crate) fn fmt_tarball_filename<'a>(

@@ -1,15 +1,21 @@
 use crate::options::Externals;
 use bun_core::strings::last_index_of_char;
-use bun_paths::{Path, is_absolute, is_package_path, windows_to_platform};
+use bun_paths::{Path, from_portable, is_absolute, is_package_path};
+use bun_sema::resolve::CodeImportKind;
 
-pub(crate) fn is_external(externals: &Externals, specifier: &[u8], directory: &[u8]) -> bool {
+pub(crate) fn is_external(
+    externals: &Externals,
+    specifier: &[u8],
+    kind: CodeImportKind,
+    directory: &[u8],
+) -> bool {
     if matches_pattern(&externals.patterns, specifier) {
         return true;
     }
     if is_package_path(specifier) {
         return externals.are_all_packages || matches_package(&externals.packages, specifier);
     }
-    matches_path(&externals.paths, specifier, directory)
+    matches_path(&externals.paths, specifier, kind, directory)
 }
 
 fn matches_pattern(patterns: &[(Vec<u8>, Vec<u8>)], specifier: &[u8]) -> bool {
@@ -36,7 +42,12 @@ fn matches_package(packages: &[Vec<u8>], specifier: &[u8]) -> bool {
     }
 }
 
-fn matches_path(paths: &[Vec<u8>], specifier: &[u8], directory: &[u8]) -> bool {
+fn matches_path(
+    paths: &[Vec<u8>],
+    specifier: &[u8],
+    kind: CodeImportKind,
+    directory: &[u8],
+) -> bool {
     if paths.is_empty() {
         return false;
     }
@@ -46,9 +57,12 @@ fn matches_path(paths: &[Vec<u8>], specifier: &[u8], directory: &[u8]) -> bool {
     if !is_absolute(directory) {
         return false;
     }
-    let specifier = windows_to_platform(specifier);
-    let mut path = Path::resolve(&[directory, &specifier]);
-    path.copy_trailing_sep_from(&specifier);
+    let specifier: &[u8] = match kind {
+        CodeImportKind::Import => &from_portable(specifier),
+        CodeImportKind::EntryPoint | CodeImportKind::Require => specifier,
+    };
+    let mut path = Path::resolve(&[directory, specifier]);
+    path.copy_trailing_sep_from(specifier);
     contains(paths, &path)
 }
 
@@ -70,14 +84,14 @@ mod tests {
 
     fn assert_external(externals: &Externals, directory: &[u8], specifiers: &[&[u8]]) {
         for specifier in specifiers {
-            let is_external = is_external(externals, specifier, directory);
+            let is_external = is_external(externals, specifier, CodeImportKind::Import, directory);
             assert!(is_external, "{} is not external", BStr::new(specifier));
         }
     }
 
     fn assert_not_external(externals: &Externals, directory: &[u8], specifiers: &[&[u8]]) {
         for specifier in specifiers {
-            let is_external = is_external(externals, specifier, directory);
+            let is_external = is_external(externals, specifier, CodeImportKind::Import, directory);
             assert!(!is_external, "{} is external", BStr::new(specifier));
         }
     }

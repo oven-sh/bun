@@ -18,8 +18,6 @@ use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::JsKeepAlive;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
 use bun_paths;
-use bun_paths::PathStyle as _;
-use bun_paths::platform::Auto;
 use bun_ptr::BackRef;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
@@ -97,7 +95,7 @@ fn dump_source_string_failiable(
     let dir = holder.as_ref().expect("just initialized above");
 
     if let Some(dir_path) = bun_paths::dirname(specifier) {
-        let root_len = Auto::root(dir_path).len();
+        let root_len = bun_paths::root(dir_path).len();
         let parent = dir.make_open_path(&dir_path[root_len..], OpenDirOptions::default())?;
 
         let base = bun_paths::basename(specifier);

@@ -9,7 +9,7 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::{NameTooLong, Path, PoolPath};
+use bun_paths::Path;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -2131,14 +2131,14 @@ impl LinkedNodeModules {
     ///
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
-    pub(crate) fn resolve(&self, path: &mut PoolPath) -> Result<bool, NameTooLong> {
+    pub(crate) fn resolve(&self, path: &mut Path) -> bool {
         let Some(below) = bun_paths::strip_prefix(path, &self.abs_path) else {
-            return Ok(false);
+            return false;
         };
         if !self.real_path.is_empty() {
-            *path = PoolPath::from_parts(&[&self.real_path, below])?;
+            *path = Path::from_parts(&[&self.real_path, below]);
         }
-        Ok(true)
+        true
     }
 
     /// `folders` are the symlinked `node_modules` folders, relative to the project root, that a

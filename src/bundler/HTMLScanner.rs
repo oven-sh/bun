@@ -72,7 +72,7 @@ impl<'a> HTMLScanner<'a> {
         // In the path of a URL `\` is a separator.
         let with_slashes = match bun_core::strings::contains_char(input_path, b':') {
             true => Cow::Borrowed(input_path),
-            false => bun_paths::slashes_to_posix(input_path),
+            false => bun_core::strings::replace_char(input_path, b'\\', b'/'),
         };
         let input_path: &[u8] = &with_slashes;
         // In HTML, sometimes people do /src/index.js

@@ -409,9 +409,9 @@ test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake 
 test/js/bun/resolve/resolve.test.ts: a backslash is part of a name: NODE_PATH
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > Bun.build
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > Bun.build({ files })
-test/js/bun/resolve/resolve.test.ts: in a directory named a\ > a file with a backslash in its own name comes first
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > a file with a backslash in its own name
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > backslashes in absolute paths are part of a name
-test/js/bun/resolve/resolve.test.ts: in a directory named a\ > backslashes in relative specifiers, main and tsconfig paths are separators
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > backslashes in import specifiers, main and tsconfig paths are separators
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun index.ts
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun run ./index.ts
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun test
@@ -423,9 +423,9 @@ test/js/bun/resolve/resolve.test.ts: in a directory named a\ > runs from another
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > runs from another cwd when HOME has the same name (scratch)
 test/js/bun/resolve/resolve.test.ts: in a directory named a\b > Bun.build
 test/js/bun/resolve/resolve.test.ts: in a directory named a\b > Bun.build({ files })
-test/js/bun/resolve/resolve.test.ts: in a directory named a\b > a file with a backslash in its own name comes first
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > a file with a backslash in its own name
 test/js/bun/resolve/resolve.test.ts: in a directory named a\b > backslashes in absolute paths are part of a name
-test/js/bun/resolve/resolve.test.ts: in a directory named a\b > backslashes in relative specifiers, main and tsconfig paths are separators
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > backslashes in import specifiers, main and tsconfig paths are separators
 test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun index.ts
 test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun run ./index.ts
 test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun test

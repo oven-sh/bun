@@ -236,7 +236,7 @@ fn generate_files(
     let basename = &basename[0..basename.len() - extension.len()];
 
     let top_level_dir = FileSystem::instance().top_level_dir();
-    let normalized_name = path::ForwardSlashPath::relative(top_level_dir, entry_point);
+    let normalized_name = path::Path::relative(top_level_dir, entry_point).into_portable();
     let normalized_name = &normalized_name[0..normalized_name.len() - extension.len()];
 
     let mut max_filename_len: usize = 0;

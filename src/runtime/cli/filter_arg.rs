@@ -7,9 +7,7 @@ use bun_install::package_manager::workspace_selection::{
     self, Candidate, NegatedWorkspaces, RootSelection, WorkspaceGraph, workspaces_entry,
 };
 use bun_parsers::json;
-use bun_paths::{
-    ForwardSlashPath, Path, PathBuffer, PoolPath, dirname_or_root, without_trailing_sep,
-};
+use bun_paths::{Path, PathBuffer, dirname_or_root, without_trailing_sep};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::cli::Command;
@@ -59,10 +57,7 @@ fn get_candidate_package_patterns<'a>(
     // `break` → `break 'walk`.
     'walk: loop {
         'body: {
-            // Treat a path that's too long like a missing package.json and try the parent.
-            let Ok(json_path) = PoolPath::resolve(&[workdir, b"package.json"]) else {
-                break 'body;
-            };
+            let json_path = Path::resolve(&[workdir, b"package.json"]);
 
             log.msgs.clear();
             log.errors = 0;
@@ -72,9 +67,10 @@ fn get_candidate_package_patterns<'a>(
             // (T1 cannot name T2 — see src/sys/File.rs:446).
             let json_source = match bun_ast::to_source(&json_path, Default::default()) {
                 Err(err) => match err.get_errno() {
-                    bun_sys::Errno::ENOENT | bun_sys::Errno::EACCES | bun_sys::Errno::EPERM => {
-                        break 'body;
-                    }
+                    bun_sys::Errno::ENOENT
+                    | bun_sys::Errno::EACCES
+                    | bun_sys::Errno::EPERM
+                    | bun_sys::Errno::ENAMETOOLONG => break 'body,
                     _ => return Err(err.into()),
                 },
                 Ok(source) => source,
@@ -253,7 +249,10 @@ impl WorkspacePackage {
     /// `package.json` name, or the directory relative to the workspace root for unnamed packages.
     pub(crate) fn display_name(&self, root_dir: &[u8]) -> Box<[u8]> {
         if self.json.name.is_empty() {
-            (ForwardSlashPath::relative(root_dir, &self.dir).as_bytes()).into()
+            (Path::relative(root_dir, &self.dir)
+                .into_portable()
+                .as_bytes())
+            .into()
         } else {
             Box::from(&self.json.name[..])
         }

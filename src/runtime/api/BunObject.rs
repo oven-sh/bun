@@ -14,13 +14,13 @@ pub(crate) fn get_public_path_with_asset_prefix(
     out: &mut Vec<u8>,
 ) {
     use bun_core::strings;
-    use bun_paths::{ForwardSlashPath, Path};
+    use bun_paths::Path;
 
     let relative;
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {
         bun_paths::without_trailing_sep(&to[dir.len()..])
     } else {
-        relative = ForwardSlashPath::relative(dir, to);
+        relative = Path::relative(dir, to).into_portable();
         &relative
     };
     if !origin.is_absolute() {
@@ -290,9 +290,8 @@ pub(crate) fn which<'a>(
         .unwrap_or_else(|| vm.env_loader().get(b"PATH").unwrap_or(b""));
     let cwd = options.cwd.unwrap_or_else(|| vm.top_level_dir());
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    bun_which::which(&mut *path_buf, path, cwd, command)
-        .map(|bin_path| heap.create_utf8_string(bin_path))
+    bun_which::which(path, cwd, command)
+        .map(|bin_path| heap.create_utf8_string(&bin_path))
         .transpose()
 }
 

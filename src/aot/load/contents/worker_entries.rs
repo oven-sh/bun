@@ -1474,7 +1474,7 @@ fn is_absolute(path: &[u8]) -> bool {
 }
 
 pub(crate) fn with_forward_slashes(mut path: Vec<u8>) -> Vec<u8> {
-    bun_paths::slashes_to_posix_in_place(&mut path);
+    strings::replace_char_in_place(&mut path, b'\\', b'/');
     path
 }
 
@@ -1665,7 +1665,7 @@ pub(crate) fn find_file_named_as_in_executable(
 }
 
 pub(crate) fn source_path_of(path: &[u8]) -> Vec<u8> {
-    bun_paths::posix_to_platform(to_native(path)).into_owned()
+    bun_paths::to_native(to_native(path)).into_owned()
 }
 
 #[cfg(test)]

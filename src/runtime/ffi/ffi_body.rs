@@ -1493,7 +1493,7 @@ impl FFI {
             return Ok(invalid_options_arg(global));
         };
 
-        let mut filepath_buf = bun_paths::path_buffer_pool::get();
+        let extracted;
         let name: &[u8] = 'brk: {
             let ext: &[u8] = match () {
                 // Android shared libraries are `.so` (ELF, same as Linux/FreeBSD).
@@ -1513,17 +1513,9 @@ impl FFI {
             // can't see the bunfs virtual FS. The helper lives in
             // `crate::jsc_hooks` — same crate, so a direct call.
             let _ = vm;
-            if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
-                name_slice,
-                ext,
-                &mut filepath_buf[..],
-            ) {
-                // NUL-terminate in place so `DynLib::open`
-                // can pass the slice to libc without copying. `resolve_*_to_buf`
-                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
-                // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
-                filepath_buf[len] = 0;
-                break 'brk &filepath_buf[0..len];
+            if let Some(path) = crate::jsc_hooks::resolve_embedded_file(name_slice, ext) {
+                extracted = path;
+                break 'brk &extracted;
             }
 
             break 'brk name_slice;
@@ -1553,9 +1545,9 @@ impl FFI {
                 Err(_) => {
                     // if that fails, try resolving the filepath relative to the current working directory
                     let cwd = Fs::FileSystem::get().top_level_dir();
-                    match bun_paths::PoolPath::resolve(&[cwd, name]).map(|path| open(&path)) {
-                        Ok(Ok(d)) => break 'brk d,
-                        Ok(Err(_)) | Err(_) => {
+                    match open(&bun_paths::Path::resolve(&[cwd, name])) {
+                        Ok(d) => break 'brk d,
+                        Err(_) => {
                             // Then, if that fails, report an error with the library name and system error
                             let dlerror_msg = get_dl_error();
 

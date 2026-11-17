@@ -24,8 +24,7 @@ pub use compile::{
 use bstr::ByteSlice;
 use bun_core::file_steps::{self, FileStep};
 use bun_core::strings;
-use bun_paths::platform::Posix;
-use bun_paths::{PathStyle as _, path_buffer_pool};
+use bun_paths::path_buffer_pool;
 use bun_sema::atom::{Interner, RecentAtoms};
 use bun_sema::bind::find_commonjs_indicator;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject};
@@ -46,7 +45,8 @@ use bun_sema::resolve::{
     AOT_CONDITION, Host, ModuleDetection, Options, ParseOptions, ProjectFile, ProjectFiles,
     ancestors, contains_path, displayed_path, get_relative_path_from_directory, inside,
     is_declaration_file_name, is_javascript, is_javascript_file, is_relative, is_same_path, join,
-    output_declaration_file_name, run_with_current_helpers, to_path, to_path_in, typescript_path,
+    output_declaration_file_name, parent_directory, run_with_current_helpers, to_path, to_path_in,
+    typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -1264,7 +1264,7 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
 
 /// Returns the `node_modules/typescript` nearest to the configuration file at `config`.
 fn installed_typescript(host: &dyn Host, config: &[u8]) -> Option<Vec<u8>> {
-    ancestors(Posix::dirname_or_root(config))
+    ancestors(parent_directory(config))
         .map(|directory| inside(directory, b"node_modules/typescript"))
         .find(|package| host.is_dir(package))
 }
@@ -1913,7 +1913,7 @@ fn dependencies_not_installed(
         let package = package.join(&b'/');
         let from = match &reported.path[..] {
             b"" => project,
-            path => Posix::dirname_or_root(path),
+            path => parent_directory(path),
         };
         if !missing.iter().any(|it| it.0 == from && it.1 == package) {
             missing.push((from, package));
@@ -2134,7 +2134,7 @@ impl Projects {
                 break;
             }
             // Up to the root. The parent of `/C:` is `/`, which isn't a directory on Windows.
-            let parent = ancestors(Posix::dirname_or_root(&below)).nth(1);
+            let parent = ancestors(parent_directory(&below)).nth(1);
             let Some(above) = parent.and_then(|it| config::find_config(disk, it)) else {
                 break;
             };
@@ -2426,7 +2426,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 add(first, Extent::Project, path.clone());
                 continue;
             }
-            let nearest = config_in(Posix::dirname_or_root(path));
+            let nearest = config_in(parent_directory(path));
             match projects.owner_of(disk, request, nearest.clone(), path) {
                 // A solution has no files of its own.
                 Err(None)
@@ -2469,7 +2469,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         for config in std::iter::once(config_in(path)).chain(below.into_iter().map(Some)) {
             let is_below =
                 |dir: &&[u8]| !is_same(dir, path) && contains_path(path, dir, is_case_sensitive);
-            let top = (config.as_deref().map(Posix::dirname_or_root))
+            let top = (config.as_deref().map(parent_directory))
                 .filter(is_below)
                 .unwrap_or(path);
             // A configuration file that can't be read excludes nothing. `check_project_of` reports it.
@@ -2480,7 +2480,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             };
             let (mut included, mut others) = (Vec::new(), Vec::new());
             for file in files {
-                if config_in(Posix::dirname_or_root(&file)) == config {
+                if config_in(parent_directory(&file)) == config {
                     match projects.owner_of(disk, request, config.clone(), &file) {
                         Ok(owner) => included.push((owner, file)),
                         Err(nearest) => others.push((nearest, file)),
@@ -3146,14 +3146,14 @@ struct Expected {
 
 impl Expected {
     fn add(&mut self, path: Vec<u8>, project: usize) {
-        let mut directory = Posix::dirname_or_root(&path);
+        let mut directory = parent_directory(&path);
         while directory.len() > 1 {
             let projects = self.directories.entry(directory.to_vec()).or_default();
             if projects.last() == Some(&project) {
                 break;
             }
             projects.push(project);
-            directory = Posix::dirname_or_root(directory);
+            directory = parent_directory(directory);
         }
         self.files.entry(path).or_default().push(project);
     }
@@ -3192,9 +3192,9 @@ impl Emitted {
         }
         let mut directories: FxHashSet<Vec<u8>> = FxHashSet::default();
         for (path, text) in files {
-            let mut directory = Posix::dirname_or_root(&path);
+            let mut directory = parent_directory(&path);
             while directory.len() > 1 && directories.insert(directory.to_vec()) {
-                directory = Posix::dirname_or_root(directory);
+                directory = parent_directory(directory);
             }
             let per_project = self.files.insert_ref(path, Guarded::default());
             per_project.lock().push((project, text));
@@ -3252,7 +3252,7 @@ impl WithOutputs<'_> {
         {
             return None;
         }
-        let on_disk = ancestors(Posix::dirname_or_root(path))
+        let on_disk = ancestors(parent_directory(path))
             .find(|dir| dir.len() <= 1 || self.disk.is_dir(dir))?;
         let real = self.disk.realpath(on_disk);
         (real != on_disk).then(|| [&real[..], &path[on_disk.len()..]].concat())
@@ -3534,7 +3534,7 @@ fn check_with_references(
                 .into_iter()
                 .find(|dir| !dir.is_empty())?;
             let root_dir = if options.root_dir.is_empty() {
-                Posix::dirname_or_root(&p.project.config_path)
+                parent_directory(&p.project.config_path)
             } else {
                 options.root_dir.as_slice()
             };
@@ -4160,7 +4160,7 @@ pub fn check_project(
 /// True if the dependencies of the project at `config` aren't installed: its `package.json` lists packages, and none of
 /// them is in a `node_modules`. Then the types of Node, of the test runner and so on aren't available.
 fn has_no_installed_dependencies(host: &dyn Host, config: &[u8]) -> bool {
-    let above = || ancestors(Posix::dirname_or_root(config));
+    let above = || ancestors(parent_directory(config));
     let mut manifests = above().map(|it| inside(it, b"package.json"));
     let manifest = manifests.find(|it| host.is_file(it));
     let text = manifest.and_then(|it| host.read(&it));
@@ -4486,7 +4486,7 @@ fn find_files_others_cannot_see(
             .flatten();
         if let Some(text) = &text {
             for_each_augmented_file(text, &mut |name| {
-                let path = path_from_folder(Posix::dirname_or_root(file), name);
+                let path = path_from_folder(parent_directory(file), name);
                 if let Some(augmented) = find_listed_file(&listed, &path) {
                     may_be_seen[augmented].store(true, Ordering::Relaxed);
                 }
@@ -4501,7 +4501,7 @@ fn find_files_others_cannot_see(
                     if !is_relative(name) {
                         named.push((name.to_vec(), at));
                     } else if !leads_beyond {
-                        let path = path_from_folder(Posix::dirname_or_root(file), name);
+                        let path = path_from_folder(parent_directory(file), name);
                         leads_beyond = find_listed_file(&listed, &path).is_none();
                     }
                 });
@@ -4551,7 +4551,7 @@ fn check_named_files(
         config_path
             if request.plan_options.uses_project_directory_as_cwd && !config_path.is_empty() =>
         {
-            Posix::dirname_or_root(config_path).to_vec()
+            parent_directory(config_path).to_vec()
         }
         _ => host::from_native(request.cwd),
     };
@@ -4818,7 +4818,7 @@ fn check_named_files(
                     && it.ends_with(b".html")
                     && is_relative(it)
             });
-            let directory = Posix::dirname_or_root(modules[i].file_name());
+            let directory = parent_directory(modules[i].file_name());
             let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
             let scripts = scripts.filter_map(|script| {
                 let here = program.files.by_path.get(&script);

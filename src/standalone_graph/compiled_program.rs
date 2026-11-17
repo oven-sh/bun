@@ -9,8 +9,8 @@ use std::borrow::Cow;
 use bun_collections::StringArrayHashMap;
 use bun_collections::index_sort;
 use bun_core::strings;
-use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
-use bun_paths::{PathBuffer, SlicePath, path_buffer_pool, platform_to_posix};
+use bun_core::{StringBuilder, StringPointer, bytes_of, slice_as_bytes};
+use bun_paths::{Path, path_buffer_pool, to_portable};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
     CompiledProgram, FoundForFileSystemAlone, ImageFile, NamesReadLater, RefusedData,
@@ -835,7 +835,7 @@ pub(crate) fn add_source_directories(
         }
     }
     for entry_point in program.entry_points.iter() {
-        add_ancestor_directories(dirs, &platform_to_posix(entry_point.source_path));
+        add_ancestor_directories(dirs, &to_portable(entry_point.source_path));
     }
 }
 
@@ -895,8 +895,7 @@ static HAS_WRITTEN_FILES: core::sync::atomic::AtomicBool =
 
 /// `name` as an absolute path without `.` and `..`.
 pub fn normalize_source_path(name: &[u8]) -> Option<Box<[u8]>> {
-    let mut buffer = path_buffer_pool::get();
-    Some(absolute_key(name, &mut buffer)?.as_bytes().into())
+    Some(absolute_key(name)?.as_bytes().into())
 }
 
 pub fn has_written_files() -> bool {
@@ -917,8 +916,7 @@ fn find_file_on_disk(name: &[u8], trusts_other_processes: bool) -> Option<Box<[u
     if !has_written_files() || !is_bun_standalone_file_path(name) {
         return None;
     }
-    let mut buffer = path_buffer_pool::get();
-    let name = absolute_key(name, &mut buffer)?.as_bytes();
+    let name: &[u8] = &absolute_key(name)?;
     let graph = StandaloneModuleGraph::get_ref();
     let file = graph.and_then(|it| it.lookup_file(name));
     let path = {
@@ -1049,8 +1047,7 @@ fn has_vanished(path: &[u8]) -> bool {
 }
 
 fn is_file_on_disk(path: &[u8]) -> bool {
-    let mut buffer = path_buffer_pool::get();
-    let found = absolute_key(path, &mut buffer).and_then(|it| bun_sys::stat(it).ok());
+    let found = absolute_key(path).and_then(|it| bun_sys::stat(&it).ok());
     found.is_some_and(|it| {
         bun_sys::kind_from_mode(it.st_mode as bun_sys::Mode) == bun_sys::FileKind::File
     })
@@ -1075,9 +1072,8 @@ fn split_at_parent_steps(name: &[u8]) -> impl Iterator<Item = &[u8]> {
 
 /// Whether the disk has a folder where `path` leads once it is normalized. The disk does not know a path as written that runs through a folder of the executable alone. A link in front of a `..` has another parent than the text says, and a file has none, so the text is normalized only past what the disk has as a folder or not at all.
 fn is_folder_once_normalized(path: &[u8]) -> bool {
-    let mut buffer = path_buffer_pool::get();
-    let mut find_kind = |folder: &[u8]| {
-        let found = bun_sys::lstat(absolute_key(folder, &mut buffer)?).ok()?;
+    let find_kind = |folder: &[u8]| {
+        let found = bun_sys::lstat(&absolute_key(folder)?).ok()?;
         Some(bun_sys::kind_from_mode(found.st_mode as bun_sys::Mode))
     };
     let mut left = split_at_parent_steps(path);
@@ -1092,16 +1088,14 @@ fn requests_directory(name: &[u8]) -> bool {
 }
 
 /// `name` as a key of `files` and `dirs`: absolute, normalized, posix-separated, without trailing separators.
-fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr> {
+fn absolute_key(name: &[u8]) -> Option<Path> {
     let name = bun_paths::without_nt_prefix(name);
     if name.is_empty() || strings::contains_char(name, 0) {
         return None;
     }
     // Every `stat` that the disk fails comes by here, most of them with a path that is a key as it stands.
-    if cfg!(not(windows)) && name.len() < buffer.len() && is_normalized_posix_path(name) {
-        let length = name.strip_suffix(b"/").unwrap_or(name).len();
-        buffer[..length].copy_from_slice(&name[..length]);
-        return Some(ZStr::nul_terminate(buffer, length));
+    if cfg!(not(windows)) && is_normalized_posix_path(name) {
+        return (Path::from(name.strip_suffix(b"/").unwrap_or(name)).check_len()).ok();
     }
     let mut working_directory = path_buffer_pool::get();
     // On Windows an absolute name can still take its drive from the working directory.
@@ -1111,12 +1105,11 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     } else {
         b"/"
     };
-    let mut key = SlicePath::new(buffer);
-    key.resolve_in_place(&[base, name]).ok()?;
+    let mut key = Path::resolve(&[base, name]).check_len().ok()?;
     key.strip_nt_prefix();
-    bun_paths::platform_to_posix_in_place(key.as_mut_slice());
+    key = key.into_portable();
     key.truncate(strings::trim_right(&key, b"/").len());
-    Some(key.into_zstr())
+    Some(key)
 }
 
 fn is_shared_library_name(name: &[u8]) -> bool {
@@ -1279,7 +1272,7 @@ fn stat_descriptor(fd: Fd) -> Maybe<PosixStat> {
 
 /// `fd` reads the file at `path` from here on, from the same offset, if it still is what `is_meant` asks for when that is open.
 #[cfg(not(windows))]
-fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool> {
+fn reopen_at(fd: Fd, path: &bun_core::ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool> {
     let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
     let opened = file.fd();
     let offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR)?;
@@ -1348,7 +1341,7 @@ impl StandaloneModuleGraph {
         if self.compiled_program.is_none() {
             return false;
         }
-        let mut buffer = path_buffer_pool::get();
+        let mut buffer = Path::new();
         self.directory_key(path, &mut buffer).is_some()
     }
 
@@ -1520,8 +1513,7 @@ impl StandaloneModuleGraph {
         if cfg!(not(windows)) && is_normalized_posix_path(path) {
             return self.is_near_source_paths(program, path.strip_suffix(b"/").unwrap_or(path));
         }
-        let mut buffer = path_buffer_pool::get();
-        absolute_key(path, &mut buffer).is_some_and(|key| {
+        absolute_key(path).is_some_and(|key| {
             // A relative path may lead into the executable.
             is_bun_standalone_file_path(key.as_bytes())
                 || self.is_near_source_paths(program, key.as_bytes())
@@ -1531,8 +1523,7 @@ impl StandaloneModuleGraph {
     /// For a path the disk does not have.
     pub fn source_path_kind(&self, path: &[u8]) -> Option<SourcePathKind> {
         let program = self.compiled_program.as_ref()?;
-        let mut buffer = path_buffer_pool::get();
-        let key = absolute_key(path, &mut buffer)?.as_bytes();
+        let key: &[u8] = &absolute_key(path)?;
         if is_removed_by_program(key) || has_vanished(key) {
             return None;
         }
@@ -1657,14 +1648,13 @@ impl StandaloneModuleGraph {
     /// The program has written the file at the source path `name` whole. What has the embedded file open reads there, in whichever thread: at once if this thread runs scripts, and otherwise, as a script may be reading, from the next `move_waiting_descriptors` on.
     #[cfg(not(windows))]
     pub fn move_descriptors_to_disk(&self, name: &[u8], runs_scripts: bool) {
-        let mut buffer = path_buffer_pool::get();
-        let Some(path) = absolute_key(name, &mut buffer).map(ZStr::as_bytes) else {
+        let Some(path) = absolute_key(name) else {
             return;
         };
         match runs_scripts {
-            true => self.move_descriptors_to(path),
+            true => self.move_descriptors_to(&path),
             false => {
-                WRITTEN_BY_POOL.lock().push(path.into());
+                WRITTEN_BY_POOL.lock().push(path.as_bytes().into());
                 HAS_WRITTEN_BY_POOL.store(true, Ordering::Release);
             }
         }
@@ -1709,8 +1699,7 @@ impl StandaloneModuleGraph {
 
     /// The embedded files below the folder `name` that the disk has there, by their paths on the disk.
     pub fn find_files_on_disk_below(&self, name: &[u8]) -> Vec<Box<[u8]>> {
-        let mut buffer = path_buffer_pool::get();
-        let path = absolute_key(name, &mut buffer);
+        let path = absolute_key(name);
         let Some((program, path)) = self.compiled_program.as_ref().zip(path) else {
             return Vec::new();
         };
@@ -1965,14 +1954,14 @@ impl StandaloneModuleGraph {
         name: &[u8],
         found: &[u8],
     ) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
-        let mut buffer = path_buffer_pool::get();
-        let written = match is_bun_standalone_file_path(name) {
-            true => Some(Self::normalize_dir_path(name, &mut buffer)),
-            false => absolute_key(name, &mut buffer).map(|key| key.as_bytes()),
+        let program = self.compiled_program.as_ref()?;
+        let as_read = match is_bun_standalone_file_path(name) {
+            true => {
+                let mut buffer = Path::new();
+                Self::key_under_own_root(program, Self::normalize_dir_path(name, &mut buffer))?
+            }
+            false => Self::key_under_own_root(program, &absolute_key(name)?)?,
         };
-        let program = self.compiled_program.as_ref().zip(written);
-        let as_read = program.and_then(|it| Self::key_under_own_root(it.0, it.1));
-        let as_read = as_read?;
         let is_other_folder = |key: &Vec<u8>| key != found && self.dirs.contains(key);
         let keys = self.root_asset_keys(&as_read)?;
         let others: Vec<Vec<u8>> = keys.filter(is_other_folder).collect();
@@ -2038,8 +2027,7 @@ impl StandaloneModuleGraph {
 
     /// The program has removed the file or folder `name` from the disk, or renamed it. The executable no longer answers for that source path or below it.
     pub fn forget_source_path(&self, name: &[u8]) {
-        let mut buffer = path_buffer_pool::get();
-        let Some(key) = absolute_key(name, &mut buffer) else {
+        let Some(key) = absolute_key(name) else {
             return;
         };
         let program = self.compiled_program.as_ref();
@@ -2072,8 +2060,7 @@ impl StandaloneModuleGraph {
 
     /// The program has written the file at the source path `name` on the disk, or has moved a folder there. The copy in the executable of a file that nobody asked the build to embed is outdated.
     pub fn note_written_file(&self, name: &[u8]) {
-        let mut buffer = path_buffer_pool::get();
-        let path_on_disk = absolute_key(name, &mut buffer);
+        let path_on_disk = absolute_key(name);
         let Some((program, path_on_disk)) = self.compiled_program.as_ref().zip(path_on_disk) else {
             return;
         };
@@ -2240,8 +2227,7 @@ impl StandaloneModuleGraph {
     /// The disk has the source folder `name`. What the executable still answers for in it, where the sources are not there: that can't be moved or removed with the folder. Where they are, the disk has all the names there are.
     pub fn list_beside_disk(&self, name: &[u8], recursive: bool) -> Vec<(Box<[u8]>, bool)> {
         let name = bun_paths::without_trailing_sep(name);
-        let mut buffer = path_buffer_pool::get();
-        let found = absolute_key(name, &mut buffer);
+        let found = absolute_key(name);
         let Some((program, found)) = self.compiled_program.as_ref().zip(found) else {
             return Vec::new();
         };
@@ -2279,8 +2265,7 @@ impl StandaloneModuleGraph {
 
     /// The program asks that nothing is at the source path `name`, and the disk had nothing there. That holds for what nobody asked the build to embed.
     pub fn forget_unasked_files(&self, name: &[u8]) {
-        let mut buffer = path_buffer_pool::get();
-        let key = absolute_key(name, &mut buffer);
+        let key = absolute_key(name);
         let program = self.compiled_program.as_ref().zip(key);
         let Some(key) = program.and_then(|it| Self::key_under_own_root(it.0, it.1.as_bytes()))
         else {
@@ -2336,9 +2321,8 @@ impl StandaloneModuleGraph {
     pub fn find_at_source_path(&self, name: &[u8]) -> Option<&File> {
         let program = self.compiled_program.as_ref()?;
         if !bun_paths::is_absolute(name) {
-            let mut buffer = path_buffer_pool::get();
             // It may lead into the executable.
-            let key = absolute_key(name, &mut buffer)?.as_bytes();
+            let key: &[u8] = &absolute_key(name)?;
             if is_bun_standalone_file_path(key) {
                 return self.find_ref(key);
             }
@@ -2349,9 +2333,7 @@ impl StandaloneModuleGraph {
         if requests_directory(name) || self.traverses_non_directory(name) {
             return None;
         }
-        let mut buffer = path_buffer_pool::get();
-        let key =
-            absolute_key(name, &mut buffer).filter(|it| !self.is_gone(program, it.as_bytes()))?;
+        let key = absolute_key(name).filter(|it| !self.is_gone(program, it.as_bytes()))?;
         let under_own_root = Self::key_under_own_root(program, key.as_bytes());
         if !program.preserves_source_paths && under_own_root.is_none() {
             return None;
@@ -2541,7 +2523,7 @@ impl StandaloneModuleGraph {
     pub(crate) fn directory_key<'a>(
         &self,
         name: &'a [u8],
-        buffer: &'a mut PathBuffer,
+        buffer: &'a mut Path,
     ) -> Option<&'a [u8]> {
         if is_bun_standalone_file_path(name) {
             let program = self.compiled_program.as_ref();
@@ -2561,19 +2543,18 @@ impl StandaloneModuleGraph {
                 true => as_read,
                 false => self.key_of_mounted_asset(&as_read)?,
             };
-            if as_read.len() > buffer.len() || !is_directory(&as_read) {
+            if !is_directory(&as_read) {
                 return None;
             }
-            buffer[..as_read.len()].copy_from_slice(&as_read);
-            return Some(&buffer[..as_read.len()]);
+            buffer.set(&as_read);
+            return Some(buffer);
         }
         let program = self.compiled_program.as_ref()?;
         if !program.preserves_source_paths {
             // Every key of such a graph lies under its own root.
             program.root_on_build_machine()?;
-            let mut on_build_machine = path_buffer_pool::get();
             // The key of the root is empty. The disk has the root.
-            let key = absolute_key(name, &mut on_build_machine)
+            let key = absolute_key(name)
                 .filter(|it| !it.as_bytes().is_empty())
                 .filter(|it| !self.is_gone(program, it.as_bytes()))?;
             let under_own_root = Self::key_under_own_root(program, key.as_bytes())?;
@@ -2588,28 +2569,29 @@ impl StandaloneModuleGraph {
             };
             let is_directory =
                 is_directory(&under_own_root) && !self.has_folder_vanished(&under_own_root);
-            let length = under_own_root.len();
-            if !is_directory || length > buffer.len() || bun_sys::exists(key.as_bytes()) {
+            if !is_directory || bun_sys::exists_z(&key) {
                 return None;
             }
-            buffer[..length].copy_from_slice(&under_own_root);
-            return Some(&buffer[..length]);
+            buffer.set(&under_own_root);
+            return Some(buffer);
         }
-        let key = absolute_key(name, buffer)
+        let key = absolute_key(name)
             .filter(|it| !it.as_bytes().is_empty() && !is_removed_by_program(it.as_bytes()))?;
         if !self.is_near_source_paths(program, key.as_bytes())
             || !self.dirs.contains_key(key.as_bytes())
             || self.has_folder_vanished(key.as_bytes())
+            || bun_sys::exists_z(&key)
         {
             return None;
         }
-        (!bun_sys::exists(key.as_bytes())).then_some(key.as_bytes())
+        *buffer = key;
+        Some(buffer)
     }
 
     pub(crate) fn entry_point_by_name(&self, name: &[u8]) -> Option<&CompiledEntryPoint> {
         let program = self.compiled_program.as_ref()?;
         #[cfg(windows)]
-        let mut buffer = path_buffer_pool::get();
+        let mut buffer = Path::new();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buffer);
         match self.files.get_index(name) {
@@ -3341,7 +3323,7 @@ pub(crate) mod tests {
             let mut buffer = path_buffer_pool::get();
             let real_path = bun_sys::realpath(&ZBox::from_vec(path), &mut buffer).unwrap();
             let mut real_path = real_path.to_vec();
-            bun_paths::platform_to_posix_in_place(&mut real_path);
+            bun_paths::to_portable_in_place(&mut real_path);
             TemporaryFolder(real_path)
         }
 
@@ -3445,7 +3427,7 @@ pub(crate) mod tests {
     }
 
     fn directory_key(graph: &StandaloneModuleGraph, name: &[u8]) -> Option<Vec<u8>> {
-        let mut buffer = path_buffer_pool::get();
+        let mut buffer = Path::new();
         graph.directory_key(name, &mut buffer).map(<[u8]>::to_vec)
     }
 
@@ -3457,10 +3439,7 @@ pub(crate) mod tests {
     #[cfg(not(windows))]
     #[test]
     fn a_path_that_is_normalized_is_its_own_key() {
-        let key = |name: &[u8]| {
-            let mut buffer = path_buffer_pool::get();
-            absolute_key(name, &mut buffer).map(|key| key.as_bytes().to_vec())
-        };
+        let key = |name: &[u8]| absolute_key(name).map(|key| key.to_vec());
         for (name, expected) in [
             (&b"/"[..], &b""[..]),
             (b"/a", b"/a"),

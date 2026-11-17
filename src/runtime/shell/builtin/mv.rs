@@ -420,13 +420,11 @@ impl ShellMvBatchedTask {
             src.st_ino != 0 && dir.st_dev == src.st_dev && dir.st_ino == src.st_ino
         };
 
-        let mut path = bun_paths::PoolPath::new();
+        let mut path = bun_paths::Path::new();
         let made_in = match bun_paths::dirname(dst.as_bytes()) {
             None => bun_sys::fstat(dst_dir)?,
             Some(dir) => {
-                if path.set(dir).is_err() {
-                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
-                }
+                path.set(dir);
                 shell_statat(dst_dir, &path)?
             }
         };
@@ -436,7 +434,8 @@ impl ShellMvBatchedTask {
 
         // Check each parent by appending `..` until the root, where `..` resolves to itself.
         let mut below = (made_in.st_dev, made_in.st_ino);
-        while path.push(b"..").is_ok() {
+        while path.len() < bun_paths::MAX_PATH_BYTES {
+            path.push(b"..");
             // Stop at a parent we can't stat. `move_across_devices` still checks every directory it enters.
             let Ok(parent) = shell_statat(dst_dir, &path) else {
                 break;

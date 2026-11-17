@@ -325,9 +325,9 @@ impl Sources {
         } = self.module_paths(file);
         let path_on_disk = self.diagnostic_path(file);
         match self.root_of_executable() {
-            None if is_absolute(path_on_disk) => bun_paths::posix_to_platform(path_on_disk)
-                .into_owned()
-                .into(),
+            None if is_absolute(path_on_disk) => {
+                bun_paths::to_native(path_on_disk).into_owned().into()
+            }
             // Windows: on another drive.
             Some(_) if is_absolute(display_path) => public_path.into(),
             None | Some(_) => display_path.into(),
@@ -358,7 +358,7 @@ impl Sources {
         if is_name_of_text(&entry.diagnostic_path) {
             return None;
         }
-        let path = bun_paths::posix_to_platform(&entry.diagnostic_path).into_owned();
+        let path = bun_paths::to_native(&entry.diagnostic_path).into_owned();
         (*path != *entry.public_path).then_some(path)
     }
 

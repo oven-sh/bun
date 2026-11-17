@@ -126,14 +126,6 @@ impl<T: PoolStorage> DerefMut for PoolGuard<T> {
     }
 }
 
-/// Lets a struct that embeds a `Guard` `#[derive(Default)]`.
-impl<T: PoolStorage> Default for PoolGuard<T> {
-    #[inline]
-    fn default() -> Self {
-        PathBufferPoolT::<T>::get()
-    }
-}
-
 impl<T: PoolStorage> Drop for PoolGuard<T> {
     fn drop(&mut self) {
         if let Some(buf) = self.buf.take() {
@@ -150,24 +142,12 @@ impl<T: PoolStorage> PoolGuard<T> {
     }
 }
 
-#[allow(non_camel_case_types)]
-pub type path_buffer_pool = PathBufferPoolT<PathBuffer>;
-#[allow(non_camel_case_types)]
-pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
-
 /// `bun.path_buffer_pool.get()` — convenience wrapper returning the RAII guard.
 pub type Guard = PoolGuard<PathBuffer>;
 #[inline(never)]
 pub fn get() -> PoolGuard<PathBuffer> {
     PathBufferPoolT::<PathBuffer>::get()
 }
-
-#[cfg(windows)]
-#[allow(non_camel_case_types)]
-pub type os_path_buffer_pool = w_path_buffer_pool;
-#[cfg(not(windows))]
-#[allow(non_camel_case_types)]
-pub type os_path_buffer_pool = path_buffer_pool;
 
 #[cfg(test)]
 mod tests {
@@ -209,7 +189,7 @@ mod tests {
     #[test]
     fn wide_pool_is_separate_and_zeroed() {
         U16_POOL.with(|p| p.borrow_mut().clear());
-        let w = w_path_buffer_pool::get();
+        let w = crate::w_path_buffer_pool::get();
         assert!(w.iter().all(|&unit| unit == 0));
         assert_eq!(w.len(), bun_core::PATH_MAX_WIDE);
     }

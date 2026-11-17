@@ -194,7 +194,7 @@ where
         let hoisted_deps = this.buffers.hoisted_dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
         let mut depth_buf = tree::depth_buf_uninit();
-        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut path_buf = bun_paths::Path::new();
 
         for tree_id in 0..this.buffers.trees.len() {
             w.begin_object()?;
@@ -216,7 +216,7 @@ where
                 );
 
             w.object_field(b"path")?;
-            w.write(&*bun_paths::platform_to_posix(relative_path))?;
+            w.write(&*bun_paths::to_portable(relative_path))?;
 
             w.object_field(b"depth")?;
             w.write(depth)?;

@@ -15,8 +15,6 @@ use bun_install::package_manager::workspace_manifests;
 use bun_install::{self as install, Npm, PackageManager, Subcommand};
 use bun_parsers::json as json_mod;
 use bun_paths as path;
-use bun_paths::PathStyle as _;
-use bun_paths::platform::{Posix, Windows};
 use bun_sha_hmac as sha;
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self, Fd, File, FileKind};
@@ -183,8 +181,10 @@ impl Context {
             total_files += usize::from(kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
-            let stripped = (pathname.iter().position(|&c| Windows::is_sep(c)))
-                .map(|slash| &pathname[slash + 1..]);
+            let stripped = (pathname
+                .iter()
+                .position(|&c| bun_paths::portable::is_sep(c)))
+            .map(|slash| &pathname[slash + 1..]);
             if stripped.is_some_and(|stripped| stripped.is_empty()) {
                 continue;
             }
@@ -211,7 +211,7 @@ impl Context {
             files.push(filename.to_vec());
             #[cfg(windows)]
             files.push(strings::to_utf8_alloc(filename));
-            if filename.iter().any(|&c| Windows::is_sep(c)) {
+            if filename.iter().any(|&c| bun_paths::portable::is_sep(c)) {
                 continue;
             }
 
@@ -1276,7 +1276,7 @@ impl PublishCommand {
                         .is_some_and(|below| below.len() > 1 && below[0] == b'/')
                     {
                         bin_props.push(string_property(
-                            cli_dupe(Posix::basename(path)),
+                            cli_dupe(bun_paths::basename(path)),
                             cli_dupe(path),
                         ));
                     }
@@ -1349,7 +1349,7 @@ impl PublishCommand {
                     continue;
                 }
 
-                bin_props.push(string_property(cli_dupe(Posix::basename(subpath)), subpath));
+                bin_props.push(string_property(cli_dupe(name.as_bytes()), subpath));
 
                 if entry.kind == bun_sys::EntryKind::Directory {
                     let Ok(subdir) = bun_sys::openat(&dir, name, bun_sys::O::DIRECTORY, 0) else {

@@ -1,6 +1,6 @@
 use bun_ast::Loader;
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
-use bun_paths::ForwardSlashPath;
+use bun_paths::Path;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::declaration_imports::name_imported_files;
 
@@ -76,7 +76,7 @@ pub(crate) fn add_declaration_files(
 }
 
 pub(super) fn declaration_path(root_directory: &[u8], source: &[u8]) -> Option<Vec<u8>> {
-    let relative = ForwardSlashPath::relative(root_directory, source);
+    let relative = Path::relative(root_directory, source).into_portable();
     if bun_paths::climbs_out(&relative) {
         return None;
     }

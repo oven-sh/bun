@@ -1273,7 +1273,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // A deleted cwd must not abort the runtime (Node boots and lets
         // `process.cwd()` throw later); fall back to the executable's dir.
         let mut temp = bun_paths::path_buffer_pool::get();
-        Box::<[u8]>::from(crate::cli::getcwd_or_exe_dir(&mut temp).as_bytes())
+        Box::<[u8]>::from(crate::cli::getcwd_or_exe_dir(&mut temp))
     } else {
         // Everything else (install/test/build/...) must not silently act on
         // whatever project happens to live above the executable.

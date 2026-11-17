@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, Log};
 use bun_core::strings;
-use bun_paths::{Path, is_sep, platform_to_posix};
+use bun_paths::{Path, is_sep, to_portable};
 
 use crate::compiled_program::{
     ENDS_SEARCH, LEADS_OUTSIDE, LEADS_OUTSIDE_AS_FOLDER, compare_source_paths,
@@ -127,7 +127,7 @@ fn is_inside_node_modules(folder: &[u8]) -> bool {
 
 /// `path` as a specifier relative to `folder`. Both are absolute.
 fn to_relative_specifier(folder: &[u8], path: &[u8]) -> Option<Vec<u8>> {
-    let relative: &[u8] = &bun_paths::ForwardSlashPath::relative(folder, path);
+    let relative: &[u8] = &bun_paths::Path::relative(folder, path).into_portable();
     if bun_paths::is_absolute(relative) {
         return None;
     }
@@ -151,7 +151,7 @@ pub fn add_written_names(
             continue;
         };
         names.push(PackageName {
-            public_path: platform_to_posix(name.public_path).into_owned(),
+            public_path: to_portable(name.public_path).into_owned(),
             required: Some(position as u32),
             imported: Some(position as u32),
             hides_other_paths: false,
@@ -231,7 +231,7 @@ impl Resolver<'_> {
         packages.sort_unstable();
         packages.dedup();
         // The build may spell the root directory with forward slashes, and `parent()` goes by those of the host.
-        let folder = bun_paths::posix_to_platform(root.source_path);
+        let folder = bun_paths::to_native(root.source_path);
         let folder = bun_paths::without_trailing_sep(&folder);
         let public_root = bun_paths::without_trailing_sep(root.public_path);
         let mut unread_log = Log::default();
@@ -444,7 +444,7 @@ impl Resolver<'_> {
                 let is_hidden_from_require = leads_elsewhere(ImportKind::Require);
                 let is_hidden_from_import = leads_elsewhere(ImportKind::Dynamic);
                 names.push(PackageName {
-                    public_path: platform_to_posix(
+                    public_path: to_portable(
                         &[place.public_path, b"/node_modules/", package, ENDS_SEARCH].concat(),
                     )
                     .into_owned(),
@@ -531,7 +531,7 @@ impl Resolver<'_> {
                     && !is_compiled(&[folder.source_path, separator, &name[..], spelling].concat())
             });
             let mark = |written: &[&[u8]], for_require: bool, for_import: bool| PackageName {
-                public_path: platform_to_posix(
+                public_path: to_portable(
                     &[&[folder.public_path, b"/", &name[..]], written]
                         .concat()
                         .concat(),
@@ -621,7 +621,7 @@ impl Resolver<'_> {
             if is_below_same_tsconfig {
                 continue;
             }
-            let folder = platform_to_posix(place.public_path).into_owned();
+            let folder = to_portable(place.public_path).into_owned();
             let count_before = aliases.len();
             let base_url = match tsconfig.has_base_url() {
                 true => &tsconfig.base_url,
@@ -629,8 +629,8 @@ impl Resolver<'_> {
             };
             let mut add = |resolver: &Self, key: &[u8], target: &[u8], is_base_url: bool| {
                 let parts = [resolver.fs_ref().top_level_dir(), base_url, target];
-                let target = bun_paths::PoolPath::resolve(&parts).ok();
-                let target = target.and_then(|it| to_relative_specifier(place.source_path, &it));
+                let target = bun_paths::Path::resolve(&parts);
+                let target = to_relative_specifier(place.source_path, &target);
                 aliases.extend(target.map(|target| PathAlias {
                     folder: folder.clone(),
                     key: key.to_vec(),
@@ -709,7 +709,7 @@ impl Resolver<'_> {
             }
             let folder = place.source_path;
             names.push(PackageName {
-                public_path: platform_to_posix(&[place.public_path, b"/"].concat()).into_owned(),
+                public_path: to_portable(&[place.public_path, b"/"].concat()).into_owned(),
                 required: self.find_entry_point_named(
                     folder,
                     b"./",
@@ -783,7 +783,7 @@ impl Resolver<'_> {
                 if required.is_some() || imported.is_some() || hides_other_paths {
                     names.push(PackageName {
                         // The run time joins what it looks for with forward slashes.
-                        public_path: platform_to_posix(
+                        public_path: to_portable(
                             &[place.public_path, b"/node_modules/", specifier].concat(),
                         )
                         .into_owned(),
@@ -810,7 +810,7 @@ impl Resolver<'_> {
         root: BuildPaths<'_>,
         levels_above_root: usize,
     ) -> Vec<PackageName> {
-        let root_directory = bun_paths::posix_to_platform(root.source_path);
+        let root_directory = bun_paths::to_native(root.source_path);
         let root_directory = bun_paths::without_trailing_sep(&root_directory);
         let mut unread_log = Log::default();
         let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
@@ -832,7 +832,7 @@ impl Resolver<'_> {
             };
             let place = public_path_from_root(root.public_path, levels_above_root, &relative);
             names.push(PackageName {
-                public_path: platform_to_posix(
+                public_path: to_portable(
                     &[&place[..], b"/node_modules/", &name.specifier].concat(),
                 )
                 .into_owned(),

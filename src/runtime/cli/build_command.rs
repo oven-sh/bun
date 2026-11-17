@@ -1062,19 +1062,15 @@ impl BuildCommand {
                             // root_dir already points to the outfile's parent directory,
                             // so use map_basename (not a path with directory components)
                             // to avoid writing to a doubled directory path.
-                            let mut pathbuf = bun_paths::path_buffer_pool::get();
-                            match bun_sys::write_file_with_path_buffer(
-                                &mut pathbuf,
-                                &bun_sys::WriteFileArgs {
-                                    data: bun_sys::WriteFileData::Buffer {
-                                        buffer: sourcemap_bytes,
-                                    },
-                                    encoding: bun_sys::WriteFileEncoding::Buffer,
-                                    dirfd: root_dir.fd,
-                                    file: bun_sys::PathOrFileDescriptor::Path(map_basename),
-                                    ..Default::default()
+                            match bun_sys::write_file(&bun_sys::WriteFileArgs {
+                                data: bun_sys::WriteFileData::Buffer {
+                                    buffer: sourcemap_bytes,
                                 },
-                            ) {
+                                encoding: bun_sys::WriteFileEncoding::Buffer,
+                                dirfd: root_dir.fd,
+                                file: bun_sys::PathOrFileDescriptor::Path(map_basename),
+                                ..Default::default()
+                            }) {
                                 Err(err) => {
                                     Output::err(
                                         err,
@@ -1467,7 +1463,7 @@ pub(crate) fn collect_compile_assets(
                 }
                 #[cfg(windows)]
                 let (rel, bytes) = {
-                    let rel = bun_paths::ForwardSlashPath::from_parts(&[entry.path.as_slice()]);
+                    let rel = bun_paths::Path::from(entry.path.as_slice()).into_portable();
                     let rel = rel.to_vec();
                     let base_z = bun_paths::Path::from(entry.basename.as_slice());
                     let bytes = match bun_sys::File::read_from(entry.dir, base_z.as_bytes()) {

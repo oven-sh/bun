@@ -364,7 +364,7 @@ impl Lookup {
 
 /// `source` is an entry of the `sources` of the map for `generated_file`.
 fn path_of_source(generated_file: &[u8], source: &[u8]) -> bun_paths::Path {
-    let source = bun_paths::windows_to_platform(source);
+    let source = bun_paths::from_portable(source);
     bun_paths::Path::resolve(&[bun_paths::dirname_or_root(generated_file), &source])
 }
 

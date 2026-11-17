@@ -6,19 +6,17 @@
 use crate::config_options::{Declaration, In, converted, is_enum, is_file_path, is_list};
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
-    Host, Options, ancestors, combine_paths, contains_path, displayed_path,
+    Host, Options, ancestors, basename, combine_paths, contains_path, displayed_path,
     equate_string_case_insensitive, extra_supported_extensions, file_extension_is_one_of,
     get_base_file_name, get_path_components, get_relative_path_from_directory, inside,
-    is_rooted_disk_path, is_same_path, join, known_extension, remove_file_extension,
-    supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
+    is_rooted_disk_path, is_same_path, join, known_extension, parent_directory,
+    remove_file_extension, supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
 };
 use crate::session::Session;
 use crate::util::{FxHashSet, SharedSort};
 use crate::verify::{ConfigLocation, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
-use bun_paths::PathStyle as _;
-use bun_paths::platform::Posix;
 
 mod build_options;
 #[cfg(test)]
@@ -244,7 +242,7 @@ impl Project {
         let mut name = if options.out_dir.is_empty() {
             config.to_vec()
         } else if options.root_dir.is_empty() {
-            join(&options.out_dir, Posix::basename(config))
+            join(&options.out_dir, basename(config))
         } else {
             let is_case_sensitive = options.use_case_sensitive_file_names;
             let relative =
@@ -716,7 +714,7 @@ fn open_config(
         at: problem.span.map(at),
         ..ConfigError::new(problem.code, &[])
     };
-    let base = Posix::dirname_or_root(path);
+    let base = parent_directory(path);
     let mut own = Raw::default();
     // `getDefaultCompilerOptions`
     if path.ends_with(b"/jsconfig.json") {
@@ -833,8 +831,8 @@ impl PendingConfig {
         // relative to that file's directory.
         // `relativeDifference`: from the extending file's directory. 18003 prints the result.
         let (base, extended_dir) = (
-            Posix::dirname_or_root(&self.path),
-            Posix::dirname_or_root(extended_path),
+            parent_directory(&self.path),
+            parent_directory(extended_path),
         );
         let relative_difference =
             get_relative_path_from_directory(base, extended_dir, is_case_sensitive);
@@ -999,7 +997,7 @@ pub fn load_overriding(
     let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
         return Err(errors);
     };
-    let base = Posix::dirname_or_root(path);
+    let base = parent_directory(path);
     let references = get_project_references(&raw.references, base);
     let has_references = references.is_some_and(|list| !list.is_empty());
     merge_compiler_options(&mut raw.compiler, overrides(has_references), &[]);
@@ -1875,7 +1873,7 @@ fn include_base_path(absolute: &[u8]) -> Vec<u8> {
         // `HasExtension`
         None if !strings::contains_char(get_base_file_name(absolute), b'.') => absolute.to_vec(),
         None => {
-            let directory = Posix::dirname_or_root(absolute);
+            let directory = parent_directory(absolute);
             directory.strip_suffix(b"/").unwrap_or(directory).to_vec()
         }
         Some(wildcard) => {

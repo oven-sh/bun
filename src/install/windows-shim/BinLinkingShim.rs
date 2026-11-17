@@ -137,8 +137,6 @@ mod host {
     use core::mem::size_of;
 
     use bun_core::strings;
-    use bun_paths::PathStyle as _;
-    use bun_paths::platform::Windows;
     use bun_simdutf_sys::simdutf;
 
     #[inline]
@@ -236,7 +234,7 @@ mod host {
         }
 
         pub(crate) fn parse_from_bin_path(bin_path: &[u16]) -> Option<Shebang<'static>> {
-            if let Some(i) = bun_extensions_get(Windows::extension(bin_path)) {
+            if let Some(i) = bun_extensions_get(bun_paths::extension(bin_path)) {
                 return Some(match i {
                     // Const-evaluated; the
                     // values below are the simdutf utf16 lengths of pure-ASCII literals

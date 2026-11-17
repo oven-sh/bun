@@ -39,7 +39,7 @@ use bun_ast::Source;
 use bun_collections::AutoBitSet;
 use bun_io::Write;
 use bun_js_printer::Encoding;
-use bun_paths::ForwardSlashPath;
+use bun_paths::Path;
 use bun_resolver::fs::FileSystem;
 
 use crate::chunk::Content;
@@ -355,6 +355,6 @@ fn source_path_relative_to_root<'b>(
     path: &[u8],
 ) -> &'b [u8] {
     buf.clear();
-    buf.extend_from_slice(&ForwardSlashPath::relative(root_dir, path));
+    buf.extend_from_slice(&Path::relative(root_dir, path).into_portable());
     buf
 }

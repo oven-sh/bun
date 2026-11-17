@@ -1,18 +1,14 @@
 #![warn(unused_must_use)]
 #![forbid(unsafe_code)]
 use bstr::BStr;
+use bun_core::strings;
 #[cfg(windows)]
 use bun_core::w;
-use bun_core::{ZStr, strings};
 #[cfg(not(windows))]
 use bun_paths::DELIMITER;
+use bun_paths::{MAX_PATH_BYTES, Path, is_absolute};
 #[cfg(windows)]
-use bun_paths::posix_to_platform_in_place;
-#[cfg(windows)]
-use bun_paths::w_path_buffer_pool;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SlicePath, is_absolute};
-#[cfg(windows)]
-use bun_paths::{Path, PoolPath, WPathBuffer};
+use bun_paths::{OSPath, to_native_in_place};
 
 #[allow(non_upper_case_globals)]
 mod scope {
@@ -20,32 +16,22 @@ mod scope {
 }
 use scope::which as which_log;
 
-/// Writes `[cwd/]segment/bin` into `buf`, each part as it is spelled. `None` unless that is an executable.
+/// Sets `path` to `[cwd/]segment/bin`, each part as it is spelled. Returns whether that is an executable.
 #[cfg(not(windows))]
-fn executable_at<'a>(
-    buf: &'a mut PathBuffer,
-    cwd: &[u8],
-    segment: &[u8],
-    bin: &[u8],
-) -> Option<&'a ZStr> {
-    let mut path = SlicePath::new(buf);
+fn is_executable_at(path: &mut Path, cwd: &[u8], segment: &[u8], bin: &[u8]) -> bool {
+    path.clear();
     for part in [cwd, segment, bin] {
-        path.push_trailing_sep().ok()?;
-        path.extend_from_slice(part).ok()?;
+        path.push_trailing_sep();
+        path.extend_from_slice(part);
     }
-    bun_sys::is_executable_file_path(&path).then(|| path.into_zstr())
+    bun_sys::is_executable_file_path(path)
 }
 
 /// `which()` for spawn-style executable resolution. Windows resolves bare
 /// names against the working directory before `$PATH` (CreateProcessW search
 /// order; libuv and Node.js spawn behave the same), unlike `which()` which is
 /// `$PATH`-only for bare names on every platform.
-pub fn which_for_spawn<'a>(
-    buf: &'a mut PathBuffer,
-    path: &[u8],
-    cwd: &[u8],
-    bin: &[u8],
-) -> Option<&'a ZStr> {
+pub fn which_for_spawn(path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<Path> {
     #[cfg(windows)]
     {
         let has_sep = strings::contains_any(bin, b"/\\");
@@ -60,49 +46,41 @@ pub fn which_for_spawn<'a>(
             && std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_none()
         {
             // One more `$PATH` directory: .exe/.cmd/.bat before the walk, .com after it.
-            let mut convert_buf = w_path_buffer_pool::get();
+            let mut found = OSPath::new();
             let spells_executable_extension = ends_with_extension(bin);
             let extensions: &[&[u16]] = if spells_executable_extension {
                 &[]
             } else {
                 &WIN_EXTENSIONS_W
             };
-            if let Some(found) = search_bin_in_path(
-                &mut *convert_buf,
+            if search_bin_in_path(
+                &mut found,
                 cwd,
                 bin,
                 spells_executable_extension,
                 extensions,
             ) {
-                posix_to_platform_in_place(found);
-                return Some(utf16_result_into(buf, found));
+                to_native_in_place(found.as_mut_slice());
+                return Some(Path::from(&found));
             }
-            if let Some(found) = which_win(&mut *convert_buf, path, cwd, bin) {
-                return Some(utf16_result_into(buf, found));
+            if which_win(&mut found, path, cwd, bin) {
+                return Some(Path::from(&found));
             }
-            if spells_executable_extension {
+            if spells_executable_extension
+                || !search_bin_in_path(&mut found, cwd, bin, false, &WIN_COM_EXTENSION_W)
+            {
                 return None;
             }
-            let found =
-                search_bin_in_path(&mut *convert_buf, cwd, bin, false, &WIN_COM_EXTENSION_W)?;
-            posix_to_platform_in_place(found);
-            return Some(utf16_result_into(buf, found));
+            to_native_in_place(found.as_mut_slice());
+            return Some(Path::from(&found));
         }
     }
-    which(buf, path, cwd, bin)
-}
-
-/// Writes `result` into `buf` as NUL-terminated UTF-8.
-#[cfg(windows)]
-fn utf16_result_into<'a>(buf: &'a mut PathBuffer, result: &[u16]) -> &'a ZStr {
-    let mut path = SlicePath::new(buf);
-    path.set(result).expect("a wide path fits a path buffer");
-    path.into_zstr()
+    which(path, cwd, bin)
 }
 
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
-pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
+pub fn which(path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<Path> {
     if bin.len() >= MAX_PATH_BYTES {
         return None;
     }
@@ -116,9 +94,8 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
     #[cfg(windows)]
     {
-        let mut convert_buf = w_path_buffer_pool::get();
-        let result = which_win(&mut *convert_buf, path, cwd, bin)?;
-        return Some(utf16_result_into(buf, result));
+        let mut found = OSPath::new();
+        return which_win(&mut found, path, cwd, bin).then(|| Path::from(&found));
     }
 
     #[cfg(not(windows))]
@@ -127,9 +104,11 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             return None;
         }
 
+        let mut found = Path::new();
+
         // Do not look absolute paths in $PATH
         if is_absolute(bin) {
-            return executable_at(buf, b"", b"", bin);
+            return is_executable_at(&mut found, b"", b"", bin).then_some(found);
         }
 
         let cwd_trimmed = bun_paths::without_trailing_sep(cwd);
@@ -139,12 +118,8 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             if cwd.is_empty() {
                 return None;
             }
-            return executable_at(
-                buf,
-                b"",
-                cwd_trimmed,
-                bun_paths::without_leading_dot_slash(bin),
-            );
+            let bin = bun_paths::without_leading_dot_slash(bin);
+            return is_executable_at(&mut found, b"", cwd_trimmed, bin).then_some(found);
         }
 
         let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) { cwd_trimmed } else { b"" };
@@ -155,7 +130,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             } else {
                 cwd_for_relative_segment
             };
-            if let Some(found) = executable_at(buf, cwd_prefix, segment, bin) {
+            if is_executable_at(&mut found, cwd_prefix, segment, bin) {
                 return Some(found);
             }
         }
@@ -238,62 +213,48 @@ pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
     strings::contains_any(arg, b"\"%&|<>^\r\n")
 }
 
+/// Stats `path` as spelled, then with each of `extensions` appended. `path` is left at what exists.
 #[cfg(windows)]
-type WideSlicePath<'a> = bun_paths::GenericPath<bun_paths::SliceBackend<'a, u16>>;
-
-/// Stats `path` as spelled, then with each of `extensions` appended. Returns the length of what exists.
-#[cfg(windows)]
-fn search_bin(
-    mut path: WideSlicePath<'_>,
-    try_as_spelled: bool,
-    extensions: &[&[u16]],
-) -> Option<usize> {
-    if try_as_spelled && bun_sys::exists_os_path(&path, true) {
-        return Some(path.len());
+fn search_bin(path: &mut OSPath, try_as_spelled: bool, extensions: &[&[u16]]) -> bool {
+    if try_as_spelled && bun_sys::exists_os_path(path, true) {
+        return true;
     }
-    path.extend_from_slice(b".").ok()?;
+    path.extend_from_slice(b".");
     let len = path.len();
-    extensions.iter().find_map(|extension| {
+    extensions.iter().any(|extension| {
         path.truncate(len);
-        path.extend_from_slice(extension).ok()?;
-        bun_sys::exists_os_path(&path, true).then(|| path.len())
+        path.extend_from_slice(extension);
+        bun_sys::exists_os_path(path, true)
     })
 }
 
 /// Check if bin file exists in this path (internally used by which_win)
 #[cfg(windows)]
-fn search_bin_in_path<'a>(
-    buf: &'a mut WPathBuffer,
+fn search_bin_in_path(
+    found: &mut OSPath,
     path: &[u8],
     bin: &[u8],
     try_as_spelled: bool,
     extensions: &[&[u16]],
-) -> Option<&'a mut [u16]> {
+) -> bool {
     if path.is_empty() {
-        return None;
+        return false;
     }
     let mut segment = Path::from(path);
     segment.add_current_drive();
-    let mut candidate = WideSlicePath::new(buf);
-    (candidate.set(bun_paths::without_trailing_sep(&segment))).ok()?;
-    candidate.push_trailing_sep().ok()?;
-    candidate.extend_from_slice(bin).ok()?;
-    let len = search_bin(candidate, try_as_spelled, extensions)?;
-    Some(&mut buf[..len])
+    found.set(bun_paths::without_trailing_sep(&segment));
+    found.push_trailing_sep();
+    found.extend_from_slice(bin);
+    search_bin(found, try_as_spelled, extensions)
 }
 
 /// This is the windows version of `which`.
 /// It operates on wide strings.
 /// It is similar to Get-Command in powershell.
 #[cfg(windows)]
-pub(crate) fn which_win<'a>(
-    buf: &'a mut WPathBuffer,
-    path: &[u8],
-    cwd: &[u8],
-    bin: &[u8],
-) -> Option<&'a [u16]> {
+fn which_win(found: &mut OSPath, path: &[u8], cwd: &[u8], bin: &[u8]) -> bool {
     if bin.is_empty() {
-        return None;
+        return false;
     }
 
     let spells_executable_extension = ends_with_extension(bin);
@@ -308,55 +269,37 @@ pub(crate) fn which_win<'a>(
 
     // handle absolute paths
     if is_absolute(bin) {
-        let mut normalized_bin = PoolPath::from(bin).ok()?;
-        normalized_bin.add_current_drive().ok()?;
-        let mut candidate = WideSlicePath::new(buf);
-        candidate.set(&normalized_bin).ok()?;
-        let len = search_bin(candidate, try_as_spelled, extensions)?;
-        return Some(&buf[..len]);
+        let mut normalized_bin = Path::from(bin);
+        normalized_bin.add_current_drive();
+        found.set(&normalized_bin);
+        return search_bin(found, try_as_spelled, extensions);
     }
 
-    // check if bin is in cwd
+    // check if bin is in cwd. Do not lookup paths with slashes in $PATH
     if has_dir {
-        if let Some(bin_path) = search_bin_in_path(
-            buf,
-            cwd,
-            strings::without_prefix_comptime(bin, b"./"),
-            try_as_spelled,
-            extensions,
-        ) {
-            posix_to_platform_in_place(bin_path);
-            return Some(&*bin_path);
-        }
-        // Do not lookup paths with slashes in $PATH
-        return None;
+        let bin = strings::without_prefix_comptime(bin, b"./");
+        let exists = search_bin_in_path(found, cwd, bin, try_as_spelled, extensions);
+        to_native_in_place(found.as_mut_slice());
+        return exists;
     }
 
     // `.com` gets its own pass once every directory failed `.exe`/`.cmd`/`.bat`.
     if spells_executable_extension {
-        return search_bin_in_path_list(buf, path, bin, true, &[]).map(|w| &*w);
+        return search_bin_in_path_list(found, path, bin, true, &[]);
     }
-    if let Some(bin_path) = search_bin_in_path_list(buf, path, bin, false, &WIN_EXTENSIONS_W) {
-        return Some(&*bin_path);
-    }
-    search_bin_in_path_list(buf, path, bin, false, &WIN_COM_EXTENSION_W).map(|w| &*w)
+    search_bin_in_path_list(found, path, bin, false, &WIN_EXTENSIONS_W)
+        || search_bin_in_path_list(found, path, bin, false, &WIN_COM_EXTENSION_W)
 }
 
 /// `search_bin_in_path` over every `;`-separated directory of `path`.
 #[cfg(windows)]
-fn search_bin_in_path_list<'a>(
-    buf: &'a mut WPathBuffer,
+fn search_bin_in_path_list(
+    found: &mut OSPath,
     path: &[u8],
     bin: &[u8],
     try_as_spelled: bool,
     extensions: &[&[u16]],
-) -> Option<&'a mut [u16]> {
-    for segment_part in strings::tokenize(path, b";") {
-        if let Some(bin_path) =
-            search_bin_in_path(buf, segment_part, bin, try_as_spelled, extensions)
-        {
-            return Some(bin_path);
-        }
-    }
-    None
+) -> bool {
+    strings::tokenize(path, b";")
+        .any(|dir| search_bin_in_path(found, dir, bin, try_as_spelled, extensions))
 }

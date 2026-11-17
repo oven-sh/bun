@@ -105,7 +105,7 @@ impl Entry {
 
         for native_file_path in paths.iter() {
             source_map_strings.extend_from_slice(b",");
-            let path: &[u8] = &bun_paths::platform_to_posix(native_file_path);
+            let path: &[u8] = &bun_paths::to_portable(native_file_path);
 
             if bun_paths::is_absolute(path) {
                 let is_windows_drive_path = cfg!(windows) && path[0] != b'/';

@@ -245,12 +245,6 @@ impl From<bun_sys::Error> for Error {
     }
 }
 
-impl From<bun_paths::NameTooLong> for Error {
-    fn from(e: bun_paths::NameTooLong) -> Self {
-        Self::Sys(e.into())
-    }
-}
-
 impl From<bun_uws::ConnectError> for Error {
     #[inline]
     fn from(_: bun_uws::ConnectError) -> Self {

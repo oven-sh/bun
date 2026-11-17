@@ -6,11 +6,11 @@ use crate::hir::{
     TypeNodeId, TypeNodeKind, VarDecl, VarDeclId, VarKind,
 };
 use crate::json::Json;
-use crate::resolve::{Host, ParseOptions, ScriptKind, ancestors, is_declaration_file_name};
+use crate::resolve::{
+    Host, ParseOptions, ScriptKind, ancestors, is_declaration_file_name, parent_directory,
+};
 use crate::session::Arena;
 use bun_core::strings;
-use bun_paths::PathStyle as _;
-use bun_paths::platform::Posix;
 use std::borrow::Cow;
 
 const BLANK_TEXT: &[u8] = &[b' '; 4096];
@@ -91,8 +91,8 @@ impl Host for DeclarationsHost<'_> {
     }
 
     fn is_dir(&self, path: &[u8]) -> bool {
-        let mut directories = (self.files.iter())
-            .flat_map(|file| ancestors(Posix::dirname_or_root(file.path.as_bytes())));
+        let mut directories =
+            (self.files.iter()).flat_map(|file| ancestors(parent_directory(file.path.as_bytes())));
         directories.any(|directory| directory == path)
     }
 

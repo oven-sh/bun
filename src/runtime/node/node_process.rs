@@ -498,7 +498,7 @@ mod _impl {
         global_object: &JSGlobalObject,
         directory: &[u8],
     ) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global_object, &bun_paths::posix_to_platform(directory))
+        bun_string_jsc::create_utf8_for_js(global_object, &bun_paths::to_native(directory))
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -555,7 +555,7 @@ mod _impl {
     /// Resolves `to` against the working directory when that is a folder of the executable, which the system cannot do.
     fn resolve_chdir_target<'a>(
         to: &'a bun_core::ZStr,
-        buf: &'a mut bun_paths::PathBuffer,
+        path: &'a mut bun_paths::Path,
     ) -> ChdirTarget<'a> {
         let Some(graph) = bun_standalone_graph::Graph::get_ref() else {
             return ChdirTarget::OnDisk(to);
@@ -564,11 +564,10 @@ mod _impl {
         if !bun_paths::is_absolute(to.as_bytes()) && current.is_none() {
             return ChdirTarget::OnDisk(to);
         }
-        let mut path = bun_paths::SlicePath::new(&mut buf[..]);
-        if (path.resolve_in_place(&[current.unwrap_or(b"/"), to.as_bytes()])).is_err() {
+        path.resolve_in_place(&[current.unwrap_or(b"/"), to.as_bytes()]);
+        if path.len() >= bun_paths::MAX_PATH_BYTES {
             return ChdirTarget::InExecutable(Err(bun_sys::E::ENAMETOOLONG));
         }
-        let path = path.into_zstr();
         if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
             return ChdirTarget::InExecutable(graph.dir_key(path.as_bytes()));
         }
@@ -599,7 +598,7 @@ mod _impl {
         let prev_cwd: Box<[u8]> = Box::from(
             bun_core::working_directory_in_executable().unwrap_or_else(|| vm.top_level_dir()),
         );
-        let mut resolved = bun_paths::path_buffer_pool::get();
+        let mut resolved = bun_paths::Path::new();
         let on_disk = match resolve_chdir_target(slice, &mut resolved) {
             ChdirTarget::OnDisk(path) => path,
             ChdirTarget::InExecutable(Ok(directory)) => {

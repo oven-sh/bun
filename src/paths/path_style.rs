@@ -1,4 +1,4 @@
-//! Per-platform path syntax, and read-only queries on path slices.
+//! The syntax of each platform. Not exported: other crates get that of the platform they run on.
 
 use core::marker::PhantomData;
 use core::ops::Range;
@@ -8,34 +8,35 @@ use bun_core::strings;
 use crate::PathChar;
 use crate::path_unit::PathUnit;
 
-pub mod platform {
-    pub struct Posix;
-    pub struct Windows;
-    /// Reads like [`Windows`] and writes `/`.
-    pub struct WindowsForwardSlash;
-    /// The host's.
-    #[cfg(not(windows))]
-    pub type Auto = Posix;
-    #[cfg(windows)]
-    pub type Auto = Windows;
-    /// Reads like [`Auto`] and writes `/`, for output that is printed, hashed or saved.
-    #[cfg(not(windows))]
-    pub(crate) type ForwardSlash = Posix;
-    #[cfg(windows)]
-    pub(crate) type ForwardSlash = WindowsForwardSlash;
-}
-use platform::{Posix, Windows, WindowsForwardSlash};
+pub struct Style<const WIN32: bool>;
+pub(crate) type Posix = Style<false>;
+pub(crate) type Windows = Style<true>;
+pub(crate) type Host = Style<{ cfg!(windows) }>;
 
-/// Purely lexical. Call it on a [`platform`](crate::platform) type: `Posix::basename(path)`.
+/// The functions of the same names at the root of the crate say what these do.
 pub trait PathStyle: Sized {
-    /// The separator to write.
-    const SEP: u8;
     /// `\` is a separator too, there are drives, shares and device prefixes, and ASCII case is ignored.
     const WIN32: bool;
+    /// The separator to write.
+    const SEP: u8 = if Self::WIN32 { b'\\' } else { b'/' };
 
     #[inline(always)]
     fn is_sep<C: PathChar>(unit: C) -> bool {
         unit.eq_ascii(b'/') || (Self::WIN32 && unit.eq_ascii(b'\\'))
+    }
+
+    #[inline(always)]
+    fn to_portable_in_place<C: PathChar>(path: &mut [C]) {
+        if Self::WIN32 {
+            strings::replace_char_in_place(path, b'\\', b'/');
+        }
+    }
+
+    #[inline(always)]
+    fn to_native_in_place<C: PathChar>(path: &mut [C]) {
+        if Self::WIN32 {
+            strings::replace_char_in_place(path, b'/', b'\\');
+        }
     }
 
     #[inline(always)]
@@ -48,7 +49,6 @@ pub trait PathStyle: Sized {
         path.last().is_some_and(|&unit| Self::is_sep(unit))
     }
 
-    /// Removes all of them.
     #[inline(always)]
     fn without_leading_sep<C: PathChar>(mut path: &[C]) -> &[C] {
         while Self::has_leading_sep(path) {
@@ -57,7 +57,6 @@ pub trait PathStyle: Sized {
         path
     }
 
-    /// Removes one `./`.
     #[inline(always)]
     fn without_leading_dot_slash<C: PathChar>(path: &[C]) -> &[C] {
         match path {
@@ -66,7 +65,6 @@ pub trait PathStyle: Sized {
         }
     }
 
-    /// Removes all of them, but a root keeps its separator.
     #[inline]
     fn without_trailing_sep<C: PathUnit>(path: &[C]) -> &[C] {
         if !Self::has_trailing_sep(path) {
@@ -75,13 +73,11 @@ pub trait PathStyle: Sized {
         &path[..len_without_trailing_sep::<Self>(path, Root::parse::<Self>(path).len)]
     }
 
-    /// `/`, `C:\`, `C:`, `\\server\share\`, `\\?\C:\`, or empty.
     #[inline]
     fn root<C: PathUnit>(path: &[C]) -> &[C] {
         &path[..Root::parse::<Self>(path).len]
     }
 
-    /// The root without its separator: `C:`, `\\server\share`, `\\?\C:`, or empty.
     #[inline]
     fn volume<C: PathUnit>(path: &[C]) -> &[C] {
         &path[..Root::parse::<Self>(path).volume_len]
@@ -92,13 +88,11 @@ pub trait PathStyle: Sized {
         Self::has_leading_sep(path) || (Self::WIN32 && Root::parse::<Self>(path).is_absolute())
     }
 
-    /// False for `\a` on Windows, which depends on the current drive.
     #[inline]
     fn is_fully_qualified<C: PathUnit>(path: &[C]) -> bool {
         Root::parse::<Self>(path).is_fully_qualified::<Self>()
     }
 
-    /// `C:\a` for `\\?\C:\a` and `\??\C:\a`. A share needs [`strip_nt_prefix`](crate::GenericPath::strip_nt_prefix).
     #[inline]
     fn without_nt_prefix<C: PathUnit>(path: &[C]) -> &[C] {
         if !Self::WIN32 || !Root::parse::<Self>(path).has_nt_prefix(path) {
@@ -112,7 +106,6 @@ pub trait PathStyle: Sized {
         }
     }
 
-    /// `None` for a root or a single component.
     #[inline]
     fn dirname<C: PathUnit>(path: &[C]) -> Option<&[C]> {
         let (root, last) = last_component::<Self>(path);
@@ -125,13 +118,11 @@ pub trait PathStyle: Sized {
         }
     }
 
-    /// [`Self::dirname`], but a root is its own parent, and a single component has an empty one.
     #[inline]
     fn dirname_or_root<C: PathUnit>(path: &[C]) -> &[C] {
         Self::dirname(path).unwrap_or_else(|| Self::root(path))
     }
 
-    /// Empty for `/` and `C:\`. `share` for `\\server\share`, as in Node.
     #[inline]
     fn basename<C: PathUnit>(path: &[C]) -> &[C] {
         let root = Root::parse::<Self>(path);
@@ -142,21 +133,18 @@ pub trait PathStyle: Sized {
         Components::<Self, C>::new(path).next_back().unwrap_or(&[])
     }
 
-    /// Includes the dot. `.gitignore` and `..` have none.
     #[inline]
     fn extension<C: PathUnit>(path: &[C]) -> &[C] {
         let basename = Self::basename(path);
         &basename[stem_len(basename)..]
     }
 
-    /// The basename without its extension.
     #[inline]
     fn stem<C: PathUnit>(path: &[C]) -> &[C] {
         let basename = Self::basename(path);
         &basename[..stem_len(basename)]
     }
 
-    /// `path` relative to `dir`: empty if they are equal, `None` if `path` is outside of it.
     #[inline]
     fn strip_prefix<'a, C: PathUnit>(path: &'a [C], dir: &[C]) -> Option<&'a [C]> {
         let root = Root::parse::<Self>(path);
@@ -173,13 +161,11 @@ pub trait PathStyle: Sized {
         }
     }
 
-    /// The components after the root. `.` and `..` are kept.
     #[inline]
     fn components<C: PathUnit>(path: &[C]) -> Components<'_, Self, C> {
         Components::new(&path[Root::parse::<Self>(path).len..])
     }
 
-    /// `path`, then each parent up to the root or the first component, without trailing separators.
     #[inline]
     fn ancestors<C: PathUnit>(path: &[C]) -> impl Iterator<Item = &[C]> {
         let root = Root::parse::<Self>(path);
@@ -193,7 +179,6 @@ pub trait PathStyle: Sized {
         })
     }
 
-    /// Whether `path` has a root, or its `..` lead above the directory it starts in.
     fn climbs_out<C: PathUnit>(path: &[C]) -> bool {
         let step = |depth: usize, component: &[C]| match component {
             [dot] if dot.eq_ascii(b'.') => Some(depth),
@@ -203,7 +188,6 @@ pub trait PathStyle: Sized {
         !Self::root(path).is_empty() || Self::components(path).try_fold(0, step).is_none()
     }
 
-    /// The longest path that each of `paths` is in or equal to.
     fn common_ancestor<'a, C: PathUnit>(
         mut paths: impl Iterator<Item = &'a [C]>,
     ) -> Option<&'a [C]> {
@@ -214,19 +198,8 @@ pub trait PathStyle: Sized {
     }
 }
 
-impl PathStyle for Posix {
-    const SEP: u8 = b'/';
-    const WIN32: bool = false;
-}
-
-impl PathStyle for Windows {
-    const SEP: u8 = b'\\';
-    const WIN32: bool = true;
-}
-
-impl PathStyle for WindowsForwardSlash {
-    const SEP: u8 = b'/';
-    const WIN32: bool = true;
+impl<const WIN32: bool> PathStyle for Style<WIN32> {
+    const WIN32: bool = WIN32;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -290,12 +263,7 @@ impl Root {
             return Root::parse_unc_or_device::<S, C>(path, VolumeKind::Unc, 2);
         }
         // `\??\` is only recognized with backslashes.
-        if S::SEP == b'\\'
-            && is(0, b'\\')
-            && is(1, b'?')
-            && is(2, b'?')
-            && (path.len() == 3 || is(3, b'\\'))
-        {
+        if is(0, b'\\') && is(1, b'?') && is(2, b'?') && (path.len() == 3 || is(3, b'\\')) {
             return Root::parse_unc_or_device::<S, C>(path, VolumeKind::Device, 3);
         }
         Root::without_volume(true)
@@ -414,7 +382,7 @@ pub(crate) fn eq_path<S: PathStyle, C: PathUnit>(a: &[C], b: &[C]) -> bool {
     a == b || (S::WIN32 && eq_ignore_case_and_sep(a, b))
 }
 
-/// See [`PathStyle::components`].
+/// See [`crate::components`].
 pub struct Components<'a, S, C> {
     rest: &'a [C],
     style: PhantomData<S>,

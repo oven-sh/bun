@@ -146,7 +146,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
 
 pub(super) fn bundler_path(path: &[u8]) -> Vec<u8> {
     let mut path = to_native(path).to_vec();
-    bun_paths::posix_to_platform_in_place::<u8>(&mut path);
+    bun_paths::to_native_in_place::<u8>(&mut path);
     path
 }
 

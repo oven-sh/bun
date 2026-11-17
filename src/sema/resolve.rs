@@ -9,9 +9,7 @@ use crate::util::{AppendVec, FxHashMap, FxHashSet, ShardedMap};
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::fs::Path;
-use bun_paths::platform::Posix;
-use bun_paths::platform::Windows;
-use bun_paths::{PathStyle as _, path_buffer_pool, slashes_to_posix as normalize_slashes};
+use bun_paths::path_buffer_pool;
 use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -1500,8 +1498,9 @@ pub fn ancestors(dir: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
+/// The directory that `path` is in. `/` is its own.
 #[inline]
-fn parent_directory(mut path: &[u8]) -> &[u8] {
+pub fn parent_directory(mut path: &[u8]) -> &[u8] {
     loop {
         match strings::last_index_of_char(path, b'/') {
             None => return b"",
@@ -1510,6 +1509,19 @@ fn parent_directory(mut path: &[u8]) -> &[u8] {
             Some(separator) => return &path[..separator],
         }
     }
+}
+
+/// The last name in `path`. Empty for `/`.
+#[inline]
+pub fn basename(path: &[u8]) -> &[u8] {
+    let path = strings::trim_right(path, b"/");
+    &path[strings::last_index_of_char(path, b'/').map_or(0, |at| at + 1)..]
+}
+
+/// `NormalizeSlashes`
+#[inline]
+pub fn normalize_slashes(path: &[u8]) -> Cow<'_, [u8]> {
+    strings::replace_char(path, b'\\', b'/')
 }
 
 #[inline]
@@ -1748,7 +1760,7 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
             [b'/', b'\\', b'\\', ..] => &rest[1..],
             _ => rest,
         };
-        let (share, after) = native.split_at(Windows::volume(native).len());
+        let (share, after) = native.split_at(bun_paths::volume(native).len());
         if !share.is_empty() {
             let names = strings::split_any(share, b"/\\").filter(|name| !name.is_empty());
             for (i, name) in names.enumerate() {

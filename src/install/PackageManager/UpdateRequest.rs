@@ -177,7 +177,7 @@ impl UpdateRequest {
             let mut input: Vec<u8> = strings::trim(positional, b" \n\r\t").to_vec();
             if cfg!(windows) {
                 input = strings::replace_owned(&input, b"\\\\", b"/");
-                bun_paths::platform_to_posix_in_place(&mut input);
+                bun_paths::to_portable_in_place(&mut input);
             }
             match subcommand {
                 Subcommand::Link | Subcommand::Unlink => {

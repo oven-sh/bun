@@ -106,7 +106,7 @@ pub struct InstallContext {
 
 /// A relative path in `patchedDependencies` is resolved against the project directory.
 fn resolve_patchfile_path(project_dir: &[u8], patchfile_path: &[u8]) -> path::Path {
-    let patchfile_path = path::windows_to_platform(patchfile_path);
+    let patchfile_path = path::from_portable(patchfile_path);
     let mut resolved = path::Path::resolve(&[project_dir, &patchfile_path]);
     resolved.copy_trailing_sep_from(&patchfile_path);
     resolved

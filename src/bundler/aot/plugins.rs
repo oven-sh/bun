@@ -255,7 +255,7 @@ impl PluginRequests {
         match self.written_keys.get(module.path) {
             Some(key) => Cow::Borrowed(&**key),
             // The compiler writes `C:/a/b.ts`. A filter may be written for `C:\a\b.ts`.
-            None => bun_paths::posix_to_platform(module.path),
+            None => bun_paths::to_native(module.path),
         }
     }
 

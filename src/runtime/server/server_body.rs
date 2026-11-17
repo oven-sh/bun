@@ -36,7 +36,7 @@ use bun_jsc::{
     Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
-use bun_paths::{ForwardSlashPath, Path, PosixPath};
+use bun_paths::Path;
 use bun_ptr::RefPtr;
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
@@ -611,7 +611,8 @@ impl AnyRoute {
         };
 
         let abs_path = Path::resolve(&[FileSystem::get().top_level_dir(), path_slice]);
-        let route_path = PosixPath::resolve(&[b"/", &ForwardSlashPath::relative(cwd, &abs_path)]);
+        let mut route_path = Path::from(b"/");
+        route_path.push_inside(&Path::relative(cwd, &abs_path));
         let is_index_route = path.path().slice() == index_path;
 
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {
@@ -630,7 +631,7 @@ impl AnyRoute {
         methods.insert(Method::HEAD);
 
         init_ctx.user_routes.push(server_config::StaticRouteEntry {
-            path: route_path.as_bytes().into(),
+            path: route_path.into_portable().as_bytes().into(),
             route,
             method: methods,
         });

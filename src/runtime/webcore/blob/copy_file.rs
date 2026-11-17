@@ -13,7 +13,7 @@ use bun_io::{self as aio, IntrusiveUvFs as _};
 #[cfg(not(windows))]
 use bun_jsc::JSGlobalObject;
 use bun_jsc::{self as jsc, JSPromise, JSValue};
-use bun_paths::PathBuffer;
+use bun_paths::Path;
 use bun_ptr::RefPtr;
 #[cfg(not(windows))]
 use bun_sys::File;
@@ -190,7 +190,7 @@ impl CopyFile {
         }
     }
 
-    fn open_source(&mut self, path_buf: &mut PathBuffer) -> Option<File> {
+    fn open_source(&mut self, path_buf: &mut Path) -> Option<File> {
         let path = self.source_file_store.pathlike.path().slice_z(path_buf);
         match File::open(path, OPEN_SOURCE_FLAGS, 0) {
             Ok(file) => Some(file),
@@ -202,8 +202,7 @@ impl CopyFile {
     }
 
     fn open_destination(&mut self) -> Option<File> {
-        // Not `slice_z`, which makes "" of a path that does not fit.
-        let dest = &bun_paths::Path::from(self.destination_file_store.pathlike.path().slice());
+        let dest = &Path::from(self.destination_file_store.pathlike.path().slice());
         loop {
             let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
             let errno = match File::open(dest, OPEN_DESTINATION_FLAGS, mode) {
@@ -465,8 +464,8 @@ impl CopyFile {
 
     #[cfg(target_os = "macos")]
     pub(crate) fn do_clonefile(&mut self) -> Result<(), crate::Error> {
-        let mut source_buf = bun_paths::path_buffer_pool::get();
-        let mut dest_buf = bun_paths::path_buffer_pool::get();
+        let mut source_buf = Path::new();
+        let mut dest_buf = Path::new();
 
         loop {
             let dest = self
@@ -524,7 +523,7 @@ impl CopyFile {
             )
         {
             'do_clonefile: {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
+                let mut path_buf = Path::new();
 
                 match bun_sys::stat(
                     self.source_file_store
@@ -598,7 +597,7 @@ impl CopyFile {
         let mut source: Option<File> = None;
         let mut destination: Option<File> = None;
         if self.source_fd == Fd::INVALID || self.destination_fd == Fd::INVALID {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let mut path_buf = Path::new();
             // Source first: if it fails, no destination file is left behind.
             if self.source_fd == Fd::INVALID {
                 let Some(file) = self.open_source(&mut path_buf) else {
@@ -1202,7 +1201,7 @@ impl CopyFileWindows {
     /// `None` if the descriptor has no path: the NUL device, or a pipe (`cat foo.txt | bun bar.ts`).
     fn copyfile_path<'b>(
         store: &Store,
-        buf: &'b mut PathBuffer,
+        buf: &'b mut Path,
     ) -> bun_sys::Result<Option<&'b bun_core::ZStr>> {
         let fd = match &store.data.as_file().pathlike {
             PathOrFileDescriptor::Path(path) => return Ok(Some(path.slice_z(buf))),
@@ -1214,14 +1213,21 @@ impl CopyFileWindows {
                 bun_sys::Tag::open,
             )),
             bun_sys::FileKind::CharacterDevice => Ok(None),
-            _ => Ok(bun_sys::get_fd_path_z(fd, buf).ok()),
+            _ => {
+                let mut fd_path = bun_paths::path_buffer_pool::get();
+                let Ok(fd_path) = bun_sys::get_fd_path(fd, &mut fd_path) else {
+                    return Ok(None);
+                };
+                buf.set(fd_path);
+                Ok(Some(buf))
+            }
         }
     }
 
     fn copyfile_paths<'b>(
         &self,
-        old_buf: &'b mut PathBuffer,
-        new_buf: &'b mut PathBuffer,
+        old_buf: &'b mut Path,
+        new_buf: &'b mut Path,
     ) -> bun_sys::Result<Option<(&'b bun_core::ZStr, &'b bun_core::ZStr)>> {
         let Some(new_path) = Self::copyfile_path(&self.destination_file_store, new_buf)? else {
             return Ok(None);
@@ -1240,8 +1246,8 @@ impl CopyFileWindows {
             return;
         }
 
-        let mut pathbuf1 = bun_paths::path_buffer_pool::get();
-        let mut pathbuf2 = bun_paths::path_buffer_pool::get();
+        let mut pathbuf1 = Path::new();
+        let mut pathbuf2 = Path::new();
         let (old_path, new_path) = match self.copyfile_paths(&mut pathbuf2, &mut pathbuf1) {
             Ok(Some(paths)) => paths,
             Ok(None) => return self.prepare_read_write_loop(),
@@ -1299,7 +1305,7 @@ impl CopyFileWindows {
                 PathOrFileDescriptor::Path(_)
             ) {
                 self.written_bytes = written;
-                let mut pathbuf = bun_paths::path_buffer_pool::get();
+                let mut pathbuf = Path::new();
                 let path_ptr = self
                     .destination_file_store
                     .data
@@ -1421,7 +1427,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         let source_missing = errno == bun_sys::E::ENOENT
             && match &this.source_file_store.data.as_file().pathlike {
                 PathOrFileDescriptor::Path(p) => {
-                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let mut buf = Path::new();
                     matches!(
                         bun_sys::access(p.slice_z(&mut buf), 0),
                         bun_sys::Result::Err(e) if e.get_errno() == bun_sys::E::ENOENT
@@ -1466,7 +1472,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     // uv_fs_copyfile leaves `statbuf` empty.
     let size = match &this.destination_file_store.data.as_file().pathlike {
         PathOrFileDescriptor::Path(p) => {
-            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut buf = Path::new();
             bun_sys::stat(p.slice_z(&mut buf)).map(|stat| stat.size())
         }
         PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd).map(|stat| stat.size()),

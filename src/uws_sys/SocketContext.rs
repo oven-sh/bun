@@ -44,8 +44,8 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // reparse points — it would return the link's own mtime/size and miss an
     // in-place cert rotation behind a symlink (stale SSL_CTX served). Match
     // libuv: open query-only, `GetFileInformationByHandle`, close.
-    let mut wide = bun_paths::OSPath::from(path).ok()?;
-    bun_paths::posix_to_platform_in_place(wide.as_mut_slice());
+    let mut wide = bun_paths::OSPath::from(path);
+    bun_paths::to_native_in_place(wide.as_mut_slice());
     // SAFETY: `wide` is NUL-terminated. dwDesiredAccess=0 is query-
     // only (metadata). FILE_FLAG_BACKUP_SEMANTICS lets this succeed on dirs;
     // omitting FILE_FLAG_OPEN_REPARSE_POINT makes CreateFileW follow symlinks.

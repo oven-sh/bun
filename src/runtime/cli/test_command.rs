@@ -20,7 +20,7 @@ use bun_options_types::aot_options::ReplacedByTests;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironment, TestGlobals};
 use bun_paths as bun_path;
-use bun_paths::{ForwardSlashPath, Path, PoolPath, dirname_or_root, without_trailing_sep};
+use bun_paths::{Path, dirname_or_root, without_trailing_sep};
 use bun_ptr::{CellExt as _, Interned};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -1100,7 +1100,7 @@ impl TestFailure {
             if !func.slice().is_empty() {
                 let _ = write!(body, "{} (", frame.name_formatter(false));
             }
-            body.extend_from_slice(&bun_paths::platform_to_posix(file));
+            body.extend_from_slice(&bun_paths::to_portable(file));
             let pos = frame.position;
             if pos.line.is_valid() && pos.column.is_valid() {
                 let _ = write!(body, ":{}:{}", pos.line.one_based(), pos.column.one_based());
@@ -1694,7 +1694,7 @@ pub(crate) fn react_compiler_filter(
             .map(|written| {
                 let written: &[u8] = written;
                 let absolute =
-                    ForwardSlashPath::resolve(&[root, &bun_path::windows_to_platform(written)]);
+                    Path::resolve(&[root, &bun_path::from_portable(written)]).into_portable();
                 let written = written.strip_prefix(b"./").unwrap_or(written);
                 ReactCompilerEntry {
                     written: Box::from(written),
@@ -1719,8 +1719,8 @@ pub(crate) fn react_compiler_filter(
         {
             return false;
         }
-        let relative = ForwardSlashPath::relative(root, path);
-        let path = bun_path::platform_to_posix(path);
+        let relative = Path::relative(root, path).into_portable();
+        let path = bun_path::to_portable(path);
         let matches = |entry: &ReactCompilerEntry| {
             // A folder matches everything inside it.
             path.strip_prefix(&*entry.absolute)
@@ -2516,7 +2516,9 @@ fn write_lcov_report(
             .with_path(&opts.reports_directory)
     };
     let in_reports = |name: &[u8]| {
-        PoolPath::resolve(&[relative_dir, &opts.reports_directory, name]).map_err(|_| too_long())
+        Path::resolve(&[relative_dir, &opts.reports_directory, name])
+            .check_len()
+            .map_err(|_| too_long())
     };
     let tmp_path: &bun_core::ZStr = &in_reports(&tmpname)?;
     let path: &bun_core::ZStr = &in_reports(b"lcov.info")?;
@@ -2933,7 +2935,7 @@ impl TestCommand {
                     .iter()
                     .map(|filter| {
                         let mut normalized = filter.clone();
-                        bun_path::posix_to_platform_in_place::<u8>(&mut normalized);
+                        bun_path::to_native_in_place::<u8>(&mut normalized);
                         normalized
                     })
                     .collect();

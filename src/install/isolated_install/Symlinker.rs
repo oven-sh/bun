@@ -1,5 +1,5 @@
 use bun_core::{ZStr, strings};
-use bun_paths::{Path, PoolPath};
+use bun_paths::Path;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub(crate) struct Symlinker<'a> {
@@ -112,7 +112,7 @@ impl Symlinker<'_> {
                             // Keep the copy that `bun patch <pkg>` made, or a mount point (EBUSY).
                             _ => {
                                 let Ok(package_json) =
-                                    PoolPath::from_parts(&[self.dest, b"package.json"])
+                                    Path::from_parts(&[self.dest, b"package.json"]).check_len()
                                 else {
                                     return Err(bun_sys::Error::from_code(
                                         Errno::ENAMETOOLONG,

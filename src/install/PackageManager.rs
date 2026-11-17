@@ -21,7 +21,7 @@ use bun_dotenv as dot_env;
 use bun_event_loop::{self, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
-use bun_paths::{DELIMITER, ForwardSlashPath, Path, PoolPath, VecPath, without_trailing_sep};
+use bun_paths::{DELIMITER, Path, VecPath, without_trailing_sep};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -231,8 +231,8 @@ pub use directories::{
     cached_npm_package_folder_print_basename, cached_tarball_folder_name,
     cached_tarball_folder_name_print, compute_cache_dir_and_subpath, fetch_cache_directory_path,
     get_cache_directory, get_temporary_directory, global_link_dir, global_link_dir_path,
-    is_folder_in_cache, node_can_import_from, path_for_cached_npm_path, path_for_resolution,
-    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    is_folder_in_cache, node_can_import_from, save_lockfile, setup_global_dir,
+    update_lockfile_if_needed, write_yarn_lock,
 };
 
 pub use self::package_manager_enqueue as enqueue;
@@ -1188,11 +1188,8 @@ fn configure_env_for_scripts_run(this: &mut PackageManager) -> Result<(), Error>
     }
 
     {
-        let mut node_path = bun_paths::path_buffer_pool::get();
-        if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let _ = this
-                .env_mut()
-                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
+        if let Some(node_path) = this.env_mut().get_node_path(paths_fs) {
+            let _ = this.env_mut().load_node_js_config(paths_fs, &node_path)?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1689,12 +1686,6 @@ fn load_npmrc_files<'a>(
     project_npmrcs: &mut dyn Iterator<Item = &'a ZStr>,
     diagnostics: ini::NpmrcDiagnostics,
 ) -> Api::BunInstall {
-    // A path that is too long could not be opened either, so it counts as a missing file.
-    let resolve = |dir: &[u8], file: &[u8]| {
-        let mut path = PoolPath::resolve(&[dir, file]).ok()?;
-        path.copy_trailing_sep_from(file).ok()?;
-        Some(path)
-    };
     // npm's `userconfig` replaces both candidates below (actions/setup-node exports it).
     let userconfig = [b"NPM_CONFIG_USERCONFIG" as &[u8], b"npm_config_userconfig"]
         .into_iter()
@@ -1702,9 +1693,14 @@ fn load_npmrc_files<'a>(
 
     // An empty or relative value is ignored, as it is when `.bunfig.toml` is looked up.
     let usable = |dir: &&[u8]| bun_paths::is_fully_qualified(dir);
-    let npmrc_in = |dir: Option<&[u8]>| resolve(dir.filter(usable)?, b".npmrc");
+    let npmrc_in = |dir: Option<&[u8]>| Some(Path::resolve(&[dir.filter(usable)?, b".npmrc"]));
     let user_npmrc = match userconfig {
-        Some(path) => resolve(start_dir, &Api::BunInstall::resolve_path(start_dir, path)),
+        Some(path) => {
+            let file = Api::BunInstall::resolve_path(start_dir, path);
+            let mut path = Path::resolve(&[start_dir, &file]);
+            path.copy_trailing_sep_from(&file);
+            Some(path)
+        }
         // npm ignores XDG_CONFIG_HOME: `$XDG_CONFIG_HOME/.npmrc` counts only when that file exists.
         None => npmrc_in(bun_core::env_var::XDG_CONFIG_HOME.get())
             .filter(|path| bun_sys::exists_z(path))
@@ -1981,7 +1977,7 @@ fn find_workspace_root_above<'a>(
             drop(log);
 
             let root_dir = Package::WorkspaceMap::package_json_dir(&json_source);
-            let child_path = ForwardSlashPath::relative(root_dir, child_cwd);
+            let child_path = Path::relative(root_dir, child_cwd).into_portable();
             if let Some((_, entry)) = (workspace_names.keys().iter())
                 .zip(workspace_names.values())
                 .find(|(path, _)| bun_paths::strip_prefix(&child_path, path) == Some(b""))
@@ -2323,7 +2319,8 @@ pub fn init(
         bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
     }
     // Not from the fd's real path, so that relative paths never cross drives.
-    let root_package_json_path = PoolPath::from_parts(&[fs.top_level_dir(), b"package.json"])?;
+    let root_package_json_path =
+        Path::from_parts(&[fs.top_level_dir(), b"package.json"]).check_len()?;
     let root_package_json_path: &'static ZStr = ZStr::from_slice_with_nul(
         fs.dirname_store()
             .append(root_package_json_path.as_bytes_with_nul())?,
@@ -2375,12 +2372,12 @@ pub fn init(
             .install
             .take()
             .map_or_else(Api::BunInstall::default, |b| *b);
-        let npmrc_local = PoolPath::resolve(&[top_level_dir, b".npmrc"]).ok();
+        let npmrc_local = Path::resolve(&[top_level_dir, b".npmrc"]);
         let mut install = load_npmrc_files(
             &bunfig_install,
             env,
             bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
-            &mut npmrc_local.as_deref().into_iter(),
+            &mut core::iter::once(&*npmrc_local),
             ini::NpmrcDiagnostics::Print,
         );
 
@@ -2443,7 +2440,8 @@ pub fn init(
     }
     {
         // make sure folder packages can find the root package without creating a new one
-        let normalized = bun_paths::ForwardSlashPath::join(&[root_package_json_path.as_bytes()]);
+        let normalized =
+            bun_paths::Path::join(&[root_package_json_path.as_bytes()]).into_portable();
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
             FolderResolutionKey::new(FolderResolutionKind::Folder, &normalized),

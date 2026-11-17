@@ -582,27 +582,15 @@ impl Extraction {
         // Strip the leading `package/` (or `<repo>-<sha>/` for GitHub) and
         // normalise. Same transformation as Archiver.extractToDir so both
         // paths produce identical on-disk layouts.
-        let mut tokenizer = pathname[..]
-            .split(|c| *c == ('/' as OSPathChar))
-            .filter(|s| !s.is_empty());
-        if tokenizer.next().is_none() {
+        let Some(rest) = bun_archive::skip_path_components(pathname, 1) else {
             return Ok(());
-        }
-        // tokenizeScalar.rest() — need byte offset of remainder, not just
-        // iterator. `split().filter()` loses that, so use a manual
-        // index-of-first-'/' + skip-leading-'/' instead. The result is fed
-        // straight to `normalize_entry_path` (which takes `&[OSPathChar]`, not a
-        // NUL-terminated slice) so there is no need to reconstruct an
-        // `OSPathSliceZ` suffix view here.
-        let rest: &[OSPathChar] = tokenize_rest_after_first(pathname);
-
-        let mut norm_buf = bun_paths::os_path_buffer_pool::get();
-        let normalized = if self.npm_mode {
-            bun_archive::normalize_npm_entry_path(entry, &mut norm_buf[..])?
-        } else {
-            bun_archive::normalize_entry_path(rest, &mut norm_buf[..])
         };
-        let Some(path) = normalized else {
+        let destination = if self.npm_mode {
+            bun_archive::npm_entry_destination(entry)?
+        } else {
+            bun_archive::entry_destination(rest)
+        };
+        let Some(path) = destination else {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",
                 bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(rest, Default::default())),
@@ -612,19 +600,7 @@ impl Extraction {
         if path.is_empty() {
             return Ok(());
         }
-        bun_paths::posix_to_platform_in_place(path);
-        #[cfg(windows)]
-        {
-            if self.npm_mode {
-                apply_windows_npm_path_escapes(path);
-            }
-            if <bun_paths::platform::Windows as bun_paths::PathStyle>::climbs_out(path) {
-                return Ok(());
-            }
-        }
-
-        let norm_len = path.len();
-        let path: OSPathZ = OSPathSliceZ::nul_terminate(&mut norm_buf, norm_len);
+        let path: OSPathZ = &path;
         let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.as_ref().unwrap().fd();
 
@@ -946,43 +922,6 @@ fn make_directory(entry: &tar::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[
             },
         }
     }
-}
-
-#[cfg(windows)]
-fn apply_windows_npm_path_escapes(path: &mut [OSPathChar]) {
-    // Same transformation as Archiver.extractToDir: encode characters
-    // Windows rejects in filenames into the 0xf000 private-use range so
-    // the extraction round-trips with node-tar.
-    for ch in path.iter_mut() {
-        match *ch {
-            c if c == ('|' as OSPathChar)
-                || c == ('<' as OSPathChar)
-                || c == ('>' as OSPathChar)
-                || c == ('?' as OSPathChar)
-                || c == (':' as OSPathChar) =>
-            {
-                *ch += 0xf000;
-            }
-            _ => {}
-        }
-    }
-}
-
-// Skips any leading `/` delimiters, then returns everything after the first
-// path component, so for `"package/index.js"` the result is `"index.js"`
-// (no leading `/`).
-fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
-    let mut i = 0;
-    while i < s.len() && s[i] == ('/' as OSPathChar) {
-        i += 1;
-    }
-    while i < s.len() && s[i] != ('/' as OSPathChar) {
-        i += 1;
-    }
-    while i < s.len() && s[i] == ('/' as OSPathChar) {
-        i += 1;
-    }
-    &s[i..]
 }
 
 use crate::package_manager_task::{Job, Status as TaskStatus, Task};

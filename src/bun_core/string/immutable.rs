@@ -2099,7 +2099,9 @@ pub use crate::strings_impl::trim_left;
 /// Strip trailing chars in `values_to_strip`.
 pub use crate::strings_impl::trim_right;
 
-pub use crate::strings_impl::{replace, replace_owned, replacement_size};
+pub use crate::strings_impl::{
+    replace, replace_char, replace_char_in_place, replace_owned, replacement_size,
+};
 
 // Defined in crate::fmt; re-exported here for back-compat.
 pub use crate::fmt::{ParseIntError, parse_int};

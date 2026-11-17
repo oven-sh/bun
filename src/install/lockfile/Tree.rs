@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList, index_sort};
 use bun_core::ZStr;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, UnwrapOrOom as _};
-use bun_paths::{MAX_PATH_BYTES, NameTooLong, PathBuffer, SlicePath, platform_to_posix_in_place};
+use bun_paths::{MAX_PATH_BYTES, Path, to_portable_in_place};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{
@@ -194,7 +194,7 @@ pub enum IteratorPathStyle {
 
 pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
     pub(crate) tree_id: Id,
-    pub(crate) path_buf: PathBuffer,
+    path: Path,
 
     trees: &'a [Tree],
     hoisted_dependencies: &'a [DependencyID],
@@ -247,7 +247,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             hoisted_dependencies,
             dependencies,
             string_bytes,
-            path_buf: PathBuffer::ZEROED,
+            path: Path::new(),
             depth_stack: depth_buf_uninit(),
         }
     }
@@ -291,7 +291,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             self.dependencies,
             self.string_bytes,
             current_tree_id,
-            &mut self.path_buf,
+            &mut self.path,
             &mut self.depth_stack,
         );
 
@@ -313,7 +313,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     dependencies: &[Dependency],
     string_buf: &[u8],
     tree_id: Id,
-    path_buf: &'b mut PathBuffer,
+    path: &'b mut Path,
     depth_buf: &mut DepthBuf,
 ) -> (&'b ZStr, usize) {
     let mut depth: usize = 0;
@@ -322,16 +322,9 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
     let mut parent_id = tree.id;
 
-    let crash_if_too_long = |result: Result<(), NameTooLong>| {
-        if result.is_err() {
-            Output::err_generic("Lockfile is malformed (dependency path is too long)", ());
-            bun_core::Global::crash();
-        }
-    };
-
-    let mut path = SlicePath::new(path_buf);
+    path.clear();
     if PATH_STYLE == IteratorPathStyle::NodeModules {
-        crash_if_too_long(path.set(b"node_modules"));
+        path.set(b"node_modules");
     }
 
     if tree.id > 0 {
@@ -340,7 +333,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
         while parent_id > 0 && (parent_id as usize) < trees.len() {
             if ids.len() == ids.capacity() {
-                return (path.into_zstr(), 0);
+                return (path, 0);
             }
             ids.unfilled().append(&[parent_id]);
             parent_id = trees[parent_id as usize].parent;
@@ -349,9 +342,9 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
         depth = ids.len();
         for (i, &id) in ids.filled().iter().rev().enumerate() {
             if PATH_STYLE == IteratorPathStyle::NodeModules {
-                crash_if_too_long(path.push_trailing_sep());
+                path.push_trailing_sep();
             } else if i != 0 {
-                crash_if_too_long(path.extend_from_slice(b"/"));
+                path.extend_from_slice(b"/");
             }
 
             let mut name = trees[id as usize].folder_name(dependencies, buf);
@@ -360,7 +353,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             // first component. The path starts at the package's own folder, or `./` in bun.lock.
             if trees[id as usize].is_unlinked_member(trees, hoisted_dependencies, dependencies) {
                 if PATH_STYLE == IteratorPathStyle::PkgPath {
-                    crash_if_too_long(path.set(b"./"));
+                    path.set(b"./");
                 } else {
                     let member = &dependencies[trees[id as usize].dependency_id as usize];
                     let crate::dependency::Value::Workspace(folder) = &member.version.value else {
@@ -380,19 +373,23 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             }
             if is_workspace_path {
                 path.clear();
-                crash_if_too_long(path.push(name));
+                path.push(name);
                 // Keeps the `/` that it has in the lockfile.
-                platform_to_posix_in_place(path.as_mut_slice());
+                to_portable_in_place(path.as_mut_slice());
             } else {
-                crash_if_too_long(path.extend_from_slice(name));
+                path.extend_from_slice(name);
             }
             if PATH_STYLE == IteratorPathStyle::NodeModules {
-                crash_if_too_long(path.push(b"node_modules"));
+                path.push(b"node_modules");
+            }
+            if path.len() >= MAX_PATH_BYTES {
+                Output::err_generic("Lockfile is malformed (dependency path is too long)", ());
+                bun_core::Global::crash();
             }
         }
     }
 
-    (path.into_zstr(), depth)
+    (path, depth)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

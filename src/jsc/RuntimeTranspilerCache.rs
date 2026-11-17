@@ -9,7 +9,7 @@ use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
 use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
 use bun_js_printer::analyze_transpiled_module::ModuleInfo;
-use bun_paths::{self as paths, PoolPath, VecPath};
+use bun_paths::{self as paths, Path, VecPath};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd};
 // Wyhash (final4 variant). Must stay stable so on-disk
@@ -564,7 +564,7 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> crate::CrateResult<Bo
 }
 
 impl RuntimeTranspilerCache {
-    fn get_cache_file_path(input_hash: u64) -> crate::CrateResult<PoolPath> {
+    fn get_cache_file_path(input_hash: u64) -> crate::CrateResult<Path> {
         thread_local! {
             static CACHE_DIR: OnceCell<Option<VecPath>> = const { OnceCell::new() };
         }
@@ -581,10 +581,10 @@ impl RuntimeTranspilerCache {
         bun_core::fmt::bytes_to_hex_lower(&input_hash.to_ne_bytes(), &mut hex);
         let path = CACHE_DIR.with(|dir| {
             let dir = dir.get_or_init(Self::find_cache_dir).as_ref()?;
-            let mut path = PoolPath::from(dir).ok()?;
-            path.push(&hex).ok()?;
-            path.extend_from_slice(SUFFIX).ok()?;
-            Some(path)
+            let mut path = Path::from(dir);
+            path.push(&hex);
+            path.extend_from_slice(SUFFIX);
+            path.check_len().ok()
         });
         path.ok_or_else(|| {
             IS_DISABLED.store(true, Ordering::Relaxed);

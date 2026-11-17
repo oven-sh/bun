@@ -53,7 +53,7 @@ pub(crate) fn generate_and_write_profile(
     if config.text_format {
         bun_core::pretty_errorln!(
             "Heap profile written to: {}",
-            bun_core::fmt::fmt_os_path(&path, Default::default())
+            bun_core::fmt::fmt_path(&path, Default::default())
         );
         Output::flush();
     }

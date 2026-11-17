@@ -564,17 +564,10 @@ pub use bun_alloc::SEP;
 ///
 /// Canonical definition; `bun_paths::PathBuffer` re-exports this so the two
 /// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
-/// `bun_core::getcwd`/`which` without a pointer cast.
+/// `bun_core::getcwd` without a pointer cast.
 ///
 /// Scratch instances come from `bun_paths::path_buffer_pool::get()`. `ZEROED`
 /// is for long-lived struct fields: on Windows it is a 98 KB memset.
-///
-/// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
-/// `&mut PathBuffer` as `&mut [u16]` via [`cast_slice_mut`]. The language
-/// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
-/// hard `assert!`. In practice every `PathBuffer` fed to
-/// the `[u16]` view is a fresh stack local or a pooled heap allocation, both
-/// of which are ≥8-byte aligned on every supported target.
 #[repr(transparent)]
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {

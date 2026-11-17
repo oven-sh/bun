@@ -1387,9 +1387,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     if body.needs_to_read_file() {
         'prepare_body: {
-            // A local `PathBuffer` serves as NUL-termination scratch for
-            // `path.slice_z()`.
-            let mut open_path_buf = bun_paths::path_buffer_pool::get();
+            let mut open_path_buf = bun_paths::Path::new();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 match &store.data.as_file().pathlike {

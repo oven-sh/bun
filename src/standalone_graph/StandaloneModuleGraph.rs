@@ -17,7 +17,7 @@ use bun_exe_format::mapped_file::FileBytes;
 use bun_exe_format::{macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
 pub use bun_options_types::standalone_path::is_bun_standalone_file_path;
-use bun_paths::{self as path, PathBuffer, fs as bun_fs};
+use bun_paths::{self as path, fs as bun_fs};
 use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledProgram, ImageFile, join_public_path,
@@ -182,7 +182,7 @@ impl StandaloneModuleGraph {
 
     pub(crate) fn lookup_file(&self, name: &[u8]) -> Option<&File> {
         #[cfg(windows)]
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buf);
         self.files
@@ -237,14 +237,14 @@ impl StandaloneModuleGraph {
             self.fill_stat_for_file_system_alone(file.name, &mut stat);
             return Some(stat);
         }
-        let mut buffer = bun_paths::path_buffer_pool::get();
+        let mut buffer = path::Path::new();
         let key = self.directory_key(name, &mut buffer)?;
         let mut stat = dir_stat();
         self.fill_stat_for_file_system_alone(key, &mut stat);
         Some(stat)
     }
 
-    pub(crate) fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    pub(crate) fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut path::Path) -> &'a [u8] {
         #[cfg(windows)]
         let name = normalize_file_key(name, buf);
         #[cfg(not(windows))]
@@ -253,14 +253,14 @@ impl StandaloneModuleGraph {
     }
 
     pub fn find_dir(&self, name: &[u8]) -> bool {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         self.directory_key(name, &mut buf).is_some()
     }
 
     /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
     /// the errno an `open(O_DIRECTORY)` of it would produce.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         if let Some(key) = self.directory_key(name, &mut buf) {
             if let Some((shared, _)) = self.find_folders_named_alike(name, key) {
                 return Ok(keep_key_of_directory_with_code_alone(&shared));
@@ -280,7 +280,7 @@ impl StandaloneModuleGraph {
 
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         let found = self.directory_key(name, &mut buf)?;
         let mut listed = self.list_folder(found, recursive);
         let others = self.find_folders_named_alike(name, found);
@@ -376,7 +376,7 @@ impl StandaloneModuleGraph {
             for entry_point in program.entry_points_in_directory(name) {
                 source_path.clear();
                 source_path.extend_from_slice(entry_point.source_path);
-                path::platform_to_posix_in_place::<u8>(&mut source_path);
+                path::to_portable_in_place::<u8>(&mut source_path);
                 push(&source_path, false);
             }
             program.for_each_module_below(name, &mut |path| {
@@ -400,7 +400,7 @@ impl StandaloneModuleGraph {
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buf);
         if self.compiled_program.is_none() || self.files.contains_key(name) {
@@ -427,13 +427,10 @@ fn keep_key_of_directory_with_code_alone(key: &[u8]) -> &'static [u8] {
 }
 
 #[cfg(windows)]
-pub(crate) fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
-    let input = path::without_nt_prefix(name);
-    let key = &mut buf[..input.len()];
-    key.copy_from_slice(input);
-    path::platform_to_posix_in_place(key);
-    let length = normalize_windows_key(key);
-    &buf[..length]
+pub(crate) fn normalize_file_key<'a>(name: &[u8], key: &'a mut path::Path) -> &'a [u8] {
+    *key = path::Path::from(path::without_nt_prefix(name)).into_portable();
+    let length = normalize_windows_key(key.as_mut_slice());
+    &key[..length]
 }
 
 /// Keys have an uppercase drive letter and no trailing separator. Returns the new length.
@@ -2363,9 +2360,9 @@ impl CompileResult {
 /// the open file plus the absolute path it was created at, which the caller
 /// renames into place (an fd cannot be mapped back to a path on every
 /// filesystem).
-pub(crate) struct Injected<'a> {
+pub(crate) struct Injected {
     pub file: ExecutableFile,
-    pub temp_path: &'a ZStr,
+    pub temp_path: path::Path,
 }
 
 /// The temp copy while `inject` writes it: deleted unless `file` is taken out.
@@ -2394,19 +2391,13 @@ impl Drop for UnfinishedCopy<'_> {
     }
 }
 
-impl<'a> Injected<'a> {
+impl Injected {
     /// `copy` was opened relative to `cwd` (or by an absolute name); pin the name in
-    /// `temp_path_buf` so a later `chdir` cannot retarget the rename/unlink.
-    fn new(
-        mut copy: UnfinishedCopy<'_>,
-        cwd: &[u8],
-        temp_path_buf: &'a mut PathBuffer,
-    ) -> Option<Injected<'a>> {
-        let mut temp_path = path::SlicePath::new(temp_path_buf);
-        temp_path.resolve_in_place(&[cwd, copy.name]).ok()?;
+    /// `temp_path` so a later `chdir` cannot retarget the rename/unlink.
+    fn new(mut copy: UnfinishedCopy<'_>, cwd: &[u8]) -> Option<Injected> {
         Some(Injected {
+            temp_path: path::Path::resolve(&[cwd, copy.name]).check_len().ok()?,
             file: copy.file.take().expect("taken once"),
-            temp_path: temp_path.into_zstr(),
         })
     }
 }
@@ -2416,15 +2407,14 @@ type ExecutableFile = bun_sys::close_on_fork::File;
 #[cfg(windows)]
 type ExecutableFile = bun_sys::File;
 
-pub(crate) fn inject<'a>(
+pub(crate) fn inject(
     payload: &mut PayloadParts<'_>,
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
     output_directory: &[u8],
-    temp_path_buf: &'a mut PathBuffer,
     additions: &mut InjectionAdditions<'_>,
-) -> Option<Injected<'a>> {
+) -> Option<Injected> {
     additions.name_executable(payload);
     additions.log_part("behind the engine: name of the executable");
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
@@ -2478,8 +2468,8 @@ pub(crate) fn inject<'a>(
             // copy self and then open it for writing
 
             use bun_sys::windows::{self as w, Win32ErrorExt as _};
-            let out: &bun_core::WStr = &path::GenericPath::<path::VecBackend<u16>>::from(zname);
-            let exe = path::GenericPath::<path::VecBackend<u16>>::from(self_exe);
+            let out: &bun_core::WStr = &path::OSPath::from(zname);
+            let exe = path::OSPath::from(self_exe);
             if let Err(err) = w::CopyFileW(&exe, out, false) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
@@ -2690,7 +2680,7 @@ pub(crate) fn inject<'a>(
             {
                 bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
-            return Injected::new(copy, cwd, temp_path_buf);
+            return Injected::new(copy, cwd);
         }
         CompileTargetOs::Windows => {
             let bytes = payload.joined();
@@ -2747,7 +2737,7 @@ pub(crate) fn inject<'a>(
             {
                 bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
-            return Injected::new(copy, cwd, temp_path_buf);
+            return Injected::new(copy, cwd);
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
@@ -2844,7 +2834,7 @@ pub(crate) fn inject<'a>(
             {
                 bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
-            return Injected::new(copy, cwd, temp_path_buf);
+            return Injected::new(copy, cwd);
         }
         _ => {
             if additions.needs_executable_format() {
@@ -2925,7 +2915,7 @@ pub(crate) fn inject<'a>(
                 bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
 
-            return Injected::new(copy, cwd, temp_path_buf);
+            return Injected::new(copy, cwd);
         }
     }
 }
@@ -3112,27 +3102,25 @@ pub fn target_executable(
             }
         }
     } else {
-        let mut exe_path_buf = bun_paths::path_buffer_pool::get();
         let mut version_str: Vec<u8> = Vec::new();
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
-        let dest_z =
-            match target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download) {
-                Ok(dest) => dest,
-                Err(_) => {
-                    return Err(CompileError::fmt(format_args!(
-                        "Cache directory path for '{}' is too long: {}",
-                        target,
-                        bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
-                    )));
-                }
-            };
+        let dest_z = match target.exe_path(version_zstr, env, &mut needs_download) {
+            Ok(dest) => dest,
+            Err(_) => {
+                return Err(CompileError::fmt(format_args!(
+                    "Cache directory path for '{}' is too long: {}",
+                    target,
+                    bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
+                )));
+            }
+        };
 
         if needs_download {
-            if let Err(e) = download_to_path(target, env, dest_z) {
+            if let Err(e) = download_to_path(target, env, &dest_z) {
                 return Err(match e {
                     crate::Error::TargetNotFound => CompileError::fmt(format_args!(
                         "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
@@ -3268,7 +3256,6 @@ pub fn to_executable(
         Err(e) => return Ok(CompileResult::Err(e)),
     };
 
-    let mut temp_path_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     let output_directory: &[u8] = b".";
     #[cfg(not(windows))]
@@ -3297,7 +3284,6 @@ pub fn to_executable(
         windows_options,
         target,
         output_directory,
-        &mut temp_path_buf,
         &mut injection,
     ) else {
         // inject() has already printed the specific error.
@@ -3350,7 +3336,7 @@ pub fn to_executable(
                 | windows::MOVEFILE_WRITE_THROUGH,
         ) {
             let err = err.to_system_errno();
-            let _ = Syscall::unlink(injected.temp_path);
+            let _ = Syscall::unlink(&injected.temp_path);
             if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
@@ -3393,7 +3379,7 @@ pub fn to_executable(
 
     #[cfg(not(windows))]
     {
-        let temp_posix = injected.temp_path;
+        let temp_posix: &ZStr = &injected.temp_path;
         let outfile_posix = path::Path::from(bun_paths::basename(outfile));
 
         if let Err(e) =

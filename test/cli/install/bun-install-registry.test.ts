@@ -5144,6 +5144,7 @@ describe.concurrent("binaries", () => {
     test.each([
       ["package directory", "has-bin", join("node_modules", "has-bin")],
       [".bin directory", "a", join("node_modules", ".bin")],
+      ["link in .bin", "a", join("node_modules", ".bin", "a")],
     ])("install reports a %s that does not fit as ENAMETOOLONG", async (_, name, subpath) => {
       const { packageDir, env } = await setupTest();
       await writeBinPackage(packageDir, name);

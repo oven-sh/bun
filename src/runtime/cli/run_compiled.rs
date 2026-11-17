@@ -109,7 +109,7 @@ pub(crate) fn set_stand_in(path: &[u8], text: &[u8]) {
 }
 
 fn key_of_stand_in(path: &[u8]) -> Vec<u8> {
-    bun_paths::platform_to_posix(path).into_owned()
+    bun_paths::to_portable(path).into_owned()
 }
 
 // No file of the run spells what the runner does for `--globals=vitest`: `Jest::define_vitest_globals()` stores the names on `globalThis` before any file runs. This file
@@ -1498,7 +1498,7 @@ pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u
     (askers.into_iter().zip(importers))
         .filter_map(|(asker, importer)| {
             let importer = importer?;
-            let importer = bun_paths::platform_to_posix(bun_paths::strip_prefix(&importer, top)?);
+            let importer = bun_paths::to_portable(bun_paths::strip_prefix(&importer, top)?);
             Some((asker.to_vec(), importer.into_owned()))
         })
         .collect()
@@ -1507,7 +1507,9 @@ pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u
 fn path_below_project(path: &bun_core::String) -> Vec<u8> {
     let path = path.to_owned_slice();
     let project = bun_resolver::fs::FileSystem::get().top_level_dir();
-    bun_paths::ForwardSlashPath::relative(project, &path).to_vec()
+    bun_paths::Path::relative(project, &path)
+        .into_portable()
+        .to_vec()
 }
 
 pub(crate) const MISSING_EXPORT: &[u8] = b"Missing ";

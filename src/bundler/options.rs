@@ -2482,7 +2482,7 @@ impl PathTemplate {
         w: &mut W,
         slice: &[u8],
     ) -> bun_io::Result<()> {
-        w.write_all(&bun_paths::posix_to_platform(slice))
+        w.write_all(&bun_paths::to_native(slice))
     }
 
     pub const CHUNK: PathTemplateConst = PathTemplateConst {

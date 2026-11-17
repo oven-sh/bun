@@ -18,7 +18,7 @@ use bun_clap as clap;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
-use bun_paths::PoolPath;
+use bun_paths::Path;
 
 use std::sync::OnceLock;
 
@@ -1831,10 +1831,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             let cwd_: &[u8] = &bun_sys::existing_spelling(bun_sys::Fd::cwd(), cwd_);
             let final_path = if cwd_.starts_with(b".") {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                PoolPath::resolve(&[bun_sys::getcwd_z(&mut buf)?, cwd_])
+                Path::resolve(&[bun_sys::getcwd_z(&mut buf)?, cwd_])
             } else {
-                PoolPath::from(cwd_)
-            };
+                Path::from(cwd_)
+            }
+            .check_len();
             let final_path = final_path.as_deref().ok();
             let too_long = bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir);
             if let Err(err) = final_path.map_or(Err(too_long), bun_sys::chdir) {

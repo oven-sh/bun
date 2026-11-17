@@ -12,8 +12,7 @@ use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::platform::{Auto, Windows};
-use bun_paths::{GenericPath, OSPathSlice, Path, PathStyle, PoolPath, VecBackend};
+use bun_paths::{OSPathSlice, Path};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
 #[cfg(not(windows))]
@@ -149,11 +148,10 @@ const BUN_CREATE_DIR: &[u8] = b".bun-create";
 
 /// `name`, joined onto a template dir, stays inside it, whether or not `\` is a separator.
 fn names_path_inside_dir(name: &[u8]) -> bool {
-    fn is_inside<S: PathStyle>(name: &[u8]) -> bool {
-        let name = &name[S::root(name).len()..];
-        !S::climbs_out(name) && GenericPath::<VecBackend, S>::resolve(&[name]).as_bytes() != b"."
-    }
-    is_inside::<Auto>(name) && is_inside::<Windows>(name)
+    let name = strings::trim_left(&name[bun_paths::volume(name).len()..], b"/\\");
+    let is_inside =
+        |name: &[u8]| !bun_paths::climbs_out(name) && Path::resolve(&[name]).as_bytes() != b".";
+    is_inside(name) && is_inside(&bun_paths::from_portable(name))
 }
 
 /// Such a copy would truncate its source or walk into its own output.
@@ -598,9 +596,9 @@ impl CreateCommand {
                     &mut walker_,
                     &progress,
                     #[cfg(windows)]
-                    bun_paths::OSPath::from(destination)?,
+                    bun_paths::OSPath::from(destination),
                     #[cfg(windows)]
-                    bun_paths::OSPath::from(abs_template_path)?,
+                    bun_paths::OSPath::from(abs_template_path),
                 )?;
 
                 template_has_dot_gitignore =
@@ -1108,8 +1106,7 @@ impl CreateCommand {
         Output::flush();
 
         if create_options.open {
-            let mut bun_path_buf = bun_paths::path_buffer_pool::get();
-            if let Some(bin) = which(&mut bun_path_buf, path_env, destination, b"bun") {
+            if let Some(bin) = which(path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 crate::cli::open::open_url(bun_core::zstr!("http://localhost:3000/"));
 
@@ -1153,13 +1150,13 @@ impl CreateCommand {
 
         let positional = positionals[0];
         let join = |parts: &[&[u8]]| {
-            let mut path = PoolPath::from_top_level_dir().ok()?;
-            path.resolve_in_place(parts).ok()?;
-            path.copy_trailing_sep_from(positional).ok()?;
-            Some(path)
+            let mut path = Path::from_top_level_dir();
+            path.resolve_in_place(parts);
+            path.copy_trailing_sep_from(positional);
+            path
         };
         let template: &[u8] = 'brk: {
-            let Some(outdir_path) = join(&[positional]) else {
+            let Ok(outdir_path) = join(&[positional]).check_len() else {
                 pretty_errorln!("<r><red>error<r>: template name too long");
                 Global::exit(1);
             };
@@ -1201,9 +1198,7 @@ impl CreateCommand {
                 home_dir.map(|dir| vec![dir, BUN_CREATE_DIR, positional]),
             ];
             for parts in template_dirs.iter().flatten() {
-                let Some(outdir_path) = join(parts) else {
-                    continue;
-                };
+                let outdir_path = join(parts);
                 if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &outdir_path).unwrap_or(false) {
                     example_tag = ExampleTag::LocalFolder;
                     break 'brk crate::cli::cli_dupe(&outdir_path);
@@ -1257,8 +1252,8 @@ fn file_copier_copy(
                 continue;
             }
 
-            let dst: &bun_core::WStr = &destination.push_scoped(entry.path)?;
-            let src: &bun_core::WStr = &template.push_scoped(entry.path)?;
+            let dst: &bun_core::WStr = &destination.push_scoped(entry.path);
+            let src: &bun_core::WStr = &template.push_scoped(entry.path);
 
             match entry.kind {
                 bun_sys::FileKind::Directory => {
@@ -1927,12 +1922,11 @@ impl GitHandler {
         let git_start = bun_core::time::nano_timestamp();
 
         // The git CLI: libgit2 took three times as long for this.
-        let mut bun_path_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None),
         );
-        if let Some(git) = which(&mut bun_path_buf, path, destination, b"git") {
+        if let Some(git) = which(path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
 
             if verbose {

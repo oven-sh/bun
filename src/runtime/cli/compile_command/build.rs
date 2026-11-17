@@ -16,7 +16,7 @@ use bun_exe_format::identity::{
 };
 use bun_options_types::Format;
 use bun_options_types::aot_options::AotOptions;
-use bun_paths::{ForwardSlashPath, Path, VecPath, platform_to_posix};
+use bun_paths::{Path, VecPath, to_portable};
 use bun_resolver::compiled_program::{
     PathForFileSystemAlone, encode_files_for_file_system_alone, folders_up_to,
 };
@@ -765,7 +765,7 @@ fn emit_not_embedded_warnings(
     output_files: &[OutputFile],
     log: &mut bun_ast::Log,
 ) {
-    let root = platform_to_posix(trim_trailing_separators(root_directory));
+    let root = to_portable(trim_trailing_separators(root_directory));
     let fs_only_paths = fs_only_paths.iter().filter(|it| !it.is_folder);
     let fs_only_paths = fs_only_paths.map(|it| &it.path_below_root[..]);
     let is_file = |file: &&OutputFile| file.output_kind.is_file_in_standalone_mode();
@@ -774,7 +774,7 @@ fn emit_not_embedded_warnings(
     let with_text = with_text.map(|it| bun_paths::without_leading_dot_slash(&it.dest_path));
     let found: std::collections::BTreeSet<&[u8]> = fs_only_paths.chain(with_text).collect();
     for (path, warning) in &files_for_file_system.warnings_if_not_embedded {
-        let spelled = platform_to_posix(path);
+        let spelled = to_portable(path);
         if !found.contains(spelled.get(root.len() + 1..).unwrap_or_default()) {
             log.warnings += 1;
             log.add_msg(warning.clone());
@@ -798,7 +798,9 @@ fn list_below(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
     let (mut files, mut folders) = (Vec::new(), Vec::new());
     while let Some(entry) = walker.next().ok()? {
         #[cfg(windows)]
-        let path = ForwardSlashPath::from_parts(&[entry.path.as_slice()]).to_vec();
+        let path = Path::from_parts(&[entry.path.as_slice()])
+            .into_portable()
+            .to_vec();
         #[cfg(not(windows))]
         let path = entry.path.as_bytes().to_vec();
         match entry.kind {
@@ -849,9 +851,9 @@ fn add_data_files_under_root(
     if data_files.is_empty() {
         return Vec::new();
     }
-    let root = platform_to_posix(trim_trailing_separators(root_directory));
+    let root = to_portable(trim_trailing_separators(root_directory));
     let code = files_for_file_system.code_seen.iter();
-    let code: Paths = code.map(|it| platform_to_posix(it).into_owned()).collect();
+    let code: Paths = code.map(|it| to_portable(it).into_owned()).collect();
     let mut modules_without_text = modules_without_text(output_files);
     let taken: Paths = output_files
         .iter()
@@ -868,7 +870,9 @@ fn add_data_files_under_root(
     // What an earlier build left where this one writes its executable is no file of the program.
     let outfile = bun_sys::getcwd_alloc().ok().map(|working_directory| {
         let folder = working_directory.as_bytes();
-        ForwardSlashPath::resolve(&[folder, entry_name]).to_vec()
+        Path::resolve(&[folder, entry_name])
+            .into_portable()
+            .to_vec()
     });
     let is_outfile = |path: &[u8]| {
         outfile.as_deref().is_some_and(|outfile| {
@@ -881,7 +885,7 @@ fn add_data_files_under_root(
 
     let mut data: std::collections::BTreeMap<Vec<u8>, OutputFile> = Default::default();
     for data_file in data_files {
-        let spelled = platform_to_posix(data_file).into_owned();
+        let spelled = to_portable(data_file).into_owned();
         let is_below_root = spelled.starts_with(&root) && spelled.get(root.len()) == Some(&b'/');
         let under_root = path_from_root(root_directory, b"/", data_file);
         if !is_below_root || under_root.is_none_or(|it| it != below_root(&spelled)) {
@@ -1391,7 +1395,7 @@ fn trim_trailing_separators(mut path: &[u8]) -> &[u8] {
 
 pub(super) fn graph_path(asset_path: &[u8], path_in_asset: &[u8]) -> Vec<u8> {
     let mut path = to_embedded_name(&[asset_path, path_in_asset].concat());
-    bun_paths::platform_to_posix_in_place(&mut path[..]);
+    bun_paths::to_portable_in_place(&mut path[..]);
     path
 }
 

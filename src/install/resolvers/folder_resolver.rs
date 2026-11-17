@@ -2,7 +2,7 @@ use core::fmt;
 
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
-use bun_paths::{ForwardSlashPath, Path, PoolPath};
+use bun_paths::Path;
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
@@ -131,7 +131,7 @@ impl ResolverContext for NewResolver<'_> {
 
 struct Paths {
     /// The absolute path of the `package.json`.
-    abs: PoolPath,
+    abs: Path,
     /// The folder, relative to the project root.
     rel: Path,
 }
@@ -146,18 +146,18 @@ fn normalize_package_json_path(
         GlobalOrRelative::Global(path) => path,
         GlobalOrRelative::Relative(_) => top_level_dir,
     };
-    let mut abs = PoolPath::resolve(&[base, non_normalized_path]).ok()?;
+    let mut abs = Path::resolve(&[base, non_normalized_path]);
     let rel = Path::relative(top_level_dir, &abs);
-    abs.push(b"package.json").ok()?;
+    abs.push(b"package.json");
+    let abs = abs.check_len().ok()?;
     Some(Paths { abs, rel })
 }
 
 /// A `file:` folder is copied, and this one would take the whole file system.
 pub(crate) fn is_root_above_project(folder: &[u8]) -> bool {
     let project = FileSystem::get().top_level_dir();
-    let abs = ForwardSlashPath::resolve(&[project, folder]);
-    matches!(abs.as_bytes(), b"/" | [_, b':', b'/'])
-        && ForwardSlashPath::relative(project, &abs).starts_with(b"..")
+    let abs = Path::resolve(&[project, folder]);
+    abs.dirname().is_none() && Path::relative(project, &abs).starts_with(b"..")
 }
 
 fn read_package_json_from_disk(
@@ -323,8 +323,8 @@ pub(crate) fn get_or_put(
         return FolderResolution::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
     };
     // replace before getting hash
-    bun_paths::platform_to_posix_in_place(paths.abs.as_mut_slice());
-    bun_paths::platform_to_posix_in_place(paths.rel.as_mut_slice());
+    bun_paths::to_portable_in_place(paths.abs.as_mut_slice());
+    bun_paths::to_portable_in_place(paths.rel.as_mut_slice());
     let abs: &ZStr = &paths.abs;
     let rel: &[u8] = &paths.rel;
 

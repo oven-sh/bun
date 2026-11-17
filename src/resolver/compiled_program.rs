@@ -2,12 +2,12 @@ use core::cell::RefCell;
 use core::cmp::Ordering;
 use std::sync::OnceLock;
 
+use bun_ast::ImportKind;
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
-use bun_paths::platform::Auto;
-use bun_paths::{Path, PathStyle as _, PoolPath, is_sep};
+use bun_paths::{Path, is_sep};
 
 use crate::package_json::{Package, split_at_star};
-use crate::resolver::Resolver;
+use crate::resolver::{Resolver, path_of_specifier};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ImageFile {
@@ -404,9 +404,9 @@ pub fn directories_of_importer(
     let segments = segments.unwrap_or_default();
     let join = |count: usize| {
         let relative = segments[..count].join(&b"/"[..]);
-        Some(PoolPath::resolve(&[base, &relative]).ok()?.to_vec())
+        Path::resolve(&[base, &relative]).to_vec()
     };
-    (1..=segments.len()).rev().filter_map(join).collect()
+    (1..=segments.len()).rev().map(join).collect()
 }
 
 /// The path without the extension of its last name: `find_file()` puts others in its place.
@@ -865,7 +865,7 @@ impl CompiledProgram {
     /// Where the root directory lies below the folder of this executable, wherever it is installed.
     pub fn root_beside_executable(&self, executable: &[u8]) -> Option<Vec<u8>> {
         let root = self.root_from_executable?;
-        Some(PoolPath::resolve(&[executable, b"..", root]).ok()?.to_vec())
+        Some(Path::resolve(&[executable, b"..", root]).to_vec())
     }
 
     pub fn knows_root_on_disk(&self) -> bool {
@@ -875,7 +875,7 @@ impl CompiledProgram {
     /// The folder on disk that stands for the root directory of the build.
     pub fn root_on_disk(&self, working_directory: &[u8]) -> Option<Vec<u8>> {
         let root = self.root_below_working_directory?;
-        Some(PoolPath::resolve(&[working_directory, root]).ok()?.to_vec())
+        Some(Path::resolve(&[working_directory, root]).to_vec())
     }
 
     pub fn set_module_lookup(&self, lookup: ModuleLookup) {
@@ -967,11 +967,11 @@ impl CompiledProgram {
         let Some(listing) = self.module_listing.get() else {
             return;
         };
-        bun_paths::posix_to_platform_in_place(&mut start);
+        bun_paths::to_native_in_place(&mut start);
         listing(&start, &mut |path| {
             // A file that only an attribute asks for stands under its path, a question mark and the name of the form.
             let path = bun_core::strings::split(path, b"?").next().unwrap_or(path);
-            each(&bun_paths::platform_to_posix(path))
+            each(&bun_paths::to_portable(path))
         });
     }
 
@@ -1143,7 +1143,7 @@ impl CompiledProgram {
         if !bun_paths::is_absolute(base) || is_bun_standalone_file_path(base) {
             return None;
         }
-        let file = PoolPath::resolve(&[source_dir, specifier]).ok()?;
+        let file = Path::resolve(&[source_dir, specifier]);
         let path = self.public_path_of_source(public_root, &file)?;
         let how = HowNamed {
             names_directory: Resolver::import_path_names_directory(specifier),
@@ -1257,8 +1257,9 @@ impl CompiledProgram {
         let aliases = || self.path_aliases.iter().filter(|it| it.folder == folder);
         let paths = || aliases().filter(|alias| !alias.is_base_url);
         let find = |alias: &CompiledPathAlias, matched: &[u8]| {
+            let matched = bun_core::strings::replace_char(matched, b'\\', b'/');
             let target = match split_at_star(alias.target) {
-                Some((start, end)) => [start, matched, end].concat(),
+                Some((start, end)) => [start, &matched, end].concat(),
                 None => alias.target.to_vec(),
             };
             let how = HowNamed {
@@ -1347,8 +1348,13 @@ impl CompiledProgram {
         if let Some(found) = alias {
             return Found(found);
         }
+        let kind = match is_require {
+            true => ImportKind::Require,
+            false => ImportKind::Stmt,
+        };
+        let as_path: &[u8] = &path_of_specifier(specifier, kind);
         let how = HowNamed {
-            names_directory: Auto::has_trailing_sep(specifier),
+            names_directory: bun_paths::has_trailing_sep(as_path),
             is_require,
         };
         let package = find_name_of_package_with_exports(specifier);
@@ -1395,7 +1401,7 @@ impl CompiledProgram {
                         None => Hidden,
                     };
                 }
-                push_segments(&mut segments, split_path(specifier));
+                push_segments(&mut segments, split_path(as_path));
                 let path = spell_public_path(public_root, levels, &segments);
                 let folder = match how.names_directory {
                     true => self.find_package_name(&[&path[..], b"/"].concat(), is_require),
@@ -1459,7 +1465,7 @@ impl CompiledProgram {
             let names_directory = Resolver::import_path_names_directory(specifier);
             let Some(path) = self.join_public_path(public_root, public_root, specifier) else {
                 // `..` has left nothing of the root in a path that began there. The build wrote down what it leads to.
-                let written = bun_paths::platform_to_posix(specifier);
+                let written = bun_paths::to_portable(specifier);
                 return self.find_package_name(&written, false)?;
             };
             if let Some(found) = self.entry_point_from_working_directory(public_root, specifier) {

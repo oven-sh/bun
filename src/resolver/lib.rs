@@ -50,7 +50,7 @@ pub use tsconfig_json::TSConfigJSON;
 // `result` / `standalone_module_graph` sibling modules.
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{BrowserMapPathKind, Bufs, Resolver, module_type_from_ext};
+pub use resolver::{BrowserMapPathKind, Bufs, Resolver, module_type_from_ext, path_of_specifier};
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
     MatchStatus, PathPair, Result, ResultFlags, ResultUnion,
@@ -567,7 +567,7 @@ pub mod fs {
                 // display path goes into the per-build arena, not the
                 // process-lifetime `FilenameStore` (it is recomputed each build).
                 let pretty: &'b mut [u8] = alloc.alloc_slice_copy(self.pretty);
-                bun_paths::platform_to_posix_in_place(pretty);
+                bun_paths::to_portable_in_place(pretty);
                 new.pretty = pretty;
                 new.assert_pretty_is_valid();
                 Ok(new)

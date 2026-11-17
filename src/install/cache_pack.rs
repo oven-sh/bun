@@ -462,7 +462,7 @@ fn pack_entry(
         #[cfg(not(windows))]
         let rel: &[u8] = entry.path.as_bytes();
         #[cfg(windows)]
-        let rel: &[u8] = &bun_paths::ForwardSlashPath::from_parts(&[entry.path.as_slice()]);
+        let rel: &[u8] = &bun_paths::Path::from(entry.path.as_slice()).into_portable();
         if rel.len() > MAX_PACK_PATH_LEN || !is_safe_relative_path(rel) {
             return Err(refuse("cache entry path cannot be packed", rel));
         }
@@ -999,9 +999,9 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
         }
     };
     // `PackageManager::init` has changed directory since it was typed.
-    let abs_file = bun_paths::PoolPath::resolve(&[original_cwd, file])
-        .and_then(|mut abs_file| abs_file.copy_trailing_sep_from(file).map(|()| abs_file));
-    let Ok(abs_file) = abs_file else {
+    let mut abs_file = bun_paths::Path::resolve(&[original_cwd, file]);
+    abs_file.copy_trailing_sep_from(file);
+    let Ok(abs_file) = abs_file.check_len() else {
         bun_core::pretty_errorln!("<r><red>error<r><d>:<r> \\<file\\> is too long");
         Global::exit(1);
     };

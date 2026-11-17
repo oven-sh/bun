@@ -1,4 +1,4 @@
-//! What [`GenericPath`](crate::GenericPath) does differently for `u8` (WTF-8) and `u16` (WTF-16).
+//! What a path does differently for `u8` (WTF-8) and `u16` (WTF-16).
 
 use core::mem::MaybeUninit;
 use core::ops::Deref;

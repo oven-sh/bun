@@ -157,7 +157,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
 
     /// `local_tarball` is as package.json spells it.
     pub(crate) fn local_tarball_path<'a>(&'a self, buf: &'a [u8]) -> Cow<'a, [u8]> {
-        bun_paths::windows_to_platform(self.local_tarball().slice(buf))
+        bun_paths::from_portable(self.local_tarball().slice(buf))
     }
 
     pub(crate) fn can_enqueue_install_task(&self) -> bool {
@@ -305,7 +305,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 )));
             }
             return Ok(Resolution::init(TaggedValue::Folder(
-                string_buf.append(&bun_paths::windows_to_platform(path))?,
+                string_buf.append(&bun_paths::from_portable(path))?,
             )));
         }
 

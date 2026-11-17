@@ -1,5 +1,4 @@
-use bun_paths::{PosixPath, slashes_to_posix};
-use bun_sema::resolve::DeclaredSideEffects;
+use bun_sema::resolve::{DeclaredSideEffects, join_unrooted, normalize_slashes};
 
 pub(super) fn is_declared_free_of_side_effects(
     declared: DeclaredSideEffects<'_>,
@@ -21,7 +20,7 @@ fn is_pattern(entry: &[u8]) -> bool {
 }
 
 pub(crate) fn names(directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
-    let named: &[u8] = &PosixPath::join(&[directory, &slashes_to_posix(entry)]);
+    let named: &[u8] = &join_unrooted(directory, &normalize_slashes(entry));
     match is_pattern(entry) {
         true => bun_glob::Prepared::new(named).r#match(path).matches(),
         false => named == path,

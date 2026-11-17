@@ -974,7 +974,7 @@ pub mod bv2_impl {
             impl FileMap {
                 /// On Windows a key has forward slashes, and its drive letter is uppercase.
                 pub fn key(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-                    let mut key = bun_paths::platform_to_posix(path);
+                    let mut key = bun_paths::to_portable(path);
                     if cfg!(windows) && matches!(*key, [b'a'..=b'z', b':', b'/', ..]) {
                         key.to_mut()[0].make_ascii_uppercase();
                     }
@@ -1005,12 +1005,12 @@ pub mod bv2_impl {
                     arena: &'b bun_alloc::Arena,
                     source_file: &[u8],
                     specifier: &[u8],
+                    kind: ImportKind,
                 ) -> Option<bun_resolver::Result<'b>> {
                     if self.map.is_empty() {
                         return None;
                     }
 
-                    use bun_paths::{PathStyle as _, platform::Windows};
                     let dupe = |key: &[u8]| -> &'b [u8] { arena.alloc_slice_copy(key) };
 
                     // Direct key match. Return the map-owned key, not the parameter.
@@ -1018,26 +1018,18 @@ pub mod bv2_impl {
                         return Some(Self::result_for_key(dupe(key)));
                     }
 
-                    if specifier.is_empty() || Windows::is_absolute(specifier) {
+                    if specifier.is_empty() || bun_paths::portable::is_absolute(specifier) {
                         return None;
                     }
                     // A key keeps the root it was written with: `/a` on Windows, `C:/a` on POSIX.
-                    let base = match Windows::is_absolute(source_file) {
+                    let base = match bun_paths::portable::is_absolute(source_file) {
                         true => b"",
                         false => bun_resolver::fs::FileSystem::get().top_level_dir(),
                     };
-                    let find = |specifier: &[u8]| {
-                        let parts = [base, source_file, b"..", specifier];
-                        let joined = bun_paths::ForwardSlashPath::resolve(&parts);
-                        self.map.get_key_value(joined.as_bytes())
-                    };
-                    let (key, _) =
-                        find(specifier).or_else(|| {
-                            match bun_paths::windows_to_platform(specifier) {
-                                std::borrow::Cow::Owned(with_slashes) => find(&with_slashes),
-                                std::borrow::Cow::Borrowed(_) => None,
-                            }
-                        })?;
+                    let specifier = bun_resolver::path_of_specifier(specifier, kind);
+                    let parts = [base, source_file, b"..", &specifier];
+                    let joined = bun_paths::Path::resolve(&parts).into_portable();
+                    let (key, _) = self.map.get_key_value(joined.as_bytes())?;
                     Some(Self::result_for_key(dupe(key.as_ref())))
                 }
 
@@ -2862,7 +2854,9 @@ pub mod bv2_impl {
         ) -> Result<EntryPointModule, Error> {
             // Check FileMap first for in-memory entry points
             if let Some(file_map) = self.file_map {
-                if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point) {
+                if let Some(file_map_result) =
+                    file_map.resolve(self.arena(), b"", entry_point, ImportKind::EntryPointBuild)
+                {
                     let target = match file_map_result.path_const() {
                         Some(path) => self.target_of_entry_point(path),
                         None => self.transpiler.options.target,
@@ -4029,7 +4023,7 @@ pub mod bv2_impl {
                             let mut v = Vec::new();
                             template.print(&mut v, !is_executable).expect("oom");
                             // Like a chunk's `final_rel_path`: `/`-separated on every platform.
-                            bun_paths::platform_to_posix_in_place::<u8>(&mut v);
+                            bun_paths::to_portable_in_place::<u8>(&mut v);
                             v.into_boxed_slice()
                         };
                         let mut output_path = print(&template);
@@ -4802,7 +4796,7 @@ pub mod bv2_impl {
         if !outdir.is_empty() {
             // Open the output directory and write the metafile relative to it,
             // routed through `bun_sys::File`.
-            let written = match bun_paths::PoolPath::join(&[outdir, file_path]) {
+            let written = match bun_paths::Path::join(&[outdir, file_path]).check_len() {
                 Ok(joined) => {
                     if let Some(parent) = joined.dirname() {
                         let _ = bun_sys::mkdir_recursive(parent);
@@ -5814,9 +5808,12 @@ pub mod bv2_impl {
                 if let Some(file_map) = self.file_map
                     && !matches!(ctx.plugin_answer, PluginAnswer::Path(_))
                 {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(heap, source.path.text, import_record.path.text)
-                    {
+                    if let Some(_file_map_result) = file_map.resolve(
+                        heap,
+                        source.path.text,
+                        import_record.path.text,
+                        import_record.kind,
+                    ) {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let path_loader = Fs::Path::init(path_primary.text)
@@ -5961,6 +5958,7 @@ pub mod bv2_impl {
                                             .bust_dir_cache_from_specifier(
                                                 source.path.text,
                                                 import_record.path.text,
+                                                import_record.kind,
                                             )
                                         {
                                             had_busted_dir_cache = true;
@@ -5971,7 +5969,10 @@ pub mod bv2_impl {
                                         // Tell DevServer about the resolution failure.
                                         dev.track_resolution_failure(
                                             source.path.text,
-                                            import_record.path.text,
+                                            &_resolver::path_of_specifier(
+                                                import_record.path.text,
+                                                import_record.kind,
+                                            ),
                                             ctx.target.bake_graph(), // use the source file target not the altered one
                                             loader,
                                         )
@@ -6062,7 +6063,7 @@ pub mod bv2_impl {
                                         let text = import_record.path.text;
                                         let below_root = (text.strip_prefix(top_level_dir))
                                             .filter(|_| loader == Loader::Html)
-                                            .map(bun_paths::platform_to_posix);
+                                            .map(bun_paths::to_portable);
                                         let specifier_to_use =
                                             below_root.as_deref().unwrap_or(text);
                                         add_error(
@@ -6177,10 +6178,11 @@ pub mod bv2_impl {
                         if !matches!(ctx.plugin_answer, PluginAnswer::Path(_))
                             && let Some(entry) = dev_server.is_file_cached(path.text, bake_graph)
                         {
-                            let rel = bun_paths::ForwardSlashPath::relative(
+                            let rel = bun_paths::Path::relative(
                                 Fs::FileSystem::get().top_level_dir(),
                                 path.text,
-                            );
+                            )
+                            .into_portable();
                             // A cached JSON or text module is also an `Asset`, but it has no asset URL.
                             if loader == Loader::Html
                                 && entry.kind == bake_types::CacheKind::Asset
@@ -7515,7 +7517,7 @@ pub mod bv2_impl {
         let mut prefixed = Vec::new();
         let mut path_clone: crate::bun_fs::Path<'_> = *path;
         path_clone.pretty = if path.is_file() || is_node {
-            rel = bun_paths::ForwardSlashPath::relative(top_level_dir, path.text);
+            rel = bun_paths::Path::relative(top_level_dir, path.text).into_portable();
             rel.prepend(ssr_prefix);
             &rel
         } else {

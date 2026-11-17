@@ -96,9 +96,8 @@ pub use HTMLImportManifest::html_import_manifest;
 
 /// The two halves of `prefix` + `suffix`, without a doubled separator or a `./` between them.
 pub(crate) fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [u8]; 2] {
-    use bun_paths::{PathStyle as _, platform::Auto};
     if prefix.is_empty() {
-        let suffix = Auto::without_leading_dot_slash(suffix);
+        let suffix = bun_paths::without_leading_dot_slash(suffix);
         return [
             if suffix.starts_with(b"../") {
                 b""
@@ -108,10 +107,10 @@ pub(crate) fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) ->
             suffix,
         ];
     }
-    if Auto::has_trailing_sep(prefix) && Auto::has_leading_sep(suffix) {
+    if bun_paths::has_trailing_sep(prefix) && bun_paths::has_leading_sep(suffix) {
         return [prefix, &suffix[1..]];
     }
-    [prefix, Auto::without_leading_dot_slash(suffix)]
+    [prefix, bun_paths::without_leading_dot_slash(suffix)]
 }
 
 pub use bundle_v2::{

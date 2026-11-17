@@ -1,7 +1,6 @@
 use bstr::BStr;
 use bun_jsc::ThreadIsolated;
-use bun_paths::platform::Auto;
-use bun_paths::{Path, PathStyle as _, VecPath};
+use bun_paths::{Path, VecPath};
 
 use crate::node::PathLike;
 use crate::node::fs::{ShellAsyncCpTask, args};
@@ -379,7 +378,7 @@ impl ShellCpTask {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                 // If it has a trailing directory separator, it's a directory.
-                (Auto::has_trailing_sep(tgt.as_bytes()), false)
+                (bun_paths::has_trailing_sep(tgt.as_bytes()), false)
             }
             Err(e) => return Err(e.into()),
         };

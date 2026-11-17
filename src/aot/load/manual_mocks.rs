@@ -1,9 +1,9 @@
-use bun_paths::PathStyle as _;
-use bun_paths::platform::Posix;
 use bun_sema::atom::known;
 use bun_sema::hir::{ExprKind, MemberKey};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_module_call_of_plugin};
-use bun_sema::resolve::{CodeResolution, ExternalKind, FinishedFile, SiteResolution};
+use bun_sema::resolve::{
+    CodeResolution, ExternalKind, FinishedFile, SiteResolution, basename, parent_directory,
+};
 
 use crate::load::is_in_node_modules;
 
@@ -55,14 +55,8 @@ pub(crate) fn find_manual_mocks(
             continue;
         }
         let written = file.atoms.bytes(written);
-        let beside = |path: &[u8]| {
-            [
-                Posix::dirname_or_root(path),
-                b"/__mocks__/",
-                Posix::basename(path),
-            ]
-            .concat()
-        };
+        let beside =
+            |path: &[u8]| [parent_directory(path), b"/__mocks__/", basename(path)].concat();
         let candidate = match *resolution {
             SiteResolution::Constant(CodeResolution::File(module))
                 if module.host_module.is_none() && !is_in_node_modules(module.path) =>
@@ -73,7 +67,7 @@ pub(crate) fn find_manual_mocks(
                 specifier: [b'.' | b'/', ..],
                 kind: ExternalKind::UncompiledCode,
             }) => beside(&bun_sema::resolve::join(
-                Posix::dirname_or_root(file.path),
+                parent_directory(file.path),
                 written,
             )),
             _ if !written.starts_with(b".") && !written.starts_with(b"/") => {

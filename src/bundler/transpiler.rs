@@ -2732,7 +2732,7 @@ impl<'a> Transpiler<'a> {
         template
             .print(&mut dest_path, true)
             .expect("write to Vec<u8>");
-        bun_paths::platform_to_posix_in_place::<u8>(&mut dest_path);
+        bun_paths::to_portable_in_place::<u8>(&mut dest_path);
         dest_path.into_boxed_slice()
     }
 

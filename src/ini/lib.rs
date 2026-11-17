@@ -1385,7 +1385,7 @@ mod draft {
         // Relative paths in a `.npmrc` are resolved against the directory that contains it.
         let dir = bun_paths::dirname_or_root(source.path.text);
         let resolve_path =
-            |path: &[u8]| BunInstall::resolve_path(dir, &bun_paths::windows_to_platform(path));
+            |path: &[u8]| BunInstall::resolve_path(dir, &bun_paths::from_portable(path));
 
         if let Some(query) = out.as_property(b"registry") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {

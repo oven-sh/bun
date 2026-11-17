@@ -5,8 +5,7 @@ use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 use bun_core::{MutableString, strings};
 use bun_core::{Output, slice_as_bytes};
-use bun_paths::platform::Posix;
-use bun_paths::{GenericPath, OSPathChar, OSPathSliceZ, PathStyle, PathUnit, SEP, SliceBackend};
+use bun_paths::{MAX_PATH_BYTES, OSPath, OSPathChar, PATH_MAX_WIDE, Path, SEP};
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
 use bun_sys::{self, Fd, FdExt, File};
@@ -15,7 +14,7 @@ use bun_wyhash::hash;
 pub mod error;
 pub use error::{Error, ReadDataError, Result};
 mod npm_path;
-pub use npm_path::normalize_npm_entry_path;
+pub use npm_path::{normalize_npm_entry_path, npm_entry_destination};
 
 pub use bun_tar as tar;
 use bun_tar::{Dialect, Entry, Event, MemoryDecoder, Options};
@@ -197,17 +196,47 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
-/// Returns where an entry is extracted, with `/`. Both slashes separate, and `..` stops at the destination. `None` if it does not fit in `buf` with a NUL behind it.
-pub fn normalize_entry_path<'a, T: PathUnit>(path: &[T], buf: &'a mut [T]) -> Option<&'a mut [T]> {
-    let mut rooted = GenericPath::<SliceBackend<'_, T>, Posix>::new(buf);
-    rooted.set(b"/").ok()?;
-    rooted.extend_from_slice(path).ok()?;
-    bun_paths::slashes_to_posix_in_place(rooted.as_mut_slice());
-    rooted.resolve_in_place::<u8>(&[]).ok()?;
-    rooted.copy_trailing_sep_from(path).ok()?;
-    let len = rooted.len();
-    buf.copy_within(1..len, 0);
-    Some(&mut buf[..len - 1])
+const MAX_OS_PATH: usize = if cfg!(windows) {
+    PATH_MAX_WIDE
+} else {
+    MAX_PATH_BYTES
+};
+
+/// Where the entry `name` is extracted. Both slashes separate, and `..` stops at the destination. Empty for an entry to skip, `None` for a name that is too long.
+pub fn entry_destination(name: &[OSPathChar]) -> Option<OSPath> {
+    if name.len() >= MAX_OS_PATH {
+        return None;
+    }
+    let mut path = OSPath::new();
+    #[cfg(not(windows))]
+    path.push_inside(&strings::replace_char(name, b'\\', b'/'));
+    #[cfg(windows)]
+    {
+        path.push_inside(name);
+        // How `push_inside` spells a name that starts with a drive.
+        if path.starts_with(bun_core::w!(".\\")) {
+            path.clear();
+        }
+    }
+    if name.last() == Some(&(b'/' as OSPathChar)) {
+        path.push_trailing_sep();
+    }
+    Some(path)
+}
+
+/// An entry's path without its first `count` components. `None` if it has fewer.
+pub fn skip_path_components(mut path: &[OSPathChar], count: usize) -> Option<&[OSPathChar]> {
+    let sep = b'/' as OSPathChar;
+    let leading_seps = |path: &[OSPathChar]| path.iter().take_while(|c| **c == sep).count();
+    path = &path[leading_seps(path)..];
+    for _ in 0..count {
+        if path.is_empty() {
+            return None;
+        }
+        path = &path[strings::index_of_scalar(path, sep).unwrap_or(path.len())..];
+        path = &path[leading_seps(path)..];
+    }
+    Some(path)
 }
 
 /// Returns the first component of an entry's path, which is the archive's root folder.
@@ -221,9 +250,9 @@ pub fn first_path_component(path: &[OSPathChar]) -> &[OSPathChar] {
 /// What is made before an entry is: everything up to the last separator, so `a/b` for `a/b/`.
 #[cfg(unix)]
 fn folder_of_entry(path: &[u8]) -> &[u8] {
-    match Posix::has_trailing_sep(path) {
-        true => Posix::without_trailing_sep(path),
-        false => Posix::dirname_or_root(path),
+    match bun_paths::has_trailing_sep(path) {
+        true => bun_paths::without_trailing_sep(path),
+        false => bun_paths::dirname_or_root(path),
     }
 }
 
@@ -256,12 +285,8 @@ pub fn is_symlink_target_safe(symlink_path: &[u8], link_target_bytes: &[u8]) -> 
 
     // Relative, because `..` stops at the root of an absolute path.
     let symlink_dir = folder_of_entry(symlink_path);
-    let Ok(resolved) = bun_paths::PoolPath::join(&[symlink_dir, link_target_bytes]) else {
-        return false;
-    };
-    let resolved = resolved.as_bytes();
-
-    !(strings::eql(resolved, b"..") || strings::has_prefix_comptime(resolved, b"../"))
+    let resolved = Path::join(&[symlink_dir, link_target_bytes]);
+    resolved.len() < MAX_PATH_BYTES && !bun_paths::climbs_out(&resolved)
 }
 
 #[cfg(unix)]
@@ -398,57 +423,17 @@ impl Archiver {
         };
 
         let mut reader = open_memory(file_buffer, Dialect::General)?;
-        let mut normalized_buf = bun_paths::path_buffer_pool::get();
+        let mut os_path_buf: Vec<OSPathChar> = Vec::new();
 
-        'loop_: while let Some(entry) = reader.next_entry()? {
-            let pathname = display_path(entry)?;
-            let pathname_bytes: &[u8] = &pathname;
-
-            // Tokenizer semantics: `next()` skips leading
-            // separators and returns None only when no token remains;
-            // the rest-of-input slice also skips leading separators.
-            // An entry's name has `/` on every platform, as in `extract_to_dir`.
-            let mut remaining = pathname_bytes;
-            let mut depth_i = 0usize;
-            while depth_i < DEPTH_TO_SKIP {
-                // skip leading separators
-                while let [first, rest @ ..] = remaining {
-                    if *first == b'/' {
-                        remaining = rest;
-                    } else {
-                        break;
-                    }
-                }
-                if remaining.is_empty() {
-                    continue 'loop_;
-                }
-                match strings::index_of_char_usize(remaining, b'/') {
-                    Some(i) => remaining = &remaining[i..],
-                    None => remaining = &remaining[remaining.len()..],
-                }
-                depth_i += 1;
-            }
-            // skip leading separators (tokenizer.rest() does this)
-            while let [first, rest @ ..] = remaining {
-                if *first == b'/' {
-                    remaining = rest;
-                } else {
-                    break;
-                }
-            }
-
-            let Some(pathname) = normalize_entry_path(remaining, &mut normalized_buf[..]) else {
-                continue 'loop_;
+        while let Some(entry) = reader.next_entry()? {
+            let name = skip_path_components(os_path(entry, &mut os_path_buf)?, DEPTH_TO_SKIP);
+            let Some(destination) = name.and_then(entry_destination) else {
+                continue;
             };
-            bun_paths::posix_to_platform_in_place(pathname);
-            let pathname: &[u8] = pathname;
-            if pathname.is_empty() {
-                continue 'loop_;
+            if destination.is_empty() {
+                continue;
             }
-            #[cfg(windows)]
-            if bun_paths::platform::Windows::climbs_out(pathname) {
-                continue 'loop_;
-            }
+            let pathname: &[u8] = &Path::from(&destination);
             let first_sep = strings::index_of_char_usize(pathname, SEP);
 
             let size: usize = usize::try_from(entry.size().max(0)).unwrap();
@@ -504,7 +489,6 @@ impl Archiver {
             Symlinks::FollowInside
         };
 
-        let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
         let mut write_strategy = WriteStrategy::default();
 
         'loop_: while let Some(entry) = reader.next_entry()? {
@@ -543,46 +527,16 @@ impl Archiver {
                 continue;
             }
 
-            // strip and normalize the path
-            let pathname_slice: &[OSPathChar] = pathname_z;
-            let mut remaining: &[OSPathChar] = pathname_slice;
-            {
-                let sep: OSPathChar = b'/' as OSPathChar;
-                let mut i = 0usize;
-                while i < options.depth_to_skip {
-                    while let [first, rest @ ..] = remaining {
-                        if *first == sep {
-                            remaining = rest;
-                        } else {
-                            break;
-                        }
-                    }
-                    if remaining.is_empty() {
-                        continue 'loop_;
-                    }
-                    match strings::index_of_scalar(remaining, sep) {
-                        Some(j) => remaining = &remaining[j + 1..],
-                        None => remaining = &remaining[remaining.len()..],
-                    }
-                    i += 1;
-                }
-                while let [first, rest @ ..] = remaining {
-                    if *first == sep {
-                        remaining = rest;
-                    } else {
-                        break;
-                    }
-                }
-            }
-            let pathname: &[OSPathChar] = remaining;
-
-            let normalized = if options.npm {
-                debug_assert_eq!(options.depth_to_skip, 1);
-                normalize_npm_entry_path(entry, &mut normalized_buf[..])?
-            } else {
-                normalize_entry_path(pathname, &mut normalized_buf[..])
+            let Some(pathname) = skip_path_components(pathname_z, options.depth_to_skip) else {
+                continue;
             };
-            let Some(path) = normalized else {
+            let destination = if options.npm {
+                debug_assert_eq!(options.depth_to_skip, 1);
+                npm_entry_destination(entry)?
+            } else {
+                entry_destination(pathname)
+            };
+            let Some(path) = destination else {
                 if options.log {
                     bun_core::warn!(
                         "Skipping entry with a path longer than the maximum path length: {}\n",
@@ -597,37 +551,7 @@ impl Archiver {
             if path.is_empty() {
                 continue;
             }
-            bun_paths::posix_to_platform_in_place(path);
-
-            #[cfg(windows)]
-            if options.npm {
-                // When writing files on Windows, translate the characters to their
-                // 0xf000 higher-encoded versions.
-                // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
-                for ch in path.iter_mut() {
-                    match *ch {
-                        c if c == b'|' as OSPathChar
-                            || c == b'<' as OSPathChar
-                            || c == b'>' as OSPathChar
-                            || c == b'?' as OSPathChar
-                            || c == b':' as OSPathChar =>
-                        {
-                            *ch += 0xf000;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            // On POSIX the leading separators are already gone.
-            #[cfg(windows)]
-            if bun_paths::platform::Windows::climbs_out(path) {
-                continue 'loop_;
-            }
-
-            let normalized_len = path.len();
-            let path_z = OSPathSliceZ::nul_terminate(&mut normalized_buf, normalized_len);
-            let path_slice: &[OSPathChar] = path_z;
+            let path_slice: &[OSPathChar] = &path;
 
             if options.log {
                 bun_core::prettyln!(
@@ -730,7 +654,7 @@ impl Archiver {
                     #[cfg(not(windows))]
                     let file_handle_native: Fd = {
                         // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
-                        match beneath::openat(dir_fd, path_z, flags, mode, symlinks) {
+                        match beneath::openat(dir_fd, &path, flags, mode, symlinks) {
                             Ok(fd) => fd,
                             Err(err) => match err.get_errno() {
                                 bun_sys::E::EACCES | bun_sys::E::EPERM | bun_sys::E::ENOENT => {
@@ -739,7 +663,7 @@ impl Archiver {
                                         return Err(err.into());
                                     }
                                     let _ = beneath::make_path(dir, dirname, symlinks);
-                                    beneath::openat(dir_fd, path_z, flags, mode, symlinks)?
+                                    beneath::openat(dir_fd, &path, flags, mode, symlinks)?
                                 }
                                 _ => return Err(err.into()),
                             },

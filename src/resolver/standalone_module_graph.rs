@@ -7,7 +7,7 @@ pub use crate::compiled_program::{
     CompiledEntryPoint, CompiledProgram, ExtensionSearch, ImageFile, ModuleLookup, PackageLookup,
     compare_source_paths,
 };
-use bun_paths::PoolPath;
+use bun_paths::Path;
 
 use crate::resolver::Resolver;
 
@@ -71,10 +71,9 @@ pub trait StandaloneModuleGraph: Send + Sync {
             return None;
         }
         let mut path = match is_embedded_path {
-            true => PoolPath::from(specifier),
-            false => PoolPath::resolve(&[source_dir, specifier]),
-        }
-        .ok()?;
+            true => Path::from(specifier),
+            false => Path::resolve(&[source_dir, specifier]),
+        };
         if let Some(name) = self.find_assume_standalone_path(&path) {
             return Some(name);
         }
@@ -95,7 +94,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
         if !is_source_extension {
             return None;
         }
-        path.set_extension(b".js").ok()?;
+        path.set_extension(b".js");
         self.find_assume_standalone_path(&path)
     }
     /// The name of the file that an executable compiled in place holds for `path`, an absolute path that the disk no longer has.
@@ -157,13 +156,12 @@ pub trait StandaloneModuleGraph: Send + Sync {
             let program = self.compiled_program().filter(|_| !is_left_to_program)?;
             let public_root = self.base_public_path_with_default_suffix();
             let on_build_machine = match bun_paths::is_absolute(specifier) {
-                true => PoolPath::from(specifier),
+                true => Path::from(specifier),
                 false if crate::compiled_program::is_relative_specifier(specifier) => {
-                    PoolPath::resolve(&[source_dir, specifier])
+                    Path::resolve(&[source_dir, specifier])
                 }
                 false => return None,
             };
-            let on_build_machine = on_build_machine.ok()?;
             let path = program.public_path_of_source(public_root, &on_build_machine)?;
             match bun_sys::exists_z(&on_build_machine) {
                 true => None,

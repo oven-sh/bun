@@ -6,44 +6,37 @@ use core::ops::{Deref, DerefMut};
 
 use bun_core::ZBox;
 
-use crate::path_backend::{
-    PathBackend, PoolBackend, PoolOrVecBackend, SliceBackend, StackBackend, VecBackend,
-};
+use crate::path_backend::{PathBackend, PoolBackend, StackBackend, VecBackend};
 use crate::path_ops::{
     EditBuf, LONG_PATH_PREFIX, NAMESPACE_OVERHEAD, NORMALIZE_OVERHEAD, NT_PATH_PREFIX, Relative,
     Resolved, TrimmedPart, Unresolved, last_absolute_posix_part, max_joined_len, max_relative_len,
 };
-use crate::path_style::{PathStyle, Root, last_component, stem_len};
+use crate::path_style::{Host, PathStyle, Root, last_component, stem_len};
 use crate::path_unit::PathUnit;
-use crate::platform::{Auto, ForwardSlash, Posix};
-use crate::{OSPathChar, PathChar};
+use crate::{NameTooLong, OSPathChar, PathChar};
 
-/// The default. Starts in a pooled buffer and moves to the heap, so the syscall reports `ENAMETOOLONG`.
-pub type Path = GenericPath<PoolOrVecBackend>;
-/// Pooled buffer only. Returns `NameTooLong` instead of outgrowing a `PathBuffer`.
-pub type PoolPath = GenericPath<PoolBackend>;
-/// [`PoolPath`] of [`OSPathChar`] (`u16` on Windows).
-pub type OSPath = GenericPath<PoolBackend<OSPathChar>>;
-/// `Vec`-backed. For storing a path, or when more than 4 (the size of the pool) are alive.
+/// The default. In a pooled buffer, or on the heap once it outgrows that, so the syscall reports `ENAMETOOLONG`.
+pub type Path = GenericPath<PoolBackend>;
+/// In a `Vec`. For storing a path, or when more than 4 (the size of the pool) are alive.
 pub type VecPath = GenericPath<VecBackend>;
-/// Inline `[u8; N]`, NUL included. Never allocates. Moving it copies all `N` bytes.
+/// In an inline `[u8; N]`, NUL included. `NameTooLong` if a result does not fit. Allocates only to normalize input that does not.
 pub type StackPath<const N: usize> = GenericPath<StackBackend<N>>;
-/// Writes into the caller's buffer, for functions that return `&'a ZStr`.
-pub type SlicePath<'a> = GenericPath<SliceBackend<'a>>;
-/// [`Path`] that writes `/` on every platform.
-pub type ForwardSlashPath = GenericPath<PoolOrVecBackend, ForwardSlash>;
-/// [`Path`] with POSIX syntax on every platform: no drives, and `\` is part of a name.
-pub type PosixPath = GenericPath<PoolOrVecBackend, Posix>;
+/// [`Path`] in the encoding that syscalls take. For names that go from one syscall to the next.
+pub type OSPath = GenericPath<PoolBackend<OSPathChar>>;
 
 type ZSlice<B> = <<B as PathBackend>::Unit as PathUnit>::ZSlice;
 
 /// Derefs to `ZStr` or `WStr`. Most arguments can be `&[u8]` or `&[u16]`. On `Err` the path is unchanged.
-pub struct GenericPath<B: PathBackend, S: PathStyle = Auto> {
+pub struct GenericPath<B: PathBackend, S: PathStyle = Host> {
     /// `[..len]` is initialized and `[len]` is NUL.
     backend: B,
     len: usize,
+    /// Only tests set it, to run the code of each platform on every platform.
     style: PhantomData<S>,
 }
+
+// SAFETY: a length of 0, and a NUL after it.
+unsafe impl<const N: usize> bun_core::Zeroable for StackPath<N> {}
 
 impl<B: PathBackend, S: PathStyle> Deref for GenericPath<B, S> {
     type Target = ZSlice<B>;
@@ -55,7 +48,7 @@ impl<B: PathBackend, S: PathStyle> Deref for GenericPath<B, S> {
     }
 }
 
-impl<B: PathBackend + Default, S: PathStyle> Default for GenericPath<B, S> {
+impl<B: PathBackend, S: PathStyle> Default for GenericPath<B, S> {
     #[inline(always)]
     fn default() -> Self {
         Self {
@@ -66,7 +59,7 @@ impl<B: PathBackend + Default, S: PathStyle> Default for GenericPath<B, S> {
     }
 }
 
-impl<B: PathBackend + Default, S: PathStyle> GenericPath<B, S> {
+impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
     /// Takes no buffer until the first write.
     #[inline(always)]
     pub fn new() -> Self {
@@ -117,24 +110,6 @@ impl<B: PathBackend + Default, S: PathStyle> GenericPath<B, S> {
     }
 }
 
-impl<'a, U: PathUnit, S: PathStyle> GenericPath<SliceBackend<'a, U>, S> {
-    /// An empty path. The contents of `buffer` are discarded.
-    #[inline]
-    pub fn new(buffer: &'a mut [U]) -> Self {
-        Self {
-            backend: SliceBackend::new(buffer),
-            len: 0,
-            style: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn into_zstr(self) -> &'a U::ZSlice {
-        // SAFETY: `[..len]` is initialized, `[len]` is NUL, and the buffer is borrowed for `'a`.
-        unsafe { U::zslice_from_raw(self.backend.as_ptr(), self.len) }
-    }
-}
-
 impl<U: PathUnit, S: PathStyle> GenericPath<VecBackend<U>, S> {
     #[inline]
     pub fn into_vec(self) -> Vec<U> {
@@ -162,16 +137,25 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         unsafe { self.backend.as_uninit_slice_mut()[..self.len].assume_init_mut() }
     }
 
-    /// See [`PathStyle::dirname`].
+    /// See [`crate::dirname`].
     #[inline]
     pub fn dirname(&self) -> Option<&[B::Unit]> {
         S::dirname(self.as_slice())
     }
 
-    /// See [`PathStyle::basename`].
+    /// See [`crate::basename`].
     #[inline]
     pub fn basename(&self) -> &[B::Unit] {
         S::basename(self.as_slice())
+    }
+
+    /// `Err` if no syscall takes a path this long. For where no syscall is there to say so.
+    #[inline]
+    pub fn check_len(self) -> Result<Self, NameTooLong> {
+        match self.len < B::Unit::BUFFER_LEN {
+            true => Ok(self),
+            false => Err(NameTooLong),
+        }
     }
 
     #[inline]
@@ -224,11 +208,16 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         let mut result = self.try_push_fmt_in_place(args);
         if result.is_err() {
             self.truncate(len);
-            if B::RETRY_ON_HEAP {
-                result = self.try_push(&format_on_heap(args));
-            }
+            result = self.try_push(&format_on_heap(args));
         }
         B::output(result)
+    }
+
+    /// [`Self::push`], but `.` and `..` are resolved, and `..` stops where `part` starts.
+    #[inline]
+    pub fn push_inside<C: PathUnit>(&mut self, part: &[C]) -> B::Output<()> {
+        let max_len = self.len + max_joined_len::<B::Unit, C>(&[part]);
+        B::output(self.edit_or_retry_on_heap(max_len, |buf| buf.push_inside(part)))
     }
 
     /// [`Self::push`], undone when the guard drops.
@@ -291,7 +280,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         B::output(self.try_resolve(parts))
     }
 
-    /// Normalizes to `\\?\C:\a` or `\\?\UNC\server\share\a`, which lifts `MAX_PATH`. Drops a trailing separator. No-op unless the style is `Windows`.
+    /// Normalizes to `\\?\C:\a` or `\\?\UNC\server\share\a`, which lifts `MAX_PATH`. Drops a trailing separator. No-op on POSIX.
     #[inline]
     pub fn make_long_path(&mut self) -> B::Output<()> {
         self.add_namespace_prefix(LONG_PATH_PREFIX)
@@ -314,13 +303,22 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
 }
 
 impl<B: PathBackend<Unit = u8>> GenericPath<B> {
+    /// See [`crate::to_portable`]. Later edits write this platform's separator again.
+    #[inline(always)]
+    pub fn into_portable(mut self) -> Self {
+        if cfg!(windows) {
+            crate::to_portable_in_place(self.as_mut_slice());
+        }
+        self
+    }
+
     /// On Windows `\a` becomes `C:\a`, with the drive or share of the process's working directory.
     #[inline]
     pub fn add_current_drive(&mut self) -> B::Output<()> {
-        if cfg!(windows) && Root::parse::<Auto>(self.as_slice()) == Root::without_volume(true) {
+        if cfg!(windows) && Root::parse::<Host>(self.as_slice()) == Root::without_volume(true) {
             let mut buf = crate::path_buffer_pool::get();
             if let Ok(cwd) = bun_core::getcwd(&mut buf) {
-                return self.prepend(Auto::volume(cwd.as_bytes()));
+                return self.prepend(Host::volume(cwd.as_bytes()));
             }
         }
         B::output(Ok(()))
@@ -356,7 +354,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         mut f: impl FnMut(&mut EditBuf<'_, B::Unit, S>),
     ) -> Result<(), B::Error> {
         let result = self.edit(max_len, &mut f);
-        if result.is_ok() || !B::RETRY_ON_HEAP {
+        if result.is_ok() {
             return result;
         }
         let edited = edit_on_heap(self.as_slice(), max_len, &mut f);
@@ -474,7 +472,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
 
     #[inline(always)]
     fn add_namespace_prefix(&mut self, prefix: [u8; 4]) -> B::Output<()> {
-        if S::SEP != b'\\' || self.len == 0 {
+        if !S::WIN32 || self.len == 0 {
             return B::output(Ok(()));
         }
         let max_len = self.len + NAMESPACE_OVERHEAD;

@@ -1182,6 +1182,35 @@ pub(crate) mod strings_impl {
         out.extend_from_slice(&input[i..]);
         out
     }
+
+    #[inline]
+    pub fn replace_char_in_place<T: PathByte>(text: &mut [T], from: u8, to: u8) {
+        let (from, to) = (T::from_u8(from), T::from_u8(to));
+        // An unconditional store is what lets this be vectorized.
+        let replace = |unit: T| if unit == from { to } else { unit };
+        let Some(&last) = text.last_chunk::<16>() else {
+            return text.iter_mut().for_each(|unit| *unit = replace(*unit));
+        };
+        for chunk in text.as_chunks_mut::<16>().0 {
+            *chunk = chunk.map(replace);
+        }
+        // Overlaps the chunk before it, in place of a scalar loop.
+        if let Some(end) = text.last_chunk_mut() {
+            *end = last.map(replace);
+        }
+    }
+
+    /// [`replace_char_in_place`] on a copy, if there is anything to replace.
+    #[inline]
+    pub fn replace_char(text: &[u8], from: u8, to: u8) -> std::borrow::Cow<'_, [u8]> {
+        if !crate::strings::contains_char(text, from) {
+            return text.into();
+        }
+        let mut text = text.to_vec();
+        replace_char_in_place(&mut text, from, to);
+        text.into()
+    }
+
     /// Defers to libc `strncasecmp`/`_strnicmp` for the
     /// hot path (CSS parser, HTTP header matching). A `b` shorter than `a` is
     /// rejected instead of read past.

@@ -399,6 +399,14 @@ fn check_len(rc: DWORD, capacity: usize) -> Result<usize, Win32Error> {
     }
 }
 
+/// kernel32 can report a path that is too long as missing.
+pub(crate) fn path_ptr(path: &WStr) -> Result<*const u16, Win32Error> {
+    if path.len() >= bun_paths::PATH_MAX_WIDE {
+        return Err(Win32Error::FILENAME_EXCED_RANGE);
+    }
+    Ok(path.as_ptr())
+}
+
 /// Manual-reset, not signalled, and without a name.
 pub fn CreateEventW() -> Result<OwnedHandle, Win32Error> {
     // SAFETY: both pointers are optional.
@@ -416,7 +424,7 @@ pub fn CreateFileW(
     // SAFETY: `file_name` is NUL-terminated; the result is a new handle or `INVALID_HANDLE_VALUE`.
     let handle = unsafe {
         HandleOrInvalid::from_raw_handle(externs::CreateFileW(
-            file_name.as_ptr(),
+            path_ptr(file_name)?,
             desired_access,
             share_mode,
             ptr::null_mut(),
@@ -454,7 +462,7 @@ pub fn CreateNamedPipeW(
 
 pub fn MoveFileExW(from: &WStr, to: &WStr, flags: DWORD) -> Result<(), Win32Error> {
     // SAFETY: both are NUL-terminated.
-    check(unsafe { kernel32::MoveFileExW(from.as_ptr(), to.as_ptr(), flags) })
+    check(unsafe { kernel32::MoveFileExW(path_ptr(from)?, path_ptr(to)?, flags) })
 }
 
 pub fn SetEndOfFile(file: HANDLE) -> Result<(), Win32Error> {
@@ -537,7 +545,7 @@ pub fn GetFileInformationByHandle(file: HANDLE) -> Result<BY_HANDLE_FILE_INFORMA
 
 pub fn GetFileAttributesW(file_name: &WStr) -> Result<DWORD, Win32Error> {
     // SAFETY: `file_name` is NUL-terminated.
-    match unsafe { externs::GetFileAttributesW(file_name.as_ptr()) } {
+    match unsafe { externs::GetFileAttributesW(path_ptr(file_name)?) } {
         INVALID_FILE_ATTRIBUTES => Err(Win32Error::get()),
         attributes => Ok(attributes),
     }
@@ -660,8 +668,8 @@ pub fn CreateHardLinkW(new_file_name: &WStr, existing_file_name: &WStr) -> Resul
     // SAFETY: both are NUL-terminated; null security attributes.
     let result = check(unsafe {
         CreateHardLinkW_raw(
-            new_file_name.as_ptr(),
-            existing_file_name.as_ptr(),
+            path_ptr(new_file_name)?,
+            path_ptr(existing_file_name)?,
             ptr::null_mut(),
         )
     });
@@ -680,10 +688,10 @@ pub fn CopyFileW(source: &WStr, dest: &WStr, fail_if_exists: bool) -> Result<(),
     static EMPTY_DEST: [u16; 2] = [0, 0];
     let dest = match dest.first() {
         None | Some(0) => EMPTY_DEST[1..].as_ptr(),
-        Some(_) => dest.as_ptr(),
+        Some(_) => path_ptr(dest)?,
     };
     // SAFETY: both are NUL-terminated.
-    check(unsafe { externs::CopyFileW(source.as_ptr(), dest, fail_if_exists.into()) })
+    check(unsafe { externs::CopyFileW(path_ptr(source)?, dest, fail_if_exists.into()) })
 }
 
 /// `bun.windows.Error` — alias for `Win32Error`.
@@ -906,8 +914,8 @@ pub fn CreateDirectoryExW(
     // SAFETY: both are NUL-terminated; null security attributes.
     check(unsafe {
         externs::CreateDirectoryExW(
-            template_directory.as_ptr(),
-            new_directory.as_ptr(),
+            path_ptr(template_directory)?,
+            path_ptr(new_directory)?,
             ptr::null_mut(),
         )
     })
@@ -1553,7 +1561,6 @@ pub mod rescle {
         description: Option<&[u8]>,
         copyright: Option<&[u8]>,
     ) -> Result<(), RescleError> {
-        use bun_paths::{GenericPath, VecBackend};
         const _: () = assert!(cfg!(windows));
 
         // Validate version string format if provided
@@ -1582,7 +1589,7 @@ pub mod rescle {
 
         // Allocate UTF-16 strings (global mimalloc; allocator param dropped)
 
-        let icon_path = icon.map(|icon| GenericPath::<VecBackend<u16>>::join(&[icon]));
+        let icon_path = icon.map(|icon| bun_paths::OSPath::join(&[icon]));
         let icon_w: Option<&bun_core::WStr> = icon_path.as_deref();
 
         let title_w = title

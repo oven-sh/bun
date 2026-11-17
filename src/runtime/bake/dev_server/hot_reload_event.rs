@@ -75,7 +75,8 @@ impl HotReloadEvent {
                             .resolve(
                                 bun_paths::dirname_or_root(source_file_path.slice()),
                                 &dep.specifier,
-                                bun_ast::ImportKind::Stmt,
+                                // Like an import statement, but it takes a path.
+                                bun_ast::ImportKind::EntryPointBuild,
                             )
                             .is_ok();
 

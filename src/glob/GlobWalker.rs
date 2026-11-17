@@ -29,7 +29,7 @@ use bun_core::define_scoped_log;
 use bun_core::env::IS_WINDOWS;
 use bun_core::strings;
 use bun_core::{ZBox, ZStr};
-use bun_paths::{PathStyle as _, PoolPath, platform};
+use bun_paths::{MAX_PATH_BYTES, Path};
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self as Syscall, Dir, E, Error as SysError, O, Result as Maybe, S, Stat};
 
@@ -278,16 +278,11 @@ pub enum IterState<A: Accessor> {
     Matched(MatchedPath),
 }
 
-#[cold]
-fn name_too_long(path: &[u8]) -> SysError {
-    SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open).with_path(path)
-}
-
 pub struct Directory<A: Accessor> {
     /// `None` is the iterator's `cwd_fd`.
     pub(crate) fd: Option<A::Handle>,
     pub(crate) iter: A::DirIter,
-    pub(crate) path: PoolPath,
+    pub(crate) path: Path,
 
     /// Active component indices. Multiple indices mean one readdir
     /// evaluates all of them instead of revisiting the directory.
@@ -345,7 +340,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 path_without_special_syntax = if !IS_WINDOWS {
                     b"/"
                 } else {
-                    platform::Auto::root(&self.walker.cwd)
+                    bun_paths::root(&self.walker.cwd)
                 };
             } else {
                 // Skip the components associated with the literal path
@@ -394,10 +389,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         };
 
         let root_path = &root_work_item.path;
-        let Ok(root_path_z) = PoolPath::from(root_path) else {
-            return Ok(Err(name_too_long(root_path)));
-        };
-        let cwd_fd = match A::open(&root_path_z)? {
+        let cwd_fd = match A::open(&Path::from(root_path))? {
             Err(err) => return Ok(Err(err.with_path(root_path))),
             Ok(fd) => fd,
         };
@@ -426,9 +418,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         log!("transition => {}", bstr::BStr::new(work_item_path));
         // Build the Directory in a local and assign at the end (borrowck:
         // mutating `iter_state` in place would overlap the `self.walker` borrow).
-        let mut dir_path = PoolPath::new();
-        if (!ROOT || self.walker.absolute) && dir_path.set(work_item_path).is_err() {
-            return Ok(Err(name_too_long(work_item_path)));
+        let mut dir_path = Path::new();
+        if !ROOT || self.walker.absolute {
+            dir_path.set(work_item_path);
         }
 
         let mut had_dot_dot = false;
@@ -633,9 +625,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             // NUL in `.len()`; drop it (see `work_item_logical_path`) so the
                             // NUL re-written at `[len]` below isn't left embedded in the path.
                             let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
-                            let Ok(mut symlink_full_path) = PoolPath::from(work_item_path) else {
-                                return Ok(Err(name_too_long(work_item_path)));
-                            };
+                            let mut symlink_full_path = Path::from(work_item_path);
                             // Note: reshaped for borrowck — entry_name is a sub-slice
                             // of symlink_full_path; capture range and re-slice later.
                             let entry_start = work_item.entry_start as usize;
@@ -676,7 +666,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
                                         }
-                                        if self.walker.error_on_broken_symlinks {
+                                        if self.walker.error_on_broken_symlinks
+                                            || symlink_full_path_z.len() >= MAX_PATH_BYTES
+                                        {
                                             return Ok(Err(
                                                 err.with_path(symlink_full_path_z.as_bytes())
                                             ));
@@ -1252,7 +1244,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     fn collapse_dots(
         &self,
         idx: u32,
-        dir_path: &mut PoolPath,
+        dir_path: &mut Path,
         encountered_dot_dot: &mut bool,
     ) -> Maybe<u32> {
         let mut component_idx = idx;
@@ -1266,12 +1258,16 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 _ => break,
             };
             let start = usize::from(dir_path.is_empty());
-            if dir_path.extend_from_slice(&dots[start..]).is_err() {
-                return Err(name_too_long(dir_path));
-            }
+            dir_path.extend_from_slice(&dots[start..]);
             component_idx += 1;
         }
 
+        // `./` alone opens nothing that would say so.
+        if dir_path.len() >= MAX_PATH_BYTES {
+            return Err(
+                SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open).with_path(dir_path)
+            );
+        }
         Ok(component_idx)
     }
 
@@ -1291,7 +1287,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     pub(crate) fn skip_special_components(
         &self,
         work_item_idx: u32,
-        dir_path: &mut PoolPath,
+        dir_path: &mut Path,
         encountered_dot_dot: &mut bool,
     ) -> Maybe<u32> {
         let pattern_components = self.pattern_components.as_slice();

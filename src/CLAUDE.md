@@ -214,9 +214,9 @@ strings::to_utf16_alloc(...)             // encoding conversions
 
 ## Paths (`bun_paths`)
 
-Never use `std::path`. Build paths with `bun_paths::Path`. It is NUL-terminated and derefs to `ZStr`
-(then `[u8]`), so `&path` goes straight into `bun_sys`. No input makes it panic, and a failed
-operation leaves it unchanged.
+Never use `std::path`. Build paths with `bun_paths::Path`. It has the syntax and the separator of the
+platform it runs on. It is NUL-terminated and derefs to `ZStr` (then `[u8]`), so `&path` goes straight
+into `bun_sys`. No input makes it panic.
 
 ```rust
 use bun_paths::Path;
@@ -233,24 +233,20 @@ for name in names {
 write!(path, "-{hash:x}");                            // no separator; `push_fmt` adds one
 ```
 
-| Type               | Storage                         | Too long | When to use                                                        |
-| ------------------ | ------------------------------- | -------- | ------------------------------------------------------------------ |
-| `Path`             | pooled buffer, then `Vec`       | grows    | default; the syscall returns `ENAMETOOLONG`                        |
-| `PoolPath`         | pooled buffer                   | `Err`    | must fit a `PathBuffer`, or too long must not look like "missing"  |
-| `OSPath`           | pooled buffer, `u16` on Windows | `Err`    | wide and NT calls (`make_long_path`, `make_nt_path`)               |
-| `VecPath`          | `Vec`                           | grows    | stored (`into_vec`, `into_zbox`), or more than 4 are alive at once |
-| `StackPath<N>`     | inline array                    | `Err`    | known to be short, or allocating is not allowed                    |
-| `SlicePath`        | the caller's buffer             | `Err`    | returning a `&ZStr` into that buffer (`into_zstr`)                 |
-| `ForwardSlashPath` | like `Path`, always writes `/`  | grows    | output that is printed, hashed or saved                            |
-| `PosixPath`        | like `Path`, POSIX syntax       | grows    | not a host path: URL paths, archive entries                        |
+| Type           | Storage       | When to use                                                        |
+| -------------- | ------------- | ------------------------------------------------------------------ |
+| `Path`         | pooled buffer | default                                                            |
+| `VecPath`      | `Vec`         | stored (`into_vec`, `into_zbox`), or more than 4 are alive at once |
+| `StackPath<N>` | inline array  | short names, statics, signal handlers                              |
+| `OSPath`       | pooled buffer | with `OSPathSlice`, which is UTF-16 on Windows                     |
 
-All are aliases of `GenericPath<Backend, Style>`. Types that grow return `T`, the others
-`Result<T, NameTooLong>`. Always handle the `Err`: the path still has its old value, usually the parent
-directory. `NameTooLong` converts into `SystemErrno::ENAMETOOLONG`.
+They have the same methods. `StackPath` returns `Result<T, NameTooLong>`, is unchanged on `Err`, and
+allocates only to normalize or transcode input that does not fit. The others grow, and the syscall returns
+`ENAMETOOLONG`. Call `check_len()` where no syscall would say so, as with `exists`.
 
 - `from`, `set`, `extend_from_slice` and `prepend` copy as is.
-- `push` and `from_parts` add one separator and write native ones. `..` is kept, and an absolute part
-  does not replace the path.
+- `push` and `from_parts` add one separator. `..` is kept, and an absolute part does not replace the path.
+- `push_inside` resolves `.` and `..`, and `..` cannot leave the path it is pushed onto.
 - `join`, `resolve` and `relative` are Node's, except that `resolve` does not fall back to the cwd.
   `resolve_in_place` uses the path as the first part.
 - `push_scoped` and `save` restore the length when the guard drops.
@@ -259,21 +255,20 @@ directory. `NameTooLong` converts into `SystemErrno::ENAMETOOLONG`.
 
 To inspect a slice use `bun_paths::{dirname, basename, extension, stem, components, ancestors,
 strip_prefix, climbs_out, without_trailing_sep}`. `strip_prefix(path, dir)` compares whole components:
-`/ab` is not in `/a`. For another platform's syntax, import `PathStyle` and call the same functions on
-`platform::{Posix, Windows}`.
+`/ab` is not in `/a`.
 
-On POSIX `\` is part of a name, and nothing above treats it as a separator. What to do depends on where
-the path comes from:
+On POSIX `\` is part of a name. Only text that moves between platforms (package.json, tsconfig.json,
+lockfiles, bundles, hashes, URLs) needs a conversion, once, where it is read or written:
 
-| Source                                                 | Call                                                     |
-| ------------------------------------------------------ | -------------------------------------------------------- |
-| argv, environment, JS APIs, `readdir`, `realpath`      | nothing                                                  |
-| text in package.json, tsconfig.json, bunfig.toml, HTML | `windows_to_platform(text)`, once, where it is read      |
-| either of them: lockfile rows, `--cwd`                 | `bun_sys::existing_spelling(dir, path)`                  |
-| untrusted text that has to stay inside a directory     | reject `climbs_out(text) \|\| Windows::climbs_out(text)` |
-
-`platform_to_posix` and `posix_to_platform` only act on Windows. `slashes_to_posix` acts everywhere, so it
-corrupts a POSIX path. `strings::without_trailing_slash` is for URLs.
+| Text                                        | Call                                               |
+| ------------------------------------------- | -------------------------------------------------- |
+| argv, environment, JS APIs, syscall results | nothing                                            |
+| read from a file                            | `from_portable(text)`                              |
+| written to a file, hashed, used as a URL    | `path.into_portable()`, `to_portable(slice)`       |
+| portable, and shown or compared with a path | `to_native(slice)`                                 |
+| untrusted, has to stay inside a directory   | reject `portable::climbs_out(text)`                |
+| an import specifier                         | `bun_resolver::path_of_specifier(specifier, kind)` |
+| typed or read: lockfile rows, `--cwd`       | `bun_sys::existing_spelling(dir, path)`            |
 
 For a buffer that the OS fills, use `path_buffer_pool::get()` or `w_path_buffer_pool::get()`, not the
 stack: a `PathBuffer` is 96 KB on Windows.

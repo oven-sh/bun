@@ -18,8 +18,7 @@ use bun_install::dependency::{self, Dependency, DependencyExt as _, Tag as DepTa
 use bun_install::install::{self, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 use bun_install::npm;
-use bun_paths::platform::Posix;
-use bun_paths::{Path, PathStyle as _, windows_to_platform};
+use bun_paths::{Path, from_portable};
 use bun_semver::{self as Semver, String as SemverString};
 
 #[derive(Default)]
@@ -175,7 +174,7 @@ impl<'a> Entry<'a> {
     }
 
     pub(crate) fn file_path_from_spec(spec: &[u8]) -> Box<[u8]> {
-        let mut path: &[u8] = &windows_to_platform(spec.strip_prefix(b"file:").unwrap_or(spec));
+        let mut path: &[u8] = &from_portable(spec.strip_prefix(b"file:").unwrap_or(spec));
         while let Some(rest) = path.strip_prefix(b"./") {
             path = rest;
         }
@@ -296,8 +295,8 @@ impl<'a> YarnLock<'a> {
                     let range = spec.get(name.len() + 1..).unwrap_or(b"");
                     if let Some(path) = range.strip_prefix(b"link:") {
                         // `link:./ui/` and `link:./ui` are the same package.
-                        let path = windows_to_platform(path);
-                        let path = Posix::without_trailing_sep(&path);
+                        let path = from_portable(path);
+                        let path = bun_paths::without_trailing_sep(&path);
                         new_entry.link = Some(dependency::link_path_for_lockfile(path).into());
                         break;
                     }

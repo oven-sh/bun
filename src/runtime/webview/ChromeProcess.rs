@@ -32,7 +32,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::{self, Path, VecPath, path_buffer_pool};
+use bun_paths::{self, Path, VecPath};
 use bun_ptr::{AliasableBox, CellExt as _};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
@@ -257,8 +257,6 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
         return Some(ZBox::from_bytes(p));
     }
 
-    let mut buf = path_buffer_pool::get();
-
     // $PATH first — `brew install chromium`, distro packages, manual symlinks
     // all land here. Same precedence as `which` at a shell prompt.
     let path = env_var::PATH.get().unwrap_or(b"");
@@ -275,7 +273,7 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
     #[cfg(windows)]
     let names: &[&[u8]] = &[b"chrome", b"chromium", b"brave", b"msedge"];
     for n in names {
-        if let Some(found) = which(&mut buf, path, b"", n) {
+        if let Some(found) = which(path, b"", n) {
             return Some(ZBox::from_bytes(&found[..]));
         }
     }

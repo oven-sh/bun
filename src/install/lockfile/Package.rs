@@ -4,7 +4,7 @@ use core::mem;
 use bun_collections::{ArrayHashMap, AutoBitSet, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{self as path, ForwardSlashPath, MAX_PATH_BYTES};
+use bun_paths::{self as path, MAX_PATH_BYTES, Path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
@@ -118,18 +118,15 @@ fn name_range_on_disk(source: &bun_ast::Source) -> bun_ast::Range {
 
 /// Returns the path in the form that `dependency::Value::Folder` has in local packages, or `None` if it
 /// is too long. `folder` is as the package.json in `pkg_dir` spells it.
-pub(crate) fn folder_relative_to_top_level_dir(
-    pkg_dir: &[u8],
-    folder: &[u8],
-) -> Option<ForwardSlashPath> {
+pub(crate) fn folder_relative_to_top_level_dir(pkg_dir: &[u8], folder: &[u8]) -> Option<Path> {
     let top_level_dir = FileSystem::get().top_level_dir();
-    let joined = lockfile::join_top_level_dir(&[pkg_dir, &path::windows_to_platform(folder)])?;
-    let mut relative = ForwardSlashPath::relative(top_level_dir, &joined);
+    let joined = lockfile::join_top_level_dir(&[pkg_dir, &path::from_portable(folder)])?;
+    let mut relative = Path::relative(top_level_dir, &joined).into_portable();
     // empty when the package depends on itself
     if relative.is_empty() {
         relative.set(b".");
     }
-    (relative.len() < MAX_PATH_BYTES).then_some(relative)
+    relative.check_len().ok()
 }
 
 #[cold]
@@ -2101,7 +2098,7 @@ impl Package<u64> {
                 | dependency::version::Tag::Symlink
                 | dependency::version::Tag::Tarball => {
                     let to_posix = |path: &mut [u8]| {
-                        path::platform_to_posix_in_place(path);
+                        path::to_portable_in_place(path);
                         if let [drive, b':', b'/', ..] = path {
                             drive.make_ascii_uppercase();
                         }

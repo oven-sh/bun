@@ -2,7 +2,7 @@ use core::ffi::c_int;
 
 use crate::VM;
 use bun_core::String as BunString;
-use bun_paths::{NameTooLong, OSPath, Path};
+use bun_paths::{NameTooLong, Path};
 use bun_sys::{self, Errno, Fd};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -121,8 +121,8 @@ fn write_profile_to_file(
 }
 
 /// Writes `contents` to `path`. On ENOENT, EPERM or EACCES it creates the directory and retries once.
-pub(crate) fn write_file_creating_dir(path: &OSPath, contents: &[u8]) -> bun_sys::Maybe<()> {
-    let result = bun_sys::File::write_file_os_path(Fd::cwd(), path, contents);
+pub(crate) fn write_file_creating_dir(path: &Path, contents: &[u8]) -> bun_sys::Maybe<()> {
+    let result = bun_sys::File::write_file(Fd::cwd(), path, contents);
     if let Err(err) = &result
         && matches!(
             err.get_errno(),
@@ -130,8 +130,8 @@ pub(crate) fn write_file_creating_dir(path: &OSPath, contents: &[u8]) -> bun_sys
         )
         && let Some(dir) = path.dirname()
     {
-        let _ = bun_sys::Dir::cwd().make_path(&Path::from(dir));
-        return bun_sys::File::write_file_os_path(Fd::cwd(), path, contents);
+        let _ = bun_sys::Dir::cwd().make_path(dir);
+        return bun_sys::File::write_file(Fd::cwd(), path, contents);
     }
     result
 }
@@ -142,22 +142,18 @@ pub(crate) fn build_output_path(
     name: &[u8],
     default_prefix: &str,
     default_extension: &str,
-) -> Result<OSPath, NameTooLong> {
-    let mut path = OSPath::from_top_level_dir()?;
-    path.resolve_in_place(&[dir, name])?;
+) -> Result<Path, NameTooLong> {
+    let mut path = Path::from_top_level_dir();
+    path.resolve_in_place(&[dir, name]);
     if name.is_empty() {
-        push_diagnostic_filename(&mut path, default_prefix, default_extension)?;
+        push_diagnostic_filename(&mut path, default_prefix, default_extension);
     }
-    Ok(path)
+    path.check_len()
 }
 
 /// Node's DiagnosticFilename: `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
 /// https://github.com/nodejs/node/blob/main/src/util.cc (MakeFilename)
-fn push_diagnostic_filename(
-    path: &mut OSPath,
-    prefix: &str,
-    extension: &str,
-) -> Result<(), NameTooLong> {
+fn push_diagnostic_filename(path: &mut Path, prefix: &str, extension: &str) {
     let pid = std::process::id();
 
     let (year, month, day, hour, minute, second) = local_time_now();
@@ -167,7 +163,7 @@ fn push_diagnostic_filename(
 
     path.push_fmt(format_args!(
         "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
-    ))
+    ));
 }
 
 #[cfg(not(windows))]

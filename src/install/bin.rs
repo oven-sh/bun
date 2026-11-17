@@ -8,8 +8,7 @@ use bun_core::ZStr;
 use bun_core::strings;
 #[cfg(windows)]
 use bun_paths::OSPath;
-use bun_paths::platform::Windows;
-use bun_paths::{self as path, NameTooLong, Path, PathStyle as _, PoolPath, SEP, VecPath};
+use bun_paths::{self as path, NameTooLong, Path, SEP, VecPath};
 use bun_semver::{ExternalString, String};
 #[cfg(not(windows))]
 use bun_sys::Mode;
@@ -577,7 +576,7 @@ impl<'a> NamesIterator<'a> {
             else {
                 return Ok(None);
             };
-            let bin_dir = bin_target_path(package_name, &target)?;
+            let bin_dir = bin_target_path(package_name, &target);
             let child_dir = sys::Dir::borrow(&self.destination_node_modules)
                 .open_at(&bin_dir)
                 .map_err(Error::from)?;
@@ -627,8 +626,11 @@ impl<'a> NamesIterator<'a> {
             _ => return Ok(None),
         };
 
-        let base = Windows::basename(name.slice(self.string_buffer));
-        Ok(Some(strings::copy(&mut self.buf[..], base)))
+        let base = strings::tokenize_any(name.slice(self.string_buffer), b"/\\").last();
+        Ok(Some(strings::copy(
+            &mut self.buf[..],
+            base.unwrap_or_default(),
+        )))
     }
 }
 
@@ -772,8 +774,7 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     if cfg!(windows) && strings::contains_char(target, b':') {
         return true;
     }
-    // `a\b/../..` only escapes if `\` is not a separator, so check both.
-    Windows::climbs_out(target) || path_climbs_out(target)
+    path::portable::climbs_out(target) || strings::contains_char(target, 0)
 }
 
 /// The OS stops reading a path at a NUL byte, so `..\0x` would open `..`.
@@ -783,9 +784,9 @@ pub(crate) fn path_climbs_out(path: &[u8]) -> bool {
 
 /// A `bin` or `directories.bin` value, relative to the package. As in npm, a leading separator means nothing.
 pub fn bin_target_in_package(target: &[u8]) -> Option<Cow<'_, [u8]>> {
-    let target = Windows::without_leading_sep(target);
+    let target = strings::trim_left(target, b"/\\");
     (!target.is_empty() && !bin_target_escapes_package_dir(target))
-        .then(|| path::windows_to_platform(target))
+        .then(|| path::from_portable(target))
 }
 
 fn bin_target_needs_resolved_containment_check(target: &[u8]) -> bool {
@@ -797,8 +798,8 @@ fn bin_target_needs_resolved_containment_check(target: &[u8]) -> bool {
 }
 
 /// A trailing separator would make `lchmod` follow a symlink.
-fn bin_target_path(package_dir: &[u8], target: &[u8]) -> Result<PoolPath, NameTooLong> {
-    PoolPath::resolve(&[package_dir, target])
+fn bin_target_path(package_dir: &[u8], target: &[u8]) -> Path {
+    Path::resolve(&[package_dir, target])
 }
 
 fn bin_dir_path(node_modules: &[u8]) -> Path {
@@ -821,12 +822,12 @@ struct WindowsShimPaths {
 
 #[cfg(windows)]
 impl WindowsShimPaths {
-    fn new(abs_dest: &ZStr) -> Result<Self, NameTooLong> {
-        let mut bunx = OSPath::from(abs_dest)?;
-        let mut exe = OSPath::from(&bunx)?;
-        bunx.extend_from_slice(b".bunx")?;
-        exe.extend_from_slice(b".exe")?;
-        Ok(Self { bunx, exe })
+    fn new(abs_dest: &ZStr) -> Self {
+        let mut bunx = OSPath::from(abs_dest);
+        let mut exe = OSPath::from(&bunx);
+        bunx.extend_from_slice(b".bunx");
+        exe.extend_from_slice(b".exe");
+        Self { bunx, exe }
     }
 }
 
@@ -908,9 +909,9 @@ impl<'a> Linker<'a> {
             let _ = sys::unlink(abs_dest);
         }
 
-        // A path that does not fit has no shim: `create_windows_shim` refuses it.
         #[cfg(windows)]
-        if let Ok(shim_paths) = WindowsShimPaths::new(abs_dest) {
+        {
+            let shim_paths = WindowsShimPaths::new(abs_dest);
             let had_bunx_file = sys::unlink_w(&shim_paths.bunx).is_ok();
             // An `.exe` without its `.bunx` is a program, `bun.exe` for one.
             if global_owner.is_some() && !had_bunx_file {
@@ -939,6 +940,12 @@ impl<'a> Linker<'a> {
         debug_assert!(path::is_absolute(abs_dest.as_bytes()));
         debug_assert!(abs_target.as_bytes()[abs_target.as_bytes().len() - 1] != SEP);
         debug_assert!(abs_dest.as_bytes()[abs_dest.as_bytes().len() - 1] != SEP);
+
+        // First, because in such a directory the target can look missing.
+        if abs_dest.len() >= path::MAX_PATH_BYTES {
+            self.err.get_or_insert_with(|| NameTooLong.into());
+            return;
+        }
 
         // Skip if the target does not exist. This is important because placing a dangling
         // shim in path might break a postinstall
@@ -1170,7 +1177,7 @@ impl<'a> Linker<'a> {
     ) -> Result<(), Error> {
         let mut shim_buf = [0u16; 32768];
         let mut read_in_buf = [0u8; WinShimShebang::MAX_SHEBANG_INPUT_LENGTH];
-        let shim_paths = WindowsShimPaths::new(abs_dest)?;
+        let shim_paths = WindowsShimPaths::new(abs_dest);
         let foreign_exe_exists = (global
             || Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path))
             && sys::exists_os_path(&shim_paths.exe, false);
@@ -1211,7 +1218,7 @@ impl<'a> Linker<'a> {
                 None => (abs_target.as_bytes(), true),
             };
 
-        let bin_path_w: &[u16] = &OSPath::from(bin_path)?;
+        let bin_path_w: &[u16] = &OSPath::from(bin_path);
 
         // Loop-fill via `read_all` so a short read can't truncate the shebang sniff.
         let shebang = match target.read_all(&mut read_in_buf) {
@@ -1434,13 +1441,7 @@ impl<'a> Linker<'a> {
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    /// `Err`: the path is too long; callers treat that as a missing bin.
-    fn resolve_bin_target(
-        &self,
-        package_dir: &[u8],
-        target: &[u8],
-        bin_name: &[u8],
-    ) -> Result<PoolPath, NameTooLong> {
+    fn resolve_bin_target(&self, package_dir: &[u8], target: &[u8], bin_name: &[u8]) -> Path {
         if !self.is_native_binlink_redirect() {
             return bin_target_path(package_dir, target);
         }
@@ -1457,10 +1458,10 @@ impl<'a> Linker<'a> {
         for candidate in [target, bin_name, at_root, &exe_name] {
             if !candidate.is_empty()
                 && !bin_target_escapes_package_dir(candidate)
-                && let Ok(abs_target) = bin_target_path(package_dir, candidate)
+                && let abs_target = bin_target_path(package_dir, candidate)
                 && sys::exists_z(&abs_target)
             {
-                return Ok(abs_target);
+                return abs_target;
             }
         }
 
@@ -1470,17 +1471,18 @@ impl<'a> Linker<'a> {
         bin_target_path(package_dir, target)
     }
 
-    fn target_package_dir(&self) -> Result<PoolPath, NameTooLong> {
+    /// Checks the length, because a target that `stat` rejects is skipped as missing.
+    fn target_package_dir(&self) -> Result<Path, NameTooLong> {
         let node_modules_path = (self.target_node_modules_path).unwrap_or(self.node_modules_path);
-        PoolPath::from_parts(&[node_modules_path, self.target_package_name])
+        Path::from_parts(&[node_modules_path, self.target_package_name]).check_len()
     }
 
     /// `.bin`, or the global bin directory.
-    fn destination_dir(&self, global: bool) -> Result<PoolPath, NameTooLong> {
+    fn destination_dir(&self, global: bool) -> Result<Path, NameTooLong> {
         if global {
-            PoolPath::from(self.global_bin_path)
+            Path::from(self.global_bin_path).check_len()
         } else {
-            PoolPath::from(&bin_dir_path(self.node_modules_path))
+            bin_dir_path(self.node_modules_path).check_len()
         }
     }
 
@@ -1501,46 +1503,40 @@ impl<'a> Linker<'a> {
 
         let mut link_named = |this: &mut Self, name: &[u8], target: &[u8]| {
             let Some(target) = bin_target_in_package(target).filter(|_| !name.is_empty()) else {
-                return Ok(());
+                return;
             };
-            let target: &[u8] = &target;
-            let abs_dest = dest_dir.push_scoped(name)?;
-            let Ok(abs_target) = this.resolve_bin_target(&package_dir, target, name) else {
-                this.skipped_due_to_missing_bin = true;
-                return Ok(());
-            };
+            let abs_target = this.resolve_bin_target(&package_dir, &target, name);
             this.link_bin_or_create_shim(
                 &abs_target,
-                &abs_dest,
+                &dest_dir.push_scoped(name),
                 global,
-                bin_target_needs_resolved_containment_check(target),
+                bin_target_needs_resolved_containment_check(&target),
             );
-            Ok::<_, NameTooLong>(())
         };
 
         match bin.tag {
             Tag::None => {}
             Tag::File => {
                 let name = Dependency::unscoped_package_name(self.package_name);
-                link_named(self, name, bin.file().slice(string_buf))?;
+                link_named(self, name, bin.file().slice(string_buf));
             }
             Tag::NamedFile => {
                 let [name, target] = bin.named_file();
                 let name = normalized_bin_name(name.slice(string_buf));
-                link_named(self, name, target.slice(string_buf))?;
+                link_named(self, name, target.slice(string_buf));
             }
             Tag::Map => {
                 for i in (bin.map().begin()..bin.map().end()).step_by(2) {
                     let name = normalized_bin_name(extern_string_buf[i as usize].slice(string_buf));
                     let target = extern_string_buf[(i + 1) as usize].slice(string_buf);
-                    link_named(self, name, target)?;
+                    link_named(self, name, target);
                 }
             }
             Tag::Dir => {
                 let Some(target) = bin_target_in_package(bin.dir().slice(string_buf)) else {
                     return Ok(());
                 };
-                let mut abs_target_dir = bin_target_path(&package_dir, &target)?;
+                let mut abs_target_dir = bin_target_path(&package_dir, &target);
 
                 let target_dir = match sys::open_dir_absolute(&abs_target_dir) {
                     Ok(d) => sys::Dir::from_fd(d),
@@ -1558,11 +1554,8 @@ impl<'a> Linker<'a> {
                         continue;
                     }
                     let entry_name = entry.name.slice_u8();
-                    let Ok(abs_target) = abs_target_dir.push_scoped(entry_name) else {
-                        self.skipped_due_to_missing_bin = true;
-                        continue;
-                    };
-                    let abs_dest = dest_dir.push_scoped(entry_name)?;
+                    let abs_target = abs_target_dir.push_scoped(entry_name);
+                    let abs_dest = dest_dir.push_scoped(entry_name);
                     self.link_bin_or_create_shim(&abs_target, &abs_dest, global, true);
                 }
             }
@@ -1587,34 +1580,33 @@ impl<'a> Linker<'a> {
         let mut unlink_name = |name: &[u8]| {
             if !name.is_empty() {
                 let owner = global.then_some(package_dir.as_bytes());
-                Self::unlink_bin_or_shim(&dest_dir.push_scoped(name)?, owner);
+                Self::unlink_bin_or_shim(&dest_dir.push_scoped(name), owner);
             }
-            Ok::<_, NameTooLong>(())
         };
 
         match bin.tag {
             Tag::None => {}
-            Tag::File => unlink_name(Dependency::unscoped_package_name(self.package_name))?,
+            Tag::File => unlink_name(Dependency::unscoped_package_name(self.package_name)),
             Tag::NamedFile => {
-                unlink_name(normalized_bin_name(bin.named_file()[0].slice(string_buf)))?;
+                unlink_name(normalized_bin_name(bin.named_file()[0].slice(string_buf)));
             }
             Tag::Map => {
                 for i in (bin.map().begin()..bin.map().end()).step_by(2) {
                     let name = extern_string_buf[i as usize].slice(string_buf);
-                    unlink_name(normalized_bin_name(name))?;
+                    unlink_name(normalized_bin_name(name));
                 }
             }
             Tag::Dir => {
                 let Some(target) = bin_target_in_package(bin.dir().slice(string_buf)) else {
                     return Ok(());
                 };
-                let abs_target_dir = bin_target_path(&package_dir, &target)?;
+                let abs_target_dir = bin_target_path(&package_dir, &target);
                 let target_dir = sys::Dir::from_fd(sys::open_dir_absolute(&abs_target_dir)?);
 
                 let mut iter = sys::iterate_dir(target_dir.fd());
                 while let Some(entry) = iter.next().unwrap_or(None) {
                     if is_bin_entry(&entry) {
-                        unlink_name(entry.name.slice_u8())?;
+                        unlink_name(entry.name.slice_u8());
                     }
                 }
             }
@@ -1942,10 +1934,9 @@ pub(crate) fn link_conflicting_bins(
     if conflicts.is_empty() {
         return Ok(());
     }
-    let node_modules_path = PoolPath::from_parts(&[cwd, b"node_modules"])?;
+    let node_modules_path = Path::from_parts(&[cwd, b"node_modules"]);
     let mut bin_dir = bin_dir_path(&node_modules_path);
     let mut seen: StringHashMap<()> = StringHashMap::default();
-    let mut which_buf = path::path_buffer_pool::get();
     for conflict in conflicts {
         for_each_bin_name(
             lockfile,
@@ -1954,7 +1945,7 @@ pub(crate) fn link_conflicting_bins(
             &conflict.node_modules,
             |name| {
                 let is_conflict = (conflict.names.iter()).any(|conflict| **conflict == *name)
-                    && bun_which::which(&mut which_buf, env_path, cwd, name).is_none();
+                    && bun_which::which(env_path, cwd, name).is_none();
                 if !is_conflict {
                     let _ = seen.put(&bin_dir.push_scoped(name), ());
                 }

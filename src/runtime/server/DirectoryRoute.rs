@@ -270,7 +270,7 @@ impl DirectoryRoute {
             if !had_trailing_slash {
                 return Some(Subpath::RedirectSlash);
             }
-            let (f, s) = open_and_stat(&bun_paths::PosixPath::join(&[rel, b"index.html"]))?;
+            let (f, s) = open_and_stat(&bun_paths::Path::from_parts(&[rel, b"index.html"]))?;
             return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
                 .then_some(Subpath::File(f, s, true));
         }

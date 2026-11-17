@@ -2343,29 +2343,24 @@ pub(crate) fn install_isolated_packages(
                                 break 'needs_install true;
                             };
                             let local_entry_len = store_path.len();
-                            if store_path.push(b"node_modules").is_err()
-                                || store_path.push(pkg_name.slice(string_buf)).is_err()
-                            {
-                                break 'needs_install true;
-                            }
-                            let package_len = store_path.len();
+                            store_path.push(b"node_modules");
+                            store_path.push(pkg_name.slice(string_buf));
                             let mut hash_buf: install::BuntagHashBuf = Default::default();
                             let marker = installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf);
                             // `exists` follows the link of an entry that left the global store.
-                            if store_path.push(marker).is_err() || !sys::exists_z(&store_path) {
+                            if !sys::exists_z(&store_path.push_scoped(marker)) {
                                 break 'needs_install true;
                             }
                             // Like the hoisted linker, replace a tarball copy that holds other bytes than bun.lock pins.
                             if matches!(pkg_res.tag, ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball) {
-                                store_path.truncate(package_len);
-                                let is_current = store_path.push(crate::package_install::BUN_TAG).is_ok()
-                                    && sys::File::read_from(Fd::cwd(), &store_path).is_ok_and(|tag| {
-                                        crate::package_install::tarball_tag_matches(
-                                            &tag,
-                                            &pkgs.items_meta()[pkg_id as usize].integrity,
-                                            installer.manager().skips_verify(pkg_res.tag),
-                                        )
-                                    });
+                                let tag_path = store_path.push_scoped(crate::package_install::BUN_TAG);
+                                let is_current = sys::File::read_from(Fd::cwd(), &tag_path).is_ok_and(|tag| {
+                                    crate::package_install::tarball_tag_matches(
+                                        &tag,
+                                        &pkgs.items_meta()[pkg_id as usize].integrity,
+                                        installer.manager().skips_verify(pkg_res.tag),
+                                    )
+                                });
                                 if !is_current {
                                     break 'needs_install true;
                                 }
@@ -2378,14 +2373,13 @@ pub(crate) fn install_isolated_packages(
                             }
                             // `..` goes up from a symlink's target. If part of this path is a link
                             // out of the store, going back up does not reach `node_modules/.bun`.
-                            store_path.truncate(package_len);
                             let up: &[u8] = if bun_core::strings::contains_char(pkg_name.slice(string_buf), b'/') {
                                 b"../../../.."
                             } else {
                                 b"../../.."
                             };
-                            store_path.push(up).is_err()
-                                || !sys::stat(&store_path).is_ok_and(|st| Some((st.st_dev, st.st_ino)) == store_inode)
+                            store_path.push(up);
+                            !sys::stat(&store_path).is_ok_and(|st| Some((st.st_dev, st.st_ino)) == store_inode)
                         };
 
                     if !needs_install {

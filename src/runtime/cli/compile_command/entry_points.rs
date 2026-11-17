@@ -2,7 +2,7 @@ use crate::cli::script_or_command::{
     LAUNCHER_SUFFIXES, RUNNABLE_EXTENSIONS, is_runnable_file, nearest_package_json,
     read_package_json,
 };
-use bun_paths::{VecPath, windows_to_platform};
+use bun_paths::{VecPath, from_portable};
 
 const INDEX_FILES: [&[u8]; 4] = [b"index.ts", b"index.tsx", b"index.mts", b"index.js"];
 
@@ -277,7 +277,7 @@ fn is_named_by_bin(path: &[u8]) -> bool {
         return false;
     };
     let executables = parse_manifest(directory, &package_json, &contents).executables;
-    (executables.iter()).any(|it| join(directory, &windows_to_platform(&it.1)) == path)
+    (executables.iter()).any(|it| join(directory, &from_portable(&it.1)) == path)
 }
 
 fn find_package_executable(
@@ -294,7 +294,7 @@ fn find_package_executable(
         return Ok(PackageExecutable::NotProvided { executable_names });
     };
     let (_, written) = executables.swap_remove(index);
-    let path = join(package_directory, &windows_to_platform(&written));
+    let path = join(package_directory, &from_portable(&written));
     if is_outside(package_directory, &path) {
         return Err(EntryPointError::ExecutableOutsidePackage {
             package_json,
@@ -418,7 +418,7 @@ fn find_package_entry_point(
             };
         }
     };
-    match find_file(directory, &windows_to_platform(&written)) {
+    match find_file(directory, &from_portable(&written)) {
         Some(path) => Ok(DefaultEntryPoint {
             path,
             executable_name: executable_name.into(),

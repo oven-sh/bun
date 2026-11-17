@@ -6,8 +6,6 @@ use bstr::BStr;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_core::StringOrView;
-use bun_paths::PathStyle as _;
-use bun_paths::platform::Auto;
 use bun_url::URL as ZigURL;
 
 use crate::exception_list;
@@ -148,11 +146,11 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             write!(f, "{}", BStr::new(source_slice))?;
         } else {
             if self.enable_color {
-                let not_root = self.root_path.len() > Auto::root(self.root_path).len();
+                let not_root = self.root_path.len() > bun_paths::root(self.root_path).len();
                 if not_root && source_slice.starts_with(self.root_path) {
                     let root_path = bun_paths::without_trailing_sep(self.root_path);
                     let relative_path =
-                        Auto::without_leading_sep(&source_slice[self.root_path.len()..]);
+                        bun_paths::without_leading_sep(&source_slice[self.root_path.len()..]);
                     f.write_str(Output::pretty_fmt!("<d>", true))?;
                     write!(f, "{}", BStr::new(root_path))?;
                     f.write_str(bun_paths::SEP_STR)?;

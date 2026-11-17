@@ -8,8 +8,6 @@ use bun_core::{self as bun, Environment, Global, Output, env_var, fmt as bun_fmt
 use bun_core::{MutableString, ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::platform::Windows;
-use bun_paths::{self, PathStyle as _, path_buffer_pool};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
@@ -505,7 +503,7 @@ impl InitCommand {
                     .or_else(|| package_json_expr.get(b"main"))
                 {
                     if let Some(str_) = name.as_utf8_string_literal() {
-                        fields.entry_point = bun_paths::windows_to_platform(str_).into_owned();
+                        fields.entry_point = bun_paths::from_portable(str_).into_owned();
                     }
                 }
 
@@ -1467,13 +1465,11 @@ impl Template {
             return false;
         }
 
-        let mut pathbuffer = path_buffer_pool::get();
-
         let Some(path) = env_var::PATH.get() else {
             return false;
         };
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
+        bun_which::which(path, top_level_dir, b"claude").is_some()
     }
 
     fn create_agent_rule() {
@@ -1917,7 +1913,7 @@ fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
 /// (absolute paths or any `..` segment), so `bun init` only creates files
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
-    !Windows::is_absolute(path) && !Windows::components(path).any(|seg| seg == b"..")
+    !bun_paths::portable::is_absolute(path) && !bun_paths::portable::has_dot_dot(path)
 }
 
 #[inline]

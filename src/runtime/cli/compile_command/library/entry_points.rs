@@ -1,5 +1,5 @@
 use bun_ast::Expr;
-use bun_paths::{Path, windows_to_platform};
+use bun_paths::{Path, from_portable};
 
 use super::is_inside;
 
@@ -74,7 +74,7 @@ fn is_typescript(path: &[u8]) -> bool {
 }
 
 fn find_file(directory: &[u8], written: &[u8]) -> Option<Box<[u8]>> {
-    let written = windows_to_platform(written);
+    let written = from_portable(written);
     let mut absolute_path = Path::resolve(&[directory, &written]);
     absolute_path.copy_trailing_sep_from(&written);
     if bun_core::strings::contains_char(&absolute_path, 0) {

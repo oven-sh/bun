@@ -3903,7 +3903,7 @@ fn declared_path(
     version_was_replaced: bool,
 ) -> Path {
     let path = lockfile.str(&path);
-    match bun_paths::windows_to_platform(path) {
+    match bun_paths::from_portable(path) {
         Cow::Owned(converted)
             if version_was_replaced || !lockfile.is_dependency_of_local_package(dependency_id) =>
         {

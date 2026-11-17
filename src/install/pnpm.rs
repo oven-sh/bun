@@ -4,7 +4,7 @@ use bun_ast::{self, self as js_ast, E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::strings;
-use bun_paths::{ForwardSlashPath, PoolPath, windows_to_platform};
+use bun_paths::{Path, from_portable};
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
@@ -276,7 +276,7 @@ fn resolution_from_package_entry(
             && let Some(dir) = get_str(obj, b"directory")
         {
             return Ok(Resolution::init(TaggedValue::Folder(
-                string_buf.append(&windows_to_platform(dir))?,
+                string_buf.append(&from_portable(dir))?,
             )));
         }
 
@@ -375,12 +375,12 @@ pub(crate) fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
 }
 
 /// Resolves `parts`, as pnpm-lock.yaml spells them, against the project root.
-fn join_top_level_dir(parts: &[&[u8]]) -> Option<PoolPath> {
-    let mut path = PoolPath::from_top_level_dir().ok()?;
+fn join_top_level_dir(parts: &[&[u8]]) -> Option<Path> {
+    let mut path = Path::from_top_level_dir();
     for part in parts {
-        path.resolve_in_place(&[&windows_to_platform(part)]).ok()?;
+        path.resolve_in_place(&[&from_portable(part)]);
     }
-    Some(path)
+    path.check_len().ok()
 }
 
 /// The package.json of the importer at `path`, relative to the project.
@@ -775,7 +775,7 @@ pub(crate) fn migrate_pnpm_lockfile(
             let (Some(abs_link_path), Some(folder)) = (
                 join_top_level_dir(&[workspace_path, link_path]),
                 lockfile::package::folder_relative_to_top_level_dir(
-                    &windows_to_platform(workspace_path),
+                    &from_portable(workspace_path),
                     link_path,
                 ),
             ) else {
@@ -1360,10 +1360,11 @@ fn declare_folder_dependencies_relative_to_their_package(
 
             literal.clear();
             literal.extend_from_slice(b"file:");
-            let relative = ForwardSlashPath::relative(
+            let relative = Path::relative(
                 pkg_dir.slice(string_bytes!(lockfile)),
-                &windows_to_platform(folder.slice(string_bytes!(lockfile))),
-            );
+                &from_portable(folder.slice(string_bytes!(lockfile))),
+            )
+            .into_portable();
             literal.extend_from_slice(if relative.is_empty() { b"." } else { &relative });
 
             let appended = sbuf!(lockfile).append(&literal)?;

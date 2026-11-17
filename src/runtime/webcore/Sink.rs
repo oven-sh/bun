@@ -934,7 +934,7 @@ impl ReadableSinkController {
         }
     }
 
-    /// `write` for C++. The pump passes the bytes of a JS buffer.
+    /// `write` of bytes that are not in a JS object.
     pub(crate) fn write_bytes(&self, cx: &mut JsScope<'_>, bytes: &[u8]) -> JsResult<JSValue> {
         let Some(sink) = self.sink_or_throw(cx.global())? else {
             return Ok(JSValue::js_number(0.0));

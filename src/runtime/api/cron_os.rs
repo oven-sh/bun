@@ -50,14 +50,23 @@ pub(crate) fn register(
         CronPath::Url(url) => resolve_script(global, path_of_url(global, url.to_js())?.slice()),
     };
     let script = script.ok_or_else(|| invalid("Failed to resolve path"))?;
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+        return Err(global.throw(format_args!("Failed to get the working directory")));
+    };
+    let cwd = core::str::from_utf8(cwd.as_bytes())
+        .map_err(|_| invalid("Working directory must be valid UTF-8"))?;
 
-    // The path goes into a crontab line, in single quotes.
-    if let Some(byte) = strings::index_of_any(&script, b"'%\n\r").and_then(|i| script.get(i)) {
-        return Err(invalid(match byte {
-            b'\'' => "Path must not contain single quotes",
-            b'%' => "Path must not contain percent signs (cron interprets % as newline)",
-            _ => "Path must not contain line breaks",
-        }));
+    // Both go into a crontab line, in single quotes.
+    for (name, path) in [("Path", &*script), ("Working directory", cwd.as_bytes())] {
+        if let Some(byte) = strings::index_of_any(path, b"'%\n\r").and_then(|i| path.get(i)) {
+            let refused = match byte {
+                b'\'' => "single quotes",
+                b'%' => "percent signs (cron interprets % as newline)",
+                _ => "line breaks",
+            };
+            return Err(invalid(&format!("{name} must not contain {refused}")));
+        }
     }
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(global.throw(format_args!("Failed to get bun executable path")));
@@ -75,6 +84,7 @@ pub(crate) fn register(
         schedule,
         exe,
         script: &script,
+        cwd,
     });
     Ok(OsJob::start(global, first))
 }

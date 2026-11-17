@@ -13,6 +13,7 @@ pub struct TooManyTriggers;
 
 pub fn task_xml(job: &Registration<'_>) -> Result<String, TooManyTriggers> {
     let (title, schedule) = (&job.title, &job.schedule);
+    let cwd = XmlText(job.cwd.as_bytes());
     let (exe, script) = (XmlText(job.exe), XmlText(job.script));
     let triggers = triggers(schedule)?;
     Ok(format!(
@@ -37,6 +38,7 @@ pub fn task_xml(job: &Registration<'_>) -> Result<String, TooManyTriggers> {
 <Exec>
 <Command>{exe}</Command>
 <Arguments>run --cron-title={title} --cron-period="{schedule}" "{script}"</Arguments>
+<WorkingDirectory>{cwd}</WorkingDirectory>
 </Exec>
 </Actions>
 </Task>

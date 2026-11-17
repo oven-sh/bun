@@ -30,12 +30,13 @@ impl Display for Title {
     }
 }
 
-/// What the OS is asked to run: `<exe> run --cron-title=<title> --cron-period=<schedule> <script>`.
+/// What the OS is asked to run, in `cwd`: `<exe> run --cron-title=<title> --cron-period=<schedule> <script>`.
 pub struct Registration<'a> {
     pub title: Title,
     pub schedule: CronExpression,
     pub exe: &'a [u8],
     pub script: &'a [u8],
+    pub cwd: &'a str,
 }
 
 /// Escaped. The document has to be UTF-8, so a byte that is not becomes U+FFFD.

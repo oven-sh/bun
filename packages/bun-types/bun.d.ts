@@ -9081,6 +9081,9 @@ declare module "bun" {
      * };
      * ```
      *
+     * The module runs in the working directory of the process that registered it. If that
+     * directory is gone when the job fires, the module does not run.
+     *
      * ### Cron expression syntax
      *
      * Five fields: `minute hour day-of-month month day-of-week`.

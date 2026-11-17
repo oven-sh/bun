@@ -285,18 +285,18 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
         // On macOS /tmp is a symlink to /private/tmp, so the resolved path may use either.
         // The important thing: it ends in the caller dir's worker.ts, not the cwd.
         expect(plist).toMatch(/bun-cron-caller-rel[^<]*[\\/]worker\.ts/);
-        expect(plist).not.toContain("bun-cron-other-cwd");
+        expect(plist).toMatch(/<key>WorkingDirectory<\/key>\n<string>[^<]*bun-cron-other-cwd[^<]*<\/string>/);
       } else if (hasCrontab) {
         const crontab = Bun.spawnSync({ cmd: [Bun.which("crontab")!, "-l"], stdout: "pipe" }).stdout.toString();
         expect(crontab).toMatch(/bun-cron-caller-rel[^\n]*[\\/]worker\.ts/);
-        expect(crontab).not.toContain("bun-cron-other-cwd");
+        expect(crontab).toMatch(/ cd '[^']*bun-cron-other-cwd[^']*' && .* --cron-title=test-xplat-caller-rel /);
       } else if (hasSchtasks) {
         const query = Bun.spawnSync({
           cmd: ["schtasks", "/query", "/tn", "bun-cron-test-xplat-caller-rel", "/xml"],
           stdout: "pipe",
         }).stdout.toString();
         expect(query).toMatch(/bun-cron-caller-rel[^<]*[\\/]worker\.ts/);
-        expect(query).not.toContain("bun-cron-other-cwd");
+        expect(query).toMatch(/<WorkingDirectory>[^<]*bun-cron-other-cwd[^<]*<\/WorkingDirectory>/);
       }
     } finally {
       await Bun.cron.remove("test-xplat-caller-rel");
@@ -739,13 +739,14 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
   async function run(fixture: string, env: Record<string, string> = {}) {
     using dir = tempDir("cron-stub", {
       "bin/crontab": `#!/bin/sh
+        cd "\${0%/*}/.."
         if [ "$1" = -l ]; then cat table; eval "$AFTER_LIST"; exit 0; fi
         eval "$BEFORE_INSTALL"
         cp "$1" table.new && mv table.new table
       `,
       "tmp/.keep": "",
       "table": untouched,
-      "job.ts": "",
+      "job.ts": `export default { scheduled: () => console.log(process.cwd(), process.env.FROM_DOTENV, process.execArgv.join()) };`,
       "a b#é.ts": "",
       "fixture.js": fixture,
     });
@@ -760,7 +761,8 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const table = readFileSync(`${dir}/table`, "utf8")
       .replace(/'[^']*' run/, "'bun' run")
-      .replace(String(dir), "");
+      .replace(`cd '${dir}' && `, "")
+      .replaceAll(String(dir), "");
     return { stdout, stderr, table, tempFiles: readdirSync(`${dir}/tmp`).length - 1, exitCode };
   }
 
@@ -789,6 +791,53 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
       tempFiles: 0,
       exitCode: 0,
     });
+  });
+
+  const registerInThenFire = (directory: string, beforeFiring = "") =>
+    run(`
+      const fs = require("node:fs");
+      fs.mkdirSync(${JSON.stringify(directory)});
+      process.chdir(${JSON.stringify(directory)});
+      fs.writeFileSync(".env", "FROM_DOTENV=1");
+      await Bun.cron("./job.ts", "@daily", "t");
+      ${beforeFiring}
+      const command = fs.readFileSync(import.meta.dir + "/table", "utf8").split("\\n0 0 * * * ")[1];
+      const job = Bun.spawnSync(["sh", "-c", command], { cwd: "/" });
+      console.log(job.stdout.toString().replace(import.meta.dir, "") + (job.success ? "succeeded" : "failed"));
+    `);
+
+  test.each(["a b", "a\\b", "$HOME`id`"])("a job that was registered in the directory %s runs there", async name => {
+    expect(await registerInThenFire(name)).toEqual({
+      stdout: `/${name} 1 --cron-title=t,--cron-period=0 0 * * *\nsucceeded\n`,
+      stderr: "",
+      table: `${kept}# bun-cron: t\n0 0 * * * cd '/${name}' && 'bun' run --cron-title=t --cron-period='0 0 * * *' '/job.ts'\n`,
+      tempFiles: 0,
+      exitCode: 0,
+    });
+  });
+
+  test("a job does not run when its directory is gone", async () => {
+    const result = await registerInThenFire("gone", `fs.rmSync(process.cwd(), { recursive: true });`);
+    expect(result).toMatchObject({ stdout: "failed\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    { name: `"a'b"`, message: "Working directory must not contain single quotes" },
+    { name: `"a%b"`, message: "Working directory must not contain percent signs (cron interprets % as newline)" },
+    { name: `"a\\nb"`, message: "Working directory must not contain line breaks" },
+    { name: `"a\\rb"`, message: "Working directory must not contain line breaks" },
+    { name: `Buffer.from([0xff])`, message: "Working directory must be valid UTF-8" },
+    { name: `"gone"`, afterChdir: `fs.rmdirSync("../gone");`, message: "Failed to get the working directory" },
+  ])("throws in the directory $name", async ({ name, afterChdir = "", message }) => {
+    const result = await run(`
+      const fs = require("node:fs");
+      fs.mkdirSync(${name});
+      fs.symlinkSync(${name}, "link");
+      process.chdir("link");
+      ${afterChdir}
+      try { await Bun.cron("./job.ts", "@daily", "t"); } catch (e) { console.log(e.message); }
+    `);
+    expect(result).toEqual({ stdout: message + "\n", stderr: "", table: untouched, tempFiles: 0, exitCode: 0 });
   });
 
   describe.each([
@@ -935,6 +984,16 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
       }
     `);
     expect(result).toEqual({ stdout: "closed\n", stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!isMacOS)("the plist names the working directory", async () => {
+    const result = await run(`
+      await Bun.cron("./job.ts", "@yearly", "bun-test-cwd").catch(() => {});
+      const plist = await Bun.file("home/Library/LaunchAgents/bun.cron.bun-test-cwd.plist").text();
+      await Bun.cron.remove("bun-test-cwd");
+      console.log(plist.includes("<key>WorkingDirectory</key>\\n<string>" + process.cwd() + "</string>"));
+    `);
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
   });
 
   test("a file URL resolves to the script", async () => {
@@ -1405,6 +1464,7 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
               cron: controller.cron,
               scheduledTime: controller.scheduledTime,
               keys: Object.keys(controller).sort(),
+              cwd: process.cwd(),
             }));
             // The test reads the marker as soon as it exists, so it appears with its content.
             fs.renameSync("${markerPath}.tmp", "${markerPath}");
@@ -1433,6 +1493,7 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
       expect(output.scheduledTime).toBeLessThanOrEqual(after + 5000);
       // Verify exactly these three keys, no extras
       expect(output.keys).toEqual(["cron", "scheduledTime", "type"]);
+      expect(output.cwd).toBe(process.cwd());
     } finally {
       removeLaunchdJob("test-mac-e2e");
       try {

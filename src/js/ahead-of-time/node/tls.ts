@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 77277c3d9a2ab638ca69e4aca4d3758b00ea3fc854d7cec65d06180970df6a2d.
+// Written against that file with the SHA-256 6e9c3c66c164c112c3f007569fbdc9a5fe3d3a926423286f163d50d8ed2024a9.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -786,6 +786,7 @@ function TLSSocket(this: $Node.TLSSocket, socket?, options?) {
   }
   // Cached by digest. createSecureContext() and new tls.SecureContext() own theirs.
   this[ksecureContext] = secureContext || newSecureContext(options, true, true);
+  if (!secureContext) this[kservername] = options.servername;
   this.secureConnecting = true;
   const checkServerIdentityOption = options.checkServerIdentity;
   if (checkServerIdentityOption !== undefined) {
@@ -1097,7 +1098,7 @@ TLSSocket.prototype[buntls] = function (host: string | null | undefined) {
   // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
   // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
   // falling back to the connection host.
-  let servername = this.servername || this[kservername] || ctx?.servername;
+  let servername = this.servername || this[kservername];
   if (servername == null) {
     servername = host && !net.isIP(host) ? host : "";
   }

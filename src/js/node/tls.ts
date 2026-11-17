@@ -640,6 +640,7 @@ function TLSSocket(socket?, options?) {
   }
   // Cached by digest. createSecureContext() and new tls.SecureContext() own theirs.
   this[ksecureContext] = secureContext || newSecureContext(options, true, true);
+  if (!secureContext) this[kservername] = options.servername;
   this.secureConnecting = true;
   const checkServerIdentityOption = options.checkServerIdentity;
   if (checkServerIdentityOption !== undefined) {
@@ -942,7 +943,7 @@ TLSSocket.prototype[buntls] = function (host) {
   // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
   // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
   // falling back to the connection host.
-  let servername = this.servername || this[kservername] || ctx?.servername;
+  let servername = this.servername || this[kservername];
   if (servername == null) {
     servername = host && !net.isIP(host) ? host : "";
   }

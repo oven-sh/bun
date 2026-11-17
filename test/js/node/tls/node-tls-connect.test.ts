@@ -5873,6 +5873,28 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
     }
   });
 
+  it("tls.connect() takes no servername from the options of its secureContext", async () => {
+    const server = tls.createServer(COMMON_CERT_).on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const names: string[] = [];
+    const socket = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      secureContext: tls.createSecureContext({
+        ca: COMMON_CERT_.cert,
+        servername: "localhost",
+      } as tls.SecureContextOptions),
+      checkServerIdentity: name => void names.push(name),
+    });
+    try {
+      await once(socket, "secureConnect");
+      expect({ names, servername: (socket as any).servername }).toEqual({ names: ["127.0.0.1"], servername: false });
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
   // Bun runs the functions of the fixture in this process. Node runs the same file as a
   // script, so each expected report below is also node v26.12.1's.
   async function underNode(mode: string) {

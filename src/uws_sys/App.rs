@@ -173,6 +173,12 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
 
+    /// Keep the ClientHello of every TLS connection this app accepts, on its
+    /// current and later listeners. Does nothing on a plain HTTP app.
+    pub fn capture_client_hello(&mut self) {
+        c::uws_app_capture_client_hello(Self::SSL_FLAG, self.as_raw())
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // RouteHandler
     //
@@ -628,6 +634,7 @@ pub mod c {
         );
 
         pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
+        pub(crate) safe fn uws_app_capture_client_hello(ssl_flag: c_int, app: &mut uws_app_t);
     }
 
     #[repr(C)]

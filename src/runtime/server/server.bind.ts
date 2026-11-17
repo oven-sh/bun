@@ -30,6 +30,12 @@ function server(name: string) {
     ],
     proto: {
       address: { getter: b.any.returning("string", "object", "null"), cache: true, capability: "js", throws: true },
+      clientHello: {
+        args: { request: b.any },
+        returns: b.any.returning("object", "null"),
+        capability: "js",
+        throws: true,
+      },
       closeIdleConnections: { returns: b.usize, capability: "js" },
       development: { getter: b.bool, pure: true },
       fetch: {

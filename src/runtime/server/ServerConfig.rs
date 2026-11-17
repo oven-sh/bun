@@ -35,6 +35,9 @@ pub(crate) struct ServerConfig {
 
     pub(crate) ssl_config: Option<SSLConfig>,
     pub(crate) sni: Option<Vec<SSLConfig>>,
+    /// `tls.clientHello`: keep each connection's ClientHello for `server.clientHello(request)`.
+    /// Read here and not in `SSLConfig`, which `Bun.listen`, `Bun.connect` and `fetch` share.
+    pub(crate) capture_client_hello: bool,
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,
     pub(crate) broadcast_console_log_from_browser_to_server_for_bake: bool,
@@ -83,6 +86,7 @@ impl Default for ServerConfig {
             base_uri: Box::default(),
             ssl_config: None,
             sni: None,
+            capture_client_hello: false,
             max_request_body_size: 1024 * 1024 * 128,
             development: DevelopmentOption::Development,
             broadcast_console_log_from_browser_to_server_for_bake: false,
@@ -283,6 +287,7 @@ impl ServerConfig {
             base_uri: core::mem::take(&mut self.base_uri),
             ssl_config: self.ssl_config.take(),
             sni: self.sni.take(),
+            capture_client_hello: self.capture_client_hello,
             max_request_body_size: self.max_request_body_size,
             development: self.development,
             broadcast_console_log_from_browser_to_server_for_bake: self
@@ -563,6 +568,39 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
         remaining = &remaining[end..];
     }
     Ok(())
+}
+
+/// What a `tls` object is to the listener.
+#[derive(Clone, Copy)]
+enum TlsObject {
+    /// It gives the listener its default certificate.
+    Default,
+    /// It has no certificate, so it makes no TLS server.
+    WithoutCertificate,
+    /// A later entry of a `tls` array: the certificate of one `serverName`.
+    ServerName,
+}
+
+/// `clientHello` of one `tls` object. The listener keeps the ClientHello before
+/// it knows the server name, so the option belongs to the server and only the
+/// `TlsObject::Default` object can set it.
+fn client_hello_option(global: &JSGlobalObject, tls: JSValue, object: TlsObject) -> JsResult<bool> {
+    if !tls.is_object() {
+        return Ok(false);
+    }
+    let Some(wanted) = tls.get_boolean_strict(global, "clientHello")? else {
+        return Ok(false);
+    };
+    match object {
+        TlsObject::Default => Ok(wanted),
+        TlsObject::WithoutCertificate if !wanted => Ok(false),
+        TlsObject::WithoutCertificate => Err(global.throw_invalid_arguments(format_args!(
+            "tls.clientHello needs a TLS server. Set \"cert\" and \"key\" in the same tls object",
+        ))),
+        TlsObject::ServerName => Err(global.throw_invalid_arguments(format_args!(
+            "tls.clientHello applies to every serverName. Set it on the first tls object",
+        ))),
+    }
 }
 
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
@@ -1203,12 +1241,16 @@ impl ServerConfig {
                     while let Some(item) = value_iter.next()? {
                         let Some(ssl_config) = SSLConfig::from_js(vm, global, item, true)? else {
                             // Backwards-compatibility; we ignored empty tls objects.
+                            client_hello_option(global, item, TlsObject::WithoutCertificate)?;
                             continue;
                         };
 
                         if args.ssl_config.is_none() {
                             args.ssl_config = Some(ssl_config);
+                            args.capture_client_hello =
+                                client_hello_option(global, item, TlsObject::Default)?;
                         } else {
+                            client_hello_option(global, item, TlsObject::ServerName)?;
                             if ssl_config.server_name_bytes().unwrap_or(b"").is_empty() {
                                 drop(ssl_config);
                                 return Err(global.throw_invalid_arguments(format_args!(
@@ -1226,6 +1268,10 @@ impl ServerConfig {
             } else {
                 if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
                     args.ssl_config = Some(ssl_config);
+                    args.capture_client_hello =
+                        client_hello_option(global, tls, TlsObject::Default)?;
+                } else {
+                    client_hello_option(global, tls, TlsObject::WithoutCertificate)?;
                 }
             }
         }

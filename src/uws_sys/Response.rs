@@ -393,6 +393,18 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    /// The ClientHello of this connection's TLS handshake, when its listener
+    /// keeps it (`App::capture_client_hello`).
+    pub fn client_hello(&mut self) -> Option<&[u8]> {
+        let mut len: u32 = 0;
+        let ptr = c::uws_res_get_client_hello(self.as_raw(), &mut len);
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: usockets keeps `len` bytes at `ptr` until the socket closes.
+        Some(unsafe { bun_core::ffi::slice(ptr, len as usize) })
+    }
+
     pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut ip_ptr: *const u8 = core::ptr::null();
         let mut port: i32 = 0;
@@ -794,6 +806,12 @@ impl AnyResponse {
 
     pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
         any_dispatch!(self, |r| r.get_remote_socket_info())
+    }
+
+    /// Runs `f` on the ClientHello of this connection's TLS handshake. `None`
+    /// when the connection is not TLS or its listener does not keep it.
+    pub fn with_client_hello<R>(self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        any_dispatch!(self, |r| r.client_hello().map(f))
     }
 
     pub fn flush_headers(self, flush_immediately: bool) {
@@ -1249,6 +1267,11 @@ pub mod c {
             port: &mut i32,
             is_ipv6: &mut bool,
         ) -> usize;
+        // NULL, with `length` untouched, when there is none.
+        pub(crate) safe fn uws_res_get_client_hello(
+            res: &mut uws_res,
+            length: &mut u32,
+        ) -> *const u8;
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_when_complete(ssl: i32, res: &mut uws_res);

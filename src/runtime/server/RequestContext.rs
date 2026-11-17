@@ -4249,6 +4249,10 @@ where
         })
     }
 
+    pub(crate) fn with_client_hello<R>(&self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        self.live_resp()?.with_client_hello(f)
+    }
+
     pub(crate) fn set_timeout(&self, seconds: c_uint) -> bool {
         if let Some(resp) = self.live_resp() {
             // SAFETY: FFI handle

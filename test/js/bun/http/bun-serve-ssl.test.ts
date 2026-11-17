@@ -1,12 +1,26 @@
+import type { Server } from "bun";
 import { describe, expect, test } from "bun:test";
 import { readFileSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, bunRun, expiredTls, isWindows, tempDir, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  expectRssDeltaBelow,
+  expiredTls,
+  isASAN,
+  isDebug,
+  isWindows,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
-import net from "node:net";
+import net, { type AddressInfo } from "node:net";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
 import publicKey from "../../third_party/jsonwebtoken/pub.pem" with { type: "text" };
+import { connectH2, request } from "./serve-http2-helpers";
 
 describe("Bun.serve SSL validations", () => {
   const fixtures = [
@@ -786,4 +800,467 @@ test.concurrent.each([
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(JSON.parse(stdout)).toEqual({ before: false, error, after: false });
   expect(exitCode).toBe(0);
+});
+
+const SERVER_NAME = 0;
+const ALPN = 16;
+const QUIC_TRANSPORT_PARAMETERS = 0x39;
+
+// parseClientHello and ja4 are the two functions of docs/runtime/http/tls.mdx, as written there.
+function parseClientHello(raw: Uint8Array) {
+  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  let offset = 2 + 32; // legacy_version, random
+  offset += 1 + view.getUint8(offset); // legacy_session_id
+
+  const cipherSuites: number[] = [];
+  const cipherSuitesEnd = offset + 2 + view.getUint16(offset);
+  for (offset += 2; offset < cipherSuitesEnd; offset += 2) cipherSuites.push(view.getUint16(offset));
+
+  offset += 1 + view.getUint8(offset); // legacy_compression_methods
+
+  const extensions: { type: number; data: Uint8Array }[] = [];
+  if (offset < raw.length) {
+    const extensionsEnd = offset + 2 + view.getUint16(offset);
+    for (offset += 2; offset < extensionsEnd;) {
+      const length = view.getUint16(offset + 2);
+      extensions.push({ type: view.getUint16(offset), data: raw.subarray(offset + 4, offset + 4 + length) });
+      offset += 4 + length;
+    }
+  }
+  return { legacyVersion: view.getUint16(0), cipherSuites, extensions };
+}
+
+const isGrease = (value: number) => (value & 0x0f0f) === 0x0a0a && value >> 8 === (value & 0xff);
+const hex4 = (value: number) => value.toString(16).padStart(4, "0");
+const count = (values: number[]) => String(Math.min(values.length, 99)).padStart(2, "0");
+const hash = (list: string) => (list ? createHash("sha256").update(list).digest("hex").slice(0, 12) : "000000000000");
+const isAlphanumeric = (byte: number) => /[0-9A-Za-z]/.test(String.fromCharCode(byte));
+const versions: Record<number, string> = { 0x0304: "13", 0x0303: "12", 0x0302: "11", 0x0301: "10", 0x0300: "s3" };
+
+function u16List(data: Uint8Array | undefined, start: number) {
+  const values: number[] = [];
+  for (let i = start; data && i + 1 < data.length; i += 2) values.push((data[i] << 8) | data[i + 1]);
+  return values.filter(value => !isGrease(value));
+}
+
+// `transport` is "t" for TLS over TCP (HTTP/1.1, HTTP/2) and "q" for QUIC (HTTP/3).
+function ja4(raw: Uint8Array, transport: "t" | "q") {
+  const { legacyVersion, cipherSuites, extensions } = parseClientHello(raw);
+  const extension = (type: number) => extensions.find(e => e.type === type)?.data;
+
+  const ciphers = cipherSuites.filter(cipher => !isGrease(cipher));
+  const types = extensions.map(e => e.type).filter(type => !isGrease(type));
+  const version = Math.max(...u16List(extension(0x002b), 1), 0) || legacyVersion; // supported_versions
+  const signatureAlgorithms = u16List(extension(0x000d), 2);
+
+  // application_layer_protocol_negotiation: the first and the last character of the first protocol.
+  const alpn = extension(0x0010);
+  const protocol = alpn && alpn.length > 3 ? alpn.subarray(3, 3 + alpn[2]) : new Uint8Array();
+  const first = protocol[0];
+  const last = protocol[protocol.length - 1];
+  const alpnCharacters = !protocol.length
+    ? "00"
+    : isAlphanumeric(first) && isAlphanumeric(last)
+      ? String.fromCharCode(first, last)
+      : (first >> 4).toString(16) + (last & 0x0f).toString(16);
+
+  const a =
+    transport +
+    (versions[version] ?? "00") +
+    (extension(0x0000) ? "d" : "i") + // server_name
+    count(ciphers) +
+    count(types) +
+    alpnCharacters;
+  const b = hash(ciphers.map(hex4).sort().join(","));
+  const sorted = types
+    .filter(type => type !== 0x0000 && type !== 0x0010)
+    .map(hex4)
+    .sort()
+    .join(",");
+  const c = hash(
+    sorted && signatureAlgorithms.length ? `${sorted}_${signatureAlgorithms.map(hex4).join(",")}` : sorted,
+  );
+  return `${a}_${b}_${c}`;
+}
+
+/** A ClientHello body with these cipher suites and extensions, in this order. */
+function buildClientHello(cipherSuites: number[], extensions: [type: number, data: number[]][]) {
+  const u16 = (value: number) => [value >> 8, value & 0xff];
+  const extensionBytes = extensions.flatMap(([type, data]) => [...u16(type), ...u16(data.length), ...data]);
+  return Uint8Array.from([
+    ...[0x03, 0x03], // legacy_version
+    ...new Array(32).fill(0x11), // random
+    ...[4, 1, 2, 3, 4], // legacy_session_id
+    ...u16(cipherSuites.length * 2),
+    ...cipherSuites.flatMap(u16),
+    ...[1, 0], // legacy_compression_methods
+    ...u16(extensionBytes.length),
+    ...extensionBytes,
+  ]);
+}
+
+/** What the handlers answer with: the ClientHello in hex, or null. */
+const hex = (hello: { raw: Uint8Array } | null) => hello && Buffer.from(hello.raw).toString("hex");
+const describeHello = (hexHello: string) => {
+  const { legacyVersion, cipherSuites, extensions } = parseClientHello(Buffer.from(hexHello, "hex"));
+  const extension = (type: number) => {
+    const found = extensions.find(e => e.type === type);
+    return found ? Buffer.from(found.data).toString("latin1") : undefined;
+  };
+  return { legacyVersion, cipherSuites, types: extensions.map(e => e.type), extension };
+};
+
+function handler(req: Request, server: Server<undefined>) {
+  if (new URL(req.url).pathname !== "/async") return Response.json(hex(server.clientHello(req)));
+  return new Promise<void>(resolve => setImmediate(resolve)).then(() => Response.json(hex(server.clientHello(req))));
+}
+
+/** A TCP proxy in front of `port` that keeps every byte its client sent. */
+async function recordingProxy(port: number) {
+  const sent: Buffer[] = [];
+  const sockets: net.Socket[] = [];
+  const proxy = net.createServer(client => {
+    const upstream = net.connect(port, "127.0.0.1");
+    sockets.push(client, upstream);
+    client.on("data", chunk => {
+      sent.push(chunk);
+      upstream.write(chunk);
+    });
+    upstream.on("data", chunk => client.write(chunk));
+    client.on("error", () => {}).on("close", () => upstream.destroy());
+    upstream.on("error", () => {}).on("close", () => client.destroy());
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  return {
+    port: (proxy.address() as AddressInfo).port,
+    /** The body of the ClientHello in the client's byte stream: no record headers, no handshake header. */
+    clientHello() {
+      const stream = Buffer.concat(sent);
+      let handshake = Buffer.alloc(0);
+      for (let offset = 0; offset + 5 <= stream.length && stream[offset] === 22;) {
+        const length = stream.readUInt16BE(offset + 3);
+        handshake = Buffer.concat([handshake, stream.subarray(offset + 5, offset + 5 + length)]);
+        offset += 5 + length;
+        if (handshake.length >= 4 && handshake.length >= 4 + handshake.readUIntBE(1, 3)) break;
+      }
+      expect(handshake[0]).toBe(1);
+      return handshake.subarray(4, 4 + handshake.readUIntBE(1, 3)).toString("hex");
+    },
+    [Symbol.dispose]() {
+      for (const socket of sockets) socket.destroy();
+      proxy.close();
+    },
+  };
+}
+
+/** One GET on an open connection. Resolves with the JSON body once `content-length` bytes of it arrived. */
+function get(socket: tls.TLSSocket, path: string): Promise<any> {
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  let text = "";
+  const onData = (chunk: Buffer) => {
+    text += chunk.toString("latin1");
+    const end = text.indexOf("\r\n\r\n");
+    if (end === -1) return;
+    const length = Number(/\r\ncontent-length: (\d+)/i.exec(text.slice(0, end))?.[1]);
+    if (text.length < end + 4 + length) return;
+    socket.off("data", onData);
+    resolve(JSON.parse(text.slice(end + 4, end + 4 + length)));
+  };
+  socket.on("data", onData);
+  socket.once("error", reject);
+  socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+  return promise;
+}
+
+async function connectTLS(options: tls.ConnectionOptions) {
+  const socket = tls.connect({ rejectUnauthorized: false, ALPNProtocols: ["http/1.1"], ...options });
+  await once(socket, "secureConnect");
+  return socket;
+}
+
+describe("server.clientHello", () => {
+  test("HTTP/1.1: raw is the ClientHello the client sent, for every request on the connection", async () => {
+    await using server = Bun.serve({ port: 0, tls: { ...tlsCert, clientHello: true }, fetch: handler });
+    using proxy = await recordingProxy(server.port!);
+
+    const socket = await connectTLS({ host: "127.0.0.1", port: proxy.port, servername: "localhost" });
+    const first = await get(socket, "/");
+    const afterAwait = await get(socket, "/async");
+    socket.destroy();
+
+    expect(first).toBe(proxy.clientHello());
+    expect(afterAwait).toBe(first);
+
+    const hello = describeHello(first);
+    expect(hello.legacyVersion).toBe(0x0303);
+    expect(hello.cipherSuites.length).toBeGreaterThan(0);
+    expect(hello.extension(SERVER_NAME)).toEndWith("localhost");
+    expect(hello.extension(ALPN)).toEndWith("http/1.1");
+
+    // The bytes belong to the connection: the next one has its own `random`.
+    const second = await connectTLS({ host: "127.0.0.1", port: server.port!, servername: "localhost" });
+    const other = await get(second, "/");
+    second.destroy();
+    expect(other).not.toBe(first);
+    expect(describeHello(other).types).toEqual(hello.types);
+  });
+
+  test("HTTP/2: every stream of a connection gets the ClientHello the client sent", async () => {
+    await using server = Bun.serve({ port: 0, http2: true, tls: { ...tlsCert, clientHello: true }, fetch: handler });
+    using proxy = await recordingProxy(server.port!);
+
+    const session = await connectH2(proxy.port, true);
+    const [first, second] = await Promise.all([
+      request(session, { ":path": "/" }),
+      request(session, { ":path": "/async" }),
+    ]);
+    await new Promise<void>(resolve => session.close(() => resolve()));
+
+    const hello = JSON.parse(first.body.toString());
+    expect(hello).toBe(proxy.clientHello());
+    expect(JSON.parse(second.body.toString())).toBe(hello);
+    expect(describeHello(hello).extension(ALPN)).toContain("h2");
+  });
+
+  test("HTTP/3: requests after the handshake get the ClientHello of the QUIC connection", async () => {
+    await using server = Bun.serve({ port: 0, http3: true, tls: { ...tlsCert, clientHello: true }, fetch: handler });
+    const h3 = (path: string) =>
+      fetch(`https://127.0.0.1:${server.port}${path}`, {
+        protocol: "http3",
+        tls: { rejectUnauthorized: false },
+      } as RequestInit).then(res => res.json());
+
+    // lsquic frees its SSL once the handshake is done, so the second request
+    // reads the copy that the connection kept.
+    const first = await h3("/");
+    const second = await h3("/async");
+    expect(first).toBeString();
+    expect(second).toBe(first);
+
+    const hello = describeHello(first);
+    expect(hello.legacyVersion).toBe(0x0303);
+    expect(hello.types).toContain(QUIC_TRANSPORT_PARAMETERS);
+    expect(hello.extension(ALPN)).toContain("h3");
+
+    // The TCP listener of the same server keeps its own connections' ClientHello.
+    const overTCP = await fetch(server.url, { tls: { rejectUnauthorized: false } }).then(res => res.json());
+    expect(describeHello(overTCP).types).not.toContain(QUIC_TRANSPORT_PARAMETERS);
+  });
+
+  test("null without the option, without TLS, for a Request of no connection, and after the response", async () => {
+    let seen: Request | undefined;
+    const fetchHandler = (req: Request, server: Server<undefined>) => {
+      seen = req;
+      return Response.json(hex(server.clientHello(req)));
+    };
+
+    await using off = Bun.serve({ port: 0, tls: tlsCert, fetch: fetchHandler });
+    expect(await fetch(off.url, { tls: { rejectUnauthorized: false } }).then(res => res.json())).toBeNull();
+
+    await using plain = Bun.serve({ port: 0, fetch: fetchHandler });
+    expect(await fetch(plain.url).then(res => res.json())).toBeNull();
+
+    // `clientHello` is an option of the `tls` object. Beside a top-level certificate it is not an option.
+    // @ts-expect-error
+    await using topLevel = Bun.serve({ port: 0, ...tlsCert, clientHello: true, fetch: fetchHandler });
+    expect(topLevel.url.protocol).toBe("https:");
+    expect(await fetch(topLevel.url, { tls: { rejectUnauthorized: false } }).then(res => res.json())).toBeNull();
+
+    await using on = Bun.serve({ port: 0, tls: { ...tlsCert, clientHello: true }, fetch: fetchHandler });
+    expect(await fetch(on.url, { tls: { rejectUnauthorized: false } }).then(res => res.json())).toBeString();
+    expect(on.clientHello(seen!)).toBeNull();
+    expect(on.clientHello(new Request(on.url))).toBeNull();
+    // @ts-expect-error
+    expect(() => on.clientHello({})).toThrow("Expected Request object");
+    // @ts-expect-error
+    expect(() => on.clientHello()).toThrow("Expected Request object");
+  });
+
+  test("the result is a new { raw: Uint8Array } for each call", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls: { ...tlsCert, clientHello: true },
+      fetch(req, server) {
+        const first = server.clientHello(req)!;
+        const second = server.clientHello(req)!;
+        expect(Object.keys(first)).toEqual(["raw"]);
+        expect(first.raw).toBeInstanceOf(Uint8Array);
+        expect(first.raw).not.toBeInstanceOf(Buffer);
+        expect(second.raw).not.toBe(first.raw);
+        first.raw.fill(0);
+        expect(second.raw).toEqual(server.clientHello(req)!.raw);
+        expect(second.raw[0]).toBe(3);
+        resolve();
+        return new Response("ok");
+      },
+    });
+    expect(await fetch(server.url, { tls: { rejectUnauthorized: false } }).then(res => res.text())).toBe("ok");
+    await promise;
+  });
+
+  test("tls array: the option of the first entry covers every serverName, over TCP and QUIC", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      http3: true,
+      tls: [
+        { ...tlsCert, clientHello: true },
+        { ...tlsCert, serverName: "other.example" },
+        { ...tlsCert, serverName: "localhost" },
+      ],
+      fetch: handler,
+    });
+    const socket = await connectTLS({ host: "127.0.0.1", port: server.port!, servername: "other.example" });
+    const overTCP = await get(socket, "/");
+    socket.destroy();
+    expect(describeHello(overTCP).extension(SERVER_NAME)).toEndWith("other.example");
+
+    const overQUIC = await fetch(`https://localhost:${server.port}/`, {
+      protocol: "http3",
+      tls: { rejectUnauthorized: false },
+    } as RequestInit).then(res => res.json());
+    expect(describeHello(overQUIC).types).toContain(QUIC_TRANSPORT_PARAMETERS);
+    expect(describeHello(overQUIC).extension(SERVER_NAME)).toEndWith("localhost");
+  });
+
+  test("the option is a boolean of the tls object that has the default certificate", () => {
+    const serve = (tls: unknown) => {
+      // @ts-expect-error
+      using server = Bun.serve({ port: 0, tls, fetch: () => new Response() });
+      return server.url.protocol;
+    };
+    for (const clientHello of ["yes", "false", 1, 0, null, {}]) {
+      expect(() => serve({ ...tlsCert, clientHello })).toThrow('The "clientHello" property must be of type boolean');
+    }
+    expect(serve({ ...tlsCert, clientHello: false })).toBe("https:");
+    expect(serve({ ...tlsCert, clientHello: undefined })).toBe("https:");
+
+    // The listener reads the ClientHello before it knows the serverName, so a later entry cannot set the option.
+    for (const clientHello of [true, false]) {
+      expect(() => serve([tlsCert, { ...tlsCert, serverName: "other.example", clientHello }])).toThrow(
+        "tls.clientHello applies to every serverName. Set it on the first tls object",
+      );
+    }
+
+    // A `tls` object with no certificate makes a plain HTTP server, which has no ClientHello.
+    const needsTLS = 'tls.clientHello needs a TLS server. Set "cert" and "key" in the same tls object';
+    expect(() => serve({ clientHello: true })).toThrow(needsTLS);
+    expect(() => serve([{ clientHello: true }, tlsCert])).toThrow(needsTLS);
+    expect(serve({ clientHello: false })).toBe("http:");
+  });
+
+  test("a server without the option keeps nothing when it shares its certificate with a server that has it", async () => {
+    // Servers with the same TLS options share one SSL_CTX, and with it the callback that reads the ClientHello.
+    await using off = Bun.serve({ port: 0, tls: tlsCert, fetch: handler });
+    await using on = Bun.serve({ port: 0, tls: { ...tlsCert, clientHello: true }, fetch: handler });
+    const ask = async (server: Server<undefined>) => {
+      const socket = await connectTLS({ host: "127.0.0.1", port: server.port!, servername: "localhost" });
+      const hello = await get(socket, "/");
+      socket.destroy();
+      return typeof hello;
+    };
+    expect([await ask(off), await ask(on), await ask(off), await ask(on)]).toEqual([
+      "object", // null
+      "string",
+      "object",
+      "string",
+    ]);
+  });
+
+  test("a reload keeps the option, and another server object reads the same connection", async () => {
+    await using other = Bun.serve({ port: 0, fetch: () => new Response() });
+    await using server = Bun.serve({ port: 0, tls: { ...tlsCert, clientHello: true }, fetch: handler });
+    server.reload({
+      fetch: (req, server) => Response.json([hex(server.clientHello(req)), hex(other.clientHello(req))]),
+    });
+
+    const [own, fromOther] = await fetch(server.url, { tls: { rejectUnauthorized: false } }).then(res => res.json());
+    expect(own).toBeString();
+    expect(fromOther).toBe(own);
+  });
+
+  test("TLS over a unix socket", async () => {
+    using dir = tempDir("serve-client-hello", {});
+    const unix = join(String(dir), "tls.sock");
+    await using server = Bun.serve({ unix, tls: { ...tlsCert, clientHello: true }, fetch: handler });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let text = "";
+    await using socket = await Bun.connect({
+      unix,
+      tls: { rejectUnauthorized: false, serverName: "localhost" },
+      socket: {
+        open: socket => void socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+        data: (_, chunk) => void (text += chunk.toString("latin1")),
+        close: () => resolve(text),
+        error: (_, error) => reject(error),
+      },
+    });
+    const hello = JSON.parse((await promise).split("\r\n\r\n")[1]);
+    expect(describeHello(hello).extension(SERVER_NAME)).toEndWith("localhost");
+  });
+
+  test("the JA4 function of the documentation", async () => {
+    // The example of the JA4 specification, with a GREASE value added to each list.
+    const u16 = (value: number) => [value >> 8, value & 0xff];
+    const signatureAlgorithms = [0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601];
+    const data: Record<number, number[]> = {
+      [SERVER_NAME]: [0, 14, 0, 0, 11, ...Buffer.from("example.com")],
+      [ALPN]: [0, 12, 2, ...Buffer.from("h2"), 8, ...Buffer.from("http/1.1")],
+      0x002b: [6, ...u16(0x2a2a), ...u16(0x0304), ...u16(0x0303)],
+      0x000d: [...u16(2 + signatureAlgorithms.length * 2), ...u16(0x3a3a), ...signatureAlgorithms.flatMap(u16)],
+    };
+    const example = buildClientHello(
+      [
+        0x0a0a, 0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014, 0x009c, 0x009d,
+        0x002f, 0x0035,
+      ],
+      [
+        0x1a1a, 0x001b, 0x0000, 0x0033, 0x0010, 0x4469, 0x0017, 0x002d, 0x000d, 0x0005, 0x0023, 0x0012, 0x002b, 0xff01,
+        0x000b, 0x000a, 0x0015,
+      ].map(type => [type, data[type] ?? []]),
+    );
+    expect(ja4(example, "t")).toBe("t13d1516h2_8daaf6152771_e5627efa2ab1");
+    // No extensions, and a first ALPN name that is not alphanumeric.
+    expect(ja4(buildClientHello([0x1301], []), "q")).toBe("q12i010000_0f2cb44170f4_000000000000");
+    expect(ja4(buildClientHello([0x1301], [[ALPN, [0, 3, 2, 0xab, 0xcd]]]), "t")).toStartWith("t12i0101ad_");
+
+    await using server = Bun.serve({
+      port: 0,
+      http3: true,
+      tls: { ...tlsCert, clientHello: true },
+      fetch: (req, server) => {
+        const { raw } = server.clientHello(req)!;
+        const overQuic = parseClientHello(raw).extensions.some(e => e.type === QUIC_TRANSPORT_PARAMETERS);
+        return new Response(ja4(raw, overQuic ? "q" : "t"));
+      },
+    });
+    const socket = await connectTLS({ host: "127.0.0.1", port: server.port!, servername: "localhost" });
+    const overTCP = await new Promise<string>((resolve, reject) => {
+      let text = "";
+      socket.on("data", chunk => (text += chunk)).on("close", () => resolve(text.split("\r\n\r\n")[1]));
+      socket.on("error", reject);
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    });
+    expect(overTCP).toMatch(/^t13d\d{4}h1_[0-9a-f]{12}_[0-9a-f]{12}$/);
+
+    const overQUIC = await fetch(`https://127.0.0.1:${server.port}/`, {
+      protocol: "http3",
+      tls: { rejectUnauthorized: false },
+    } as RequestInit).then(res => res.text());
+    expect(overQUIC).toMatch(/^q13[di]\d{4}h3_[0-9a-f]{12}_[0-9a-f]{12}$/);
+  });
+
+  // The copy lives as long as the connection. HTTP/1.1 and HTTP/2 share its owner, the TLS state of
+  // the socket. RSS cannot show the 1.5 KB of a QUIC connection, so HTTP/3 is not part of this test.
+  test(
+    "the ClientHello is freed with its connection",
+    async () => {
+      // The fixture's server measures itself over 2000 connections with a ClientHello of 13 KB each.
+      // Copies that are not freed add 25 MiB. Without a leak the debug build measured 1.7 to 5.1 MiB.
+      const fixture = join(import.meta.dir, "serve-client-hello-leak-fixture.ts");
+      await expectRssDeltaBelow([fixture, "2000"], { release: 12, debug: 12 });
+    },
+    isASAN || isDebug ? 120_000 : 30_000,
+  );
 });

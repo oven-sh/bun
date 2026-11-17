@@ -1520,6 +1520,29 @@ where
         )
     }
 
+    /// Like `request_ip`, this reads what the connection carries: `null` once
+    /// the response ended, and for a connection whose listener keeps no ClientHello.
+    pub(crate) fn client_hello(
+        &self,
+        cx: &mut JsScope<'_>,
+        request: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let request = request.as_class_ref::<Request>().ok_or_else(|| {
+            global.throw_invalid_arguments(format_args!("Expected Request object"))
+        })?;
+        let Some(raw) = request
+            .request_context
+            .get()
+            .with_client_hello(|bytes| ArrayBuffer::create_uint8_array(global, bytes))
+        else {
+            return Ok(JSValue::NULL);
+        };
+        let hello = JSValue::create_empty_object(global, 1);
+        hello.put(global, b"raw", raw?);
+        Ok(hello)
+    }
+
     pub(crate) fn timeout<'a>(
         &self,
         heap: &JsHeap<'a>,

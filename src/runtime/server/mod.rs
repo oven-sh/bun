@@ -2571,6 +2571,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 this_ref.h3_app.set(h3);
                 this_ref.init_mux_request_pool();
             }
+            if this_ref.config.get().capture_client_hello {
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                bun_opaque::opaque_deref_mut(app).capture_client_hello();
+                if Self::HAS_H3 {
+                    if let Some(h3_app) = this_ref.h3_app() {
+                        // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                        bun_opaque::opaque_deref_mut(h3_app).capture_client_hello();
+                    }
+                }
+            }
             if !this_ref.attach_http2(app) {
                 return None;
             }

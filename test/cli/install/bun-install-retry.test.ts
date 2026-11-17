@@ -1018,14 +1018,30 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
-  it.each(["hoisted", "isolated"])(
-    "the %s linker downloads a tarball URL that a skipped peer names too",
-    async linker => {
+  it.each([
+    { linker: "hoisted", status: 200, installed: true, errors: [] },
+    { linker: "hoisted", status: 404, installed: false, errors: ["error: GET /url.tgz - 404"] },
+    { linker: "isolated", status: 200, installed: true, errors: [] },
+    {
+      linker: "isolated",
+      status: 404,
+      installed: false,
+      errors: ["error: failed to download bar@/url.tgz: 404 Not Found", "  /url.tgz"],
+    },
+  ])(
+    "the $linker linker requests a tarball URL that a skipped peer names too ($status)",
+    async ({ linker, status, ...expected }) => {
+      let isLocked = false;
+      let requests = 0;
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
         fetch(request) {
           const { origin, pathname } = new URL(request.url);
+          if (isLocked && pathname === "/url.tgz") {
+            requests++;
+            if (status !== 200) return new Response(null, { status });
+          }
           if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
           const name = pathname.slice(1);
           const dependencies = name === "host" ? { bar: `${origin}/url.tgz` } : {};
@@ -1042,6 +1058,7 @@ describe.concurrent("backoff", () => {
         "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href, linker } }),
       });
       expect(await install(String(dir), {}, "--lockfile-only")).toMatchObject({ exitCode: 0 });
+      isLocked = true;
       rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
       writeFileSync(
         join(String(dir), "package.json"),
@@ -1055,7 +1072,11 @@ describe.concurrent("backoff", () => {
       const { lines, exitCode } = await install(String(dir), {}, "--force");
       expect(lines).toContain("error: InvalidURL");
       const parent = linker === "hoisted" ? "" : join(".bun", "host@1.0.0", "node_modules");
-      expect(existsSync(join(String(dir), "node_modules", parent, "bar", "package.json"))).toBe(true);
+      expect({
+        requests,
+        installed: existsSync(join(String(dir), "node_modules", parent, "bar", "package.json")),
+        errors: lines.filter(line => line.includes("/url.tgz")).map(line => line.replace(server.url.origin, "")),
+      }).toEqual({ requests: 1, ...expected });
       expect(exitCode).toBe(1);
     },
     30_000,

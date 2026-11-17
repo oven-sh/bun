@@ -2354,7 +2354,7 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
             let name = before_first_clean.packages.items_name()[id];
             let name = before_first_clean.str(&name);
             let task_id = Task::Id::for_npm_package(name, resolution.npm().version);
-            manager.fetches.forget_failure(task_id, None);
+            manager.fetches.release(task_id);
         }
     }
 

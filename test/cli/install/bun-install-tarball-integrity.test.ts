@@ -932,7 +932,7 @@ describe.concurrent.each(
       expect(exitCode).toBe(1);
     });
 
-    // The hoisted linker leaves pkg out: https://github.com/oven-sh/bun/issues/45623
+    // The hoisted linker leaves pkg out: https://github.com/oven-sh/bun/pull/45623
     describe.if(linker === "isolated")("bun add under another name reads it again for pkg", () => {
       async function add(name: string, prepare: (box: ReturnType<typeof sandbox>) => unknown) {
         const { box, v1, requests } = await changed(`tarball-added-under-another-name-${name}`);

@@ -607,6 +607,10 @@ fn substrings(js: &[u8]) {
             (b"aab".repeat(20_000), vec![b'a'; 40]),
         ),
         (
+            "in noise with another letter",
+            (Random(6).bytes(1 << 15, b"aaac"), vec![b'a'; 40]),
+        ),
+        (
             "in source around runs",
             ([all, &broken_runs(80).0, all].concat(), vec![b'a'; 80]),
         ),
@@ -624,6 +628,13 @@ fn substrings(js: &[u8]) {
         ("in random bytes", letters(1 << 16, 24, b"")),
         ("in 2 KB of source", absent(&js[..2000], &js[3000..3150])),
         ("in 4 KB of source", absent(&js[..4096], b"e t")),
+        ("in 4 KB of source", absent(&js[..4096], &js[9000..9016])),
+        ("in 8 KB of source", absent(&js[..8192], &js[9000..9016])),
+        ("in 8 KB of source", absent(&js[..8192], b"function return")),
+        (
+            "in 20 KB of source",
+            absent(&js[..20_000], b"function returns"),
+        ),
         ("in 64 KB of source", absent(&js[..1 << 16], b"e t")),
         (
             "in 64 KB of source",
@@ -904,15 +915,21 @@ fn webp_decoder() {
         );
     }
 
-    let ([from, upper, lower], pixels) = (planes, &mut Vec::with_capacity(STRIDE));
+    let ([from, upper, _], pixels) = (planes, &mut Vec::with_capacity(STRIDE));
     let [y, u, v, alpha] = [0, 1, 2, 3].map(|row| &from[row * STRIDE..][..STRIDE]);
     for n in [9, 100, 1000] {
-        compare!("webp::upsample {n}", |k| {
-            k::webp::upsample([opaque(u), v], [upper, lower], n)
-        });
+        let (both, to) = (&from[STRIDE..], &mut upper[..4 * STRIDE]);
+        compare!(
+            "webp::upsample {n}",
+            {
+                let (upper, lower) = to.split_at_mut(2 * STRIDE);
+                highway::webp::upsample(opaque([u, v]), opaque([upper, lower]), opaque(n))
+            },
+            rust::webp::upsample(opaque(both), opaque(STRIDE), opaque(to), opaque(n))
+        );
         compare!("webp::yuv_to_rgba {n}", |k| {
             pixels.clear();
-            k::webp::yuv_to_rgba([opaque(y), u, v, alpha], pixels, 0, n)
+            k::webp::yuv_to_rgba(opaque([y, u, v, alpha]), pixels, 0, opaque(n))
         });
     }
 

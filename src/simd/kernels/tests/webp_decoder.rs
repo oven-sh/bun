@@ -255,9 +255,10 @@ fn upsample() {
     let mut below = random();
     for count in sample((0..3000).map(|it| it % 100), 333) {
         let padded = usize::next_multiple_of(count, ROW_STEP);
-        let from = [(); 2].map(|()| samples(&mut below, padded + 1));
+        let (distance, half) = (below(2) * below(2 * padded + 2), 2 * padded + below(20));
+        let (from, odd) = (samples(&mut below, distance + padded + 1), below(2));
         let want = [0, 1].map(|y| {
-            let at = |y: usize, x: usize| u32::from(from[y][x]);
+            let at = |y: usize, x: usize| u32::from(from[y * distance + x]);
             let pixel = |i: usize| {
                 let (near, far) = (i / 2 + i % 2, i / 2 + 1 - i % 2);
                 let sum = 9 * at(y, near) + 3 * at(y, far) + 3 * at(1 - y, near) + at(1 - y, far);
@@ -266,10 +267,9 @@ fn upsample() {
             (0..2 * count).map(pixel).collect::<Vec<_>>()
         });
         check(Some(want), || {
-            let mut got = [(); 2].map(|()| vec![7; 2 * padded]);
-            let to = got.each_mut().map(Vec::as_mut_slice);
-            webp::upsample(from.each_ref().map(Vec::as_slice), to, count)?;
-            Some(got.map(|it| it[..2 * count].to_vec()))
+            let mut got = vec![7; 2 * half + odd];
+            webp::upsample(&from, distance, &mut got, count)?;
+            Some([0, half].map(|start| got[start..][..2 * count].to_vec()))
         });
     }
 }
@@ -421,14 +421,11 @@ fn the_filters_get_whole_macroblocks_and_what_is_around_them() {
 
 #[test]
 fn rows_are_padded_to_whole_steps() {
-    needs([65, 65, 128, 128], |lens| {
-        let [upper, lower, mut to_upper, mut to_lower] = lens.map(|len| vec![0; len]);
-        webp::upsample([&upper, &lower], [&mut to_upper, &mut to_lower], 33)
+    needs([7 + 65, 256], |[from, to]| {
+        webp::upsample(&vec![0; from], 7, &mut vec![0; to], 33)
     });
-    for endless in [usize::MAX, usize::MAX - 32] {
-        check(None, || {
-            webp::upsample([&[0]; 2], [&mut [], &mut []], endless)
-        });
+    for [distance, count] in [[0, usize::MAX], [0, usize::MAX - 32], [usize::MAX, 0]] {
+        check(None, || webp::upsample(&[0], distance, &mut [], count));
     }
     let convert = |yuva: [usize; 4], len, room: usize| {
         let (yuva, mut rgba) = (yuva.map(|len| vec![0; len]), Vec::with_capacity(5 + room));

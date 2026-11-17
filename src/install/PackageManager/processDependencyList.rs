@@ -548,7 +548,7 @@ impl PackageManager {
         let Some((row, task_id, arrived)) = self.fetches.take_next(turn) else {
             return false;
         };
-        let (arrived, waiters) = &*arrived;
+        let (waiters, arrived) = (&arrived.waiters, &arrived.package);
 
         let mut package_id = INVALID_PACKAGE_ID;
         let log_level = self.options.log_level;

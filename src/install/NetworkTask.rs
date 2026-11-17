@@ -723,13 +723,6 @@ impl NetworkTask {
         tarball
     }
 
-    pub(crate) fn manifest_name(&self) -> &strings::StringOrTinyString {
-        let Callback::PackageManifest { name, .. } = &self.callback else {
-            unreachable!("not a manifest task")
-        };
-        name
-    }
-
     pub(crate) fn for_tarball(
         &mut self,
         tarball_: ExtractTarball,

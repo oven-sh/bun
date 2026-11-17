@@ -358,9 +358,12 @@ impl PatchTask {
                             &pkg,
                             None,
                         ) {
+                            Ok(Some(network_task)) => network_task,
                             // --offline and not cached: already reported / skipped; nothing to patch
-                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
-                            other => other?,
+                            Ok(None) | Err(crate::network_task::ForTarballError::Offline) => {
+                                return Ok(());
+                            }
+                            Err(err) => return Err(err.into()),
                         };
                     manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
                     package_manager::enqueue_network_task(manager, network_task);

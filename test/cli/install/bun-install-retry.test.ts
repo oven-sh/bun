@@ -1061,6 +1061,44 @@ describe.concurrent("backoff", () => {
     30_000,
   );
 
+  it("a peer that is bound to a tarball URL does not hold the next peers back", async () => {
+    const nextPeer = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname === "/next.tgz") nextPeer.resolve();
+        if (pathname === "/first.tgz") await nextPeer.promise;
+        if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+        const name = pathname.slice(1);
+        const peerDependencies = { host: { overridden: "1", first: "1" }, first: { next: "1" } }[name];
+        const dist = { tarball: `${origin}/${name}.tgz` };
+        return Response.json({ name, versions: { "1.0.0": { name, version: "1.0.0", peerDependencies, dist } } });
+      },
+    });
+    const url = `${server.url}url.tgz`;
+    using dir = tempDir("install-retry-bound-peer", {
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { host: "1.0.0", url },
+        overrides: { overridden: url },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href, linker: "hoisted" } }),
+    });
+    const { exitCode } = await install(String(dir), {}, "--force");
+    expect(await readdirSorted(join(String(dir), "node_modules"))).toEqual([
+      ".cache",
+      "first",
+      "host",
+      "next",
+      "overridden",
+      "url",
+    ]);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
   it("reports the last attempt when the abbreviated manifest gets no answer", async () => {
     const accepts: string[] = [];
     await using server = createServer(client => {

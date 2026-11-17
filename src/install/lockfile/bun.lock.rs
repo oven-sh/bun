@@ -3186,9 +3186,8 @@ fn version_based_peer_range<'a>(
     // before its scan, so filtering candidates with the raw manifest range
     // here would pick a version the override replaced. The printed tree
     // already reflects the overridden resolution, so overridden edges keep
-    // the path walk. The exemptions mirror
-    // `asked_version`: `npm:` aliases and
-    // workspace-only edges are never overridden.
+    // the path walk. The exemptions mirror `asked_version`: `npm:` aliases
+    // and workspace-only edges are never overridden.
     let overridable = !dep.behavior.is_workspace() && !dep.version.is_npm_alias();
     // Overrides are applied before catalog resolution, so a catalog peer is overridden by its own name.
     let override_name_hash = if dep.version.tag() == DependencyVersionTag::Catalog {

@@ -39,7 +39,7 @@ pub trait Isa: Copy {
         before.count_ones() as usize / bits_per_lane
     }
 
-    /// For masks with the index of their first lane, after `start`: two halves without gaps, from 0 on.
+    /// For masks with the index of their first lane, after `start`: ascending from 0, without gaps.
     #[doc(hidden)]
     #[inline(always)]
     fn nearest_set<T: Int<N>, const N: usize, const FORWARD: bool>(
@@ -82,6 +82,7 @@ pub(crate) fn nearest_set<T: Int<N>, const N: usize, I: Isa, const FORWARD: bool
     masks: &[(Mask<T, N, I>, usize)],
     start: usize,
 ) -> Option<usize> {
+    debug_assert!(matches!((masks.len(), FORWARD), (1 | 2, _) | (4, true)));
     let (mut all, bits_per_lane) = I::movemask(masks[0].0);
     for &(mask, at) in &masks[1..] {
         // LLVM would put them together in a vector.

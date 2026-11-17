@@ -798,7 +798,8 @@ pub(crate) mod simd {
     #[inline(always)]
     fn add_average<const MODE: u8>(row: &mut [Rgba], left: Rgba, above: [&[Rgba]; 3]) {
         // LLVM would invert in general registers.
-        let inverted = |it| !pixel(it).opaque();
+        let ones = U8::splat(0xFF).opaque();
+        let inverted = |it| pixel(it) ^ ones;
         let [&[tl, ..], &[t, ..], tr] = above else {
             return;
         };
@@ -807,7 +808,7 @@ pub(crate) mod simd {
         for i in 0..row.len() {
             let tr = inverted(tr[i]);
             left = average::<MODE>([left, tl, t, tr]) - pixel(row[i]);
-            row[i] = first((!left).opaque());
+            row[i] = first(left ^ ones);
             [tl, t] = [t, tr];
         }
     }

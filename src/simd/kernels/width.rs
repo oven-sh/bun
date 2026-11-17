@@ -1,4 +1,5 @@
 //! Ports of highway_strings.cpp, for `Bun.stringWidth`.
+use core::array::from_fn;
 
 const BEL: u8 = 0x07;
 const CAN: u8 = 0x18;
@@ -51,13 +52,28 @@ fn byte_by_byte(text: &[u8], state: u64) -> (usize, u64) {
     (width, 1 << (shift / 8 % 8) >> 1)
 }
 
-// Ranges of units that are a cluster of their own, with a width of 1 up to U+3000 and of 2 above.
-const STARTS: [u16; 12] = [
+// Ascending ranges of units that are a cluster of their own, 1 wide up to U+3000 and 2 above.
+const STARTS: [u16; 2 * PAIRS] = [
     0x20, 0xA0, 0xAA, 0xAF, 0x370, 0x48A, 0x3041, 0x309B, 0x3400, 0x4E00, 0xAC00, 0xFF01,
 ];
-const ENDS: [u16; 12] = [
+const ENDS: [u16; 2 * PAIRS] = [
     0x7E, 0xA8, 0xAC, 0x2FF, 0x482, 0x52F, 0x3096, 0x30FF, 0x4DBF, 0x9FFF, 0xD7A3, 0xFF60,
 ];
+const PAIRS: usize = 6;
+
+/// In the order of `i16`, the first range comes first, and what is below it last.
+const fn signed(unit: u16) -> i16 {
+    unit.wrapping_sub(STARTS[0]) as i16 ^ i16::MIN
+}
+
+/// For each pair of ranges, the three bounds after its start: the low bytes, then the high ones.
+const BOUNDS: [[u8; 16]; 3] = from_fn(const |nth| {
+    from_fn(const |i| {
+        let at = 2 * (i % 8 % PAIRS);
+        assert!(PAIRS <= 8 && ENDS[at] < STARTS[at + 1] && (at == 0 || ENDS[at - 1] < STARTS[at]));
+        signed([ENDS[at] + 1, STARTS[at + 1], ENDS[at + 1] + 1][nth]).to_le_bytes()[i / 8]
+    })
+});
 
 /// The bits from each of `starts` up to the next of `ends`, and whether that is in a later block.
 #[inline(always)]
@@ -68,7 +84,7 @@ fn runs(starts: u64, ends: u64) -> (u64, u64) {
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{I8, Mask, U8, U16, x128};
+    use isa::{I8, I16, Mask, U8, U16, x128};
 
     type Test = Mask<u8, { U8::LEN }>;
 
@@ -224,9 +240,13 @@ pub(crate) mod simd {
     }
 
     fn has_fixed_width(v: U16) -> Mask<u16, { U16::LEN }> {
-        let is_in = |i: usize| v.in_range(STARTS[i]..=ENDS[i]);
-        let either = |i: usize| is_in(i) | is_in(i + 1);
-        (either(0) | either(2) | either(4)) | (either(6) | either(8) | either(10))
+        let (v, mut pair) = (v.bitcast::<I16>() + signed(0), U8::repeat([0, 8]));
+        for i in 1..PAIRS {
+            pair -= v.simd_ge(signed(STARTS[2 * i])).to_vector().bitcast::<U8>();
+        }
+        // In a range, one or three of them are above.
+        let is_below = |i: usize| v.simd_lt(U8::repeat(BOUNDS[i]).lookup(pair).bitcast::<I16>());
+        (is_below(0) ^ is_below(1) ^ is_below(2)).cast()
     }
 
     /// The same for one unit, with a lane for each range.

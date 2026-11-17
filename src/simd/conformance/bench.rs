@@ -144,6 +144,9 @@ fn searches(plain: &[u8]) {
         compare!("last of 3 miss {n}", |k| {
             k::last_index_of_any_char(opaque(t), b"\n\r\xE2")
         });
+        compare!("last of 6 miss {n}", |k| {
+            k::last_index_of_any_char(opaque(t), opaque(b"<>&\"'\n"))
+        });
         compare!("index_of_not_char miss {n}", |k| {
             k::index_of_not_char(opaque(t), b'a')
         });

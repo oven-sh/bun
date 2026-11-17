@@ -41,19 +41,27 @@ fn pairwise_add(a: u8x16, b: u8x16) -> u8x16 {
     even + odd
 }
 
-/// For each byte, `offset` and its index in the last mask that has it set, or else `none`.
+/// For each byte, its index in the nearer mask that has it set, or 255. Backward: from 1 on, or 0.
 #[inline(always)]
-fn select_indices<T: Int<N>, const N: usize, I: crate::Isa>(
-    masks: impl Iterator<Item = (crate::Mask<T, N, I>, usize)>,
-    offset: usize,
-    none: u8,
+fn select_indices<T: Int<N>, const N: usize, I: crate::Isa, const FORWARD: bool>(
+    low: (crate::Mask<T, N, I>, usize),
+    high: (crate::Mask<T, N, I>, usize),
 ) -> u8x16 {
-    static INDICES: [u8; 65] = core::array::from_fn(const |i| i as u8);
-    masks.fold(u8x16::splat(none), |others, (mask, start)| {
-        let is_set = mask.to_vector().first_bytes::<16>();
-        let indices = from_slice(&INDICES[offset + start * size_of::<T>()..]);
-        is_set & indices | !is_set & others
-    })
+    static INDICES: [u8; 64] = from_fn(const |i| i as u8);
+    let indices = |at: usize| {
+        let bytes = from_slice(&INDICES[at * size_of::<T>() + usize::from(!FORWARD)..]);
+        // With SVE, LLVM computes them, which takes long for wider lanes.
+        if N < 16 { opaque16(bytes) } else { bytes }
+    };
+    let [(near, at), (far, far_at)] = if FORWARD { [low, high] } else { [high, low] };
+    let far = far.to_vector().first_bytes();
+    // LLVM would put an `and` before the `orn` for a union of tests, and take the `bsl` apart.
+    let others = match FORWARD {
+        true => indices(far_at) | !opaque16(far),
+        false => opaque16(indices(far_at) & far),
+    };
+    let lanes = crate::Vector::from_first_bytes::<16>;
+    near.select(lanes(indices(at)), lanes(others)).first_bytes()
 }
 
 impl<const S: bool> crate::Isa for Neon<S> {
@@ -83,15 +91,20 @@ impl<const S: bool> crate::Isa for Neon<S> {
         masks: &[(crate::Mask<T, N, Self>, usize)],
         start: usize,
     ) -> Option<usize> {
-        if size_of::<[T; N]>() != 16 || masks.len() == 1 {
-            return nearest_set::<T, N, Self, FORWARD>(masks, start);
-        }
-        let masks = masks.iter().copied();
+        let select = select_indices::<T, N, Self, FORWARD>;
+        let indices = match *masks {
+            _ if size_of::<[T; N]>() != 16 || masks.len() == 1 => {
+                return nearest_set::<T, N, Self, FORWARD>(masks, start);
+            }
+            [a, b] => select(a, b),
+            [a, b, c, d] if FORWARD => select(a, b).simd_min(select(c, d)),
+            _ => unreachable!(),
+        };
         if FORWARD {
-            let first = opaque(select_indices(masks.rev(), 0, 0xFF).reduce_min().into());
+            let first = opaque(indices.reduce_min().into());
             return (first != 0xFF).then_some(start + first as usize / size_of::<T>());
         }
-        let end = opaque(select_indices(masks, 1, 0).reduce_max().into());
+        let end = opaque(indices.reduce_max().into());
         (end != 0).then(|| start + (end - 1) as usize / size_of::<T>())
     }
 

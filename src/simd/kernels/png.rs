@@ -60,10 +60,10 @@ pub(crate) mod simd {
         pub fn filter([x, a, b, c]: [U8; 4], sums: &mut [U64; 5]) -> [U8; 4] {
             let average = a.average_round(b) - ((a ^ b) & 1);
             let (pa, pb) = (b.abs_diff(c), a.abs_diff(c));
-            let c_is_between = a.simd_ge(c) ^ b.simd_ge(c);
-            let pc = c_is_between.select(pa.abs_diff(pb), pa.saturating_add(pb));
-            let least = pa.simd_min(pb).simd_min(pc);
-            let nearest = pa.simd_eq(least).select(a, pb.simd_eq(least).select(b, c));
+            let least = pa.simd_min(pb);
+            // The third distance is their difference if `c` is between the others, or else their sum.
+            let is_c = (a.simd_ge(c) ^ b.simd_ge(c)) & pa.abs_diff(pb).simd_lt(least);
+            let nearest = is_c.select(c, pa.simd_eq(least).select(a, b));
             let filtered = [x - a, x - b, x - average, x - nearest];
             let distance = |v: U8| U64::sums_of_8(v.simd_min(v.wrapping_neg()));
             sums[0] += distance(x);

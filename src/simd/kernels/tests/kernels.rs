@@ -104,11 +104,12 @@ fn searches() {
         (kernels::index_of_html_escape_char8, |b| b"<>&'\"".contains(&b)),
     ];
     #[rustfmt::skip]
-    let lasts: [(First, &[u8]); 7] = [
+    let lasts: [(First, &[u8]); 8] = [
         (|t| from_shared(t, |t| kernels::last_index_of_char_shared(t, b'F')), b"F"),
         (|t| kernels::last_index_of_char(t, b'F'), b"F"),
         (|t| kernels::last_index_of_any_char(t, b"F0"), b"F0"),
         (|t| kernels::last_index_of_any_char(t, b"F0<"), b"F0<"),
+        (|t| kernels::last_index_of_any_char(t, b"F0,<"), b"F0,<"),
         (|t| kernels::last_index_of_any_char(t, b"F\x91,\xff"), b"F\x91,\xff"),
         (kernels::last_index_of_slash, b"/"),
         (kernels::last_index_of_slash_or_dot, b"/."),
@@ -1660,6 +1661,27 @@ fn paeth_predictions() {
 fn paeth_predictions_of_bytes() {
     for _ in targets() {
         check_paeth::<1>();
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn paeth_predictions_of_the_encoder() {
+    let row: Vec<u8> = (0..512).map(|i| (i / 8 * 4 + i % 4) as u8).collect();
+    for (b, c) in (0..=255).flat_map(|b| (0..=255).map(move |c| (b, c))) {
+        let above = [[c; 4], [b; 4]].repeat(64);
+        let filtered = |a: u8| a.wrapping_sub(png_prediction(4, [a, b, c]));
+        check((0..=255).map(filtered).collect::<Vec<_>>(), || {
+            let mut rows = [[[0; 4]; 128]; 4];
+            let into = rows.each_mut().map(|it| &mut it[..]);
+            kernels::png_filter_rgba(row.as_chunks().0, &above, into);
+            rows[3]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .flat_map(|it| it[1])
+                .collect()
+        });
     }
 }
 

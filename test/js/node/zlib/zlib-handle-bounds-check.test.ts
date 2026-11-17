@@ -353,6 +353,24 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       "threw ERR_INVALID_STATE: zlib binding closed",
     ],
+    [
+      "zstd: a handle whose init() dictionary was rejected is closed",
+      `const C = zlib.createZstdCompress()._handle.constructor;
+       const h = new C(11);
+       try { h.init(new Uint32Array(0), undefined, new Uint32Array(2), () => {}, Buffer.from("37a430ec01000000", "hex")); } catch {}
+       try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
+    ],
+    [
+      "zstd: reset() before init() does nothing",
+      `const C = zlib.createZstdCompress()._handle.constructor;
+       const h = new C(10), out = new Uint8Array(64);
+       h.reset();
+       h.writeSync(zlib.constants.ZSTD_e_end, null, 0, 0, out, 0, 64);
+       console.log(out.some(Boolean) ? "wrote a frame" : "handled");`,
+      "handled",
+    ],
   ];
 
   for (const [name, body, expected] of cases) {
@@ -433,6 +451,28 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
          h.writeSync(zlib.constants.ZSTD_e_flush, pattern, 0, pattern.length, out, 0, out.length);`,
       ),
     ).toEqual({ stdout: "ZSTD_error_srcSize_wrong\nZSTD_error_srcSize_wrong", exitCode: 0 });
+  });
+
+  test.concurrent("zstd: a compressor that broke its pledge keeps failing until reset()", async () => {
+    expect(
+      await run(
+        `const stream = zlib.createZstdCompress({ pledgedSrcSize: 5 });
+         const h = stream._handle;
+         h.onerror = (message, errno, code) => console.log(code);
+         const out = Buffer.alloc(64);
+         const write = input => h.writeSync(zlib.constants.ZSTD_e_end, input, 0, input.length, out, 0, out.length);
+         write(Buffer.from("hi"));
+         write(Buffer.from("hello"));
+         h.reset();
+         write(Buffer.from("hello"));
+         console.log(zlib.zstdDecompressSync(out.subarray(0, out.length - stream._writeState[0])).toString());
+         h.reset();
+         write(Buffer.from("hi"));`,
+      ),
+    ).toEqual({
+      stdout: "ZSTD_error_srcSize_wrong\nZSTD_error_srcSize_wrong\nhello\nZSTD_error_srcSize_wrong",
+      exitCode: 0,
+    });
   });
 
   test.concurrent("zstd: a decompressor that failed keeps failing until reset()", async () => {
@@ -690,7 +730,14 @@ describe("zstd compressor with workers and a dictionary", () => {
 
   test.each([
     ["destroy()", `stream.destroy(); console.log("ok");`],
-    ["reset() and the next frame", `stream.reset(); stream.end("x"); await finished(stream); console.log("ok");`],
+    [
+      "reset() and the next frame",
+      // reset() refuses if the job got to report output before write() returned.
+      `stream.reset();
+       stream.end("x");
+       await finished(stream).catch(e => { if (e.code !== "ERR_ZLIB_INCOMPLETE_FRAME") throw e; });
+       console.log("ok");`,
+    ],
   ])("doesn't crash on %s while a job is running", async (_, body) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", prelude + body],

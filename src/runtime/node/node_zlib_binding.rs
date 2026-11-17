@@ -14,6 +14,7 @@ use bun_jsc::{
 
 // ─── type defs ────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
 pub(crate) struct Error {
     pub(crate) msg: &'static CStr,
     pub(crate) err: c_int,

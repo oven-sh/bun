@@ -36,6 +36,9 @@ export const H2FrameParserOptions = b.dictionary({
 });
 
 /** The session of `node:http2`. */
+/** `entry` is pushed onto `pending`. */
+const queuesEntry = { pending: [table.everything], entry: [table.everything] };
+
 export const H2FrameParser = b.class({
   rustPath: "crate::api::H2FrameParser",
   refCounted: true,
@@ -99,7 +102,7 @@ export const H2FrameParser = b.class({
     isStreamClosed: { args: { streamId: b.u32 }, returns: b.bool },
     noTrailers: { args: { streamId: b.u32 }, capability: "js" },
     origin: { ...js, args: { origin: b.any } },
-    ping: { ...js, args: { payload: buffer, pending: b.any, entry: b.any }, returns: b.bool },
+    ping: { ...js, args: { payload: buffer, pending: b.any, entry: b.any }, returns: b.bool, uses: queuesEntry },
     pushPromise: {
       ...js,
       args: { parentId: b.u32, promisedId: b.u32, headers: b.any, sensitiveHeaders: b.any },
@@ -128,7 +131,7 @@ export const H2FrameParser = b.class({
     setNextStreamID: { args: { streamId: b.u32.wrap }, capability: "js" },
     setStreamContext: { args: { streamId: b.u32, context: b.any }, capability: "js" },
     setStreamReading: { args: { streamId: b.u32, reading: b.bool }, capability: "js" },
-    settings: { ...js, args: { settings: b.any, pending: b.any, entry: b.any } },
+    settings: { ...js, args: { settings: b.any, pending: b.any, entry: b.any }, uses: queuesEntry },
     validateRequest: { ...js, args: { headers: b.any } },
     writeStream: {
       ...js,

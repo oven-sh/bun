@@ -2864,12 +2864,6 @@ pub struct StringPointer {
     pub length: u32,
 }
 impl_any_bit_pattern!(StringPointer);
-impl StringPointer {
-    #[inline]
-    pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
-        &buf[self.offset as usize..(self.offset + self.length) as usize]
-    }
-}
 
 // ── ZStr trait sugar (downstream ergonomics) ──────────────────────────────
 impl AsRef<ZStr> for ZStr {
@@ -4052,13 +4046,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     #[cfg(windows)]
     {
         // Signal the watcher-manager parent via magic exit code.
-        use crate::windows_sys::kernel32::{GetCurrentProcess, GetLastError};
-        unsafe extern "system" {
-            // `h` is an opaque kernel HANDLE (never dereferenced in-process);
-            // the kernel validates it and returns FALSE on a bad handle. No
-            // memory-safety preconditions.
-            safe fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
-        }
+        use crate::windows_sys::kernel32::{GetCurrentProcess, GetLastError, TerminateProcess};
         // = 3224497970. Parent
         // watcher-manager compares the child's exit code against exactly this.
         const WATCHER_RELOAD_EXIT: u32 = 0xC031_EF32;

@@ -4665,7 +4665,7 @@ pub mod c {
     #[cfg(windows)]
     pub use crate::windows::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT};
     #[cfg(windows)]
-    pub use bun_windows_sys::kernel32::{FlushFileBuffers, SetConsoleCtrlHandler};
+    pub use bun_windows_sys::kernel32::SetConsoleCtrlHandler;
 
     // ── `bun.c` Darwin surface — C symbols picked up via
     // `@cImport` of system headers. The `libc` crate already binds all of
@@ -7459,6 +7459,20 @@ pub mod posix {
         // SAFETY: TIOCSWINSZ reads one `winsize`, which `Winsize` mirrors.
         if unsafe { libc::ioctl(fd.native(), libc::TIOCSWINSZ, &raw const size) } != 0 {
             return Err(super::err_with(super::Tag::ioctl));
+        }
+        Ok(())
+    }
+
+    // ── rmdir ──
+
+    /// The call that libuv makes. [`crate::rmdir`] is `unlinkat`.
+    #[cfg(unix)]
+    pub fn rmdir(path: &bun_core::ZStr) -> super::Maybe<()> {
+        // SAFETY: `path` is NUL-terminated.
+        while unsafe { libc::rmdir(path.as_ptr()) } < 0 {
+            if super::last_errno() != libc::EINTR {
+                return Err(super::err_with_path(super::Tag::rmdir, path));
+            }
         }
         Ok(())
     }

@@ -345,10 +345,10 @@ __arm_tpidr2_save  [SVE]
 
 
 # ----------------------------------------------------------------------------
-# libdeflate Adler-32 NEON DotProd. Gate: HWCAP_ASIMDDP.
-# (1 symbols)
+# Bun Adler-32 (src/jsc/bindings/highway_checksums.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
 # ----------------------------------------------------------------------------
-adler32_arm_neon_dotprod  [DotProd]
+_ZN3bun11N_NEON_BF16L7Adler32EjPKhm  [DotProd]
 
 
 # ----------------------------------------------------------------------------

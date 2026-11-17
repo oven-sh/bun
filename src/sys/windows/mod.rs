@@ -10,7 +10,8 @@ use core::ffi::{c_int, c_void};
 use core::mem::{MaybeUninit, size_of};
 use core::ptr;
 use std::os::windows::io::{
-    AsRawHandle as _, FromRawHandle as _, HandleOrInvalid, HandleOrNull, OwnedHandle,
+    AsRawHandle as _, FromRawHandle as _, HandleOrInvalid, HandleOrNull, IntoRawHandle as _,
+    OwnedHandle,
 };
 
 use bun_core::WStr;
@@ -33,10 +34,10 @@ pub use bun_windows_sys::ws2_32;
 /// locally so adding an extern doesn't require touching `bun_windows_sys`.
 pub mod kernel32 {
     use super::{
-        BOOL, CONDITION_VARIABLE, DWORD, FileNotifyChangeFilter, HANDLE, LPCWSTR, LPOVERLAPPED,
-        LPOVERLAPPED_COMPLETION_ROUTINE, OVERLAPPED, SRWLOCK, ULONG, ULONG_PTR,
+        BOOL, CONDITION_VARIABLE, DWORD, FileNotifyChangeFilter, HANDLE, IO_COUNTERS, LPCWSTR,
+        LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE, OVERLAPPED, SRWLOCK, STARTUPINFOW,
+        SYSTEMTIME, ULONG, ULONG_PTR,
     };
-    pub use bun_windows_sys::externs::SetEndOfFile;
     pub use bun_windows_sys::externs::{GetConsoleMode, GetExitCodeProcess};
     pub use bun_windows_sys::kernel32::*;
     use core::ffi::c_void;
@@ -89,7 +90,7 @@ pub mod kernel32 {
         ) -> std::os::windows::io::HandleOrNull;
 
         // ── file moves ──
-        pub fn MoveFileExW(
+        pub(super) fn MoveFileExW(
             lpExistingFileName: LPCWSTR,
             lpNewFileName: LPCWSTR,
             dwFlags: DWORD,
@@ -118,6 +119,17 @@ pub mod kernel32 {
 
         /// No preconditions; reads the calling thread's ID.
         pub safe fn GetCurrentThreadId() -> DWORD;
+        pub safe fn GetLocalTime(lpSystemTime: &mut SYSTEMTIME);
+        pub(super) safe fn SetHandleInformation(
+            hObject: HANDLE,
+            dwMask: DWORD,
+            dwFlags: DWORD,
+        ) -> BOOL;
+        pub(super) safe fn GetStartupInfoW(lpStartupInfo: &mut STARTUPINFOW);
+        pub(super) safe fn GetProcessIoCounters(
+            hProcess: HANDLE,
+            lpIoCounters: &mut IO_COUNTERS,
+        ) -> BOOL;
     }
 }
 
@@ -147,7 +159,6 @@ pub use bun_windows_sys::LPWSTR;
 pub use bun_windows_sys::NT_ERROR;
 pub use bun_windows_sys::NT_SUCCESS;
 pub use bun_windows_sys::NTSTATUS;
-pub use bun_windows_sys::PWSTR;
 pub use bun_windows_sys::TRUE;
 pub use bun_windows_sys::UINT;
 pub use bun_windows_sys::ULONG;
@@ -199,9 +210,8 @@ pub use bun_windows_sys::{CONSOLE_SCREEN_BUFFER_INFO, SMALL_RECT};
 pub use bun_windows_sys::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
 pub use bun_windows_sys::{DELETE, GENERIC_READ, GENERIC_WRITE, SYNCHRONIZE};
 pub use bun_windows_sys::{
-    FILE_FLAG_OVERLAPPED, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE,
-    PIPE_TYPE_BYTE, PIPE_WAIT, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE,
-    SYMBOLIC_LINK_FLAG_DIRECTORY,
+    FILE_FLAG_OVERLAPPED, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND,
+    SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE, SYMBOLIC_LINK_FLAG_DIRECTORY,
 };
 pub use bun_windows_sys::{FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE};
 
@@ -284,12 +294,18 @@ impl Default for CONDITION_VARIABLE {
 // `ntdll` is re-exported from `bun_windows_sys` above; the futex primitives
 // (`RtlWaitOnAddress` / `RtlWakeAddress*`) live there so this crate doesn't
 // shadow the canonical module.
-/// `S_OK` — success `HRESULT`.
-pub const S_OK: HRESULT = 0;
-/// Extract the Win32 facility code from an `HRESULT` (`winerror.h` macro).
-#[inline]
-pub const fn HRESULT_CODE(hr: HRESULT) -> HRESULT {
-    hr & 0xFFFF
+
+#[repr(C)]
+#[derive(Default)]
+pub struct SYSTEMTIME {
+    pub wYear: WORD,
+    pub wMonth: WORD,
+    wDayOfWeek: WORD,
+    pub wDay: WORD,
+    pub wHour: WORD,
+    pub wMinute: WORD,
+    pub wSecond: WORD,
+    wMilliseconds: WORD,
 }
 
 // `NtCreateFile` access masks / create-options not yet in `bun_windows_sys`.
@@ -413,6 +429,52 @@ pub fn CreateFileW(
         ))
     };
     OwnedHandle::try_from(handle).map_err(|_| Win32Error::get())
+}
+
+/// The only instance of a pipe of bytes. `open_mode` has `PIPE_ACCESS_*` and `FILE_FLAG_*`.
+pub fn CreateNamedPipeW(
+    name: &WStr,
+    open_mode: DWORD,
+    buffer_size: DWORD,
+) -> Result<OwnedHandle, Win32Error> {
+    use externs::{PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    const FILE_FLAG_FIRST_PIPE_INSTANCE: DWORD = 0x0008_0000;
+    // SAFETY: `name` is NUL-terminated; the result is a new handle or `INVALID_HANDLE_VALUE`.
+    let handle = unsafe {
+        HandleOrInvalid::from_raw_handle(kernel32::CreateNamedPipeW(
+            name.as_ptr(),
+            open_mode | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            1,
+            buffer_size,
+            buffer_size,
+            0,
+            ptr::null_mut(),
+        ))
+    };
+    OwnedHandle::try_from(handle).map_err(|_| Win32Error::get())
+}
+
+pub fn MoveFileExW(from: &WStr, to: &WStr, flags: DWORD) -> Result<(), Win32Error> {
+    // SAFETY: both are NUL-terminated.
+    check(unsafe { kernel32::MoveFileExW(from.as_ptr(), to.as_ptr(), flags) })
+}
+
+pub fn SetEndOfFile(file: HANDLE) -> Result<(), Win32Error> {
+    check(externs::SetEndOfFile(file))
+}
+
+pub fn FlushFileBuffers(file: HANDLE) -> Result<(), Win32Error> {
+    check(kernel32::FlushFileBuffers(file))
+}
+
+pub fn make_inheritable(handle: HANDLE) -> Result<(), Win32Error> {
+    const HANDLE_FLAG_INHERIT: DWORD = 1;
+    check(kernel32::SetHandleInformation(
+        handle,
+        HANDLE_FLAG_INHERIT,
+        HANDLE_FLAG_INHERIT,
+    ))
 }
 
 /// `root_directory` is `None` if `object_name` is a full NT object name.
@@ -546,13 +608,6 @@ pub use bun_windows_sys::Win32Error;
 /// newtype).
 pub use bun_errno::Win32ErrorExt;
 
-/// The errno for the Win32 call that just failed; build a `bun_sys::Error`
-/// with `Error::from_win32(Win32Error::get(), tag)` instead.
-#[inline]
-pub fn last_system_errno() -> SystemErrno {
-    Win32Error::get().to_system_errno()
-}
-
 pub use bun_libuv_sys as libuv;
 
 /// This process's access token, opened for `TOKEN_QUERY`.
@@ -665,10 +720,22 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
     e
 }
 
-pub use bun_windows_sys::externs::GetHostNameW;
+pub fn GetHostNameW(buf: &mut [u16]) -> Option<&[u16]> {
+    libuv::uv__winsock_ensure();
+    // SAFETY: it writes at most `buf.len()` units.
+    if unsafe { externs::GetHostNameW(buf.as_mut_ptr(), buf.len() as c_int) } != 0 {
+        return None;
+    }
+    let len = bun_core::strings::index_of_scalar(buf, 0).unwrap_or(buf.len());
+    Some(&buf[..len])
+}
 
-/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
-pub use bun_windows_sys::externs::GetTempPathW;
+/// Returns the length written. `FILENAME_EXCED_RANGE` if `buf` is too small.
+pub fn GetTempPathW(buf: &mut [u16]) -> Result<usize, Win32Error> {
+    // SAFETY: it writes at most `buf.len()` units.
+    let rc = unsafe { externs::GetTempPathW(buf.len() as DWORD, buf.as_mut_ptr()) };
+    check_len(rc, buf.len())
+}
 
 /// `GetCurrentProcessId` (processthreadsapi.h) — current PID. Safe wrapper:
 /// the underlying call has no preconditions and never fails.
@@ -690,10 +757,87 @@ pub fn AssignProcessToJobObject(job: &OwnedHandle, process: HANDLE) -> Result<()
 
 pub use bun_windows_sys::externs::GetCurrentProcess;
 
-pub use bun_windows_sys::externs::{
-    PROCESS_BASIC_INFORMATION, ProcessBasicInformation, RegisterWaitForSingleObject,
-    WAITORTIMERCALLBACK, WT_EXECUTEONLYONCE,
-};
+/// The id that the creator of this process had. Not `uv_os_getppid`, which needs libuv to have started.
+pub fn parent_process_id() -> Option<DWORD> {
+    use externs::{PROCESS_BASIC_INFORMATION, ProcessBasicInformation};
+    let mut info = MaybeUninit::<PROCESS_BASIC_INFORMATION>::zeroed();
+    // SAFETY: it writes at most the size given, and any bytes are a valid `info`.
+    unsafe {
+        let rc = ntdll::NtQueryInformationProcess(
+            GetCurrentProcess(),
+            ProcessBasicInformation,
+            info.as_mut_ptr().cast(),
+            size_of_val(&info) as ULONG,
+            ptr::null_mut(),
+        );
+        NT_SUCCESS(rc).then(|| info.assume_init().InheritedFromUniqueProcessId as DWORD)
+    }
+}
+
+/// A thread of the system's pool calls `callback` once. `object` stays open for that.
+pub fn call_when_signaled(
+    object: OwnedHandle,
+    callback: extern "system" fn(LPVOID, BOOLEAN),
+) -> Result<(), Win32Error> {
+    let mut wait = ptr::null_mut();
+    // SAFETY: it writes `wait`, and only passes the context on.
+    check(unsafe {
+        externs::RegisterWaitForSingleObject(
+            &raw mut wait,
+            object.as_raw_handle(),
+            callback,
+            ptr::null_mut(),
+            INFINITE,
+            externs::WT_EXECUTEONLYONCE,
+        )
+    })?;
+    let _ = object.into_raw_handle();
+    Ok(())
+}
+
+/// `lpReserved2`, in which a parent describes its file descriptors to the C runtime of its child.
+pub fn inherited_descriptors() -> &'static [u8] {
+    let mut info: STARTUPINFOW = bun_core::ffi::zeroed();
+    kernel32::GetStartupInfoW(&mut info);
+    if info.lpReserved2.is_null() {
+        return &[];
+    }
+    // SAFETY: the block is part of the parameters of this process, which are never freed.
+    unsafe { core::slice::from_raw_parts(info.lpReserved2, info.cbReserved2.into()) }
+}
+
+/// Does not wait for the process, which inherits handles. Panics unless `command_line` ends with a NUL.
+pub fn start_process(command_line: &mut [u16]) -> Result<(), Win32Error> {
+    assert!(command_line.last() == Some(&0));
+    let mut startup_info: STARTUPINFOW = bun_core::ffi::zeroed();
+    startup_info.cb = size_of_val(&startup_info) as DWORD;
+    let mut process: PROCESS_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: `command_line` is NUL-terminated and writable. On success both handles are new.
+    unsafe {
+        check(kernel32::CreateProcessW(
+            ptr::null(),
+            command_line.as_mut_ptr(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            TRUE,
+            0,
+            ptr::null_mut(),
+            ptr::null(),
+            &raw mut startup_info,
+            &raw mut process,
+        ))?;
+        externs::CloseHandle(process.hProcess);
+        externs::CloseHandle(process.hThread);
+    }
+    Ok(())
+}
+
+/// The C runtime calls `handler` on the thread that calls `abort()`, once it has put the default back.
+pub fn set_abort_handler(handler: Option<extern "C" fn(c_int)>) {
+    let handler = handler.map_or(libc::SIG_DFL, |handler| handler as usize);
+    // SAFETY: `handler` has the type that it calls.
+    unsafe { libc::signal(libc::SIGABRT, handler) };
+}
 
 // Job Object structures + JOBOBJECTINFOCLASS consts — canonical definitions
 // live in bun_windows_sys::externs. Do NOT re-declare here.
@@ -703,7 +847,13 @@ pub use bun_windows_sys::externs::{
     JobObjectExtendedLimitInformation,
 };
 
-pub use bun_windows_sys::externs::OpenProcess;
+pub fn OpenProcess(desired_access: DWORD, process_id: DWORD) -> Result<OwnedHandle, Win32Error> {
+    // SAFETY: the result is a new handle or null.
+    let process = unsafe {
+        HandleOrNull::from_raw_handle(externs::OpenProcess(desired_access, FALSE, process_id))
+    };
+    OwnedHandle::try_from(process).map_err(|_| Win32Error::get())
+}
 
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
@@ -1036,7 +1186,17 @@ pub fn get_module_name_w(module: HMODULE, buf: &mut [u16]) -> Option<&[u16]> {
     Some(&buf[0..(rc as usize)])
 }
 
-pub use bun_windows_sys::externs::GetThreadDescription;
+/// Leaks it: for a process that is about to end.
+pub fn name_of_current_thread() -> &'static [u16] {
+    let mut name = ptr::null_mut();
+    // SAFETY: on success it points `name` to a new NUL-terminated string.
+    unsafe {
+        match externs::GetThreadDescription(externs::GetCurrentThread(), &raw mut name) {
+            0.. if !name.is_null() => bun_core::ffi::wstr_units(name),
+            _ => &[],
+        }
+    }
+}
 
 pub const ENABLE_ECHO_INPUT: DWORD = 0x004;
 pub const ENABLE_LINE_INPUT: DWORD = 0x002;
@@ -1293,11 +1453,8 @@ pub(crate) const PROC_THREAD_ATTRIBUTE_JOB_LIST: DWORD = 0x2000D;
 /// Handle to a Windows pseudoconsole (ConPTY).
 pub use bun_windows_sys::externs::HPCON;
 
-pub use bun_windows_sys::externs::CreatePseudoConsole;
-
-pub use bun_windows_sys::externs::ResizePseudoConsole;
-
-pub use bun_windows_sys::externs::ClosePseudoConsole;
+mod pseudo_console;
+pub use pseudo_console::PseudoConsole;
 
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x2000;
 pub(crate) const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x400;
@@ -1490,13 +1647,9 @@ pub mod rescle {
     }
 }
 
-pub use bun_windows_sys::externs::CloseHandle;
 pub use bun_windows_sys::externs::CreateDirectoryW;
 pub use bun_windows_sys::externs::CreateSymbolicLinkW;
 pub use bun_windows_sys::externs::DeleteFileW;
-pub use bun_windows_sys::externs::GetCommandLineW;
-pub use bun_windows_sys::externs::GetCurrentThread;
-pub use bun_windows_sys::externs::SetEndOfFile;
 
 /// In 100-ns ticks.
 pub struct ProcessTimes {
@@ -1523,6 +1676,12 @@ pub fn GetProcessTimes(process: HANDLE) -> Result<ProcessTimes, Win32Error> {
         kernel: ticks(kernel),
         user: ticks(user),
     })
+}
+
+pub fn GetProcessIoCounters(process: HANDLE) -> Result<IO_COUNTERS, Win32Error> {
+    let mut counters = IO_COUNTERS::default();
+    check(kernel32::GetProcessIoCounters(process, &mut counters))?;
+    Ok(counters)
 }
 
 /// `PROCESS_MEMORY_COUNTERS` (`psapi.h`).
@@ -1578,7 +1737,7 @@ fn update_stdio_mode_flags(
     if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) == 0
         || kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0
     {
-        return Err(last_system_errno());
+        return Err(Win32Error::get().to_system_errno());
     }
     Ok(original_mode)
 }

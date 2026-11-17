@@ -991,6 +991,27 @@ describe("css modules", () => {
       styles: {},
     });
   });
+
+  test.concurrent("composes conflicts name the unprefixed property and come in a fixed order", async () => {
+    const { logs } = await bundle({
+      "styles.module.css": `.a { composes: b from "./other.module.css"; view-transition-group: x; -webkit-transform: none; margin-top: var(--m); background-color: red }`,
+      "other.module.css": `.b { margin-top: 0; view-transition-group: y; background-color: blue; transform: none }`,
+    });
+    expect(logs).toEqual(
+      ["background-color", "margin-top", "transform", "view-transition-group"].map(
+        name => `The value of ${name} in the class a is undefined.`,
+      ),
+    );
+  });
+
+  test.concurrent.each([
+    ["12px", "Invalid declaration"],
+    ["a, b", "Unexpected token: ,"],
+  ])("composes: %s in a module is an error, not an unparsed value", async (value, error) => {
+    expect(await bundle({ "styles.module.css": `.a { top: 0 } .b { top: 1px } .c { composes: ${value} }` })).toEqual({
+      logs: [error],
+    });
+  });
 });
 
 describe("bare :global and :local: what stays an error", () => {

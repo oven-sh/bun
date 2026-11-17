@@ -88,10 +88,9 @@ pub(crate) struct RuntimeState {
     #[cfg(windows)]
     pub(crate) path_watchers: core::cell::OnceCell<Box<crate::node::win_watcher::PathWatchers>>,
     pub(crate) request_pools: crate::server::RequestPools,
-    /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
-    /// stop; one ref per entry, released by `CronJob::remove_from_list` /
-    /// `clear_all_for_vm`.
-    pub(crate) cron_jobs: JsCell<Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>,
+    /// The wrappers of the running `Bun.cron()` jobs of the main thread under `--hot`, which a reload stops.
+    pub(crate) cron_jobs: JsCell<Vec<bun_jsc::Strong>>,
+    pub(crate) cron_os_jobs: crate::api::cron_os::OsJobs,
     pub(crate) stat_watcher_scheduler: JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
     /// Set in the VM that runs the files of `bun test`.
     pub(crate) test_runner: Cell<Option<&'static crate::test_runner::jest::TestRunner>>,
@@ -158,7 +157,7 @@ fn try_timer_all() -> Option<&'static timer::All> {
     try_runtime_state().map(|state| &state.timer)
 }
 
-/// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
+/// Per-VM lazy DNS resolver storage. Shared borrow only — script can
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
@@ -317,6 +316,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         path_watchers: Default::default(),
         request_pools: Default::default(),
         cron_jobs: JsCell::default(),
+        cron_os_jobs: Default::default(),
         stat_watcher_scheduler: JsCell::new(None),
         test_runner: Cell::new(None),
         matcher_pass: Cell::new(ptr::null()),
@@ -1198,7 +1198,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_flags,
     stop_watches_for_vm_teardown,
-    cron_clear_all_reload,
+    cron_clear_all_reload: crate::api::cron::CronJob::stop_all_for_reload,
     retroactively_report_discovered_tests,
     cancel_timers,
     end_hot_run_timers,
@@ -1286,27 +1286,13 @@ unsafe fn parse_worker_exec_argv_flags(
     Some(flags)
 }
 
-/// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —
-/// stops every in-process `Bun.cron()` job registered on
-/// this VM and releases the pending-promise ref so the struct frees (the event
-/// loop is dying; settle callbacks will never run). Drops the memory pressure watcher too.
-fn stop_watches_for_vm_teardown(vm: &VirtualMachine) {
-    use crate::api::cron::{ClearMode, CronJob};
-    CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(vm);
+/// Drops the owners of polls, which are slots of `RareData`: it is freed before the runtime state.
+fn stop_watches_for_vm_teardown() {
     if let Some(state) = try_runtime_state() {
-        // Its poll is a slot of `RareData`, which is freed before the runtime state.
+        state.cron_os_jobs.release_for_vm_teardown();
         state.memory_pressure_watcher.set(None);
         state.browsers.release_for_vm_teardown();
     }
-}
-
-/// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` —
-/// the cron half of [`stop_watches_for_vm_teardown`], but skips
-/// the pending-promise force-release (the event loop survives a hot reload, so
-/// settle callbacks will still run).
-fn cron_clear_all_reload(vm: &VirtualMachine) {
-    use crate::api::cron::{ClearMode, CronJob};
-    CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
 }
 
 pub(crate) fn hot_reload_generation() -> f64 {
@@ -1411,7 +1397,7 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
-/// are all still live. See `Resolver::close_channel_for_terminate`.
+/// are all still live.
 fn stop_dns_for_vm_teardown() -> SweepResult {
     let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;

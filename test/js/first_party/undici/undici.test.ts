@@ -752,9 +752,9 @@ describe("undici dispatcher connect.lookup", () => {
     expect(
       await undiciFetch(`https://localhost:${server.port}/`, { dispatcher: noCa }).then(
         () => "resolved",
-        () => "rejected",
+        (err: Error & { code?: string }) => err.code,
       ),
-    ).toBe("rejected");
+    ).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
     const withCa = new Agent({
       connect: {
         ca: tlsCert.cert,
@@ -1464,9 +1464,9 @@ describe("undici dispatcher connect.lookup", () => {
     expect(
       await undiciFetch(url, { dispatcher: new Agent({ connect: { timeout: 5000 } }) }).then(
         () => "resolved",
-        () => "rejected",
+        (err: Error & { code?: string }) => err.code,
       ),
-    ).toBe("rejected");
+    ).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
     const agent = new Agent({ connect: { ca: tlsCert.cert } });
     const res = await undiciFetch(url, { dispatcher: agent });
     expect(await res.text()).toBe("tls-only");
@@ -1509,19 +1509,64 @@ describe("undici dispatcher connect.lookup", () => {
     },
   );
 
-  it("a Bun.FetchSession's own proxy is kept on pinned hops", async () => {
-    await using server = Bun.serve({ port: 0, fetch: () => new Response("reached") });
+  it("a Bun.FetchSession rejects on a pinned hop instead of losing its proxy or TLS settings", async () => {
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits++;
+        return new Response("reached");
+      },
+    });
     const { agent } = pinningAgent();
     const url = `http://session.invalid:${server.port}/`;
     expect(await (await undiciFetch(url, { dispatcher: agent })).text()).toBe("reached");
-    // Port 1 is closed: a request that honors the session's proxy cannot reach the server.
     using session = new Bun.FetchSession({ proxy: "http://127.0.0.1:1" });
-    expect(
-      await undiciFetch(url, { dispatcher: agent, session }).then(
+    const outcome = (p: Promise<unknown>) =>
+      p.then(
         () => "resolved",
-        (err: TypeError) => err.name,
-      ),
-    ).toBe("TypeError");
+        (err: Error & { code?: string }) => `${err.name}/${err.code}`,
+      );
+    expect(await outcome(undiciFetch(url, { dispatcher: agent, session }))).toBe(
+      "NotSupportedError/UND_ERR_NOT_SUPPORTED",
+    );
+    expect(hits).toBe(1);
+  });
+
+  it("an Agent with TLS options but no lookup hook leaves http requests with a session alone", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("plain-http") });
+    using session = new Bun.FetchSession({});
+    const agent = new Agent({ connect: { ca: tlsCert.cert } });
+    const res = await undiciFetch(`http://127.0.0.1:${server.port}/`, { dispatcher: agent, session });
+    expect(await res.text()).toBe("plain-http");
+  });
+
+  it("a plain { url, tls } input keeps its tls with an Agent that has TLS options but no lookup hook", async () => {
+    await using server = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("own-ca") });
+    const agent = new Agent({ connect: { rejectUnauthorized: true } });
+    const res = await undiciFetch({ url: `https://localhost:${server.port}/`, tls: { ca: tlsCert.cert } } as any, {
+      dispatcher: agent,
+    });
+    expect(await res.text()).toBe("own-ca");
+  });
+
+  it("a buffered body is copied before the lookup runs", async () => {
+    await using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+    const buf = Buffer.from("hello");
+    const agent = new Agent({
+      connect: {
+        lookup: (_h, _o, cb) => {
+          buf.fill(0x78);
+          cb(null, "127.0.0.1", 4);
+        },
+      },
+    });
+    const url = `http://snap.invalid:${server.port}/`;
+    const res = await undiciFetch(url, { dispatcher: agent, method: "POST", body: buf });
+    expect(await res.text()).toBe("hello");
+    buf.write("hello");
+    const { body } = await request(url, { dispatcher: agent, method: "POST", body: buf });
+    expect(await body!.text()).toBe("hello");
   });
 
   it("an Agent without connect options leaves requests untouched", async () => {

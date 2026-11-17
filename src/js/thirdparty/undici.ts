@@ -181,8 +181,15 @@ function connectTls(connect) {
 function connectInit(init, hop, connect) {
   const out = { ...init };
   const { host, serverName } = hop;
-  // A Bun.FetchSession carries its own proxy choice; a request `proxy` would override it.
-  if (host !== undefined && init?.proxy === undefined && init?.session == null) out.proxy = false;
+  if (host !== undefined) {
+    if (init?.session != null) {
+      // The session's proxy and TLS are not visible here, so a pinned hop cannot honor them.
+      throw new NotSupportedError(
+        "a Bun.FetchSession cannot be combined with a connect.lookup hook; pass proxy and tls as request options instead",
+      );
+    }
+    if (init?.proxy === undefined) out.proxy = false;
+  }
   if (hop.https) {
     const fromConnect = connectTls(connect);
     if (fromConnect !== undefined || serverName !== undefined) {
@@ -204,10 +211,30 @@ function mergeConnectTls(init, fromConnect) {
 }
 
 // No lookup hook: stay native, which keeps `tls` across its own redirect following.
-function withConnectTls(init, connect) {
+function withConnectTls(url, init, connect) {
+  if (url.protocol !== "https:") return init;
   const fromConnect = connectTls(connect);
   if (fromConnect === undefined) return init;
   return { ...init, tls: mergeConnectTls(init, fromConnect) };
+}
+
+function isPlainInput(input) {
+  return input !== null && typeof input === "object" && !(input instanceof Request) && !(input instanceof URL);
+}
+
+// A buffered body is copied now, as native fetch does at call time, so a
+// change the caller makes while the lookup is pending does not reach the wire.
+function snapshotBody(body) {
+  if (body == null || typeof body !== "object") return body;
+  if (isArrayBuffer(body)) return body.slice(0);
+  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength).slice();
+  if (body instanceof URLSearchParams) return new URLSearchParams(body);
+  if (body instanceof FormData) {
+    const copy = new FormData();
+    for (const [name, value] of body) copy.append(name, value);
+    return copy;
+  }
+  return body;
 }
 
 // Bodies that cannot be sent twice: a web or node stream, or any other
@@ -332,7 +359,7 @@ function fetchLookupError(err) {
 async function fetchWithConnect(input, init, connect) {
   // Native fetch also takes a plain { url, ...init } object as input; its
   // fields (Bun-specific ones like tls and proxy included) act as init.
-  if (input !== null && typeof input === "object" && !(input instanceof Request) && !(input instanceof URL)) {
+  if (isPlainInput(input)) {
     init = { ...input, ...init };
     input = input.url;
   }
@@ -341,8 +368,10 @@ async function fetchWithConnect(input, init, connect) {
   const redirectMode = init?.redirect ?? (isRequest ? input.redirect : undefined) ?? "follow";
   const signal = init?.signal ?? (isRequest ? input.signal : undefined);
   if (redirectMode !== "follow") {
-    // Neither mode follows a redirect, so only the first hop is pinned. Headers are copied before the await.
+    // Neither mode follows a redirect, so only the first hop is pinned. Headers
+    // and a buffered body are copied before the await.
     const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
+    const body = snapshotBody(init?.body);
     let pin;
     try {
       pin = await applyConnect(url, connect, signal);
@@ -353,7 +382,7 @@ async function fetchWithConnect(input, init, connect) {
     if (pin === undefined) return nativeFetch(input, init == null ? undefined : { ...init, headers });
     const { host } = pin;
     if (host !== undefined && !headers.has("host")) headers.set("host", host);
-    const hopInit = { ...connectInit(init, pin, connect), headers, redirect: redirectMode };
+    const hopInit = { ...connectInit(init, pin, connect), headers, body, redirect: redirectMode };
     if (isRequest) {
       // Taken from the Request directly; a second Request would tee a stream body.
       if (hopInit.method === undefined) hopInit.method = input.method;
@@ -366,7 +395,7 @@ async function fetchWithConnect(input, init, connect) {
   }
   const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
   const method = init?.method ?? (isRequest ? input.method : "GET");
-  let body = init?.body;
+  let body = snapshotBody(init?.body);
   const requestBody = body === undefined && isRequest ? input.body : null;
   if (requestBody != null) {
     // A memory or file body becomes a (lazy) Blob again: Content-Length, and replayable on 307/308.
@@ -396,21 +425,19 @@ async function fetchWithConnect(input, init, connect) {
 function fetch(input, init) {
   try {
     let dispatcher = init?.dispatcher;
-    if (
-      dispatcher === undefined &&
-      input !== null &&
-      typeof input === "object" &&
-      !(input instanceof Request) &&
-      !(input instanceof URL)
-    ) {
-      // The plain { url, ...init } input form can carry the dispatcher itself.
-      dispatcher = input.dispatcher;
-    }
+    const plain = isPlainInput(input);
+    // The plain { url, ...init } input form can carry the dispatcher itself.
+    if (dispatcher === undefined && plain) dispatcher = input.dispatcher;
     const connect = resolveConnect(dispatcher);
     if (connect == null) return nativeFetch(input, init);
     // Per-hop work is needed only for a lookup hook (or a custom connector to reject).
     if (typeof connect !== "function" && typeof connect.lookup !== "function") {
-      return nativeFetch(input, withConnectTls(init, connect));
+      if (plain) {
+        init = { ...input, ...init };
+        input = input.url;
+      }
+      const url = new URL(input instanceof Request ? input.url : input);
+      return nativeFetch(input, withConnectTls(url, init, connect));
     }
     return fetchWithConnect(input, init, connect);
   } catch (e) {
@@ -616,7 +643,7 @@ async function request(
   if (hasLookup && followRedirects) {
     resp = await followRedirectsWithConnect(new URL(url), { signal, mode: "cors", keepalive: !reset }, connect, {
       method,
-      body: inputBody,
+      body: snapshotBody(inputBody),
       headers: new Headers(requestHeaders),
       limit: maxRedirections,
       redirectError: () => new Error("redirected too many times"),
@@ -635,10 +662,10 @@ async function request(
       keepalive: !reset,
     };
     if (hasLookup) {
-      // Snapshot before the await: the caller keeps its own URL and headers.
+      // Snapshot before the await: the caller keeps its own URL, headers and body.
       url = new URL(url);
       const headers = new Headers(requestHeaders);
-      init = { ...init, headers };
+      init = { ...init, headers, body: snapshotBody(inputBody) };
       const pin = await applyConnect(url, connect, signal);
       if (pin !== undefined) {
         url = pin.url;
@@ -647,7 +674,7 @@ async function request(
         init = connectInit(init, pin, connect);
       }
     } else if (connect != null) {
-      init = withConnectTls(init, connect);
+      init = withConnectTls(new URL(url), init, connect);
     }
     resp = await nativeFetch(url, init);
   }

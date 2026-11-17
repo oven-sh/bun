@@ -52,7 +52,7 @@ using WorkQueue = Bun::PhonyWorkQueue;
 struct JsonWebKey;
 
 class BufferSource;
-class CryptoAlgorithmParameters;
+struct CryptoAlgorithmParameters;
 class CryptoKey;
 class DeferredPromise;
 
@@ -93,7 +93,7 @@ public:
 
     // KeyObject.prototype.toCryptoKey needs Node's "importKey" normalization
     // from outside this file.
-    static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeImportParameters(JSC::JSGlobalObject&, AlgorithmIdentifier&&);
+    static ExceptionOr<CryptoAlgorithmParameters> normalizeImportParameters(JSC::JSGlobalObject&, const AlgorithmIdentifier&);
 
     // KeyObject.prototype.toCryptoKey also reuses the usage-bitmap mapping.
     static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>&);

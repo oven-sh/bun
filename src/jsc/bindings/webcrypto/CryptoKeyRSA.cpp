@@ -44,7 +44,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
     if (keyData.ext && !keyData.ext.value() && extractable)
         return nullptr;
     // BoringSSL has no multi-prime RSA.
-    if (keyData.oth)
+    if (keyData.hasOth)
         return nullptr;
 
     if (keyData.n.isNull() || keyData.e.isNull())
@@ -136,18 +136,6 @@ JsonWebKey CryptoKeyRSA::exportJwk() const
     result.dp = Bun::base64URLEncodeToString(rsaComponents->firstPrimeInfo().factorCRTExponent);
     result.dq = Bun::base64URLEncodeToString(rsaComponents->secondPrimeInfo().factorCRTExponent);
     result.qi = Bun::base64URLEncodeToString(rsaComponents->secondPrimeInfo().factorCRTCoefficient);
-    if (rsaComponents->otherPrimeInfos().isEmpty())
-        return result;
-
-    Vector<RsaOtherPrimesInfo> oth;
-    for (const auto& info : rsaComponents->otherPrimeInfos()) {
-        RsaOtherPrimesInfo otherInfo;
-        otherInfo.r = Bun::base64URLEncodeToString(info.primeFactor);
-        otherInfo.d = Bun::base64URLEncodeToString(info.factorCRTExponent);
-        otherInfo.t = Bun::base64URLEncodeToString(info.factorCRTCoefficient);
-        oth.append(WTF::move(otherInfo));
-    }
-    result.oth = WTF::move(oth);
     return result;
 }
 

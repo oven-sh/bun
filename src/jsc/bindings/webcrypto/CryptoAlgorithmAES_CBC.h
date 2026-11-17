@@ -31,7 +31,6 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmAesCbcCfbParams;
 class CryptoKeyAES;
 
 class CryptoAlgorithmAES_CBC final : public CryptoAlgorithm {

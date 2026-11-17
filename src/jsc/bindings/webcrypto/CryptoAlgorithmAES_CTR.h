@@ -32,7 +32,6 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmAesCtrParams;
 class CryptoKeyAES;
 
 class CryptoAlgorithmAES_CTR final : public CryptoAlgorithm {

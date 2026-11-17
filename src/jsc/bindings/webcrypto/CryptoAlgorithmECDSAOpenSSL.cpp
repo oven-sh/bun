@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmEcdsaParams.h"
 #include "CryptoKeyEC.h"
 #include "OpenSSLUtilities.h"
 

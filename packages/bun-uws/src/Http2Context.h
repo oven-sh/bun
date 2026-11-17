@@ -279,6 +279,9 @@ struct Http2Connection {
 
     /* Inbound: partial frame reassembly, and HEADERS+CONTINUATION block. */
     BackPressure in;
+    /* Received while a handler under onData ticks the loop (waitForPromise). It goes behind what onData still has to parse. */
+    WTF::Vector<char> inBehindHandler;
+    bool parsing = false;
     BackPressure headerBlock;
     uint32_t headerBlockStream = 0;
     uint8_t headerBlockFlags = 0;
@@ -555,6 +558,8 @@ public:
     /* ── inbound ──────────────────────────────────────────────────────── */
 
     inline void onData(const char *data, size_t length);
+    /* false: the connection reads no more. */
+    inline bool parse(const char *data, size_t length);
     inline bool handleFrame(uint8_t type, uint8_t flags, uint32_t streamId, const unsigned char *payload, uint32_t length);
     inline bool handleHeaderBlock(uint32_t streamId, uint8_t flags, const unsigned char *block, size_t length);
     /* `flowLength` is the whole frame payload (padding counts against the
@@ -1137,14 +1142,34 @@ inline bool Http2Connection::streamError(uint32_t streamId, Http2Response *strea
 }
 
 inline void Http2Connection::onData(const char *data, size_t length) {
+    if (parsing) [[unlikely]] {
+        inBehindHandler.append(std::span<const char>(data, length));
+        us_socket_pause(s);
+        return;
+    }
     Pin pin(this);
+    parsing = true;
+    bool reads = parse(data, length);
+    while (!inBehindHandler.isEmpty()) [[unlikely]] {
+        WTF::Vector<char> held = std::exchange(inBehindHandler, {});
+        us_socket_resume(s);
+        reads = reads && parse(held.span().data(), held.size());
+    }
+    parsing = false;
+    if (reads) {
+        /* Only frames that move a stream count as activity: a peer holding
+         * streams open at a zero window can't keep the connection alive on PINGs.
+         * After a graceful stop, neither can a peer with no stream. */
+        if (progressed || (streams.isEmpty() && !ctx->stopping)) touch();
+        progressed = false;
+    }
+    Http2Context::epilogue(pin, s);
+}
+
+inline bool Http2Connection::parse(const char *data, size_t length) {
     if (prefaceOffset < http2::CLIENT_PREFACE_LEN) {
         size_t n = std::min<size_t>(http2::CLIENT_PREFACE_LEN - prefaceOffset, length);
-        if (memcmp(data, http2::CLIENT_PREFACE + prefaceOffset, n) != 0) {
-            connectionError(http2::ERR_PROTOCOL_ERROR);
-            Http2Context::epilogue(pin, s);
-            return;
-        }
+        if (memcmp(data, http2::CLIENT_PREFACE + prefaceOffset, n) != 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
         prefaceOffset += (uint8_t) n;
         data += n;
         length -= n;
@@ -1168,16 +1193,9 @@ inline void Http2Connection::onData(const char *data, size_t length) {
         uint32_t flen = ((uint32_t) h[0] << 16) | ((uint32_t) h[1] << 8) | h[2];
         uint8_t type = h[3], flags = h[4];
         uint32_t streamId = http2::readU32BE(h + 5) & 0x7fffffff;
-        if (flen > http2::LOCAL_MAX_FRAME_SIZE) {
-            connectionError(http2::ERR_FRAME_SIZE_ERROR);
-            Http2Context::epilogue(pin, s);
-            return;
-        }
+        if (flen > http2::LOCAL_MAX_FRAME_SIZE) return connectionError(http2::ERR_FRAME_SIZE_ERROR);
         if (avail - consumed < http2::FRAME_HEADER_SIZE + flen) break;
-        if (!handleFrame(type, flags, streamId, h + http2::FRAME_HEADER_SIZE, flen) || closed || us_socket_is_shut_down(s)) {
-            Http2Context::epilogue(pin, s);
-            return;
-        }
+        if (!handleFrame(type, flags, streamId, h + http2::FRAME_HEADER_SIZE, flen) || closed || us_socket_is_shut_down(s)) return false;
         consumed += http2::FRAME_HEADER_SIZE + flen;
     }
 
@@ -1186,12 +1204,7 @@ inline void Http2Connection::onData(const char *data, size_t length) {
     } else if (consumed < avail) {
         in.append((const char *) p + consumed, avail - consumed);
     }
-    /* Only frames that move a stream count as activity: a peer holding
-     * streams open at a zero window can't keep the connection alive on PINGs.
-     * After a graceful stop, neither can a peer with no stream. */
-    if (progressed || (streams.isEmpty() && !ctx->stopping)) touch();
-    progressed = false;
-    Http2Context::epilogue(pin, s);
+    return true;
 }
 
 inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *payload, uint32_t length) {

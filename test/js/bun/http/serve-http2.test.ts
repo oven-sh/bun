@@ -1172,3 +1172,54 @@ test.concurrent.each([
   expect(stdout).toBe(order.map(protocol => protocol + " timed out\n").join(""));
   expect(exitCode).toBe(0);
 });
+
+// Bun.build() waits for an async plugin setup() by running the event loop.
+test.each([
+  [false, "one read"],
+  [false, "two reads"],
+  [true, "one read"],
+  [true, "two reads"],
+])("frames that arrive while a handler runs the event loop wait their turn (tls: %p, %s)", async (secure, reads) => {
+  const late = Buffer.alloc(16384, "b");
+  let ranLoop = false;
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    http2: true,
+    tls: secure ? tlsCert : undefined,
+    async fetch(req) {
+      if (req.method === "GET") return new Response("fence");
+      client.write(Buffer.concat([frame(T.DATA, 0, 1, late), frame(T.DATA, F.END_STREAM, 1, late)]));
+      let waited = false;
+      Bun.build({
+        entrypoints: ["./none.js"],
+        plugins: [{ name: "nested tick", setup: () => fence().then(() => void (waited = true)) }],
+      }).catch(() => {});
+      ranLoop = waited;
+      return new Response(sha256(await req.bytes()));
+    },
+  });
+  // The server polls its sockets.
+  const fence = () => fetch(server.url, { tls: { rejectUnauthorized: false } }).then(res => res.text());
+  const client = await RawH2.connect(server.port!, secure);
+  try {
+    await client.waitFor(f => f.type === T.SETTINGS && f.flags === F.ACK);
+    let frames = Buffer.concat([
+      frame(T.HEADERS, F.END_HEADERS, 1, hpackLiteral(baseHeaders("/", "POST"))),
+      frame(T.DATA, 0, 1, Buffer.from("first")),
+    ]);
+    if (reads === "two reads") {
+      client.write(frames.subarray(0, 5));
+      frames = frames.subarray(5);
+      await fence();
+    }
+    client.write(frames);
+    const answer = await client.waitFor(
+      f => f.type === T.GOAWAY || (f.streamId === 1 && f.type !== T.HEADERS && f.type !== T.WINDOW_UPDATE),
+    );
+    expect(answer.payload.toString()).toBe(sha256(Buffer.concat([Buffer.from("first"), late, late])));
+    expect(ranLoop).toBe(true);
+  } finally {
+    client.socket.destroy();
+  }
+});

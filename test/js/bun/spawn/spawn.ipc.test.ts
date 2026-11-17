@@ -811,6 +811,42 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
     );
     expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
   });
+
+  it("is closed once if a worker thread exits in the handler", async () => {
+    const result = await runPair(
+      `
+        const { Worker, isMainThread, workerData } = require("node:worker_threads");
+        if (isMainThread) {
+          const shared = new Int32Array(new SharedArrayBuffer(8));
+          const worker = new Worker(__filename, { workerData: shared });
+          await new Promise(resolve => worker.once("message", resolve));
+          // Take the number as soon as it is free.
+          const deadline = Date.now() + 30_000;
+          Atomics.store(shared, 1, 1);
+          for (let fd; (fd = fs.openSync("/dev/null")) !== shared[0] && Date.now() < deadline; ) {
+            if (fd > shared[0]) fs.closeSync(fd);
+          }
+          await new Promise(resolve => worker.once("exit", resolve));
+          console.log(fs.readlinkSync("/proc/self/fd/" + shared[0]));
+        } else {
+          spawnChild({
+            ipc(message, child, socket) {
+              workerData[0] = socket._handle.fd;
+              require("node:worker_threads").parentPort.postMessage("");
+              while (!Atomics.load(workerData, 1)) Bun.sleepSync(1);
+              process.exit();
+            },
+          });
+        }
+      `,
+      `
+        const server = await listen();
+        const socket = net.connect(server.address().port, () => process.send("socket", socket));
+        process.on("disconnect", () => process.exit());
+      `,
+    );
+    expect(result).toEqual({ stdout: ["/dev/null"], stderr: "", exitCode: 0 });
+  });
 });
 
 // Linux only: what one write() sends has to arrive in one read.

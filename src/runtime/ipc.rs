@@ -732,9 +732,12 @@ impl SendQueue {
             if cmd.eq_ascii(b"NODE_HANDLE") {
                 if let Some(received) = self.accept_handle(global, message)? {
                     let fd = received_fd_to_js(received.fd());
-                    jsc::cpp::IPCParse(global, owner.to_js(), message, fd)?;
-                    // The object that `parseHandle` made closes it.
-                    received.into_raw();
+                    let parsed = jsc::cpp::IPCParse(global, owner.to_js(), message, fd);
+                    // The object that `parseHandle` made closes it. A termination also unwinds it from the listener.
+                    if parsed.is_ok() || !global.bun_vm().script_allowed() {
+                        received.into_raw();
+                    }
+                    parsed?;
                 }
                 return Ok(());
             } else if cmd.eq_ascii(b"NODE_HANDLE_ACK") {

@@ -529,7 +529,7 @@ bun_webp = { path = "src/webp" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on. scripts/build/flags.ts does the same for highway_webp_*.cpp.
+# checks stay on.
 [profile.dev.package.bun_png]
 opt-level = 3
 [profile.dev.package.bun_jpeg]

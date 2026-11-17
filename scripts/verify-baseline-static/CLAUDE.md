@@ -145,8 +145,8 @@ executed. Real bug, will SIGILL on baseline hardware. Fix the compile flags.
 ### Deciding which
 
 **Identify the dependency.** Demangle the symbol (`c++filt`, or recognize the
-prefix: `_ZN7simdutf` = simdutf, `_ZN3bun` + `N_AVX2`/`N_SVE` = Bun's Highway
-code, `_RNv` + `memchr` = Rust memchr, etc). Search the allowlist for that
+prefix: `_ZN7simdutf` = simdutf, `_R` + `4simd4avx2` = a copy for a target of
+`bun_simd`, `_RNv` + `memchr` = Rust memchr, etc). Search the allowlist for that
 dependency — if neighbors are there under an existing `# Gate: ...` header,
 this is almost certainly (A).
 
@@ -157,7 +157,6 @@ table, an HWCAP test. Known patterns:
 | Dependency                            | Gate                                                        | Where                                 |
 | ------------------------------------- | ----------------------------------------------------------- | ------------------------------------- |
 | simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy    |
-| Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h` |
 | `bun_simd`                            | `if_supported!` → `bun_simd::detected()`                    | `src/simd/trusted/gate.rs`            |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c` |
 | zstd                                  | `ZSTD_cpuid()`                                              | `vendor/zstd/lib/common/cpu.h`        |

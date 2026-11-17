@@ -2549,10 +2549,10 @@ impl Resolver {
         let resolver = global_resolver(global_this);
         let channel = resolver.get_channel_or_error(global_this)?;
 
-        let cache_name = format!("{}|{port}", bstr::BStr::new(addr_s)).into_bytes();
-        let (kind, hash) = (QueryKind::NameInfo, wyhash(&cache_name));
+        // For one address, the hashes are equal only if the ports are.
+        let (kind, hash) = (QueryKind::NameInfo, wyhash(addr_s) ^ u64::from(port));
         let send = |query| channel.get_name_info(&sa, query);
-        Ok(resolver.ask(kind, hash, &cache_name, global_this, context, send))
+        Ok(resolver.ask(kind, hash, addr_s, global_this, context, send))
     }
 
     pub(crate) fn get_runtime_default_result_order_option() -> bun::String {

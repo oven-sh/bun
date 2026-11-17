@@ -13,12 +13,14 @@ import fs from "node:fs";
 //   an uncaught error in its event loop, or left an unhandled rejection. Fuzzilli keeps only
 //   programs with status 0.
 // - A program is global code on a fresh global object, with `require`, `module`, `__filename`
-//   and `__dirname`. Its event loop runs until it is empty, and no wait in it is longer than
-//   what is left of 250 ms (the profile's timeout is 2500 ms). Then the reset of
-//   `bun test --isolate` retires the realm and makes the next global.
-// - A child that the reset cannot clean (the event loop is still alive after it) exits in place
-//   of the status write, with exit code 0 or 1. libreprl reports that code as the status and
-//   starts a new child. The profile also starts a new child after 1000 programs.
+//   and `__dirname`. The preloads of bunfig.toml run on that global first. The event loop of
+//   the program runs until it is empty, and no wait in it is longer than what is left of 250 ms
+//   (the profile's timeout is 2500 ms). Then the reset of `bun test --isolate` retires the
+//   realm and makes the next global.
+// - A child that cannot run another program (the event loop is still alive after the reset, or
+//   a preload fails) exits in place of the status write, with exit code 0 or 1. libreprl reports
+//   that code as the status and starts a new child. The profile also starts a new child after
+//   1000 programs.
 //
 // Here `Bun.spawn` makes the four descriptors. The commands and the programs are written up
 // front and the command descriptor is closed, so the child runs every program and leaves on EOF.
@@ -62,12 +64,13 @@ async function runReprl(
   }
 
   using dir = tempDir("fuzzilli-reprl", options.files ?? {});
+  const cwd = fs.realpathSync(String(dir));
   // Descriptors 3 to 99 stay closed in the child. 100 to 103 are the REPRL descriptors.
   const unused = Array.from({ length: REPRL_CRFD - 3 }, () => "ignore" as const);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fuzzilli"],
     env: { ...bunEnv, ...options.env },
-    cwd: String(dir),
+    cwd,
     stdio: ["ignore", "pipe", "pipe", ...unused, "pipe", "pipe", "pipe", "pipe"],
   });
   // Reading `stdio` makes the caller the owner of the descriptors.
@@ -92,7 +95,7 @@ async function runReprl(
     handshake: written.subarray(0, 4).toString("latin1"),
     statuses,
     stdout: lines(stdout),
-    stderr: errorLines(stderr),
+    stderr: errorLines(stderr.replaceAll(cwd, "<dir>")),
     exitCode,
   };
 }
@@ -480,6 +483,58 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
     });
   });
 
+  describe("a preload of bunfig.toml", () => {
+    const bunfig = { "bunfig.toml": `preload = ["./preload.js"]\n` };
+
+    test.concurrent("runs on every fresh global", async () => {
+      const result = await runReprl(
+        [`fromPreload.push("program 0"); console.log(fromPreload.join());`, `console.log(fromPreload.join());`],
+        { files: { ...bunfig, "preload.js": `globalThis.fromPreload = ["preload"];` } },
+      );
+
+      expect(result).toEqual({
+        handshake: "HELO",
+        statuses: [0, 0],
+        stdout: ["preload,program 0", "preload"],
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("that fails at the start ends the child before the handshake", async () => {
+      const result = await runReprl([`console.log("program 0");`], {
+        files: { ...bunfig, "preload.js": `throw new Error("preload failure");` },
+      });
+
+      expect(result).toEqual({
+        handshake: "",
+        statuses: [],
+        stdout: [],
+        stderr: [
+          "error: preload failure",
+          "at <dir>/preload.js:1:11",
+          "error: [REPRL] could not start: a preload failed",
+        ],
+        exitCode: 1,
+      });
+    });
+
+    test.concurrent("that fails on a later global ends the child, whose exit code is the status", async () => {
+      const result = await runReprl(
+        [`require("fs").rmSync("preload.js"); console.log("removed");`, `console.log("next program");`],
+        { files: { ...bunfig, "preload.js": `globalThis.fromPreload = ["preload"];` } },
+      );
+
+      expect(result).toEqual({
+        handshake: "HELO",
+        statuses: [],
+        stdout: ["removed"],
+        stderr: [`error: ENOENT reading "<dir>/preload.js"`, "[REPRL] a preload failed: this child ends"],
+        exitCode: 0,
+      });
+    });
+  });
+
   test.concurrent("a program cannot replace the REPRL child with process.execve", async () => {
     const result = await runReprl([
       `process.execve(process.execPath, [process.execPath, "--version"]); console.log("still here");`,
@@ -529,6 +584,14 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
       program: `require("fs").writeFileSync("late.mjs", "export default 7;"); import("./late.mjs").then(module => console.log(module.default));`,
     },
     {
+      name: "a global that a preload of bunfig.toml sets",
+      program: `console.log(fromPreload);`,
+      files: {
+        "bunfig.toml": `preload = ["./preload.js"]\n`,
+        "preload.js": `globalThis.fromPreload = "set by the preload";`,
+      },
+    },
+    {
       name: "process.exitCode",
       program: `process.exitCode = 3; console.log("set");`,
       differs: "the status reports errors, not the exit code",
@@ -543,9 +606,9 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
       program: `await 1; console.log("after");`,
       differs: "a program is global code, where await is not a keyword",
     },
-  ])("$name", ({ program, differs }) => {
+  ])("$name", ({ program, differs, files }) => {
     test.concurrent(differs ? `differs from bun <file>: ${differs}` : "is as with bun <file>", async () => {
-      using dir = tempDir("fuzzilli-reprl-file", { "program.cjs": program });
+      using dir = tempDir("fuzzilli-reprl-file", { ...files, "program.cjs": program });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "program.cjs"],
         env: bunEnv,
@@ -553,7 +616,11 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
         stdout: "pipe",
         stderr: "ignore",
       });
-      const [reprl, stdout, exitCode] = await Promise.all([runReprl([program]), proc.stdout.text(), proc.exited]);
+      const [reprl, stdout, exitCode] = await Promise.all([
+        runReprl([program], { files }),
+        proc.stdout.text(),
+        proc.exited,
+      ]);
 
       const asProgram = { ok: reprl.statuses[0] === 0, stdout: reprl.stdout };
       const asFile = { ok: exitCode === 0, stdout: lines(stdout) };

@@ -92,6 +92,7 @@ mod reprl {
             ..Default::default()
         };
         let vm = VirtualMachine::init(ctx.log, options)?;
+        vm.preload.set(core::mem::take(&mut ctx.preloads));
 
         let defines_ok = vm.transpiler.with_mut(|b| {
             RunCommand::wire_transpiler_from_ctx(b, ctx);
@@ -123,10 +124,13 @@ mod reprl {
         let mut program: Vec<u8> = Vec::new();
         let mut passed: Option<bool> = None;
         loop {
-            let is_reusable = reset(vm);
-            match passed {
-                None => handshake(),
-                Some(ok) => report(vm, ok, is_reusable),
+            match (passed, reset(vm)) {
+                (None, Ok(())) => handshake(),
+                (None, Err(why)) => {
+                    bun_core::pretty_errorln!("<r><red>error<r>: [REPRL] could not start: {}", why);
+                    exit(vm, 1)
+                }
+                (Some(ok), ready) => report(vm, ok, ready),
             }
             if !read_program(&mut program) {
                 break;
@@ -181,14 +185,12 @@ mod reprl {
     }
 
     /// Writes the status of a program. A child that cannot run another program ends here.
-    fn report(vm: &VirtualMachine, ok: bool, is_reusable: bool) {
+    fn report(vm: &VirtualMachine, ok: bool, ready: Result<(), &'static str>) {
         // The fuzzer reads the program's output once it has the status.
         Output::flush();
-        if !is_reusable {
+        if let Err(why) = ready {
             // libreprl takes the exit code of a child that leaves here as the status, and starts a new child.
-            bun_core::pretty_errorln!(
-                "[REPRL] work of the program outlived the reset: this child ends"
-            );
+            bun_core::pretty_errorln!("[REPRL] {}: this child ends", why);
             exit(vm, if ok { 0 } else { 1 });
         }
         let status: u32 = if ok { 0 } else { 1 << 8 };
@@ -216,14 +218,46 @@ mod reprl {
         vm.unhandled_error_counter.get() == 0
     }
 
-    /// Retires the current realm and makes the global of the next program. Returns whether this child can run it.
-    fn reset(vm: &VirtualMachine) -> bool {
+    /// Retires the current realm and makes the global of the next program. `Err` says why this child cannot run it.
+    fn reset(vm: &VirtualMachine) -> Result<(), &'static str> {
         crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
         vm.swap_global_for_test_isolation();
         vm.exit_handler.exit_code.set(0);
         prepare_global(vm);
         // Nothing of the next program exists yet: what holds the loop now, or throws, is what the reset could not stop.
-        run_event_loop(vm) && vm.unhandled_error_counter.get() == 0
+        if !run_event_loop(vm) || vm.unhandled_error_counter.get() != 0 {
+            return Err("work of the program outlived the reset");
+        }
+        if !load_preloads(vm) {
+            return Err("a preload failed");
+        }
+        Ok(())
+    }
+
+    /// Runs the preloads of bunfig.toml on the new global, as `bun test --isolate` runs them for each file. False: one failed.
+    fn load_preloads(vm: &VirtualMachine) -> bool {
+        if vm.preload.get().is_empty() {
+            return true;
+        }
+        let rejected = match crate::jsc_hooks::load_preloads(vm) {
+            Ok(rejected) => rejected,
+            Err(_) => {
+                if let Some(log) = vm.log_mut() {
+                    let _ = log.print(Output::error_writer());
+                    log.msgs.clear();
+                }
+                return false;
+            }
+        };
+        if !rejected.is_null() {
+            // SAFETY: the module loader returned this promise just now, and nothing ran since that could collect it.
+            let promise = unsafe { &mut *rejected };
+            let reason = promise.result(vm.jsc_vm());
+            promise.set_handled();
+            let _ = vm.uncaught_exception(vm.global(), reason, true);
+        }
+        vm.set_pending_internal_promise(None);
+        rejected.is_null()
     }
 
     /// Runs `source` as global code. Returns what it threw.

@@ -539,7 +539,7 @@ unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `NotFound` returns `error.ModuleNotFound`,
 /// `JSModuleLoader.import` throwing returns a rejected promise.
-fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
+pub(crate) fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
     // ── is_in_preload guard ─────────────────────────────────────────────
     let global = vm.global();
     vm.is_in_preload.set(true);

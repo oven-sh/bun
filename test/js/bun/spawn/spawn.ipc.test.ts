@@ -709,6 +709,29 @@ describe.concurrent("the send queue", () => {
     );
     expect(result).toEqual({ stdout: [String(count)], stderr: "", exitCode: 0 });
   });
+
+  it.skipIf(!isLinux)("releases a handle if the channel closes while its message is serialized", async () => {
+    const result = await runPair(
+      `
+        const server = await listen();
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        const child = spawnChild({ onDisconnect });
+        const message = {
+          toJSON() {
+            child.disconnect();
+            runEventLoopUntil(Promise.all([disconnected, child.exited]));
+            return "late";
+          },
+        };
+        child.send(message, server);
+        const inode = fd => fs.statSync("/proc/self/fd/" + fd, { throwIfNoEntry: false })?.ino;
+        console.log(fs.readdirSync("/proc/self/fd").filter(fd => inode(fd) === inode(server._handle.fd)).length);
+        server.close();
+      `,
+      `process.on("message", () => {});`,
+    );
+    expect(result).toEqual({ stdout: ["1"], stderr: "", exitCode: 0 });
+  });
 });
 
 describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {

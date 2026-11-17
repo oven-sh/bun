@@ -426,6 +426,8 @@ it.each([
 describe("a short input with crowded hashes", () => {
   const allBases = bytesOf(noise.length, i => "ACGT".charCodeAt(noise[i] & 3));
   const bases = allBases.subarray(0, 32768);
+  // 0x22b54b95 is the inverse of the multiplier.
+  const alike = Buffer.from(Int32Array.from({ length: 300 }, (_, i) => Math.imul(i + 1, 0x22b54b95)).buffer);
 
   it("is compressed", () => {
     const answers = [5, 6, 7, 8, 9].map(quality => [
@@ -458,18 +460,26 @@ describe("a short input with crowded hashes", () => {
   });
 
   it("may have them without matches", () => {
-    // 0x22b54b95 is the inverse of the multiplier.
-    const alike = Buffer.from(Int32Array.from({ length: 300 }, (_, i) => Math.imul(i + 1, 0x22b54b95)).buffer);
-    const records = Array.from(window(alike, 4), (four, i) => [four, noise.subarray(6 * i, 6 * i + 6)]);
-    const input = Buffer.concat([noise.subarray(0, 1800), ...records.flat(), text.subarray(0, 8000)]);
-    expect(roundTrip(input, { [QUALITY]: 8 })).toBe("6751 8762648d");
+    const records = gap => Array.from(window(alike, 4), (four, i) => [four, noise.subarray(gap * i, gap * (i + 1))]);
+    const inputs = [
+      Buffer.concat([noise.subarray(0, 1800), ...records(6).flat(), text.subarray(0, 8000)]),
+      // Searches end up 17 bytes apart.
+      Buffer.concat([...records(13).flat(), text.subarray(0, 8000)]).subarray(15),
+    ];
+    expect(inputs.map(input => roundTrip(input, { [QUALITY]: 8 }))).toEqual(["6751 8762648d", "7759 6ac1f53b"]);
+  });
+
+  it("keeps the last hash apart from the first", () => {
+    const last = Buffer.from(Int32Array.of(-0x22b54b95).buffer);
+    const input = Buffer.concat([last, alike.subarray(0, 64), Buffer.from("12345"), last, Buffer.alloc(100)]);
+    expect(roundTrip(input, { [QUALITY]: 5 })).toBe("103 d6036a47");
   });
 
   it("goes on looking for matches in what follows", () => {
-    const bits = bytesOf(1700, i => 48 + (noise[i] & 1));
-    const rest = Buffer.alloc(12000).fill(noise.subarray(0, 100), 0, 200);
-    const inputs = Array.from({ length: 10 }, (_, i) => Buffer.concat([bits.subarray(0, 1645 + 5 * i), rest]));
-    expect(roundTrips(inputs, { [QUALITY]: 7 })).toBe("4675 13acc0d0");
+    // Searches begin to skip bytes shortly before each match.
+    const records = Array.from(window(alike, 96), part => [part, part.subarray(-16)]);
+    const input = Buffer.concat([...records.flat(), Buffer.alloc(10000)]);
+    expect([7, 8].map(quality => roundTrip(input, { [QUALITY]: quality }))).toEqual(Array(2).fill("1312 a585dbc7"));
   });
 });
 
@@ -846,6 +856,23 @@ it.each([
     "the same hash for another start",
     [Buffer.alloc(70000), "aV234567.1323!x132?.........x13234567~~~~~~~~"],
     "51 cb142f73",
+  ],
+  [
+    7,
+    "a last distance that leads to a byte less than what is left",
+    [Buffer.alloc(70000), "0123qrstu?qrst#", text.subarray(0, 300), "0123qrstu!qrstu"],
+    "210 6e6ae43b",
+  ],
+  [
+    7,
+    "matches of two bytes less, a byte less, and all that is left",
+    [
+      Buffer.alloc(70000),
+      "0123?qjxzvkwbgfpmydhlcu#",
+      text.subarray(0, 300),
+      "qjxzvkwbgfpmydhlcuts_qjxzvkwbgfpmydhlcut$0123!qjxzvkwbgfpmydhlcuts",
+    ],
+    "225 80a8f4ec",
   ],
   [
     10,
@@ -1257,8 +1284,21 @@ it("remembers more than a block of input at quality 10", () => {
 });
 
 it("finds matches after 16 MiB at quality 9 in a small window", () => {
-  const input = Buffer.concat([Buffer.alloc(16 << 20), text.subarray(0, 600)]);
-  expect(roundTrip(input, { [QUALITY]: 9, [LGWIN]: 16 })).toBe("1910 e092aaa1");
+  const input = Buffer.concat([Buffer.alloc(16 << 20, noise.subarray(-100)), text.subarray(0, 600)]);
+  expect(roundTrip(input, { [QUALITY]: 9, [LGWIN]: 16 })).toBe("2089 0cc1a156");
+});
+
+it("finds nothing before the first position with a hash after 8 MiB at quality 9 in a small window", () => {
+  // What follows 520 literals is skipped, so 200 bytes on its hash is new, and the empty head is 8 MiB + 200 back.
+  const rest = Buffer.alloc(1000);
+  noise.copy(rest, 0, 0, 550);
+  noise.copy(rest, 720, 520, 524);
+  noise.copy(rest, 920, 520, 550);
+  const steps = [
+    [FLUSH, Buffer.alloc((8 << 20) - (1 << 16) - 520, noise.subarray(-100))],
+    [FINISH, rest],
+  ];
+  expect(roundTripInSteps(steps, { [QUALITY]: 9, [LGWIN]: 16 })).toBe("1614 ea49b2a8");
 });
 
 it("has 512 links for the hashes that share them at quality 9", () => {
@@ -1270,12 +1310,21 @@ it("has 512 links for the hashes that share them at quality 9", () => {
 });
 
 it.each([
-  [42, "91 a8b6072f"],
-  [43, "94 033c7a0f"],
+  [42, ["91 a8b6072f", "212 e1cd70b0"]],
+  [43, ["94 033c7a0f", "223 f3df6450"]],
 ])("runs out of these links in a short input, or not, after %d runs of zeros", (length, expected) => {
   const records = Array.from({ length }, (_, i) => [Buffer.alloc(15), [128 + i]]);
   const input = Buffer.concat(["qwbk0#qwbk!", ...records.flat(), "qwbk0#~~~~~~~~"].map(part => Buffer.from(part)));
-  expect(roundTrip(input, { [QUALITY]: 9, [LGWIN]: 16 })).toBe(expected);
+  const steps = [...Array.from(window(input, 64), chunk => [FLUSH, chunk]), [FINISH, Buffer.alloc(0)]];
+  const params = { [QUALITY]: 9, [LGWIN]: 16 };
+  expect([roundTrip(input, params), roundTripInSteps(steps, params)]).toEqual(expected);
+});
+
+it("keeps these links apart from those of other hashes", () => {
+  // The words are in banks 511, 1 and 510, and zeros are in bank 0.
+  const parts = ["qjwz0#qjwz!jzwk1%jzwk?xgbz2xgbz3", Buffer.alloc(500), "qjwz0#jzwk1%~~~~~~~~"];
+  const input = Buffer.concat(parts.map(part => Buffer.from(part)));
+  expect(roundTrip(input, { [QUALITY]: 9, [LGWIN]: 16 })).toBe("54 058c784d");
 });
 
 it("tries all recent distances shortly before its buffer wraps around", () => {
@@ -2439,32 +2488,46 @@ it("needs no more input to tell that a code is incomplete", () => {
   expect(drive(zlib.createBrotliDecompress(), [[FINISH, stream]], 64).code).toBe("ERR__ERROR_FORMAT_HUFFMAN_SPACE");
 });
 
-it.each([9, 10, 11, 12, 13, 14, 15])("decodes commands of 48 + %d bits at each alignment", length => {
+it.each(upTo15.slice(1, 15))("decodes commands of 34 or 48 + %d bits at each alignment", length => {
   // The code of one bit is for a literal and two bytes from the last distance.
   const lengths = Array(704).fill(0).fill(length, 702);
   lengths.splice(8, length - 1, ...upTo15.slice(0, length - 1));
-  const out = Buffer.alloc(1 << 18, "a");
+  const out = Buffer.alloc(1 << 19, "a");
   function write(total) {
     const bits = windowOf(20).uncompressed(noise.subarray(0, 40)).plainLastHeader(total);
     bits.simpleCode(8, 97).complexCode(lengths).sixBitCode();
     let [at, last] = [noise.copy(out, 0, 0, 40), 4];
-    for (let i = 0; i < 8; i++) {
-      for (let short = 0; short < 8 || bits.count !== 7 - i; short++, at += 3) {
+    for (let i = 0; i < 16; i++) {
+      for (let short = 0; short < 8 || bits.count !== (15 - i) % 8; short++, at += 3) {
         bits.put([1, 0]);
         out.copyWithin(at + 1, at + 1 - last, at + 3 - last);
       }
       last = at += 22594 + 37 * i;
+      const [code, base, extra] = i < 8 ? [2, 1094, [10, 1023 - i]] : [1, 2118, [24, 1592 - 99 * i]];
       bits
-        .code(length, 2 ** length - 1)
-        .put([24, 37 * i], [24, 800 - 99 * i])
+        .code(length, 2 ** length - code)
+        .put([24, 37 * i], extra)
         .distance(last);
-      out.copyWithin(at, 0, 2118 + 800 - 99 * i);
-      at += 2118 + 800 - 99 * i;
+      out.copyWithin(at, 0, base + extra[1]);
+      at += base + extra[1];
     }
     return [bits.finish(), at];
   }
   const [stream, end] = write(write(1 << 17)[1] - 40);
   expect(decodeInPieces(stream, [stream.length, 1], 1 << 18)).toEqual(Array(2).fill(digest(out.subarray(0, end))));
+
+  function withHighestBit(insert, copy) {
+    const bits = windowOf(16).plainLastHeader(22594 + 2118);
+    bits.simpleCode(8, 97).complexCode(lengths).simpleCode(6, 0);
+    bits.code(length, 2 ** length - 1).put([24, insert << 23], [24, copy << 23]);
+    const result = decompress(bits.finish());
+    return result.code ?? digest(result);
+  }
+  expect([withHighestBit(0, 0), withHighestBit(1, 0), withHighestBit(0, 1)]).toEqual([
+    digest(Buffer.alloc(22594 + 2118, "a")),
+    "ERR__ERROR_FORMAT_BLOCK_LENGTH_1",
+    "ERR__ERROR_FORMAT_BLOCK_LENGTH_1",
+  ]);
 });
 
 it.each([

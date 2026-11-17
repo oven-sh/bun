@@ -390,47 +390,65 @@ fn a_read_inside_an_event() {
     }
 }
 
-/// `outer` is one read. `nested` comes after it in the stream, and is read inside its first event.
+/// The stream is `frames`, cut at the two marks. The second read is made inside the first event of the first.
 #[test]
 #[rustfmt::skip]
 fn a_nested_read_is_not_mixed_with_the_rest_of_the_outer_read() {
+    /// After this many frames.
     #[derive(Copy, Clone)]
-    enum Part { All, AllInTwoReads, FirstByte, AllButThePayload, AllButTheLastByte }
-    use Part::*;
-    let one_two = &[(FIN | TEXT, "one"), (FIN | TEXT, "two")][..];
-    let ping_in_ab = &[(TEXT, "a"), (FIN | PING, "p"), (FIN | CONTINUE, "b")][..];
+    enum Mark { After(usize), OneByteAfter(usize), TwoBytesAfter(usize), HeaderAfter(usize), OneByteBefore(usize) }
+    use Mark::*;
+    let (one, two, six) = ((FIN | TEXT, "one"), (FIN | TEXT, "two"), (FIN | BINARY, "six"));
+    let (a, b, c) = ((TEXT, "a"), (CONTINUE, "b"), (FIN | CONTINUE, "c"));
+    let (ping, pong, close) = ((FIN | PING, "p"), (FIN | PONG, "q"), (FIN | CLOSE, ""));
     let unexpected = |opcode| (Error(UnexpectedOpcode(opcode)), "");
-    for (outer, (part, nested), expected) in [
-        (one_two,          (All,               &[(FIN | TEXT, "six")][..]),            &[(Text, "one"), (Text, "six"), (Text, "two")][..]),
-        (one_two,          (All,               &[(TEXT, "s"), (FIN | CONTINUE, "ix")]), &[(Text, "one"), (Text, "six"), (Text, "two")]),
-        (one_two,          (AllInTwoReads,     &[(FIN | TEXT, "six")]),                &[(Text, "one"), (Text, "six"), (Text, "two")]),
-        (one_two,          (All,               &[(FIN | CLOSE, "")]),                  &[(Text, "one"), (Close(1005), "")]),
-        (one_two,          (FirstByte,         &[(FIN | BINARY, "six")]),              &[(Text, "one"), unexpected(TEXT)]),
-        (one_two,          (AllButThePayload,  &[(FIN | BINARY, "six")]),              &[(Text, "one"), unexpected(TEXT)]),
-        (one_two,          (AllButTheLastByte, &[(FIN | BINARY, "six")]),              &[(Text, "one"), unexpected(TEXT)]),
-        (one_two,          (AllButTheLastByte, &[(FIN | PING, "six")]),                &[(Text, "one"), unexpected(TEXT)]),
-        (one_two,          (All,               &[(BINARY, "s")]),                      &[(Text, "one"), unexpected(TEXT)]),
-        (&ping_in_ab[1..], (All,               &[(TEXT, "s")]),                        &[(Ping, "p"), unexpected(CONTINUE)]),
-        (ping_in_ab,       (All,               &[]),                                   &[(Ping, "p"), (Text, "ab")]),
-        (ping_in_ab,       (All,               &[(FIN | CONTINUE, "c")]),              &[(Ping, "p"), unexpected(CONTINUE)]),
-        (ping_in_ab,       (All,               &[(FIN | PONG, "six")]),                &[(Ping, "p"), unexpected(PONG)]),
-        (ping_in_ab,       (FirstByte,         &[(FIN | TEXT, "six")]),                &[(Ping, "p"), unexpected(TEXT)]),
-        (&ping_in_ab[..2], (All,               &[(FIN | CONTINUE, "c")]),              &[(Ping, "p"), (Text, "ac")]),
+    for (stream, outer_ends, nested_ends, expected) in [
+        (&[one, two, six][..],        After(2),        After(3),         &[(Text, "one"), (Binary, "six"), (Text, "two")][..]),
+        (&[one, two, a, c],           After(2),        After(4),         &[(Text, "one"), (Text, "ac"), (Text, "two")]),
+        (&[one, two, close],          After(2),        After(3),         &[(Text, "one"), (Close(1005), "")]),
+        (&[one, two, six],            After(2),        OneByteAfter(2),  &[(Text, "one"), (Text, "two"), (Binary, "six")]),
+        (&[one, two, six],            After(2),        HeaderAfter(2),   &[(Text, "one"), (Text, "two"), (Binary, "six")]),
+        (&[one, two, six],            After(2),        OneByteBefore(3), &[(Text, "one"), (Text, "two"), (Binary, "six")]),
+        (&[one, two, ping],           After(2),        OneByteBefore(3), &[(Text, "one"), (Text, "two"), (Ping, "p")]),
+        (&[one, two, a, c],           After(2),        After(3),         &[(Text, "one"), (Text, "two"), (Text, "ac")]),
+        (&[one, a, ping, c, a, c],    After(4),        After(5),         &[(Text, "one"), (Ping, "p"), (Text, "ac"), (Text, "ac")]),
+        (&[a, ping, c],               After(3),        After(3),         &[(Ping, "p"), (Text, "ac")]),
+        (&[a, ping, c],               After(2),        After(3),         &[(Ping, "p"), (Text, "ac")]),
+        (&[a, ping, c, pong],         After(3),        After(4),         &[(Ping, "p"), (Pong, "q"), (Text, "ac")]),
+        (&[a, ping, c, six],          After(3),        After(4),         &[(Ping, "p"), unexpected(BINARY)]),
+        (&[a, ping, c, six],          After(3),        OneByteAfter(3),  &[(Ping, "p"), (Text, "ac"), (Binary, "six")]),
+        (&[a, ping, b, pong, c],      After(3),        After(4),         &[(Ping, "p"), (Pong, "q"), (Text, "abc")]),
+        (&[a, ping, b, pong, c],      After(3),        OneByteBefore(4), &[(Ping, "p"), (Pong, "q"), (Text, "abc")]),
+        (&[a, ping, pong, c],         After(3),        After(3),         &[(Ping, "p"), (Pong, "q"), (Text, "ac")]),
+        (&[a, ping, pong, b, c],      After(3),        After(4),         &[(Ping, "p"), (Pong, "q"), (Text, "abc")]),
+        (&[a, ping, pong, b, c],      After(3),        HeaderAfter(3),   &[(Ping, "p"), (Pong, "q"), (Text, "abc")]),
+        (&[a, ping, pong, c],         After(3),        After(4),         &[(Ping, "p"), (Text, "ac"), (Pong, "q")]),
+        (&[a, ping, pong, pong, c],   After(4),        After(5),         &[(Ping, "p"), (Text, "ac"), (Pong, "q"), (Pong, "q")]),
+        (&[a, ping, b, c],            After(3),        OneByteAfter(3),  &[(Ping, "p"), (Text, "abc")]),
+        (&[a, ping, b, c],            After(3),        After(4),         &[(Ping, "p"), unexpected(CONTINUE)]),
+        (&[one, a, c],                After(2),        After(3),         &[(Text, "one"), unexpected(CONTINUE)]),
+        (&[one, a, six],              After(2),        OneByteBefore(3), &[(Text, "one"), unexpected(CONTINUE)]),
+        (&[one, two],                 OneByteAfter(1), TwoBytesAfter(1), &[(Text, "one"), unexpected(CONTINUE)]),
+        (&[one, two],                 HeaderAfter(1),  HeaderAfter(1),   &[(Text, "one"), (Text, "two")]),
     ] {
         for options in [CLIENT, SERVER] {
-            let (outer, nested) = (frames(options, outer), frames(options, nested));
-            let reads = match part {
-                All => [&*nested, &[]],
-                AllInTwoReads => nested.split_at(nested.len() - 1).into(),
-                FirstByte => [&nested[..1], &[]],
-                AllButThePayload => [&nested[..nested.len() - "six".len()], &[]],
-                AllButTheLastByte => [&nested[..nested.len() - 1], &[]],
+            let after = |count| frames(options, &stream[..count]).len();
+            let offset = |mark| match mark {
+                After(count) => after(count),
+                OneByteAfter(count) => after(count) + 1,
+                TwoBytesAfter(count) => after(count) + 2,
+                HeaderAfter(count) => after(count + 1) - stream[count].1.len(),
+                OneByteBefore(count) => after(count) - 1,
             };
+            let bytes = frames(options, stream);
+            let (outer, rest) = bytes.split_at(offset(outer_ends));
+            let (nested, rest) = rest.split_at(offset(nested_ends) - outer.len());
             let mut reader = Reader::new(options);
-            let mut input = Input::new(&outer);
+            let mut input = Input::new(outer);
             let mut events = vec![seen(&reader.next(&mut input).unwrap())];
-            events.extend(reads.iter().flat_map(|bytes| read(&mut reader, bytes)));
+            events.extend(read(&mut reader, nested));
             events.extend(drain(&mut reader, input));
+            events.extend(read(&mut reader, rest));
             assert_eq!(events, expected);
 
             let has_ended = matches!(expected.last(), Some((Error(_) | Close(_), _)));
@@ -438,4 +456,23 @@ fn a_nested_read_is_not_mixed_with_the_rest_of_the_outer_read() {
             assert_eq!(later, if has_ended { &[][..] } else { &[(Text, "later")] });
         }
     }
+}
+
+#[test]
+fn a_nested_read_that_only_looks_like_a_frame_fails_the_outer_read() {
+    let lookalike = frame(CLIENT, FIN | TEXT, b"x");
+    let payload = [b"ab", &*lookalike].concat();
+    let bytes = [
+        frame(CLIENT, FIN | TEXT, b"one"),
+        frame(CLIENT, FIN | BINARY, &payload),
+    ]
+    .concat();
+    let mut reader = Reader::new(CLIENT);
+    let mut input = Input::new(&bytes[..bytes.len() - lookalike.len()]);
+    assert_eq!(seen(&reader.next(&mut input).unwrap()), (Text, "one"));
+    assert_eq!(read(&mut reader, &lookalike), [(Text, "x")]);
+    assert_eq!(
+        drain(&mut reader, input),
+        [(Error(UnexpectedOpcode(CONTINUE)), "")]
+    );
 }

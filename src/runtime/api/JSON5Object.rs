@@ -45,7 +45,6 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
         let root =
             match json5::JSON5Parser::parse(source, log, bump) {
                 Ok(r) => r,
-                Err(json5::ExternalError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(json5::ExternalError::StackOverflow) => {
                     return Err(global.throw_stack_overflow());
                 }

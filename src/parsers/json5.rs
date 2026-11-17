@@ -170,7 +170,6 @@ impl<'a> SourceTokens<'a> {
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, Debug)]
 pub enum ParseError {
-    OutOfMemory,
     UnexpectedCharacter,
     UnexpectedToken,
     UnexpectedEof,
@@ -196,11 +195,8 @@ pub enum ParseError {
 
 bun_core::impl_tag_error!(ParseError);
 
-bun_core::oom_from_alloc!(ParseError);
-
 #[derive(Clone, Copy)]
 pub enum Error {
-    Oom,
     StackOverflow,
     UnexpectedCharacter { pos: usize },
     UnexpectedToken { pos: usize },
@@ -226,7 +222,6 @@ pub enum Error {
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, Debug)]
 pub enum AddToLogError {
-    OutOfMemory,
     StackOverflow,
 }
 bun_core::impl_tag_error!(AddToLogError);
@@ -235,7 +230,7 @@ impl Error {
     /// The error's offset in the text and its message. Returns `None` for an error that isn't about the text.
     pub fn describe(&self) -> Option<(usize, &'static [u8])> {
         let pos = match *self {
-            Error::Oom | Error::StackOverflow => return None,
+            Error::StackOverflow => return None,
             Error::UnexpectedCharacter { pos }
             | Error::UnexpectedToken { pos }
             | Error::UnexpectedEof { pos }
@@ -258,7 +253,7 @@ impl Error {
             | Error::TrailingData { pos } => pos,
         };
         let msg: &'static [u8] = match *self {
-            Error::Oom | Error::StackOverflow => return None,
+            Error::StackOverflow => return None,
             Error::UnexpectedCharacter { .. } => b"Unexpected character",
             Error::UnexpectedToken { .. } => b"Unexpected token",
             Error::UnexpectedEof { .. } => b"Unexpected end of input",
@@ -285,10 +280,7 @@ impl Error {
 
     pub(crate) fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
         let Some((pos, msg)) = self.describe() else {
-            return Err(match self {
-                Error::Oom => AddToLogError::OutOfMemory,
-                _ => AddToLogError::StackOverflow,
-            });
+            return Err(AddToLogError::StackOverflow);
         };
         let loc = Loc {
             start: i32::try_from(pos).expect("int cast"),
@@ -300,7 +292,6 @@ impl Error {
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, Debug)]
 pub enum ExternalError {
-    OutOfMemory,
     SyntaxError,
     StackOverflow,
 }
@@ -316,7 +307,6 @@ impl From<bun_ast::SourceTooLarge> for ExternalError {
 impl From<ExternalError> for crate::Error {
     fn from(e: ExternalError) -> Self {
         match e {
-            ExternalError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ExternalError::SyntaxError => crate::Error::SyntaxError,
             ExternalError::StackOverflow => crate::Error::StackOverflow,
         }
@@ -328,7 +318,6 @@ impl<'a> JSON5Parser<'a> {
         let token_pos = parser.token.loc.to_usize();
         let scan_pos = parser.pos;
         match err {
-            ParseError::OutOfMemory => Error::Oom,
             ParseError::StackOverflow => Error::StackOverflow,
             // Scanner errors use scan position
             ParseError::UnexpectedCharacter => Error::UnexpectedCharacter { pos: scan_pos },
@@ -385,7 +374,6 @@ impl<'a> JSON5Parser<'a> {
             Err(err) => {
                 let e = Self::to_error(err, &parser);
                 e.add_to_log(source, log).map_err(|e| match e {
-                    AddToLogError::OutOfMemory => ExternalError::OutOfMemory,
                     AddToLogError::StackOverflow => ExternalError::StackOverflow,
                 })?;
                 Err(ExternalError::SyntaxError)

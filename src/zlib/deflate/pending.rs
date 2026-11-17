@@ -1,9 +1,9 @@
 //! Compressed data that has not been handed out yet.
 
 use bun_core::vec::BorrowedCursor;
+use bun_deflate::format::STORED;
 
 use crate::error::Result;
-use crate::format::STORED_BLOCK;
 use crate::vec;
 
 const WORD: usize = size_of::<u64>();
@@ -209,7 +209,7 @@ impl Pending {
     }
 
     pub(super) fn write_stored_header(&mut self, len: u16, is_last: bool) {
-        self.put(Bits::block_header(STORED_BLOCK, is_last));
+        self.put(Bits::block_header(STORED, is_last));
         self.write_bytes(&(u32::from(len) | u32::from(!len) << 16).to_le_bytes());
     }
 

@@ -105,7 +105,7 @@ enum Progress {
 
 enum Backend {
     Deflate(Box<Deflater>),
-    Inflate(Inflater),
+    Inflate(Box<Inflater>),
     BrotliEncode(bun_brotli::OwnedEncoder),
     BrotliDecode(bun_brotli::OwnedDecoder),
     ZstdEncode(bun_zstd::OwnedCCtx),
@@ -152,6 +152,7 @@ impl CompressionStreamCoder {
         high_water_mark: usize,
         level: Option<i32>,
     ) -> Result<Box<Self>, CodecError> {
+        let inflater = |container| Backend::Inflate(Box::new(Inflater::new(container)));
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
                 let container = match format {
@@ -171,9 +172,9 @@ impl CompressionStreamCoder {
                     .map_err(|_| CodecError::Message("failed to initialize deflate"))?;
                 Backend::Deflate(deflater)
             }
-            (Format::Deflate, true) => Backend::Inflate(Inflater::new(inflate::Container::Zlib)),
-            (Format::DeflateRaw, true) => Backend::Inflate(Inflater::new(inflate::Container::Raw)),
-            (Format::Gzip, true) => Backend::Inflate(Inflater::new(inflate::Container::Gzip)),
+            (Format::Deflate, true) => inflater(inflate::Container::Zlib),
+            (Format::DeflateRaw, true) => inflater(inflate::Container::Raw),
+            (Format::Gzip, true) => inflater(inflate::Container::Gzip),
             (Format::Brotli, false) => {
                 if bun_removable_features::is_removed(
                     bun_removable_features::Feature::BrotliEncoder,
@@ -327,22 +328,8 @@ impl CompressionStreamCoder {
                 }
             }
             Backend::Inflate(s) => {
-                // After a gzip member ends, further bytes must be another member (RFC 1952 §2.2).
-                let gzip = s.container() == inflate::Container::Gzip;
-                if !continuing {
-                    // `self.ended` = "the last inflate returned StreamEnd" = "at
-                    // a member boundary". For gzip, a following chunk starts the
-                    // next member; for deflate/deflate-raw it is trailing junk.
-                    if self.ended && !input.is_empty() {
-                        if !gzip {
-                            return Err(CodecError::TrailingJunk);
-                        }
-                        s.reset();
-                        self.ended = false;
-                    }
-                    if input.is_empty() && (self.ended || !finish) {
-                        return Ok(Progress::Done);
-                    }
+                if !continuing && input.is_empty() && (self.ended || !finish) {
+                    return Ok(Progress::Done);
                 }
                 let mut remaining = input;
                 loop {
@@ -364,7 +351,8 @@ impl CompressionStreamCoder {
                             if remaining.is_empty() {
                                 return Ok(Progress::Done);
                             }
-                            if !gzip {
+                            // After a gzip member, it has to be another one (RFC 1952 §2.2).
+                            if s.container() != inflate::Container::Gzip {
                                 return Err(CodecError::TrailingJunk);
                             }
                             s.reset();

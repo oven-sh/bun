@@ -1,12 +1,14 @@
 //! The codes that a dynamic block starts with.
 
+use bun_deflate::format::{
+    END_OF_BLOCK, FIRST_LENGTH_SYMBOL, MAX_PRECODE_LEN, PRECODE_ORDER, PRECODE_SYMBOLS,
+};
+
 use super::bits::BitReader;
 use super::tables::{Coded, Tables};
 use crate::error::{Damage, Error, Result};
 use crate::format::{
-    CODE_LENGTH_ORDER, CODE_LENGTH_SYMBOLS, DISTANCE_SYMBOLS, END_OF_BLOCK, FIRST_LENGTH_SYMBOL,
-    LITERAL_LENGTH_SYMBOLS, MAX_CODE_LENGTH_BITS, REPEAT_FEW_ZEROS, REPEAT_MANY_ZEROS,
-    REPEAT_PREVIOUS,
+    DISTANCE_SYMBOLS, LITERAL_LENGTH_SYMBOLS, REPEAT_FEW_ZEROS, REPEAT_MANY_ZEROS, REPEAT_PREVIOUS,
 };
 
 /// How many lengths there are of each code.
@@ -69,11 +71,11 @@ impl DynamicCodes {
     /// `lengths` has three bits for each code length symbol, in the order of the stream.
     pub(super) fn start(&mut self, lengths: u64) -> Result<()> {
         #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
-        const SHIFTS: [u8; CODE_LENGTH_SYMBOLS] = {
+        const SHIFTS: [u8; PRECODE_SYMBOLS] = {
             let mut shifts = [0; _];
             let mut rank = 0;
-            while rank < CODE_LENGTH_SYMBOLS {
-                shifts[CODE_LENGTH_ORDER[rank] as usize] = 3 * rank as u8;
+            while rank < PRECODE_SYMBOLS {
+                shifts[PRECODE_ORDER[rank] as usize] = 3 * rank as u8;
                 rank += 1;
             }
             shifts
@@ -106,7 +108,7 @@ impl DynamicCodes {
         bits: &mut BitReader<'_>,
         counts: Counts,
     ) -> Result<bool> {
-        const MAX_BITS: u32 = MAX_CODE_LENGTH_BITS as u32 + REPEAT_MANY_ZEROS.extra_bits;
+        const MAX_BITS: u32 = MAX_PRECODE_LEN + REPEAT_MANY_ZEROS.extra_bits;
         let tables = self.tables.as_deref().ok_or(Error::Internal)?;
         let total = counts.literal_lengths + u16::from(counts.distances);
         let (mut read, mut last) = (self.read, self.last);

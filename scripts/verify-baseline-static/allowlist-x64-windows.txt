@@ -791,12 +791,16 @@ bun::N_AVX2::UnfilterUp                                              [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
-# Bun DEFLATE (src/deflate).
-# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (3 symbols)
+# Bun DEFLATE (src/deflate, src/zlib).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (7 symbols)
 # ----------------------------------------------------------------------------
 bun_deflate::block::write_body::bmi2             [BMI2]
 bun_deflate::decompressor::decode_blocks::bmi2   [BMI2]
 bun_deflate::decompressor::decode_dynamic::bmi2  [BMI2]
+bun_zlib::deflate::encoding::put_symbols::bmi2   [BMI2]
+bun_zlib::deflate::quick::compress_up_to::bmi2   [BMI2]
+bun_zlib::inflate::codes::decode_masked::bmi2    [BMI2]
+bun_zlib::inflate::codes::decode_unmasked::bmi2  [BMI2]
 
 
 # ----------------------------------------------------------------------------

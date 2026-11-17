@@ -1334,14 +1334,39 @@ extern "C" fn is_executable_file(_path: *const c_char) -> bool {
     false
 }
 #[unsafe(no_mangle)]
-extern "C" fn compress2(
-    _d: *mut u8,
-    _dl: *mut usize,
-    _s: *const u8,
-    _sl: usize,
-    _level: c_int,
-) -> c_int {
-    -2
+#[linkage = "weak"]
+unsafe extern "C" fn highway_crc32(state: u32, p: *const u8, len: usize) -> u64 {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let state = unsafe { bytes(p, len) }.iter().fold(state, |state, &byte| {
+        (0..8).fold(state ^ u32::from(byte), |state, _| {
+            (state >> 1) ^ (0xEDB8_8320 * (state & 1))
+        })
+    });
+    state.into()
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_adler32(adler: u32, p: *const u8, len: usize) -> u32 {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    unsafe { bytes(p, len) }.iter().fold(adler, |adler, &byte| {
+        let low = ((adler & 0xffff) + u32::from(byte)) % 65521;
+        (((adler >> 16) + low) % 65521) << 16 | low
+    })
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes two slices of that length.
+    let (a, b) = unsafe { (bytes(a, len), bytes(b, len)) };
+    a.iter().zip(b).take_while(|(a, b)| a == b).count()
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_subtract_saturating(p: *mut [u16; 64], len: usize, amount: u16) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    for value in unsafe { core::slice::from_raw_parts_mut(p, len) }.as_flattened_mut() {
+        *value = value.saturating_sub(amount);
+    }
 }
 
 /// Returns the mantissa digits of `text`, starting at the first nonzero digit.

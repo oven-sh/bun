@@ -817,12 +817,16 @@ _ZN3bun6N_AVX2L10UnfilterUpEPhPKhm                                             [
 
 
 # ----------------------------------------------------------------------------
-# Bun DEFLATE (src/deflate).
-# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (3 symbols)
+# Bun DEFLATE (src/deflate, src/zlib).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (7 symbols)
 # ----------------------------------------------------------------------------
 _RNvNvNt<rust-hash>11bun_deflate5block10write_body4bmi2              [BMI2]
 _RNvNvNt<rust-hash>11bun_deflate12decompressor13decode_blocks4bmi2   [BMI2]
 _RNvNvNt<rust-hash>11bun_deflate12decompressor14decode_dynamic4bmi2  [BMI2]
+_RNvNvNtNt<rust-hash>8bun_zlib7deflate8encoding11put_symbols4bmi2   [BMI2]
+_RNvNvNtNt<rust-hash>8bun_zlib7deflate5quick14compress_up_to4bmi2   [BMI2]
+_RNvNvNtNt<rust-hash>8bun_zlib7inflate5codes13decode_masked4bmi2    [BMI2]
+_RNvNvNtNt<rust-hash>8bun_zlib7inflate5codes15decode_unmasked4bmi2  [BMI2]
 
 
 # ----------------------------------------------------------------------------

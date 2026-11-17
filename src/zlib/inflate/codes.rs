@@ -3,13 +3,14 @@
 use core::cell::Cell;
 use core::hint::cold_path;
 
+use bun_deflate::format::MAX_MATCH_LEN;
+use bun_highway::with_bmi2;
 use bun_highway::zlib::{MATCH_SPAN, repeat};
 
 use super::bits::{BitReader, REFILLED_BITS};
 use super::tables::{DISTANCE_BITS, Entry, LITERAL_LENGTH_BITS, Special, Tables};
 use super::window::{LAP, SLACK, Window};
 use crate::error::{Damage, Error, Result};
-use crate::format::MAX_MATCH;
 
 /// How far back a match may start.
 #[derive(Clone, Copy)]
@@ -73,7 +74,7 @@ fn copy_match(from: &Span, to: &Span, distance: usize, len: usize) {
         }
     };
     copy_chunk(0);
-    for at in (CHUNK..MAX_MATCH).step_by(CHUNK) {
+    for at in (CHUNK..MAX_MATCH_LEN).step_by(CHUNK) {
         if at >= len {
             break;
         }
@@ -92,8 +93,35 @@ pub(super) fn decode_fast(
     last_distance: &Cell<usize>,
 ) -> Result<Stop> {
     if tables.literal_length_mask == u64::MAX {
-        decode_fast_with::<false>(tables, bits, window, limit, reach, last_distance)
+        decode_unmasked(tables, bits, window, limit, reach, last_distance)
     } else {
+        decode_masked(tables, bits, window, limit, reach, last_distance)
+    }
+}
+
+with_bmi2! {
+    /// The mask takes a register, of which there are too few.
+    fn decode_unmasked(
+        tables: &Tables,
+        bits: &mut BitReader<'_>,
+        window: &mut Window,
+        limit: usize,
+        reach: Reach,
+        last_distance: &Cell<usize>,
+    ) -> Result<Stop> {
+        decode_fast_with::<false>(tables, bits, window, limit, reach, last_distance)
+    }
+}
+
+with_bmi2! {
+    fn decode_masked(
+        tables: &Tables,
+        bits: &mut BitReader<'_>,
+        window: &mut Window,
+        limit: usize,
+        reach: Reach,
+        last_distance: &Cell<usize>,
+    ) -> Result<Stop> {
         decode_fast_with::<true>(tables, bits, window, limit, reach, last_distance)
     }
 }
@@ -105,8 +133,7 @@ enum Exit {
     Internal,
 }
 
-/// The mask takes a register, of which there are too few.
-#[inline(never)]
+#[inline(always)]
 fn decode_fast_with<const MASK: bool>(
     tables: &Tables,
     bits: &mut BitReader<'_>,
@@ -383,7 +410,7 @@ pub(super) struct LongestMatch {
 impl LongestMatch {
     pub(super) fn peek(tables: &Tables, bits: &mut BitReader<'_>) -> Option<Self> {
         match peek(tables, bits) {
-            Ok(Some((Symbol::Match { len, distance }, code_bits))) if len == MAX_MATCH => {
+            Ok(Some((Symbol::Match { len, distance }, code_bits))) if len == MAX_MATCH_LEN => {
                 Some(Self {
                     distance,
                     code: bits.peek(code_bits),
@@ -398,7 +425,7 @@ impl LongestMatch {
     pub(super) fn take_all(self, bits: &mut BitReader<'_>, mut len: usize, max: usize) -> usize {
         while len <= max && bits.has(self.code_bits) && bits.peek(self.code_bits) == self.code {
             bits.skip(self.code_bits);
-            len += MAX_MATCH;
+            len += MAX_MATCH_LEN;
         }
         len
     }

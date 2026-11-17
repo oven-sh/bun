@@ -1,6 +1,10 @@
 //! The literals and matches of the block in the making.
 
 use bun_core::vec::{BorrowedCursor, append_with};
+use bun_deflate::format::{
+    DYNAMIC, END_OF_BLOCK, FIRST_LENGTH_SYMBOL, MAX_CODEWORD_LEN, STATIC, length_slot, offset_slot,
+    static_litlen_codeword, static_offset_codeword,
+};
 
 use super::encoding::{Encoding, FIXED, LITERAL_LENGTH_ROOM};
 use super::header::DynamicHeader;
@@ -9,11 +13,7 @@ use super::pending::{Bits, Pending};
 use super::symbol::Symbol;
 use crate::array::At;
 use crate::error::Result;
-use crate::format::{
-    DISTANCE_SYMBOLS, DYNAMIC_BLOCK, END_OF_BLOCK, FIRST_LENGTH_SYMBOL, FIXED_BLOCK,
-    FIXED_DISTANCE_BITS, LITERAL_LENGTH_SYMBOLS, MAX_CODE_BITS, MAX_STORED_LEN, distance_range,
-    fixed_literal_length_bits, length_range,
-};
+use crate::format::{DISTANCE_SYMBOLS, LITERAL_LENGTH_SYMBOLS, MAX_STORED_LEN};
 use crate::vec;
 
 macro_rules! table {
@@ -30,19 +30,17 @@ macro_rules! table {
 
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
 static FIXED_LITERAL_LENGTH_BITS: [u8; LITERAL_LENGTH_ROOM] = table!(
-    |symbol| fixed_literal_length_bits(symbol),
+    |symbol| static_litlen_codeword(symbol).len,
     0..LITERAL_LENGTH_SYMBOLS
 );
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
 static LENGTH_EXTRA_BITS: [u8; LITERAL_LENGTH_ROOM] = table!(
-    |symbol| length_range((symbol - FIRST_LENGTH_SYMBOL) as u32).extra_bits,
+    |symbol| length_slot(symbol - FIRST_LENGTH_SYMBOL).extra_bits,
     FIRST_LENGTH_SYMBOL..LITERAL_LENGTH_SYMBOLS
 );
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
-static DISTANCE_EXTRA_BITS: [u8; 32] = table!(
-    |symbol| distance_range(symbol as u32).extra_bits,
-    0..DISTANCE_SYMBOLS
-);
+static DISTANCE_EXTRA_BITS: [u8; 32] =
+    table!(|symbol| offset_slot(symbol).extra_bits, 0..DISTANCE_SYMBOLS);
 /// Adds to a block.
 pub(super) struct Tally<'a> {
     symbols: BorrowedCursor<'a, Symbol>,
@@ -158,22 +156,22 @@ impl Block {
     ) {
         // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/trees.c#L628
         if self.is_empty() {
-            pending.put(Bits::block_header(FIXED_BLOCK, is_last));
+            pending.put(Bits::block_header(STATIC, is_last));
             pending.put(FIXED.end_of_block());
             return;
         }
         self.literal_length_frequencies[END_OF_BLOCK] = 1;
         let literal_lengths =
-            Code::new::<512>(&self.literal_length_frequencies, MAX_CODE_BITS as u8);
-        let distances = Code::new::<32>(&self.distance_frequencies, MAX_CODE_BITS as u8);
+            Code::new::<512>(&self.literal_length_frequencies, MAX_CODEWORD_LEN as u8);
+        let distances = Code::new::<32>(&self.distance_frequencies, MAX_CODEWORD_LEN as u8);
         let header = DynamicHeader::new(&literal_lengths, &distances);
 
         let frequencies = (&self.literal_length_frequencies, &self.distance_frequencies);
         let matches = cost(frequencies.1, &[1; _]);
         let extra_bits =
             cost(frequencies.0, &LENGTH_EXTRA_BITS) + cost(frequencies.1, &DISTANCE_EXTRA_BITS);
-        let fixed_bits =
-            cost(frequencies.0, &FIXED_LITERAL_LENGTH_BITS) + matches * FIXED_DISTANCE_BITS;
+        let fixed_bits = cost(frequencies.0, &FIXED_LITERAL_LENGTH_BITS)
+            + matches * static_offset_codeword(0).len;
         let dynamic_bits = header.bits()
             + cost(frequencies.0, &literal_lengths.lengths)
             + cost(frequencies.1, &distances.lengths);
@@ -186,11 +184,11 @@ impl Block {
         {
             pending.write_stored_block(source, is_last);
         } else if is_fixed {
-            pending.put(Bits::block_header(FIXED_BLOCK, is_last));
+            pending.put(Bits::block_header(STATIC, is_last));
             FIXED.write(pending, len, &self.symbols, matches as usize);
         } else {
             pending.write(len, |writer| {
-                writer.put(Bits::block_header(DYNAMIC_BLOCK, is_last));
+                writer.put(Bits::block_header(DYNAMIC, is_last));
                 header.write(writer);
             });
             let encoding = Encoding::new(&literal_lengths, &distances);

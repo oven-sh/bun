@@ -4,22 +4,20 @@ use crate::error::{Error, Result};
 use crate::output::Output;
 use crate::reader::Dialect;
 use bun_core::strings;
-use bun_zlib::{
-    DEFLATE_METHOD, Deflater, GZIP_ID, Inflater, crc32, deflate, gzip_flag as flag, inflate,
+use bun_deflate::gzip::{
+    HAS_COMMENT, HAS_EXTRA, HAS_HEADER_CRC, HAS_NAME, HEADER_LEN, MAGIC_AND_METHOD, RESERVED,
+    TRAILER_LEN, UNKNOWN_SYSTEM, plain_header, trailer_for,
 };
+use bun_highway::crc32;
+use bun_zlib::{Deflater, GZIP_ID, Inflater, deflate, inflate};
 
-/// The two identification bytes, and the compression method, which is always DEFLATE.
-const MAGIC: [u8; 3] = [GZIP_ID[0], GZIP_ID[1], DEFLATE_METHOD];
-const FLAGS: usize = MAGIC.len();
-const FIXED_HEADER_SIZE: usize = 10;
+const FLAGS: usize = MAGIC_AND_METHOD.len();
 /// The length of the extra field, and the CRC-16 of the header.
 const SHORT_SIZE: usize = 2;
-/// The CRC-32 and the size.
-const TRAILER_SIZE: usize = 8;
 
-fn fixed_header_flags(fixed: &[u8; FIXED_HEADER_SIZE]) -> Option<u8> {
+fn fixed_header_flags(fixed: &[u8; HEADER_LEN]) -> Option<u8> {
     let flags = fixed[FLAGS];
-    (fixed.starts_with(&MAGIC) && flags & flag::RESERVED == 0).then_some(flags)
+    (fixed.starts_with(&MAGIC_AND_METHOD) && flags & RESERVED == 0).then_some(flags)
 }
 
 /// All that npm looks at.
@@ -29,7 +27,7 @@ pub(crate) fn starts_with_id(data: &[u8]) -> bool {
 
 /// Whether `data` starts like a gzip header. The optional fields are not looked at.
 pub fn starts_like_header(data: &[u8]) -> bool {
-    data.first_chunk::<FIXED_HEADER_SIZE>()
+    data.first_chunk::<HEADER_LEN>()
         .is_some_and(|fixed| fixed_header_flags(fixed).is_some())
 }
 
@@ -82,7 +80,7 @@ pub struct Decoder {
     state: State,
     inflater: Inflater,
     flags: u8,
-    small: [u8; FIXED_HEADER_SIZE],
+    small: [u8; HEADER_LEN],
     small_len: usize,
     /// How much of the current header is behind us.
     header_len: usize,
@@ -102,7 +100,7 @@ impl Decoder {
             state: State::Fixed,
             inflater: Inflater::new(inflate::Container::Raw),
             flags: 0,
-            small: [0; FIXED_HEADER_SIZE],
+            small: [0; HEADER_LEN],
             small_len: 0,
             header_len: 0,
             header_spilled: false,
@@ -140,13 +138,13 @@ impl Decoder {
     /// Moves to the first optional field at or behind `from` that the flags announce.
     fn next_header_field(&mut self, from: Field) {
         let has = |flag: u8| self.flags & flag != 0;
-        self.state = if from <= Field::Extra && has(flag::EXTRA) {
+        self.state = if from <= Field::Extra && has(HAS_EXTRA) {
             State::ExtraLength
-        } else if from <= Field::Name && has(flag::NAME) {
+        } else if from <= Field::Name && has(HAS_NAME) {
             State::Name
-        } else if from <= Field::Comment && has(flag::COMMENT) {
+        } else if from <= Field::Comment && has(HAS_COMMENT) {
             State::Comment
-        } else if from <= Field::HeaderCrc && has(flag::HEADER_CRC) {
+        } else if from <= Field::HeaderCrc && has(HAS_HEADER_CRC) {
             State::HeaderCrc
         } else {
             self.crc = 0;
@@ -212,7 +210,7 @@ impl Decoder {
             State::Done => Ok(Some(Progress::Done)),
 
             State::Fixed => {
-                let gathered = self.gather(FIXED_HEADER_SIZE, input, used);
+                let gathered = self.gather(HEADER_LEN, input, used);
                 self.left_data |= !is_zero(input.get(..*used).unwrap_or_default());
                 if !gathered {
                     return Ok(starved(self));
@@ -242,7 +240,7 @@ impl Decoder {
                 let left = left.saturating_sub(u16::try_from(take).unwrap_or(u16::MAX));
                 if left > 0 {
                     self.state = State::Extra(left);
-                    if eof && self.flags & (flag::NAME | flag::COMMENT | flag::HEADER_CRC) == 0 {
+                    if eof && self.flags & (HAS_NAME | HAS_COMMENT | HAS_HEADER_CRC) == 0 {
                         return Err(Error::TruncatedGzip);
                     }
                     return Ok(starved(self));
@@ -323,16 +321,13 @@ impl Decoder {
                 }
             }
             State::Trailer => {
-                if !self.gather(TRAILER_SIZE, input, used) {
+                if !self.gather(TRAILER_LEN, input, used) {
                     if eof {
                         return Err(Error::TruncatedGzip);
                     }
                     return Ok(Some(Progress::NeedInput));
                 }
-                let [c0, c1, c2, c3, s0, s1, s2, s3, ..] = self.small;
-                if u32::from_le_bytes([c0, c1, c2, c3]) != self.crc
-                    || u32::from_le_bytes([s0, s1, s2, s3]) != self.size
-                {
+                if !self.small.starts_with(&trailer_for(self.crc, self.size)) {
                     return Err(Error::GzipTrailerMismatch);
                 }
                 self.state = State::Fixed;
@@ -366,7 +361,6 @@ pub struct Encoder<O: Output> {
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_write_add_filter_gzip.c#L206
 /// At level 0 the room `deflate()` is shown decides where a stored block ends.
 const ENCODER_BUFFER: usize = 61440;
-const OS_UNKNOWN: u8 = 255;
 
 fn compression_error(error: bun_zlib::Error) -> Error {
     match error {
@@ -389,8 +383,7 @@ impl<O: Output> Encoder<O> {
             1 => 4,
             _ => 0,
         };
-        buffer.extend_from_slice(&MAGIC);
-        buffer.extend_from_slice(&[0, 0, 0, 0, 0, extra_flags, OS_UNKNOWN]);
+        buffer.extend_from_slice(&plain_header(extra_flags, UNKNOWN_SYSTEM));
         Ok(Self {
             out,
             deflater: Deflater::new(deflate::Container::Raw, options).map_err(compression_error)?,
@@ -428,10 +421,7 @@ impl<O: Output> Encoder<O> {
     pub fn finish(mut self) -> Result<O> {
         self.drive(&[], true)?;
         self.out.write(&self.buffer)?;
-        let mut trailer = [0u8; TRAILER_SIZE];
-        trailer[..4].copy_from_slice(&self.crc.to_le_bytes());
-        trailer[4..].copy_from_slice(&self.size.to_le_bytes());
-        self.out.write(&trailer)?;
+        self.out.write(&trailer_for(self.crc, self.size))?;
         Ok(self.out)
     }
 }

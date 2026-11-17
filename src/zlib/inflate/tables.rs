@@ -1,12 +1,13 @@
 //! Tables that tell what the next bits of a block stand for.
 
-use crate::array::At;
-use crate::format::{
-    DISTANCE_SYMBOLS, END_OF_BLOCK, FIRST_LENGTH_SYMBOL, FIXED_DISTANCE_BITS,
-    FIXED_LITERAL_LENGTH_SYMBOLS, LITERAL_LENGTH_SYMBOLS, MAX_CODE_BITS, MAX_CODE_LENGTH_BITS,
-    MIN_MATCH, distance_range, fixed_literal_length_bits, fixed_literal_length_code, length_range,
-    reversed,
+use bun_deflate::format::{
+    END_OF_BLOCK, FIRST_LENGTH_SYMBOL, LITLEN_SYMBOLS, MAX_CODEWORD_LEN, MAX_PRECODE_LEN,
+    MIN_MATCH_LEN, OFFSET_SYMBOLS, length_slot, offset_slot, static_litlen_codeword,
+    static_offset_codeword,
 };
+
+use crate::array::At;
+use crate::format::{DISTANCE_SYMBOLS, LITERAL_LENGTH_SYMBOLS, reversed};
 
 pub(super) const LITERAL_LENGTH_BITS: u32 = 11;
 pub(super) const DISTANCE_BITS: u32 = 8;
@@ -49,7 +50,7 @@ impl Entry {
     }
 
     const fn length(length: u32, bits: u32) -> Self {
-        Self((length - MIN_MATCH as u32) << Self::SECOND_SHIFT | Self::MATCH | bits)
+        Self((length - MIN_MATCH_LEN as u32) << Self::SECOND_SHIFT | Self::MATCH | bits)
     }
 
     const fn literal(literal: u8, bits: u32) -> Self {
@@ -62,12 +63,12 @@ impl Entry {
             0..END_OF_BLOCK => Self::literal(symbol as u8, bits),
             END_OF_BLOCK => Self::special(Special::EndOfBlock, bits),
             FIRST_LENGTH_SYMBOL..LITERAL_LENGTH_SYMBOLS => {
-                let range = length_range((symbol - FIRST_LENGTH_SYMBOL) as u32);
+                let range = length_slot(symbol - FIRST_LENGTH_SYMBOL);
                 if range.extra_bits == 0 {
                     return Self::length(range.base, bits);
                 }
                 let special = Self::special(Special::LengthWithExtraBits, bits);
-                let base = (range.base - MIN_MATCH as u32) << Self::SECOND_SHIFT;
+                let base = (range.base - MIN_MATCH_LEN as u32) << Self::SECOND_SHIFT;
                 Self(special.0 | range.extra_bits << Self::SMALL_SHIFT | base)
             }
             _ => Self::special(Special::Invalid, bits),
@@ -138,7 +139,7 @@ impl Entry {
 
     #[inline(always)]
     pub(super) const fn match_length(self) -> usize {
-        (self.0 >> Self::SECOND_SHIFT) as u8 as usize + MIN_MATCH
+        (self.0 >> Self::SECOND_SHIFT) as u8 as usize + MIN_MATCH_LEN
     }
 
     /// How many bits there are in the first literal's code, behind a length's code, or in the index of the subtable.
@@ -163,7 +164,7 @@ impl DistanceEntry {
         if symbol >= DISTANCE_SYMBOLS {
             return Self(Entry::special(Special::Invalid, bits).0 as u64);
         }
-        let range = distance_range(symbol as u32);
+        let range = offset_slot(symbol);
         let lowest = Entry::MATCH | (bits + range.extra_bits);
         let lower = range.base << Self::BASE_SHIFT | bits << Self::CODE_BITS_SHIFT | lowest;
         Self(((1 << range.extra_bits) - 1) << Self::EXTRA_MASK_SHIFT | lower as u64)
@@ -209,10 +210,9 @@ pub(super) struct Tables {
 pub(super) static FIXED: Tables = {
     let mut tables = Tables::EMPTY;
     let mut symbol = 0;
-    while symbol < FIXED_LITERAL_LENGTH_SYMBOLS {
-        let bits = fixed_literal_length_bits(symbol);
-        let entry = Entry::new(symbol, bits);
-        let mut index = fixed_literal_length_code(symbol) as usize;
+    while symbol < LITLEN_SYMBOLS {
+        let code = static_litlen_codeword(symbol);
+        let (entry, bits, mut index) = (Entry::new(symbol, code.len), code.len, code.bits as usize);
         while index < 1 << LITERAL_LENGTH_BITS {
             tables.literal_length.root[index] = if entry.fits_with_extra_bits() {
                 entry.with_extra_bits(index as u64 >> bits)
@@ -225,9 +225,9 @@ pub(super) static FIXED: Tables = {
     }
     let mut index = 0;
     while index < 1 << DISTANCE_BITS {
-        let code = index as u16 % (1 << FIXED_DISTANCE_BITS);
-        let symbol = reversed(code, FIXED_DISTANCE_BITS) as usize;
-        tables.distance.root[index] = DistanceEntry::new(symbol, FIXED_DISTANCE_BITS);
+        let (symbol, others) = (index % OFFSET_SYMBOLS, index - index % OFFSET_SYMBOLS);
+        let code = static_offset_codeword(symbol);
+        tables.distance.root[others + code.bits as usize] = DistanceEntry::new(symbol, code.len);
         index += 1;
     }
     tables
@@ -256,7 +256,7 @@ impl Coded {
 
 /// For each length, where the longer codes start in a list that is sorted by length.
 #[derive(Default)]
-struct Ends([u16; MAX_CODE_BITS + 1]);
+struct Ends([u16; MAX_CODEWORD_LEN as usize + 1]);
 
 impl Ends {
     #[inline(always)]
@@ -279,13 +279,13 @@ impl<'a> Sorted<'a> {
     /// `None` if there are more symbols than codes. `first` becomes symbol 0.
     #[inline(always)]
     fn new<const N: usize>(coded: &[Coded], first: u16, room: &'a mut [u16; N]) -> Option<Self> {
-        let mut counts = [0u16; MAX_CODE_BITS + 1];
+        let mut counts = [0u16; MAX_CODEWORD_LEN as usize + 1];
         for it in coded {
             *counts.at_mut(it.bits()) += 1;
         }
-        let mut next = [0u16; MAX_CODE_BITS + 1];
+        let mut next = [0u16; MAX_CODEWORD_LEN as usize + 1];
         let (mut start, mut unused, mut lengths) = (0, 1i32, 0u32);
-        for bits in 1..=MAX_CODE_BITS {
+        for bits in 1..=MAX_CODEWORD_LEN as usize {
             let count = *counts.at(bits);
             *next.at_mut(bits) = start;
             start += count;
@@ -440,8 +440,7 @@ impl Tables {
     /// The symbol is the first literal.
     #[inline(always)]
     pub(super) fn code_length(&self, stream: u64) -> Entry {
-        self.literal_length
-            .look_up(stream % (1 << MAX_CODE_LENGTH_BITS))
+        self.literal_length.look_up(stream % (1 << MAX_PRECODE_LEN))
     }
 
     /// `false` if the lengths do not make a code.
@@ -458,7 +457,7 @@ impl Tables {
             return false;
         };
         let entry_for = |symbol, bits| Entry::literal(symbol as u8, bits);
-        table.fill_root(&sorted, MAX_CODE_LENGTH_BITS as u32, entry_for);
+        table.fill_root(&sorted, MAX_PRECODE_LEN, entry_for);
         true
     }
 

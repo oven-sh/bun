@@ -1,12 +1,12 @@
 //! Earlier positions in the window by the hash of what starts there.
 
 use bun_core::ffi::try_boxed_zeroed;
+use bun_deflate::format::MIN_MATCH_LEN;
 use bun_highway::zlib::subtract_saturating;
 
 use super::window::chunk;
 use crate::array::At;
 use crate::error::Result;
-use crate::format::MIN_MATCH;
 use crate::vec;
 
 /// So many bytes are hashed, but for the rolling hash. Only lazy matching takes shorter matches.
@@ -90,6 +90,13 @@ fn hash(bytes: [u8; HASHED_LEN as usize]) -> u32 {
     u32::from_le_bytes(bytes).wrapping_mul(2654435761) >> 16
 }
 
+/// `None` if they wrap around.
+#[inline(always)]
+fn links_from(links: &mut [u16], position: usize, len: usize) -> Option<&mut [u16]> {
+    let first = position & links.len().wrapping_sub(1);
+    links.get_mut(first..first + len)
+}
+
 /// The chains and what they point into.
 pub(super) struct Index<'a> {
     pub(super) window: &'a [u8],
@@ -99,7 +106,7 @@ pub(super) struct Index<'a> {
     rolling_hash: &'a mut u32,
 }
 
-impl Index<'_> {
+impl<'a> Index<'a> {
     #[inline(always)]
     pub(super) fn head(&self, hash: u32) -> u32 {
         (*self.heads.at(hash as usize)).into()
@@ -132,7 +139,7 @@ impl Index<'_> {
         bytes: [u8; HASHED_LEN as usize],
     ) -> u32 {
         if ROLLING {
-            *self.rolling_hash = roll(*self.rolling_hash, bytes[MIN_MATCH - 1]);
+            *self.rolling_hash = roll(*self.rolling_hash, bytes[MIN_MATCH_LEN - 1]);
             return self.insert_hash(*self.rolling_hash, position);
         }
         self.insert_hash(hash(bytes), position)
@@ -145,15 +152,19 @@ impl Index<'_> {
         }
     }
 
+    #[inline(always)]
+    fn hashed_from(&self, first: usize, len: usize) -> Option<&'a [u8]> {
+        self.window
+            .get(first..first + len + HASHED_LEN as usize - 1)
+    }
+
     /// Out of line, so that its loop has all registers to itself.
     #[inline(never)]
     pub(super) fn insert_all<const ROLLING: bool>(&mut self, start: u32, len: u32) {
-        let (first, first_link) = (start as usize, start as usize & self.link_mask);
-        let hashed = first..first + len as usize + HASHED_LEN as usize - 1;
-        let (Some(hashed), Some(links)) = (
-            self.window.get(hashed),
-            self.links.get_mut(first_link..first_link + len as usize),
-        ) else {
+        let first = start as usize;
+        let hashed = self.hashed_from(first, len as usize);
+        let (Some(hashed), Some(links)) = (hashed, links_from(self.links, first, len as usize))
+        else {
             return self.insert_one_by_one::<ROLLING>(start, len);
         };
         let (mut done, mut rolling_hash) = (0, *self.rolling_hash);

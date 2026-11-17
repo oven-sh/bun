@@ -1,8 +1,9 @@
 //! The search for the longest match.
 
+use bun_deflate::format::MIN_MATCH_LEN;
+
 use super::chains::{HASHED_LEN, Index, roll};
 use super::window::{Scan, chunk, match_len, word};
-use crate::format::MIN_MATCH;
 
 const WORD: u32 = 8;
 
@@ -16,7 +17,7 @@ impl Match {
     /// One byte short of what counts as a match.
     pub(super) const NONE: Self = Self {
         start: 0,
-        len: MIN_MATCH as u32 - 1,
+        len: MIN_MATCH_LEN as u32 - 1,
     };
 
     /// From `position`, where it is used.
@@ -264,9 +265,11 @@ impl<'a> Matcher<'a> {
         let mut steps = self.effort.steps(best.len);
         // How far into the match the position is whose chain `candidate` is on.
         let mut offset = 0;
-        if best.len >= MIN_MATCH as u32 {
+        if best.len >= MIN_MATCH_LEN as u32 {
             let mut hash = roll(scan[1].into(), scan[2]);
-            let newest = scan.get(MIN_MATCH..=best.len as usize).unwrap_or_default();
+            let newest = scan
+                .get(MIN_MATCH_LEN..=best.len as usize)
+                .unwrap_or_default();
             for (at, &byte) in (1..).zip(newest) {
                 hash = roll(hash, byte);
                 let head = self.index.head(hash);
@@ -308,9 +311,9 @@ impl<'a> Matcher<'a> {
                 if len >= lookahead.min(self.effort.nice_len) {
                     return best;
                 }
-                if len > MIN_MATCH as u32 && start + len < position {
+                if len > MIN_MATCH_LEN as u32 && start + len < position {
                     (offset, candidate) = (0, start);
-                    for at in 0..=len - MIN_MATCH as u32 {
+                    for at in 0..=len - MIN_MATCH_LEN as u32 {
                         let previous = self.index.link(start + at);
                         if previous < candidate {
                             if previous <= base_limit + at {
@@ -319,8 +322,8 @@ impl<'a> Matcher<'a> {
                             (offset, candidate) = (at, previous);
                         }
                     }
-                    let at = len - (MIN_MATCH as u32 + 1);
-                    let bytes: [u8; MIN_MATCH] = chunk(scan, at).copied().unwrap_or_default();
+                    let at = len - (MIN_MATCH_LEN as u32 + 1);
+                    let bytes: [u8; MIN_MATCH_LEN] = chunk(scan, at).copied().unwrap_or_default();
                     let head = self.index.head(bytes.into_iter().fold(0, roll));
                     if head < candidate {
                         if head <= base_limit + at {

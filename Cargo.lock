@@ -2075,6 +2075,8 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
+ "bun_deflate",
+ "bun_highway",
  "bun_zlib",
  "itoa",
  "thiserror",
@@ -2248,6 +2250,7 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
+ "bun_deflate",
  "bun_highway",
  "thiserror",
 ]

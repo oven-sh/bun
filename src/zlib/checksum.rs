@@ -1,11 +1,7 @@
 use bun_core::vec::BorrowedCursor;
-pub use bun_highway::zlib::crc32;
+use bun_highway::crc32;
 
 const ADLER32_START: u32 = 1;
-
-pub fn adler32(bytes: &[u8]) -> u32 {
-    bun_highway::zlib::adler32(ADLER32_START, bytes)
-}
 
 /// What the trailer of a container is computed from.
 #[derive(Clone, Copy)]

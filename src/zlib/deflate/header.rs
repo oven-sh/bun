@@ -1,13 +1,12 @@
 //! How a dynamic block tells its codes.
 
+use bun_deflate::format::{FIRST_LENGTH_SYMBOL, MAX_PRECODE_LEN, PRECODE_ORDER, PRECODE_SYMBOLS};
+
 use super::encoding::LITERAL_LENGTH_ROOM;
 use super::huffman::{Code, cost};
 use super::pending::{Bits, Writer};
 use crate::array::At;
-use crate::format::{
-    CODE_LENGTH_ORDER, CODE_LENGTH_SYMBOLS, FIRST_LENGTH_SYMBOL, MAX_CODE_LENGTH_BITS,
-    REPEAT_FEW_ZEROS, REPEAT_MANY_ZEROS, REPEAT_PREVIOUS, Repeat,
-};
+use crate::format::{REPEAT_FEW_ZEROS, REPEAT_MANY_ZEROS, REPEAT_PREVIOUS, Repeat};
 
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
 static EXTRA_BITS: [u8; 32] = {
@@ -74,7 +73,7 @@ pub(super) struct DynamicHeader {
     code_lengths: CodeLengths,
     code: Code<32>,
     /// The lengths of `code`, of which so many are written.
-    ordered: [u8; CODE_LENGTH_SYMBOLS],
+    ordered: [u8; PRECODE_SYMBOLS],
     ordered_len: usize,
 }
 
@@ -88,8 +87,8 @@ impl DynamicHeader {
         };
         code_lengths.extend(literal_lengths.used_lengths());
         code_lengths.extend(distances.used_lengths());
-        let code = Code::new::<32>(&code_lengths.frequencies, MAX_CODE_LENGTH_BITS as u8);
-        let ordered = CODE_LENGTH_ORDER.map(|symbol| *code.lengths.at(symbol.into()));
+        let code = Code::new::<32>(&code_lengths.frequencies, MAX_PRECODE_LEN as u8);
+        let ordered = PRECODE_ORDER.map(|symbol| *code.lengths.at(symbol.into()));
         let last_used = ordered.iter().enumerate().rfind(|&(_, &bits)| bits != 0);
         Self {
             literal_lengths: literal_lengths.used,

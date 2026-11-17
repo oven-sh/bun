@@ -9,7 +9,7 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-#![feature(allocator_ext, core_io_borrowed_buf)]
+#![feature(allocator_ext, core_io_borrowed_buf, stmt_expr_attributes)]
 
 mod array;
 mod checksum;
@@ -19,8 +19,7 @@ mod format;
 pub mod inflate;
 mod vec;
 
-pub use checksum::{adler32, crc32};
 pub use deflate::Deflater;
 pub use error::{Damage, Error, Result};
-pub use format::{DEFLATE_METHOD, GZIP_ID, gzip_flag};
+pub use format::GZIP_ID;
 pub use inflate::Inflater;

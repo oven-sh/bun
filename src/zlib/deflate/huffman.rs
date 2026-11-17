@@ -1,7 +1,9 @@
 //! Code lengths from frequencies. Where several codes are as good, it picks the one that zlib picks.
 
+use bun_deflate::format::MAX_CODEWORD_LEN;
+
 use crate::array::At;
-use crate::format::{MAX_CODE_BITS, reversed};
+use crate::format::reversed;
 
 const INDEX_BITS: u32 = 10;
 const DEPTH_BITS: u32 = 6;
@@ -78,12 +80,24 @@ pub(super) fn cost<const N: usize>(frequencies: &[u16; N], bits: &[u8; N]) -> u3
         .sum()
 }
 
+/// For each length.
+type Counts = [u16; MAX_CODEWORD_LEN as usize + 1];
+
+fn first_codes(counts: &Counts) -> Counts {
+    let (mut first, mut code) = (Counts::default(), 0);
+    for (first, &shorter) in first.iter_mut().skip(1).zip(counts) {
+        code = (code + shorter) << 1;
+        *first = code;
+    }
+    first
+}
+
 /// There is room for `N` symbols.
 pub(super) struct Code<const N: usize> {
     pub(super) lengths: [u8; N],
     /// The symbols from here on have no code.
     pub(super) used: usize,
-    counts: [u16; MAX_CODE_BITS + 1],
+    counts: Counts,
 }
 
 impl<const N: usize> Code<N> {
@@ -181,12 +195,7 @@ impl<const N: usize> Code<N> {
 
     /// In the order in which their bits are written.
     pub(super) fn codes(&self) -> [u16; N] {
-        let mut next = [0u16; MAX_CODE_BITS + 1];
-        let mut code = 0u16;
-        for (next, &shorter) in next.iter_mut().skip(1).zip(&self.counts) {
-            code = (code + shorter) << 1;
-            *next = code;
-        }
+        let mut next = first_codes(&self.counts);
         let mut codes = [0; N];
         for (code, &bits) in codes.iter_mut().zip(self.used_lengths()) {
             if bits != 0 {

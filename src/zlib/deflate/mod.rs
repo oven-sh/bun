@@ -17,12 +17,14 @@ mod symbol;
 mod window;
 
 use bun_core::vec::{BorrowedCursor, append_with};
+use bun_deflate::format::{MIN_MATCH_LEN, STATIC};
+use bun_deflate::gzip;
+use bun_highway::adler32;
 
-use crate::checksum::{Checksum, adler32};
+use crate::checksum::Checksum;
 use crate::error::{Error, Result};
 use crate::format::{
-    DEFLATE_METHOD, FIXED_BLOCK, GZIP_ID, MAX_WINDOW_BITS, MIN_MATCH, MIN_WINDOW_BITS,
-    ZLIB_HEADER_DIVISOR, ZLIB_PRESET_DICTIONARY,
+    DEFLATE_METHOD, MAX_WINDOW_BITS, MIN_WINDOW_BITS, ZLIB_HEADER_DIVISOR, ZLIB_PRESET_DICTIONARY,
 };
 use block::Block;
 use chains::{Chains, HASHED_LEN};
@@ -490,8 +492,7 @@ impl Deflater {
                 Checksum::None => {}
                 Checksum::Adler32(adler) => self.pending.write_bytes(&adler.to_be_bytes()),
                 Checksum::Crc32 { crc, len } => {
-                    self.pending.write_bytes(&crc.to_le_bytes());
-                    self.pending.write_bytes(&len.to_le_bytes());
+                    self.pending.write_bytes(&gzip::trailer_for(crc, len));
                 }
             }
             self.pending.hand_out(&mut io.out);
@@ -536,14 +537,13 @@ impl Deflater {
                 } else {
                     3
                 };
-                let extra_flags = match self.level {
+                let effort = match self.level {
                     Level::BEST => 2,
                     _ if is_fastest => 4,
                     _ => 0,
                 };
-                self.pending.write_bytes(&GZIP_ID);
                 self.pending
-                    .write_bytes(&[DEFLATE_METHOD, 0, 0, 0, 0, 0, extra_flags, SYSTEM]);
+                    .write_bytes(&gzip::plain_header(effort, SYSTEM));
                 self.checksum = Checksum::GZIP;
             }
         }
@@ -571,7 +571,7 @@ impl Deflater {
     fn write_flush_marker(&mut self, flush: Flush) {
         match flush {
             Flush::Partial => {
-                self.pending.put(Bits::block_header(FIXED_BLOCK, false));
+                self.pending.put(Bits::block_header(STATIC, false));
                 self.pending.put(encoding::FIXED.end_of_block());
             }
             Flush::Sync => self.pending.write_stored_header(0, false),
@@ -634,7 +634,7 @@ impl Deflater {
         self.chains.grow(self.window.end);
 
         let (lookahead, unhashed) = (self.window.lookahead(), self.window.unhashed);
-        if lookahead + unhashed >= MIN_MATCH as u32 {
+        if lookahead + unhashed >= MIN_MATCH_LEN as u32 {
             let start = self.window.position - unhashed;
             let mut index = self.chains.over(&self.window.bytes);
             if self.level.uses_rolling_hash() {
@@ -667,7 +667,25 @@ impl Deflater {
         Stretch::Until(with_lookahead.max(without))
     }
 
-    /// `fill` stops at a full block or the position it is given. `false` if input or room is wanted.
+    /// `step` goes no further than the position it is given. Both return `false` if input or room is wanted.
+    #[inline(always)]
+    fn in_stretches(
+        &mut self,
+        io: &mut Io<'_, '_>,
+        flush: Flush,
+        lookahead: u32,
+        mut step: impl FnMut(&mut Self, &mut Io<'_, '_>, u32) -> bool,
+    ) -> bool {
+        loop {
+            match self.next_stretch(io, flush, lookahead) {
+                Stretch::Until(stop) if step(self, io, stop) => {}
+                Stretch::Until(_) | Stretch::NeedsInput => return false,
+                Stretch::End => return true,
+            }
+        }
+    }
+
+    /// The same for a `fill` that also stops when the block is full.
     #[inline(always)]
     fn fill_blocks(
         &mut self,
@@ -676,16 +694,10 @@ impl Deflater {
         lookahead: u32,
         mut fill: impl FnMut(&mut Self, u32),
     ) -> bool {
-        loop {
-            match self.next_stretch(io, flush, lookahead) {
-                Stretch::Until(stop) => fill(self, stop),
-                Stretch::NeedsInput => return false,
-                Stretch::End => return true,
-            }
-            if self.block.is_full() && !self.flush_block(io, false) {
-                return false;
-            }
-        }
+        self.in_stretches(io, flush, lookahead, |this, io, stop| {
+            fill(this, stop);
+            !this.block.is_full() || this.flush_block(io, false)
+        })
     }
 
     /// Whether there is room left.

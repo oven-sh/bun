@@ -1,10 +1,11 @@
 //! Levels 7 to 9: a match is only taken if there is no longer one at the next position.
 
+use bun_deflate::format::MIN_MATCH_LEN;
+
 use super::chains::HASHED_LEN;
 use super::matcher::Match;
 use super::window::{MIN_LOOKAHEAD, byte};
-use super::{Deflater, Flush, Io, Progress, Strategy, Stretch, Tuning};
-use crate::format::MIN_MATCH;
+use super::{Deflater, Flush, Io, Progress, Strategy, Tuning};
 
 const MAX_FILTERED_LEN: u32 = 5;
 
@@ -43,19 +44,14 @@ impl Deflater {
         tuning: Tuning,
     ) -> Progress {
         let is_filtered = self.strategy == Strategy::Filtered;
-        loop {
-            let stop = match self.next_stretch(io, flush, MIN_LOOKAHEAD) {
-                Stretch::Until(stop) => stop,
-                Stretch::NeedsInput => return Progress::NeedsMore,
-                Stretch::End => break,
-            };
-            let mut matcher = tuning.matcher(&mut self.chains, &self.window);
+        let is_done = self.in_stretches(io, flush, MIN_LOOKAHEAD, |this, io, stop| {
+            let mut matcher = tuning.matcher(&mut this.chains, &this.window);
             let window = matcher.index.window;
-            let (mut position, end) = (self.window.position, self.window.end);
-            let (mut previous, mut is_undecided) = (self.lazy.previous, self.lazy.is_undecided);
+            let (mut position, end) = (this.window.position, this.window.end);
+            let (mut previous, mut is_undecided) = (this.lazy.previous, this.lazy.is_undecided);
             // With a full output it goes no further than the next literal.
             let (is_out_full, mut must_stop) = (io.is_full(), false);
-            self.block.tally(|mut block| {
+            this.block.tally(|mut block| {
                 while position < stop
                     && !block.is_full()
                     && let Some(target) = matcher.target(position, end - position)
@@ -77,9 +73,9 @@ impl Deflater {
                         }
                     }
 
-                    if previous.len >= MIN_MATCH as u32 && found.len <= previous.len {
+                    if previous.len >= MIN_MATCH_LEN as u32 && found.len <= previous.len {
                         block.push_match(previous.distance(window, position - 1), previous.len);
-                        let hashable = lookahead.saturating_sub(MIN_MATCH as u32);
+                        let hashable = lookahead.saturating_sub(MIN_MATCH_LEN as u32);
                         matcher
                             .index
                             .insert_all::<ROLLING>(position + 1, hashable.min(previous.len - 2));
@@ -99,18 +95,19 @@ impl Deflater {
                     }
                 }
             });
-            self.lazy = Lazy {
+            this.lazy = Lazy {
                 previous,
                 is_undecided,
             };
-            if self.block.is_full() {
-                self.window.position = position - u32::from(is_undecided);
-                must_stop = !self.flush_block(io, false);
+            if this.block.is_full() {
+                this.window.position = position - u32::from(is_undecided);
+                must_stop = !this.flush_block(io, false);
             }
-            self.window.position = position;
-            if must_stop {
-                return Progress::NeedsMore;
-            }
+            this.window.position = position;
+            !must_stop
+        });
+        if !is_done {
+            return Progress::NeedsMore;
         }
         if core::mem::take(&mut self.lazy.is_undecided) {
             let last = byte(&self.window.bytes, self.window.position - 1);

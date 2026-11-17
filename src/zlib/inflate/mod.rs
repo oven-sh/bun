@@ -10,12 +10,15 @@ use core::cell::Cell;
 
 use bun_core::strings;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
+use bun_deflate::format::{DYNAMIC, STATIC, STORED};
+use bun_deflate::gzip;
+use bun_highway::{adler32, crc32};
 
-use crate::checksum::{Checksum, adler32, crc32};
+use crate::checksum::Checksum;
 use crate::error::{Damage, Error, Result};
 use crate::format::{
-    DEFLATE_METHOD, DYNAMIC_BLOCK, FIXED_BLOCK, GZIP_ID, MAX_WINDOW_BITS, MIN_WINDOW_BITS,
-    STORED_BLOCK, ZLIB_HEADER_DIVISOR, ZLIB_PRESET_DICTIONARY, gzip_flag,
+    DEFLATE_METHOD, GZIP_ID, MAX_WINDOW_BITS, MIN_WINDOW_BITS, ZLIB_HEADER_DIVISOR,
+    ZLIB_PRESET_DICTIONARY,
 };
 use bits::{BitReader, HeldBits};
 use codes::{FAST_INPUT, FAST_ROOM, LongestMatch, Reach, Step, Stop};
@@ -317,7 +320,7 @@ impl Inflater {
     }
 
     fn add_to_header_crc(&mut self, bytes: &[u8]) {
-        if self.gzip_flags & gzip_flag::HEADER_CRC != 0 {
+        if self.gzip_flags & gzip::HAS_HEADER_CRC != 0 {
             self.gzip_header_crc = crc32(self.gzip_header_crc, bytes);
         }
     }
@@ -376,7 +379,7 @@ impl Inflater {
                     if method != DEFLATE_METHOD {
                         return Err(Damage::UnknownMethod.into());
                     }
-                    if flags & gzip_flag::RESERVED != 0 {
+                    if flags & gzip::RESERVED != 0 {
                         return Err(Damage::UnknownHeaderFlags.into());
                     }
                     (self.gzip_flags, self.gzip_header_crc) = (flags, 0);
@@ -389,9 +392,7 @@ impl Inflater {
                     self.add_to_header_crc(&fields);
                     State::GzipExtraLength
                 }
-                State::GzipExtraLength if self.gzip_flags & gzip_flag::EXTRA == 0 => {
-                    State::GzipName
-                }
+                State::GzipExtraLength if self.gzip_flags & gzip::HAS_EXTRA == 0 => State::GzipName,
                 State::GzipExtraLength => {
                     let len = take!(16) as u16;
                     self.add_to_header_crc(&len.to_le_bytes());
@@ -408,19 +409,19 @@ impl Inflater {
                     State::GzipName
                 }
                 State::GzipName => {
-                    if !self.skip_gzip_string(gzip_flag::NAME, bits) {
+                    if !self.skip_gzip_string(gzip::HAS_NAME, bits) {
                         return Ok(Status::NeedsInput);
                     }
                     State::GzipComment
                 }
                 State::GzipComment => {
-                    if !self.skip_gzip_string(gzip_flag::COMMENT, bits) {
+                    if !self.skip_gzip_string(gzip::HAS_COMMENT, bits) {
                         return Ok(Status::NeedsInput);
                     }
                     State::GzipHeaderCrc
                 }
                 State::GzipHeaderCrc => {
-                    if self.gzip_flags & gzip_flag::HEADER_CRC != 0
+                    if self.gzip_flags & gzip::HAS_HEADER_CRC != 0
                         && take!(16) as u16 != self.gzip_header_crc as u16
                     {
                         return Err(Damage::HeaderCrc.into());
@@ -544,7 +545,7 @@ impl Inflater {
         }
         let is_last = bits.buffer % 2 != 0;
         let state = match (bits.peek(TYPE_END) / 2) as u32 {
-            STORED_BLOCK => {
+            STORED => {
                 let padded = TYPE_END + (bits.count - TYPE_END) % 8;
                 if !bits.has(padded + 32) {
                     return Ok(None);
@@ -557,11 +558,11 @@ impl Inflater {
                 }
                 State::Stored(len)
             }
-            FIXED_BLOCK => {
+            STATIC => {
                 bits.skip(TYPE_END);
                 State::Codes { fixed: true }
             }
-            DYNAMIC_BLOCK => {
+            DYNAMIC => {
                 if !bits.has(COUNTS_END) {
                     return Ok(None);
                 }

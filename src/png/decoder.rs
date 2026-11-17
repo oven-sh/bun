@@ -14,6 +14,8 @@ const MAX_ICC_PROFILE_LEN: usize = 255 * 65_519;
 
 /// Bytes of lines inflated at a time, as a call for each short line takes longer.
 const AHEAD_LEN: usize = 128 * 1024;
+/// No system has smaller pages.
+const PAGE_LEN: usize = 4 * 1024;
 
 type Rgba = [u8; 4];
 
@@ -443,6 +445,9 @@ fn read_rgba8(header: Header, size: usize, idat: &mut Idat) -> Result<Vec<u8>> {
         let lines = lines_at_a_time.min(lines_left);
         lines_left -= lines;
         let start = image.len();
+        // Some CPUs are slow to get new pages within `memcpy`, and none prefetches from them.
+        let room = image.spare_capacity_mut().iter_mut().take(AHEAD_LEN);
+        room.step_by(PAGE_LEN).for_each(|byte| _ = byte.write(0));
         idat.read(&mut image, lines * line_len)?;
         for i in 0..lines {
             let (from, to) = (start + i * line_len, start + i * stride);

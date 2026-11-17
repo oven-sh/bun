@@ -1,7 +1,7 @@
 const EventEmitter = require("node:events");
 const dc = require("node:diagnostics_channel");
 const { isArrayBuffer } = require("node:util/types");
-const { isIP } = require("node:net");
+const { isIP } = require("internal/net/isIP");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
@@ -51,18 +51,22 @@ function resolveConnect(dispatcher) {
   return undefined;
 }
 
-// Bounded like undici's connector: connect.timeout (default 10s) covers the
-// lookup, so a hook that never calls back fails with ConnectTimeoutError.
+// Bounded like undici's connector: connect.timeout (default 10s, 0 disables)
+// covers the lookup, so a hook that never calls back fails with
+// ConnectTimeoutError. The timer stays ref'd so a pending lookup keeps the
+// process alive the way an open socket would.
 function runLookup(lookup, hostname, connect, signal): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);
     let onAbort;
-    const timeout = typeof connect.timeout === "number" && connect.timeout >= 0 ? connect.timeout : 10_000;
-    const timer = setTimeout(
-      () => fail(new ConnectTimeoutError(`lookup for "${hostname}" timed out after ${timeout}ms`)),
-      timeout,
-    );
-    timer.unref?.();
+    const timeout = connect.timeout === undefined ? 10_000 : connect.timeout;
+    let timer;
+    if (typeof timeout === "number" && timeout > 0 && Number.isFinite(timeout)) {
+      timer = setTimeout(
+        () => fail(new ConnectTimeoutError(`lookup for "${hostname}" timed out after ${timeout}ms`)),
+        timeout,
+      );
+    }
     const settle = fn => value => {
       clearTimeout(timer);
       if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
@@ -301,19 +305,25 @@ async function fetchWithConnect(input, init, connect) {
     if (pin === undefined) return nativeFetch(input, init);
     const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
     if (!headers.has("host")) headers.set("host", pin.host);
-    const hopInit = { ...pinnedInit(init, pin), headers };
-    const resp = isRequest
-      ? // Request's constructor reads `input` as an init dict: method/headers/body carry over.
-        await nativeFetch(new Request(pin.url.href, input as ConstructorParameters<typeof Request>[1]), hopInit)
-      : await nativeFetch(pin.url.href, hopInit);
+    const hopInit = { ...pinnedInit(init, pin), headers, redirect: redirectMode };
+    if (isRequest) {
+      // Taken from the Request directly; a second Request would tee a stream body.
+      if (hopInit.method === undefined) hopInit.method = input.method;
+      if (hopInit.signal === undefined) hopInit.signal = signal;
+      if (hopInit.body === undefined) hopInit.body = input.body ?? undefined;
+    }
+    const resp = await nativeFetch(pin.url.href, hopInit);
     ObjectDefineProperty(resp, "url", { __proto__: null, configurable: true, value: url.href });
     return resp;
   }
   const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
   const method = init?.method ?? (isRequest ? input.method : "GET");
-  // A Request body streams into the first hop; a body-preserving redirect
-  // afterwards is rejected like any other stream body.
-  const body = init?.body !== undefined ? init.body : isRequest ? (input.body ?? undefined) : undefined;
+  let body = init?.body;
+  if (body === undefined && isRequest && input.body != null) {
+    // A buffered Request body (string, bytes, Blob, file) is native-backed and
+    // can be replayed on a 307/308; a user stream is sent once and cannot.
+    body = input.body.$bunNativePtr != null ? await input.blob() : input.body;
+  }
   return followRedirectsWithConnect(url, { ...init, signal }, connect, {
     method,
     body,
@@ -672,23 +682,35 @@ const interceptors = {
 };
 
 // Error classes
-class UndiciError extends Error {}
+class UndiciError extends Error {
+  name = "UndiciError";
+  code = "UND_ERR";
+}
 class AbortError extends UndiciError {}
 class HTTPParserError extends Error {}
 class HeadersTimeoutError extends UndiciError {}
 class HeadersOverflowError extends UndiciError {}
 class BodyTimeoutError extends UndiciError {}
 class RequestContentLengthMismatchError extends UndiciError {}
-class ConnectTimeoutError extends UndiciError {}
+class ConnectTimeoutError extends UndiciError {
+  name = "ConnectTimeoutError";
+  code = "UND_ERR_CONNECT_TIMEOUT";
+}
 class ResponseStatusCodeError extends UndiciError {}
-class InvalidArgumentError extends UndiciError {}
+class InvalidArgumentError extends UndiciError {
+  name = "InvalidArgumentError";
+  code = "UND_ERR_INVALID_ARG";
+}
 class InvalidReturnValueError extends UndiciError {}
 class RequestAbortedError extends AbortError {}
 class ClientDestroyedError extends UndiciError {}
 class ClientClosedError extends UndiciError {}
 class InformationalError extends UndiciError {}
 class SocketError extends UndiciError {}
-class NotSupportedError extends UndiciError {}
+class NotSupportedError extends UndiciError {
+  name = "NotSupportedError";
+  code = "UND_ERR_NOT_SUPPORTED";
+}
 class ResponseContentLengthMismatchError extends UndiciError {}
 class BalancedPoolMissingUpstreamError extends UndiciError {}
 class ResponseExceededMaxSizeError extends UndiciError {}

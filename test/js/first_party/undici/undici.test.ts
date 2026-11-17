@@ -822,10 +822,64 @@ describe("undici dispatcher connect.lookup", () => {
     expect(
       await undiciFetch(`http://${UNRESOLVABLE}:1/`, { dispatcher: agent }).then(
         () => "resolved",
-        (err: TypeError) =>
-          err.cause instanceof errors.ConnectTimeoutError ? "ConnectTimeoutError" : String(err.cause),
+        (err: TypeError) => {
+          const cause = err.cause as Error & { code?: string };
+          return cause instanceof errors.ConnectTimeoutError ? `${cause.name}/${cause.code}` : String(cause);
+        },
       ),
-    ).toBe("ConnectTimeoutError");
+    ).toBe("ConnectTimeoutError/UND_ERR_CONNECT_TIMEOUT");
+  });
+
+  it("connect.timeout: 0 disables the lookup deadline", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("unbounded") });
+    const agent = new Agent({
+      connect: {
+        timeout: 0,
+        // Answers on a later macrotask; a 0ms deadline would fire first.
+        lookup: (_hostname, _opts, cb) => void setTimeout(() => cb(null, "127.0.0.1", 4), 2),
+      },
+    });
+    const res = await undiciFetch(`http://${UNRESOLVABLE}:${server.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe("unbounded");
+  });
+
+  it("a buffered Request body is replayed on a 307 through the pin", async () => {
+    await using target = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(`${req.method} ${await req.text()}`),
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => new Response(null, { status: 307, headers: { location: `http://replay.invalid:${target.port}/` } }),
+    });
+    const { agent, seen } = pinningAgent();
+    const res = await undiciFetch(
+      new Request(`http://first.invalid:${origin.port}/`, { method: "PUT", body: "payload" }),
+      { dispatcher: agent },
+    );
+    expect(await res.text()).toBe("PUT payload");
+    expect(seen).toEqual(["first.invalid", "replay.invalid"]);
+
+    // A Request carrying a user stream is not buffered, so the same 307 rejects.
+    expect(
+      await undiciFetch(
+        new Request(`http://first.invalid:${origin.port}/`, {
+          method: "PUT",
+          body: new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("payload"));
+              c.close();
+            },
+          }),
+          // @ts-expect-error duplex is required for stream bodies by the spec
+          duplex: "half",
+        }),
+        { dispatcher: agent },
+      ).then(
+        () => "resolved",
+        (err: TypeError) => (err.cause as Error).message,
+      ),
+    ).toContain("the request body is a stream that was already sent");
   });
 
   it("a Request stream body streams through the pin and a 307 cannot replay it", async () => {
@@ -999,9 +1053,10 @@ describe("undici dispatcher connect.lookup", () => {
     expect(
       await undiciFetch(`http://localhost:${server.port}/`, { dispatcher: agent }).then(
         () => "resolved",
-        err => (err instanceof errors.NotSupportedError ? "NotSupportedError" : String(err)),
+        (err: Error & { code?: string }) =>
+          err instanceof errors.NotSupportedError ? `${err.name}/${err.code}` : String(err),
       ),
-    ).toBe("NotSupportedError");
+    ).toBe("NotSupportedError/UND_ERR_NOT_SUPPORTED");
   });
 
   it("redirect manual and error modes still pin the first hop", async () => {

@@ -137,7 +137,7 @@ export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abo
  * (`rustc --print cfg`), none of which the C++ side does.
  *
  * clang-cl (windows) spells the same flags `/clang:-march=...`. For apple-m1,
- * the link adds a feature that only clang lists (`-mattr` in flags.ts).
+ * that is not enough: see `ccidx` in flags.ts.
  */
 function rustCpuTargetFlags(cfg: Config): string[] {
   const rustflags: string[] = [];

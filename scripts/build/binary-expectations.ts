@@ -408,7 +408,7 @@ function testOnlySymbols(cfg: Config): string[] | undefined {
 
 /**
  * An `always_inline` C++ function that only Rust calls. It stays behind if the CPU features of the two halves do not
- * let LTO inline C++ into Rust at all: rustCpuTargetFlags() in rust.ts.
+ * let LTO inline it: rustCpuTargetFlags() in rust.ts.
  */
 function inlinedSymbols(cfg: Config): string[] {
   return cfg.lto && linksWithLld(cfg) && !cfg.hardened ? ["*highway_brotli_short_codes"] : [];

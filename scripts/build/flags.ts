@@ -1068,13 +1068,6 @@ export const linkerFlags: Flag[] = [
     desc: "LTO: inline at a cold call site only what is cheaper than the call (lld)",
   },
   {
-    // For -mcpu=apple-m1, clang lists `ccidx` among the features of each function. The CPU does not imply it in LLVM,
-    // and rustc is phasing out features it has no name for. Rust functions list none, so they take those of the link.
-    flag: "-Wl,-mllvm,-mattr=+ccidx",
-    when: c => c.darwin && c.arm64 && c.lto && linksWithLld(c),
-    desc: "LTO: let C++ be inlined into Rust, which takes a caller with all CPU features of the callee (lld)",
-  },
-  {
     flag: "-Os",
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
@@ -2002,6 +1995,14 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernels run for every byte that Brotli compresses.",
+  },
+  {
+    file: "src/jsc/bindings/highway_brotli.cpp",
+    // For -mcpu=apple-m1, clang lists `ccidx` on each function, and rustc does not. For all C++ at once, it would be
+    // -Wl,-mllvm,-mattr=+ccidx in the link, which makes the executable 2 MB larger.
+    extraFlags: ["-Xclang", "-target-feature", "-Xclang", "-ccidx"],
+    when: c => c.darwin && c.arm64 && c.lto,
+    desc: "LTO inlines a function only into one that has all of its CPU features, and these are called from Rust loops.",
   },
   {
     file: "src/jsc/bindings/highway_byte_set.cpp",

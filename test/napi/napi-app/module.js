@@ -1722,6 +1722,40 @@ nativeTests.test_external_buffer_untransferable = () => {
   console.log("stats:", JSON.stringify(nativeTests.external_for_transfer_stats()));
 };
 
+// The finalizer waits for a call that is still using the bytes, and runs from a task of its own.
+nativeTests.test_external_buffer_detached = async (_, file) => {
+  const fs = require("node:fs");
+  const finalized = () => nativeTests.external_for_transfer_stats().finalized;
+  const untilFinalized = async count => {
+    for (let i = 0; i < 100 && finalized() < count; i++) await new Promise(setImmediate);
+    console.log("later:", finalized());
+  };
+
+  nativeTests.create_external_arraybuffer_for_transfer(8).transfer(0);
+  console.log("after transfer(0):", finalized());
+  await untilFinalized(1);
+
+  const buffer = nativeTests.create_external_buffer_for_transfer(8);
+  const fd = fs.openSync(file, "w");
+  const inCallback = new Promise(resolve => fs.write(fd, buffer, () => resolve(finalized())));
+  buffer.buffer.transfer(0);
+  console.log("while a write is pending:", finalized(), "byteLength:", buffer.byteLength);
+  console.log("in its callback:", await inCallback);
+  await untilFinalized(2);
+  fs.closeSync(fd);
+  console.log("written:", fs.readFileSync(file).join());
+};
+
+nativeTests.test_detach_arraybuffer_in_use = async (gc, file) => {
+  const attached = new Uint8Array(4096);
+  const detached = new Uint8Array(4096);
+  const pending = [attached, detached].map(view => require("node:fs").promises.writeFile(file, view));
+  detached.buffer.transfer();
+  nativeTests.test_detach_arraybuffer(gc, attached.buffer, detached.buffer);
+  await Promise.all(pending);
+  nativeTests.test_detach_arraybuffer(gc, attached.buffer, detached.buffer);
+};
+
 // A worker creates the buffers and exits: the parent can only ever have copies,
 // and the worker's env teardown finalizes both on the thread that created them.
 nativeTests.test_external_buffer_worker_exit = async () => {

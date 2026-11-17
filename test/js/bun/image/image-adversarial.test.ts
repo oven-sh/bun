@@ -9,8 +9,20 @@
 //
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
+import { isBufferPinned } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, emptyProcessMaxRSS, gcTick, isASAN, isDebug, rss, runFixtureMaxRSS, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  detachAndReuse,
+  emptyProcessMaxRSS,
+  gcTick,
+  isASAN,
+  isDebug,
+  rss,
+  runFixtureMaxRSS,
+  tempDir,
+} from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 import { linesAtATime } from "./png-golden/check";
@@ -1238,21 +1250,25 @@ describe("hostile option objects", () => {
     // These two have no ArrayBuffer until something reads `.buffer`.
     ["FastTypedArray", 0, a => a],
     ["OversizeTypedArray", 4096, a => a],
-    ["subarray", 4096, a => a.subarray(0, tinyPng.length)],
+    ["subarray", 4096, a => a.subarray(0, 2048)],
     ["DataView", 4096, a => new DataView(a.buffer)],
     ["ArrayBuffer", 4096, a => a.buffer],
-  ])("%s input survives `.buffer` → transfer() while worker decodes", async (_, padding, input) => {
+  ])("%s input can be detached while worker decodes", async (_, padding, input) => {
     const a = new Uint8Array(tinyPng.length + padding);
     a.set(tinyPng);
     const p = new Bun.Image(input(a)).png().bytes();
-    const moved = a.buffer.transfer();
-    // While pinned: transfer() returned a COPY; `a` is NOT detached.
-    expect(moved.byteLength).toBe(tinyPng.length + padding);
-    expect(a.byteLength).toBe(tinyPng.length + padding);
-    expect(await p).toEqual(await new Bun.Image(tinyPng).png().bytes());
-    // After resolve the pin is released; now transfer() actually detaches.
-    a.buffer.transfer();
+    detachAndReuse(a.buffer);
     expect(a.byteLength).toBe(0);
+    expect(await p).toEqual(await new Bun.Image(tinyPng).png().bytes());
+    expect(isBufferPinned(a)).toBe(false);
+  });
+
+  test("a small input can be reused as soon as the call returns", async () => {
+    const a = new Uint8Array(tinyPng);
+    const p = new Bun.Image(a).png().bytes();
+    expect(isBufferPinned(a)).toBe(false);
+    a.fill(0);
+    expect(await p).toEqual(await new Bun.Image(tinyPng).png().bytes());
   });
 
   test("decodes the bytes the caller passed when their WebAssembly.Memory grows after the call", async () => {

@@ -8,8 +8,9 @@ import {
   zstdDecompress,
   zstdDecompressSync,
 } from "bun";
+import { isBufferPinned } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
+import { bunEnv, bunExe, detachAndReuse, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
 import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
 import path from "path";
@@ -577,16 +578,18 @@ it.each([
     async (input: Uint8Array) => zstdDecompressSync(await zstdCompress(input)),
   ],
   ["zstdDecompress", zstdCompressSync, zstdDecompress],
-] as const)("%s keeps an input with no ArrayBuffer yet attached while it is pending", async (_, encode, run) => {
-  const original = crypto.getRandomValues(new Uint8Array(4096));
-  const input = new Uint8Array(encode(original));
-  const pending = run(input);
-  input.buffer.transfer();
-  expect(input.buffer.detached).toBe(false);
-  expect(await pending).toEqual(Buffer.from(original));
-  input.buffer.transfer();
-  expect(input.buffer.detached).toBe(true);
-});
+] as const)(
+  "%s reads an input with no ArrayBuffer yet that is detached while it is pending",
+  async (_, encode, run) => {
+    const original = crypto.getRandomValues(new Uint8Array(4096));
+    const input = new Uint8Array(encode(original));
+    const pending = run(input);
+    detachAndReuse(input.buffer);
+    expect(input.buffer.detached).toBe(true);
+    expect(await pending).toEqual(Buffer.from(original));
+    expect(isBufferPinned(input)).toBe(false);
+  },
+);
 
 describe("sync compression argument handling", () => {
   it("zstdCompressSync evaluates the options object before capturing the input", () => {

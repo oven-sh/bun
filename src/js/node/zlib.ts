@@ -420,13 +420,17 @@ ZlibBase.prototype._processChunk = function (this: $Node.ZlibBase, chunk: View, 
   else return processChunkSync(this, chunk, flushFlag);
 };
 
-// Takes `have` bytes at `offset` out of an output chunk, without `slice` where possible: a slice keeps the whole chunk alive with the result.
+// Takes `have` bytes at `offset` out of an output chunk, without `slice` where possible. A slice gives
+// the chunk an ArrayBuffer. JSC then counts the chunk as allocated a second time, and only a full
+// collection takes it out of the heap size again, so full collections come often. A slice also keeps
+// the whole chunk alive with the result. nativeDecodePullResult in BunStreamSource.cpp has the same rule.
 function takeOutput(buffer: Buffer, offset: number, have: number): Buffer {
   // A full chunk: hand it over. The caller replaces an exhausted chunk.
-  if (offset === 0 && have === buffer.byteLength) return buffer;
+  const { byteLength } = buffer;
+  if (offset === 0 && have === byteLength) return buffer;
   // At most one default chunk: copy it out. A fractional chunkSize gives fractional offsets, which
-  // `slice` truncates and `copyBytesFrom` rejects.
-  if (have <= Z_DEFAULT_CHUNK && NumberIsInteger(offset) && NumberIsInteger(have)) {
+  // `slice` truncates and `copyBytesFrom` rejects. Only `slice` throws for a detached chunk.
+  if (have <= Z_DEFAULT_CHUNK && byteLength !== 0 && NumberIsInteger(offset) && NumberIsInteger(have)) {
     return Buffer.copyBytesFrom(buffer, offset, have);
   }
   return buffer.slice(offset, offset + have);
@@ -543,7 +547,8 @@ function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: 
   );
 }
 
-function processCallback(this: ZlibHandle) {
+// `unread` is what is left of a chunk that was detached during the write.
+function processCallback(this: ZlibHandle, unread?: Buffer) {
   // This callback's context (`this`) is the `_handle` (ZCtx) object. It is
   // important to null out the values once they are no longer needed since
   // `_handle` can stay in memory long after the buffer is needed.
@@ -600,6 +605,10 @@ function processCallback(this: ZlibHandle) {
     // it'll have the correct byte counts.
     handle.inOff += inDelta;
     handle.availInBefore = availInAfter;
+    if (unread) {
+      this.buffer = unread;
+      handle.inOff = 0;
+    }
 
     if (!streamBufferIsFull) {
       this.write(

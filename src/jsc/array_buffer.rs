@@ -136,7 +136,7 @@ unsafe extern "C" {
 }
 
 impl JSValue {
-    /// Releases a pin on this value's backing `JSC::ArrayBuffer`. Only for a value that was pinned; prefer [`ArrayBuffer::unpin`], which knows.
+    /// Releases a pin on this value's bytes, which can free them. Only for a value that was pinned; prefer [`ArrayBuffer::unpin`], which knows.
     pub fn unpin_array_buffer(self) {
         JSC__JSValue__unpinArrayBuffer(self);
     }
@@ -188,8 +188,7 @@ impl ArrayBuffer {
     }
 
     /// True if a pin doesn't keep these bytes mapped. `resize()` unmaps the pages it trims, and
-    /// `grow()` detaches a non-shared `WebAssembly.Memory`'s buffer regardless of the pin count,
-    /// which frees the old block immediately or when the memory is collected.
+    /// `grow()` can replace the block of a non-shared `WebAssembly.Memory`.
     /// Copy these bytes if the borrow outlives the call.
     ///
     /// A call instead of a field, so that `as_array_buffer` callers that never ask don't pay for the answer.
@@ -470,8 +469,8 @@ impl ArrayBuffer {
 // PinnedArrayBuffer
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
-/// moved) for as long as this value lives; [`root`](Self::root) additionally
+/// A JS ArrayBuffer/view whose bytes are pinned (not freed or moved, even by a
+/// detach) for as long as this value lives; [`root`](Self::root) additionally
 /// GC-roots the cell. `Drop` releases what was taken. Constructed and dropped on the JS
 /// thread.
 pub struct PinnedArrayBuffer {
@@ -620,13 +619,17 @@ impl PinnedArrayBuffer {
         self.buffer.byte_slice_mut()
     }
 
-    /// Returns the view's current range from JSC, or null and 0 if it's detached. The range can
-    /// change while pinned (see [`ArrayBuffer::can_be_freed_while_pinned`]).
+    /// Returns the view's current range from JSC, which can change while pinned. For a detached view
+    /// that is the pinned range, which has a new owner now, or null and 0 if it
+    /// [`can_be_freed_while_pinned`](ArrayBuffer::can_be_freed_while_pinned).
     fn live_range(&self) -> (*mut u8, usize) {
         debug_assert!(self.copy.is_none());
         let mut ptr = ptr::null_mut();
         let mut byte_len = 0usize;
         JSC__JSValue__arrayBufferExtent(self.buffer.value, &mut ptr, &mut byte_len);
+        if ptr.is_null() && !self.buffer.can_be_freed_while_pinned() {
+            return (self.buffer.ptr, self.buffer.byte_len);
+        }
         (ptr, byte_len)
     }
 
@@ -648,7 +651,7 @@ impl PinnedArrayBuffer {
         if ptr.is_null() {
             return &[];
         }
-        // SAFETY: JSC reports the view's own range, and no JS runs while the borrow of `self` lives.
+        // SAFETY: the view's own range or the pinned one, and no JS runs while the borrow of `self` lives.
         unsafe { core::slice::from_raw_parts(ptr, byte_len) }
     }
 

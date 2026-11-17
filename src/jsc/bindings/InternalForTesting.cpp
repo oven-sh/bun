@@ -62,6 +62,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer, (JSC::JSGlobalObje
     return JSValue::encode(jsBoolean(view->hasArrayBuffer()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isBufferPinned, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto value = callFrame->argument(0);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return JSValue::encode(jsBoolean(view->isBorrowed()));
+    auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(value);
+    return JSValue::encode(jsBoolean(buffer && buffer->impl()->isBorrowed()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto object = callFrame->argument(0).getObject();

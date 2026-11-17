@@ -1323,6 +1323,30 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       scriptTimeout,
     );
 
+    test.concurrent.skipIf(!builtin)(
+      "a chunk in a WebAssembly.Memory that a listener grows is read to its end",
+      async () => {
+        const { lines, exitCode } = await runScript(
+          { specifier },
+          connectScript +
+            `
+            connect().then(([client]) => {
+              const memory = new WebAssembly.Memory({ initial: 1 });
+              const chunk = Buffer.from(memory.buffer, 0, 8);
+              chunk.set([0x81, 2, 0x68, 0x69, 0x81, 2, 0x79, 0x6f]);
+              client.on("message", data => (memory.grow(1), console.log(String(data))));
+              client._socket.emit("data", chunk);
+            });
+          `,
+          // Without fast memory, `grow()` moves the block on every platform. With system malloc, the old block is unmapped.
+          { BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+        );
+        expect(lines).toEqual(["hi", "yo"]);
+        expect(exitCode).toBe(0);
+      },
+      scriptTimeout,
+    );
+
     // The other end replies to the Close frame while close() is still running.
     test.concurrent(
       "closed sockets don't keep the process alive",

@@ -666,12 +666,19 @@ impl Image {
     ) -> Result<(Input, Option<PinnedArrayBuffer>), PinError> {
         match self.source.get() {
             Source::JsBuffer => {
-                let v = js::source_js_get_cached(this_value).ok_or(PinError::Detached)?;
-                let pin =
-                    PinnedArrayBuffer::root_read_only(global, v).ok_or(PinError::OutOfMemory)?;
-                if pin.byte_len == 0 {
-                    return Err(PinError::Detached);
+                let view = js::source_js_get_cached(this_value)
+                    .and_then(|v| v.as_array_buffer(global))
+                    .filter(|view| view.byte_len > 0)
+                    .ok_or(PinError::Detached)?;
+                if view.len <= Input::MAX_COPIED_ELEMENTS {
+                    let input = Input {
+                        copied: Some(view.byte_slice().to_vec()),
+                        ..Default::default()
+                    };
+                    return Ok((input, None));
                 }
+                let pin = PinnedArrayBuffer::root_read_only(global, view.value)
+                    .ok_or(PinError::OutOfMemory)?;
                 let input = Input {
                     bytes: bun_ptr::RawSlice::new(pin.slice()),
                     ..Default::default()
@@ -1331,7 +1338,7 @@ impl jsc::JobContext for PipelineTask {
     }
 }
 
-/// Bytes for the worker: a pinned/owned slice, or a path to read there.
+/// Bytes for the worker: a pinned/owned slice, a copy, or a path to read there.
 pub(crate) struct Input {
     // Borrows from the task's `PinnedArrayBuffer` or `image.source.owned`; the owning
     // `Image` is held via BACKREF for the task's lifetime — `RawSlice` invariant.
@@ -1339,6 +1346,7 @@ pub(crate) struct Input {
     // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
+    copied: Option<Vec<u8>>,
 }
 
 impl Default for Input {
@@ -1346,7 +1354,20 @@ impl Default for Input {
         Self {
             bytes: bun_ptr::RawSlice::EMPTY,
             path: None,
+            copied: None,
         }
+    }
+}
+
+impl Input {
+    /// `JSArrayBufferView::fastSizeLimit`. To pin a view this small, JSC has to copy it anyway.
+    const MAX_COPIED_ELEMENTS: usize = 1000;
+
+    fn slice(&self) -> &[u8] {
+        if let Some(c) = &self.copied {
+            return c.as_slice();
+        }
+        self.bytes.slice()
     }
 }
 
@@ -1460,7 +1481,7 @@ impl PipelineTask {
             }
             owned_file.as_deref().unwrap()
         } else {
-            self.input.bytes.slice()
+            self.input.slice()
         };
 
         // Header-only fast path for `.metadata()` — Sharp parses just the

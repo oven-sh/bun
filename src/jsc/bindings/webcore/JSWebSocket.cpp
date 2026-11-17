@@ -1127,7 +1127,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketFeedForWs, (JSGlobalObject * lexicalGlobalOb
     Bun::PinnedArrayBuffer buffer { view->unsharedBuffer() };
     if (!buffer) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    socket->wrapped().feed(view->span());
+    // A pin does not stop a WebAssembly.Memory grow().
+    Vector<uint8_t> copy;
+    if (view->unsharedBuffer()->isWasmMemory() && !copy.tryAppend(view->span())) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(lexicalGlobalObject, throwScope));
+    socket->wrapped().feed(copy.isEmpty() ? view->span() : copy.span());
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsUndefined());
 }

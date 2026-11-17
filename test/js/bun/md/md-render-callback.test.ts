@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, detachAndReuse } from "harness";
 
 const Markdown = Bun.markdown;
 
@@ -410,25 +410,21 @@ describe("Bun.markdown.render", () => {
 });
 
 describe("Bun.markdown buffer input", () => {
-  test.each([
+  describe.each([
     ["over an ArrayBuffer", () => new TextEncoder().encode("# Hello\n\nworld\n")],
     ["with no ArrayBuffer yet", () => new Uint8Array(Buffer.from("# Hello\n\nworld".padEnd(4096, "\n")))],
-  ])("an input %s stays attached while a callback runs and is released after", (_, makeInput) => {
-    const input = makeInput();
-    let detachedDuringRender = null as boolean | null;
-    const result = Markdown.render(input, {
-      heading: (children: string) => {
-        input.buffer.transfer();
-        detachedDuringRender = (input.buffer as ArrayBuffer).detached;
-        return `<h1>${children}</h1>`;
-      },
-      paragraph: (children: string) => `<p>${children}</p>`,
+  ])("an input %s", (_, makeInput) => {
+    test.each<[string, (input: Uint8Array<ArrayBuffer>) => void]>([
+      ["detaches", input => detachAndReuse(input.buffer)],
+      ["overwrites", input => input.fill(0x78)],
+    ])("renders as it was passed when a callback %s it", (_, change) => {
+      const input = makeInput();
+      const result = Markdown.render(input, {
+        heading: (children: string) => (change(input), `<h1>${children}</h1>`),
+        paragraph: (children: string) => `<p>${children}</p>`,
+      });
+      expect(result).toBe("<h1>Hello</h1><p>world</p>");
     });
-    expect(detachedDuringRender).toBe(false);
-    expect(result).toBe("<h1>Hello</h1><p>world</p>");
-
-    input.buffer.transfer();
-    expect((input.buffer as ArrayBuffer).detached).toBe(true);
   });
 
   test("renders the bytes the caller passed when a callback grows their WebAssembly.Memory", async () => {
@@ -460,7 +456,7 @@ describe("Bun.markdown buffer input", () => {
     });
   });
 
-  // A pin prevents a detach but not a shrink, and `resize()` unmaps the trimmed pages.
+  // `resize()` unmaps the trimmed pages.
   // The options are read before the bytes, so a getter that shrinks the input leaves nothing to render.
   describe("survives a resizable input that shrinks during the call", () => {
     const source = "# Hello\n\nworld **bold**\n";

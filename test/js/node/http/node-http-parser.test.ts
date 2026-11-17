@@ -1,5 +1,6 @@
+import { isBufferPinned } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, detachAndReuse } from "harness";
 const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser") as any;
 const { parsers } = require("node:_http_common");
 
@@ -142,14 +143,20 @@ describe("HTTPParser.prototype.finish", () => {
 });
 
 describe("HTTPParser.prototype.execute", () => {
-  test("keeps the input buffer attached when a callback transfers it mid-parse", async () => {
+  test.each([
+    ["stored inline", 0],
+    ["with no ArrayBuffer yet", 2000],
+  ])("finishes an input %s that a callback detaches mid-parse", async (_, padding) => {
     const kOnBody = HTTPParser.kOnBody;
     const kOnMessageComplete = HTTPParser.kOnMessageComplete;
 
     const parser = new HTTPParser();
     parser.initialize(HTTPParser.REQUEST, {});
 
-    const input = Buffer.from("POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 11\r\n\r\nhello world");
+    const host = Buffer.alloc(padding + 1, "a");
+    const input = new Uint8Array(
+      Buffer.from(`POST / HTTP/1.1\r\nHost: ${host}\r\nContent-Length: 11\r\n\r\nhello world`),
+    );
     const inputLength = input.byteLength;
 
     const bodyChunks: string[] = [];
@@ -158,12 +165,9 @@ describe("HTTPParser.prototype.execute", () => {
     parser[kOnHeadersComplete] = function () {
       try {
         // llhttp still holds pointers into `input` here and will keep reading
-        // from it after this callback returns. Transferring the backing
-        // ArrayBuffer must not free that memory out from under the parser:
-        // the original buffer stays attached for the rest of execute().
-        input.buffer.transfer();
-        expect(input.buffer.detached).toBe(false);
-        expect(input.byteLength).toBe(inputLength);
+        // from it after this callback returns.
+        detachAndReuse(input.buffer);
+        expect(input.buffer.detached).toBe(true);
       } catch (err) {
         reject(err);
       }
@@ -182,6 +186,7 @@ describe("HTTPParser.prototype.execute", () => {
     // body it reports is the request's actual body.
     expect(bodyChunks.join("")).toBe("hello world");
     expect(executed).toBe(inputLength);
+    expect(isBufferPinned(input)).toBe(false);
   });
 
   // A callback can shrink a resizable ArrayBuffer, or grow a WebAssembly.Memory, while llhttp is

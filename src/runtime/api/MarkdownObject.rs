@@ -8,8 +8,7 @@ use bun_core::StackCheck;
 use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer, RangeErrorOptions,
-    StringJsc as _,
+    JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, RangeErrorOptions, StringJsc as _,
 };
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
@@ -131,17 +130,22 @@ macro_rules! parser_options {
     }};
 }
 
-/// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
-fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
-    let StringOrBuffer::Buffer(buffer) = input else {
-        return Ok(None);
+/// For a render that runs JS, which can write to a buffer, free it or transfer it to another thread.
+/// Skips the copy when the parser will reject the buffer for its length anyway.
+fn copy_if_buffer(
+    global: &JSGlobalObject,
+    input: StringOrBuffer<'static>,
+) -> JsResult<StringOrBuffer<'static>> {
+    let StringOrBuffer::Buffer(buffer) = &input else {
+        return Ok(input);
     };
-    if let Some(mut pinned) = PinnedArrayBuffer::pin(global, buffer.buffer.value)
-        && pinned.copy_if_freeable_while_pinned(global)
-    {
-        return Ok(Some(pinned));
+    if buffer.buffer.byte_len > MAX_INPUT_LEN {
+        return Ok(input);
     }
-    Err(global.throw_out_of_memory())
+    match buffer.buffer.try_copy_bytes() {
+        Some(copy) => Ok(StringOrBuffer::owned(copy)),
+        None => Err(global.throw_out_of_memory()),
+    }
 }
 
 /// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:
@@ -213,16 +217,13 @@ pub(crate) fn render<'a>(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let buffer = copy_if_buffer(global_this, buffer)?;
+    let input = buffer.slice();
 
     let options = parser_options!(options);
 
@@ -297,16 +298,13 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let buffer = copy_if_buffer(global_this, buffer)?;
+    let input = buffer.slice();
 
     let mut renderer = match ParseRenderer::init(
         global_this,

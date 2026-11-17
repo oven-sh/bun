@@ -699,6 +699,13 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
   1,
 );
 
+/** Whether a native call has pinned the bytes of this view or ArrayBuffer. */
+export const isBufferPinned: (value: ArrayBufferView | ArrayBufferLike) => boolean = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_isBufferPinned",
+  1,
+);
+
 export const timerInternals = {
   timerClockMs: $bindgen("Timer.bind.ts", "timerClockMs"),
   monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),

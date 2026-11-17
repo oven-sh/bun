@@ -21,7 +21,6 @@ import {
 } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
@@ -3159,63 +3158,37 @@ it("ReadableStream BYOB read pending at cancel() resolves with undefined", async
 describe.each([
   ["over an ArrayBuffer", () => new Uint8Array(new ArrayBuffer(4096))],
   ["with no ArrayBuffer yet", () => new Uint8Array(4096)],
-])("a byte stream takes a copy of a view %s that a pending call is using", (_, makeView) => {
+  ["over a resizable ArrayBuffer", () => new Uint8Array(new ArrayBuffer(4096, { maxByteLength: 8192 }))],
+])("a byte stream takes over a view %s that a pending call is using", (_, makeView) => {
   const expected = Buffer.alloc(4096, 97);
 
   it("enqueue()", async () => {
     const view = makeView().fill(97);
     const pending = Bun.zstdCompress(view);
     const reader = new ReadableStream({ type: "bytes", start: c => c.enqueue(view) }).getReader();
-    expect(view.byteLength).toBe(4096);
+    expect(view.byteLength).toBe(0);
     expect(Buffer.from((await reader.read()).value)).toEqual(expected);
     expect(Bun.zstdDecompressSync(await pending)).toEqual(expected);
   });
 
-  it("read(view)", async () => {
+  it.each([
+    ["respond()", request => request.respond(4096)],
+    ["respondWithNewView()", request => request.respondWithNewView(request.view)],
+  ])("read(view) and %s", async (_, respond) => {
     const view = makeView().fill(97);
-    const pending = Bun.zstdCompress(view);
+    const pending = [Bun.zstdCompress(view)];
     const reader = new ReadableStream({
       type: "bytes",
       pull(c) {
-        c.byobRequest.view[0] = 98;
-        c.byobRequest.respond(1);
+        pending.push(Bun.zstdCompress(c.byobRequest.view));
+        respond(c.byobRequest);
       },
     }).getReader({ mode: "byob" });
     const read = reader.read(view);
-    expect(view.byteLength).toBe(4096);
-    expect((await read).value).toEqual(new Uint8Array([98]));
-    expect(Bun.zstdDecompressSync(await pending)).toEqual(expected);
+    expect(view.byteLength).toBe(0);
+    expect(Buffer.from((await read).value)).toEqual(expected);
+    expect((await Promise.all(pending)).map(bytes => Bun.zstdDecompressSync(bytes))).toEqual([expected, expected]);
   });
-});
-
-it.each([
-  ["respond()", request => request.respond(4096)],
-  ["respondWithNewView()", request => request.respondWithNewView(request.view)],
-])("%s takes a copy of a BYOB view that a pending call is using", async (_, respond) => {
-  let pending;
-  const reader = new ReadableStream({
-    type: "bytes",
-    pull(c) {
-      pending = Bun.zstdCompress(c.byobRequest.view.fill(97));
-      respond(c.byobRequest);
-    },
-  }).getReader({ mode: "byob" });
-  expect(Buffer.from((await reader.read(new Uint8Array(4096))).value)).toEqual(Buffer.alloc(4096, 97));
-  expect(Bun.zstdDecompressSync(await pending)).toEqual(Buffer.alloc(4096, 97));
-});
-
-it("a byte stream copies a resizable chunk that a pending call is using into a fixed-length buffer", async () => {
-  using dir = tempDir("byte-stream-resizable-pinned", {});
-  const chunk = new Uint8Array(new ArrayBuffer(8, { maxByteLength: 16 })).fill(97);
-  const pending = writeFile(join(String(dir), "out"), chunk);
-  const reader = new ReadableStream({ type: "bytes", start: c => c.enqueue(chunk) }).getReader();
-  expect(chunk.byteLength).toBe(8);
-  const { value } = await reader.read();
-  expect({ text: Buffer.from(value).toString(), resizable: value.buffer.resizable }).toEqual({
-    text: "aaaaaaaa",
-    resizable: false,
-  });
-  await pending;
 });
 
 describe("pipeTo from a byte source", () => {

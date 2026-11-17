@@ -411,6 +411,13 @@ export function gc(force = true) {
   bunGC(force);
 }
 
+/** Detaches `buffer` without a new owner for its bytes, then fills an allocation of that size, which tends to get the block if it was freed. */
+export function detachAndReuse(buffer: ArrayBuffer) {
+  const { byteLength } = buffer;
+  buffer.transferToFixedLength(0);
+  return new Uint8Array(new ArrayBuffer(byteLength)).fill(0xee);
+}
+
 /**
  * The garbage collector is not 100% deterministic
  *

@@ -197,20 +197,21 @@ RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSGlobalObject* globalObject, J
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(!buffer.isDetached());
-    if (buffer.isShared() || buffer.isWasmMemory()) [[unlikely]] {
+    if (!buffer.isDetachable()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Cannot transfer an ArrayBuffer that is not detachable"_s);
         return nullptr;
     }
-    if (buffer.isResizableNonShared() || !buffer.isDetachable()) [[unlikely]] {
+    if (buffer.isResizableNonShared()) [[unlikely]] {
         // Same shape as JSC's arrayBufferCopyAndDetach FixedLength slow path: copy into a
-        // fixed-length block, then detach the original, unless native code has pinned it.
+        // fixed-length block, then detach the original.
         RefPtr<JSC::ArrayBuffer> copy = JSC::ArrayBuffer::tryCreate(buffer.span());
         if (!copy) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        if (buffer.isDetachable())
-            buffer.detach(vm);
+        JSC::ArrayBufferContents droppedContents;
+        bool detached = buffer.transferTo(vm, droppedContents);
+        ASSERT_UNUSED(detached, detached);
         return copy;
     }
     JSC::ArrayBufferContents contents;

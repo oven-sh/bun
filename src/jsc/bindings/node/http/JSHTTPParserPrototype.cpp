@@ -3,8 +3,8 @@
 #include "JSConnectionsList.h"
 #include "ZigGlobalObject.h"
 #include "JSDOMExceptionHandling.h"
-#include "PinnedArrayBuffer.h"
 #include <wtf/MathExtras.h>
+#include <wtf/Scope.h>
 
 namespace Bun {
 
@@ -130,18 +130,18 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
             return {};
         }
 
-        RefPtr<ArrayBuffer> backingBuffer = buffer->possiblySharedBuffer();
-        if (!backingBuffer) {
+        if (!buffer->beginBorrow()) {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
+        auto endBorrow = makeScopeExit([&] { buffer->endBorrow(); });
 
         std::span<const uint8_t> input = buffer->span();
 
-        // A pin stops transfer(), not resize() or a WebAssembly.Memory grow(), which a callback can call.
+        // A borrow outlasts transfer(), not resize() or a WebAssembly.Memory grow(), which a callback can call.
         WTF::Vector<uint8_t> owned;
-        bool copied = !input.empty() && (backingBuffer->isResizableNonShared() || backingBuffer->isWasmMemory());
-        if (copied) {
+        ArrayBuffer* backingBuffer = buffer->hasArrayBuffer() ? buffer->possiblySharedBuffer() : nullptr;
+        if (!input.empty() && backingBuffer && (backingBuffer->isResizableNonShared() || backingBuffer->isWasmMemory())) {
             if (!owned.tryAppend(input)) {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -149,7 +149,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
             input = owned.span();
         }
 
-        PinnedArrayBuffer pinned { copied || backingBuffer->isShared() ? nullptr : WTF::move(backingBuffer) };
         JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(input.data()), input.size());
         RETURN_IF_EXCEPTION(scope, {});
 

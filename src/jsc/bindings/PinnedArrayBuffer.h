@@ -5,7 +5,8 @@
 
 namespace Bun {
 
-// Script can't detach the buffer while this lives.
+// Script can't detach the buffer while this lives: a transfer copies, so no other thread gets these bytes.
+// For bytes that only have to stay allocated, use beginBorrow(), as PinnedArrayBuffer in array_buffer.rs does.
 class PinnedArrayBuffer {
     WTF_MAKE_NONCOPYABLE(PinnedArrayBuffer);
 

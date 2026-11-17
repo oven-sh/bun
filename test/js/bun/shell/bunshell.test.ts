@@ -5,6 +5,7 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { $ } from "bun";
+import { isBufferPinned } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
@@ -3363,12 +3364,7 @@ const redirectTargets: [string, () => Uint8Array<ArrayBuffer>][] = [
   ["with no ArrayBuffer yet", () => new Uint8Array(1 << 16)],
 ];
 
-test.each(redirectTargets)("redirect target %s stays attached while a builtin command is running", async (_, make) => {
-  // A builtin with `> ${buf}` caches the buffer's raw pointer and length for
-  // the whole (asynchronous) lifetime of the command. The backing store must
-  // stay alive and attached until the command finishes so the output lands in
-  // memory the caller can still see.
-  //
+test.each(redirectTargets)("a builtin command fills the new owner of a redirect target %s", async (_, make) => {
   // `ls` is used (rather than `cat`) because `cat` is in the
   // DISABLED_ON_POSIX list and delegates to the system binary on Linux/macOS,
   // which never takes the builtin ArrayBuffer redirect path. `ls` is a real
@@ -3382,20 +3378,15 @@ test.each(redirectTargets)("redirect target %s stays attached while a builtin co
   // now holds the buffer while the directory-listing task is still pending.
   const running = promise.then(o => o);
 
-  // Attempting to detach the redirect target while the command is in flight
-  // must leave the buffer attached (refusing the detach by throwing is also
-  // acceptable).
-  try {
-    buffer.buffer.transfer();
-  } catch {}
-  expect(buffer.buffer.detached).toBe(false);
+  const moved = new Uint8Array(buffer.buffer.transfer());
+  expect(buffer.buffer.detached).toBe(true);
 
   await running;
-  expect(stringifyBuffer(buffer)).toEqual("pin.txt\n");
+  expect(stringifyBuffer(moved)).toEqual("pin.txt\n");
 });
 
 test.skipIf(isWindows)(
-  "output redirect buffer for an external command is detachable as soon as the command settles",
+  "output redirect buffer for an external command is unpinned as soon as the command settles",
   async () => {
     // `> ${buf}` for an external command is pinned until the child's stdout
     // reaches EOF. Here `sh` prints and exits at once while a background
@@ -3403,7 +3394,7 @@ test.skipIf(isWindows)(
     // fetch below is answered. The process exit and the stderr EOF are then
     // processed long before the stdout EOF, so the stdout reader is the
     // callback that settles the promise. The code after `await` must already
-    // see the buffer unpinned: a `transfer()` detaches it instead of copying.
+    // see the buffer unpinned.
     const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
     const gate = Promise.withResolvers<void>();
     const grandchildStarted = Promise.withResolvers<void>();
@@ -3431,20 +3422,14 @@ test.skipIf(isWindows)(
       }),
     ]);
 
-    // The grandchild still holds stdout, so the buffer is pinned: a detach
-    // attempt copies instead (or throws).
-    try {
-      buffer.buffer.transfer();
-    } catch {}
-    const detachedWhileOpen = buffer.buffer.detached;
+    // The grandchild still holds stdout.
+    const pinnedWhileOpen = isBufferPinned(buffer);
     gate.resolve();
-    expect(detachedWhileOpen).toBe(false);
+    expect(pinnedWhileOpen).toBe(true);
 
     const result = await running;
     expect(stringifyBuffer(buffer)).toEqual("hi\n");
-
-    buffer.buffer.transfer();
-    expect(buffer.buffer.detached).toBe(true);
+    expect(isBufferPinned(buffer)).toBe(false);
     expect(result.exitCode).toBe(0);
   },
 );
@@ -3506,6 +3491,16 @@ describe.each(["> ", "2>&1 "])("an external command with a `%s${buf}` redirect",
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
   });
+});
+
+test("a builtin fills a redirect target whose SharedArrayBuffer grew", async () => {
+  using dir = tempDir("shell-redirect-grow", { "pin.txt": "x" });
+  const shared = new SharedArrayBuffer(1, { maxByteLength: 64 });
+  const buffer = new Uint8Array(shared);
+  const running = $`ls ${String(dir)} > ${buffer}`.env(bunEnv).then(o => o);
+  shared.grow(64);
+  await running;
+  expect(stringifyBuffer(buffer)).toEqual("pin.txt\n");
 });
 
 test("a builtin stops writing to a redirect target whose WebAssembly.Memory grew", async () => {
@@ -3629,13 +3624,9 @@ describe.skipIf(isWindows)("stdin redirect whose pipe outlives the command's pro
   });
 });
 
-test.each(redirectTargets)("redirect target %s stays attached until an external command finishes", async (_, make) => {
+test.each(redirectTargets)("an external command fills the new owner of a redirect target %s", async (_, make) => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and
-  // copies the child's stdout into it as chunks arrive across event-loop
-  // turns. The backing store must therefore stay attached for the whole
-  // duration of the command so those writes land in memory the caller still
-  // owns. (The builtin equivalent of this test is directly above; this one
-  // spawns a real subprocess so it goes through the subprocess output path.)
+  // copies the child's stdout into it as chunks arrive across event-loop turns.
   const buffer = make();
   const childCode = "console.log('external-redirect-output')";
   const promise = $`${BUN} -e ${childCode} > ${buffer}`.env(bunEnv).nothrow();
@@ -3643,16 +3634,11 @@ test.each(redirectTargets)("redirect target %s stays attached until an external 
   // slot already holds the buffer while the child process is still running.
   const running = promise.then(o => o);
 
-  // Attempting to detach the redirect target while the command is in flight
-  // must leave the buffer attached (refusing the detach by throwing is also
-  // acceptable).
-  try {
-    buffer.buffer.transfer();
-  } catch {}
-  expect(buffer.buffer.detached).toBe(false);
+  const moved = new Uint8Array(buffer.buffer.transfer());
+  expect(buffer.buffer.detached).toBe(true);
 
   const result = await running;
-  expect(stringifyBuffer(buffer)).toEqual("external-redirect-output\n");
+  expect(stringifyBuffer(moved)).toEqual("external-redirect-output\n");
   expect(result.exitCode).toBe(0);
 });
 

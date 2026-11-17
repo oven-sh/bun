@@ -360,8 +360,7 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
 /// valid by `pending_pinned_write_owner` (WTFStringImpl ref / borrowed
 /// ArrayBuffer / owned encoded slice); the JS cell is GC-rooted via the
 /// `pendingWriteBuffer` cached slot; for buffer inputs the
-/// backing store is additionally `pin()`ed so `transfer()` copies instead of
-/// detaching.
+/// backing store is additionally pinned so `transfer()` does not free it.
 #[derive(Clone, Copy)]
 struct PendingPinnedWrite {
     /// The body bytes not yet accepted by the kernel / cork buffer. Borrows
@@ -2181,7 +2180,7 @@ impl NodeHTTPResponse {
                     consumed,
                     bytes_len
                 );
-                // For buffers, pin so `transfer()` copies instead of detaching.
+                // For buffers, pin so `transfer()` does not free the tail.
                 // If a pin can't keep the bytes mapped, copy them into the backpressure buffer instead.
                 let pinned_value = match buffer_value {
                     Some(buffer_value) => match buffer_value.as_pinned_arraybuffer(global_object) {

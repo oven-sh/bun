@@ -223,7 +223,6 @@
 #include "ProcessBindingHTTPParser.h"
 #include "node/NodeTimers.h"
 #include "JSConnectionsList.h"
-#include "JSHTTPParser.h"
 #include <exception>
 #include <mutex>
 #include "JSBunRequest.h"
@@ -2704,11 +2703,6 @@ void GlobalObject::finishCreation(VM& vm)
              setupConnectionsListClassStructure(init);
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPParserClassStructure), [](LazyClassStructure::Initializer& init) {
-             BUN_BEGIN_REMOVABLE_ENTRY_POINT(HttpParser, Abort, void)
-             setupHTTPParserClassStructure(init);
-             BUN_END_REMOVABLE_ENTRY_POINT
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatsClassStructure), [](LazyClassStructure::Initializer& init) {
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(FsStats, Abort, void)
              Bun::initJSStatsClassStructure(init);
@@ -2988,7 +2982,7 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_NativePromiseContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              // One feature for each kind of context the cell holds (NativePromiseContext::Tag).
-             runBodySharedByFeatures<Bun::Feature::Serve, Bun::Feature::HtmlRewriter, Bun::Feature::S3Client, Bun::Feature::Cron>([&]() ALWAYS_INLINE_LAMBDA {
+             runBodySharedByFeatures<Bun::Feature::Serve, Bun::Feature::HtmlRewriter, Bun::Feature::S3Client>([&]() ALWAYS_INLINE_LAMBDA {
                  init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
              });
          } },

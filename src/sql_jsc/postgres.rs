@@ -2,20 +2,9 @@
 // Submodule tree (files use PascalCase basenames; wired via `#[path]`).
 // ──────────────────────────────────────────────────────────────────────────
 
-#[path = "postgres/SASL.rs"]
-pub mod sasl;
-
-#[path = "postgres/AuthenticationState.rs"]
-pub mod authentication_state;
-pub use authentication_state::AuthenticationState;
-
 #[path = "postgres/PostgresSQLContext.rs"]
 pub mod postgres_sql_context;
 pub use postgres_sql_context::PostgresSQLContext;
-
-#[path = "postgres/Signature.rs"]
-pub mod signature;
-pub use signature::Signature;
 
 #[path = "postgres/command_tag_jsc.rs"]
 pub mod command_tag_jsc;

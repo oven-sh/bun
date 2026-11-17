@@ -2,7 +2,7 @@
 //!
 //! `tick`/`enter`/`exit`/`drain_microtasks`/`run_callback`/concurrent-queue
 //! plumbing are real. The two hot dispatch loops (`tickQueueWithCount`'s
-//! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
+//! per-`Task` switch and `ImmediateObject::run`) name
 //! `bun_runtime` types and are hoisted to that tier via link-time
 //! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
 //! `auto_tick`/`auto_tick_active` likewise
@@ -258,13 +258,13 @@ unsafe extern "Rust" {
         vm: &VirtualMachine,
         counter: &mut u32,
     ) -> Result<(), Stopped>;
-    /// `ImmediateObject::runImmediateTask` — `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
-    /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
+    /// `ImmediateObject::run` — `task` is an erased
+    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the microtask
+    /// checkpoint is still owed. Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool;
     /// Release the event loop's `+1` ref on a still-queued `ImmediateObject`
     /// without running it. Defined in `bun_runtime::dispatch`.
-    fn __bun_cancel_pending_immediate(task: *mut (), vm: &VirtualMachine);
+    fn __bun_cancel_pending_immediate(task: *mut ());
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: &VirtualMachine);
@@ -978,7 +978,7 @@ impl EventLoop {
         drop(self.next_immediate_tasks.take());
         for task in self.immediate_tasks.take() {
             // SAFETY: `task` came from `enqueue_immediate_task`.
-            unsafe { __bun_cancel_pending_immediate(task, self.vm_ref()) };
+            unsafe { __bun_cancel_pending_immediate(task) };
         }
     }
 

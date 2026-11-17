@@ -40,6 +40,8 @@ mod x86;
 
 pub use algo::blocks;
 pub use bit_indices::BitIndices;
+#[doc(hidden)]
+pub use bun_simd_macros::force_inline;
 pub use bun_simd_macros::{foreach_target, foreach_width};
 #[doc(hidden)]
 pub use bun_simd_trusted::AtomicFn;
@@ -48,7 +50,7 @@ pub use bun_simd_trusted::{Append, Out, Writer, extend_vec, spare_capacity};
 pub use bun_simd_trusted::{Features, detected, if_supported};
 pub use bun_simd_trusted::{SharedOutU8, SharedU8, copy_from_shared, copy_to_shared};
 pub use bun_simd_trusted::{Target, opaque};
-pub use dispatch::limit_to;
+pub use dispatch::{limit_to, limit_to_named, limit_to_with};
 pub use isa::Isa;
 pub use mask::Mask;
 pub use matches::Matches;
@@ -56,6 +58,8 @@ pub use partial::Padded;
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub use portable::{portable32, portable64};
 pub use sink::{SharedWriter, Sink};
+#[cfg(feature = "test_support")]
+pub use source::Memory;
 pub use source::Source;
 pub use swizzle::Shuffle;
 pub use vector::{Int, Lane, Vector};

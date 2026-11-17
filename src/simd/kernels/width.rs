@@ -1,4 +1,4 @@
-//! For `Bun.stringWidth`.
+//! Ports of highway_strings.cpp, for `Bun.stringWidth`.
 
 const BEL: u8 = 0x07;
 const CAN: u8 = 0x18;

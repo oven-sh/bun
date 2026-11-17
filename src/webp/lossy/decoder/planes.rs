@@ -1,6 +1,6 @@
 //! A row of macroblocks on its way through the loop filter to RGBA.
 
-use bun_highway::webp::{self as kernels, FilterStrength, ROW_STEP};
+use bun_simd_kernels::webp::{self as kernels, FilterStrength, ROW_SLACK, ROW_STEP};
 
 use super::header::FilterType;
 use super::reconstruct::Samples;
@@ -12,6 +12,7 @@ use crate::vec;
 
 /// In front of each row. Chroma has its first sample repeated there.
 const MARGIN: usize = 16;
+const _: () = assert!(MARGIN >= ROW_SLACK);
 
 /// One channel of the row of macroblocks, below the last rows of the one above.
 struct Plane<'a> {
@@ -81,21 +82,22 @@ impl Plane<'_> {
 
 /// The chroma of the two rows of pixels between two rows of a `Plane`.
 struct Upsampled<'a> {
-    rows: [&'a mut [u8]; 2],
+    /// One in each half.
+    rows: &'a mut [u8],
     pairs: usize,
 }
 
 impl Upsampled<'_> {
     #[inline(always)]
-    fn fill(&mut self, plane: &Plane, rows: [usize; 2]) {
-        let to = self.rows.each_mut().map(|row| &mut **row);
-        kernels::upsample(rows.map(|row| plane.row(row, 1)), to, self.pairs);
+    fn fill(&mut self, plane: &Plane, [upper, lower]: [usize; 2]) {
+        let (from, distance) = (plane.row(upper, 1), (lower - upper) * plane.stride);
+        known(kernels::upsample(from, distance, self.rows, self.pairs));
     }
 
     /// The first sample is outside of the picture.
     fn row(&self, is_lower: bool) -> &[u8] {
-        let row = self.rows.at(usize::from(is_lower));
-        row.get(1..).unwrap_or_default()
+        let start = if is_lower { self.rows.len() / 2 } else { 0 };
+        self.rows.get(start + 1..).unwrap_or_default()
     }
 }
 
@@ -142,12 +144,10 @@ impl<'a> Planes<'a> {
         let uv_len = (kept_chroma_rows + 8) * uv_stride + MARGIN;
         let pairs = width / 2 + 1;
         let row_len = 2 * pairs.next_multiple_of(ROW_STEP) + MARGIN;
-        let lens = [
-            y_len, uv_len, uv_len, row_len, row_len, row_len, row_len, padded,
-        ];
+        let lens = [y_len, uv_len, uv_len, 2 * row_len, 2 * row_len, padded];
         *memory = vec::filled(0, lens.iter().sum())?;
         let mut rest = memory.as_mut_slice();
-        let [y, u, v, upper_u, lower_u, upper_v, lower_v, opaque] =
+        let [y, u, v, upsampled_u, upsampled_v, opaque] =
             lens.map(|len| rest.split_off_mut(..len).unwrap_or_default());
         opaque.fill(255);
         let plane = |samples, stride, kept_rows| Plane {
@@ -160,8 +160,8 @@ impl<'a> Planes<'a> {
             y: plane(y, y_stride, 2 * kept_chroma_rows),
             u: plane(u, uv_stride, kept_chroma_rows),
             v: plane(v, uv_stride, kept_chroma_rows),
-            upsampled_u: upsampled([upper_u, lower_u]),
-            upsampled_v: upsampled([upper_v, lower_v]),
+            upsampled_u: upsampled(upsampled_u),
+            upsampled_v: upsampled(upsampled_v),
             filter_type,
             width,
             height,
@@ -183,14 +183,14 @@ impl<'a> Planes<'a> {
 
     /// All macroblocks of row `y` are stored.
     pub(super) fn finish_row(&mut self, y: usize, strengths: &[FilterStrength]) {
-        match self.filter_type {
-            FilterType::None => {}
+        known(match self.filter_type {
+            FilterType::None => Some(()),
             FilterType::Simple => kernels::filter_simply(self.y.for_filter(), strengths, y > 0),
             FilterType::Normal => {
                 let planes = [&mut self.y, &mut self.u, &mut self.v].map(Plane::for_filter);
-                kernels::filter_normally(planes, strengths, y > 0);
+                kernels::filter_normally(planes, strengths, y > 0)
             }
-        }
+        });
         let bottom = 16 * (y + 1);
         let end = match bottom < self.height {
             true => bottom + 1 - self.y.kept_rows,
@@ -229,7 +229,8 @@ impl<'a> Planes<'a> {
                 self.upsampled_v.row(is_lower),
                 alpha.unwrap_or(self.opaque),
             ];
-            kernels::yuv_to_rgba(yuva, &mut self.pixels, start, self.width);
+            let pixels = &mut self.pixels;
+            known(kernels::yuv_to_rgba(yuva, pixels, start, self.width));
         }
     }
 
@@ -256,7 +257,7 @@ impl<'a> Planes<'a> {
             .as_mut()
             .and_then(|it| known(it.next(count, pixels)));
         let yuva = [&luma, &u, &v, alpha.unwrap_or(self.opaque)];
-        kernels::yuv_to_rgba(yuva, &mut self.pixels, start, count);
+        known(kernels::yuv_to_rgba(yuva, &mut self.pixels, start, count));
     }
 
     pub(super) fn into_pixels(self) -> Vec<[u8; 4]> {

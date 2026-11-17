@@ -8,3 +8,7 @@ path = "lib.rs"
 
 [lints]
 workspace = true
+
+[dependencies]
+bstr.workspace = true
+

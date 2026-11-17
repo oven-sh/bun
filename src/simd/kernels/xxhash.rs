@@ -1,8 +1,7 @@
-//! XXH32, XXH64 and XXH3 of xxHash.
-use bun_simd::{Isa, SharedU8, Source, opaque};
+//! Port of xxhash3.cpp. The constants are those of xxHash.
+use crate::Byte;
+use bun_simd::{Isa, SharedU8, opaque};
 use core::slice;
-
-trait Byte = Source<Lane = u8>;
 
 const PRIME32_1: u32 = 0x9E3779B1;
 const PRIME32_2: u32 = 0x85EBCA77;

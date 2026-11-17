@@ -1,4 +1,4 @@
-//! Bun's kernels on `bun_simd`.
+//! Bun's kernels on `bun_simd`, checked against those on Highway.
 #![feature(loop_hints, trait_alias)]
 #![feature(const_array, const_closures, const_trait_impl)]
 #![forbid(unsafe_code)]
@@ -7,8 +7,10 @@
 // The copies for the targets look alike.
 #![cfg_attr(mordant, allow(reimplemented_helper))]
 
+mod adler32;
 mod byte_set;
 mod convert;
+mod crc32;
 mod hex;
 mod image;
 mod jpeg;
@@ -20,14 +22,17 @@ mod png;
 mod scanner;
 mod search;
 mod sourcemap;
+mod webp_decoder;
+mod webp_encoder;
 mod width;
 mod words;
 mod xml;
 mod xxhash;
 
-use bun_simd::SharedU8;
+use bun_simd::{SharedU8, Source};
 use memmem::index_with;
 
+pub use adler32::{adler32, adler32_shared};
 pub use byte_set::ByteSet;
 pub use convert::simd::{
     bswap16_shared, bswap32_shared, bswap64_shared, copy_ascii_prefix_to_shared,
@@ -35,6 +40,7 @@ pub use convert::simd::{
     copy_u16_to_u8, fill_with_mask, fill_with_mask_from_shared, lower_ascii, lower_ascii16,
     mask_in_place,
 };
+pub use crc32::crc32;
 pub use hex::simd::{
     decode_hex, decode_hex_to_shared, decode_hex16, decode_hex16_to_shared, encode_hex_lower,
     encode_hex_lower_shared,
@@ -68,7 +74,7 @@ pub use search::simd::{
     last_index_of_char16,
 };
 pub use sourcemap::simd::{count_mapping_delims, parse_mappings};
-pub use sourcemap::{Columns, ColumnsOut, MappingsState};
+pub use sourcemap::{Columns, ColumnsFilled, ColumnsOut, MappingsState};
 pub use width::simd::{
     count_printable_ascii16, visible_latin1_width, visible_latin1_width_exclude_ansi,
     visible_utf16_width,
@@ -80,6 +86,23 @@ pub use xml::simd::{
 };
 pub use xxhash::XxHash64State;
 pub use xxhash::simd::{xxhash3_64_shared, xxhash32, xxhash32_shared, xxhash64, xxhash64_shared};
+
+/// `None` means that the arguments do not fit together. A part of the work may be done.
+pub mod webp {
+    pub use crate::webp_decoder::simd::{
+        filter_normally, filter_simply, inverse_dct, reconstruct_subblocks, undo_cross_color,
+        undo_prediction, upsample,
+    };
+    pub use crate::webp_decoder::{FilterStrength, Plane, ROW_SLACK, ROW_STEP, yuv_to_rgba};
+    pub use crate::webp_encoder::simd::{
+        analyze, convert, try_chroma_modes, try_diagonal_modes, try_luma_modes, try_straight_modes,
+    };
+    pub use crate::webp_encoder::{
+        Block, Candidates, ChromaCandidates, Context, Edges, GammaTable, Histograms, IS_FLAT,
+        LinearColors, LumaCandidates, LumaSaturation, LumaSource, MAX_SYMBOL, Macroblock,
+        Quantizer, Scratch, SubblockCandidates,
+    };
+}
 
 #[inline(always)]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -167,4 +190,16 @@ pub fn line_starts(text: &[u8]) -> Vec<u32> {
         scanner::simd::line_starts(text, out)
     });
     starts
+}
+
+trait Byte = Source<Lane = u8>;
+
+/// In a long input, it is worth a call to have no load cross a cache line.
+#[inline(always)]
+fn in_aligned_parts<B>(mut state: u32, mut bytes: &[B], update: impl Fn(u32, &[B]) -> u32) -> u32 {
+    if bytes.len() > 65536 {
+        let (head, rest) = bytes.split_at(bytes.as_ptr().addr().wrapping_neg() % 64);
+        (state, bytes) = (update(state, head), rest);
+    }
+    update(state, bytes)
 }

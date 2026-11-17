@@ -1,3 +1,4 @@
+//! Port of highway_byte_set.cpp.
 use core::ops::RangeInclusive;
 
 /// Byte `b` is a member if `rows[b >> 4] & columns[b & 15]` is not zero.

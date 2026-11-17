@@ -4,9 +4,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::fmt::Debug;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use bun_highway::webp::{self as kernels, FilterStrength, LumaCandidates, Macroblock, Plane};
 use bun_webp::{Compression, Decoder, Error, Result, encode};
 
 thread_local! {
@@ -36,78 +34,6 @@ unsafe impl GlobalAlloc for Refusing {
 
 #[global_allocator]
 static ALLOCATOR: Refusing = Refusing;
-
-/// The kernels ask for no memory, and are not linked.
-mod native_test_shims {
-    use super::{LumaCandidates, Macroblock};
-
-    type P = *const u8;
-
-    macro_rules! do_nothing {
-        ($(fn $name:ident($($argument:ty),*) $(-> $result:ty)?;)*) => {$(
-            #[unsafe(no_mangle)]
-            extern "C" fn $name($(_: $argument),*) $(-> $result)? {
-                Default::default()
-            }
-        )*};
-    }
-
-    do_nothing! {
-        fn highway_webp_inverse_dct(P, u32);
-        fn highway_webp_reconstruct_subblocks(P, P, P, P, P, P);
-        fn highway_webp_filter_normally(P, usize, P, P, usize, P, usize, bool);
-        fn highway_webp_filter_simply(P, usize, P, usize, bool);
-        fn highway_webp_upsample(P, P, P, P, usize);
-        fn highway_webp_undo_prediction(P, P, usize, P, u32);
-        fn highway_webp_undo_cross_color(P, usize, P, u32);
-        fn highway_webp_analyze(P, P, P, P);
-        fn highway_webp_try_straight_modes(u64, u64, u8, usize, P, P, i32, P) -> u8;
-        fn highway_webp_try_diagonal_modes(u64, u64, u8, usize, P, P, i32, P) -> u8;
-        fn highway_webp_try_chroma_modes(P, P, u64, P, P, P) -> bool;
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_webp_yuv_to_rgba(
-        _: P,
-        _: P,
-        _: P,
-        _: P,
-        rgba: *mut [u8; 4],
-        width: usize,
-    ) {
-        // SAFETY: there is room for `width` pixels, which the caller takes to be written.
-        unsafe { rgba.write_bytes(0, width) };
-    }
-
-    #[unsafe(no_mangle)]
-    extern "C" fn highway_webp_convert(
-        &[&[[red, ..], ..], ..]: &[&[[u8; 4]; 16]; 16],
-        _: P,
-        _: P,
-        out: &mut Macroblock,
-    ) {
-        out.luma[0][0][0] = red;
-    }
-
-    /// A macroblock that starts with red gets subblock modes. The others get many tokens, which make no sense, and some
-    /// levels of 1, whose signs make the frame outgrow its room.
-    #[unsafe(no_mangle)]
-    extern "C" fn highway_webp_try_luma_modes(
-        samples: &Macroblock,
-        _: P,
-        _: u64,
-        _: u8,
-        _: P,
-        _: P,
-        _: P,
-        out: &mut LumaCandidates,
-    ) -> u8 {
-        out.squared_errors = [(i32::from(samples.luma[0][0][0]) - 1) << 20; 4];
-        out.ends = [[[[4 * 16; _]; _]; _]; _];
-        out.blocks[0].symbols = [[[0x0101; _]; _]; _];
-        0
-    }
-}
 
 /// Once for each allocation. One that cannot be refused ends the process.
 fn refuse_each_allocation<T: PartialEq + Debug>(run: impl Fn() -> Result<T>) -> T {
@@ -189,6 +115,8 @@ fn refused_memory_is_an_error_when_lossy() {
     let lossy = Compression::Lossy { quality: 80 };
     let pictures: [Paint; _] = [
         |_, _, _| [1, 0, 0, 255],
+        // Subblock modes, and several pages of tokens.
+        |_, _, [r, g, b, _]| [r, g, b, 255],
         // Alpha that does not compress, with a palette, and with a filter.
         |_, _, [n, ..]| [1, 0, 0, n.max(1)],
         |x, _, _| [1, 0, 0, 1 + x as u8 % 3],
@@ -198,7 +126,7 @@ fn refused_memory_is_an_error_when_lossy() {
         back(&there(60, 33, lossy, paint));
         back(&there(33, 60, lossy, paint));
     }
-    // Some of these frames end just where their room does, and some have several pages of tokens.
+    // Some of these frames end just where their room does.
     for macroblocks in 1..12 {
         there(16 * macroblocks, 16, lossy, |_, _, _| [0, 0, 0, 255]);
     }
@@ -266,95 +194,4 @@ fn an_empty_profile_is_none() {
     file[34] = 0;
     let image = Decoder::new(&file).unwrap().decode().unwrap();
     assert_eq!(image.icc_profile, None);
-}
-
-/// By an assertion, as an overflow stops debug builds only.
-fn is_stopped(call: impl FnOnce()) -> bool {
-    catch_unwind(AssertUnwindSafe(call)).is_err_and(|message| {
-        let formatted = message.downcast_ref().map(String::as_str);
-        let message = formatted.or_else(|| message.downcast_ref().copied());
-        message.unwrap().starts_with("assertion")
-    })
-}
-
-/// `call` gets through with `enough`, and not with one less of any of them. Returns what it returns with `enough`.
-fn needs<const N: usize, T>(enough: [usize; N], call: impl Fn([usize; N]) -> T) -> T {
-    for i in 0..N {
-        let mut fewer = enough;
-        fewer[i] -= 1;
-        assert!(is_stopped(|| drop(call(fewer))), "{fewer:?}");
-    }
-    call(enough)
-}
-
-#[test]
-fn the_filters_get_whole_macroblocks_and_the_rows_above() {
-    fn plane(samples: &mut [u8], stride: usize, start: usize) -> Plane<'_> {
-        Plane {
-            samples,
-            stride,
-            start,
-        }
-    }
-    let strengths = [FilterStrength::default(); 2];
-    needs([32, 2 * 32, 16 * 32], |[stride, above, below]| {
-        let mut y = vec![0; above + below];
-        kernels::filter_simply(plane(&mut y, stride, above), &strengths, true);
-    });
-    let behind = || kernels::filter_simply(plane(&mut [0; 64], 32, 1024), &strengths, true);
-    assert!(is_stopped(behind));
-    let [y, u, v] = [16, 8, 8].map(|size| [2 * size, 4 * 2 * size, size * 2 * size]);
-    let normally = |planes: [[usize; 3]; 3]| {
-        let mut planes =
-            planes.map(|[stride, above, below]| (vec![0; above + below], stride, above));
-        let planes = planes.each_mut().map(|it| plane(&mut it.0, it.1, it.2));
-        kernels::filter_normally(planes, &strengths, true);
-    };
-    needs(y, |y| normally([y, u, v]));
-    needs(u, |u| normally([y, u, v]));
-    needs(v, |v| normally([y, u, v]));
-    needs([16], |[stride]| {
-        normally([y, [stride, 64, 128], [stride, 64, 128]])
-    });
-    needs([17], |[stride]| {
-        normally([y, [stride, 68, 136], [17, 68, 136]])
-    });
-}
-
-#[test]
-fn rows_are_padded_to_whole_steps() {
-    needs([65, 65, 128, 128], |lens| {
-        let [upper, lower, mut to_upper, mut to_lower] = lens.map(|len| vec![0; len]);
-        kernels::upsample([&upper, &lower], [&mut to_upper, &mut to_lower], 33);
-    });
-    let endless = || kernels::upsample([&[0]; 2], [&mut [], &mut []], usize::MAX);
-    assert!(is_stopped(endless));
-    let converted = needs([64, 64, 64, 64, 5, 33], |[y, u, v, alpha, len, room]| {
-        let yuva = [y, u, v, alpha].map(|len| vec![0; len]);
-        let mut rgba = Vec::with_capacity(5 + room);
-        rgba.resize(len, [1; 4]);
-        kernels::yuv_to_rgba(yuva.each_ref().map(Vec::as_slice), &mut rgba, 5, 33);
-        rgba.len()
-    });
-    assert_eq!(converted, 5 + 33);
-}
-
-#[test]
-fn every_pixel_has_a_tile() {
-    // So that one less is one bit too many.
-    let tile_bits = |spare: usize| 16 - spare as u32;
-    needs([9, 9, 3], |[row, above, tiles]| {
-        let [mut row, above, tiles] = [row, above, tiles].map(|len| vec![[0; 4]; len]);
-        kernels::undo_prediction(&mut row, &above, &tiles, 2);
-    });
-    needs([1, 1], |[len, spare]| {
-        let [mut row, above] = [len; 2].map(|len| vec![[0; 4]; len]);
-        kernels::undo_prediction(&mut row, &above, &[[0; 4]], tile_bits(spare));
-    });
-    needs([3], |[tiles]| {
-        kernels::undo_cross_color(&mut [[0; 4]; 9], &vec![[0; 4]; tiles], 2);
-    });
-    needs([1], |[spare]| {
-        kernels::undo_cross_color(&mut [[0; 4]], &[[0; 4]], tile_bits(spare));
-    });
 }

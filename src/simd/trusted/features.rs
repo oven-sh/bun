@@ -76,6 +76,11 @@ impl<A: Arch> Features<A> {
         Self(bits, PhantomData)
     }
 
+    #[inline]
+    pub const fn bits(self) -> u64 {
+        self.0
+    }
+
     pub(crate) const fn index_of(name: &str) -> usize {
         let mut i = 0;
         while !A::FEATURES[i].name.eq_ignore_ascii_case(name) {

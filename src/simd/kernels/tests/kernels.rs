@@ -1,7 +1,7 @@
 //! Every kernel on every target, against a plain loop or the portable target.
 #![forbid(unsafe_code)]
 mod common;
-use bun_simd::{Out, SharedOutU8, SharedU8, Target, limit_to};
+use bun_simd::{Out, SharedOutU8, SharedU8, Target, limit_to, limit_to_with};
 use bun_simd_kernels::{self as kernels, Filter, MappingsState};
 use common::{check, check_against_portable, random, sample, targets};
 use core::f64::consts::PI;
@@ -324,6 +324,15 @@ fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) 
             check_both(&text, b"zyx");
         }
     }
+    // It does so only if much follows.
+    for (at, other) in (0..2).flat_map(|i| (1990 << i..2100 << i).map(move |at| (at, 6500 << i))) {
+        for other in [other - at % 600, other] {
+            let mut text = [&vec![b'x'; at][..], b"xyz", &vec![b'x'; other]].concat();
+            check_both(&text, b"xyz");
+            text.reverse();
+            check_both(&text, b"zyx");
+        }
+    }
     // One unit is rare, wherever it is.
     for (letters, len) in [
         (&b"ab"[..], 33),
@@ -399,6 +408,16 @@ fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) 
             .for_each(|i| text[i] = b'#');
         text.splice(len * joined..len * joined, needle.iter().copied());
         check_both(&text, needle);
+    }
+    // Where it is split depends on the direction.
+    for (len, runs) in [51, 107, 203]
+        .map(|len| (1..30).map(move |it| (len, it)))
+        .into_iter()
+        .flatten()
+    {
+        let needle = &b"aabb".repeat(51)[..len];
+        let side = [&needle[..len - 4], b"#"].concat().repeat(runs);
+        check_both(&[&side, needle, b"#", &side].concat(), needle);
     }
     let runs = b"aaaaaaaaaaaaaaaaaaac".repeat(100);
     (600..2000).for_each(|len| check_both(&runs[7..len], &[b'a'; 20]));
@@ -489,6 +508,7 @@ fn memmem() {
 #[cfg_attr(miri, ignore = "reads only a slice")]
 fn memmem16() {
     check_memmem(|b| u16::from(b) << 7, SEARCHES16);
+    check_memmem(|b| u16::from(b) | 0x8000, SEARCHES16);
 }
 
 /// Does not end unless the time is linear.
@@ -1459,6 +1479,56 @@ fn xxhash() {
     }
 }
 
+fn crc32_by_bits(crc: u32, bytes: &[u8]) -> u32 {
+    let step = |crc: u32, _| crc >> 1 ^ if crc & 1 != 0 { 0xEDB8_8320 } else { 0 };
+    !(bytes.iter()).fold(!crc, |crc, &byte| (0..8).fold(crc ^ u32::from(byte), step))
+}
+
+fn adler32_by_bytes(bytes: &[u8]) -> u32 {
+    let (mut low, mut high) = (1, 0);
+    for &byte in bytes {
+        low = (low + u32::from(byte)) % 65521;
+        high = (high + low) % 65521;
+    }
+    high << 16 | low
+}
+
+#[test]
+fn checksums() {
+    fn check(want: u32, kernel: impl Fn() -> u32) {
+        let more = ["pclmulqdq", "vpclmulqdq", "crc", "aes+sha3+dotprod"];
+        for target in targets() {
+            assert_eq!(kernel(), want, "{target:?}");
+            for more in more.iter().filter(|_| target.arch().is_some()) {
+                limit_to_with(target, more.split('+'));
+                assert_eq!(kernel(), want, "{target:?}+{more}");
+            }
+        }
+    }
+    assert_eq!(crc32_by_bits(0, b"123456789"), 0xCBF4_3926);
+    assert_eq!(adler32_by_bytes(b"Wikipedia"), 0x11E6_0398);
+    let lengths: Vec<usize> = match cfg!(miri) {
+        true => vec![3, 40, 700],
+        false => (0..2400)
+            .chain([4095, 4096, 4097, 5375, 5376, 5377, 5503, 5504, 5505])
+            .chain([5552, 11_100, 65_536, 65_537, 70_001])
+            .collect(),
+    };
+    let mut below = random();
+    for len in lengths {
+        let any = (0..len).map(|_| below(256) as u8).collect();
+        for bytes in [any, vec![255; len]] {
+            let bytes = &bytes[below(64).min(len / 4096)..];
+            let crc = [0, below(1 << 31) as u32 * 2 + 1][len % 2];
+            check(crc32_by_bits(crc, bytes), || kernels::crc32(crc, bytes));
+            check(adler32_by_bytes(bytes), || kernels::adler32(bytes));
+            from_shared(bytes, |t| {
+                check(adler32_by_bytes(bytes), || kernels::adler32_shared(t));
+            });
+        }
+    }
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn xxhash_of_each_length() {
@@ -1480,6 +1550,31 @@ fn xxhash_of_each_length() {
         });
         check(0x5b38_37bf_69e3_e093, || sum(t, kernels::xxhash64_shared));
         check(0xb3b5_0c44_a8cd_22f2, || sum(t, kernels::xxhash3_64_shared));
+    });
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn xxhash_wraps_around() {
+    // Each adds up to all ones with a constant of the hashes.
+    let seeds = [0, 0x27D4_EB2F_1656_67C5, 0x1656_67B1, 0x6782_737B_EA42_39B9].map(|it| !it);
+    let sum = |hash: &dyn Fn(u64, &[u8]) -> u64| {
+        let of = |seed| (0..=40).map(move |len| hash(seed, &[0; 40][..len]));
+        seeds.into_iter().flat_map(of).fold(0, u64::wrapping_add)
+    };
+    check(0x50_79a4_a962, || {
+        sum(&|seed, t| kernels::xxhash32(seed as u32, t).into())
+    });
+    check(0x108b_1a1c_9eaf_c9d5, || sum(&kernels::xxhash64));
+    check(0x108b_1a1c_9eaf_c9d5, || {
+        sum(&|seed, t| {
+            let mut state = kernels::XxHash64State::new(seed);
+            state.update(t);
+            state.digest()
+        })
+    });
+    check(0x4483_2bee_5cad_6b4b, || {
+        sum(&|seed, t| from_shared(t, |t| kernels::xxhash3_64_shared(seed, t)))
     });
 }
 
@@ -1717,7 +1812,7 @@ impl Mappings {
             &mut now.name_idx,
         ];
         for (field, &delta) in fields.into_iter().zip(deltas) {
-            *field += delta;
+            *field = field.wrapping_add(delta);
             push_vlq(&mut self.text, delta);
         }
         now.needs_sort |= deltas[0] < 0;
@@ -1858,7 +1953,10 @@ fn check_odd_mappings(start: i32, step: i32) {
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn mappings_at_the_limits() {
-    let mut mappings = Mappings::new(MappingsState::default());
+    let mut mappings = Mappings::new(MappingsState {
+        name_idx: i32::MAX,
+        ..Default::default()
+    });
     for _ in 0..9 {
         mappings.push_segment(&[i32::MAX, 2, 0, 0], 0);
         mappings.push_segment(&[-i32::MAX], 0);

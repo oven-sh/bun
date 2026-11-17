@@ -1,3 +1,4 @@
+//! Ports of highway_strings.cpp: hexadecimal.
 use bun_simd::{Isa, Out, SharedOutU8, SharedU8, SharedWriter, Sink, Source};
 
 #[bun_simd::foreach_target]

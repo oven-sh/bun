@@ -1,4 +1,4 @@
-//! Where a character is, and how many there are.
+//! Ports of highway_strings.cpp: where a character is, and how many there are.
 use bun_simd::SharedU8;
 
 /// For each low half of a byte, a bit for each high half: 0 to 7, and 8 to 15.

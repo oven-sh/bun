@@ -1,6 +1,6 @@
 //! Which copy runs, and which items the macros accept.
 #![forbid(unsafe_code)]
-use bun_simd::{Isa, Target, limit_to};
+use bun_simd::{Isa, Target, limit_to, limit_to_named, limit_to_with};
 
 struct Kernel(u8);
 struct AtomicFn(u8);
@@ -185,5 +185,52 @@ fn portable_copies_take_the_paths_of_the_others() {
             Neon | Portable => ([16, 0], [0, 1, 1, 0, 1, 0]),
         };
         assert_eq!(simd::properties(), want, "{target:?}");
+    }
+}
+
+fn neither() -> &'static str {
+    "neither"
+}
+
+#[bun_simd::foreach_target(avx2 + "vaes", sse4 + "aes" + "pclmulqdq", sse4, neon + "aes")]
+mod listed_simd {
+    #[export(or = neither)]
+    pub fn module() -> &'static str {
+        module_path!().rsplit("::").next().unwrap()
+    }
+}
+
+#[bun_simd::foreach_target(avx512_skx, sse4, portable)]
+mod capped_simd {
+    #[export(up_to = avx2)]
+    pub fn module() -> &'static str {
+        stringify!(this_target)
+    }
+}
+
+#[test]
+fn further_features() {
+    let has = |name| bun_simd::detected().names().any(|it| it == name);
+    for target in Target::ALL.into_iter().filter(|it| it.is_supported()) {
+        let plain = match target.arch() {
+            Some("x86_64") => "sse4",
+            _ => "neither",
+        };
+        let best = match (target, target.arch()) {
+            (Target::Sse4, _) if has("aes") && has("pclmulqdq") => "sse4_aes_pclmulqdq",
+            (Target::Sse4, _) => plain,
+            (_, Some("x86_64")) if has("vaes") => "avx2_vaes",
+            (_, Some("x86_64")) if has("aes") => "sse4_aes_pclmulqdq",
+            (_, Some("aarch64")) if has("aes") => "neon_aes",
+            _ => plain,
+        };
+        limit_to_with(target, ["vaes", "aes", "pclmulqdq", "unknown"]);
+        assert_eq!(listed_simd::module(), best, "{target:?}");
+        limit_to(target);
+        assert_eq!(listed_simd::module(), plain, "{target:?}");
+        limit_to_named(format!("{}+vaes+aes+pclmulqdq", target.name()).as_bytes());
+        limit_to_named(b"none+aes");
+        assert_eq!(listed_simd::module(), best, "{target:?}");
+        assert_ne!(capped_simd::module(), "avx512_skx", "{target:?}");
     }
 }

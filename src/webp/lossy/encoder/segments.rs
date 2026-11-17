@@ -1,6 +1,6 @@
 //! How coarsely the macroblocks of each segment are quantized, and how much they are filtered afterwards.
 
-use bun_highway::webp::Quantizer;
+use bun_simd_kernels::webp::Quantizer;
 
 use super::analysis::Analysis;
 use super::cost::bit_cost;
@@ -13,23 +13,6 @@ use crate::vec;
 const MAX_FILTER_LEVEL: i32 = 63;
 pub(super) const CHROMA_DC_DELTA: i8 = -2;
 
-// https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/quant_enc.c#L213
-fn quantizer(steps: [u16; 2], biases: [u16; 2], sharpening: [[u16; 4]; 4]) -> Quantizer {
-    let rows = |values: [u16; 2]| {
-        let [dc, ac] = values.map(|it| [it as i16; 2]);
-        [[dc, ac, ac, ac], [ac; 4]]
-    };
-    // For a step of 4, one less makes no difference.
-    let reciprocals = steps.map(|step| ((1 << 17) / u32::from(step.max(4))).min(0x7fff) as u16);
-    Quantizer {
-        steps: rows(steps),
-        reciprocals: rows(reciprocals),
-        doubled_reciprocals: rows(reciprocals.map(|it| 2 * it)),
-        limits: rows(biases.map(|bias| ((128 - bias) << 10) - 1)),
-        sharpening: sharpening.map(|row| row.map(|it| [((it * steps[1]) >> 11) as i16; 2])),
-    }
-}
-
 fn y2_ac_step(index: u8) -> u16 {
     (AC_QUANTIZERS.at(index.into()) * 155 / 100).max(8)
 }
@@ -41,7 +24,6 @@ fn average_step([dc, ac]: [u16; 2]) -> i32 {
 /// What the choice of modes for a macroblock goes by.
 pub(super) struct Coding {
     pub(super) luma: Quantizer,
-    pub(super) luma_without_dc: Quantizer,
     pub(super) y2: Quantizer,
     pub(super) chroma: Quantizer,
     pub(super) subblock_lambda: i32,
@@ -57,7 +39,7 @@ pub(super) struct Coding {
 impl Coding {
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/quant_enc.c#L244
     fn new(index: u8, segments: &Segments, max_subblock_modes_cost: i32) -> Self {
-        const SHARPENING: [[u16; 4]; 4] =
+        const SHARPENING: [[u8; 4]; 4] =
             [[0, 30, 60, 90], [30, 60, 90, 90], [60, 90, 90, 90], [90; 4]];
         let dc = |index: u8| u16::from(*DC_QUANTIZERS.at(index.into()));
         let ac = |index: u8| *AC_QUANTIZERS.at(index.into());
@@ -71,14 +53,10 @@ impl Coding {
         ];
         let [luma_step, y2_step, chroma_step] =
             [luma_steps, y2_steps, chroma_steps].map(average_step);
-        let luma = quantizer(luma_steps, [96, 110], SHARPENING);
-        let mut luma_without_dc = luma;
-        luma_without_dc.reciprocals[0][0] = [0; 2];
         Self {
-            luma,
-            luma_without_dc,
-            y2: quantizer(y2_steps, [96, 108], [[0; 4]; 4]),
-            chroma: quantizer(chroma_steps, [110, 115], [[0; 4]; 4]),
+            luma: Quantizer::new(luma_steps, [96, 110], SHARPENING),
+            y2: Quantizer::new(y2_steps, [96, 108], [[0; 4]; 4]),
+            chroma: Quantizer::new(chroma_steps, [110, 115], [[0; 4]; 4]),
             subblock_lambda: ((3 * luma_step * luma_step) >> 7).max(1),
             luma_lambda: (3 * y2_step * y2_step).into(),
             chroma_lambda: ((3 * chroma_step * chroma_step) >> 6).max(1).into(),
@@ -262,7 +240,7 @@ mod tests {
         assert_eq!([level(0, 255), level(0, 0), level(100, 0)], [36, 63, 0]);
         let segments = segments(0, 255);
         assert_eq!(segments.chroma_ac_delta, 6);
-        let [[dc, ac, ..], _] = Coding::new(127, &segments, 0).chroma.steps;
-        assert_eq!([dc, ac], [[132; 2], [284; 2]]);
+        let [[dc, _, ac, ..], _] = Coding::new(127, &segments, 0).chroma.steps;
+        assert_eq!([dc, ac], [132, 284]);
     }
 }

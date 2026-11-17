@@ -537,11 +537,7 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   if (unit.crateName === "bun_simd_kernels") {
     // Without LTO, another crate's instance of a generic is a call in a vector loop.
     args.push("-Zshare-generics=n");
-    // `core`'s precondition checks, which debug assertions turn on, keep each vector on the stack.
-    if (!cfg.hardened) args.push("-Zub-checks=n");
   }
-  // Its optimized loops would call the instances of crates that are not optimized.
-  if (cfg.debug && unit.crateName === "bun_simd_conformance") args.push("-Zshare-generics=n");
   if (!isHost && cfg.fuzzilli && /^bun_(aot|sema)(_|$)/.test(unit.crateName)) {
     args.push(
       "-Cpasses=sancov-module",

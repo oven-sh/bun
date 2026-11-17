@@ -872,6 +872,29 @@ mod simd {
 # fn main() {}
 ```
 
+With brackets of the macro at the end:
+
+```rust,compile_fail,E0658
+macro_rules! take {
+    (then $($meta:tt)*) => { #[cfg_attr(all(), $($meta)*)] struct S; };
+    (#$group:tt $(#$more:tt)* fn f $($start:tt)*) => { take! { then $($start)* $group } };
+    ($($group:tt)*) => { "" };
+}
+#[bun_simd::foreach_target]
+mod simd {
+    take! { fn f rustc_dummy = take! }
+}
+# fn main() {}
+```
+
+After the attribute that has the right:
+
+```rust,compile_fail,E0658
+#[bun_simd::force_inline]
+#[rustc_nounwind]
+fn f() {}
+```
+
 A macro in the place of the module, which would get all that is added:
 
 ```rust,compile_fail
@@ -928,6 +951,24 @@ mod simd {
 }
 ```
 
+The same, from a macro in the module:
+
+```rust,compile_fail,E0308
+#[bun_simd::foreach_target]
+mod simd {
+    macro_rules! make {
+        ($vis:vis, $name:ident) => {
+            #[inline(always)]
+            $vis fn $name() {}
+        };
+    }
+    make!(pub(crate), kernel);
+    fn f() -> fn() {
+        kernel
+    }
+}
+```
+
 A lane of one's own:
 
 ```rust,compile_fail,E0277
@@ -968,9 +1009,82 @@ mod portable {
     pub fn f() {}
 }
 bun_simd::export! {
-    native[is_allowed (all()) Sse4 portable ["sse2"]] portable_for_tests[]
+    native[is_allowed (all()) Sse4 portable ["sse2"]] portable_for_tests[] or[]
     #[unsafe(export_name = "g")]
     fn f()
+}
+# fn main() {}
+```
+
+In a macro whose path ends with a token of `foreach_width`:
+
+```rust,no_run
+#![expect(unsafe_code)]
+mod isa {
+    pub use core::arch::global_asm as x128;
+}
+macro_rules! isa {
+    ($text:literal) => {};
+}
+#[bun_simd::foreach_width]
+mod width {
+    isa!("nop");
+}
+# fn main() {}
+```
+
+In a macro that has the name of an added attribute:
+
+```rust,no_run
+#![expect(unsafe_code)]
+use core::arch::global_asm as inline;
+macro_rules! take {
+    (then $($call:tt)*) => { $($call)* };
+    (portable #[$name:tt] fn f $($rest:tt)*) => { take! { then $name $($rest)* } };
+    ($($other:tt)*) => {};
+}
+#[bun_simd::foreach_target]
+mod simd {
+    take! { this_target fn f !("nop"); }
+}
+# fn main() {}
+```
+
+Or that of what replaces `#[inline(never)]`:
+
+```rust,no_run
+#![expect(unsafe_code)]
+use core::arch::global_asm as inline;
+macro_rules! take {
+    (then $($call:tt)*) => { $($call)* };
+    (portable #[$name:tt] fn f $($rest:tt)*) => { take! { then $name $($rest)* } };
+    ($($other:tt)*) => {};
+}
+#[bun_simd::foreach_target]
+mod simd {
+    take! { this_target #[inline(never)] fn f !("nop"); }
+}
+# fn main() {}
+```
+
+Or that of an argument of `export!`:
+
+```rust,no_run
+#![expect(unsafe_code)]
+extern crate bun_simd as real;
+extern crate self as bun_simd;
+use {core::arch::global_asm as native, export::export, real::*};
+mod export {
+    macro_rules! export {
+        (then $($name:tt)*) => { $($name)*!("nop"); };
+        ($name:tt $($more:tt)*) => { export! { then $name } };
+    }
+    pub(crate) use export;
+}
+#[real::foreach_target]
+mod simd {
+    #[export]
+    fn f() {}
 }
 # fn main() {}
 ```
@@ -1057,4 +1171,56 @@ Features that are decoded from a lie:
 let before = bun_simd::detected().names().count();
 bun_simd_trusted::x86_64::decode(|_, _| [!0; 4], !0);
 assert_eq!(bun_simd::detected().names().count(), before);
+```
+
+## Further features
+
+An op needs its feature in the list of the module:
+
+```rust,compile_fail,E0133
+#[bun_simd::foreach_target(sse4, neon)]
+mod simd {
+    pub fn f(v: isa::U64) -> isa::U64 {
+        v.carryless_mul_lower(v)
+    }
+}
+# fn main() {}
+```
+
+```rust,no_run
+#[bun_simd::foreach_target(sse4 + "pclmulqdq", neon + "aes")]
+mod simd {
+    pub fn f(v: isa::U64) -> isa::U64 {
+        v.carryless_mul_lower(v)
+    }
+}
+# fn main() {}
+```
+
+What runs otherwise cannot need one:
+
+```rust,compile_fail,E0308
+#[bun_simd::foreach_target(sse4 + "pclmulqdq", neon + "aes")]
+mod simd {
+    #[export(or = g)]
+    pub fn f() {}
+}
+#[cfg_attr(target_arch = "x86_64", target_feature(enable = "avx2"))]
+#[cfg_attr(target_arch = "aarch64", target_feature(enable = "sve2"))]
+fn g() {}
+# fn main() {}
+```
+
+The best copy comes first:
+
+```rust,compile_fail
+#[bun_simd::foreach_target(sse4, avx2)]
+mod simd {}
+# fn main() {}
+```
+
+```rust,compile_fail
+#[bun_simd::foreach_target(sse4, sse4 + "bmi2")]
+mod simd {}
+# fn main() {}
 ```

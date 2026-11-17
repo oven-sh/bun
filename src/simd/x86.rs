@@ -108,6 +108,12 @@ impl<I: Xmm> Vector<u8, 16, I> {
     }
 
     #[inline]
+    #[target_feature(enable = "ssse3")]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        self.lookup(indices + 0x70) | upper.lookup(indices - 16)
+    }
+
+    #[inline]
     #[target_feature(enable = "sse2")]
     pub fn saturating_narrow(first: Vector<i16, 8, I>, second: Vector<i16, 8, I>) -> Self {
         Self::new(_mm_packus_epi16(first.0.into(), second.0.into()))
@@ -155,6 +161,18 @@ impl<I: Xmm> Vector<i16, 8, I> {
     }
 
     #[inline]
+    #[target_feature(enable = "sse2")]
+    pub fn mul_high(self, other: Self) -> Self {
+        Self::new(_mm_mulhi_epi16(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "ssse3")]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        Self::new(_mm_sign_epi16(self.0.into(), sign.0.into()))
+    }
+
+    #[inline]
     #[target_feature(enable = "ssse3")]
     pub fn saturating_pairwise_dot(a: Vector<u8, 16, I>, b: Vector<i8, 16, I>) -> Self {
         Self::new(_mm_maddubs_epi16(a.0.into(), b.0.into()))
@@ -169,11 +187,31 @@ impl<I: Xmm> Vector<i32, 4, I> {
     }
 }
 
+impl<I: Xmm> Vector<u32, 4, I> {
+    #[inline]
+    #[target_feature(enable = "sse2")]
+    pub fn distances(a: Vector<u8, 16, I>, b: Vector<u8, 16, I>) -> Self {
+        Self::new(_mm_sad_epu8(a.0.into(), b.0.into()))
+    }
+}
+
 impl<I: Xmm> Vector<u64, 2, I> {
     #[inline]
     #[target_feature(enable = "sse2")]
     pub fn sums_of_8(bytes: Vector<u8, 16, I>) -> Self {
         Self::new(_mm_sad_epu8(bytes.0.into(), _mm_setzero_si128()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "pclmulqdq")]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::new(_mm_clmulepi64_si128::<0x00>(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "pclmulqdq")]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        Self::new(_mm_clmulepi64_si128::<0x11>(self.0.into(), other.0.into()))
     }
 }
 
@@ -195,6 +233,12 @@ impl<I: Ymm> Vector<u8, 32, I> {
     #[target_feature(enable = "avx2")]
     pub fn lookup(self, indices: Self) -> Self {
         Self::new(_mm256_shuffle_epi8(self.0.into(), indices.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        self.lookup(indices + 0x70) | upper.lookup(indices - 16)
     }
 
     #[inline]
@@ -242,6 +286,18 @@ impl<I: Ymm> Vector<i16, 16, I> {
 
     #[inline]
     #[target_feature(enable = "avx2")]
+    pub fn mul_high(self, other: Self) -> Self {
+        Self::new(_mm256_mulhi_epi16(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        Self::new(_mm256_sign_epi16(self.0.into(), sign.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
     pub fn saturating_pairwise_dot(a: Vector<u8, 32, I>, b: Vector<i8, 32, I>) -> Self {
         Self::new(_mm256_maddubs_epi16(a.0.into(), b.0.into()))
     }
@@ -260,6 +316,24 @@ impl<I: Ymm> Vector<u64, 4, I> {
     #[target_feature(enable = "avx2")]
     pub fn sums_of_8(bytes: Vector<u8, 32, I>) -> Self {
         Self::new(_mm256_sad_epu8(bytes.0.into(), _mm256_setzero_si256()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "vpclmulqdq")]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::new(_mm256_clmulepi64_epi128::<0x00>(
+            self.0.into(),
+            other.0.into(),
+        ))
+    }
+
+    #[inline]
+    #[target_feature(enable = "vpclmulqdq")]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        Self::new(_mm256_clmulepi64_epi128::<0x11>(
+            self.0.into(),
+            other.0.into(),
+        ))
     }
 }
 
@@ -282,6 +356,12 @@ impl<I: Zmm> Vector<u8, 64, I> {
     #[target_feature(enable = "avx512bw")]
     pub fn lookup(self, indices: Self) -> Self {
         Self::new(_mm512_shuffle_epi8(self.0.into(), indices.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        self.lookup(indices + 0x70) | upper.lookup(indices - 16)
     }
 
     #[inline]
@@ -332,6 +412,17 @@ impl<I: Zmm> Vector<i16, 32, I> {
 
     #[inline]
     #[target_feature(enable = "avx512bw")]
+    pub fn mul_high(self, other: Self) -> Self {
+        Self::new(_mm512_mulhi_epi16(self.0.into(), other.0.into()))
+    }
+
+    #[inline(always)]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        sign.simd_lt(0).select(self.wrapping_neg(), self)
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
     pub fn saturating_pairwise_dot(a: Vector<u8, 64, I>, b: Vector<i8, 64, I>) -> Self {
         Self::new(_mm512_maddubs_epi16(a.0.into(), b.0.into()))
     }
@@ -343,6 +434,12 @@ impl<I: Zmm> Vector<i32, 16, I> {
     pub fn pairwise_dot(a: Vector<i16, 32, I>, b: Vector<i16, 32, I>) -> Self {
         Self::new(_mm512_madd_epi16(a.0.into(), b.0.into()))
     }
+
+    #[inline]
+    #[target_feature(enable = "avx512vnni")]
+    pub fn add_dot(self, a: Vector<u8, 64, I>, b: Vector<i8, 64, I>) -> Self {
+        Self::new(_mm512_dpbusd_epi32(self.0.into(), a.0.into(), b.0.into()))
+    }
 }
 
 impl<I: Zmm> Vector<u64, 8, I> {
@@ -350,6 +447,24 @@ impl<I: Zmm> Vector<u64, 8, I> {
     #[target_feature(enable = "avx512bw")]
     pub fn sums_of_8(bytes: Vector<u8, 64, I>) -> Self {
         Self::new(_mm512_sad_epu8(bytes.0.into(), _mm512_setzero_si512()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "vpclmulqdq,avx512f")]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::new(_mm512_clmulepi64_epi128::<0x00>(
+            self.0.into(),
+            other.0.into(),
+        ))
+    }
+
+    #[inline]
+    #[target_feature(enable = "vpclmulqdq,avx512f")]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        Self::new(_mm512_clmulepi64_epi128::<0x11>(
+            self.0.into(),
+            other.0.into(),
+        ))
     }
 }
 

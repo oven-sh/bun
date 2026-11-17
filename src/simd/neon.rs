@@ -2,7 +2,9 @@ use crate::isa::{bitmask_of, nearest_set};
 pub(crate) use crate::native::{load_shared, store_shared};
 pub(crate) use crate::portable::masked::*;
 pub use crate::portable::{bit_indices, prefix_xor};
+use crate::vector::{from_slice, to_array};
 use crate::{Int, opaque};
+use bun_simd_trusted::opaque16;
 use core::arch::aarch64::*;
 use core::array::from_fn;
 use core::simd::{ToBytes, prelude::*};
@@ -18,6 +20,19 @@ crate::isa::vector_types!(Neon<false>, 16);
 crate::native::x256_in_halves!("neon");
 
 type Lanes<T, const N: usize, const S: bool> = crate::Vector<T, N, Neon<S>>;
+
+/// A step of the CRC-32 of gzip, without the inversions.
+#[inline]
+#[target_feature(enable = "crc")]
+pub fn crc32_u8(crc: u32, byte: u8) -> u32 {
+    __crc32b(crc, byte)
+}
+
+#[inline]
+#[target_feature(enable = "crc")]
+pub fn crc32_u64(crc: u32, word: u64) -> u32 {
+    __crc32d(crc, word)
+}
 
 /// `addp`
 #[inline(always)]
@@ -36,7 +51,7 @@ fn select_indices<T: Int<N>, const N: usize, I: crate::Isa>(
     static INDICES: [u8; 65] = core::array::from_fn(const |i| i as u8);
     masks.fold(u8x16::splat(none), |others, (mask, start)| {
         let is_set = mask.to_vector().first_bytes::<16>();
-        let indices = u8x16::from_slice(&INDICES[offset + start * size_of::<T>()..]);
+        let indices = from_slice(&INDICES[offset + start * size_of::<T>()..]);
         is_set & indices | !is_set & others
     })
 }
@@ -45,6 +60,7 @@ impl<const S: bool> crate::Isa for Neon<S> {
     const MASKED_BYTES: usize = if S { 16 } else { 0 };
     const IS_SLOW_TO_SKIP_PAGE: bool = false;
     const HAS_INTERLEAVED_MEMORY: bool = true;
+    const HAS_PAIRWISE_DOT: bool = false;
     const HAS_SINGLE_CYCLE_OPS: bool = false;
 
     /// `shrn` leaves 4 bits per byte.
@@ -54,7 +70,7 @@ impl<const S: bool> crate::Isa for Neon<S> {
             return (mask.to_bitmask(), 1);
         }
         let nibbles = (u16x8::from_ne_bytes(mask.to_vector().first_bytes()) >> 4).cast::<u8>();
-        (u64::from_ne_bytes(nibbles.to_array()), 4 * size_of::<T>())
+        (u64::from_ne_bytes(to_array(nibbles)), 4 * size_of::<T>())
     }
 
     #[inline(always)]
@@ -90,9 +106,9 @@ impl<const S: bool> crate::Isa for Neon<S> {
             return (mask.to_bitmask() & !u64::MAX.unbounded_shl(lane as u32)).count_ones()
                 as usize;
         }
-        let ones = u8x16::from_slice(&STEP[16 - lane * size_of::<T>()..]);
+        let ones: u8x16 = from_slice(&STEP[16 - lane * size_of::<T>()..]);
         // LLVM would widen the lanes first.
-        let is_set = bun_simd_trusted::opaque16(mask.to_vector().first_bytes());
+        let is_set = opaque16(mask.to_vector().first_bytes());
         usize::from((is_set & ones).reduce_sum()) / size_of::<T>()
     }
 
@@ -130,6 +146,13 @@ impl<const S: bool> Lanes<u8, 16, S> {
     #[target_feature(enable = "neon")]
     pub fn lookup(self, indices: Self) -> Self {
         Self::new(vqtbl1q_u8(self.0.into(), indices.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        let both = uint8x16x2_t(self.0.into(), upper.0.into());
+        Self::new(vqtbl2q_u8(both, indices.0.into()))
     }
 
     #[inline]
@@ -185,6 +208,17 @@ impl<const S: bool> Lanes<i16, 8, S> {
         Self::new(vqrdmulhq_s16(self.0.into(), other.0.into()))
     }
 
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn mul_high(self, other: Self) -> Self {
+        Self::new(vqdmulhq_s16(self.0.into(), other.0.into())) >> 1
+    }
+
+    #[inline(always)]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        (self ^ sign >> 15) - (sign >> 15)
+    }
+
     #[inline(always)]
     pub fn saturating_pairwise_dot(a: Lanes<u8, 16, S>, b: Lanes<i8, 16, S>) -> Self {
         let (a, b) = (
@@ -205,6 +239,22 @@ impl<const S: bool> Lanes<i32, 4, S> {
         let low = vmull_s16(vget_low_s16(a), vget_low_s16(b));
         Self::new(vpaddq_s32(low, vmull_high_s16(a, b)))
     }
+
+    #[inline]
+    #[target_feature(enable = "dotprod")]
+    pub fn add_dot(self, a: Lanes<u8, 16, S>, b: Lanes<i8, 16, S>) -> Self {
+        debug_assert!(b.simd_ge(0).all());
+        let sums = vdotq_u32(self.0.cast().into(), a.0.into(), b.0.cast().into());
+        Self::new(u32x4::from(sums).cast())
+    }
+}
+
+impl<const S: bool> Lanes<u32, 4, S> {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn distances(a: Lanes<u8, 16, S>, b: Lanes<u8, 16, S>) -> Self {
+        Self::new(vpaddlq_u16(vpaddlq_u8(a.abs_diff(b).0.into())))
+    }
 }
 
 impl<const S: bool> Lanes<u64, 2, S> {
@@ -212,6 +262,19 @@ impl<const S: bool> Lanes<u64, 2, S> {
     #[target_feature(enable = "neon")]
     pub fn sums_of_8(bytes: Lanes<u8, 16, S>) -> Self {
         Self::new(vpaddlq_u32(vpaddlq_u16(vpaddlq_u8(bytes.0.into()))))
+    }
+
+    #[inline]
+    #[target_feature(enable = "aes")]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::new(vreinterpretq_u64_p128(vmull_p64(self[0], other[0])))
+    }
+
+    #[inline]
+    #[target_feature(enable = "aes")]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        let [a, b] = [self, other].map(|it| vreinterpretq_p64_u64(it.0.into()));
+        Self::new(vreinterpretq_u64_p128(vmull_high_p64(a, b)))
     }
 }
 

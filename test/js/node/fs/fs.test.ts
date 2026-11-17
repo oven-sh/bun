@@ -2800,6 +2800,11 @@ describe("readFileSync", () => {
       expect(text[i]).toBe(encoded[i]);
     }
   });
+
+  it("returns a file of over 256 KiB as hex", () => {
+    using dir = tempDir("fs-read-large-hex", { "large.bin": Buffer.alloc(300_000, "007fab", "hex") });
+    expect(readFileSync(join(String(dir), "large.bin"), "hex")).toBe(Buffer.alloc(600_000, "007fab").toString());
+  });
 });
 
 describe("readFile", () => {
@@ -6659,6 +6664,111 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
   // If bsize isn't the sentinel, the shim didn't interpose: fail loudly, don't skip.
   expect(result).toEqual({ type: TYPE, bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
   expect(proc.exitCode).toBe(0);
+});
+
+// FUSE and network file systems return EINTR from any call that a signal interrupts. libuv calls again.
+it.skipIf(!isGlibc || !cc)("calls that change files are made again after EINTR", async () => {
+  using dir = tempDir("fs-eintr", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+// Every other call on a file of the test fails.
+static int is_interrupted(const char *name, const char *path, int *calls) {
+  if ((path && !strstr(path, "eintr-")) || (*calls)++ % 2) return 0;
+  dprintf(2, "%s\\n", name);
+  errno = EINTR;
+  return 1;
+}
+
+#define INTERRUPT(name, path, parameters, arguments) \\
+  int name parameters { \\
+    static int calls; \\
+    if (is_interrupted(#name, path, &calls)) return -1; \\
+    return ((int (*) parameters) dlsym(RTLD_NEXT, #name)) arguments; \\
+  }
+
+INTERRUPT(fsync, NULL, (int file), (file))
+INTERRUPT(fdatasync, NULL, (int file), (file))
+INTERRUPT(truncate, path, (const char *path, off_t length), (path, length))
+INTERRUPT(link, to, (const char *from, const char *to), (from, to))
+INTERRUPT(unlink, path, (const char *path), (path))
+INTERRUPT(rmdir, path, (const char *path), (path))
+
+int unlinkat(int folder, const char *path, int flags) {
+  static int calls;
+  if (is_interrupted(flags & AT_REMOVEDIR ? "rmdir" : "unlink", path, &calls)) return -1;
+  return ((int (*)(int, const char *, int)) dlsym(RTLD_NEXT, "unlinkat"))(folder, path, flags);
+}
+
+char *mkdtemp(char *name) {
+  static int calls;
+  if (!is_interrupted("mkdtemp", name, &calls)) return ((char *(*)(char *)) dlsym(RTLD_NEXT, "mkdtemp"))(name);
+  // As libc leaves it.
+  memcpy(name + strlen(name) - 6, "abc123", 6);
+  return NULL;
+}
+`,
+    "index.js": `
+import fs from "node:fs";
+import { promisify } from "node:util";
+const flavors = {
+  sync: name => fs[name + "Sync"],
+  callback: name => promisify(fs[name]),
+  promises: name => fs.promises[name] ?? promisify(fs[name]),
+};
+for (const [flavor, functionNamed] of Object.entries(flavors)) {
+  const call = async (name, ...args) => {
+    try {
+      return await functionNamed(name)(...args);
+    } catch (error) {
+      console.log(flavor, name, error.code);
+    }
+  };
+  fs.writeFileSync("eintr-file", "hello");
+  fs.mkdirSync("eintr-folder-" + flavor);
+  const fd = fs.openSync("eintr-file", "r+");
+  await call("fsync", fd);
+  await call("fdatasync", fd);
+  await call("truncate", "eintr-file", 2);
+  await call("link", "eintr-file", "eintr-link-" + flavor);
+  await call("unlink", "eintr-file");
+  await call("rmdir", "eintr-folder-" + flavor);
+  const made = await call("mkdtemp", "eintr-temp-");
+  console.log(flavor, fs.statSync(made).isDirectory(), fs.readFileSync("eintr-link-" + flavor, "utf8"));
+}
+console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder)/.test(name)));
+`,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build the EINTR shim:\n${compile.stderr.toString()}`);
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${soPath}:${bunEnv.LD_PRELOAD}` : soPath },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const interrupted = "fsync\nfdatasync\ntruncate\nlink\nunlink\nrmdir\nmkdtemp\n";
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "sync true he\ncallback true he\npromises true he\n[]\n",
+    stderr: interrupted + interrupted + interrupted,
+    exitCode: 0,
+  });
 });
 
 // A subdirectory can be removed between the moment the recursive walk lists it

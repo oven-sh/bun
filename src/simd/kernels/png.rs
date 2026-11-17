@@ -1,4 +1,4 @@
-//! PNG filters. `a` is left of the byte `x`, `b` is above it, and `c` is above `a`.
+//! Port of highway_png.cpp. `a` is left of the byte `x`, `b` is above it, and `c` is above `a`.
 
 use bun_simd::{Isa, opaque};
 use core::hint::{black_box, select_unpredictable};
@@ -15,7 +15,7 @@ pub(crate) mod simd {
 
     fn load_pixel<const BPP: usize>(pixel: [u8; BPP]) -> U8 {
         let mut bytes = [0; 8];
-        bytes[..BPP].copy_from_slice(&pixel);
+        *bytes.first_chunk_mut().unwrap() = pixel;
         U64::from_first(u64::from_le_bytes(bytes)).bitcast()
     }
 

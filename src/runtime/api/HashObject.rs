@@ -18,8 +18,8 @@ pub(crate) fn wyhash(data: &[u8], seed: JsLocal<'_>) -> u64 {
     bun_wyhash::Wyhash::hash(seed_of(seed), data)
 }
 
-pub(crate) fn adler32(data: &[u8]) -> u32 {
-    bun_hash::Adler32::hash(data)
+pub(crate) fn adler32(data: &[SharedU8]) -> u32 {
+    bun_simd_kernels::adler32_shared(data)
 }
 
 /// Hardware-accelerated, from zlib.

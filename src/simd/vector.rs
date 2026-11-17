@@ -2,7 +2,7 @@
 use crate::swizzle::{As, DeinterleaveInBlocks, InterleaveInBlocks, Repeat, ShiftRight};
 use crate::swizzle::{Shuffle, SwapPairs};
 use crate::{Isa, Mask};
-use bun_simd_trusted::opaque16;
+use bun_simd_trusted::{from_array, opaque16};
 use core::array;
 use core::marker::PhantomData;
 use core::ops::{
@@ -10,6 +10,18 @@ use core::ops::{
     Not, RangeInclusive, Shl, Shr, Sub, SubAssign,
 };
 use core::simd::{self, SimdCast, SimdElement, Swizzle, ToBytes, prelude::*};
+
+/// By value, or LLVM takes the vector of `store_pieces_shared` apart.
+#[inline(always)]
+pub(crate) fn to_array<T: SimdElement, const N: usize>(lanes: Simd<T, N>) -> [T; N] {
+    *lanes.as_array()
+}
+
+/// Panics if `lanes` is too short.
+#[inline(always)]
+pub(crate) fn from_slice<T: SimdElement, const N: usize>(lanes: &[T]) -> Simd<T, N> {
+    from_array(*lanes.first_chunk().unwrap())
+}
 
 /// The type of a lane.
 pub trait Lane: SimdElement + SimdCast + Default {}
@@ -74,7 +86,7 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
     #[inline(always)]
     pub fn iota() -> Self {
         let indices = const { array::from_fn(const |i| i as u8) };
-        Self::new(Simd::from_array(indices).cast())
+        Self::new(from_array(indices).cast())
     }
 
     /// `lane` followed by zeros.
@@ -87,18 +99,18 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
 
     #[inline(always)]
     pub const fn from_array(lanes: [T; N]) -> Self {
-        Self(Simd::from_array(lanes), PhantomData)
+        Self(from_array(lanes), PhantomData)
     }
 
     #[inline(always)]
     pub fn to_array(self) -> [T; N] {
-        self.0.to_array()
+        to_array(self.0)
     }
 
     /// Panics if `lanes` is too short.
     #[inline(always)]
     pub fn from_slice(lanes: &[T]) -> Self {
-        Self::from_array(*lanes.first_chunk().unwrap())
+        Self::new(from_slice(lanes))
     }
 
     /// Panics if `lanes` is too short.
@@ -231,9 +243,9 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
         // LLVM does not merge a `splat` of wider lanes with the shuffles after it.
         let lanes = Vector::<T, K, I>::from_array(lanes);
         Self::from_first_bytes(match size_of_val(&lanes) {
-            2 => u16x32::splat(u16::from_le_bytes(lanes.first_bytes().into())).to_le_bytes(),
-            4 => u32x16::splat(u32::from_le_bytes(lanes.first_bytes().into())).to_le_bytes(),
-            8 => u64x8::splat(u64::from_le_bytes(lanes.first_bytes().into())).to_le_bytes(),
+            2 => u16x32::splat(u16::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
+            4 => u32x16::splat(u32::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
+            8 => u64x8::splat(u64::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
             _ => Repeat::<16>::swizzle(lanes.first_bytes::<16>()),
         })
     }
@@ -241,7 +253,7 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
     /// Panics if the vector has fewer than `BYTES` bytes.
     #[inline(always)]
     pub(crate) fn first_bytes<const BYTES: usize>(self) -> Simd<u8, BYTES> {
-        Simd::from_slice(self.0.to_le_bytes().as_ref())
+        from_slice(self.0.to_le_bytes().as_ref())
     }
 
     /// `a0 b0 a1 b1 ..`, split into two halves.
@@ -313,17 +325,30 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
     }
 }
 
+macro_rules! impl_narrow {
+    ($($T:ty)*) => {$(
+        impl<const N: usize, I: Isa> Vector<$T, N, I> {
+            #[inline(always)]
+            pub fn saturating_add(self, other: impl Into<Self>) -> Self {
+                Self::new(self.0.saturating_add(other.into().0))
+            }
+
+            #[inline(always)]
+            pub fn saturating_sub(self, other: impl Into<Self>) -> Self {
+                Self::new(self.0.saturating_sub(other.into().0))
+            }
+
+            #[inline(always)]
+            pub fn reduce_max(self) -> $T {
+                self.0.reduce_max()
+            }
+        }
+    )*};
+}
+
+impl_narrow!(u8 i8 u16 i16);
+
 impl<const N: usize, I: Isa> Vector<u8, N, I> {
-    #[inline(always)]
-    pub fn saturating_add(self, other: impl Into<Self>) -> Self {
-        Self::new(self.0.saturating_add(other.into().0))
-    }
-
-    #[inline(always)]
-    pub fn saturating_sub(self, other: impl Into<Self>) -> Self {
-        Self::new(self.0.saturating_sub(other.into().0))
-    }
-
     #[inline(always)]
     pub fn abs_diff(self, other: Self) -> Self {
         Self::new(self.0.abs_diff(other.0))
@@ -391,6 +416,16 @@ impl<const N: usize, I: Isa> Vector<i16, N, I> {
 }
 
 impl<const N: usize, I: Isa> Vector<i32, N, I> {
+    #[inline(always)]
+    pub fn abs(self) -> Self {
+        Self::new(self.0.abs())
+    }
+
+    #[inline(always)]
+    pub fn reduce_sum(self) -> i32 {
+        self.0.reduce_sum()
+    }
+
     #[inline(always)]
     pub fn reduce_min(self) -> i32 {
         self.0.reduce_min()

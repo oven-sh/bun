@@ -1,4 +1,4 @@
-//! From one buffer to another, or in place.
+//! Ports of highway_strings.cpp: from one buffer to another, or in place.
 use bun_simd::{Out, SharedOutU8, SharedU8, SharedWriter, Sink, Source};
 use core::sync::atomic::AtomicU8;
 

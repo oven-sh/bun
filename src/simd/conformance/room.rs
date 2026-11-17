@@ -49,11 +49,10 @@ impl Room {
         Self(unsafe { &mut *map().cast() })
     }
 
-    /// At `offset` bytes, or as far in as it fits. Has nothing of the last use.
+    /// At `offset` bytes, or as far in as it fits.
     pub(crate) fn uninit<T>(&mut self, len: usize, offset: usize) -> &mut [MaybeUninit<T>] {
         let size = len * size_of::<T>();
         let bytes = &mut self.0[offset.min(SIZE - size) & !(align_of::<T>() - 1)..][..size];
-        bytes.fill(MaybeUninit::new(0xA5));
         // SAFETY: the room is aligned to a page, and the offset into it for `T`.
         unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast(), len) }
     }

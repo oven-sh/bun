@@ -220,6 +220,10 @@ mod simd {
                 let each = |f: fn(u8, u8) -> u8| from_fn(|i| f(a[i], b[i]));
                 assert_eq!(x.saturating_add(y).to_array(), each(u8::saturating_add));
                 assert_eq!(x.saturating_sub(y).to_array(), each(u8::saturating_sub));
+                let (p, q): (I8, I8) = (x.bitcast(), y.bitcast());
+                let signed = |f: fn(i8, i8) -> i8| from_fn(|i| f(a[i] as i8, b[i] as i8));
+                assert_eq!(p.saturating_add(q).to_array(), signed(i8::saturating_add));
+                assert_eq!(p.saturating_sub(q).to_array(), signed(i8::saturating_sub));
                 assert_eq!(x.abs_diff(y).to_array(), each(u8::abs_diff));
                 let average = each(|a, b| (u16::from(a) + u16::from(b)).div_ceil(2) as u8);
                 assert_eq!(x.average_round(y).to_array(), average);
@@ -246,6 +250,15 @@ mod simd {
                     let got = U8::load(&distinct).lookup(U8::load(black_box(&indices)));
                     assert_eq!(got.to_array(), want);
                 }
+            }
+            for (index, lane) in (0..32).flat_map(|index| (0..N).map(move |lane| (index, lane))) {
+                let indices = from_fn(|i| if i == lane { index } else { 31 - index });
+                let want = from_fn(|i| match usize::from(indices[i]) {
+                    index @ ..16 => distinct[i / 16 * 16 + index],
+                    index => !distinct[i / 16 * 16 + index - 16],
+                });
+                let (lower, indices) = (U8::load(&distinct), U8::load(black_box(&indices)));
+                assert_eq!(lower.lookup2(!lower, indices).to_array(), want);
             }
             for from in (0..=u16::MAX).step_by(N) {
                 let all: [u16; N] = black_box(from_fn(|i| from + i as u16));
@@ -300,6 +313,8 @@ mod simd {
             let dots = from_fn(|i| saturating_dot(a.as_chunks().0[i], b.as_chunks().0[i]));
             assert_eq!(I16::saturating_pairwise_dot(x, y).to_array(), dots);
             assert_eq!(U16::widen_lower(x).to_array(), from_fn(|i| a[i].into()));
+            assert_eq!(Some(x.reduce_max()), a.into_iter().max());
+            assert_eq!(Some(y.reduce_max()), b.into_iter().max());
             let repeated = U8::repeat::<16>(*a.first_chunk().unwrap());
             assert_eq!(repeated.to_array(), from_fn(|i| a[i % 16]));
             assert_eq!(U8::repeat([a[0], a[1]]).to_array(), from_fn(|i| a[i % 2]));
@@ -323,7 +338,20 @@ mod simd {
             let product = |i: usize| i32::from(a[i]) * i32::from(b[i]);
             let dots = from_fn(|i| product(2 * i).wrapping_add(product(2 * i + 1)));
             assert_eq!(I32::pairwise_dot(x, y).to_array(), dots);
+            let each = |f: fn(i16, i16) -> i16| from_fn(|i| f(a[i], b[i]));
+            assert_eq!(x.saturating_add(y).to_array(), each(i16::saturating_add));
+            assert_eq!(x.saturating_sub(y).to_array(), each(i16::saturating_sub));
+            let (p, q): (U16, U16) = (x.bitcast(), y.bitcast());
+            let got = y.simd_eq(0).select(0, x).mul_sign(y);
+            assert_eq!(got.to_array(), each(|a, b| a.wrapping_mul(b.signum())));
+            assert_eq!(Some(x.reduce_max()), a.into_iter().max());
+            assert_eq!(Some(p.reduce_max()), p.to_array().into_iter().max());
+            let each = |f: fn(u16, u16) -> u16| from_fn(|i| f(a[i] as u16, b[i] as u16));
+            assert_eq!(p.saturating_add(q).to_array(), each(u16::saturating_add));
+            assert_eq!(p.saturating_sub(q).to_array(), each(u16::saturating_sub));
             let b = b.map(|b| b.max(-i16::MAX));
+            let want = from_fn(|i| ((i32::from(a[i]) * i32::from(b[i])) >> 16) as i16);
+            assert_eq!(x.mul_high(I16::load(&b)).to_array(), want);
             let want = from_fn(|i| ((i32::from(a[i]) * i32::from(b[i]) + (1 << 14)) >> 15) as i16);
             assert_eq!(x.mul_q15(I16::load(&b)).to_array(), want);
             let [first, second] = x.halves();
@@ -346,6 +374,7 @@ mod simd {
             let clamped = a.map(|a: i32| a.clamp(0, 255) as u8);
             assert_eq!(I32::load(&a).saturating_cast_u8().to_array(), clamped);
             assert_eq!(Some(I32::load(&a).reduce_min()), a.into_iter().min());
+            assert_eq!(I32::load(&a).abs().to_array(), a.map(i32::wrapping_abs));
 
             let (a, b) = (a.map(|a| a >> 12), random.lanes().map(|b: i32| b >> 20));
             let (x, y): (F32, F32) = (I32::load(&a).cast(), I32::load(&b).cast());
@@ -463,6 +492,15 @@ mod simd {
             let (word, lanes) = (random.next(), from_fn(|_| random.next() as i16));
             assert_eq!(bun_simd::opaque(word), word);
             assert_eq!(isa::x128::I16::load(&lanes).opaque().to_array(), lanes);
+            let (a, b) = (random.lanes::<u8, 16>(), random.lanes::<u8, 16>());
+            let b = from_fn(|i| if i & 4 == 0 { b[i] } else { a[i] });
+            let sum = |i: usize| {
+                (4 * i..4 * i + 4)
+                    .map(|i| u32::from(a[i].abs_diff(b[i])))
+                    .sum()
+            };
+            let got = isa::x128::U32::distances(Vector::load(&a), Vector::load(&b));
+            assert_eq!(got.to_array(), from_fn(sum));
             any_lanes::<u8, 8>(random);
             any_lanes::<u8, 64>(random);
             any_lanes::<i32, 16>(random);
@@ -521,4 +559,57 @@ fn more_random_inputs() {
 #[ignore = "slow"]
 fn all_dots() {
     on_each_target(simd::all_dots);
+}
+
+#[bun_simd::foreach_target(
+    avx512_icl,
+    avx2 + "vpclmulqdq",
+    sse4 + "pclmulqdq",
+    neon + "aes",
+    portable
+)]
+mod carryless_simd {
+    use isa::U64;
+
+    #[export]
+    pub fn products() {
+        let product = |a: u64, b: u64| {
+            let shifted = (0..64).map(|bit| u128::from(a * (b >> bit & 1)) << bit);
+            shifted.fold(0, |all, it| all ^ it).to_le_bytes()
+        };
+        let random = &mut Random(1);
+        for _ in 0..if cfg!(miri) { 2 } else { 1000 } {
+            let [a, b]: [[u64; U64::LEN]; 2] = [random.lanes(), random.lanes()];
+            let (x, y) = (U64::from_array(a), U64::from_array(b));
+            for (at, got) in [(0, x.carryless_mul_lower(y)), (1, x.carryless_mul_upper(y))] {
+                let want: [_; U64::LEN / 2] = from_fn(|i| product(a[2 * i + at], b[2 * i + at]));
+                assert_eq!(got.bitcast::<isa::U8>().to_array(), want.as_flattened());
+            }
+        }
+    }
+}
+
+#[bun_simd::foreach_target(avx512_icl, neon + "dotprod", portable)]
+mod dot_simd {
+    use isa::{I8, I32, U8};
+
+    #[export]
+    pub fn sums() {
+        let random = &mut Random(1);
+        for _ in 0..if cfg!(miri) { 2 } else { 1000 } {
+            let (sums, a): ([i32; I32::LEN], [u8; U8::LEN]) = (random.lanes(), random.lanes());
+            let b: [i8; I8::LEN] = random.lanes();
+            let b = b.map(|it| if I8::LEN == 16 { it & 127 } else { it });
+            let product = |i: usize| i32::from(a[i]) * i32::from(b[i]);
+            let want = from_fn(|i| sums[i].wrapping_add((4 * i..4 * i + 4).map(product).sum()));
+            let got = I32::from_array(sums).add_dot(U8::from_array(a), I8::from_array(b));
+            assert_eq!(got.to_array(), want);
+        }
+    }
+}
+
+#[test]
+fn ops_with_further_features() {
+    on_each_target(carryless_simd::products);
+    on_each_target(dot_simd::sums);
 }

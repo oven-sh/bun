@@ -1,4 +1,4 @@
-//! For `Bun.Image`. They panic if a width is zero or if `dst` has no room for the result.
+//! Ports of image_resize.cpp. They panic if a width is zero or if `dst` has no room for the result.
 use bun_simd::{Int, Out, Writer};
 use core::array::from_fn;
 use std::collections::TryReserveError;
@@ -525,7 +525,6 @@ fn build_weights(
     } else {
         scale.min(1.0)
     };
-    // A limit on the taps alone would move the window off its center.
     let support = (filter.radius() / fscale).min((MAX_TAPS / 2 - 1) as f64);
     let mut fw = [0.0; MAX_TAPS];
     for (i, (span, w)) in spans

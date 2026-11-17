@@ -1,5 +1,6 @@
 //! The definition of the ops that have intrinsics. Debug builds panic on input for which targets differ.
 use crate::{BitIndices, Int, Out, SharedOutU8, SharedU8};
+use bun_simd_trusted::{from_array, load_or_default};
 use core::array;
 use core::simd::{ToBytes, prelude::*};
 pub(crate) use masked::*;
@@ -12,6 +13,7 @@ impl<const BYTES: usize> crate::Isa for Portable<BYTES> {
     const HAS_MASK_REGISTERS: bool = BYTES == 64;
     const HAS_UNSIGNED_COMPARE: bool = BYTES != 32;
     const HAS_INTERLEAVED_MEMORY: bool = BYTES == 16;
+    const HAS_PAIRWISE_DOT: bool = BYTES != 16;
     const HAS_SINGLE_CYCLE_OPS: bool = BYTES != 16;
 }
 
@@ -29,6 +31,16 @@ impl<const N: usize, const B: usize> Lanes<u8, N, B> {
             } else {
                 0
             }
+        }))
+    }
+
+    /// The same for indices below 32. Those from 16 on go into `upper`.
+    #[inline]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        Self::from_array(array::from_fn(|i| {
+            let index = usize::from(indices[i]);
+            debug_assert!(index < 32);
+            [self, upper][index / 16 % 2][i / 16 * 16 + index % 16]
         }))
     }
 
@@ -111,6 +123,21 @@ impl<const N: usize, const B: usize> Lanes<i16, N, B> {
         debug_assert!(product.simd_ne(Simd::splat(1 << 30)).all());
         Self::new(((product + Simd::splat(1 << 14)) >> 15).cast())
     }
+
+    /// `(a * b) >> 16`. They must not both be `i16::MIN`.
+    #[inline]
+    pub fn mul_high(self, other: Self) -> Self {
+        let product = self.0.cast::<i32>() * other.0.cast();
+        debug_assert!(product.simd_ne(Simd::splat(1 << 30)).all());
+        Self::new((product >> 16).cast())
+    }
+
+    /// Negated where `sign` is negative. It must be zero where `sign` is.
+    #[inline]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        debug_assert!((0..N).all(|i| sign[i] != 0 || self[i] == 0));
+        Self::new(self.0 * sign.0.signum())
+    }
 }
 
 impl<const B: usize> Lanes<i16, 8, B> {
@@ -133,9 +160,46 @@ impl<const N: usize, const B: usize> Lanes<i32, N, B> {
         let (even, odd) = products.deinterleave(products);
         Self::new((even + odd).extract::<0, N>())
     }
+
+    /// Adds the products of four lanes each, wrapping. With 16 lanes, `b` must not be negative.
+    #[inline]
+    pub fn add_dot<const M: usize>(self, a: Lanes<u8, M, B>, b: Lanes<i8, M, B>) -> Self {
+        const { assert!(M == 4 * N) };
+        debug_assert!(M != 16 || b.0.reduce_min() >= 0);
+        let products = a.cast::<i32>() * b.cast();
+        self + Self::from_array(array::from_fn(|i| {
+            (0..4).map(|j| products[4 * i + j]).sum()
+        }))
+    }
+}
+
+impl<const B: usize> Lanes<u32, 4, B> {
+    /// The sum of the absolute differences of each 4 lanes. The second and the last must be zero.
+    #[inline]
+    pub fn distances(a: Lanes<u8, 16, B>, b: Lanes<u8, 16, B>) -> Self {
+        let pairs: Self = Lanes::<u16, 8, B>::sums_of_2(a.abs_diff(b)).bitcast();
+        debug_assert!(pairs[1] | pairs[3] == 0);
+        (pairs & 0xFFFF) + (pairs >> 16)
+    }
 }
 
 impl<const N: usize, const B: usize> Lanes<u64, N, B> {
+    /// In each block of 16 bytes, the product of the first lanes as polynomials over GF(2).
+    #[inline]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::from_array(array::from_fn(|i| {
+            let (a, b) = (u128::from(self[i & !1]), other[i & !1]);
+            let set = (0..64).filter(|bit| b >> bit & 1 != 0);
+            (set.fold(0, |all, bit| all ^ a << bit) >> (i % 2 * 64)) as u64
+        }))
+    }
+
+    /// The same for the second lanes.
+    #[inline]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        self.swap_pairs().carryless_mul_lower(other.swap_pairs())
+    }
+
     #[inline]
     pub fn sums_of_8<const M: usize>(bytes: Lanes<u8, M, B>) -> Self
     where
@@ -191,7 +255,7 @@ pub(crate) mod masked {
         for (to, from) in bytes[skipped..].iter_mut().zip(from) {
             *to = from.get();
         }
-        Simd::from_array(bytes)
+        from_array(bytes)
     }
 
     /// As many of the first or the last lanes as fit.
@@ -205,7 +269,7 @@ pub(crate) mod masked {
 
     #[inline(always)]
     pub(crate) fn load_to_last<T: Int<N>, const N: usize>(from: &[T]) -> u8x64 {
-        let first = Lanes::<T, N, 64>::new(Simd::load_or_default(from)).to_64_bytes();
+        let first = Lanes::<T, N, 64>::new(load_or_default(from)).to_64_bytes();
         rotate_bytes(first, size_of_val(from).wrapping_neg())
     }
 
@@ -218,7 +282,7 @@ pub(crate) mod masked {
     /// Lane `i` goes to lane `(i + by) % 64`.
     #[inline(always)]
     pub(crate) fn rotate_bytes(v: u8x64, by: usize) -> u8x64 {
-        Simd::from_array(array::from_fn(|i| v[i.wrapping_sub(by) % 64]))
+        from_array(array::from_fn(|i| v[i.wrapping_sub(by) % 64]))
     }
 }
 

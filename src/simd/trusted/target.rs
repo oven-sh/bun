@@ -69,6 +69,7 @@ impl Target {
             Self::Avx512Icl => &[
                 "popcnt", "bmi1", "bmi2", "lzcnt", "pclmulqdq", "avx512cd", "avx512dq", "avx512vl",
                 "avx512vbmi", "avx512vbmi2", "avx512bitalg", "avx512vpopcntdq", "avx512vnni", "gfni",
+                "vpclmulqdq",
             ],
             Self::Avx512Skx => &[
                 "popcnt", "bmi1", "bmi2", "lzcnt", "pclmulqdq", "avx512cd", "avx512dq", "avx512vl",
@@ -106,13 +107,16 @@ impl Target {
         }
     }
 
-    /// The whole program is compiled for it.
-    pub const fn is_in_build(self) -> bool {
+    /// The bits of the features that neither it nor `more` has. None if it is for other machines.
+    pub fn lacks<'a>(self, more: impl IntoIterator<Item = &'a str>) -> u64 {
         cfg_select! {
             any(target_arch = "x86_64", target_arch = "aarch64") => {
-                matches!(self.needs(), Some(needs) if crate::Features::IN_BUILD.contains(needs))
+                let is_here = |name: &&str| crate::detected().names().any(|it| it == *name);
+                let more = more.into_iter().filter(is_here);
+                let more = more.fold(0, |all, it| all | crate::Features::named(&[it]).0);
+                self.needs().map_or(0, |needs| !(needs.0 | more))
             }
-            _ => self.arch().is_none(),
+            _ => more.into_iter().fold(0, |none, _| none),
         }
     }
 }

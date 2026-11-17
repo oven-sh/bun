@@ -177,6 +177,20 @@ test("SourceMap with invalid name index has undefined name property", () => {
   `);
 });
 
+test.each([1, 40])("SourceMap sorts columns that go back, and ties keep their order (%d lines)", lines => {
+  // Columns 4, 2, 2, 0. All other fields are 0 again at the end of the line. The last lines, which are decoded one
+  // segment at a time, are in order.
+  const mappings = [...Array(lines).fill("ICGCG,FDFDF,ACCCC,FDFDF"), ...Array(lines).fill("AAAA")].join(";");
+  const map = new SourceMap({ version: 3, sources: ["a", "b"], names: ["w", "x", "y", "z"], mappings });
+  for (let generatedLine = 0; generatedLine < lines; generatedLine++) {
+    expect([0, 2, 4].map(column => map.findEntry(generatedLine, column))).toEqual([
+      { generatedLine, generatedColumn: 0, originalSource: "a", originalLine: 0, originalColumn: 0, name: "w" },
+      { generatedLine, generatedColumn: 2, originalSource: "b", originalLine: 2, originalColumn: 1, name: "y" },
+      { generatedLine, generatedColumn: 4, originalSource: "b", originalLine: 3, originalColumn: 1, name: "z" },
+    ]);
+  }
+});
+
 test("SourceMap handles mappings with truncated VLQ segments without crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [

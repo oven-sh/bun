@@ -101,14 +101,15 @@ fn inverse_transform_of_any_coefficients() {
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn flat_blocks() {
-    let ones = JpegBlock([1; 64]);
     for dc in (i16::MIN..=i16::MAX).step_by(7) {
+        // The product has 16 bits.
+        let step = if dc % 8 == 0 { 255 } else { 1 };
         let mut block = ZERO;
         block.0[0] = dc;
-        let mean = (((i32::from(dc) + 4) >> 3) + 128).clamp(0, 255) as u8;
+        let mean = (((i32::from(dc.wrapping_mul(step)) + 4) >> 3) + 128).clamp(0, 255) as u8;
         for size in [5, 8, 14] {
             check(vec![vec![mean; size]; size], || {
-                inverse(&[block], &ones, size)
+                inverse(&[block], &JpegBlock([step; 64]), size)
             });
         }
     }
@@ -128,7 +129,7 @@ fn forward<const MASKS: usize>(
     samples: &[u8],
     divisors: &[JpegBlock; 2],
 ) -> Vec<([i16; 64], [u64; MASKS])> {
-    let (mut blocks, mut masks) = ([ZERO; 2], [[0; MASKS]; 2]);
+    let (mut blocks, mut masks) = ([JpegBlock([-1; 64]); 2], [[!0; MASKS]; 2]);
     kernels::jpeg_forward_transform(samples, 19, divisors, &mut blocks, &mut masks).unwrap();
     blocks.map(|it| it.0).into_iter().zip(masks).collect()
 }
@@ -161,9 +162,14 @@ fn forward_transform() {
                     let centered = f64::from(samples[i / 8 * 19 + 8 * x + i % 8]) - 128.0;
                     centered * basis[i / 8][v] * basis[i % 8][u]
                 };
-                let step = f64::from(steps[place(v, u)]);
-                let error = (0..64).map(term).sum::<f64>() / step - f64::from(block[place(v, u)]);
+                let (step, exact) = (
+                    f64::from(steps[place(v, u)]),
+                    (0..64).map(term).sum::<f64>(),
+                );
+                let error = exact / step - f64::from(block[place(v, u)]);
                 assert!(error.abs() <= 0.5 + 2.0 / step, "{error}");
+                let k = zigzag.iter().position(|&at| at == place(v, u)).unwrap();
+                assert!(exact.abs() <= 2.0 || (masks[3] >> k & 1 != 0) == (exact < 0.0));
             }
             let mask = |is: fn(i16) -> bool| -> u64 {
                 let bit = |(k, &at): (usize, &usize)| u64::from(is(block[at])) << k;
@@ -351,15 +357,20 @@ fn blocks_that_do_not_fit() {
 
 #[test]
 fn rows_that_do_not_fit() {
-    let (full, half) = (&[0; 64][..], &[0; 36][..]);
-    for nth in sample(0..5, 5) {
+    for (groups, nth) in sample((0..5).flat_map(|nth| [(2, nth), (1, nth)]), 10) {
+        let (full, half) = (&[0; 64][..32 * groups], &[0; 36][..16 * groups + 4]);
+        let (len, few) = (full.len(), full.len() - 31);
         let rows = |row: &'static [u8]| [0, 1, 2, 3].map(|i| &row[usize::from(i == nth)..]);
         let ([cb, cr, ..], [a, b, c, d]) = (rows(full), rows(half));
         let (not_halved, half_width) = (Full { cb, cr }, HalfWidth { cb: a, cr: b });
         let (cb, cr) = ([a, b], [c, d]);
         for (chroma, count) in [(not_halved, 2), (half_width, 2), (HalfSize { cb, cr }, 4)] {
-            check(nth >= count, || converted(full, chroma, 33, 64).is_some());
-            for (y, width, room) in [(&full[1..], 33, 64), (full, 33, 63), (full, usize::MAX, 64)] {
+            check(nth >= count, || converted(full, chroma, few, len).is_some());
+            for (y, width, room) in [
+                (&full[1..], few, len),
+                (full, few, len - 1),
+                (full, !0, len),
+            ] {
                 check(None, || converted(y, chroma, width, room));
             }
         }
@@ -392,7 +403,7 @@ fn planes_that_do_not_fit() {
     for misfit in [
         [HUGE, 32, 1, 20],
         [0, 32, HUGE, 20],
-        [70, 32, 1, HUGE],
+        [70, 32, 1, HUGE + 20],
         [70, 32, 1, 15],
     ] {
         check(None, || fits(lens, misfit));

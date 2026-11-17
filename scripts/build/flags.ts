@@ -19,7 +19,7 @@ import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = ["brotli", "libdeflate", "lshpack", "zlib", "zstd"];
+export const safeStackDependencies: readonly DepName[] = ["brotli", "zlib", "zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -755,7 +755,7 @@ export const bunOnlyFlags: Flag[] = [
   },
   // C standard: gnu17 on unix (cmake: C_STANDARD 17 with C_EXTENSIONS
   // default ON → -std=gnu17). Can't go to C23 — MSVC doesn't support it.
-  // Most .c files are usockets/llhttp which would compile fine without,
+  // Most .c files are usockets, which would compile fine without,
   // but explicit is better than compiler-default drift.
   {
     flag: "-std=gnu17",
@@ -1946,12 +1946,6 @@ export function bunIncludes(cfg: Config): string[] {
     includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
 
-  // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
-  // a compat copy for this case.
-  if (cfg.linux && cfg.abi === "musl") {
-    includes.push(join(vendorDir, "lshpack/compat/queue"));
-  }
-
   return includes;
 }
 
@@ -1997,16 +1991,57 @@ export const fileOverrides: FileOverride[] = [
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
   {
+    file: "src/jsc/bindings/highway_byte_set.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below.",
+  },
+  {
+    file: "src/jsc/bindings/highway_checksums.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte of what is in a gzip or zlib stream.",
+  },
+  {
+    file: "src/jsc/bindings/highway_jpeg.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every sample of a JPEG image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_png.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
+  },
+  {
     file: "src/jsc/bindings/highway_webp_decoder.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
-    desc: "The file has to be optimized, see its #error. The kernels run over every pixel of a WebP image.",
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
   },
   {
     file: "src/jsc/bindings/highway_webp_encoder.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
-    desc: "The file has to be optimized, see its #error. The kernels run over every pixel of a WebP image.",
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_xml.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the XML structural-index kernel must be optimized even in debug builds.",
+  },
+  {
+    file: "src/jsc/bindings/highway_json.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc:
+      "Always optimize the JSON structural-index kernel (debug builds use -O0 globally). At -O0 every " +
+      "highway op is an outlined call taking 64-byte vectors by value through the stack, and clang's " +
+      "unoptimized codegen for that pattern raises #GP on an aligned zmm stack store under the debug " +
+      "sanitizer set; it would also make every JSON parse in debug builds pathologically slow. " +
+      "Covered by test/js/bun/jsonc/jsonc.test.ts and `scripts/bench-json-rust.sh --test`.",
   },
 ];
 

@@ -13,6 +13,8 @@ pub trait Isa: Copy {
     const HAS_LEADING_ZEROS: bool = true;
     /// `load_interleaved4` and `to_interleaved4` take one instruction.
     const HAS_INTERLEAVED_MEMORY: bool = false;
+    /// `saturating_pairwise_dot` takes one instruction.
+    const HAS_PAIRWISE_DOT: bool = true;
     /// The result of a simple op is there as soon as in a general register.
     const HAS_SINGLE_CYCLE_OPS: bool = true;
 

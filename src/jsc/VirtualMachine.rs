@@ -5050,10 +5050,13 @@ impl VirtualMachine {
         .map(|path| (path, query));
         let vm = global.bun_vm();
         let global_cache = vm.transpiler.get().resolver.opts.global_cache;
-        // A name that only `require()` resolves is a miss of the first pass. Any other error ends the resolve.
+        // A package name that only `require()` resolves is a miss of the first pass. Any other miss or error ends the resolve.
         let is_answered = match &for_import {
             Ok(_) => true,
-            Err(error) => error.is::<crate::ResolveMessage>(),
+            Err(error) => {
+                error.is::<crate::ResolveMessage>()
+                    && bun_resolver::is_package_path(&specifier.to_utf8())
+            }
         };
         // The second pass installs nothing. With `force` an `import` skips node_modules, so the file there is of another copy of the package.
         if !also_for_require || !is_answered || global_cache == bun_resolver::GlobalCache::force {

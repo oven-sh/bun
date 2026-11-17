@@ -405,8 +405,11 @@ impl Expect {
         if flags.promise() == Promise::None {
             return true;
         }
-        match (Pass::settled(global_this, *value), flags.promise()) {
-            (Ok(Settled::Fulfilled(settled)), Promise::Resolves) | (Ok(Settled::Rejected(settled)), Promise::Rejects) => {
+        let Ok(settled) = Pass::settled(global_this, *value) else {
+            return false;
+        };
+        match (settled, flags.promise()) {
+            (Settled::Fulfilled(settled), Promise::Resolves) | (Settled::Rejected(settled), Promise::Rejects) => {
                 *value = settled;
                 true
             }

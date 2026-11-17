@@ -4191,3 +4191,50 @@ it.concurrent.each([
   expect(stdout.trim()).toBe(expected);
   expect(exitCode).toBe(0);
 });
+
+it.each(["before", "after", "around"])(
+  "an upgrade holds when the handler runs the event loop for another request %s it",
+  async when => {
+    const message = Promise.withResolvers<string>();
+    let ranLoop = false;
+    let upgrading: Request;
+    function runLoop() {
+      let waited = false;
+      Bun.build({
+        entrypoints: ["./none.js"],
+        plugins: [{ name: "nested tick", setup: () => fetch(server.url).then(() => void (waited = true)) }],
+      }).catch(() => {});
+      ranLoop = waited;
+    }
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request, server) {
+        if (!request.headers.has("upgrade")) {
+          if (when === "around") server.upgrade(upgrading);
+          return new Response(null, { headers: { connection: "close" } });
+        }
+        upgrading = request;
+        if (when !== "after") runLoop();
+        if (when !== "around") server.upgrade(request);
+        if (when === "after") runLoop();
+      },
+      websocket: {
+        message: (_, data) => message.resolve(String(data)),
+        close: (_, code) => message.resolve("close " + code),
+      },
+    });
+    const client = net.connect(server.port!, "127.0.0.1").resume();
+    try {
+      client.on("close", () => message.resolve("closed")).on("error", message.reject);
+      // A frame that doesn't wait for the 101.
+      client.write(
+        "GET / HTTP/1.1\r\nHost: a\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n\x81\x81\0\0\0\0a",
+        "latin1",
+      );
+      expect({ message: await message.promise, ranLoop }).toEqual({ message: "a", ranLoop: true });
+    } finally {
+      client.destroy();
+    }
+  },
+);

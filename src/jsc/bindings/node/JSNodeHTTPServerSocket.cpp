@@ -423,7 +423,7 @@ void JSNodeHTTPServerSocket::onUpgradeBodyEnded()
         if (isClosed()) {
             return;
         }
-        is_ssl ? uWS::HttpContext<true>::getSocketContextDataS(socket)->socketLeft(socket, false) : uWS::HttpContext<false>::getSocketContextDataS(socket)->socketLeft(socket, false);
+        is_ssl ? uWS::HttpContext<true>::getSocketContextDataS(socket)->socketLeft(socket, socket, false) : uWS::HttpContext<false>::getSocketContextDataS(socket)->socketLeft(socket, socket, false);
     } else if (!leaveHttp(false)) {
         detachParser();
         return;
@@ -731,7 +731,7 @@ static void handOverToSocketHandle(us_socket_t* socket, void* handle, bool restO
     auto* contextData = uWS::HttpContext<SSL>::getSocketContextDataS(socket);
     auto left = reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->leaveHttp();
     Bun__NodeHTTPSocket__leaveHttp(handle, SSL, socket, left.backpressure.data(), left.backpressure.length(), left.readsPaused, left.bytesRead, responseBytesWritten);
-    contextData->socketLeft(socket, restOfReadTaken);
+    contextData->socketLeft(socket, socket, restOfReadTaken);
 }
 
 bool JSNodeHTTPServerSocket::leaveHttp(bool restOfReadTaken)

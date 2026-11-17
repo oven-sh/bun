@@ -263,7 +263,7 @@ public:
      * no later uncork or gate: true. */
     bool uncorkCompletedResponse() {
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
-        const bool parsingThis = httpContext->getSocketContextData()->parsingSocket == (us_socket_t *) this;
+        const bool parsingThis = httpContext->getSocketContextData()->isParsing((us_socket_t *) this);
         if (!Super::isCorked()) {
             /* A write larger than the cork buffer released the cork. The rest of this read can hold the body of a node:http request. */
             return !(parsingThis && httpContext->isNodeHttp());
@@ -664,9 +664,6 @@ private:
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
 
-        /* Read before the adoption below, which can move this socket. An upgrade of another connection must leave the parsed socket alone. */
-        const bool upgradingParsedSocket = httpContextData->isParsing((us_socket_t *) this);
-
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         /* The old ext size is only used as an upper bound to keep the block in
          * place (and as the copy length when it cannot be). The base size is
@@ -687,11 +684,7 @@ private:
         /* Initialize websocket with any moved backpressure intact */
         webSocket->init(perMessageDeflate, compressOptions, std::move(left.backpressure), nullptr, nullptr);
 
-        /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (upgradingParsedSocket) {
-            /* We need to tell the Http parser that we changed socket */
-            httpContextData->upgradedWebSocket = webSocket;
-        }
+        httpContextData->socketLeft((us_socket_t *) this, usSocket, false);
 
         /* Arm idleTimeout */
         us_socket_timeout((us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);

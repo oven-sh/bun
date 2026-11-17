@@ -451,9 +451,8 @@ private:
         ((AsyncSocket<SSL> *) s)->cork();
 
         /* Mark that we are inside the parser now */
-        httpContextData->flags.isParsingHttp = true;
-        struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
-        httpContextData->parsingSocket = s;
+        typename HttpContextData<SSL>::Parse thisParse{s, httpContextData->parsing};
+        httpContextData->parsing = &thisParse;
         const bool wasIdle = httpResponseData->isIdle;
         httpResponseData->isIdle = false;
 
@@ -579,7 +578,7 @@ private:
             }
 
             /* First of all we need to check if this socket was deleted due to upgrade */
-            if (httpContextData->upgradedWebSocket) {
+            if (httpContextData->parsing->upgraded) {
                 /* We differ between closed and upgraded below */
                 return nullptr;
             }
@@ -671,7 +670,7 @@ private:
                 httpResponseData->inStream(static_cast<HttpResponse<SSL>*>(user), data.data(), data.length(), fin, httpResponseData->userData);
 
                 /* The body handler upgraded this socket (ws.handleUpgrade in req 'end'): upgrade() destroyed httpResponseData, so stop here. */
-                if (httpContextData->upgradedWebSocket) {
+                if (httpContextData->parsing->upgraded) {
                     return nullptr;
                 }
 
@@ -707,7 +706,7 @@ private:
             if constexpr (IsNodeHttp) {
                 if (leaveAfterThisChunk && httpResponseData->socketData) {
                     httpContextData->nodeHttpHooks->onUpgradeBodyEnded(httpResponseData->socketData);
-                    if (httpContextData->upgradedWebSocket || us_socket_is_closed((struct us_socket_t *) user)) {
+                    if (httpContextData->parsing->upgraded || us_socket_is_closed((struct us_socket_t *) user)) {
                         return nullptr;
                     }
                     /* A socket whose write side is shut down stays, with its parser detached. The rest of this read isn't HTTP either. */
@@ -731,8 +730,7 @@ private:
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
         /* Mark that we are no longer parsing Http */
-        httpContextData->flags.isParsingHttp = false;
-        httpContextData->parsingSocket = prevParsingSocket;
+        httpContextData->parsing = thisParse.outer;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             /* node:http compat: parse errors surface as the server's 'clientError'
@@ -789,7 +787,7 @@ private:
 
         /* JavaScript destroyed the socket and its message did not complete in this read: close now, unless the read made this socket a WebSocket. */
         if constexpr (IsNodeHttp) {
-            if (httpContextData->upgradedWebSocket != s && !us_socket_is_closed(s)
+            if (!thisParse.upgraded && !us_socket_is_closed(s)
                 && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE)) {
                 closeDestroyedNodeHttpSocket(s, httpResponseData);
                 returnedData = nullptr;
@@ -861,9 +859,9 @@ private:
         }
 
         /* If we upgraded, check here (differ between nullptr close and nullptr upgrade) */
-        if (httpContextData->upgradedWebSocket) {
+        if (thisParse.upgraded) {
             /* This path is only for upgraded websockets */
-            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) httpContextData->upgradedWebSocket;
+            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) thisParse.upgraded;
 
             /* The socket of 'connect' or 'upgrade' holds the loop through its own handle, which unref() and the peer's FIN release. */
             if constexpr (IsNodeHttp) {
@@ -875,23 +873,15 @@ private:
             /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?) */
             asyncSocket->uncork();
 
-            /* Reset upgradedWebSocket before we return */
-            httpContextData->upgradedWebSocket = nullptr;
-
             /* Frames that a client sent without waiting for the 101 (RFC 6455 4.1) follow the
              * request head in this read, and the HTTP parser stopped there. Give them to the
              * WebSocket now, as the loop would have for a read of its own. If the request declared
              * a body, the parser counts the whole read as consumed, so what this read holds of the
-             * body is not taken for frames. Nothing remembers the rest: a later read is all frames.
-             * Not when upgradedWebSocket names another connection (upgrade() adopts in place,
-             * so ours is s): the field is per context, and a microtask of this dispatch, or an
-             * earlier upgrade from a request body handler, can set it. */
+             * body is not taken for frames. Nothing remembers the rest: a later read is all frames. */
             unsigned int consumed = result.consumedBytes();
-            const bool restOfReadTaken = httpContextData->flags.restOfReadTaken;
-            httpContextData->flags.restOfReadTaken = false;
-            if (consumed < (unsigned int) length && (us_socket_t *) asyncSocket == s && !restOfReadTaken
-                && !us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {
-                return us_dispatch_data(s, data + consumed, (int) ((unsigned int) length - consumed));
+            if (consumed < (unsigned int) length && !thisParse.restOfReadTaken
+                && !us_socket_is_closed(thisParse.upgraded) && !us_socket_is_shut_down(thisParse.upgraded)) {
+                return us_dispatch_data(thisParse.upgraded, data + consumed, (int) ((unsigned int) length - consumed));
             }
 
             /* Return the new upgraded websocket */

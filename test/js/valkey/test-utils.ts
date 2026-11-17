@@ -756,6 +756,7 @@ export function readCommands(state: { buffer: Buffer }): string[][] {
         complete = false;
         break;
       }
+      if (!text.startsWith("\r\n", dataEnd)) throw new Error(`no CRLF after argument ${i} of ${JSON.stringify(text)}`);
       args.push(text.slice(dataStart, dataEnd));
       pos = dataEnd + 2;
     }

@@ -19,6 +19,7 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::{NativeCallbacks, NewSocket};
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HiveArrayFallback, VecExt, recycle_vec};
+use bun_event_loop::{ContextId, RefTask, Task, TaskTag, task_tag};
 use bun_hpack::Indexing;
 use bun_http_types::h2::flow_control::{DEFAULT_WINDOW_SIZE, MAX_WINDOW_SIZE};
 use bun_http_types::h2::frame::{
@@ -639,6 +640,11 @@ pub(crate) struct H2FrameParser {
     inbound_tail: JsCell<Vec<u8>>,
     /// Read cursor into `inbound_tail` while a batch has its remainder parked there, otherwise 0.
     inbound_tail_pos: Cell<usize>,
+    /// `DeferredTaskQueue::passes` at the last `hold_answers_until_caller_returns`.
+    asked_in_pass: Cell<Option<u32>>,
+    /// `inbound_tail` has bytes that wait for `read_held_input`, whose task is queued.
+    holds_input: Cell<bool>,
+    held_input_read_in_drain: Cell<u64>,
     /// `engine.receive()` is on the stack, so events go to `deferred`.
     receiving: Cell<bool>,
     deferred: JsCell<VecDeque<Deferred>>,
@@ -865,11 +871,11 @@ impl H2FrameParser {
         for frame in stream.queue.take() {
             self.queued_data_size
                 .set(self.queued_data_size.get() - frame.unsent().len() as u64);
+            self.outbound_queue_size
+                .set(self.outbound_queue_size.get() - 1);
             if let Some(callback) = frame.callback.get() {
                 self.dispatch_write_callback(callback);
             }
-            self.outbound_queue_size
-                .set(self.outbound_queue_size.get() - 1);
         }
     }
 
@@ -2908,6 +2914,7 @@ impl H2FrameParser {
         self.load_settings_from_js_value(cx.global(), settings.to_js())?;
         if self.can_dispatch(js::on_local_settings_get_cached) {
             self.queue_for_ack(pending, entry)?;
+            self.hold_answers_until_caller_returns();
             self.send_settings();
         }
         Ok(())
@@ -3728,6 +3735,7 @@ impl H2FrameParser {
             .engine
             .streams
             .apply(&promised, StreamEvent::SendPushPromise);
+        self.hold_answers_until_caller_returns();
         self.write_header_block(
             FrameType::PushPromise,
             0,
@@ -3957,6 +3965,9 @@ impl H2FrameParser {
         // Before the write: a synchronous JS transport handles the peer's answer inside it.
         let _ = self.engine.streams.apply(&stream, StreamEvent::SendHeaders);
         stream.sent_final_headers.set(!informational);
+        if !self.engine.is_server.get() {
+            self.hold_answers_until_caller_returns();
+        }
         self.write_header_block(FrameType::Headers, flags, stream_id, b"", &scratch.encoded);
         if end_stream {
             self.sent_end_stream(&stream, false);
@@ -3970,24 +3981,71 @@ impl H2FrameParser {
     pub(crate) fn read<'a>(&self, cx: &mut JsScope<'a>, data: JsBytes<'a>) -> JsResult<()> {
         // A handler can detach or transfer the buffer between two frames, so a copy is parsed.
         let copied = data.get(&cx.heap).to_vec();
-        self.receive(&copied);
+        self.on_native_read(&copied)
+    }
+
+    pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
+        bun_output::scoped_log!(H2FrameParser, "onNativeRead");
+        if self.asked_in_pass.get() == Some(self.current_pass()) && self.transport_write_runs_js() {
+            self.hold_input(data);
+            return Ok(());
+        }
+        self.receive_and_throw(data)
+    }
+
+    fn receive_and_throw(&self, data: &[u8]) -> JsResult<()> {
+        let _keepalive = self.keepalive();
+        self.receive(data);
+        // What a frame callback left pending stopped the engine (`should_stop`);
+        // it belongs to the dispatch that delivered these bytes.
         if self.left_exception.replace(false) {
             return Err(bun_jsc::JsError::Thrown);
         }
         Ok(())
     }
 
-    pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
-        bun_output::scoped_log!(H2FrameParser, "onNativeRead");
-        let _keepalive = self.keepalive();
-        // Engine-driven inbound: all reads flow through the rewritten connection engine.
-        self.receive(data);
-        // What a frame callback left pending stopped the engine (`should_stop`);
-        // it belongs to the socket dispatch that delivered these bytes.
-        if self.left_exception.replace(false) {
-            return Err(bun_jsc::JsError::Thrown);
+    fn current_pass(&self) -> u32 {
+        self.handlers.vm.event_loop().deferred_tasks.passes()
+    }
+
+    /// A peer in this process answers inside the transport's write, before the caller can listen for the answer.
+    fn hold_answers_until_caller_returns(&self) {
+        self.asked_in_pass.set(Some(self.current_pass()));
+    }
+
+    fn hold_input(&self, data: &[u8]) {
+        self.inbound_tail.with_mut(|t| t.extend_from_slice(data));
+        if self.holds_input.replace(true) {
+            return;
         }
-        Ok(())
+        let event_loop = self.handlers.vm.event_loop();
+        let task = Task::from_ref::<Self>(self.ref_guard());
+        // Like in Node, ahead of the immediates, unless one answer leads to the next.
+        if self.held_input_read_in_drain.get() == event_loop.task_drains() {
+            event_loop.enqueue_task_after_yield(task);
+        } else {
+            event_loop.enqueue_task(task);
+        }
+    }
+
+    pub(crate) fn run_held_input_task(this: RefPtr<Self>) -> JsResult<()> {
+        // Unlike the task's ref, this one is released if a handler calls `process.exit()`.
+        let keepalive = this.keepalive();
+        drop(this);
+        keepalive.0.read_held_input()
+    }
+
+    fn read_held_input(&self) -> JsResult<()> {
+        if !self.holds_input.replace(false) {
+            return Ok(());
+        }
+        self.held_input_read_in_drain
+            .set(self.handlers.vm.event_loop().task_drains());
+        self.receive_and_throw(b"")
+    }
+
+    pub(crate) fn read_held_input_from_js(&self, _: &mut JsScope<'_>) -> JsResult<()> {
+        self.read_held_input()
     }
 
     pub(crate) fn on_native_writable(&self) {
@@ -4144,6 +4202,9 @@ impl H2FrameParser {
             frames_sent: Cell::new(0),
             inbound_tail: JsCell::new(Vec::new()),
             inbound_tail_pos: Cell::new(0),
+            asked_in_pass: Cell::new(None),
+            holds_input: Cell::new(false),
+            held_input_read_in_drain: Cell::new(u64::MAX),
             receiving: Cell::new(false),
             deferred: JsCell::new(VecDeque::new()),
             pending_push: Cell::new(0),
@@ -4371,6 +4432,7 @@ impl H2FrameParser {
             self.draining.set(Draining::Output);
         }
         self.tx_tracker.set(TxFrameTracker::default());
+        self.holds_input.set(false);
     }
 
     /// `process.exit()` never unwinds: the VM is destructed from inside the `exit()` call, so
@@ -4408,6 +4470,16 @@ bun_jsc::impl_abort_handle_owner!(H2FrameParser, abort_handle, |this, _cause| {
     // collectible is not finalized under this call.
     unsafe { (*this).release_from_js(false) }
 });
+
+impl RefTask for H2FrameParser {
+    const TAG: TaskTag = task_tag::H2HeldInput;
+    type Ref = RefPtr<Self>;
+    fn release_unrun(_: Self::Ref) {}
+    /// The handlers carry their own.
+    fn context(_: &Self::Ref) -> ContextId {
+        ContextId::NONE
+    }
+}
 
 impl Drop for H2FrameParser {
     fn drop(&mut self) {

@@ -601,6 +601,11 @@ impl EventLoop {
         Ok(counter)
     }
 
+    /// See [`EventLoop::task_drains`].
+    pub fn task_drains(&self) -> u64 {
+        self.task_drains.load(Ordering::Relaxed)
+    }
+
     fn tick_concurrent(&self) {
         let _ = self.tick_concurrent_with_count();
     }

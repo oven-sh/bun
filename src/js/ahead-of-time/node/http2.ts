@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0a89524f688f308d74721134d6569a9732257d48ab3e65038ef2783cc59b9e98.
+// Written against that file with the SHA-256 b8af0229a7f956a12df1288d0d4ab09660d493c68804c8dff6118e1f6b6ed428.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -4546,6 +4546,7 @@ class ServerHttp2Session extends Http2Session {
   }
   #onClose() {
     this[kTransportClosed] = true;
+    this.#parser?.readHeldInput();
     const parser = this.#parser;
     // Read before the sweep and close() below, which make a lost transport look like a graceful close.
     const closedAndIdle = this.#isClosedAndIdle();
@@ -4570,6 +4571,7 @@ class ServerHttp2Session extends Http2Session {
     destroySessionInternally(this);
   }
   #onError(error: Error) {
+    this.#parser?.readHeldInput();
     // Node's socketOnError reads `const session = this[kSession]` and does
     // nothing when it is undefined: destroying the session detaches it from the
     // socket, so a transport error that lands afterwards (the peer's RST racing
@@ -5635,6 +5637,7 @@ class ClientHttp2Session extends Http2Session {
 
   #onClose() {
     this[kTransportClosed] = true;
+    this.#parser?.readHeldInput();
     const parser = this.#parser;
     const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
     // Read before streamCancel, which can close the last open stream.
@@ -5655,6 +5658,7 @@ class ClientHttp2Session extends Http2Session {
     this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
+    this.#parser?.readHeldInput();
     // See the client session's #onError: Node's socketOnError is a no-op once
     // the session has been detached from the socket, so a transport error that
     // races our own teardown is not re-reported.

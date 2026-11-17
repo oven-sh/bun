@@ -101,6 +101,7 @@ export const H2FrameParser = b.class({
       returns: b.any.returning("number"),
     },
     read: { ...js, args: { data: buffer } },
+    readHeldInput: { ...js, rustName: "read_held_input_from_js" },
     releaseStream: { args: { streamId: b.u32, unread: b.bool.default(false) }, returns: b.bool },
     request: {
       ...js,

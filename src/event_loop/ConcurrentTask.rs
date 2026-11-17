@@ -88,6 +88,7 @@ pub mod task_tag {
         GraphContextStopAgain,
         GraphContextStopAndFree,
         DeadContextStopAgain,
+        H2HeldInput,              // bun_runtime::api::H2FrameParser
         HandledPromise,
         HotReloadTask,
         HTMLRewriterBackgroundPull,

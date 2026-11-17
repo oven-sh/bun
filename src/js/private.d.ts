@@ -1306,6 +1306,8 @@ declare namespace $Node {
     settings<T>(settings: object, pending: T[], entry: T): undefined;
     setLocalWindowSize(windowSize: number): undefined;
     read(data: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): undefined;
+    /** Parses now what arrived inside a write and waits for its turn. */
+    readHeldInput(): undefined;
     /** How many bytes still wait. */
     flush(): number;
     detach(keepOutput?: boolean): undefined;

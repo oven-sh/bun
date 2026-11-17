@@ -53,6 +53,7 @@ pub struct DeferredTaskQueue {
     /// No borrow spans a callback, which reaches this queue again.
     map: UnsafeCell<ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>>,
     posted_since_run: Cell<bool>,
+    passes: Cell<u32>,
 }
 
 impl DeferredTaskQueue {
@@ -84,7 +85,13 @@ impl DeferredTaskQueue {
         self.posted_since_run.get() && !unsafe { &*self.map.get() }.is_empty()
     }
 
+    /// How often `run` was called. It changes once the script that is running has returned.
+    pub fn passes(&self) -> u32 {
+        self.passes.get()
+    }
+
     pub fn run(&self) {
+        self.passes.update(|passes| passes.wrapping_add(1));
         self.posted_since_run.set(false);
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and

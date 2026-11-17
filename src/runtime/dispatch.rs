@@ -273,6 +273,13 @@ pub(crate) fn run_task(
         task_tag::SendQueueDeferred => counted_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
             queue.run_deferred();
         }),
+        task_tag::H2HeldInput => counted_arm!(
+            task,
+            [Sockets],
+            |parser: crate::api::H2FrameParser| -> JsResult<()> {
+                crate::api::H2FrameParser::run_held_input_task(parser)
+            }
+        )?,
         task_tag::BundleV2PluginResolve => in_features!(
             [Bundler],
             (
@@ -844,7 +851,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 84,
+    task_tag::COUNT == 85,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1763,6 +1770,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::S3UploadWriterCollected => {
             release_counted_in!([S3Client], S3UploadWriterCollected)
         }
+        task_tag::H2HeldInput => release_counted_in!([Sockets], crate::api::H2FrameParser),
         task_tag::SendQueueDeferred => release_counted_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {
             release_boxed_in!([Serve], ServerAllConnectionsClosedTask)

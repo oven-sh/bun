@@ -2557,6 +2557,122 @@ describe("a transport that delivers the peer's answer inside write()", () => {
     }
   });
 
+  async function connectPair(secure: boolean, onStream: (stream: http2.ServerHttp2Stream) => void) {
+    const [clientSide, serverSide] = duplexPair();
+    const server = secure ? http2.createSecureServer(tlsCert) : http2.createServer();
+    server.on("stream", onStream);
+    server.emit("connection", serverSide);
+    const client = http2.connect("https://localhost", {
+      createConnection: () =>
+        secure ? tls.connect({ socket: clientSide, ca: tlsCert.cert, ALPNProtocols: ["h2"] }) : clientSide,
+    });
+    await once(client, "localSettings");
+    await new Promise(resolve => client.ping(resolve));
+    await new Promise(setImmediate);
+    return Object.assign(client, {
+      [Symbol.dispose]() {
+        client.destroy();
+        serverSide.destroy();
+      },
+    });
+  }
+  const answer = (stream: http2.ServerHttp2Stream) => {
+    stream.respond();
+    stream.end("ok");
+  };
+  async function eventsOf(req: http2.ClientHttp2Stream) {
+    const events: string[] = [];
+    for (const name of ["response", "data", "end", "error"]) req.on(name, () => events.push(name));
+    await once(req, "close");
+    return events;
+  }
+
+  describe.each([
+    ["duplexPair()", false],
+    ["TLS over duplexPair()", true],
+  ])("listeners added after request() get the response over %s", (_, secure) => {
+    type Client = http2.ClientHttp2Session;
+    const post = { ":method": "POST" };
+    test.each<[string, (client: Client, other: Client) => http2.ClientHttp2Stream | Promise<http2.ClientHttp2Stream>]>([
+      ["a GET", client => client.request()],
+      ["end()", client => client.request(post).end()],
+      ["end(body)", client => client.request(post).end(Buffer.alloc(40_000))],
+      [
+        "headers over the size of a frame",
+        client => client.request({ ...post, x: Buffer.alloc(30_000, "~").toString() }).end(),
+      ],
+      ["a request of another session", (client, other) => [client.request(), other.request().resume()][0]],
+      [
+        "settings()",
+        client => {
+          const req = client.request();
+          client.settings({});
+          return req;
+        },
+      ],
+      [
+        "close()",
+        client => {
+          const req = client.request();
+          client.close();
+          return req;
+        },
+      ],
+      [
+        "an await",
+        async client => {
+          const req = client.request();
+          await null;
+          return req;
+        },
+      ],
+    ])("%s", async (_, request) => {
+      using client = await connectPair(secure, stream => answer(stream.resume()));
+      using other = await connectPair(secure, answer);
+      expect(await eventsOf(await request(client, other))).toEqual(["response", "data", "end"]);
+    });
+
+    test("the server ends the connection behind it", async () => {
+      using client = await connectPair(secure, stream => {
+        answer(stream);
+        stream.session!.destroy();
+      });
+      expect(await eventsOf(client.request())).toEqual(["response", "data", "end"]);
+    });
+  });
+
+  test("a listener added after settings() gets 'localSettings'", async () => {
+    using client = await connectPair(false, answer);
+    client.settings({ maxConcurrentStreams: 3 });
+    expect((await once(client, "localSettings"))[0].maxConcurrentStreams).toBe(3);
+  });
+
+  test("the callback of pushStream() gets an open stream from a client that cancels pushes", async () => {
+    const pushed = Promise.withResolvers<boolean>();
+    using client = await connectPair(false, stream =>
+      setImmediate(() =>
+        stream.pushStream({ ":path": "/pushed" }, (_, push) => pushed.resolve(push.closed || push.destroyed)),
+      ),
+    );
+    client.request().on("error", () => {});
+    expect(await pushed.promise).toBe(false);
+  });
+
+  test("requests in a row leave the event loop its turn", async () => {
+    using client = await connectPair(false, answer);
+    let turns = 0;
+    let counting = setImmediate(function count() {
+      turns++;
+      counting = setImmediate(count);
+    });
+    try {
+      for (let i = 0; i < 20; i++) await once(client.request().resume(), "end");
+    } finally {
+      clearImmediate(counting);
+    }
+    expect(turns).toBeGreaterThan(5);
+  });
+
   const u32 = (value: number) => {
     const buffer = Buffer.alloc(4);
     buffer.writeUInt32BE(value);

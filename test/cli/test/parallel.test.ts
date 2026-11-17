@@ -1360,6 +1360,30 @@ describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () 
     });
   });
 
+  test.concurrent("Ready is answered with Shutdown when no file is left", async () => {
+    using dir = tempDir("parallel-forged-ready-in-last-file", {
+      "a.test.js": `import {test} from "bun:test"; test("a", () => {});`,
+      "b.test.js": `import {expect, test} from "bun:test"; import {readSync, writeSync} from "fs";
+        test("b", () => {
+          writeSync(3, Buffer.from([/* no payload */ 0, 0, 0, 0, /* Ready */ 0]));
+          const answer = Buffer.alloc(5);
+          for (const deadline = performance.now() + 30_000; ; Bun.sleepSync(1)) {
+            try {
+              readSync(3, answer);
+              break;
+            } catch (error) {
+              if (error.code !== "EAGAIN" || performance.now() > deadline) throw error;
+            }
+          }
+          expect([...answer]).toEqual([/* no payload */ 0, 0, 0, 0, /* Shutdown */ 6]);
+        }, 60_000);`,
+    });
+    expect(await runOnOneWorker(String(dir))).toEqual({
+      results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("FileDone does not change the report of another file", async () => {
     using dir = tempDir("parallel-forged-file-done", {
       "a.test.js": `import {test} from "bun:test"; test("a", () => {});`,

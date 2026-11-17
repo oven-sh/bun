@@ -1151,6 +1151,58 @@ it("chrome: goBack at history start resolves undefined (no-op)", async () => {
   expect(await view.evaluate("document.body.textContent")).toBe("");
 });
 
+// --- Dialogs ---------------------------------------------------------------
+
+it("chrome: dialogs are dismissed when nothing listens for Page.javascriptDialogOpening", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  // An alert() during load would otherwise hold back the load event.
+  await view.navigate(html("<script>alert('on load')</script><body>loaded</body>"));
+  expect(await view.evaluate("document.body.textContent")).toBe("loaded");
+  // Same answers as the WebKit backend.
+  expect(await view.evaluate("[confirm('sure?'), prompt('name?', 'default'), (alert('hi'), 'after')]")).toEqual([
+    false,
+    null,
+    "after",
+  ]);
+  // A dialog opened by a click handler must not wedge click().
+  await view.navigate(html("<button id=b onclick=\"window.r = confirm('ok?')\">b</button>"));
+  await view.click("#b");
+  expect(await view.evaluate("window.r")).toBe(false);
+});
+
+it("chrome: a beforeunload prompt is accepted so navigate() proceeds", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(
+    html(
+      "<input id=i><script>addEventListener('beforeunload', e => { e.preventDefault(); e.returnValue = 'stay'; })</script>",
+    ),
+  );
+  // Chrome only shows the prompt after a user gesture on the page.
+  await view.click("#i");
+  await view.type("unsaved");
+  expect(await view.evaluate("navigator.userActivation.hasBeenActive")).toBe(true);
+  await view.navigate(html("<body>left</body>"));
+  expect(await view.evaluate("document.body.textContent")).toBe("left");
+});
+
+it("chrome: a Page.javascriptDialogOpening listener answers dialogs until it is removed", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  const seen: { type: string; message: string }[] = [];
+  const onDialog = (e: MessageEvent<{ type: string; message: string }>) => {
+    seen.push({ type: e.data.type, message: e.data.message });
+    view.cdp("Page.handleJavaScriptDialog", { accept: true, promptText: "typed" });
+  };
+  view.addEventListener("Page.javascriptDialogOpening", onDialog);
+  expect(await view.evaluate("[confirm('sure?'), prompt('name?')]")).toEqual([true, "typed"]);
+  view.removeEventListener("Page.javascriptDialogOpening", onDialog);
+  expect(await view.evaluate("confirm('again?')")).toBe(false);
+  expect(seen).toEqual([
+    { type: "confirm", message: "sure?" },
+    { type: "prompt", message: "name?" },
+  ]);
+});
+
 // --- Console capture -------------------------------------------------------
 
 it("chrome: console callback receives (type, ...args)", async () => {

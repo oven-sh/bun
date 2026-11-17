@@ -659,23 +659,7 @@ impl<P> Client<P> {
             kind => ACKS.get(kind),
         };
         let Some(&kind) = kind else {
-            let answers =
-                matches!(&*push.kind, [b'p' | b's', rest @ ..] if ACKS.get(rest).is_some());
-            return match self.in_flight.pop_front_if(|_| answers) {
-                Some(InFlight {
-                    expect: Expect::Reply(reply),
-                    promise,
-                }) if !self.is_subscriber => Event::Resolved {
-                    promise,
-                    value: RESPValue::Push(push),
-                    as_buffer: reply == Reply::Buffer,
-                },
-                None if !self.is_subscriber => Event::Ignored,
-                _ => broken(
-                    b"Unexpected push message kind without promise",
-                    RedisError::InvalidResponseType,
-                ),
-            };
+            return Event::Ignored;
         };
         let acked = match self.take_acknowledged(kind) {
             None if !self.is_subscriber => return Event::Ignored,

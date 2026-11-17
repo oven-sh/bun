@@ -449,4 +449,20 @@ describe("Valkey: RESP push frame routing", () => {
       });
     });
   });
+
+  describe("a push of an unknown kind answers nothing", () => {
+    test("invalidate, in subscriber mode", async () => {
+      const invalidate = Buffer.from(`>2\r\n${bulk("invalidate")}*1\r\n${bulk("key")}+PONG\r\n`);
+      await withMockClient([ack("subscribe", "a", 1), invalidate], async client => {
+        await client.subscribe("a", () => {});
+        expect(await client.ping()).toBe("PONG");
+      });
+    });
+
+    test("ppsubscribe", async () => {
+      await withMockClient([Buffer.concat([ack("ppsubscribe", "a", 1), ok])], async client => {
+        expect(await client.set("key", "value")).toBe("OK");
+      });
+    });
+  });
 });

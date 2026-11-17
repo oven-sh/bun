@@ -1194,6 +1194,40 @@ describe("scripted server", () => {
     }
   });
 
+  test.each([
+    ["resolve", owner("A", 1), [{ owner: "A" }]],
+    ["reject", mysqlErrPacket(1, 1064, "42000", "no"), { rejected: "ERR_MYSQL_SYNTAX_ERROR" }],
+  ] as const)(
+    "a reply that comes while the query in front is in %s() finds its query",
+    async (how, reply, expected) => {
+      let socket!: net.Socket;
+      const { port, server } = await mysqlServer({
+        onSocket: accepted => void (socket = accepted),
+        // The reply to A, when B is written behind it.
+        onCommand: (socket, payload) => void (payload.toString("latin1", 1) === "B" && socket.write(reply)),
+      });
+      try {
+        await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+        await sql.connect();
+        let built: Promise<unknown> | undefined;
+        const a: any = sql.unsafe("A").simple();
+        const settle = a[how];
+        a[how] = function (value: unknown) {
+          socket.write(owner("B", 1));
+          built = runEventLoopUntil(loopbackFence);
+          return settle.call(this, value);
+        };
+        expect(await Promise.all([outcome(a), outcome(sql.unsafe("B").simple())])).toEqual([
+          expected,
+          [{ owner: "B" }],
+        ]);
+        await built;
+      } finally {
+        server.close();
+      }
+    },
+  );
+
   /** For what ends the process or patches a built-in. `serve(onCommand)` gives the URL of a server. */
   async function runWithServer(script: string) {
     const prelude = /* js */ `

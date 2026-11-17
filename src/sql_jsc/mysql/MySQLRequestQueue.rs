@@ -85,9 +85,14 @@ impl MySQLRequestQueue {
             .is_some_and(|head| head.is_in_flight())
     }
 
+    /// One that ended is still here while script hears of it, and that script can run the event loop.
     #[inline]
-    pub(crate) fn current(&self) -> Option<RefPtr<JSMySQLQuery>> {
-        self.requests.get().front().cloned()
+    pub(crate) fn oldest_unfinished(&self) -> Option<RefPtr<JSMySQLQuery>> {
+        self.requests
+            .get()
+            .iter()
+            .find(|request| !request.is_completed())
+            .cloned()
     }
 
     pub(crate) fn clean(&self, reason: JSValue) {

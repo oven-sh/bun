@@ -1,6 +1,6 @@
 use core::hint::{Locality, prefetch_read, select_unpredictable};
 
-use super::{Filter, Hasher, Match, RecentDistances, Search, Small, prefetch_for_store};
+use super::{Filter, Hasher, Match, RecentDistances, Search, Small, prefetch_for_store, score};
 use crate::encoder::input_block::InputBlock;
 use crate::encoder::matching::{HASH_MULTIPLIER_64, hash_of_four};
 use crate::encoder::symbol_set::SymbolSet;
@@ -247,6 +247,9 @@ impl<const LONG: bool> Hasher for Buckets<LONG> {
         let nearest = (newer.last()).map_or(0, |&at| search.position.wrapping_sub(at as usize));
         let length = search.raise(length, nearest, &self.words, &mut best);
         let mut filter = Filter::new(search, length);
+        if length == search.data().len() && score(length, 1) <= best.score {
+            filter.reject_all();
+        }
         'bucket: for mut part in [newer, older] {
             if part.is_empty() {
                 break;

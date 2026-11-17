@@ -326,7 +326,16 @@ impl<'a> Filter<'a> {
                 || length + self.shifted.len() > search.window.without_tail().len() + 3)
         {
             self.follow(search, length, best);
+            if length == search.data().len() {
+                self.reject_all();
+            }
         }
+    }
+
+    /// Once none of the positions that are left can score higher. In runs, they would all be compared up to the end.
+    #[inline(always)]
+    fn reject_all(&mut self) {
+        self.shifted = &[];
     }
 
     /// For a match that is no better: what is farther away has to be longer. In runs, all positions can pass a raised filter.

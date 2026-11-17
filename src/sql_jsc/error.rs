@@ -8,12 +8,6 @@ pub enum Error {
     InvalidServerSignature,
     #[error("InvalidBinaryValue")]
     InvalidBinaryValue,
-    #[error("Thrown")]
-    Thrown,
-    #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
-    #[error(transparent)]
-    MySqlProtocol(#[from] bun_sql::mysql::protocol::Error),
 }
 
 impl Error {
@@ -24,9 +18,6 @@ impl Error {
             Self::InvalidServerKey => "InvalidServerKey",
             Self::InvalidServerSignature => "InvalidServerSignature",
             Self::InvalidBinaryValue => "InvalidBinaryValue",
-            Self::Thrown => "Thrown",
-            Self::Alloc(_) => "OutOfMemory",
-            Self::MySqlProtocol(e) => <&'static str>::from(e),
         }
     }
 }

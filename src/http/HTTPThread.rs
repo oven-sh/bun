@@ -125,7 +125,7 @@ pub struct HttpThread {
     pub(crate) dead_ssl_contexts: Vec<NonNull<NewHttpContext<true>>>,
 
     pub(crate) timer: Instant,
-    pub(crate) lazy_libdeflater: Option<Box<LibdeflateState>>,
+    pub(crate) lazy_libdeflater: Option<LibdeflateState>,
 
     /// What each `InFlightRequest` owns, for `dealloc_in_flight_for_exit`.
     pub(crate) in_flight: Vec<NonNull<AsyncHttp<'static>>>,
@@ -205,27 +205,8 @@ struct CertCheckResumeMessage {
 pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
 
 pub struct LibdeflateState {
-    pub(crate) decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
-    pub(crate) compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
-    pub(crate) shared_buffer: [u8; LIBDEFLATE_SHARED_BUFFER_LEN],
-}
-
-// SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
-// `NonNull`, so all-zero = `None`; `[u8; N]` is valid at the all-zero bit
-// pattern.
-unsafe impl bun_core::Zeroable for LibdeflateState {}
-
-impl LibdeflateState {
-    /// The libdeflate decompressor handle.
-    ///
-    /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
-    /// and is never `None` after that, so the unwrap is infallible.
-    #[inline]
-    pub(crate) fn decompressor(&self) -> &bun_libdeflate_sys::libdeflate::OwnedDecompressor {
-        self.decompressor
-            .as_ref()
-            .expect("set in HttpThread::deflater()")
-    }
+    pub(crate) compressor: bun_deflate::Compressor,
+    pub(crate) shared_buffer: Box<[u8; LIBDEFLATE_SHARED_BUFFER_LEN]>,
 }
 
 pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
@@ -304,15 +285,11 @@ impl HttpThread {
     }
 
     pub(crate) fn deflater(&mut self) -> &mut LibdeflateState {
-        if self.lazy_libdeflater.is_none() {
-            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
-                .unwrap_or_else(|| bun_core::out_of_memory());
-            let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
-            state.decompressor = Some(decompressor);
-            self.lazy_libdeflater = Some(state);
-        }
-
-        self.lazy_libdeflater.as_deref_mut().unwrap()
+        self.lazy_libdeflater
+            .get_or_insert_with(|| LibdeflateState {
+                compressor: Default::default(),
+                shared_buffer: bun_core::boxed_zeroed(),
+            })
     }
 
     pub(crate) fn context<const IS_SSL: bool>(&mut self) -> &mut NewHttpContext<IS_SSL> {

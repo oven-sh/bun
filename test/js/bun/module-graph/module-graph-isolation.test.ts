@@ -117,6 +117,16 @@ const dir = String(
         new HTMLRewriter().on("p", { async element(element) { await new Promise(resolve => setTimeout(resolve, 5)); element.remove(); } })
           .transform(new Response("<p>a</p><p>b</p>")).text().then(() => say("fulfilled"), error => say("rejected: " + error.message));
       };
+      // The <p> handler writes the <b>, which HTMLRewriter parses in a later turn of the event loop.
+      export const rewritesWhatItsHandlerWrote = listening => {
+        let controller;
+        const input = new ReadableStream({ type: "direct", pull(c) { controller = c; return new Promise(() => {}); } });
+        new HTMLRewriter()
+          .on("p", { element: () => void controller.write("<b>") })
+          .on("b", { element: () => listening(Bun.serve({ port: 0, fetch: () => new Response("the graph's") }).url) })
+          .transform(new Response(input)).text();
+        controller.write("<p>");
+      };
       // A module loaded through a graph of its own making.
       export const loadsThroughAGraphOfItsOwn = specifier => new Bun.ModuleGraph().import(specifier);
       export const makesAGraph = options => new Bun.ModuleGraph(options);
@@ -224,6 +234,19 @@ const dir = String(
       graph.dispose();
       // Nothing is left for the host to do: the process winds down, collecting on the way.
       process.on("exit", () => writeSync(1, JSON.stringify({ said })));
+    `,
+    "rewrite-of-what-a-handler-wrote.mjs": `
+      const listening = Promise.withResolvers();
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      graph.run(() => app.rewritesWhatItsHandlerWrote(listening.resolve));
+      if (process.argv[2] === "after") await listening.promise;
+      graph.dispose();
+      await new Promise(resolve => setImmediate(resolve));
+      listening.resolve();
+      const url = await listening.promise;
+      console.log(url ? await fetch(url).then(res => res.text(), () => "closed") : "never listened");
+      process.exit(0);
     `,
     "not-loaded-yet.ts": Array.from(
       { length: 40 },
@@ -3600,6 +3623,15 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("an HTMLRewriter rewrite it had under way is given up without a word when the process winds down", async () => {
     expect(await runsFixture("rewrite-given-up-at-exit.mjs")).toEqual({ stdout: `{"said":[]}`, exitCode: 0 });
   });
+  test.each([
+    { disposed: "before", stdout: "never listened" },
+    { disposed: "after", stdout: "closed" },
+  ])(
+    "an HTMLRewriter handler of input that another handler wrote is the graph's: disposed $disposed it runs",
+    async ({ disposed, stdout }) => {
+      expect(await runsFixture("rewrite-of-what-a-handler-wrote.mjs", disposed)).toEqual({ stdout, exitCode: 0 });
+    },
+  );
   test("the host's import() of a module parked in a top-level await is left pending: dispose() settles nothing", async () => {
     expect(await runsFixture("host-import-parked-at-dispose.mjs")).toEqual({
       stdout: `{"settled":"pending"}`,

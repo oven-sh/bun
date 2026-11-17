@@ -262,9 +262,11 @@ impl HTMLRewriter {
             "an ArrayBuffer"
         };
         let out = RewriterPipe::init(self, this_value, &cx, &response, Some(noun))?;
+        let Some(out_response) = js_Response::from_js(&out) else {
+            return Ok(out);
+        };
         // Not `Locked`: with a noun the rewrite has either finished or thrown.
-        let mut blob = js_Response::from_js(&out)
-            .expect("the output is a Response")
+        let mut blob = out_response
             .get_body_value()
             .use_as_any_blob_allow_non_utf8_string();
         if is_string {
@@ -305,13 +307,6 @@ enum Then {
     Stop,
 }
 
-#[derive(Clone, Copy)]
-enum Call<'a> {
-    Write(&'a [u8]),
-    End,
-    Resume(Then),
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InputEnd {
     Open,
@@ -323,13 +318,14 @@ enum InputEnd {
 
 #[derive(Clone, Copy)]
 enum Output {
-    /// The response's pending body, which nothing waits for yet.
+    /// The response's body, which nothing waits for.
     Unread,
     /// The pending body, which `.text()`, `Bun.write` or the like wants whole.
     Buffering,
     /// Kept alive by the cell's `outputStream` slot.
     Stream(BackRef<ByteStream>),
-    Closed,
+    /// It has ended, failed or been cancelled. A handler can still settle.
+    Over,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -355,7 +351,7 @@ impl bun_event_loop::RefTask for RewriterPipeBackgroundPull {
     fn release_unrun(pipe: Self::Ref) {
         pipe.background_pull_root.set(None);
     }
-    /// Enters no context.
+    /// See [`RewriterPipe::run_background_pull`].
     fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
@@ -414,9 +410,7 @@ impl RewriterPipe {
 
     /// The handler's promise was collected without settling. Can run mid-sweep once the VM has stopped.
     pub(crate) fn abandon_suspension(&self) {
-        if self.end_suspension().is_none() {
-            return;
-        }
+        self.state.set(State::Done);
         // Failed for the script that is waiting (nobody, if its `Bun.ModuleGraph` has been disposed since).
         let _context = VirtualMachine::get().enter_context(self.script_context);
         let vm_stopped = !VirtualMachine::get().script_allowed();
@@ -429,7 +423,9 @@ impl RewriterPipe {
         if cell.is_none() {
             // Both streams are gone, or go with the VM: they must not be touched.
             self.input_source.set(SourceHandle::None);
-            self.output.set(Output::Unread);
+            if let Output::Stream(_) = self.output.get() {
+                self.output.set(Output::Unread);
+            }
         }
         if !vm_stopped {
             self.fail(webcore::body::ValueError::Message(BunString::static_(
@@ -469,7 +465,7 @@ impl RewriterPipe {
         upstream
     }
 
-    /// Runs last: the frames of `src` may be on the stack, and `src` may be all that reaches the cell.
+    /// Runs last: `src` may be delivering the end, and may be all that reaches the cell.
     fn release_input_roots(&self, src: SourceHandle) {
         let Some(cell) = self.cell.try_get() else {
             // Collected together with everything these edges pointed at.
@@ -484,7 +480,8 @@ impl RewriterPipe {
     }
 
     fn detach_output(&self) {
-        if let Output::Stream(out) = self.output.replace(Output::Closed) {
+        if let Output::Stream(out) = self.output.get() {
+            self.output.set(Output::Over);
             out.parent_const().set_owner(JSValue::UNDEFINED);
             out.parent_const().producer.set(SourceHandle::None);
         }
@@ -512,7 +509,7 @@ impl RewriterPipe {
         let out = match self.output.get() {
             Output::Stream(out) => out,
             Output::Unread if staged > Self::HIGH_WATER_MARK => return Demand::Unobserved,
-            Output::Unread | Output::Buffering | Output::Closed => return Demand::More,
+            Output::Unread | Output::Buffering | Output::Over => return Demand::More,
         };
         if out.sink_paused.get() {
             return Demand::ReaderBehind;
@@ -523,18 +520,21 @@ impl RewriterPipe {
         {
             return Demand::More;
         }
-        let observed = out.sink.get().is_some()
+        if self.has_reader(&out) {
+            Demand::ReaderBehind
+        } else {
+            Demand::Unobserved
+        }
+    }
+
+    fn has_reader(&self, out: &ByteStream) -> bool {
+        out.sink.get().is_some()
             || out.pending.is_pending()
             || (self.cell.try_get())
                 .and_then(js_HTMLRewriterTransform::output_stream_get_cached)
                 .is_some_and(|stream| {
                     webcore::readable_stream::is_locked_value(stream, &self.global)
-                });
-        if observed {
-            Demand::ReaderBehind
-        } else {
-            Demand::Unobserved
-        }
+                })
     }
 
     fn init(
@@ -617,7 +617,7 @@ impl RewriterPipe {
         Self::wire_input(this, cell, cx, value, owned_readable_stream)?;
 
         // Only a `sync_only_noun` rewrite leaves its error here.
-        if let Some(err) = js_HTMLRewriterTransform::handler_error_take_cached(cell, cx.global()) {
+        if let Some(err) = this.take_handler_error() {
             return Err(cx.global().throw_value(err));
         }
 
@@ -647,7 +647,7 @@ impl RewriterPipe {
         let Some(stream) = stream else {
             // Encodes a string body as UTF-8.
             let any_blob = value.use_as_any_blob();
-            // Before the feed: a handler that suspends resumes into `end_rewrite`.
+            // Before the feed: a handler that suspends resumes into the end.
             this.input_end.set(InputEnd::Ended);
             // A suspended lol-html keeps a copy of the unparsed tail.
             if this.feed(any_blob.slice()) {
@@ -734,6 +734,11 @@ impl RewriterPipe {
     /// Continues from the event loop, so an unread rewrite still runs its handlers, one chunk per turn.
     fn schedule_background_pull(&self) {
         self.background_pull_armed.set(true);
+        self.queue_background_pull();
+    }
+
+    #[inline(never)]
+    fn queue_background_pull(&self) {
         if self.background_pull_root.get().is_some() {
             return;
         }
@@ -751,7 +756,16 @@ impl RewriterPipe {
 
     pub(crate) fn run_background_pull(&self) {
         let _root = self.background_pull_root.take();
-        if self.background_pull_armed.replace(false) && !self.is_blocked() {
+        let armed = self.background_pull_armed.replace(false);
+        if self.is_blocked() {
+            return;
+        }
+        if armed {
+            return self.advance(PullPacing::AlreadyYielded);
+        }
+        let vm = self.global.bun_vm();
+        if self.is_stalled() && vm.is_context_live(self.script_context) {
+            let _context = vm.enter_context(self.script_context);
             self.advance(PullPacing::AlreadyYielded);
         }
     }
@@ -786,61 +800,42 @@ impl RewriterPipe {
         js_HTMLRewriterTransform::output_stream_set_cached(cell, global_this, readable.value);
     }
 
-    /// Input from a native source, or bytes from a JS one.
     pub fn write(&self, data: &StreamResult<'_>) -> Writable {
-        let from_js = matches!(self.input_source.get(), SourceHandle::JSController(_));
-        self.accept(data.slice(), data.is_done(), from_js)
-    }
-
-    /// `in_js_buffer`: a handler can shrink, transfer or overwrite `bytes`, so lol-html gets a copy.
-    fn accept(&self, bytes: &[u8], is_last: bool, in_js_buffer: bool) -> Writable {
         let _pin = self.pin();
+        let bytes = data.slice();
+        let len = bytes.len() as BlobSizeType;
+        let held = || {
+            if data.is_done() {
+                // There is nothing to hold back, and `Backpressure` would delay `end`.
+                Writable::Owned(len)
+            } else {
+                Writable::Backpressure(len)
+            }
+        };
         if self.is_over() {
             return Writable::Done;
         }
-        let taken = Writable::Owned(bytes.len() as BlobSizeType);
-        // After the last chunk there is nothing to hold back, and `Backpressure` would delay `end()`.
-        let held = if is_last {
-            Writable::Owned(bytes.len() as BlobSizeType)
-        } else {
-            Writable::Backpressure(bytes.len() as BlobSizeType)
-        };
-        let blocked = self.is_blocked();
-        let fed = if blocked || in_js_buffer || !self.pending_input.get().is_empty() {
+        if self.is_blocked() {
             self.pending_input.with_mut(|v| v.extend_from_slice(bytes));
-            if blocked {
-                return held;
-            }
-            self.feed(&self.pending_input.take())
-        } else {
+            return held();
+        }
+        let fed = if self.pending_input.get().is_empty() {
             self.feed(bytes)
+        } else {
+            self.pending_input.with_mut(|v| v.extend_from_slice(bytes));
+            self.feed_held()
         };
-        if !fed {
-            // `Done` makes a native source let go of the sink, even if a handler also suspended.
-            return if self.is_over() { Writable::Done } else { held };
+        if self.is_over() {
+            // Makes a native source let go of the sink, even if a handler also suspended.
+            return Writable::Done;
         }
-        if is_last || !self.may_continue(PullPacing::YieldIfUnobserved) {
-            return held;
+        if !fed || (!data.is_done() && !self.may_continue(PullPacing::YieldIfUnobserved)) {
+            return held();
         }
-        // No signal is coming for what arrived while lol-html was running.
-        if !self.pending_input.get().is_empty() || self.input_end.get() == InputEnd::Ended {
-            let ready = self.feed_held(PullPacing::YieldIfUnobserved);
-            if self.input_end.get() == InputEnd::Ended {
-                return taken;
-            }
-            if !ready {
-                return if self.is_over() { Writable::Done } else { held };
-            }
-            if let SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) =
-                self.input_source.get()
-            {
-                // The inner write paused it. `ready()` from inside its own write would recurse.
-                self.schedule_background_pull();
-                return held;
-            }
+        if self.is_stalled() {
+            self.queue_background_pull();
         }
-        self.pending_flush.with_mut(|p| p.run());
-        taken
+        Writable::Owned(len)
     }
 
     /// The input ended or failed.
@@ -891,15 +886,31 @@ impl RewriterPipe {
 
     /// Nothing more is delivered. A running call still gets its handlers, a parked unit stays usable.
     fn stop(&self) {
-        let over = self.state.with_mut(|state| match state {
-            State::Running { then, .. } | State::Suspended { then, .. } => {
-                *then = Then::Stop;
-                None
-            }
-            State::Idle(_) | State::Done => Some(core::mem::replace(state, State::Done)),
+        self.state.with_mut(|state| match state {
+            State::Running { then, .. } | State::Suspended { then, .. } => *then = Then::Stop,
+            State::Idle(_) | State::Done => *state = State::Done,
         });
-        drop(over);
-        self.release_handlers();
+        self.release_when_over();
+    }
+
+    /// Something waits for [`Self::advance`], and the consumer has nothing to drain: it will not signal.
+    fn is_stalled(&self) -> bool {
+        (!self.pending_input.get().is_empty()
+            || self.input_end.get() == InputEnd::Ended
+            || self.flush_waits())
+            && match self.output.get() {
+                // A later consumer signals.
+                Output::Unread | Output::Over => false,
+                Output::Buffering => true,
+                Output::Stream(out) => {
+                    out.buffer_action.get().is_some()
+                        || (out.buffered.is_empty() && self.has_reader(&out))
+                }
+            }
+    }
+
+    fn flush_waits(&self) -> bool {
+        self.pending_flush.get().state == streams::PendingState::Pending
     }
 
     /// Lets go of a direct stream's `pull()` that waits in `flush(true)`, so the pump promise can settle.
@@ -910,24 +921,100 @@ impl RewriterPipe {
         });
     }
 
-    /// Runs one lol-html call and whatever its result asks for. `true`: idle again, ready for input.
-    fn drive(&self, mut rewriter: Box<LolRewriter>, call: Call<'_>) -> bool {
-        // A handler can cut every other path to the cell while lol-html has handlers left to run.
-        let _cell = jsc::EnsureStillAlive(self.cell.get_or_undefined());
+    /// `true`: idle again, ready for input. Inline: one frame less per link in a chain of rewriters.
+    #[inline(always)]
+    fn feed(&self, bytes: &[u8]) -> bool {
+        self.drive_idle(Then::Continue, |r| r.write(bytes)) == Some(Then::Continue)
+    }
+
+    /// Out of line: the frame of `write` repeats down a chain of rewriters.
+    #[inline(never)]
+    fn feed_held(&self) -> bool {
+        self.feed(&self.pending_input.take())
+    }
+
+    fn end_rewrite(&self) {
+        if self.feed_end() {
+            self.finish();
+        }
+    }
+
+    /// Out of line: its frame must not stay under `finish`, which recurses down a chain of rewriters.
+    #[inline(never)]
+    fn feed_end(&self) -> bool {
+        // Not the consuming `end`: a document-end handler can suspend.
+        self.drive_idle(Then::Finish, |r| r.end_mut()).is_some()
+    }
+
+    #[inline(always)]
+    fn drive_idle(
+        &self,
+        then: Then,
+        call: impl FnOnce(&mut LolRewriter) -> Result<(), RewritingError>,
+    ) -> Option<Then> {
+        match self.state.replace(State::Done) {
+            State::Idle(rewriter) => self.drive(rewriter, then, call),
+            state => {
+                self.state.set(state);
+                None
+            }
+        }
+    }
+
+    /// Runs one lol-html call. `None`: it suspended or failed.
+    #[inline(always)]
+    fn drive(
+        &self,
+        rewriter: Box<LolRewriter>,
+        then: Then,
+        call: impl FnOnce(&mut LolRewriter) -> Result<(), RewritingError>,
+    ) -> Option<Then> {
         self.state.set(State::Running {
-            then: match call {
-                Call::Write(_) => Then::Continue,
-                Call::End => Then::Finish,
-                Call::Resume(then) => then,
-            },
+            then,
             suspending: None,
         });
-        let result = match call {
-            Call::Write(bytes) => rewriter.write(bytes),
-            // Not the consuming `end`: a document-end handler can suspend.
-            Call::End => rewriter.end_mut(),
-            Call::Resume(_) => rewriter.resume(),
+        let cell = self.cell.try_get();
+        // A handler can cut every other path to the cell while lol-html has handlers left to run.
+        let _cell = jsc::EnsureStillAlive(cell.unwrap_or_default());
+        // A handler can end the input, which unroots a source that is delivering this chunk.
+        let input = cell.and_then(js_HTMLRewriterTransform::input_stream_get_cached);
+        let _input = jsc::EnsureStillAlive(input.unwrap_or_default());
+        let rewriter = self.run(rewriter, call)?;
+        // One chunk per call: each `on_data` may be a socket write or a downstream rewriter's `write`.
+        self.flush_output();
+        self.leave_completed(rewriter)
+    }
+
+    /// Out of line: the frame of `drive` repeats down a chain of rewriters.
+    #[inline(never)]
+    fn leave_completed(&self, rewriter: Box<LolRewriter>) -> Option<Then> {
+        let State::Running { then, .. } = self.state.replace(State::Done) else {
+            return None;
         };
+        match then {
+            Then::Continue => self.state.set(State::Idle(rewriter)),
+            Then::Finish => {}
+            Then::Stop => self.release_when_over(),
+        }
+        Some(then)
+    }
+
+    /// As [`Self::leave_completed`].
+    #[inline(never)]
+    fn run(
+        &self,
+        mut rewriter: Box<LolRewriter>,
+        call: impl FnOnce(&mut LolRewriter) -> Result<(), RewritingError>,
+    ) -> Option<Box<LolRewriter>> {
+        let Err(e) = call(&mut rewriter) else {
+            return Some(rewriter);
+        };
+        self.leave_interrupted(rewriter, e);
+        None
+    }
+
+    #[cold]
+    fn leave_interrupted(&self, mut rewriter: Box<LolRewriter>, e: RewritingError) {
         // Before the flush, which runs JS that can use the unit.
         if let State::Running {
             suspending: Some(unit),
@@ -936,26 +1023,15 @@ impl RewriterPipe {
         {
             unit.point_at(Some(&mut rewriter));
         }
-        // One chunk per call: each `on_data` may be a socket write or a downstream rewriter's `write`.
         self.flush_output();
         let State::Running { then, suspending } = self.state.replace(State::Done) else {
-            unreachable!("only `drive` leaves `Running`");
+            return;
         };
         if then == Then::Stop {
-            self.release_handlers();
+            self.release_when_over();
         }
-        match (result, then) {
-            (Ok(()), Then::Continue) => {
-                self.state.set(State::Idle(rewriter));
-                return true;
-            }
-            (Ok(()), Then::Finish) => {
-                drop(rewriter);
-                self.finish();
-            }
-            (Ok(()), Then::Stop) => {}
-            (Err(RewritingError::Suspended), _) => {
-                let unit = suspending.expect("lol-html suspended without a pending handler");
+        match (e, suspending) {
+            (RewritingError::Suspended, Some(unit)) => {
                 self.state.set(State::Suspended {
                     then,
                     unit,
@@ -963,24 +1039,17 @@ impl RewriterPipe {
                 });
                 self.begin_suspension();
             }
-            (Err(e), _) => self.on_rewriting_error(&e, then),
+            (e, _) => self.on_rewriting_error(&e),
         }
-        false
     }
 
-    fn drive_idle(&self, call: Call<'_>) -> bool {
-        let State::Idle(rewriter) = self.state.replace(State::Done) else {
-            unreachable!("input reaches lol-html only while it is idle");
-        };
-        self.drive(rewriter, call)
-    }
-
-    /// The rewrite is over: an output `Response` that outlives it stops retaining the handlers.
-    fn release_handlers(&self) {
+    /// An output `Response` that outlives the rewrite stops retaining its handlers and input.
+    fn release_when_over(&self) {
         if matches!(self.state.get(), State::Running { .. }) {
             // lol-html runs the handlers for the rest of this chunk. `drive` calls again.
             return;
         }
+        self.pending_input.set(Vec::new());
         self.free_end_tag_slots.set(Vec::new());
         if let Some(cell) = self.cell.try_get() {
             js_HTMLRewriterTransform::handlers_set_cached(cell, &self.global, JSValue::UNDEFINED);
@@ -1024,31 +1093,24 @@ impl RewriterPipe {
         Ok(Some(slot))
     }
 
-    /// The function to call and its `this`. `None`: a termination is pending, and stays so.
-    fn take_callback(&self, callback: HandlerCallback) -> Option<(JSValue, JSValue)> {
-        let global = &*self.global;
-        // `drive` keeps the cell alive, and its arrays stay until lol-html returns.
-        let cell = self.cell.try_get()?;
-        match callback {
-            HandlerCallback::Listed {
-                callback,
-                this_object,
-            } => {
-                let list =
-                    HandlerList::existing(js_HTMLRewriterTransform::handlers_get_cached(cell))?;
-                let callback = list.get(global, callback).ok()?;
-                Some((callback, list.get(global, this_object).ok()?))
-            }
-            HandlerCallback::EndTag(slot) => {
-                let list = js_HTMLRewriterTransform::end_tag_handlers_get_cached(cell)
-                    .filter(|list| list.is_cell())?;
-                let callback = list.get_direct_index(global, slot.0).ok()?;
-                list.put_index(global, slot.0, JSValue::UNDEFINED).ok()?;
-                self.free_end_tag_slots.with_mut(|free| free.push(slot));
-                debug_assert!(callback.is_cell(), "HTMLRewriter end-tag slot is empty");
-                callback.is_cell().then_some((callback, JSValue::ZERO))
-            }
-        }
+    /// For the one run of the handler that names `slot`.
+    fn take_end_tag_callback(&self, slot: EndTagSlot) -> JsResult<Option<Callback>> {
+        // `drive` keeps the cell alive, and the array stays until lol-html returns.
+        let list = (self.cell.try_get())
+            .and_then(js_HTMLRewriterTransform::end_tag_handlers_get_cached)
+            .filter(|list| list.is_cell());
+        debug_assert!(list.is_some(), "HTMLRewriter end-tag handler has no array");
+        let Some(list) = list else {
+            return Ok(None);
+        };
+        let function = list.get_direct_index(&self.global, slot.0)?;
+        list.put_index(&self.global, slot.0, JSValue::UNDEFINED)?;
+        self.free_end_tag_slots.with_mut(|free| free.push(slot));
+        debug_assert!(function.is_cell(), "HTMLRewriter end-tag slot is empty");
+        Ok(function.is_cell().then_some(Callback {
+            function,
+            this_object: JSValue::ZERO,
+        }))
     }
 
     fn flush_output(&self) {
@@ -1059,24 +1121,22 @@ impl RewriterPipe {
         }
     }
 
-    /// `false`: a handler suspended, or the rewrite is over.
-    fn feed(&self, bytes: &[u8]) -> bool {
-        self.drive_idle(Call::Write(bytes))
-    }
-
-    fn end_rewrite(&self) {
-        self.drive_idle(Call::End);
+    /// `None`: a late end or error must not bring a used body back.
+    fn response_to_settle(&self) -> Option<&Response> {
+        let late = matches!(self.output.replace(Output::Over), Output::Over);
+        (self.response.get().as_deref()).filter(|response| {
+            !late || !matches!(response.get_body_value(), webcore::body::Value::Used)
+        })
     }
 
     fn finish(&self) {
-        self.release_handlers();
+        self.release_when_over();
         self.pending_flush.with_mut(|p| p.run());
         if let Output::Stream(out) = self.output.get() {
             out.on_data(StreamResult::Done);
-            self.detach_output();
-            return;
+            return self.detach_output();
         }
-        let Some(response) = self.response.get().as_deref() else {
+        let Some(response) = self.response_to_settle() else {
             return;
         };
         // For a waiting `.blob()`'s content type.
@@ -1111,47 +1171,36 @@ impl RewriterPipe {
         }
     }
 
-    /// Feeds the idle rewriter what is held, and ends it after the last of it. `true`: ready for more.
-    fn feed_held(&self, mut pacing: PullPacing) -> bool {
-        loop {
-            let held = self.pending_input.take();
-            if !held.is_empty() && !self.feed(&held) {
-                return false;
-            }
-            // Handlers and readers may have written meanwhile.
-            let drained = self.pending_input.get().is_empty();
-            // Backpressure only gates more input: finishing frees the parser and settles the body.
-            if drained && self.input_end.get() == InputEnd::Ended {
-                self.end_rewrite();
-                return false;
-            }
-            if !self.may_continue(pacing) {
-                return false;
-            }
-            if drained {
-                return true;
-            }
-            pacing = PullPacing::YieldIfUnobserved;
-        }
-    }
-
-    /// The rewriter is idle and nothing holds it back.
+    /// The rewriter is idle and nothing holds it back: feeds what is held, then ends or pulls.
     fn advance(&self, pacing: PullPacing) {
-        if self.feed_held(pacing) {
-            self.background_pull_armed.set(false);
-            self.input_source.get().ready(None, None);
-            self.pending_flush.with_mut(|p| p.run());
+        let drain = || self.pending_input.get().is_empty() || self.feed_held();
+        if !drain() {
+            return;
         }
+        // Backpressure only gates more input: finishing frees the parser and settles the body.
+        if self.input_end.get() == InputEnd::Ended {
+            // A handler or a reader may have written before it closed the input.
+            if drain() {
+                self.end_rewrite();
+            }
+            return;
+        }
+        if !self.may_continue(pacing) {
+            return;
+        }
+        self.background_pull_armed.set(false);
+        if !self.pending_input.get().is_empty() && self.is_stalled() {
+            self.queue_background_pull();
+        }
+        self.input_source.get().ready(None, None);
+        self.pending_flush.with_mut(|p| p.run());
     }
 
     #[cold]
-    fn on_rewriting_error(&self, e: &RewritingError, then: Then) {
+    fn on_rewriting_error(&self, e: &RewritingError) {
         let captured = self.take_handler_error();
         // The call can hit the memory limit after a handler suspended. lol-html parks nothing then.
         self.take_suspension_promise();
-        if then == Then::Stop {
-            return;
-        }
         if self.sync_only_noun.is_some() {
             // `init()` is still on the stack; make `transform()` throw.
             return self.set_handler_error(
@@ -1174,9 +1223,12 @@ impl RewriterPipe {
         js_HTMLRewriterTransform::suspension_promise_take_cached(self.cell.try_get()?, &self.global)
     }
 
+    #[inline(never)]
     fn begin_suspension(&self) {
         // The context roots the cell, and queues `abandon_suspension` if it is collected with the promise.
-        let promise = (self.take_suspension_promise()).expect("suspension promise slot empty");
+        let Some(promise) = self.take_suspension_promise() else {
+            return self.abandon_suspension();
+        };
         let cell = self.cell.get_or_undefined();
         let context = native_promise_context::create(&self.global, self.ref_guard(), cell);
         promise.then_with_value(
@@ -1187,41 +1239,41 @@ impl RewriterPipe {
         );
     }
 
-    /// For whoever holds the promise context. Detaches the unit. `None`: the rewrite is over.
-    fn end_suspension(&self) -> Option<(Box<LolRewriter>, Then)> {
-        let State::Suspended {
-            then,
-            unit,
-            rewriter,
-        } = self.state.replace(State::Done)
-        else {
-            unreachable!("one promise context per suspension");
-        };
-        drop(unit);
-        (then != Then::Stop).then_some((rewriter, then))
+    /// The handler's promise resolved.
+    fn resume_suspended(&self) {
+        match self.state.replace(State::Done) {
+            State::Suspended {
+                then: Then::Stop, ..
+            } => {}
+            State::Suspended {
+                then,
+                unit,
+                rewriter,
+            } => {
+                drop(unit);
+                match self.drive(rewriter, then, |r| r.resume()) {
+                    Some(Then::Continue) => self.advance(PullPacing::YieldIfUnobserved),
+                    Some(Then::Finish) => self.finish(),
+                    Some(Then::Stop) | None => {}
+                }
+            }
+            state => self.state.set(state),
+        }
     }
 
-    /// Put `err` on the output `Response`'s body / ByteStream. Not for a rewrite that was over before.
     fn fail(&self, mut err: webcore::body::ValueError) {
         let _pin = self.pin();
         self.stop();
         let src = self.detach_input_source(Some(err.to_js(&self.global)));
         self.release_flush();
-        // Output emitted before the failure still precedes the error.
-        self.flush_output();
-        match self.output.get() {
-            Output::Stream(out) => {
-                out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
-            }
-            Output::Unread | Output::Buffering => {
-                if let Some(response) = self.response.get().as_deref() {
-                    let _ = (response.get_body_value()).to_error_instance(err, &self.global);
-                }
-            }
-            // The reader cancelled from inside the input's `cancel()` or the flush.
-            Output::Closed => {}
+        if let Output::Stream(out) = self.output.get() {
+            // Output emitted before the failure still precedes the error.
+            self.flush_output();
+            out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
+            self.detach_output();
+        } else if let Some(response) = self.response_to_settle() {
+            let _ = (response.get_body_value()).to_error_instance(err, &self.global);
         }
-        self.detach_output();
         self.release_input_roots(src);
     }
 }
@@ -1264,16 +1316,16 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16]) -> Writable {
         let mut buf = Vec::new();
         let _ = buf.write_utf16(text);
-        this.accept(&buf, false, false)
+        RewriterPipe::write(this, &StreamResult::Temporary(&buf))
     }
     fn write_latin1(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
-            return this.accept(bytes, false, false);
+            return RewriterPipe::write(this, data);
         }
         let mut buf = Vec::new();
         let _ = buf.write_latin1(bytes);
-        this.accept(&buf, false, false)
+        RewriterPipe::write(this, &StreamResult::Temporary(&buf))
     }
     fn end(this: &mut Self::Entered<'_>, err: Option<SysError>) -> bun_sys::Result<()> {
         this.end_from_stream(err.map(StreamError::Error));
@@ -1291,7 +1343,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
-        if this.pending_flush.get().state == streams::PendingState::Pending {
+        if this.flush_waits() {
             return bun_sys::Result::Ok(this.pending_flush.with_mut(|p| p.promise(cx)));
         }
         if wait && !this.is_over() && this.is_blocked() {
@@ -1353,11 +1405,7 @@ pub(crate) fn on_handler_resolve(
     let Some(pipe) = context else {
         return Ok(());
     };
-    if let Some((rewriter, then)) = pipe.end_suspension()
-        && pipe.drive(rewriter, Call::Resume(then))
-    {
-        pipe.advance(PullPacing::YieldIfUnobserved);
-    }
+    pipe.resume_suspended();
     // Handler errors went to the output. A termination is still pending.
     if cx.global().has_exception() {
         return Err(jsc::JsError::Thrown);
@@ -1374,11 +1422,10 @@ pub(crate) fn on_handler_reject(
     let Some(pipe) = context else {
         return Ok(());
     };
-    if pipe.end_suspension().is_some() {
-        pipe.fail(webcore::body::ValueError::JSValue(
-            jsc::strong::Optional::create(reason.to_js(), global),
-        ));
-    }
+    pipe.state.set(State::Done);
+    pipe.fail(webcore::body::ValueError::JSValue(
+        jsc::strong::Optional::create(reason.to_js(), global),
+    ));
     if global.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
@@ -1405,12 +1452,10 @@ impl DocumentHandler {
                 .doctype(move |d: &mut lol::Doctype| h.run(LentUnit::DocType(Unit::lend(d))));
         }
         if let Some(h) = self.on_comment_callback.map(bound) {
-            handlers = handlers
-                .comments(move |c: &mut lol::Comment| h.run(LentUnit::Comment(Unit::lend(c))));
+            handlers = handlers.comments(h.comments());
         }
         if let Some(h) = self.on_text_callback.map(bound) {
-            handlers = handlers
-                .text(move |t: &mut lol::TextChunk| h.run(LentUnit::TextChunk(Unit::lend(t))));
+            handlers = handlers.text(h.text());
         }
         if let Some(h) = self.on_end_callback.map(bound) {
             handlers = handlers
@@ -1463,12 +1508,10 @@ impl ElementHandler {
             });
         }
         if let Some(h) = self.on_comment_callback.map(bound) {
-            handlers = handlers
-                .comments(move |c: &mut lol::Comment| h.run(LentUnit::Comment(Unit::lend(c))));
+            handlers = handlers.comments(h.comments());
         }
         if let Some(h) = self.on_text_callback.map(bound) {
-            handlers = handlers
-                .text(move |t: &mut lol::TextChunk| h.run(LentUnit::TextChunk(Unit::lend(t))));
+            handlers = handlers.text(h.text());
         }
         handlers
     }
@@ -1512,16 +1555,9 @@ fn callback_property(
     Ok(Some(val))
 }
 
-/// Where a handler's callback lives.
-#[derive(Clone, Copy)]
-enum HandlerCallback {
-    /// Given to `on()` / `onDocument()`: in the [`HandlerList`], called on its handler object.
-    Listed {
-        callback: HandlerSlot,
-        this_object: HandlerSlot,
-    },
-    /// Given to `element.onEndTag()`: in the cell's `endTagHandlers` array until its one run.
-    EndTag(EndTagSlot),
+struct Callback {
+    function: JSValue,
+    this_object: JSValue,
 }
 
 /// The pipe whose lol-html calls run it, the callback, and its handler object.
@@ -1529,13 +1565,33 @@ enum HandlerCallback {
 struct BoundHandler(BackRef<RewriterPipe>, HandlerSlot, HandlerSlot);
 
 impl BoundHandler {
-    fn run(self, unit: LentUnit) -> lol_html::HandlerResult {
-        let Self(pipe, callback, this_object) = self;
-        let callback = HandlerCallback::Listed {
-            callback,
-            this_object,
+    fn callback(self) -> JsResult<Option<Callback>> {
+        let Self(pipe, function, this_object) = self;
+        // `drive` keeps the cell alive, and the list stays until lol-html returns.
+        let cell = pipe.cell.try_get();
+        let list =
+            HandlerList::existing(cell.and_then(js_HTMLRewriterTransform::handlers_get_cached));
+        debug_assert!(list.is_some(), "HTMLRewriter handler ran without its list");
+        let Some(list) = list else {
+            return Ok(None);
         };
-        pipe.run_handler(callback, unit)
+        Ok(Some(Callback {
+            function: list.get(&pipe.global, function)?,
+            this_object: list.get(&pipe.global, this_object)?,
+        }))
+    }
+
+    #[inline(always)]
+    fn run(self, unit: LentUnit) -> lol_html::HandlerResult {
+        self.0.run_handler(self.callback(), unit)
+    }
+
+    fn comments(self) -> impl FnMut(&mut lol::Comment<'_>) -> lol_html::HandlerResult {
+        move |c| self.run(LentUnit::Comment(Unit::lend(c)))
+    }
+
+    fn text(self) -> impl FnMut(&mut lol::TextChunk<'_>) -> lol_html::HandlerResult {
+        move |t| self.run(LentUnit::TextChunk(Unit::lend(t)))
     }
 }
 
@@ -1550,6 +1606,7 @@ enum LentUnit {
 }
 
 impl LentUnit {
+    #[inline(always)]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         match self {
             Self::Element(w) => js_Element::to_js(w.clone(), global),
@@ -1590,40 +1647,57 @@ impl Drop for LentUnit {
     }
 }
 
+/// The message reaches JS when no error was recorded.
+#[cold]
+fn stopped() -> lol_html::HandlerResult {
+    Err("The rewriter has been stopped.".into())
+}
+
 impl RewriterPipe {
-    fn run_handler(&self, callback: HandlerCallback, unit: LentUnit) -> lol_html::HandlerResult {
+    /// Inlined into each closure, where the kind of `unit` is known.
+    #[inline(always)]
+    fn run_handler(
+        &self,
+        callback: JsResult<Option<Callback>>,
+        unit: LentUnit,
+    ) -> lol_html::HandlerResult {
         jsc::mark_binding();
         let global = &*self.global;
-        // Reaches JS as it is when no error was recorded.
-        let stop = || Err("The rewriter has been stopped.".into());
-        let fail = |err| {
-            self.set_handler_error(err);
-            stop()
-        };
-
-        let Some((callback, this_object)) = self.take_callback(callback) else {
-            return stop();
+        // A pending termination stays pending, as when it stops the callback itself.
+        let Ok(Some(callback)) = callback else {
+            return stopped();
         };
 
         // Not `try_take_exception()`: the exception checker wants the call's throw seen by an enclosing scope.
         bun_jsc::top_scope!(scope, global);
-        let result = callback.call(global, this_object, &[unit.to_js(global)]);
+        let result = (callback.function).call(global, callback.this_object, &[unit.to_js(global)]);
         if let Some(exception) = scope.exception() {
-            let exception = JSValue::from_cell(exception.as_ptr());
-            // A termination is not this handler's error: it stays pending to unwind whatever drives the rewriter.
-            if !exception.is_termination_exception() {
-                self.set_handler_error(exception.to_error().unwrap_or(exception));
-            }
+            self.record_exception(JSValue::from_cell(exception.as_ptr()));
             scope.clear_exception_except_termination();
-            return stop();
+            return stopped();
         }
-        let Ok(result) = result else {
-            return stop();
-        };
+        match result {
+            Ok(result) if result.is_undefined_or_null() => Ok(()),
+            Ok(result) => self.handler_returned(result, unit),
+            Err(_) => stopped(),
+        }
+    }
 
-        if result.is_undefined_or_null() {
-            return Ok(());
+    #[cold]
+    fn record_exception(&self, exception: JSValue) {
+        // A termination is not this handler's error: it stays pending to unwind whatever drives the rewriter.
+        if !exception.is_termination_exception() {
+            self.set_handler_error(exception.to_error().unwrap_or(exception));
         }
+    }
+
+    #[inline(never)]
+    fn handler_returned(&self, result: JSValue, unit: LentUnit) -> lol_html::HandlerResult {
+        let global = &*self.global;
+        let fail = |err| {
+            self.set_handler_error(err);
+            stopped()
+        };
         // Not `is_any_error`, which covers `Exception` cells and misses a cross-realm AggregateError.
         if result.is_error() || result.is_aggregate_error(global) {
             return fail(result);
@@ -1637,7 +1711,7 @@ impl RewriterPipe {
             && (global.drain_microtasks_and_next_ticks().is_err()
                 || !global.clear_exception_except_termination())
         {
-            return stop();
+            return stopped();
         }
 
         match promise.status() {
@@ -1656,14 +1730,17 @@ impl RewriterPipe {
                 }
                 // lol-html moves the unit as it returns. `drive` points the wrapper at the copy.
                 unit.point_at(None);
-                let cell = (self.cell.try_get())
-                    .expect("HTMLRewriter handler ran without the Transform cell");
+                let Some(cell) = self.cell.try_get() else {
+                    return stopped();
+                };
                 js_HTMLRewriterTransform::suspension_promise_set_cached(cell, global, result);
                 self.state.with_mut(|state| match state {
-                    State::Running { suspending, .. } => *suspending = Some(unit),
-                    _ => unreachable!("handlers run inside `drive`"),
-                });
-                Err(Box::new(lol_html::SuspensionRequest))
+                    State::Running { suspending, .. } => {
+                        *suspending = Some(unit);
+                        Err(lol_html::SuspensionRequest.into())
+                    }
+                    State::Idle(_) | State::Suspended { .. } | State::Done => stopped(),
+                })
             }
         }
     }
@@ -1784,6 +1861,7 @@ pub(crate) type EndTag = Unit<RawEndTag>;
 impl<R> Unit<R> {
     /// `T` is `R` with lol-html's lifetimes. The ref goes into a [`LentUnit`].
     fn lend<T>(unit: &mut T) -> RefPtr<Self> {
+        const { assert!(size_of::<T>() == size_of::<R>()) };
         RefPtr::new(Self {
             ref_count: Cell::new(1),
             raw: DetachablePtr::new(core::ptr::from_mut(unit).cast()),
@@ -1982,7 +2060,7 @@ impl Element {
     ) -> bindgen::Result<'a, Option<JsWrapper<'a, Self>>> {
         let global_object = cx.global();
         let function = function.to_js();
-        let Some(el) = self.raw.get_mut() else {
+        let (Some(el), Some(pipe)) = (self.raw.get_mut(), self.pipe.get()) else {
             return Ok(None);
         };
         if function.is_undefined_or_null() || !function.is_callable() {
@@ -1999,8 +2077,6 @@ impl Element {
             return Err(global_object.throw_value(err).into());
         };
 
-        // Only `invalidate()` clears `pipe`, and it detaches `raw` in the same call.
-        let pipe = self.pipe.get().expect("attached Element without its pipe");
         let slot = pipe.hold_end_tag_callback(global_object, replaced, function)?;
         let (Some(slot), None) = (slot, replaced) else {
             // No end tag can come, or the earlier call's handler now reads the new callback.
@@ -2009,7 +2085,7 @@ impl Element {
 
         handlers.push(Box::new(move |end_tag| {
             let unit = LentUnit::EndTag(Unit::lend(end_tag));
-            pipe.run_handler(HandlerCallback::EndTag(slot), unit)
+            pipe.run_handler(pipe.take_end_tag_callback(slot), unit)
         }));
         el.set_user_data(slot);
 

@@ -4602,6 +4602,8 @@ class ServerHttp2Session extends Http2Session {
     closeDuplexTransportOnEnd(socket);
     initHttp2SessionPerf(this, "server");
     socket.on("data", this.#onRead.bind(this));
+    // on("data") leaves a socket paused that was handed over after pause() and unshift().
+    socket.resume();
     socket.on("drain", this.#onDrain.bind(this));
 
     process.nextTick(emitConnectNT, this, socket);
@@ -5828,6 +5830,8 @@ class ClientHttp2Session extends Http2Session {
       throw e;
     }
     socket.on("data", this.#onRead.bind(this));
+    // on("data") leaves a socket paused that was handed over after pause() and unshift().
+    socket.resume();
     socket.on("drain", this.#onDrain.bind(this));
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));

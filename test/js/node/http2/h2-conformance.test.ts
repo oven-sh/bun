@@ -450,6 +450,47 @@ describe("an ACK goes to the callback of the frame it answers", () => {
   });
 });
 
+test.each([
+  ["TCP", false],
+  ["TLS", true],
+])("a server session reads a %s socket that was paused with bytes put back", async (_, secure) => {
+  const handOver = (socket: net.Socket) =>
+    socket.once("data", chunk => {
+      socket.pause();
+      socket.unshift(chunk);
+      server.emit("connection", socket);
+    });
+  const front = secure ? tls.createServer({ ...tlsCert, ALPNProtocols: ["h2"] }, handOver) : net.createServer(handOver);
+  await once(front.listen(0, "127.0.0.1"), "listening");
+  const c = await RawH2.connect((front.address() as net.AddressInfo).port, secure);
+  try {
+    c.send(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0)]));
+    await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) !== 0);
+    c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+    expect((await c.waitFor(f => f.type === FrameType.DATA)).payload.toString()).toBe("ok");
+  } finally {
+    c.destroy();
+    front.close();
+  }
+});
+
+test("a client session reads a socket that was paused with bytes put back", async () => {
+  const settings = encodeFrame(FrameType.SETTINGS, 0, 0, Buffer.from([0, 3, 0, 0, 0, 7]));
+  const peer = net.createServer(socket => socket.on("error", () => {}).write(settings));
+  await once(peer.listen(0, "127.0.0.1"), "listening");
+  const socket = net.connect((peer.address() as net.AddressInfo).port, "127.0.0.1");
+  try {
+    const [chunk] = await once(socket, "data");
+    socket.pause();
+    socket.unshift(chunk);
+    const client = http2.connect("http://localhost", { createConnection: () => socket });
+    expect((await once(client, "remoteSettings"))[0].maxConcurrentStreams).toBe(7);
+  } finally {
+    socket.destroy();
+    peer.close();
+  }
+});
+
 test.each<[string, string[]]>([
   ["request()", ["HEADERS 1", "RST_STREAM 1"]],
   ["a queued request", ["HEADERS 1"]],

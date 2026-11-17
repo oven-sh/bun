@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 84edc859ccef92a32cc46528c80a63120b6efbcbd7d62c8471bb954b20631092.
+// Written against that file with the SHA-256 100067e997c19865f69a0ceb04144f130fcf37f430acb2baed0ba884bc672258.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -4725,6 +4725,8 @@ class ServerHttp2Session extends Http2Session {
     closeDuplexTransportOnEnd(socket);
     initHttp2SessionPerf(this, "server");
     socket.on("data", this.#onRead.bind(this));
+    // on("data") leaves a socket paused that was handed over after pause() and unshift().
+    socket.resume();
     socket.on("drain", this.#onDrain.bind(this));
 
     process.nextTick(emitConnectNT, this, socket);
@@ -5952,6 +5954,8 @@ class ClientHttp2Session extends Http2Session {
       throw e;
     }
     socket.on("data", this.#onRead.bind(this));
+    // on("data") leaves a socket paused that was handed over after pause() and unshift().
+    socket.resume();
     socket.on("drain", this.#onDrain.bind(this));
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));

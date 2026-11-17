@@ -277,6 +277,32 @@ impl Drop for PreparedDictionary {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// DecoderOptions
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct DecoderOptions {
+    pub(crate) params: DecoderParams,
+}
+
+/// One `bool` per `BrotliDecoderParameter` variant, default `false`.
+#[derive(Default)]
+struct DecoderParams {
+    pub(crate) large_window: bool,
+    pub(crate) disable_ring_buffer_reallocation: bool,
+}
+
+impl Default for DecoderOptions {
+    fn default() -> Self {
+        Self {
+            params: DecoderParams {
+                large_window: true,
+                disable_ring_buffer_reallocation: false,
+            },
+        }
+    }
+}
+
 use bun_core::compress::State as ReaderState;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -296,11 +322,19 @@ pub struct StreamingDecoder {
 }
 
 impl StreamingDecoder {
-    pub fn new() -> crate::Result<Self> {
+    pub fn new(options: &DecoderOptions) -> crate::Result<Self> {
         let mut brotli =
             OwnedDecoder::new(Allocator::Bun).ok_or(crate::Error::BrotliFailedToCreateInstance)?;
 
-        brotli.set_parameter(c::BrotliDecoderParameter::LARGE_WINDOW as c_uint, 1);
+        if options.params.large_window {
+            brotli.set_parameter(c::BrotliDecoderParameter::LARGE_WINDOW as c_uint, 1);
+        }
+        if options.params.disable_ring_buffer_reallocation {
+            brotli.set_parameter(
+                c::BrotliDecoderParameter::DISABLE_RING_BUFFER_REALLOCATION as c_uint,
+                1,
+            );
+        }
 
         Ok(Self {
             brotli,

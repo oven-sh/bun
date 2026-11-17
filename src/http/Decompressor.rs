@@ -61,7 +61,9 @@ impl Decompressor {
                 ) {
                     return Err(bun_brotli::Error::BrotliFailedToLoad.into());
                 }
-                *self = Decompressor::Brotli(Box::new(bun_brotli::StreamingDecoder::new()?));
+                *self = Decompressor::Brotli(Box::new(bun_brotli::StreamingDecoder::new(
+                    &Default::default(),
+                )?));
             }
             Encoding::Zstd => {
                 *self = Decompressor::Zstd(Box::new(bun_zstd::StreamingDecoder::new()?));

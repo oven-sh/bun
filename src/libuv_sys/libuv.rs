@@ -841,6 +841,11 @@ pub unsafe trait UvStream: UvHandle {
         (self as *mut Self).cast()
     }
     #[inline]
+    fn get_write_queue_size(&self) -> usize {
+        // SAFETY: stream prefix invariant.
+        unsafe { uv_stream_get_write_queue_size((self as *const Self).cast()) }
+    }
+    #[inline]
     fn read_start(&mut self, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) -> ReturnCode {
         // SAFETY: stream prefix invariant.
         unsafe { uv_read_start(self.as_stream(), alloc_cb, read_cb) }

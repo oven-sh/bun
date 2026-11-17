@@ -77,6 +77,8 @@ public:
     size_t count() const { return m_items.size(); }
     size_t memoryCost() const;
 
+    String toURLEncodedString();
+
     class Iterator {
     public:
         explicit Iterator(DOMFormData&);

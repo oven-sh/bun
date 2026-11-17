@@ -88,8 +88,6 @@ pub enum RESPValue {
     VerbatimString(Box<[u8]>),
     Map(Vec<MapEntry>),
     Set(Vec<RESPValue>),
-    /// The value behind the pairs, which nothing reads.
-    Attribute(Box<RESPValue>),
     Push(Push),
     BigNumber(Box<[u8]>),
 }
@@ -391,12 +389,12 @@ impl<'a> ValkeyReader<'a> {
                 if len < 0 {
                     return Err(RedisError::InvalidAttribute);
                 }
+                // Nothing reads the pairs: the reply is the value behind them.
                 for _ in 0..len {
                     self.read_value_with_depth(depth + 1)?;
                     self.read_value_with_depth(depth + 1)?;
                 }
-                let value = self.read_value_with_depth(depth + 1)?;
-                Ok(RESPValue::Attribute(Box::new(value)))
+                self.read_value_with_depth(depth + 1)
             }
             RESPType::Push => {
                 if depth >= Self::MAX_NESTING_DEPTH {

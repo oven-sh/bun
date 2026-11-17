@@ -104,7 +104,6 @@ pub(crate) fn resp_value_to_js_with_options(
         RESPValue::Set(set) => JSValue::create_array_from_iter(global, set.iter_mut(), |item| {
             resp_value_to_js_with_options(item, global, options)
         }),
-        RESPValue::Attribute(value) => resp_value_to_js_with_options(value, global, options),
         RESPValue::Push(push) => {
             let js_obj = JSValue::create_empty_object_with_null_prototype(global);
 

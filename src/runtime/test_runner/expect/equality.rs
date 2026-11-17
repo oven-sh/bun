@@ -7,7 +7,7 @@ use super::matcher::{EXPECTED, NO_PARAMS, This, Verdict, fail, params};
 impl Expect {
     /// Object.is()
     pub(crate) fn to_be(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toBe", EXPECTED)?;
+        let (m, received) = this.start(cx, "toBe", EXPECTED)?;
         let expected = expected.to_js();
         if m.passes(expected.is_same_value(received, m.global)?) {
             return m.pass();
@@ -35,7 +35,7 @@ impl Expect {
     }
 
     pub(crate) fn to_equal(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toEqual", EXPECTED)?;
+        let (m, received) = this.start(cx, "toEqual", EXPECTED)?;
         let expected = expected.to_js();
         if m.passes(received.jest_deep_equals(expected, m.global)?) {
             m.pass()
@@ -45,7 +45,7 @@ impl Expect {
     }
 
     pub(crate) fn to_strict_equal(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toStrictEqual", EXPECTED)?;
+        let (m, received) = this.start(cx, "toStrictEqual", EXPECTED)?;
         let expected = expected.to_js();
         if m.passes(received.jest_strict_deep_equals(expected, m.global)?) {
             m.pass()
@@ -55,7 +55,7 @@ impl Expect {
     }
 
     pub(crate) fn to_match_object(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toMatchObject", EXPECTED)?;
+        let (m, received) = this.start(cx, "toMatchObject", EXPECTED)?;
         let expected = expected.to_js();
         // Jest refuses a value that isn't an object. To Vitest it's one that doesn't match.
         if m.not() && !(received.is_object() && expected.is_object()) && self.is_vitest() {
@@ -81,7 +81,7 @@ impl Expect {
         path: JsLocal<'_>,
         value: &[JsLocal<'_>],
     ) -> Verdict {
-        let m = self.begin(this, cx, "toHaveProperty", params!("<green>path<r><d>, <r><green>value<r>")).count();
+        let m = this.begin(cx, "toHaveProperty", params!("<green>path<r><d>, <r><green>value<r>")).count();
         let global = m.global;
         let path = path.to_js();
         let expected = value.first().map(|value| value.to_js());

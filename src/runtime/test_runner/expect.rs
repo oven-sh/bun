@@ -20,7 +20,7 @@ use super::execution::ExpectAssertions;
 use super::jest::Jest;
 use super::pretty_format::JestPrettyFormat;
 use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome};
-use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question};
+use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question, Settled};
 use self::matcher::{EXPECTED, Matcher, NO_PARAMS, Verdict, fail, params};
 use self::snapshots::fail_outside_of_a_test;
 pub(crate) use crate::generated_bindgen::expect::js_Expect as js;
@@ -400,12 +400,16 @@ impl Expect {
         }
         let received = *value;
         let question = Question { asked: Asked::Promise, who: JSValue::UNDEFINED, what: received };
-        let Ok(promise) = Pass::settled(global_this, question, &mut || {
+        let settled = Pass::settled(global_this, question, &mut || {
             Ok(Self::promise_to_await(global_this, received)?.map_or(JSValue::UNDEFINED, bun_jsc::AnyPromise::as_value))
-        }) else {
-            return false;
-        };
-        matcher::settle(global_this, flags.promise(), promise).map(|settled| *value = settled).is_ok()
+        });
+        match (settled, flags.promise()) {
+            (Ok(Settled::Fulfilled(settled)), Promise::Resolves) | (Ok(Settled::Rejected(settled)), Promise::Rejects) => {
+                *value = settled;
+                true
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn is_in_vitest_test(&self, buntest: &bun_test::BunTest) -> bool {
@@ -777,7 +781,7 @@ impl Expect {
 
     #[optimize(size)]
     fn inline_snapshot(m: &Matcher<'_>, received: Received, property_matchers: Option<JSValue>, result: Option<&[u8]>) -> Verdict {
-        let (this, global_this) = (m.expect, m.global);
+        let (this, global_this) = (m.call.expect, m.global);
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else { return fail_outside_of_a_test(m, false) };
         let update = runner.with_snapshots(|snapshots| snapshots.update_snapshots);
@@ -844,7 +848,7 @@ impl Expect {
         }
         let Some(buntest) = this.bun_test() else { return fail_outside_of_a_test(m, false) };
 
-        let srcloc = ExpectDeferred::call_site(global_this, m.this).unwrap_or_else(|| global_this.get_caller_src_loc());
+        let srcloc = ExpectDeferred::call_site(global_this, m.call.this).unwrap_or_else(|| global_this.get_caller_src_loc());
         let path = buntest.file.path;
         if !srcloc.str.eql_utf8(path) {
             return fail!(
@@ -938,8 +942,8 @@ impl Expect {
 
     #[optimize(size)]
     fn snapshot(m: &Matcher<'_>, received: Received, property_matchers: Option<JSValue>, hint: &[u8]) -> Verdict {
-        let (this, global_this) = (m.expect, m.global);
-        let runner = Jest::runner().expect("unreachable");
+        let (this, global_this) = (m.call.expect, m.global);
+        let Some(runner) = Jest::runner() else { return fail_outside_of_a_test(m, true) };
         let mut pretty_value: Vec<u8> = Vec::new();
         let format = match runner.with_snapshots(|snapshots| snapshots.format_of(this)) {
             Ok(format) => format,
@@ -1349,8 +1353,8 @@ impl Expect {
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
-        let call = MatcherCall { expect: &expect, this, callee, arguments, flags: expect.flags.get() };
-        expect.run_matcher(cx, &call, |cx| expect.custom_matcher(cx.global(), &call))
+        let call = MatcherCall::new(&expect, this, callee, arguments);
+        expect.run_matcher(cx, &call, |cx, call| Self::custom_matcher(cx.global(), call))
     }
 
     fn custom_matcher_fn(global_this: &JSGlobalObject, func: JSValue) -> JsResult<JSValue> {
@@ -1363,9 +1367,8 @@ impl Expect {
         Ok(matcher_fn)
     }
 
-    fn custom_matcher(&self, global_this: &JSGlobalObject, call: &MatcherCall<'_>) -> JsResult<JSValue> {
-        let expect = self;
-        let this_value: JSValue = call.this;
+    fn custom_matcher(global_this: &JSGlobalObject, call: &MatcherCall<'_>) -> JsResult<JSValue> {
+        let expect = call.expect;
         let matcher_fn = Self::custom_matcher_fn(global_this, call.callee)?;
 
         // retrieve the matcher name
@@ -1376,7 +1379,7 @@ impl Expect {
             matcher_fn,
         };
 
-        let value = expect.received(global_this, this_value, call.flags, &matcher_name, &matcher_params)?;
+        let value = call.received(global_this, &matcher_name, &matcher_params)?;
         expect.increment_expect_call_counter();
 
         let args = call.arguments;
@@ -1384,7 +1387,7 @@ impl Expect {
             Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, matcher_args, call.flags, expect.parent.as_ref(), false)
         })?;
 
-        Ok(this_value)
+        Ok(call.this)
     }
 
     pub(crate) fn add_snapshot_serializer(cx: &mut JsScope<'_>, serializer: JsLocal<'_>) -> JsResult<()> {

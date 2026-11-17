@@ -4,11 +4,10 @@ use core::fmt::{self, Write as _};
 
 use bun_core::{Output, write_pretty};
 use bun_jsc::bindgen::JsScope;
-use bun_jsc::js_promise::Status;
-use bun_jsc::{AnyPromise, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
 
-use super::expect_deferred::MatcherCall;
-use super::{Expect, Flags, Promise, js, show};
+use super::expect_deferred::{MatcherCall, Settled};
+use super::{Promise, js, show};
 use crate::test_runner::diff_format::DiffFormatter;
 
 pub(crate) type This<'a> = &'a MatcherCall<'a>;
@@ -62,39 +61,31 @@ pub(super) use fail;
 /// A call that `expect.assertions()` has counted.
 #[derive(Clone, Copy)]
 pub(super) struct Matcher<'a> {
-    pub(super) expect: &'a Expect,
+    pub(super) call: This<'a>,
     pub(super) global: &'a JSGlobalObject,
-    pub(super) this: JSValue,
     pub(super) name: &'static str,
     params: Params,
-    flags: Flags,
+    signed_not: bool,
 }
 
 /// A call that has not been counted yet. It can't pass.
 pub(super) struct Uncounted<'a>(Matcher<'a>);
 
-impl Expect {
+impl<'a> MatcherCall<'a> {
     #[inline]
-    pub(super) fn begin<'a>(
-        &'a self,
-        this: This<'_>,
-        cx: &'a mut JsScope<'_>,
-        name: &'static str,
-        params: Params,
-    ) -> Uncounted<'a> {
-        Uncounted(Matcher { expect: self, global: cx.global(), this: this.this, name, params, flags: this.flags })
+    pub(super) fn begin(&'a self, cx: &'a mut JsScope<'_>, name: &'static str, params: Params) -> Uncounted<'a> {
+        Uncounted(Matcher { call: self, global: cx.global(), name, params, signed_not: self.flags.not() })
     }
 
     /// Reads the received value, then counts the call.
     #[inline]
-    pub(super) fn start<'a>(
+    pub(super) fn start(
         &'a self,
-        this: This<'_>,
         cx: &'a mut JsScope<'_>,
         name: &'static str,
         params: Params,
     ) -> JsResult<(Matcher<'a>, JSValue)> {
-        let call = self.begin(this, cx, name, params);
+        let call = self.begin(cx, name, params);
         let received = call.received()?;
         Ok((call.count(), received))
     }
@@ -104,74 +95,50 @@ impl Expect {
     pub(super) fn received(
         &self,
         global: &JSGlobalObject,
-        this: JSValue,
-        flags: Flags,
         name: &dyn fmt::Display,
         params: &dyn fmt::Display,
     ) -> JsResult<JSValue> {
-        match js::captured_value_get_cached(this) {
-            Some(value) if flags.promise() == Promise::None => Ok(value),
-            value => self.settled(
-                global,
-                this,
-                value,
-                &Signature { promise: flags.promise(), not: flags.not(), name, params },
-            ),
+        match js::captured_value_get_cached(self.this) {
+            Some(value) if self.flags.promise() == Promise::None => Ok(value),
+            value => self.received_from_promise(global, value, name, params),
         }
     }
 
     #[cold]
     #[optimize(size)]
-    fn settled(
+    fn received_from_promise(
         &self,
         global: &JSGlobalObject,
-        this: JSValue,
         value: Option<JSValue>,
-        signature: &Signature<'_>,
+        name: &dyn fmt::Display,
+        params: &dyn fmt::Display,
     ) -> JsResult<JSValue> {
         let Some(value) = value else {
             return Err(global.throw(format_args!(
                 "Internal error: the expect(value) was garbage collected but it should not have been!"
             )));
         };
-        // `call_matcher_on_promise` keeps the promise there.
-        let promise = js::result_value_get_cached(this).and_then(JSValue::as_any_promise);
-        let (expected, received) = match settle(global, signature.promise, promise) {
-            Ok(settled) => return Ok(settled),
-            Err(Mismatch::NotAPromise) => ("Expected promise", "Received: "),
-            Err(Mismatch::Resolved) => ("Expected promise that rejects", "Received promise that resolved: "),
-            Err(Mismatch::Rejected) => ("Expected promise that resolves", "Received promise that rejected: "),
+        let promise = self.flags.promise();
+        let (expected, received) = match (self.settled, promise) {
+            (Settled::NotAPromise, _) => ("Expected promise", "Received: "),
+            (Settled::Fulfilled(_), Promise::Rejects) => {
+                ("Expected promise that rejects", "Received promise that resolved: ")
+            }
+            (Settled::Rejected(_), Promise::Resolves) => {
+                ("Expected promise that resolves", "Received promise that rejected: ")
+            }
+            (Settled::Fulfilled(settled) | Settled::Rejected(settled), _) => return Ok(settled),
         };
+        let signature = Signature { promise, not: self.flags.not(), name, params };
         let colors = Output::enable_ansi_colors_stderr();
         let body = fmt::from_fn(|f| {
             write_pretty!(f, colors, "{}<r>\n{}<red>{}<r>\n", expected, received, show(global, value))
         });
-        Err(global.throw(format_args!("{}\n\n{body}", self.label_or(signature))))
+        Err(global.throw(format_args!("{}\n\n{body}", self.label_or(&signature))))
     }
 
-    fn label_or<'a>(&'a self, signature: &'a dyn fmt::Display) -> &'a dyn fmt::Display {
-        if self.custom_label.is_empty() { signature } else { &self.custom_label }
-    }
-}
-
-pub(super) enum Mismatch {
-    NotAPromise,
-    Resolved,
-    Rejected,
-}
-
-/// What `promise`, which is not pending, settled with, if it settled the way `expected` says.
-pub(super) fn settle(
-    global: &JSGlobalObject,
-    expected: Promise,
-    promise: Option<AnyPromise>,
-) -> Result<JSValue, Mismatch> {
-    let promise = promise.ok_or(Mismatch::NotAPromise)?;
-    match (promise.status(), expected) {
-        (Status::Pending, _) => unreachable!(),
-        (Status::Fulfilled, Promise::Rejects) => Err(Mismatch::Resolved),
-        (Status::Rejected, Promise::Resolves) => Err(Mismatch::Rejected),
-        _ => Ok(promise.result(global.vm())),
+    fn label_or<'l>(&'l self, signature: &'l dyn fmt::Display) -> &'l dyn fmt::Display {
+        if self.expect.custom_label.is_empty() { signature } else { &self.expect.custom_label }
     }
 }
 
@@ -214,7 +181,7 @@ impl<'a> Uncounted<'a> {
     /// Before anything that can `Pass::wait_for`: `matcher_threw` takes the count back.
     #[inline]
     pub(super) fn count(self) -> Matcher<'a> {
-        self.0.expect.increment_expect_call_counter();
+        self.0.call.expect.increment_expect_call_counter();
         self.0
     }
 }
@@ -222,17 +189,17 @@ impl<'a> Uncounted<'a> {
 impl<'a> Matcher<'a> {
     #[inline]
     pub(super) fn received(&self) -> JsResult<JSValue> {
-        self.expect.received(self.global, self.this, self.flags, &self.name, &self.params)
+        self.call.received(self.global, &self.name, &self.params)
     }
 
     #[inline]
     pub(super) fn promise(&self) -> Promise {
-        self.flags.promise()
+        self.call.flags.promise()
     }
 
     #[inline]
     pub(super) fn not(&self) -> bool {
-        self.flags.not()
+        self.call.flags.not()
     }
 
     pub(super) fn not_word(&self) -> &'static str {
@@ -252,7 +219,7 @@ impl<'a> Matcher<'a> {
     /// For the `chainable` matchers of expect.bind.ts.
     #[inline]
     pub(super) fn pass_this(&self) -> Verdict {
-        self.pass_with(self.this)
+        self.pass_with(self.call.this)
     }
 
     #[inline]
@@ -270,10 +237,8 @@ impl<'a> Matcher<'a> {
     }
 
     /// For a failure whose signature has `.not`, or lacks it, whatever the call has.
-    pub(super) fn signed_not(&self, not: bool) -> Self {
-        let mut signed = *self;
-        signed.flags.set_not(not);
-        signed
+    pub(super) fn signed_not(&self, signed_not: bool) -> Self {
+        Self { signed_not, ..*self }
     }
 
     /// Throws `body` under the label or the signature.
@@ -281,7 +246,7 @@ impl<'a> Matcher<'a> {
     #[optimize(size)]
     pub(super) fn fail(&self, body: fmt::Arguments<'_>) -> JsError {
         self.fail_under(
-            &Signature { promise: Promise::None, not: self.not(), name: &self.name, params: &self.params },
+            &Signature { promise: Promise::None, not: self.signed_not, name: &self.name, params: &self.params },
             body,
         )
     }
@@ -297,7 +262,7 @@ impl<'a> Matcher<'a> {
     #[optimize(size)]
     fn fail_under(&self, signature: &dyn fmt::Display, body: fmt::Arguments<'_>) -> JsError {
         let mut message = String::new();
-        let rendered = write!(message, "{}\n\n{body}", self.expect.label_or(signature));
+        let rendered = write!(message, "{}\n\n{body}", self.call.label_or(signature));
         // If printing a value threw (a getter, a Proxy trap), propagate that error like Jest does.
         if rendered.is_err() && self.global.has_exception() {
             return JsError::Thrown;

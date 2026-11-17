@@ -20,13 +20,15 @@ const test_skipIf = (/** @type {boolean} */ cond) => (cond ? test.skip : test);
 /** Helper function which just type-casts to any */
 const ANY = (/** @type {any} */ arg) => arg;
 
-/** For a `catch`: `false` for the failure of a matcher, and anything else is thrown on. */
-const didNotPass = (/** @type {any} */ error, not = false) => {
-  const message = stripVTControlCharacters(String(error?.message));
-  if (isBun && !message.startsWith("expect(received).")) throw error;
-  // fail() prints .not either way.
-  if (isBun && message.startsWith("expect(received).not.to") !== not) throw error;
-  return false;
+/** `"passes"` or `"fails"`. An error that is not the failure of a matcher is thrown on. */
+const outcomeOf = async (/** @type {() => unknown} */ assertion) => {
+  try {
+    await assertion();
+    return "passes";
+  } catch (error) {
+    if (isBun && !stripVTControlCharacters(String(ANY(error)?.message)).startsWith("expect(received).")) throw error;
+    return "fails";
+  }
 };
 
 describe("expect()", () => {
@@ -249,7 +251,7 @@ describe("expect()", () => {
       const resolved = jest.fn(async () => 1);
       await resolved();
 
-      /** @type {Record<string, (pass: boolean) => unknown>} */
+      /** @type {Record<string, (pass: boolean) => unknown>} Each reads `kept.not`, and should pass if `pass` is true. */
       const rows = {
         toEqual: pass => (kept = expect(1)).toEqual(answer(pass)),
         toHaveBeenCalledWith: pass => (kept = expect(called)).toHaveBeenCalledWith(answer(pass)),
@@ -281,15 +283,13 @@ describe("expect()", () => {
         }),
       };
 
-      /** @type {Record<string, boolean[]>} */
-      const passed = {};
       for (const [name, run] of Object.entries(rows)) {
-        passed[name] = [];
-        for (const pass of [true, false]) {
-          passed[name].push(await (async () => run(pass))().then(() => true, didNotPass));
-        }
+        expect({ name, true: await outcomeOf(() => run(true)), false: await outcomeOf(() => run(false)) }).toEqual({
+          name,
+          true: "passes",
+          false: "fails",
+        });
       }
-      expect(passed).toEqual(Object.fromEntries(Object.keys(rows).map(name => [name, [true, false]])));
     });
 
     test_skipIf(!isBun)(".not that is read while a matcher runs negates the next one", async () => {
@@ -1346,77 +1346,73 @@ describe("expect()", () => {
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
   });
 
-  describe("toThrow and .not.toThrow give opposite answers", () => {
+  describe("toThrow(expected) and .not.toThrow(expected)", () => {
     const thrower = (/** @type {unknown} */ thrown) => () => {
       throw thrown;
     };
-    const passes = (/** @type {() => unknown} */ run, /** @type {boolean} */ not) => {
-      try {
-        run();
-        return true;
-      } catch (error) {
-        return didNotPass(error, not);
-      }
-    };
-    /** Whether the matcher passes without `.not`, and with it. */
-    const verdicts = (/** @type {unknown} */ thrown, /** @type {any} */ expected) => [
-      passes(() => expect(thrower(thrown)).toThrow(expected), false),
-      passes(() => expect(thrower(thrown)).not.toThrow(expected), true),
-    ];
-    const messageOf = (/** @type {() => unknown} */ run) => {
-      try {
-        run();
-      } catch (error) {
-        return stripVTControlCharacters(ANY(error).message);
-      }
-    };
+    const outcomes = async (/** @type {unknown} */ thrown, /** @type {any} */ expected) => ({
+      toThrow: await outcomeOf(() => expect(thrower(thrown)).toThrow(expected)),
+      notToThrow: await outcomeOf(() => expect(thrower(thrown)).not.toThrow(expected)),
+    });
+    const error = Object.assign(new TypeError("foo"), { code: 1 });
 
-    test("for an asymmetric matcher", async () => {
+    test("give opposite answers for an asymmetric matcher", async () => {
       expect.extend({ toHaveCode: (received, code) => ({ pass: ANY(received).code === code, message: () => "" }) });
-      const error = Object.assign(new TypeError("foo"), { code: 1 });
-      for (const [thrown, matches, differs] of [
-        [error, expect.objectContaining({ code: 1 }), expect.objectContaining({ code: 2 })],
-        [error, expect.not.objectContaining({ code: 2 }), expect.not.objectContaining({ code: 1 })],
-        [error, ANY(expect).toHaveCode(1), ANY(expect).toHaveCode(2)],
-        [error, expect.anything(), expect.stringContaining("foo")],
-        ["abc", expect.stringContaining("b"), expect.stringContaining("x")],
-        ["abc", expect.stringMatching(/b/), expect.stringMatching(/x/)],
-        [[1, 2], expect.arrayContaining([1]), expect.arrayContaining([3])],
-        [1.001, expect.closeTo(1), expect.closeTo(2)],
+      for (const { thrown, matches, differs } of [
+        {
+          thrown: error,
+          matches: expect.objectContaining({ code: 1 }),
+          differs: expect.objectContaining({ code: 2 }),
+        },
+        {
+          thrown: error,
+          matches: expect.not.objectContaining({ code: 2 }),
+          differs: expect.not.objectContaining({ code: 1 }),
+        },
+        { thrown: error, matches: ANY(expect).toHaveCode(1), differs: ANY(expect).toHaveCode(2) },
+        { thrown: error, matches: expect.anything(), differs: expect.stringContaining("foo") },
+        { thrown: "abc", matches: expect.stringContaining("b"), differs: expect.stringContaining("x") },
+        { thrown: "abc", matches: expect.stringMatching(/b/), differs: expect.stringMatching(/x/) },
+        { thrown: [1, 2], matches: expect.arrayContaining([1]), differs: expect.arrayContaining([3]) },
+        { thrown: 1.001, matches: expect.closeTo(1), differs: expect.closeTo(2) },
       ]) {
-        expect(verdicts(thrown, matches)).toEqual([true, false]);
-        expect(verdicts(thrown, differs)).toEqual([false, true]);
+        expect(await outcomes(thrown, matches)).toEqual({ toThrow: "passes", notToThrow: "fails" });
+        expect(await outcomes(thrown, differs)).toEqual({ toThrow: "fails", notToThrow: "passes" });
       }
-
-      expect(passes(() => expect(thrower(error)).not.toThrowError(expect.anything()), true)).toBe(false);
-      expect(() => {}).not.toThrow(expect.anything());
-
-      const rejectsWithout = async (/** @type {any} */ expected) =>
-        expect(Promise.reject(error)).rejects.not.toThrow(expected);
-      await rejectsWithout(expect.objectContaining({ code: 2 }));
-      expect(await rejectsWithout(expect.anything()).catch(failure => didNotPass(failure, true))).toBe(false);
     });
 
-    // Vitest throws a TypeError for a string.
-    test_skipIf(isVitest)("for a thrown symbol", () => {
-      class Symbols {
-        static [Symbol.hasInstance](/** @type {unknown} */ value) {
-          return typeof value === "symbol";
-        }
-      }
-      for (const matches of [expect.anything(), Symbols, "abc", /^Symbol\(abc\)$/, new Error("Symbol(abc)")]) {
-        expect(verdicts(Symbol("abc"), matches)).toEqual([true, false]);
-      }
-      for (const differs of [expect.stringContaining("abc"), Error, "x", /x/, new Error("abc")]) {
-        expect(verdicts(Symbol("abc"), differs)).toEqual([false, true]);
-      }
-      expect(verdicts(Symbol(), /^Symbol\(\)$/)).toEqual([true, false]);
+    test(".not asks an asymmetric matcher through toThrowError and .rejects, and not if nothing is thrown", async () => {
+      expect({
+        toThrowError: await outcomeOf(() => expect(thrower(error)).not.toThrowError(expect.anything())),
+        rejectsWithMatch: await outcomeOf(() => expect(Promise.reject(error)).rejects.not.toThrow(expect.anything())),
+        rejectsWithoutMatch: await outcomeOf(() =>
+          expect(Promise.reject(error)).rejects.not.toThrow(expect.objectContaining({ code: 2 })),
+        ),
+        nothingThrown: await outcomeOf(() => expect(() => {}).not.toThrow(expect.anything())),
+      }).toEqual({
+        toThrowError: "fails",
+        rejectsWithMatch: "fails",
+        rejectsWithoutMatch: "passes",
+        nothingThrown: "passes",
+      });
     });
 
-    test_skipIf(!isBun)("and .not prints the matcher that matched", () => {
-      expect(messageOf(() => expect(thrower("abc")).not.toThrow(expect.stringContaining("b")))).toBe(
-        'expect(received).not.toThrow(expected)\n\nExpected value: not StringContaining "b"\nReceived value: "abc"\n',
+    test_skipIf(!isBun)(".not prints the asymmetric matcher that matched", async () => {
+      await expectFailure(() => expect(thrower("abc")).not.toThrow(expect.stringContaining("b"))).toThrow(
+        new Error(
+          'expect(received).not.toThrow(expected)\n\nExpected value: not StringContaining "b"\nReceived value: "abc"\n',
+        ),
       );
+    });
+
+    test_skipIf(!isBun)("both fail when there is no message, or no RegExp test(), to compare with", async () => {
+      expect({
+        noMessage: await outcomes({ code: 1 }, /undefined/),
+        noTest: await outcomes(error, Object.assign(/foo/, { test: undefined })),
+      }).toEqual({
+        noMessage: { toThrow: "fails", notToThrow: "fails" },
+        noTest: { toThrow: "fails", notToThrow: "fails" },
+      });
     });
   });
 

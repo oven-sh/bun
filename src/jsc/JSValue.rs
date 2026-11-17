@@ -2161,7 +2161,7 @@ impl JSValue {
     // ── Object / cell views. ───────────────
     /// Statically cast to a `JSCell*`; `None` for non-cells.
     #[inline]
-    pub(crate) fn to_cell(self) -> Option<*mut crate::JSCell> {
+    pub fn to_cell(self) -> Option<*mut crate::JSCell> {
         if self.is_cell() {
             Some(self.0 as *mut crate::JSCell)
         } else {

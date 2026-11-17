@@ -39,6 +39,7 @@ test("every matcher counts as one assertion, whether it passes or fails", async 
       const throws = () => {
         throw new Error("a");
       };
+      // Calls to try, the likely ones first, until the matcher has passed once and failed once.
       function* calls(name) {
         const likely = /Call|Return|Resolve|^last|^nth/.test(name) ? [called] : /Throw/.test(name) ? [throws] : [];
         const snapshot = /Inline/.test(name) ? [['"a"']] : /File/.test(name) ? [["a.txt"]] : [];

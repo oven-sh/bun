@@ -17,7 +17,7 @@ fn compare_big_int(big_int: JSValue, other: JSValue) -> Option<Ordering> {
 
 impl Expect {
     pub(crate) fn to_be_greater_than(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        self.to_be_ordered(this, cx, expected, "toBeGreaterThan", ">", Ordering::is_gt)
+        Self::to_be_ordered(this, cx, expected, "toBeGreaterThan", ">", Ordering::is_gt)
     }
 
     pub(crate) fn to_be_greater_than_or_equal(
@@ -26,11 +26,11 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        self.to_be_ordered(this, cx, expected, "toBeGreaterThanOrEqual", ">=", Ordering::is_ge)
+        Self::to_be_ordered(this, cx, expected, "toBeGreaterThanOrEqual", ">=", Ordering::is_ge)
     }
 
     pub(crate) fn to_be_less_than(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        self.to_be_ordered(this, cx, expected, "toBeLessThan", "<", Ordering::is_lt)
+        Self::to_be_ordered(this, cx, expected, "toBeLessThan", "<", Ordering::is_lt)
     }
 
     pub(crate) fn to_be_less_than_or_equal(
@@ -39,11 +39,10 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        self.to_be_ordered(this, cx, expected, "toBeLessThanOrEqual", "<=", Ordering::is_le)
+        Self::to_be_ordered(this, cx, expected, "toBeLessThanOrEqual", "<=", Ordering::is_le)
     }
 
     fn to_be_ordered(
-        &self,
         this: This<'_>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
@@ -51,7 +50,7 @@ impl Expect {
         operator: &'static str,
         holds: fn(Ordering) -> bool,
     ) -> Verdict {
-        let m = self.begin(this, cx, name, EXPECTED).count();
+        let m = this.begin(cx, name, EXPECTED).count();
         let received = m.received()?;
         let expected = expected.to_js();
         let order = match (received.is_number(), expected.is_number()) {
@@ -82,7 +81,7 @@ impl Expect {
         expected: JsLocal<'_>,
         precision: JsLocal<'_>,
     ) -> Verdict {
-        let m = self.begin(this, cx, "toBeCloseTo", params!("<green>expected<r>, precision")).count();
+        let m = this.begin(cx, "toBeCloseTo", params!("<green>expected<r>, precision")).count();
         let (expected, precision) = (expected.to_js(), precision.to_js());
         if !expected.is_number() {
             return Err(m.global.throw_invalid_argument_type("toBeCloseTo", "expected", "number"));
@@ -124,7 +123,7 @@ impl Expect {
         start: JsLocal<'_>,
         end: JsLocal<'_>,
     ) -> Verdict {
-        let (m, received) = self.start(this, cx, "toBeWithin", params!("<green>start<r><d>, <r><green>end<r>"))?;
+        let (m, received) = this.start(cx, "toBeWithin", params!("<green>start<r><d>, <r><green>end<r>"))?;
         let (start, end) = (start.to_js(), end.to_js());
         if !start.is_number() {
             return Err(m.global.throw(format_args!("toBeWithin() requires the first argument to be a number")));

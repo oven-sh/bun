@@ -37,13 +37,6 @@ test.skipIf(isWindows)("a command is started where the limit is nothing and may 
   expect(await run(cmd, import.meta.dir, bunEnv)).toMatchObject({ stdout: "started 0\n", exitCode: 0 });
 });
 
-// The case ends before the time limit of a run, and a run ends before the programs stop sleeping: the case passes only
-// where the driver waits for neither. Its limit is what scripts/runner.node.ts gives a case of a file that runs beside
-// three others. That is how the Intel Macs of CI run it, and most of them take 116 to 166 s. Linux takes 4 s.
-const secondsOfTheCase = 360;
-const secondsOfARun = secondsOfTheCase + 20;
-const secondsAsleep = secondsOfARun + 20;
-
 test.skipIf(isWindows || !isCanary)(
   "a program that a signal ends is judged at once",
   async () => {
@@ -60,14 +53,14 @@ test.skipIf(isWindows || !isCanary)(
         `true`,
         `*/\n`,
       ].join("\n"),
-      "faults-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.kill(process.pid, "SIGSEGV");\nawait Bun.sleep(${secondsAsleep * 1000});\n`,
+      "faults-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.kill(process.pid, "SIGSEGV");\nawait Bun.sleep(200_000);\n`,
       "answers-otherwise-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.log(true);\n/* Output:\nfalse\n*/\n`,
       // The command outlives the time limit of a run, in the group of the program and with its pipe for errors.
       "leaves-a-command-behind.js": [
-        `Bun.spawnSync({ cmd: ["sh", "-c", "sleep ${secondsAsleep} &"], stdio: ["ignore", "ignore", "inherit"] });`,
+        `Bun.spawnSync({ cmd: ["sh", "-c", "sleep 200 &"], stdio: ["ignore", "ignore", "inherit"] });`,
         `console.error("said before the end");`,
         `process.kill(process.pid, "SIGKILL");`,
-        `await Bun.sleep(${secondsAsleep * 1000});\n`,
+        `await Bun.sleep(200_000);\n`,
       ].join("\n"),
       "says-what-it-may-do.js": [
         `import { existsSync, readFileSync } from "node:fs";`,
@@ -81,29 +74,37 @@ test.skipIf(isWindows || !isCanary)(
       ].join("\n"),
     });
     const root = String(dir);
-    const files = [
-      "aborts.js",
-      "aborts-under-a-todo.js",
-      "aborts-under-a-todo-of-one-way.js",
-      "faults-under-a-todo.js",
-      "answers-otherwise-under-a-todo.js",
-      "leaves-a-command-behind.js",
-      "says-what-it-may-do.js",
-    ].map(name => join(root, name));
-    const { stdout, exitCode } = await run(
+    const driven = (flags: string[], names: string[]) =>
+      run(
+        [
+          bunExe(),
+          join(import.meta.dir, "run-parallel.ts"),
+          `--root=${root}`,
+          "--jobs=3",
+          "--seconds=180",
+          ...flags,
+          ...names.map(name => join(root, name)),
+        ],
+        root,
+        { ...bunEnv, BUN_CRASH_REPORT_URL: undefined, BUN_ENABLE_CRASH_REPORTING: undefined },
+      );
+    // These ask the driver and not the compiler, so each is built once. In every way they are 24 builds, and with those
+    // the case took 116 to 166 s on the Intel Macs of CI, where four such files run at once.
+    const builtOnce = await driven(
+      ["--no-erased"],
       [
-        bunExe(),
-        join(import.meta.dir, "run-parallel.ts"),
-        `--root=${root}`,
-        "--jobs=3",
-        `--seconds=${secondsOfARun}`,
-        ...files,
+        "aborts.js",
+        "aborts-under-a-todo.js",
+        "faults-under-a-todo.js",
+        "answers-otherwise-under-a-todo.js",
+        "leaves-a-command-behind.js",
+        "says-what-it-may-do.js",
       ],
-      root,
-      { ...bunEnv, BUN_CRASH_REPORT_URL: undefined, BUN_ENABLE_CRASH_REPORTING: undefined },
     );
-    const verdicts = stdout
-      .split("\n")
+    // What this one asks is its build behind the first.
+    const builtInEveryWay = await driven([], ["aborts-under-a-todo-of-one-way.js"]);
+    const verdicts = [builtOnce, builtInEveryWay]
+      .flatMap(({ stdout }) => stdout.split("\n"))
       .filter(Boolean)
       .map(line => JSON.parse(line))
       .filter(({ state }) => state !== "compiling")
@@ -131,7 +132,8 @@ test.skipIf(isWindows || !isCanary)(
       { file: "leaves-a-command-behind.js", state: "fail", stage: "run", message: "it ended by SIGKILL", said: true },
       { file: "says-what-it-may-do.js", state: "pass", stage: undefined, message: undefined, said: undefined },
     ]);
-    expect(exitCode).toBe(1);
+    expect([builtOnce.exitCode, builtInEveryWay.exitCode]).toEqual([1, 1]);
   },
-  secondsOfTheCase * 1000,
+  // Less than the limit of a run that the driver is given above, which is less than what the programs sleep.
+  170_000,
 );

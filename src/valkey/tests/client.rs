@@ -624,6 +624,21 @@ mod handshake {
                 "broken UnsupportedProtocol Server does not support RESP3",
             ),
             (0, "-NO\r\n", "broken AuthenticationFailed NO"),
+            (0, "-LOADING x\r\n", "broken ConnectionClosed LOADING x"),
+            (0, "-BUSY x\r\n", "broken ConnectionClosed BUSY x"),
+            (0, "-BUSYKEY x\r\n", "broken AuthenticationFailed BUSYKEY x"),
+            (
+                0,
+                "-MASTERDOWN x\r\n",
+                "broken ConnectionClosed MASTERDOWN x",
+            ),
+            (0, "-TRYAGAIN x\r\n", "broken ConnectionClosed TRYAGAIN x"),
+            (1, "+OK\r\n-BUSY x\r\n", "broken ConnectionClosed BUSY x"),
+            (
+                0,
+                "-ERR max number of clients reached\r\n",
+                "broken ConnectionClosed ERR max number of clients reached",
+            ),
             (
                 0,
                 "-ERR unknown command `HELLO`, with args beginning with: `3`, `AUTH`, `u`, `p`, \r\n",

@@ -186,6 +186,22 @@ fn broken<P>(message: &[u8], error: RedisError) -> Event<P> {
     }
 }
 
+/// An error reply to the handshake. One that passes is not `error`: script can try again.
+fn refused<P>(message: &[u8], error: RedisError) -> Event<P> {
+    const PASSING: [&[u8]; 5] = [
+        b"LOADING ",
+        b"BUSY ",
+        b"MASTERDOWN ",
+        b"TRYAGAIN ",
+        b"ERR max number of clients",
+    ];
+    if PASSING.iter().any(|prefix| message.starts_with(prefix)) {
+        broken(message, RedisError::ConnectionClosed)
+    } else {
+        broken(message, error)
+    }
+}
+
 impl<P> Client<P> {
     pub fn new(config: Config) -> Self {
         Self {
@@ -573,7 +589,7 @@ impl<P> Client<P> {
                 // Redis 5 has no HELLO. It echoes the arguments, and the password is one.
                 let echo = strings::split_once(&message, b", with args beginning with");
                 let message = echo.map_or(&*message, |(message, _)| message);
-                broken(message, AuthenticationFailed)
+                refused(message, AuthenticationFailed)
             }
             RESPValue::SimpleString(ref text) if **text != *b"OK" => broken(
                 b"Authentication failed (unexpected response)",
@@ -604,10 +620,7 @@ impl<P> Client<P> {
                 self.state = State::Ready;
                 Event::Ignored
             }
-            RESPValue::Error(message) => Event::Broken {
-                message,
-                error: RedisError::InvalidCommand,
-            },
+            RESPValue::Error(message) => refused(&message, RedisError::InvalidCommand),
             RESPValue::SimpleString(_) => broken(
                 b"SELECT command failed with non-OK response",
                 RedisError::InvalidResponse,

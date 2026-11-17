@@ -1381,6 +1381,22 @@ describe("expect()", () => {
       expect(await rejectsWithout(expect.anything()).catch(failure => didNotPass(failure, true))).toBe(false);
     });
 
+    // Vitest throws a TypeError for a string.
+    test_skipIf(isVitest)("for a thrown symbol", () => {
+      class Symbols {
+        static [Symbol.hasInstance](/** @type {unknown} */ value) {
+          return typeof value === "symbol";
+        }
+      }
+      for (const matches of [expect.anything(), Symbols, "abc", /^Symbol\(abc\)$/, new Error("Symbol(abc)")]) {
+        expect(verdicts(Symbol("abc"), matches)).toEqual([true, false]);
+      }
+      for (const differs of [expect.stringContaining("abc"), Error, "x", /x/, new Error("abc")]) {
+        expect(verdicts(Symbol("abc"), differs)).toEqual([false, true]);
+      }
+      expect(verdicts(Symbol(), /^Symbol\(\)$/)).toEqual([true, false]);
+    });
+
     test_skipIf(!isBun)("and .not prints the matcher that matched", () => {
       expect(messageOf(() => expect(thrower("abc")).not.toThrow(expect.stringContaining("b")))).toBe(
         'expect(received).not.toThrow(expected)\n\nExpected value: not StringContaining "b"\nReceived value: "abc"\n',

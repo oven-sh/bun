@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{BuiltinName, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{BuiltinName, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
 use super::matcher::{EXPECTED, Matcher, NO_PARAMS, This, Verdict, fail};
 use super::{Expect, ExpectAny, JSValueTestExt as _, Promise, Received};
@@ -76,10 +76,14 @@ fn expected_argument(m: &Matcher<'_>, value: JSValue) -> JsResult<Option<JSValue
     }
 }
 
-/// A thrown primitive is its own message.
+/// A thrown primitive is its own message, as `String(thrown)` spells it.
 fn message_of(global: &JSGlobalObject, thrown: JSValue) -> JsResult<Option<JSValue>> {
     if thrown.is_object() {
         thrown.fast_get(global, BuiltinName::Message)
+    } else if thrown.is_symbol() {
+        bun_core::String::create_format(format_args!("Symbol({})", thrown.get_description(global)))
+            .to_js(global)
+            .map(Some)
     } else {
         Ok(Some(JSValue::from_cell(thrown.to_js_string(global)?)))
     }

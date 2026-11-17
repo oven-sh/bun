@@ -2794,9 +2794,7 @@ pub struct RuntimeHooks {
         unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
     /// Cron jobs and the memory pressure watcher, while the loop and `RareData` are alive.
     pub stop_watches_for_vm_teardown: fn(vm: &VirtualMachine),
-    /// `CronJob.clearAllForVM(vm, .reload)`.
-    /// The `.reload` mode preserves the next-fire schedule across the new
-    /// global so timers re-register instead of being torn down.
+    /// Stops the in-process cron jobs. The reloaded script registers them again.
     pub cron_clear_all_reload: fn(vm: &VirtualMachine),
     /// Standalone-graph sourcemap load.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`

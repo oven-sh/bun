@@ -31,11 +31,11 @@ use crate::node::PathLike;
 use crate::node::types::PathLikeExt as _;
 use backend::Step;
 
-/// XML reads `\r` as `\n`, Task Scheduler expands `%NAME%`, and a crontab line cannot quote any of the four.
+/// XML reads `\r` as `\n`, and a crontab line cannot quote any of the four.
 const REFUSED_IN_CWD: &[u8] = if cfg!(target_os = "macos") {
     b"\n\r"
 } else if cfg!(windows) {
-    b"%"
+    b""
 } else {
     b"'%\n\r"
 };
@@ -78,6 +78,17 @@ pub(crate) fn register(
             b'%' => "Working directory must not contain percent signs",
             _ => "Working directory must not contain line breaks",
         }));
+    }
+    // Task Scheduler expands `%NAME%`.
+    if cfg!(windows) && strings::count_char(cwd, b'%') >= 2 {
+        return Err(invalid(
+            "Working directory must not contain more than one percent sign",
+        ));
+    }
+    if sys::is_shared_directory(cwd) {
+        return Err(invalid(
+            "Working directory must not be a shared directory such as /tmp",
+        ));
     }
     let cwd =
         core::str::from_utf8(cwd).map_err(|_| invalid("Working directory must be valid UTF-8"))?;

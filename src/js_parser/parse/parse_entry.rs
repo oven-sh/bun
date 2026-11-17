@@ -123,7 +123,7 @@ pub struct Parser<'a> {
     pub(crate) orig_error_count: u32,
 }
 
-/// Preserved JSX would be executed by Bun instead of handed to another compiler.
+/// Execution boundary requiring JavaScript without JSX syntax.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum JsxPreserveRestriction {
     #[default]

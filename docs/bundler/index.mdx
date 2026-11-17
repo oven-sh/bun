@@ -438,6 +438,8 @@ To build an IIFE bundle, set `format` to `"iife"`. Bun wraps the bundle in an im
 
 Configures how JSX is compiled.
 
+Set `runtime: "preserve"` to keep JSX syntax for another compiler without adding JSX runtime imports. Explicit preserve mode takes precedence over `tsconfig.json` JSX settings. Bun rejects actual preserved JSX in executable and standalone HTML builds; files without JSX remain valid.
+
 **Classic runtime example** (uses `factory` and `fragment`):
 
 <CodeGroup>

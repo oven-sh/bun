@@ -1011,3 +1011,43 @@ fn a_small_window_is_kept_over_many_short_calls() {
         }
     }
 }
+
+#[test]
+fn the_rest_of_a_match_adds_to_what_a_small_window_keeps() {
+    for (distance, end) in [
+        (456, None),
+        (457, Some(End::Damaged(Damage::DistanceTooFarBack))),
+    ] {
+        let mut stream = Writer::default();
+        stream.stored(false, &Random::new(1).bytes(600)).fixed(true);
+        let stream = stream.copy(258, 200).copy(3, distance).end_block().finish();
+        let mut inflater = Inflater::with_window_bits(Container::Raw, 8).unwrap();
+        let mut first = Some((999, 658));
+        let result = run(&mut inflater, &stream, false, || {
+            first.take().unwrap_or((999, 999))
+        });
+        assert_eq!(result.end, end.unwrap_or(End::Stream(stream.len())));
+        assert!(
+            plain::inflate(&stream, &[])
+                .bytes
+                .starts_with(&result.bytes)
+        );
+    }
+}
+
+#[test]
+fn a_long_period_may_start_before_the_window_has_all_of_its_memory() {
+    for len in (3..=258).step_by(5) {
+        let mut stream = Writer::default();
+        stream.stored(false, &[7; WINDOW_SIZE]).fixed(true);
+        stream.copy(258, 1).copy(len, 1);
+        (0..20).for_each(|_| _ = stream.copy(258, 1));
+        let stream = stream.end_block().finish();
+        let mut inflater = Inflater::with_window_bits(Container::Raw, 8).unwrap();
+        let mut first = Some((stream.len(), WINDOW_SIZE + 1100));
+        let result = run(&mut inflater, &stream, false, || {
+            first.take().unwrap_or((99, 500))
+        });
+        assert!(result.bytes == plain::inflate(&stream, &[]).bytes, "{len}");
+    }
+}

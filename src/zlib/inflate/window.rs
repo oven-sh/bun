@@ -108,8 +108,14 @@ impl Window {
     /// Only `reach` of the bytes that have been handed out are still needed, and few can do with little memory.
     #[inline]
     pub(super) fn resume(&mut self, reach: usize) -> Result<()> {
+        const MAX_WASTED: usize = 4096;
+        const { assert!(MAX_DISTANCE + MAX_WASTED > FULL_LEN) };
         self.grown = 0;
-        if self.handed_out > 2 * reach && self.bytes.len() < FULL_LEN {
+        // What waits for room is long, and better off in laps.
+        if self.pending() == 0
+            && self.handed_out > reach + reach.min(MAX_WASTED)
+            && self.bytes.len() < FULL_LEN
+        {
             // By whole cache lines: https://sourceware.org/bugzilla/show_bug.cgi?id=30994
             self.slide((self.handed_out - reach) / 64 * 64)?;
         }

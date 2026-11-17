@@ -238,7 +238,7 @@ mod lifecycle {
         Closed,
     ];
 
-    /// With commands 1 and 2 waiting wherever they can.
+    /// With two commands waiting wherever they can.
     fn reach(state: State) -> Driver {
         let mut it = Driver::new(database(1));
         if state != Idle {
@@ -263,6 +263,8 @@ mod lifecycle {
             EndingFinal => {
                 it.fail();
                 it.client.connect();
+                it.send("WATCH c");
+                it.send("WATCH d");
             }
             EndingFailed => it.fail(),
             Backoff => it.lost(),
@@ -387,7 +389,7 @@ mod lifecycle {
                 (Ready, "fail Some([1, 2])", EndingFailed),
                 (EndingPolicy, "fail Some([1, 2])", EndingFailed),
                 (EndingRequested, "fail Some([1, 2])", EndingFailed),
-                (EndingFinal, "fail Some([])", EndingFailed),
+                (EndingFinal, "fail Some([3, 4])", EndingFailed),
                 (EndingFailed, "fail None", EndingFailed),
                 (Backoff, "fail None", Backoff),
                 (Closed, "fail None", Closed),
@@ -411,7 +413,7 @@ mod lifecycle {
                 (Ready, "retry in 50 [1]", Backoff),
                 (EndingPolicy, "retry in 50 []", Backoff),
                 (EndingRequested, "closed [1, 2] Requested", Closed),
-                (EndingFinal, "closed [] Final", Closed),
+                (EndingFinal, "closed [3, 4] Final", Closed),
                 (EndingFailed, "closed [] Final", Closed),
             ],
         );

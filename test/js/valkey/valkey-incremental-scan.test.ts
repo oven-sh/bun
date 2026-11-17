@@ -240,6 +240,8 @@ describe.concurrent("Valkey reply decoding", () => {
     });
     await withClient(server, async client => {
       await client.subscribe("ch", () => {});
+      let closedWith: unknown;
+      client.onclose = e => (closedWith = e);
       // The first PING drew the reply, the second is in flight when the connection fails.
       let first: unknown = "pending";
       client.send("PING", []).catch(e => (first = e));
@@ -248,6 +250,7 @@ describe.concurrent("Valkey reply decoding", () => {
         e => e,
       );
       expect(first).toBe(err);
+      expect(closedWith).toBe(err);
       expect(err).toBeInstanceOf(Error);
       expect({ code: err.code, message: err.message }).toEqual({
         code: "ERR_REDIS_SERVER_ERROR",

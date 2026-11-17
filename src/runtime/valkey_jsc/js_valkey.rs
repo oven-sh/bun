@@ -1235,11 +1235,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
             this.start();
         } else if let Some(in_flight) = this.client.with_mut(Client::session_broke) {
             // uSockets closes the socket next. No scope: script sees these once it has.
-            if !in_flight.is_empty() {
-                let global = &this.global_object;
-                let error = crate::socket::uws_jsc::verify_error_to_js(&ssl_error, global);
-                return this.reject_all(in_flight, error);
-            }
+            let global = &this.global_object;
+            let error = crate::socket::uws_jsc::verify_error_to_js(&ssl_error, global);
+            this.dial.fail(Strong::create(error, global));
+            return this.reject_all(in_flight, error);
         } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
             // The same check, made inside the handshake (`server_identity`).
             let hostname = Self::configured_hostname(this);

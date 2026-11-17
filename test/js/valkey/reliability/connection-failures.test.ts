@@ -528,13 +528,43 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
       const pending = [client.get("lost"), client.send("INFO", [])];
       expect({
         outcomes: await Promise.all(pending.map(command => command.catch(codeAndMessage))),
-        closes: onclose.mock.calls.length,
+        closes: onclose.mock.calls.map(([error]) => codeAndMessage(error)),
         connections: server.raws.length,
-      }).toEqual({ outcomes: [WRONG_VERSION_NUMBER, WRONG_VERSION_NUMBER], closes: 1, connections: 1 });
+      }).toEqual({
+        outcomes: [WRONG_VERSION_NUMBER, WRONG_VERSION_NUMBER],
+        closes: [WRONG_VERSION_NUMBER],
+        connections: 1,
+      });
     } finally {
       client.close();
     }
   });
+
+  test.each(["in place of a reply", "while the connection is idle"] as const)(
+    "with no retry left, a TLS session that breaks %s is the cause that onclose gets",
+    async when => {
+      await using server = await serverThatBreaksTls();
+      const client = new RedisClient(server.url, { tls: { ca: tlsCert.cert }, maxRetries: 0 });
+      try {
+        const closed = Promise.withResolvers<Error>();
+        client.onclose = closed.resolve;
+        await client.connect();
+        if (when === "in place of a reply") {
+          const inFlight = await client.get("lost").catch(error => error);
+          expect((await closed.promise).cause).toBe(inFlight);
+        } else {
+          server.breakSession(server.raws[0]);
+        }
+        const { message, cause } = await closed.promise;
+        expect({ message, cause: codeAndMessage(cause) }).toEqual({
+          message: "Max reconnection attempts reached",
+          cause: WRONG_VERSION_NUMBER,
+        });
+      } finally {
+        client.close();
+      }
+    },
+  );
 
   // A TLS 1.3 server answers the client's certificate after the client's side of the handshake is over.
   test("a TLS 1.3 server that refuses the client's certificate fails the client instead of being dialed again", async () => {
@@ -2452,9 +2482,11 @@ describe("Valkey: Recovering After fail()", () => {
       { host: "localhost", shown: "localhost" },
       ...(isIPv6() ? [{ host: "[::1]", shown: "::1" }] : []),
     ])("a refused port on $host", async ({ host, shown }) => {
-      const fake = helloServer();
-      const port = await fake.listen();
-      await fake.close();
+      // Without a host, the port is free on both address families.
+      const reserved = net.createServer().listen(0);
+      await once(reserved, "listening");
+      const { port } = reserved.address() as net.AddressInfo;
+      await new Promise(closed => reserved.close(closed));
       const refused = `ERR_REDIS_CONNECTION_CLOSED: connect ECONNREFUSED ${shown}:${port}`;
       expect({
         "without retries": await reasonOf(`redis://${host}:${port}`, { autoReconnect: false }),
@@ -2489,6 +2521,28 @@ describe("Valkey: Recovering After fail()", () => {
       expect(await reasonOf(`redis://${host}`, { autoReconnect: false })).toBe(
         `ERR_REDIS_CONNECTION_CLOSED: getaddrinfo ENOTFOUND ${host}`,
       );
+    });
+
+    test.each([
+      { calls: "connect get", errors: [NO_TLS_CONTEXT, HAS_FAILED] },
+      { calls: "get connect get", errors: [HAS_FAILED, NO_TLS_CONTEXT, NO_TLS_CONTEXT] },
+    ])("without a TLS context, $calls", async ({ calls, errors }) => {
+      const client = new RedisClient("rediss://localhost", { tls: badTls });
+      const call = (name: string) => (name === "get" ? client.get("key") : client.connect()).catch(show);
+      expect(await Promise.all(calls.split(" ").map(call))).toEqual(errors);
+    });
+
+    test("duplicate()", async () => {
+      const fake = helloServer({ HELLO: connection => (connection === 1 ? "+OK\r\n" : "-WRONGPASS no\r\n") });
+      const port = await fake.listen();
+      const client = new RedisClient(`redis://127.0.0.1:${port}`);
+      try {
+        await client.connect();
+        expect(await client.duplicate().catch(show)).toBe("ERR_REDIS_AUTHENTICATION_FAILED: WRONGPASS no");
+      } finally {
+        client.close();
+        fake.server.close();
+      }
     });
 
     test("the reason does not outlive its dial", async () => {

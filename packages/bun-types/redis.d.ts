@@ -91,7 +91,7 @@ declare module "bun" {
      * Callback fired when the client disconnects from the Redis server
      *
      * @param error The error that caused the disconnection. A pending
-     * `connect()` and the pending commands reject with the same object.
+     * `connect()` and the queued commands reject with the same object.
      */
     onclose: ((this: RedisClient, error: Error) => void) | null;
 

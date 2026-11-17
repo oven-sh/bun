@@ -982,8 +982,8 @@ pub(crate) fn call_matcher<'a>(
 `callee` is the JS function that was called, and `arguments` is everything it was called with. The function takes its
 own arguments out of that list, so they're all `b.any`, the last one possibly `.variadic`. It also needs
 `capability: "js"`, `throws: true` and `returns: b.any`, and can't have overloads. The class can't be `refCounted`.
-`call_matcher` chooses the return type of `matcher`, and every function of `proto` has to return that type.
-It chooses the type of the first parameter too, which is passed on as `this_value`: any `Copy` type whose `payload_ref()` gives `&Self`.
+The type of `matcher` is up to `call_matcher`. Every function of `proto` returns what `matcher` returns. It gets the
+first argument of `matcher` as `this_value`, which can be any `Copy` type whose `payload_ref()` gives `&Self`.
 
 ## What the compiler reads
 

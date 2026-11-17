@@ -87,7 +87,7 @@ fn called_times(m: &Matcher<'_>, count: u64, times: u32) -> Verdict {
 
 impl Expect {
     pub(crate) fn to_have_been_called(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalled", NO_PARAMS)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalled", NO_PARAMS)?;
         let count = number_of_calls(&m, mock)?;
         mock::no_argument(&m, expected.to_js())?;
         if m.passes(count > 0) {
@@ -97,7 +97,7 @@ impl Expect {
     }
 
     pub(crate) fn to_have_been_called_once(&self, this: This<'_>, cx: &mut JsScope<'_>) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledOnce", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledOnce", EXPECTED)?;
         called_times(&m, number_of_calls(&m, mock)?, 1)
     }
 
@@ -107,7 +107,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledTimes", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledTimes", EXPECTED)?;
         let count = number_of_calls(&m, mock)?;
         called_times(&m, count, mock::times_argument(&m, expected.to_js())?)
     }
@@ -118,7 +118,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: &[JsLocal<'_>],
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledWith", ARGUMENTS)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledWith", ARGUMENTS)?;
         let global = m.global;
         let expected = JsLocal::to_js_slice(expected);
         let (calls, count) = calls(&m, mock)?;
@@ -157,7 +157,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: &[JsLocal<'_>],
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledExactlyOnceWith", ARGUMENTS)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledExactlyOnceWith", ARGUMENTS)?;
         let global = m.global;
         let expected = JsLocal::to_js_slice(expected);
         let (calls, count) = calls(&m, mock)?;
@@ -196,7 +196,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: &[JsLocal<'_>],
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenLastCalledWith", ARGUMENTS)?;
+        let (m, mock) = this.start(cx, "toHaveBeenLastCalledWith", ARGUMENTS)?;
         let global = m.global;
         let expected = JsLocal::to_js_slice(expected);
         let (calls, count) = calls(&m, mock)?;
@@ -223,7 +223,7 @@ impl Expect {
         expected: &[JsLocal<'_>],
     ) -> Verdict {
         let (m, mock) =
-            self.start(this, cx, "toHaveBeenNthCalledWith", params!("<green>n<r>, <green>...expected<r>"))?;
+            this.start(cx, "toHaveBeenNthCalledWith", params!("<green>n<r>, <green>...expected<r>"))?;
         let global = m.global;
         let expected = JsLocal::to_js_slice(expected);
         let (calls, count) = calls(&m, mock)?;
@@ -259,7 +259,7 @@ impl Expect {
         other: JsLocal<'_>,
         must_be_called: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledBefore", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledBefore", EXPECTED)?;
         called_in_order(&m, mock, other.to_js(), must_be_called.to_js(), Order::Before)
     }
 
@@ -270,7 +270,7 @@ impl Expect {
         other: JsLocal<'_>,
         must_be_called: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledAfter", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledAfter", EXPECTED)?;
         called_in_order(&m, mock, other.to_js(), must_be_called.to_js(), Order::After)
     }
 }

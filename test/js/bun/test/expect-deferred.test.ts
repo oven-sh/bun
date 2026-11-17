@@ -88,10 +88,11 @@ describe.concurrent(".resolves and .rejects", () => {
   });
 
   test.each([
-    ["bun:test", "resolves", "resolve"],
-    ["bun:test", "rejects", "reject"],
-    ["vitest", "resolves", "resolve"],
-  ])("%s: .%s waits when it is called while another matcher starts to wait", async (module, modifier, settle) => {
+    { module: "bun:test", modifier: "resolves", settle: "resolve" },
+    { module: "bun:test", modifier: "rejects", settle: "reject" },
+    { module: "vitest", modifier: "resolves", settle: "resolve" },
+  ])("$module: .$modifier waits when it is called while another matcher starts to wait", async row => {
+    const { module, modifier, settle } = row;
     const { stdout, results, exitCode, signalCode } = await run(["test"], {
       "a.test.js": `
         import { expect, test } from "${module}";
@@ -108,12 +109,13 @@ describe.concurrent(".resolves and .rejects", () => {
           });
           const outer = kept[""]();
           resolvers.${settle}(1);
-          console.log((await Promise.allSettled([outer, ...nested])).map(result => result.status).join());
+          const [custom, toBe1, toBe2] = (await Promise.allSettled([outer, ...nested])).map(result => result.status);
+          console.log(JSON.stringify({ custom, toBe1, toBe2 }));
         });
       `,
     });
     expect({ stdout, results, exitCode, signalCode }).toEqual({
-      stdout: ["fulfilled,fulfilled,rejected"],
+      stdout: [JSON.stringify({ custom: "fulfilled", toBe1: "fulfilled", toBe2: "rejected" })],
       results: ["(pass) nested"],
       exitCode: 0,
       signalCode: null,

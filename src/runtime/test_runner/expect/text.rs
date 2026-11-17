@@ -11,20 +11,19 @@ fn without_whitespace(text: &[u8]) -> impl Iterator<Item = &u8> {
 
 impl Expect {
     pub(crate) fn to_start_with(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        self.to_have_substring(this, cx, expected, "toStartWith", "start with", strings::starts_with)
+        Self::to_have_substring(this, cx, expected, "toStartWith", "start with", strings::starts_with)
     }
 
     pub(crate) fn to_end_with(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        self.to_have_substring(this, cx, expected, "toEndWith", "end with", strings::ends_with)
+        Self::to_have_substring(this, cx, expected, "toEndWith", "end with", strings::ends_with)
     }
 
     pub(crate) fn to_include(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        self.to_have_substring(this, cx, expected, "toInclude", "include", strings::contains)
+        Self::to_have_substring(this, cx, expected, "toInclude", "include", strings::contains)
     }
 
     #[optimize(size)]
     fn to_have_substring(
-        &self,
         this: This<'_>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
@@ -36,7 +35,7 @@ impl Expect {
         if !expected.is_string() {
             return Err(cx.global().throw(format_args!("{name}() requires the first argument to be a string")));
         }
-        let (m, received) = self.start(this, cx, name, EXPECTED)?;
+        let (m, received) = this.start(cx, name, EXPECTED)?;
         let matched = received.is_string() && {
             let (text, substring) = (received.to_utf8(m.global)?, expected.to_utf8(m.global)?);
             substring.is_empty() || has(&text, &substring)
@@ -52,7 +51,7 @@ impl Expect {
         substring: JsLocal<'_>,
         count: JsLocal<'_>,
     ) -> Verdict {
-        let m = self.begin(this, cx, "toIncludeRepeated", EXPECTED).count();
+        let m = this.begin(cx, "toIncludeRepeated", EXPECTED).count();
         let (substring, count) = (substring.to_js(), count.to_js());
         if !substring.is_string() {
             return Err(m.global.throw(format_args!("toIncludeRepeated() requires the first argument to be a string")));
@@ -104,7 +103,7 @@ impl Expect {
     }
 
     pub(crate) fn to_match(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toMatch", EXPECTED)?;
+        let (m, received) = this.start(cx, "toMatch", EXPECTED)?;
         let expected = expected.to_js();
         if !expected.is_string() && !expected.is_reg_exp() {
             return Err(m
@@ -138,7 +137,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        let (m, received) = self.start(this, cx, "toEqualIgnoringWhitespace", EXPECTED)?;
+        let (m, received) = this.start(cx, "toEqualIgnoringWhitespace", EXPECTED)?;
         let expected = expected.to_js();
         if !expected.is_string() {
             return Err(m.global.throw(format_args!("toEqualIgnoringWhitespace() requires argument to be a string")));

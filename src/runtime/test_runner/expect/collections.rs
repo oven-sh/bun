@@ -20,6 +20,21 @@ fn any_item(
     Ok(false)
 }
 
+/// Reads to the end, also after a match.
+fn any_iterated(
+    global: &JSGlobalObject,
+    iterable: JSValue,
+    mut test: impl FnMut(JSValue) -> JsResult<bool>,
+) -> JsResult<bool> {
+    let mut any = false;
+    let found = &mut any;
+    iterable.try_for_each(global, move |item| {
+        *found |= test(item)?;
+        Ok(())
+    })?;
+    Ok(any)
+}
+
 fn any_index(count: u64, mut test: impl FnMut(u32) -> JsResult<bool>) -> JsResult<bool> {
     for index in 0..count as u32 {
         if test(index)? {
@@ -38,7 +53,7 @@ fn items_of(global: &JSGlobalObject, iterable: JSValue) -> JsResult<JSValue> {
     Pass::once(global, Question { asked: Asked::Items, who: JSValue::UNDEFINED, what: iterable }, &mut || {
         let items = JSValue::create_empty_array(global, 0)?;
         let mut count = 0;
-        iterable.try_for_each(global, &mut |item| {
+        iterable.try_for_each(global, move |item| {
             items.put_index(global, count, item)?;
             count += 1;
             Ok(())
@@ -74,7 +89,7 @@ fn is_dom_node(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
 
 impl Expect {
     pub(crate) fn to_have_length(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toHaveLength", EXPECTED)?;
+        let (m, received) = this.start(cx, "toHaveLength", EXPECTED)?;
         if !received.is_object() && !received.is_string() {
             return Err(throw_no_length(m.global, received));
         }
@@ -97,7 +112,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_be_array_of_size(&self, this: This<'_>, cx: &mut JsScope<'_>, size: JsLocal<'_>) -> Verdict {
-        let call = self.begin(this, cx, "toBeArrayOfSize", NO_PARAMS);
+        let call = this.begin(cx, "toBeArrayOfSize", NO_PARAMS);
         let received = call.received()?;
         let size = size.to_js();
         if !size.is_any_int() {
@@ -112,7 +127,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_be_empty(&self, this: This<'_>, cx: &mut JsScope<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toBeEmpty", NO_PARAMS)?;
+        let (m, received) = this.start(cx, "toBeEmpty", NO_PARAMS)?;
         let global = m.global;
         let length = received.get_length_if_property_exists_internal(global)?;
         let is_empty = if length.is_nan() {
@@ -126,12 +141,7 @@ impl Expect {
                 m.show(received),
             );
         } else if received.is_iterable(global)? {
-            let mut is_empty = true;
-            received.try_for_each(global, &mut |_| {
-                is_empty = false;
-                Ok(())
-            })?;
-            is_empty
+            !any_iterated(global, received, |_| Ok(true))?
         } else {
             let options = JSPropertyIteratorOptions {
                 own_properties_only: false,
@@ -157,26 +167,22 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_be_one_of(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toBeOneOf", EXPECTED)?;
+        let (m, received) = this.start(cx, "toBeOneOf", EXPECTED)?;
+        let global = m.global;
         let expected = expected.to_js();
         // jest-extended compares like `toEqual`, not like `toBe`.
         let matched = if expected.js_type().is_array_like() {
-            any_item_equals(m.global, expected, received)?
-        } else if expected.is_iterable(m.global)? {
-            let mut matched = false;
-            expected.try_for_each(m.global, &mut |item| {
-                matched |= item.jest_deep_equals(received, m.global)?;
-                Ok(())
-            })?;
-            matched
+            any_item_equals(global, expected, received)?
+        } else if expected.is_iterable(global)? {
+            any_iterated(global, expected, move |item| item.jest_deep_equals(received, global))?
         } else {
-            return Err(throw_not_a_list(m.global));
+            return Err(throw_not_a_list(global));
         };
         if m.passes(matched) { m.pass() } else { m.fail_expected_to("be one of", expected, received) }
     }
 
     pub(crate) fn to_contain(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toContain", EXPECTED)?;
+        let (m, received) = this.start(cx, "toContain", EXPECTED)?;
         let global = m.global;
         let expected = expected.to_js();
         // `===` like Jest's `indexOf()`, not Object.is: `[-0]` contains `0`, `[NaN]` does not contain `NaN`.
@@ -196,13 +202,7 @@ impl Expect {
             let contains = received.get(global, "contains")?.unwrap_or(JSValue::UNDEFINED);
             contains.call(global, received, &[expected])?.to_boolean()
         } else if received.is_iterable(global)? {
-            // Reads to the end: `try_for_each` can only stop at an error.
-            let mut matched = false;
-            received.try_for_each(global, &mut |item| {
-                matched |= item.is_strict_equal(expected, global)?;
-                Ok(())
-            })?;
-            matched
+            any_iterated(global, received, move |item| item.is_strict_equal(expected, global))?
         } else {
             return Err(throw_not_a_list(global));
         };
@@ -211,7 +211,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_contain_equal(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toContainEqual", EXPECTED)?;
+        let (m, received) = this.start(cx, "toContainEqual", EXPECTED)?;
         let global = m.global;
         let expected = expected.to_js();
         let matched = if received.js_type().is_array_like() {
@@ -281,7 +281,7 @@ impl<'a> Values<'a> {
 impl Expect {
     #[optimize(size)]
     pub(crate) fn to_contain_key(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toContainKey", EXPECTED).count();
+        let m = this.begin(cx, "toContainKey", EXPECTED).count();
         let received = m.received()?;
         let expected = expected.to_js();
         if !received.is_object() {
@@ -295,7 +295,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_contain_keys(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toContainKeys", EXPECTED).count();
+        let m = this.begin(cx, "toContainKeys", EXPECTED).count();
         let received = m.received()?;
         let expected = array_argument(&m, expected)?;
         let count = expected.get_length(m.global)?;
@@ -312,7 +312,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_contain_any_keys(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toContainAnyKeys", EXPECTED).count();
+        let m = this.begin(cx, "toContainAnyKeys", EXPECTED).count();
         let received = m.received()?;
         let expected = array_argument(&m, expected)?;
         let matched = received.is_object()
@@ -324,7 +324,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_contain_all_keys(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toContainAllKeys", EXPECTED).count();
+        let m = this.begin(cx, "toContainAllKeys", EXPECTED).count();
         let global = m.global;
         let received = m.received()?;
         let expected = array_argument(&m, expected)?;
@@ -339,7 +339,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_contain_value(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toContainValue", EXPECTED).count();
+        let m = this.begin(cx, "toContainValue", EXPECTED).count();
         let received = m.received()?;
         let expected = expected.to_js();
         let matched =
@@ -349,7 +349,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_contain_values(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toContainValues", EXPECTED).count();
+        let m = this.begin(cx, "toContainValues", EXPECTED).count();
         let expected = array_argument(&m, expected)?;
         let received = m.received()?;
         let matched = match Values::of(m.global, received)? {
@@ -361,7 +361,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_contain_any_values(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toContainAnyValues", EXPECTED).count();
+        let m = this.begin(cx, "toContainAnyValues", EXPECTED).count();
         let expected = array_argument(&m, expected)?;
         let received = m.received()?;
         let matched = match Values::of(m.global, received)? {
@@ -373,7 +373,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_contain_all_values(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toContainAllValues", EXPECTED).count();
+        let m = this.begin(cx, "toContainAllValues", EXPECTED).count();
         let expected = array_argument(&m, expected)?;
         let received = m.received()?;
         let matched = match Values::of(m.global, received)? {

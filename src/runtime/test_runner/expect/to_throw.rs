@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{BuiltinName, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::{BuiltinName, JSGlobalObject, JSValue, JsResult};
 
 use super::matcher::{EXPECTED, Matcher, NO_PARAMS, This, Verdict, fail};
 use super::{Expect, ExpectAny, JSValueTestExt as _, Promise, Received};
@@ -23,24 +23,24 @@ impl Text {
         }
     }
 
-    fn matches(self, global: &JSGlobalObject, expected: JSValue, message: JSValue, not: bool) -> JsResult<bool> {
-        match self {
+    /// `None` for a RegExp without `test`.
+    fn matches(self, global: &JSGlobalObject, expected: JSValue, message: JSValue) -> JsResult<Option<bool>> {
+        Ok(Some(match self {
             Text::Substring => {
                 let (substring, message) = (expected.to_utf8(global)?, message.to_utf8(global)?);
-                Ok(strings::contains(&message, &substring))
+                strings::contains(&message, &substring)
             }
             // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
             Text::Pattern => match expected.get(global, "test")? {
-                Some(test) => Ok(test.call(global, expected, &[message])?.to_boolean()),
-                // Fails with and without `.not`.
-                None => Ok(not),
+                Some(test) => test.call(global, expected, &[message])?.to_boolean(),
+                None => return Ok(None),
             },
-            Text::Message => message.is_same_value(expected, global),
-        }
+            Text::Message => message.is_same_value(expected, global)?,
+        }))
     }
 }
 
-/// What `toThrow(expected)` compares the thrown value with, unless it is an asymmetric matcher.
+/// What `toThrow(expected)` compares the thrown value with.
 enum Expected {
     Text(Text, JSValue),
     Class(JSValue),
@@ -76,14 +76,10 @@ fn expected_argument(m: &Matcher<'_>, value: JSValue) -> JsResult<Option<JSValue
     }
 }
 
-/// A thrown primitive is its own message, as `String(thrown)` spells it.
+/// A thrown primitive is its own message.
 fn message_of(global: &JSGlobalObject, thrown: JSValue) -> JsResult<Option<JSValue>> {
     if thrown.is_object() {
         thrown.fast_get(global, BuiltinName::Message)
-    } else if thrown.is_symbol() {
-        bun_core::String::create_format(format_args!("Symbol({})", thrown.get_description(global)))
-            .to_js(global)
-            .map(Some)
     } else {
         Ok(Some(JSValue::from_cell(thrown.to_js_string(global)?)))
     }
@@ -92,7 +88,7 @@ fn message_of(global: &JSGlobalObject, thrown: JSValue) -> JsResult<Option<JSVal
 impl Expect {
     #[optimize(size)]
     pub(crate) fn to_throw(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toThrow", EXPECTED).count();
+        let m = this.begin(cx, "toThrow", EXPECTED).count();
         let expected = expected_argument(&m, expected.to_js())?;
         let received = m.received()?;
         // Nothing was thrown if the promise resolved to a value that can't be called. Jest, unlike Vitest, counts an error as thrown.
@@ -119,22 +115,15 @@ fn compare_thrown(m: &Matcher<'_>, expected: JSValue, thrown: JSValue) -> Verdic
     let read_first = if !m.not() { Some(message_of(global, thrown)?) } else { None };
     let message = || read_first.map_or_else(|| message_of(global, thrown), Ok);
 
-    if expected.is_object() && Expect::is_asymmetric_matcher(expected) {
-        if m.passes(thrown.jest_strict_deep_equals(expected, global)?) {
-            return m.pass();
-        }
-        return fail!(
-            m,
-            "Expected value: {}<green>{}<r>\nReceived value: <red>{}<r>\n",
-            m.not_word(),
-            m.show(expected),
-            m.show(thrown)
-        );
+    // With `.not`, a matcher that has a `message` property is compared by it.
+    let is_matcher = expected.is_object() && Expect::is_asymmetric_matcher(expected);
+    if is_matcher && !m.not() {
+        return ask_matcher(m, expected, thrown);
     }
     match Expected::of(global, expected)? {
         Expected::Text(text, expected) => {
             // With `.not`, a missing message is compared as `undefined`.
-            let Some(message) = message()?.or(m.not().then_some(JSValue::UNDEFINED)) else {
+            let Some(message) = message()?.or_else(|| m.not().then_some(JSValue::UNDEFINED)) else {
                 let end = if text == Text::Message { "\n" } else { "" };
                 return fail!(
                     m,
@@ -145,7 +134,7 @@ fn compare_thrown(m: &Matcher<'_>, expected: JSValue, thrown: JSValue) -> Verdic
                     end
                 );
             };
-            if m.passes(text.matches(global, expected, message, m.not())?) {
+            if text.matches(global, expected, message)?.is_some_and(|matched| m.passes(matched)) {
                 return m.pass();
             }
             if m.not() && text == Text::Message {
@@ -160,6 +149,7 @@ fn compare_thrown(m: &Matcher<'_>, expected: JSValue, thrown: JSValue) -> Verdic
                 m.show(message),
             )
         }
+        Expected::Class(matcher) if is_matcher => ask_matcher(m, matcher, thrown),
         Expected::Class(class) => {
             if m.passes(thrown.is_instance_of(global, class)?) {
                 return m.pass();
@@ -189,6 +179,20 @@ fn compare_thrown(m: &Matcher<'_>, expected: JSValue, thrown: JSValue) -> Verdic
             )
         }
     }
+}
+
+#[optimize(size)]
+fn ask_matcher(m: &Matcher<'_>, matcher: JSValue, thrown: JSValue) -> Verdict {
+    if m.passes(thrown.jest_strict_deep_equals(matcher, m.global)?) {
+        return m.pass();
+    }
+    fail!(
+        m,
+        "Expected value: {}<green>{}<r>\nReceived value: <red>{}<r>\n",
+        m.not_word(),
+        m.show(matcher),
+        m.show(thrown)
+    )
 }
 
 #[cold]

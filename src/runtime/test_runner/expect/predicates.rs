@@ -10,7 +10,7 @@ macro_rules! predicates {
     ($($method:ident, $name:literal, |$received:ident| $matched:expr;)*) => {
         impl Expect {$(
             pub(crate) fn $method(&self, this: This<'_>, cx: &mut JsScope<'_>) -> Verdict {
-                let (m, $received) = self.start(this, cx, $name, NO_PARAMS)?;
+                let (m, $received) = this.start(cx, $name, NO_PARAMS)?;
                 if m.passes($matched) { m.pass() } else { m.fail_received($received) }
             }
         )*}
@@ -78,7 +78,7 @@ fn type_of(value: JSValue) -> Option<&'static str> {
 impl Expect {
     #[optimize(size)]
     pub(crate) fn to_be_object(&self, this: This<'_>, cx: &mut JsScope<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toBeObject", NO_PARAMS)?;
+        let (m, received) = this.start(cx, "toBeObject", NO_PARAMS)?;
         if m.passes(received.is_object()) {
             return m.pass_this();
         }
@@ -90,13 +90,13 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_be_empty_object(&self, this: This<'_>, cx: &mut JsScope<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toBeEmptyObject", NO_PARAMS)?;
+        let (m, received) = this.start(cx, "toBeEmptyObject", NO_PARAMS)?;
         if m.passes(received.is_object_empty(m.global)?) { m.pass_this() } else { m.fail_received(received) }
     }
 
     #[optimize(size)]
     pub(crate) fn to_be_valid_date(&self, this: This<'_>, cx: &mut JsScope<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toBeValidDate", NO_PARAMS)?;
+        let (m, received) = this.start(cx, "toBeValidDate", NO_PARAMS)?;
         if m.passes(received.is_date() && !received.get_unix_timestamp().is_nan()) {
             m.pass_this()
         } else {
@@ -106,7 +106,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_be_type_of(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, received) = self.start(this, cx, "toBeTypeOf", NO_PARAMS)?;
+        let (m, received) = this.start(cx, "toBeTypeOf", NO_PARAMS)?;
         let expected = expected.to_js();
         if !expected.is_string() {
             return Err(m.global.throw_invalid_arguments(format_args!("toBeTypeOf() requires a string argument")));
@@ -134,7 +134,7 @@ impl Expect {
     }
 
     pub(crate) fn to_be_instance_of(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toBeInstanceOf", EXPECTED).count();
+        let m = this.begin(cx, "toBeInstanceOf", EXPECTED).count();
         let expected = expected.to_js();
         if !expected.is_constructor() {
             return Err(m.global.throw(format_args!("Expected value must be a function: {}", m.show(expected))));
@@ -154,7 +154,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn to_satisfy(&self, this: This<'_>, cx: &mut JsScope<'_>, predicate: JsLocal<'_>) -> Verdict {
-        let m = self.begin(this, cx, "toSatisfy", EXPECTED).count();
+        let m = this.begin(cx, "toSatisfy", EXPECTED).count();
         let predicate = predicate.to_js();
         if !predicate.is_callable() {
             return Err(m.global.throw(format_args!("toSatisfy() argument must be a function")));
@@ -172,34 +172,33 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn pass(&self, this: This<'_>, cx: &mut JsScope<'_>, message: JsLocal<'_>) -> Verdict {
-        let (m, message) = self.start_with_message(this, cx, "pass", message, "passes by .pass() assertion")?;
+        let (m, message) = start_with_message(this, cx, "pass", message, "passes by .pass() assertion")?;
         if m.passes(true) { m.pass() } else { Err(m.fail(format_args!("{message}\n"))) }
     }
 
     #[optimize(size)]
     pub(crate) fn fail(&self, this: This<'_>, cx: &mut JsScope<'_>, message: JsLocal<'_>) -> Verdict {
-        let (m, message) = self.start_with_message(this, cx, "fail", message, "fails by .fail() assertion")?;
+        let (m, message) = start_with_message(this, cx, "fail", message, "fails by .fail() assertion")?;
         if m.passes(false) { m.pass() } else { Err(m.signed_not(true).fail(format_args!("{message}\n"))) }
     }
+}
 
-    #[optimize(size)]
-    fn start_with_message<'a>(
-        &'a self,
-        this: This<'_>,
-        cx: &'a mut JsScope<'_>,
-        name: &'static str,
-        message: JsLocal<'_>,
-        default: &'static str,
-    ) -> JsResult<(Matcher<'a>, bun_core::String)> {
-        let call = self.begin(this, cx, name, NO_PARAMS);
-        let message = message.to_js();
-        let message = if message.is_undefined() {
-            bun_core::String::static_(default)
-        } else if message.is_string() {
-            message.to_bun_string(call.global())?
-        } else {
-            return Err(call.global().throw_invalid_argument_type(name, "message", "string"));
-        };
-        Ok((call.count(), message))
-    }
+#[optimize(size)]
+fn start_with_message<'a>(
+    this: This<'a>,
+    cx: &'a mut JsScope<'_>,
+    name: &'static str,
+    message: JsLocal<'_>,
+    default: &'static str,
+) -> JsResult<(Matcher<'a>, bun_core::String)> {
+    let call = this.begin(cx, name, NO_PARAMS);
+    let message = message.to_js();
+    let message = if message.is_undefined() {
+        bun_core::String::static_(default)
+    } else if message.is_string() {
+        message.to_bun_string(call.global())?
+    } else {
+        return Err(call.global().throw_invalid_argument_type(name, "message", "string"));
+    };
+    Ok((call.count(), message))
 }

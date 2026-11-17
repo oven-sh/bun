@@ -138,9 +138,9 @@ fn has_values(m: &Matcher<'_>, mock: JSValue, kind: Kind, times: Times, argument
         (Times::Exactly, Kind::Resolved) => mock::times_argument(m, argument.to_js())?,
     };
     let values = results.count_values()?;
-    let (matched, relation) = match times {
-        Times::AtLeastOnce => (values >= expected, if m.not() { "< " } else { ">= " }),
-        Times::Exactly => (values == expected, if m.not() { "!= " } else { "== " }),
+    let matched = match times {
+        Times::AtLeastOnce => values >= expected,
+        Times::Exactly => values == expected,
     };
     if m.passes(matched) {
         return m.pass();
@@ -149,7 +149,12 @@ fn has_values(m: &Matcher<'_>, mock: JSValue, kind: Kind, times: Times, argument
         Kind::Returned => ("succesful returns: ", "calls:             "),
         Kind::Resolved => ("resolved calls: ", "calls:          "),
     };
-    let padding = &"   "[..relation.len()];
+    let (relation, padding) = match (times, m.not()) {
+        (Times::AtLeastOnce, false) => (">= ", "   "),
+        (Times::AtLeastOnce, true) => ("< ", "  "),
+        (Times::Exactly, false) => ("== ", "   "),
+        (Times::Exactly, true) => ("!= ", "   "),
+    };
     fail!(
         m,
         "Expected number of {}{}<green>{}<r>\nReceived number of {}{}<red>{}<r>\nReceived number of {}{}<red>{}<r>\n",
@@ -324,7 +329,7 @@ fn returned_with(m: &Matcher<'_>, mock: JSValue, expected: JSValue, roots: &mut 
 
 impl Expect {
     pub(crate) fn to_have_returned(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveReturned", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveReturned", EXPECTED)?;
         has_values(&m, mock, Kind::Returned, Times::AtLeastOnce, expected)
     }
 
@@ -334,12 +339,12 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveReturnedTimes", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveReturnedTimes", EXPECTED)?;
         has_values(&m, mock, Kind::Returned, Times::Exactly, expected)
     }
 
     pub(crate) fn to_have_resolved(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveResolved", NO_PARAMS)?;
+        let (m, mock) = this.start(cx, "toHaveResolved", NO_PARAMS)?;
         has_values(&m, mock, Kind::Resolved, Times::AtLeastOnce, expected)
     }
 
@@ -349,7 +354,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveResolvedTimes", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveResolvedTimes", EXPECTED)?;
         has_values(&m, mock, Kind::Resolved, Times::Exactly, expected)
     }
 
@@ -359,7 +364,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenLastReturnedWith", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveBeenLastReturnedWith", EXPECTED)?;
         call_has_value(&m, &Results::of(&m, mock, Kind::Returned)?, Call::Last, expected)
     }
 
@@ -369,7 +374,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveLastResolvedWith", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveLastResolvedWith", EXPECTED)?;
         call_has_value(&m, &Results::of(&m, mock, Kind::Resolved)?, Call::Last, expected)
     }
 
@@ -380,7 +385,7 @@ impl Expect {
         nth: JsLocal<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveNthReturnedWith", NTH_EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveNthReturnedWith", NTH_EXPECTED)?;
         let results = Results::of(&m, mock, Kind::Returned)?;
         call_has_value(&m, &results, Call::nth(&m, nth)?, expected)
     }
@@ -392,19 +397,19 @@ impl Expect {
         nth: JsLocal<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveNthResolvedWith", NTH_EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveNthResolvedWith", NTH_EXPECTED)?;
         let results = Results::of(&m, mock, Kind::Resolved)?;
         call_has_value(&m, &results, Call::nth(&m, nth)?, expected)
     }
 
     pub(crate) fn to_have_returned_with(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveReturnedWith", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveReturnedWith", EXPECTED)?;
         MarkedArgumentBuffer::new(|roots| returned_with(&m, mock, expected.to_js(), roots))
     }
 
     #[optimize(size)]
     pub(crate) fn to_have_resolved_with(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveResolvedWith", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveResolvedWith", EXPECTED)?;
         let expected = expected.to_js();
         let results = Results::of(&m, mock, Kind::Resolved)?;
         let mut matched = false;

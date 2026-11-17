@@ -2466,6 +2466,52 @@ test.concurrent.each(["http", "net"])(
   },
 );
 
+test.concurrent("an http worker whose bind waits for the primary listens once", async () => {
+  using dir = tempDir("cluster-http-pending-bind", {
+    "fixture.js": `
+      const cluster = require("node:cluster");
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        let told = 0;
+        worker.on("message", message => {
+          if (message === "begin") worker.on("listening", () => told++);
+          else if (message !== "end") console.log(message);
+          else console.log("listening", told), worker.disconnect();
+        });
+      } else {
+        const probe = require("node:net").createServer().listen(0, "127.0.0.1", () => {
+          setImmediate(() => {
+            process.send("begin");
+            const { port } = probe.address();
+            probe.close();
+            const server = require("node:http").createServer().listen(port, "127.0.0.1");
+            try {
+              server.listen(port, "127.0.0.1");
+            } catch (error) {
+              process.send(error.code);
+            }
+            server.close();
+            server.listen(port, "127.0.0.1").once("listening", () => process.send("end"));
+          });
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "ERR_SERVER_ALREADY_LISTEN\nlistening 1\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test.skipIf(isWindows).concurrent.each([
   ["net, SCHED_RR", "SCHED_RR", `require("node:net").createServer().listen(0, "127.0.0.1", onListening)`],
   ["net, SCHED_NONE", "SCHED_NONE", `require("node:net").createServer().listen(0, "127.0.0.1", onListening)`],

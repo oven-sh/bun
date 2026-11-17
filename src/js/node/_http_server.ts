@@ -104,6 +104,8 @@ const kListenerGeneration = Symbol("http.server.listenerGeneration");
 const kClusterHandle = Symbol("http.server.clusterHandle");
 // listen() and close() bump it, so a reply from the cluster primary to an earlier listen() is dropped.
 const kClusterListeningId = Symbol("http.server.clusterListeningId");
+// The id of the listen() whose bind waits for the primary to let go of an address.
+const kClusterPendingBind = Symbol("http.server.clusterPendingBind");
 // Under `bun --hot`, maps a reused native server to the http.Server it dispatches to, or to null once another http.Server stopped it.
 let nativeServerOwners: WeakMap<WeakKey, Server | null> | undefined;
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
@@ -556,6 +558,8 @@ Server.prototype[kClusterHandle] = undefined;
 
 Server.prototype[kClusterListeningId] = 0;
 
+Server.prototype[kClusterPendingBind] = -1;
+
 function rethrowUncaught(err) {
   throw err;
 }
@@ -786,7 +790,7 @@ Server.prototype.address = function () {
 
 Server.prototype.listen = function () {
   // Before anything is registered, like net.Server: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2270-L2272
-  if (this[serverSymbol]) throw $ERR_SERVER_ALREADY_LISTEN();
+  if (this[serverSymbol] || this[kClusterPendingBind] === this[kClusterListeningId]) throw $ERR_SERVER_ALREADY_LISTEN();
   const server = this;
   let port, host;
   let socketPath;
@@ -898,7 +902,7 @@ Server.prototype.listen = function () {
     const listeningId = ++server[kClusterListeningId];
     server.once("listening", () => {
       // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
-      if (!process.connected) return;
+      if (!process.connected || listeningId !== server[kClusterListeningId]) return;
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";
@@ -918,8 +922,11 @@ Server.prototype.listen = function () {
       server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
       return this;
     }
+    server[kClusterPendingBind] = listeningId;
     cluster._trackServer(server, track => {
-      if (listeningId !== server[kClusterListeningId] || cluster.worker?.exitedAfterDisconnect) return;
+      if (listeningId !== server[kClusterListeningId]) return;
+      server[kClusterPendingBind] = -1;
+      if (cluster.worker?.exitedAfterDisconnect) return;
       try {
         server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
         server[kClusterHandle] = track();

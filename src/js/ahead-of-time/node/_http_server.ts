@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3034d7cdb3eb9ca0f8be80959cde627950fb2389545fe0200a560b697f89010f.
+// Written against that file with the SHA-256 e6efb277d40b5fc62ce4786b8c01518d9a0786e294256f104b8ded62fb1839eb.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -218,6 +218,8 @@ const kListenerGeneration = Symbol("http.server.listenerGeneration");
 const kClusterHandle = Symbol("http.server.clusterHandle");
 // listen() and close() bump it, so a reply from the cluster primary to an earlier listen() is dropped.
 const kClusterListeningId = Symbol("http.server.clusterListeningId");
+// The id of the listen() whose bind waits for the primary to let go of an address.
+const kClusterPendingBind = Symbol("http.server.clusterPendingBind");
 // Under `bun --hot`, maps a reused native server to the http.Server it dispatches to, or to null once another http.Server stopped it.
 let nativeServerOwners: WeakMap<WeakKey, $Node.HttpServer | null> | undefined;
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
@@ -703,6 +705,7 @@ declare global {
       [kListenerGeneration]: ListenerGeneration | undefined;
       [kClusterHandle]: any;
       [kClusterListeningId]: number;
+      [kClusterPendingBind]: number;
       [kConstructed]?: boolean;
       [kHttpAllowHalfOpen]: boolean;
       [kMaxHeadersCount]: number | null;
@@ -981,6 +984,8 @@ Server.prototype[kClusterHandle] = undefined;
 
 Server.prototype[kClusterListeningId] = 0;
 
+Server.prototype[kClusterPendingBind] = -1;
+
 function rethrowUncaught(err: unknown) {
   throw err;
 }
@@ -1220,7 +1225,7 @@ Server.prototype.address = function (this: $Node.HttpServer) {
 
 Server.prototype.listen = function (this: $Node.HttpServer) {
   // Before anything is registered, like net.Server: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2270-L2272
-  if (this[serverSymbol]) throw $ERR_SERVER_ALREADY_LISTEN();
+  if (this[serverSymbol] || this[kClusterPendingBind] === this[kClusterListeningId]) throw $ERR_SERVER_ALREADY_LISTEN();
   const server = this;
   let port: number | string | null | undefined, host: string | undefined;
   let socketPath: string | undefined;
@@ -1333,7 +1338,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
       const listeningId = ++server[kClusterListeningId];
       server.once("listening", () => {
         // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
-        if (!process.connected) return;
+        if (!process.connected || listeningId !== server[kClusterListeningId]) return;
         cluster!.worker!.state = "listening";
         const address = server.address();
         const isObjectAddress = address !== null && typeof address === "object";
@@ -1353,8 +1358,11 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
         server[kRealListen](tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
         return this;
       }
+      server[kClusterPendingBind] = listeningId;
       cluster!._trackServer(server, track => {
-        if (listeningId !== server[kClusterListeningId] || cluster!.worker?.exitedAfterDisconnect) return;
+        if (listeningId !== server[kClusterListeningId]) return;
+        server[kClusterPendingBind] = -1;
+        if (cluster!.worker?.exitedAfterDisconnect) return;
         try {
           server[kRealListen](tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
           server[kClusterHandle] = track();

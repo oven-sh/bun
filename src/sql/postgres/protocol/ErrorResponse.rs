@@ -1,4 +1,5 @@
 use crate::postgres::AnyPostgresError;
+use crate::postgres::pipeline::ErrorKind;
 use crate::postgres::protocol::field_message::FieldMessage;
 use crate::postgres::protocol::new_reader::NewReader;
 
@@ -31,12 +32,18 @@ impl ErrorResponse {
         })
     }
 
-    pub fn is_query_canceled(&self) -> bool {
-        self.has_code(b"57014")
+    pub fn kind(&self) -> ErrorKind {
+        if self.has_code(b"57014") {
+            ErrorKind::Canceled
+        } else if self.invalidates_prepared_statement() {
+            ErrorKind::StaleStatement
+        } else {
+            ErrorKind::Other
+        }
     }
 
     /// 26000: the server lost the statement. 0A000 from this routine: its result columns changed.
-    pub fn invalidates_prepared_statement(&self) -> bool {
+    fn invalidates_prepared_statement(&self) -> bool {
         self.has_code(b"26000")
             || (self.has_code(b"0A000")
                 && self.messages.iter().any(|field| {

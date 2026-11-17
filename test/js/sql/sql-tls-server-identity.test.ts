@@ -19,6 +19,7 @@ import {
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlReadPackets,
+  pgAuthenticationCleartextPassword,
   pgAuthenticationOk,
   pgReadyForQuery,
   pgSSLResponse,
@@ -347,6 +348,48 @@ describe.concurrent.each([
       });
     });
   });
+});
+
+test.each([
+  ["asks for the password", [pgAuthenticationCleartextPassword()]],
+  ["says that the session is ready", [pgAuthenticationOk(), pgReadyForQuery()]],
+])("PostgreSQL: a server that %s while the callback runs the event loop is sent nothing", async (_, frames) => {
+  const bytesInsideTls = Promise.withResolvers<number>();
+  let secure: tls.TLSSocket;
+  const { server, port } = await listeningServer(rawSocket => {
+    rawSocket.on("error", () => {});
+    rawSocket.once("data", () => {
+      rawSocket.write(pgSSLResponse("S"));
+      // In TLS 1.2 the server has finished its handshake when the client finishes.
+      const cert = { ...localhost, maxVersion: "TLSv1.2" };
+      secure = upgrade(rawSocket, cert, Buffer.alloc(0), bytesInsideTls.resolve);
+    });
+  });
+  let built: Promise<unknown> | undefined;
+  try {
+    await using sql = new SQL({
+      url: `postgres://u:secret@127.0.0.1:${port}/db?sslmode=verify-full`,
+      max: 1,
+      tls: {
+        ca: localhost.ca,
+        checkServerIdentity() {
+          secure.write(Buffer.concat(frames));
+          // Bun.build() runs the event loop until an async setup() settles.
+          const plugins = [{ name: "wait", setup: () => loopbackFence().then(loopbackFence) }];
+          built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins });
+          return new Error("not the server");
+        },
+      },
+    });
+    const error = await sql.unsafe("select 'secret'").catch(e => e);
+    expect({ code: error.code, bytesInsideTls: await bytesInsideTls.promise }).toEqual({
+      code: "ERR_POSTGRES_UNEXPECTED_MESSAGE",
+      bytesInsideTls: 0,
+    });
+    await built;
+  } finally {
+    server.close();
+  }
 });
 
 for (const { image, adapter, username, password, ca, certificate } of [

@@ -765,9 +765,12 @@ impl SendQueue {
                     && let Some(owner) = self.owner.get()
                 {
                     let fd = received_fd_to_js(received.fd());
-                    jsc::cpp::IPCParse(global, owner.to_js(), message, fd)?;
+                    let emit = jsc::cpp::IPCParse(global, owner.to_js(), message, fd)?;
                     // The object that `parseHandle` made closes it.
                     received.into_raw();
+                    if emit.is_callable() {
+                        emit.call(global, JSValue::UNDEFINED, &[])?;
+                    }
                 }
                 return Ok(());
             } else if cmd.eq_ascii(b"NODE_HANDLE_ACK") {

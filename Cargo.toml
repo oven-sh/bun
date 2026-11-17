@@ -57,6 +57,7 @@ members = [
   "src/clap",
   "src/clap_macros",
   "src/crash_handler",
+  "src/cron",
   "src/csrf",
   "src/css_jsc",
   "src/dns",
@@ -116,6 +117,7 @@ members = [
   "src/wyhash",
   "src/yarr",
   "src/node_path",
+  "src/test_schedule",
   "src/text_diff",
   "src/hash",
   "src/boringssl_sys",
@@ -437,6 +439,7 @@ bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
+bun_cron = { path = "src/cron" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
@@ -494,6 +497,7 @@ bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
 bun_yarr = { path = "src/yarr" }
 bun_node_path = { path = "src/node_path" }
+bun_test_schedule = { path = "src/test_schedule" }
 bun_text_diff = { path = "src/text_diff" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }

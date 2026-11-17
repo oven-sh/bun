@@ -50,12 +50,7 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
   }
   throw $ERR_INVALID_HANDLE_TYPE();
 }
-/**
- * @param {Serialized} serialized
- * @param {unknown} handle
- * @param {(handle: Handle) => void} emit
- * @returns {void}
- */
+/** Returns what delivers the message, if that is due now. The caller lets go of `fd` first: a listener can end the thread. */
 export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Node.SerializedIPCHandle, fd: number) {
   const emit: (target: $Bindgen.Subprocess | null, message: unknown, handle: object) => void = $bindgen(
     "ipc_host.bind.ts",
@@ -74,8 +69,7 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
     case "net.Socket": {
       const socket = new net.Socket({ readable: true, writable: true });
       socket.connect({ fd, fdIsRawSocket: true });
-      emit(target, serialized.msg, socket);
-      return;
+      return () => emit(target, serialized.msg, socket);
     }
     case "dgram.Native": {
       // A non-reading UDP handle (cluster-shared dgram socket): wrap the
@@ -84,8 +78,7 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
       const wrap = new UDP();
       const err = wrap.open(fd);
       if (err) throw new Error(`failed to open received dgram handle: ${err}`);
-      emit(target, serialized.msg, wrap);
-      return;
+      return () => emit(target, serialized.msg, wrap);
     }
     case "dgram.Socket": {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js handleConversion['dgram.Socket'].got

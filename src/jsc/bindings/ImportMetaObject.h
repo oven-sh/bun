@@ -12,8 +12,9 @@ extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSyncPrivate);
 extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve, const Bun::OwnedString* paths, size_t paths_len);
-// Returns the path that an import of `specifier` resolves to, or undefined. `forRequire`, unless null, gets the path that require() resolves it to when that is another file.
-extern "C" JSC::EncodedJSValue Bun__resolveForImportAndRequire(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, const BunString* from, Bun::OwnedString* forRequire);
+extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
+// For jest's lookups in a CommonJS file: the path that require() resolves `specifier` to, or undefined for a miss or a builtin module.
+extern "C" JSC::EncodedJSValue Bun__resolveAsRequireIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, const BunString* from);
 
 namespace Bun {
 class JSModuleGraph;

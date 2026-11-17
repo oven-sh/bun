@@ -956,28 +956,46 @@ pub(crate) fn bun_resolve_sync_with_paths(
 /// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
 /// that is not a string — is thrown.
-// HOST_EXPORT(Bun__resolveForImportAndRequire, c)
-pub(crate) fn bun_resolve_for_import_and_require(
+// HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
+pub(crate) fn bun_resolve_sync_with_source_if_exists(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: &BunString,
-    for_require: Option<&mut BunString>,
+    is_esm: bool,
 ) -> JSValue {
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
     jsc::to_js_host_call(global, || {
-        let (for_import, other) = VirtualMachine::resolve_for_import_and_require(
+        match resolve_with_args::<true>(
             global,
             &specifier_str,
             source,
-            for_require.is_some(),
-        )?;
-        if let (Some(for_require), Some((path, query))) = (for_require, other) {
-            *for_require = with_query(path, &query);
+            ResolveMode::from_ffi_bools(is_esm, false),
+        )? {
+            Resolved::Found(value) => value.into_js(global),
+            Resolved::NotFound(_) => Ok(JSValue::UNDEFINED),
         }
-        match for_import {
-            Ok((path, query)) => with_query(path, &query).into_js(global),
+    })
+}
+
+/// For jest's lookups in a CommonJS file: resolves `specifier` relative to `source` as `require()` does,
+/// and yields `undefined` for a miss or a builtin module. It installs no package.
+// HOST_EXPORT(Bun__resolveAsRequireIfExists, c)
+pub(crate) fn bun_resolve_as_require_if_exists(
+    global: &JSGlobalObject,
+    specifier: JSValue,
+    source: &BunString,
+) -> JSValue {
+    let Ok(specifier_str) = specifier.to_bun_string(global) else {
+        return JSValue::ZERO;
+    };
+    jsc::to_js_host_call(global, || {
+        let mut query_string = BunString::EMPTY;
+        match VirtualMachine::resolve_as_require(global, &specifier_str, source, &mut query_string)?
+        {
+            Ok(Some(path)) => with_query(path, &query_string).into_js(global),
+            Ok(None) => Ok(JSValue::UNDEFINED),
             Err(err) if err.is::<jsc::ResolveMessage>() => Ok(JSValue::UNDEFINED),
             // e.g. an onResolve plugin returned an invalid result
             Err(err) => Err(global.throw_value(err)),

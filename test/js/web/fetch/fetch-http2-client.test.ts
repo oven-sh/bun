@@ -426,6 +426,42 @@ test.concurrent(
   30_000,
 );
 
+test.concurrent.each(["http2", "http1.1"] as const)(
+  "%s: the idle deadline does not run once a reader has fallen behind",
+  async protocol => {
+    const opened = Promise.withResolvers<http2.Http2ServerResponse>();
+    let requests = 0;
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: true }, (_, res) => {
+      if (requests++ > 0) return;
+      res.writeHead(200).write("a");
+      opened.resolve(res);
+    });
+    using fence = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const url = `https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
+      const options = { protocol, timeout: 1000, tls: { rejectUnauthorized: false } } as const;
+      const reader = (await fetch(url, options)).body!.getReader();
+      let total = (await reader.read()).value!.length;
+      const res = await opened.promise;
+      // The first goes to the stream's own pull. Only the last takes the rest over 256 KiB, so nothing arrives after the pause.
+      for (const size of [1, 250 * 1024, 8 * 1024]) {
+        await new Promise(resolve => res.write(Buffer.alloc(size), resolve));
+        await fetch(fence.url);
+      }
+      // Armed later, on a connection of its own, so it can't fire first.
+      using session = new Bun.FetchSession();
+      expect(await statusOrCode(fetch(url, { ...options, session }))).toBe("TimeoutError");
+      res.end();
+      for (let chunk; !(chunk = await reader.read()).done;) total += chunk.value.length;
+      expect(total).toBe(258 * 1024 + 2);
+    } finally {
+      server.close();
+    }
+  },
+  30_000,
+);
+
 test.concurrent("h2: a stream gets no window while compressed bytes it delivered wait to be decoded", async () => {
   const member = zlib.gzipSync(Buffer.alloc(1024 * 1024));
   // More than half of the 16 MiB window, which is when a WINDOW_UPDATE is due.

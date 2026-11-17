@@ -2116,6 +2116,11 @@ impl<'a> HTTPClient<'a> {
         if self.flags.disable_timeout {
             return Continue(());
         }
+        // The JS thread can pause a body after the timer was armed.
+        self.maybe_pause_receive(socket);
+        if self.state.flags.receive_paused {
+            return Continue(());
+        }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
         self.fail(crate::Error::Timeout)

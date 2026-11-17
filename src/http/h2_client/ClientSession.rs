@@ -198,6 +198,11 @@ impl ClientSession {
         Self::enter(this, |s| s.fail_streams(err));
     }
 
+    /// The JS thread can pause a body after the timer was armed. `resume_receive` arms it again.
+    pub(crate) fn outlives_timeout(&self) -> bool {
+        !self.ping_cap_armed && !self.streams.is_empty() && !self.waits_for_origin()
+    }
+
     /// Socket onTimeout entry point; see [`Self::on_close`]. When the wait for
     /// the ACK of a liveness PING ran out, the connection is lost.
     pub(crate) fn on_timeout(this: SessionPtr) {
@@ -584,11 +589,9 @@ impl ClientSession {
             any_unbounded |= eff == 0;
             want = want.max(eff);
         };
-        let mut waits_for_origin = !self.pending_attach.is_empty();
         for s in self.streams.values() {
             if let Some(c) = &s.client {
                 fold(c.effective_idle_timeout_seconds());
-                waits_for_origin |= !c.holds_stream_window();
             }
         }
         for c in &self.pending_attach {
@@ -605,7 +608,7 @@ impl ClientSession {
             let global = crate::idle_timeout_seconds();
             want = if global == 0 { 0 } else { want.max(global) };
         }
-        if !waits_for_origin {
+        if !self.waits_for_origin() {
             want = 0;
         }
         self.ping_cap_armed = false;
@@ -621,6 +624,16 @@ impl ClientSession {
             }
         }
         self.socket.set_timeout(want);
+    }
+
+    /// False while every response waits for its reader.
+    fn waits_for_origin(&self) -> bool {
+        !self.pending_attach.is_empty()
+            || self
+                .streams
+                .values()
+                .iter()
+                .any(|s| s.client.as_ref().is_some_and(|c| !c.holds_stream_window()))
     }
 
     /// New request body bytes (or end-of-body) are available in the request's

@@ -1346,75 +1346,22 @@ describe("expect()", () => {
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
   });
 
-  describe("toThrow(expected) and .not.toThrow(expected)", () => {
-    const thrower = (/** @type {unknown} */ thrown) => () => {
-      throw thrown;
+  test_skipIf(!isBun)("toThrow(expected) and .not.toThrow(expected) can both fail", async () => {
+    const outcomes = async (/** @type {unknown} */ thrown, /** @type {RegExp} */ expected) => {
+      const thrower = () => {
+        throw thrown;
+      };
+      return {
+        toThrow: await outcomeOf(() => expect(thrower).toThrow(expected)),
+        notToThrow: await outcomeOf(() => expect(thrower).not.toThrow(expected)),
+      };
     };
-    const outcomes = async (/** @type {unknown} */ thrown, /** @type {any} */ expected) => ({
-      toThrow: await outcomeOf(() => expect(thrower(thrown)).toThrow(expected)),
-      notToThrow: await outcomeOf(() => expect(thrower(thrown)).not.toThrow(expected)),
-    });
-    const error = Object.assign(new TypeError("foo"), { code: 1 });
-
-    test("give opposite answers for an asymmetric matcher", async () => {
-      expect.extend({ toHaveCode: (received, code) => ({ pass: ANY(received).code === code, message: () => "" }) });
-      for (const { thrown, matches, differs } of [
-        {
-          thrown: error,
-          matches: expect.objectContaining({ code: 1 }),
-          differs: expect.objectContaining({ code: 2 }),
-        },
-        {
-          thrown: error,
-          matches: expect.not.objectContaining({ code: 2 }),
-          differs: expect.not.objectContaining({ code: 1 }),
-        },
-        { thrown: error, matches: ANY(expect).toHaveCode(1), differs: ANY(expect).toHaveCode(2) },
-        { thrown: error, matches: expect.anything(), differs: expect.stringContaining("foo") },
-        { thrown: "abc", matches: expect.stringContaining("b"), differs: expect.stringContaining("x") },
-        { thrown: "abc", matches: expect.stringMatching(/b/), differs: expect.stringMatching(/x/) },
-        { thrown: [1, 2], matches: expect.arrayContaining([1]), differs: expect.arrayContaining([3]) },
-        { thrown: 1.001, matches: expect.closeTo(1), differs: expect.closeTo(2) },
-      ]) {
-        expect(await outcomes(thrown, matches)).toEqual({ toThrow: "passes", notToThrow: "fails" });
-        expect(await outcomes(thrown, differs)).toEqual({ toThrow: "fails", notToThrow: "passes" });
-      }
-    });
-
-    test(".not asks an asymmetric matcher through toThrowError and .rejects, and not if nothing is thrown", async () => {
-      expect({
-        toThrowError: await outcomeOf(() => expect(thrower(error)).not.toThrowError(expect.anything())),
-        rejectsWithMatch: await outcomeOf(() => expect(Promise.reject(error)).rejects.not.toThrow(expect.anything())),
-        rejectsWithoutMatch: await outcomeOf(() =>
-          expect(Promise.reject(error)).rejects.not.toThrow(expect.objectContaining({ code: 2 })),
-        ),
-        nothingThrown: await outcomeOf(() => expect(() => {}).not.toThrow(expect.anything())),
-      }).toEqual({
-        toThrowError: "fails",
-        rejectsWithMatch: "fails",
-        rejectsWithoutMatch: "passes",
-        nothingThrown: "passes",
-      });
-    });
-
-    test_skipIf(!isBun)(".not prints the asymmetric matcher that matched", async () => {
-      await expectFailure(() => expect(thrower("abc")).not.toThrow(expect.stringContaining("b"))).toThrow(
-        new Error(
-          'expect(received).not.toThrow(expected)\n\nExpected value: not StringContaining "b"\nReceived value: "abc"\n',
-        ),
-      );
-    });
-
-    test_skipIf(!isBun)("can both fail", async () => {
-      expect({
-        thrownWithoutMessage: await outcomes({ code: 1 }, /undefined/),
-        regExpWithoutTest: await outcomes(error, Object.assign(/foo/, { test: undefined })),
-        matcherWithMessage: await outcomes(error, Object.assign(expect.closeTo(1), { message: "foo" })),
-      }).toEqual({
-        thrownWithoutMessage: { toThrow: "fails", notToThrow: "fails" },
-        regExpWithoutTest: { toThrow: "fails", notToThrow: "fails" },
-        matcherWithMessage: { toThrow: "fails", notToThrow: "fails" },
-      });
+    expect({
+      thrownWithoutMessage: await outcomes({ code: 1 }, /undefined/),
+      regExpWithoutTest: await outcomes(new Error("foo"), Object.assign(/foo/, { test: undefined })),
+    }).toEqual({
+      thrownWithoutMessage: { toThrow: "fails", notToThrow: "fails" },
+      regExpWithoutTest: { toThrow: "fails", notToThrow: "fails" },
     });
   });
 

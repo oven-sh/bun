@@ -1340,16 +1340,6 @@ describe.concurrent("matchers that have to wait for a promise", () => {
             count("function");
             throw new Error("x");
           }).toThrow(expect.toHaveMessage("x")),
-        "not.toThrow, asymmetric": () =>
-          expect(() => {
-            count("function");
-            throw new Error("x");
-          }).not.toThrow(expect.toHaveMessage("x")),
-        "not.toThrow, asymmetric that differs": () =>
-          expect(() => {
-            count("function");
-            throw new Error("x");
-          }).not.toThrow(expect.toHaveMessage("y")),
         "toThrow, objectContaining": () =>
           expect(() => {
             count("function");
@@ -1379,8 +1369,6 @@ describe.concurrent("matchers that have to wait for a promise", () => {
       'not.toContainEqual, generator: fails {"generator":1,"toBeOdd":2}',
       'toContainEqual, Set: passes {"toBeOdd":2}',
       'toThrow, asymmetric: passes {"function":1,"toHaveMessage":1}',
-      'not.toThrow, asymmetric: fails {"function":1,"toHaveMessage":1}',
-      'not.toThrow, asymmetric that differs: passes {"function":1,"toHaveMessage":1}',
       'toThrow, objectContaining: passes {"function":1,"toBeOdd":1}',
       'toHaveProperty, getter: passes {"toBeOdd":1}',
       'a synchronous matcher before an asynchronous one: passes {"toBeCalledFirst":1,"toBeOdd":2}',

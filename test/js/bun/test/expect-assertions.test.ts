@@ -42,9 +42,14 @@ test("every matcher counts as one assertion, whether it passes or fails", async 
       // Calls to try, the likely ones first, until the matcher has passed once and failed once.
       function* calls(name) {
         const likely = /Call|Return|Resolve|^last|^nth/.test(name) ? [called] : /Throw/.test(name) ? [throws] : [];
-        const snapshot = /Inline/.test(name) ? [['"a"']] : /File/.test(name) ? [["a.txt"]] : [];
+        if (/Snapshot/.test(name)) {
+          const [received = "a"] = likely;
+          for (const saved of /Inline/.test(name) ? ['"a"', '"b"'] : ["new", "other"])
+            yield () => expect(received)[name](saved);
+          return;
+        }
         for (const received of [...likely, "a", 1, [1], { a: 1 }, called, throws])
-          for (const args of [...snapshot, [], [1], ["a"], [[1]], [1, 2], ["a", 1], [Object], [called], ["number"]])
+          for (const args of [[], [1], ["a"], [[1]], [1, 2], ["a", 1], [Object], [called], ["number"]])
             for (const chain of [e => e, e => e.not]) yield () => chain(expect(received))[name](...args);
       }
 
@@ -70,6 +75,11 @@ test("every matcher counts as one assertion, whether it passes or fails", async 
           }
         });
       }
+    `,
+    "other": "b",
+    "__snapshots__/count.test.js.snap": `
+      exports[\`toMatchSnapshot: other 1\`] = \`"b"\`;
+      exports[\`toThrowErrorMatchingSnapshot: other 1\`] = \`"b"\`;
     `,
   });
   await using proc = Bun.spawn({

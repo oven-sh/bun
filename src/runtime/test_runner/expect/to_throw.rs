@@ -115,10 +115,17 @@ fn compare_thrown(m: &Matcher<'_>, expected: JSValue, thrown: JSValue) -> Verdic
     let read_first = if !m.not() { Some(message_of(global, thrown)?) } else { None };
     let message = || read_first.map_or_else(|| message_of(global, thrown), Ok);
 
-    // With `.not`, a matcher that has a `message` property is compared by it.
-    let is_matcher = expected.is_object() && Expect::is_asymmetric_matcher(expected);
-    if is_matcher && !m.not() {
-        return ask_matcher(m, expected, thrown);
+    // With `.not`, a matcher is not asked.
+    if !m.not() && expected.is_object() && Expect::is_asymmetric_matcher(expected) {
+        if thrown.jest_strict_deep_equals(expected, global)? {
+            return m.pass();
+        }
+        return fail!(
+            m,
+            "Expected value: <green>{}<r>\nReceived value: <red>{}<r>\n",
+            m.show(expected),
+            m.show(thrown)
+        );
     }
     match Expected::of(global, expected)? {
         Expected::Text(text, expected) => {
@@ -149,7 +156,6 @@ fn compare_thrown(m: &Matcher<'_>, expected: JSValue, thrown: JSValue) -> Verdic
                 m.show(message),
             )
         }
-        Expected::Class(matcher) if is_matcher => ask_matcher(m, matcher, thrown),
         Expected::Class(class) => {
             if m.passes(thrown.is_instance_of(global, class)?) {
                 return m.pass();
@@ -179,20 +185,6 @@ fn compare_thrown(m: &Matcher<'_>, expected: JSValue, thrown: JSValue) -> Verdic
             )
         }
     }
-}
-
-#[optimize(size)]
-fn ask_matcher(m: &Matcher<'_>, matcher: JSValue, thrown: JSValue) -> Verdict {
-    if m.passes(thrown.jest_strict_deep_equals(matcher, m.global)?) {
-        return m.pass();
-    }
-    fail!(
-        m,
-        "Expected value: {}<green>{}<r>\nReceived value: <red>{}<r>\n",
-        m.not_word(),
-        m.show(matcher),
-        m.show(thrown)
-    )
 }
 
 #[cold]

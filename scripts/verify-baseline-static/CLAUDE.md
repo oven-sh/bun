@@ -145,8 +145,9 @@ executed. Real bug, will SIGILL on baseline hardware. Fix the compile flags.
 ### Deciding which
 
 **Identify the dependency.** Demangle the symbol (`c++filt`, or recognize the
-prefix: `_ZN7simdutf` = simdutf, `_ZN3bun` + `N_AVX2`/`N_SVE` = Bun's Highway
-code, `_RNv` + `memchr` = Rust memchr, etc). Search the allowlist for that
+prefix: `_ZN7simdutf` = simdutf, `_ZN3bun` + `N_AVX2` = Bun's Highway
+code, `_R` + `4simd4avx2` = a copy for a target of `bun_simd`,
+`_RNv` + `memchr` = Rust memchr, etc). Search the allowlist for that
 dependency — if neighbors are there under an existing `# Gate: ...` header,
 this is almost certainly (A).
 

@@ -35,10 +35,8 @@ import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import { webkitVersionName, type CodegenFields } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
-import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
-import { generateXmlByteClass } from "./xmlByteClass.ts";
 
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
@@ -315,11 +313,6 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engi
   const buildOptionsRs = generateBuildOptionsRs(cfg);
   o.all.push(buildOptionsRs);
   o.rustInputs.push(buildOptionsRs);
-
-  // Same shape: the byte-classification tables of the Highway kernels.
-  const byteClasses = [generateJsonByteClass(cfg), generateXmlByteClass(cfg)];
-  o.all.push(...byteClasses);
-  o.cppHeaders.push(...byteClasses);
 
   emitAotCodegen(ctx);
   emitBunError(ctx);

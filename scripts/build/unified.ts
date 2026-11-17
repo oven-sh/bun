@@ -138,29 +138,7 @@ const noUnify: readonly string[] = [
   "packages/bun-usockets/src/crypto/root_certs_windows.cpp",
   "packages/bun-usockets/src/crypto/root_certs_darwin.cpp",
 
-  // Second highway TU. foreach_target.h has a TU-wide include guard, so when
-  // bundled after highway_strings.cpp it doesn't re-expand and only the
-  // baseline ISA namespace exists for image_resize → HWY_EXPORT can't find
-  // N_AVX2/N_AVX3/etc. variants.
-  "src/jsc/bindings/image_resize.cpp",
-  // Third highway TU — same foreach_target.h include-guard reason as
-  // image_resize.cpp: it must expand its own per-ISA namespaces so
-  // HWY_EXPORT(HashLong) resolves the N_AVX2/N_AVX3/etc. variants.
-  "src/jsc/bindings/xxhash3.cpp",
-  // Fourth highway TU — same foreach_target.h include-guard reason.
-  "src/jsc/bindings/highway_sourcemap.cpp",
-  // Fifth highway TU (JSON structural indexer) — same foreach_target.h
-  // include-guard reason.
-  "src/jsc/bindings/highway_json.cpp",
-  // Sixth highway TU (XML structural indexer) — same reason.
-  "src/jsc/bindings/highway_xml.cpp",
-  // Seventh highway TU (PNG scanline filters) — same reason.
-  "src/jsc/bindings/highway_png.cpp",
-  // Eighth highway TU (byte sets) — same reason.
-  "src/jsc/bindings/highway_byte_set.cpp",
-  // Ninth highway TU (JPEG transforms and color conversion) — same reason.
-  "src/jsc/bindings/highway_jpeg.cpp",
-  // The highway TUs of the WebP codec — same reason.
+  // foreach_target.h has a TU-wide include guard, so it expands for only one file of a bundle.
   "src/jsc/bindings/highway_webp_decoder.cpp",
   "src/jsc/bindings/highway_webp_encoder.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType

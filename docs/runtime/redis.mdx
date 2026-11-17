@@ -483,6 +483,9 @@ Common error codes:
 - `ERR_REDIS_AUTHENTICATION_FAILED` - Failed to authenticate with the server
 - `ERR_REDIS_INVALID_RESPONSE` - Received an invalid response from the server
 - `ERR_REDIS_SERVER_ERROR` - The server sent an error reply, either rejecting one command or, in subscriber mode, closing the connection
+- `ERR_REDIS_CONNECTION_TIMEOUT`, `ERR_REDIS_IDLE_TIMEOUT` - `connectionTimeout` or `idleTimeout` expired
+
+When the client gives up on a connection, `connect()`, the pending commands and `onclose` get the same error. A socket that cannot be opened keeps the code `ERR_REDIS_CONNECTION_CLOSED`, and the message says why, for example `connect ECONNREFUSED 127.0.0.1:6379`. TLS errors have their own code, such as `DEPTH_ZERO_SELF_SIGNED_CERT`. After the last retry, the message is `Max reconnection attempts reached` and `error.cause` is the error of the last attempt.
 
 ---
 

@@ -27,7 +27,7 @@ use bun_ptr::{AnyRefCounted, RefPtr};
 
 use crate::api::html_rewriter;
 use crate::api::server;
-use crate::webcore::s3::client::S3UploadStreamWrapper;
+use crate::webcore::s3::multipart::NetworkSink;
 
 // Request contexts are a single generic
 // `NewRequestContext<ThisServer, SSL, DEBUG, MUX>`; alias the eight
@@ -66,7 +66,7 @@ pub(crate) enum Tag {
     /// Task-only tag (never a context cell): drops the last ref of a
     /// `RewriterPipe` on behalf of a `PipePin`.
     HTMLRewriterPipeFree,
-    /// The pump of an S3 stream upload (`S3UploadStreamWrapper`).
+    /// The pump of an S3 stream upload (`NetworkSink`).
     S3UploadStream,
     /// A `Bun.cron()` job whose tick returned a promise.
     CronJob,
@@ -126,7 +126,7 @@ where
 impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
 }
-impl NativePromiseContextType for S3UploadStreamWrapper {
+impl NativePromiseContextType for NetworkSink {
     const TAG: Tag = Tag::S3UploadStream;
 }
 impl NativePromiseContextType for crate::api::cron::CronJob {
@@ -348,8 +348,8 @@ impl DeferredDerefTask {
                 Tag::S3UploadStream => {
                     // The pump's promise was collected unsettled (the script running it is gone):
                     // as a rejection with no reason.
-                    let upload = RefPtr::from_raw(ctx.cast::<S3UploadStreamWrapper>());
-                    (*upload.as_ptr()).handle_reject_stream(JSValue::ZERO);
+                    let sink = RefPtr::from_raw(ctx.cast::<NetworkSink>());
+                    NetworkSink::on_pump_rejected(&sink, JSValue::ZERO);
                 }
                 Tag::CronJob => {
                     // The tick's promise was collected unsettled.
@@ -383,9 +383,6 @@ const _: () = assert!(
 );
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(
-    core::mem::align_of::<crate::webcore::s3::client::S3UploadStreamWrapper>()
-        > DeferredDerefTask::TAG_MASK
-);
+const _: () = assert!(core::mem::align_of::<NetworkSink>() > DeferredDerefTask::TAG_MASK);
 const _: () =
     assert!(core::mem::align_of::<crate::api::cron::CronJob>() > DeferredDerefTask::TAG_MASK);

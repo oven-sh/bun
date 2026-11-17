@@ -120,8 +120,7 @@ describe.skipIf(!isASAN)("S3 writer() frees its NetworkSink", () => {
   });
 });
 
-// On success only `Drop for MultiPartUpload` unrefs the event loop, so the sink has to drop its
-// ref on the upload when the upload completes, not when the writer is collected.
+// The upload unrefs the event loop when it completes, not when the writer is collected.
 // Serial on purpose: when this test times out, bun test kills the child that never exits.
 test("S3 writer() lets the process exit once end() resolves, even if the writer is retained", async () => {
   const script = `${mockS3("succeeds")}

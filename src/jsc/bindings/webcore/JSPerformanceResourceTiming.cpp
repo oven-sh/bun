@@ -21,8 +21,6 @@
 #include "config.h"
 #include "JSPerformanceResourceTiming.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructorNotConstructable.h"
@@ -30,24 +28,14 @@
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
-#include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSPerformanceServerTiming.h"
-#include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -58,7 +46,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsPerformanceResourceTimingPrototypeFunction_to
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceResourceTimingConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceResourceTiming_initiatorType);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceResourceTiming_nextHopProtocol);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceResourceTiming_workerStart);
@@ -78,56 +65,15 @@ static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceResourceTiming_encodedBodySize);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceResourceTiming_decodedBodySize);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceResourceTiming_serverTiming);
 
-class JSPerformanceResourceTimingPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSPerformanceResourceTimingPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSPerformanceResourceTimingPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceResourceTimingPrototype))) JSPerformanceResourceTimingPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceResourceTimingPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSPerformanceResourceTimingPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceResourceTimingPrototype, JSPerformanceResourceTimingPrototype::Base);
-
+using JSPerformanceResourceTimingPrototype = JSDOMPrototype<JSPerformanceResourceTiming>;
 using JSPerformanceResourceTimingDOMConstructor = JSDOMConstructorNotConstructable<JSPerformanceResourceTiming>;
 
 template<> const ClassInfo JSPerformanceResourceTimingDOMConstructor::s_info = { "PerformanceResourceTiming"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceResourceTimingDOMConstructor) };
 
-template<> JSValue JSPerformanceResourceTimingDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSPerformanceEntry::getConstructor(vm, &globalObject);
-}
-
-template<> void JSPerformanceResourceTimingDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "PerformanceResourceTiming"_s, JSPerformanceResourceTiming::prototype(vm, globalObject));
-}
-
 /* Hash table for prototype */
 
 static const HashTableValue JSPerformanceResourceTimingPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceResourceTimingConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSPerformanceResourceTimingPrototype::constructorGetter, 0 } },
     { "initiatorType"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceResourceTiming_initiatorType, 0 } },
     { "nextHopProtocol"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceResourceTiming_nextHopProtocol, 0 } },
     { "workerStart"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceResourceTiming_workerStart, 0 } },
@@ -149,9 +95,9 @@ static const HashTableValue JSPerformanceResourceTimingPrototypeTableValues[] = 
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceResourceTimingPrototypeFunction_toJSON, 0 } },
 };
 
-const ClassInfo JSPerformanceResourceTimingPrototype::s_info = { "PerformanceResourceTiming"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceResourceTimingPrototype) };
+template<> const ClassInfo JSPerformanceResourceTimingPrototype::s_info = { "PerformanceResourceTiming"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceResourceTimingPrototype) };
 
-void JSPerformanceResourceTimingPrototype::finishCreation(VM& vm)
+template<> void JSPerformanceResourceTimingPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSPerformanceResourceTiming::info(), JSPerformanceResourceTimingPrototypeTableValues, *this);
@@ -160,38 +106,14 @@ void JSPerformanceResourceTimingPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSPerformanceResourceTiming::s_info = { "PerformanceResourceTiming"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceResourceTiming) };
 
-JSPerformanceResourceTiming::JSPerformanceResourceTiming(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceResourceTiming>&& impl)
-    : JSPerformanceEntry(structure, globalObject, WTF::move(impl))
-{
-}
-
-// static_assert(!std::is_base_of<ActiveDOMObject, PerformanceResourceTiming>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSPerformanceResourceTiming::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSPerformanceResourceTimingPrototype::createStructure(vm, &globalObject, JSPerformanceEntry::prototype(vm, globalObject));
-    structure->setMayBePrototype(true);
-    return JSPerformanceResourceTimingPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSPerformanceResourceTiming::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSPerformanceResourceTiming>(vm, globalObject);
+    return JSPerformanceResourceTimingPrototype::create(vm, globalObject, JSPerformanceEntry::prototype(vm, globalObject));
 }
 
 JSValue JSPerformanceResourceTiming::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceResourceTimingDOMConstructor, DOMConstructorID::PerformanceResourceTiming>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceResourceTimingConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSPerformanceResourceTimingPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSPerformanceResourceTiming::getConstructor(vm, prototype->globalObject()));
 }
 
 static inline JSValue jsPerformanceResourceTiming_initiatorTypeGetter(JSGlobalObject& lexicalGlobalObject, JSPerformanceResourceTiming& thisObject)
@@ -507,20 +429,6 @@ static inline EncodedJSValue jsPerformanceResourceTimingPrototypeFunction_toJSON
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceResourceTimingPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceResourceTiming>::call<jsPerformanceResourceTimingPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
-}
-
-JSC::GCClient::IsoSubspace* JSPerformanceResourceTiming::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSPerformanceResourceTiming, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceResourceTiming, m_subspaceForPerformanceResourceTiming));
-}
-
-void JSPerformanceResourceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSPerformanceResourceTiming>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
 }
 
 }

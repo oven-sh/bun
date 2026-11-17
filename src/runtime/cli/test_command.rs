@@ -5,7 +5,7 @@ use bun_io::Write as _;
 use crate::cli::Command;
 use crate::cli::run_compiled;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
-use crate::cli::test::parallel_runner as ParallelRunner;
+use crate::cli::test::parallel::runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
@@ -506,7 +506,7 @@ fn select_shard_by_reach(
     let otherwise: Vec<u32> = match timings {
         Some(timings) => {
             let ranges = timings.partition(test_files, shard.count);
-            let shard_of = |test: u32| ranges.iter().position(|it| it.lo <= test && test < it.hi);
+            let shard_of = |test: u32| ranges.iter().position(|it| it.contains(&(test as usize)));
             (0..tests as u32)
                 .map(|test| shard_of(test).unwrap_or(0) as u32)
                 .collect()

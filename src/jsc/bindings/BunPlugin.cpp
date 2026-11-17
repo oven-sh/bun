@@ -1786,8 +1786,6 @@ static JSValue requireOriginalModule(Zig::GlobalObject* globalObject, JSModuleMo
 
 #if ENABLE(AOT)
     mock->wasOriginalRequested = true;
-    if (auto file = mock->isFromPreload && mock->state == JSModuleMock::State::Running && globalObject->aotInstance() ? Bun::compiledModuleForPath(mock->specifier->tryGetValue().data) : std::nullopt; file && JSC::AOT::isESModule(*file) && JSC::AOT::wasOriginalRunForStatement(globalObject, *file))
-        JSC::AOT::didRequireOwnOriginal(globalObject, *file);
 #endif
     if (JSValue exports = mock->originalCommonJSExports.get(); exports && !exports.inherits<JSC::JSModuleNamespaceObject>())
         return exports;
@@ -6195,13 +6193,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         bool importsOriginal = previous->importsOriginal && !previous->isOfHook && !previous->wasLoadedByRequire && !previous->spy && (hasNoInstance ? !!loadedByTestFile : previous->firstLoadTestFile == globalObject->onLoadPlugins.testFile && !isInNodeModules(specifier)) && !(factoryOfPreload && factoryOfPreload.isString()) && JSC::AOT::activeMockReloadedBy(globalObject, *loaded.compiledModule) == JSC::AOT::LoadedBy::Nobody;
         if (importsOriginal)
             JSC::AOT::didRequireOwnOriginal(globalObject, *loaded.compiledModule);
-        bool wasOriginalRunForStatement = JSC::AOT::wasOriginalRunForStatement(globalObject, *loaded.compiledModule);
         isPreviousMockKeyEmpty = JSC::AOT::tryEvictRequirerOfOriginal(globalObject, *loaded.compiledModule);
-        if (isPreviousMockKeyEmpty && wasOriginalRunForStatement) {
-            previous->earlyOriginalLoad.clear();
-            evictModulesAndTheirImporters(globalObject, Vector<String> { originalModuleKey(specifier) });
-            RETURN_IF_EXCEPTION(scope, {});
-        }
         didEvictPreloadMock = isPreviousMockKeyEmpty && importsOriginal;
         if (didEvictPreloadMock)
             previous->firstLoadTestFile = 0;

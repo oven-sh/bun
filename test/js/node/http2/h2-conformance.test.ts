@@ -667,6 +667,15 @@ test.each<[string, (stream: http2.ServerHttp2Stream) => void]>([
   expect(types).toEqual([FrameType.HEADERS]);
 });
 
+test("pushStream() calls back with an error when the write of its PUSH_PROMISE destroys the session", async () => {
+  using ctx = await acceptGet();
+  ctx.transport.onNextWrite = () => ctx.session.destroy();
+  const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+  ctx.stream.pushStream({ ":path": "/pushed" }, resolve);
+  expect(ctx.session.destroyed).toBe(true);
+  expect((await promise)?.code).toBe("ERR_HTTP2_INVALID_STREAM");
+});
+
 test.each<[string, string[]]>([
   ["request()", ["HEADERS 1", "RST_STREAM 1"]],
   ["a queued request", ["HEADERS 1"]],

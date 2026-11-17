@@ -3454,6 +3454,11 @@ class ServerHttp2Stream extends Http2Stream {
       return;
     }
     publishPushedStream(pushedStream, headers);
+    if (pushedStream?.destroyed) {
+      // From the transport's write(). Its 'close' comes before the callback could listen for it.
+      process.nextTick(callback, $ERR_HTTP2_INVALID_STREAM());
+      return;
+    }
     if (pushResult === -1) {
       // Block not encodable: session failing with COMPRESSION_ERROR. Node still delivers the
       // reserved stream to the callback and lets session teardown error it (so it is Delivered:

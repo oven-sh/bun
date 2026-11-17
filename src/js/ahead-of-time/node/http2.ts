@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 5c1841d8ccc4ebcb301dc85a2600f8a93e1891b467bcf20903cd985c8ef0eec2.
+// Written against that file with the SHA-256 3ff98d3ffdee69bd59496ecce23ae3bb073f7ea1ef8c1b4c062360b46517e4b9.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -3568,6 +3568,11 @@ class ServerHttp2Stream extends Http2Stream {
       return;
     }
     publishPushedStream(pushedStream, headers);
+    if (pushedStream?.destroyed) {
+      // From the transport's write(). Its 'close' comes before the callback could listen for it.
+      process.nextTick(callback, $ERR_HTTP2_INVALID_STREAM());
+      return;
+    }
     if (pushResult === -1) {
       // Block not encodable: session failing with COMPRESSION_ERROR. Node still delivers the
       // reserved stream to the callback and lets session teardown error it (so it is Delivered:

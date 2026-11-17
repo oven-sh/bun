@@ -21,8 +21,6 @@
 #include "root.h"
 #include "JSEvent.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
@@ -39,21 +37,12 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSEventInit.h"
 #include "JSEventTarget.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 #include "ErrorCode.h"
 #include "NodeValidator.h"
 
@@ -70,7 +59,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_initEvent);
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsEventConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsEvent_type);
 static JSC_DECLARE_CUSTOM_GETTER(jsEvent_target);
 static JSC_DECLARE_CUSTOM_GETTER(jsEvent_currentTarget);
@@ -87,38 +75,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsEvent_srcElement);
 static JSC_DECLARE_CUSTOM_GETTER(jsEvent_returnValue);
 static JSC_DECLARE_CUSTOM_SETTER(setJSEvent_returnValue);
 
-class JSEventPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSEventPrototype))) JSEventPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSEventPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventPrototype, JSEventPrototype::Base);
-
+using JSEventPrototype = JSDOMPrototype<JSEvent>;
 using JSEventDOMConstructor = JSDOMConstructor<JSEvent>;
 
 /* Source for JSEvent.lut.h
@@ -183,12 +140,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSEventDOMConstructorConstruct, JSEventDOMConstructor
 
 template<> const ClassInfo JSEventDOMConstructor::s_info = { "Event"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventDOMConstructor) };
 
-template<> JSValue JSEventDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
 template<> void JSEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 1, "Event"_s, JSEvent::prototype(vm, globalObject));
@@ -198,7 +149,7 @@ template<> void JSEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalO
 /* Hash table for prototype */
 
 static const HashTableValue JSEventPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsEventConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSEventPrototype::constructorGetter, 0 } },
     { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_type, 0 } },
     { "target"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_target, 0 } },
     { "currentTarget"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_currentTarget, 0 } },
@@ -224,9 +175,9 @@ static const HashTableValue JSEventPrototypeTableValues[] = {
     { "BUBBLING_PHASE"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 3 } },
 };
 
-const ClassInfo JSEventPrototype::s_info = { "Event"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventPrototype) };
+template<> const ClassInfo JSEventPrototype::s_info = { "Event"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventPrototype) };
 
-void JSEventPrototype::finishCreation(VM& vm)
+template<> void JSEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSEvent::info(), JSEventPrototypeTableValues, *this);
@@ -236,50 +187,14 @@ void JSEventPrototype::finishCreation(VM& vm)
 const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable, nullptr,
     CREATE_METHOD_TABLE(JSEvent) };
 
-JSEvent::JSEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Event>&& impl)
-    : JSDOMWrapper<Event>(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSEvent::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, Event>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-}
-
 JSObject* JSEvent::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSEventPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSEventPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSEvent::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSEvent>(vm, globalObject);
+    return JSEventPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSEventDOMConstructor, DOMConstructorID::Event>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSEvent::destroy(JSC::JSCell* cell)
-{
-    JSEvent* thisObject = static_cast<JSEvent*>(cell);
-    thisObject->JSEvent::~JSEvent();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSEventPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsEvent_typeGetter(JSGlobalObject& lexicalGlobalObject, JSEvent& thisObject)
@@ -576,40 +491,4 @@ JSC_DEFINE_HOST_FUNCTION(jsEventPrototypeFunction_initEvent, (JSGlobalObject * l
     return IDLOperation<JSEvent>::call<jsEventPrototypeFunction_initEventBody>(*lexicalGlobalObject, *callFrame, "initEvent");
 }
 
-JSC::GCClient::IsoSubspace* JSEvent::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForEvent, m_subspaceForEvent));
-}
-
-void JSEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSEvent>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSEventOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-JSC::WeakHandleOwner::FinalizeResult JSEventOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsEvent = static_cast<JSEvent*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsEvent->wrapped(), jsEvent);
-    return FinalizeResult::KeepImpl;
-}
-
-Event* JSEvent::toWrapped(JSC::VM& vm, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSEvent>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
 }

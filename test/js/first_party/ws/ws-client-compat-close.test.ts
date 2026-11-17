@@ -12,7 +12,6 @@ import {
   encodeFrame,
   implementations,
   invalidCloseCalls,
-  invalidFrame,
   listen,
   nextEvent,
   OP,
@@ -41,25 +40,6 @@ describe.each(implementations)("ws client close ($name)", ({ ws: implementation,
     await client.closed;
     expect(events).toEqual([...openEvents, 'message Buffer("hello") text rs=1', "close 1000 Buffer() rs=3"]);
   }, 15_000);
-
-  test.each(["message", "error"])(
-    "a protocol error resumes a socket that was paused in a %j listener",
-    async name => {
-      await using client = await openClient(implementation);
-      const { ws, conn, events } = client;
-      ws.on(name, () => ws.pause());
-      conn.write(Buffer.concat([encodeFrame(OP.text, "hello"), encodeFrame(3, "reserved")]));
-      await conn.echoClose();
-      await client.closed;
-      expect(events).toEqual([
-        ...openEvents,
-        'message Buffer("hello") text rs=1',
-        `error ${invalidFrame("invalid opcode 3", "WS_ERR_INVALID_OPCODE")} rs=2`,
-        abnormalClose,
-      ]);
-    },
-    15_000,
-  );
 
   const { WebSocket } = implementation;
 

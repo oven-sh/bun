@@ -1,6 +1,7 @@
+use bun_http_types::websocket::ProtocolError::{self, *};
 use bun_http_types::websocket::{
-    Event, Header, Input, MAX_CONTROL_FRAME_SIZE, Opcode, Payload, ProtocolError, Reader,
-    ReaderOptions, close_payload,
+    Event, Header, Input, MAX_CONTROL_FRAME_SIZE, Opcode, Payload, Reader, ReaderOptions,
+    close_payload,
 };
 
 #[unsafe(no_mangle)]
@@ -35,6 +36,18 @@ const SERVER: ReaderOptions = ReaderOptions {
 };
 const KEY: [u8; 4] = [0x37, 0xfa, 0x21, 0x3d];
 
+const FIN: u8 = 0x80;
+const RSV1: u8 = 0x40;
+const RSV2: u8 = 0x20;
+const RSV3: u8 = 0x10;
+const CONTINUE: u8 = 0x0;
+const TEXT: u8 = 0x1;
+const BINARY: u8 = 0x2;
+const CLOSE: u8 = 0x8;
+const PING: u8 = 0x9;
+const PONG: u8 = 0xa;
+const MASK: u8 = 0x80;
+
 /// `first` is the first byte. The length takes its shortest form.
 fn frame(options: ReaderOptions, first: u8, payload: &[u8]) -> Vec<u8> {
     let header = Header {
@@ -50,26 +63,49 @@ fn frame(options: ReaderOptions, first: u8, payload: &[u8]) -> Vec<u8> {
     frame
 }
 
-fn frames(options: ReaderOptions, frames: &[(u8, &[u8])]) -> Vec<u8> {
+fn frames(options: ReaderOptions, frames: &[(u8, &str)]) -> Vec<u8> {
     frames
         .iter()
-        .flat_map(|(first, payload)| frame(options, *first, payload))
+        .flat_map(|(first, payload)| frame(options, *first, payload.as_bytes()))
         .collect()
 }
 
-fn show(event: &Result<Event<'_>, ProtocolError>) -> String {
-    match event {
-        Ok(Event::Message(message, payload)) => format!(
-            "{:?}{} {}",
-            message.opcode,
-            if message.compressed { "+deflate" } else { "" },
-            payload.escape_ascii()
-        ),
-        Ok(Event::Ping(payload)) => format!("Ping {}", payload.escape_ascii()),
-        Ok(Event::Pong(payload)) => format!("Pong {}", payload.escape_ascii()),
-        Ok(Event::Close(code, reason)) => format!("Close {code} {}", reason.escape_ascii()),
-        Err(error) => format!("{error:?}"),
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Kind {
+    Text,
+    Binary,
+    Compressed(Opcode),
+    Ping,
+    Pong,
+    Close(u16),
+    Error(ProtocolError),
+}
+use Kind::*;
+
+#[derive(Debug, PartialEq)]
+struct Seen(Kind, String);
+
+impl PartialEq<(Kind, &str)> for Seen {
+    fn eq(&self, (kind, payload): &(Kind, &str)) -> bool {
+        self.0 == *kind && self.1 == *payload
     }
+}
+
+const NOTHING: [Seen; 0] = [];
+
+fn seen(event: &Result<Event<'_>, ProtocolError>) -> Seen {
+    let (kind, payload): (_, &[u8]) = match event {
+        Ok(Event::Message(message, payload)) if message.compressed => {
+            (Compressed(message.opcode), payload)
+        }
+        Ok(Event::Message(message, payload)) if message.opcode == Opcode::Text => (Text, payload),
+        Ok(Event::Message(_, payload)) => (Binary, payload),
+        Ok(Event::Ping(payload)) => (Ping, payload),
+        Ok(Event::Pong(payload)) => (Pong, payload),
+        Ok(Event::Close(code, reason)) => (Close(*code), reason),
+        Err(error) => (Error(*error), b""),
+    };
+    Seen(kind, payload.escape_ascii().to_string())
 }
 
 fn recycle(reader: &mut Reader, event: Result<Event<'_>, ProtocolError>) {
@@ -78,19 +114,22 @@ fn recycle(reader: &mut Reader, event: Result<Event<'_>, ProtocolError>) {
     }
 }
 
-fn read(reader: &mut Reader, bytes: &[u8]) -> Vec<String> {
-    let mut input = Input::new(bytes);
+fn read(reader: &mut Reader, bytes: &[u8]) -> Vec<Seen> {
+    drain(reader, Input::new(bytes))
+}
+
+fn drain(reader: &mut Reader, mut input: Input<'_>) -> Vec<Seen> {
     let mut events = Vec::new();
     while let Some(event) = reader.next(&mut input) {
-        events.push(show(&event));
+        events.push(seen(&event));
         recycle(reader, event);
     }
     events
 }
 
 /// The events of `bytes`, which are the same in one read, in every pair of reads and in one read per byte.
-fn events(options: ReaderOptions, bytes: &[u8]) -> Vec<String> {
-    let feed = |reads: &[&[u8]]| -> Vec<String> {
+fn events(options: ReaderOptions, bytes: &[u8]) -> Vec<Seen> {
+    let feed = |reads: &[&[u8]]| -> Vec<Seen> {
         let mut reader = Reader::new(options);
         reads.iter().flat_map(|r| read(&mut reader, r)).collect()
     };
@@ -105,39 +144,49 @@ fn events(options: ReaderOptions, bytes: &[u8]) -> Vec<String> {
 
 #[test]
 fn encodes_the_examples_of_the_rfc() {
-    assert_eq!(frame(CLIENT, 0x81, b"Hello"), b"\x81\x05Hello");
+    assert_eq!(frame(CLIENT, FIN | TEXT, b"Hello"), b"\x81\x05Hello");
     assert_eq!(
-        frame(SERVER, 0x81, b"Hello"),
+        frame(SERVER, FIN | TEXT, b"Hello"),
         b"\x81\x85\x37\xfa\x21\x3d\x7f\x9f\x4d\x51\x58"
     );
-    for (len, head) in [
-        (0, &b"\x00"[..]),
-        (125, b"\x7d"),
-        (126, b"\x7e\x00\x7e"),
-        (0xffff, b"\x7e\xff\xff"),
-        (0x10000, b"\x7f\x00\x00\x00\x00\x00\x01\x00\x00"),
+    for (len, encoded_len) in [
+        (0, &[0][..]),
+        (125, &[125]),
+        (126, &[126, 0, 126]),
+        (0xffff, &[126, 0xff, 0xff]),
+        (0x10000, &[127, 0, 0, 0, 0, 0, 1, 0, 0]),
     ] {
         let payload = vec![7; len];
-        assert_eq!(frame(CLIENT, 0, &payload)[1..], [head, &payload].concat());
+        let after_the_first_byte = &frame(CLIENT, BINARY, &payload)[1..];
+        assert_eq!(after_the_first_byte, [encoded_len, &payload].concat());
     }
-    assert_eq!(frame(SERVER, 0x89, &[0; 125]).len(), MAX_CONTROL_FRAME_SIZE);
+    let longest_ping = frame(SERVER, FIN | PING, &[0; 125]);
+    assert_eq!(longest_ping.len(), MAX_CONTROL_FRAME_SIZE);
 }
 
 #[test]
 fn encodes_the_first_byte_and_masks_what_a_closure_writes() {
-    for (opcode, fin, compressed, first) in [
-        (Opcode::Text, true, false, 0x81),
-        (Opcode::Binary, true, true, 0xc2),
-        (Opcode::Continue, false, false, 0x00),
-        (Opcode::Pong, true, false, 0x8a),
+    let text = Header {
+        opcode: Opcode::Text,
+        fin: true,
+        compressed: false,
+        len: 5,
+        key: Some(KEY),
+    };
+    let with = |opcode| Header { opcode, ..text };
+    let unfinished = Header { fin: false, ..text };
+    let compressed = Header {
+        compressed: true,
+        ..text
+    };
+    for (header, first) in [
+        (text, FIN | TEXT),
+        (unfinished, TEXT),
+        (compressed, FIN | RSV1 | TEXT),
+        (with(Opcode::Continue), FIN | CONTINUE),
+        (with(Opcode::Binary), FIN | BINARY),
+        (with(Opcode::Pong), FIN | PONG),
     ] {
-        let header = Header {
-            opcode,
-            fin,
-            compressed,
-            len: 5,
-            key: Some(KEY),
-        };
         let mut encoded = vec![0; header.frame_size()];
         header.encode_with(&mut encoded, |payload| payload.copy_from_slice(b"Hello"));
         assert_eq!(encoded, frame(SERVER, first, b"Hello"));
@@ -152,134 +201,108 @@ fn close_payloads() {
     assert_eq!(*close_payload(1000, &[b'a'; 124]), *b"\x03\xe8");
 }
 
+/// One stream. Each frame is next to the event it completes.
 #[test]
 fn messages_and_control_frames() {
-    let (long, longest_ping) = ([b'l'; 200], [b'p'; 125]);
+    let (long, longest_ping) = (&*"l".repeat(200), &*"p".repeat(125));
+    let deflated = Compressed(Opcode::Text);
+    let stream = [
+        ((FIN | TEXT, "text"), Some((Text, "text"))),
+        ((FIN | BINARY, ""), Some((Binary, ""))),
+        ((FIN | RSV1 | TEXT, ""), Some((deflated, ""))),
+        ((FIN | BINARY, long), Some((Binary, long))),
+        ((RSV1 | TEXT, "com"), None),
+        ((FIN | PING, ""), Some((Ping, ""))),
+        ((CONTINUE, ""), None),
+        ((FIN | PING, longest_ping), Some((Ping, longest_ping))),
+        ((CONTINUE, "press"), None),
+        ((FIN | PONG, "pong"), Some((Pong, "pong"))),
+        ((FIN | CONTINUE, "ed"), Some((deflated, "compressed"))),
+        ((BINARY, ""), None),
+        ((FIN | CONTINUE, ""), Some((Binary, ""))),
+        ((TEXT, "empty end"), None),
+        ((FIN | CONTINUE, ""), Some((Text, "empty end"))),
+        ((TEXT, "cut off by"), None),
+        ((FIN | CLOSE, "\x0f\x00bye"), Some((Close(0x0f00), "bye"))),
+        ((FIN | TEXT, "ignored"), None),
+    ];
+    let expected: Vec<_> = stream.iter().filter_map(|(_, event)| *event).collect();
     for options in [CLIENT, SERVER] {
-        let bytes = frames(
-            options,
-            &[
-                (0x81, b"text"),
-                (0x82, b""),
-                (0xc1, b""),
-                (0x82, &long),
-                (0x41, b"com"),
-                (0x89, b""),
-                (0x00, b""),
-                (0x89, &longest_ping),
-                (0x00, b"press"),
-                (0x8a, b"pong"),
-                (0x80, b"ed"),
-                (0x02, b""),
-                (0x80, b""),
-                (0x01, b"empty end"),
-                (0x80, b""),
-                (0x01, b"cut off by"),
-                (0x88, b"\x03\xe8bye"),
-                (0x81, b"ignored"),
-            ],
-        );
-        assert_eq!(
-            events(options, &bytes),
-            [
-                "Text text",
-                "Binary ",
-                "Text+deflate ",
-                &format!("Binary {}", long.escape_ascii()),
-                "Ping ",
-                &format!("Ping {}", longest_ping.escape_ascii()),
-                "Pong pong",
-                "Text+deflate compressed",
-                "Binary ",
-                "Text empty end",
-                "Close 1000 bye",
-            ]
-        );
+        let bytes = frames(options, &stream.map(|(frame, _)| frame));
+        assert_eq!(events(options, &bytes), expected);
     }
 }
 
 #[test]
 fn a_length_may_take_a_longer_form_than_it_needs() {
-    let bytes = b"\x81\x7e\x00\x00\x81\x7e\x00\x01a\x81\x7f\x00\x00\x00\x00\x00\x00\x00\x01b";
-    assert_eq!(events(CLIENT, bytes), ["Text ", "Text a", "Text b"]);
+    for (len, payload) in [
+        (&[126, 0, 0][..], ""),
+        (&[126, 0, 1], "a"),
+        (&[127, 0, 0, 0, 0, 0, 0, 0, 1], "b"),
+    ] {
+        let bytes = [&[FIN | TEXT], len, payload.as_bytes()].concat();
+        assert_eq!(events(CLIENT, &bytes), [(Text, payload)]);
+    }
 }
 
 #[test]
 fn close_codes() {
-    assert_eq!(events(CLIENT, b"\x88\x00"), ["Close 1005 "]);
-    for code in [1000, 1003, 1007, 1014, 3000, 4999_u16] {
-        let bytes = frame(SERVER, 0x88, &code.to_be_bytes());
-        assert_eq!(events(SERVER, &bytes), [format!("Close {code} ")]);
+    assert_eq!(events(CLIENT, &[FIN | CLOSE, 0]), [(Close(1005), "")]);
+    let close = |code: u16| events(SERVER, &frame(SERVER, FIN | CLOSE, &code.to_be_bytes()));
+    for code in [1000, 1003, 1007, 1014, 3000, 4999] {
+        assert_eq!(close(code), [(Close(code), "")]);
     }
     for code in [0, 999, 1004, 1005, 1006, 1015, 2999, 5000, u16::MAX] {
-        let bytes = frame(SERVER, 0x88, &code.to_be_bytes());
-        assert_eq!(
-            events(SERVER, &bytes),
-            [format!("InvalidCloseCode({code})")]
-        );
+        assert_eq!(close(code), [(Error(InvalidCloseCode(code)), "")]);
     }
 }
 
 /// Each case ends at the byte that shows the error, and also breaks the rules that are checked after it.
 #[test]
+#[rustfmt::skip]
 fn errors_come_as_early_as_possible_and_in_order() {
-    let plain = ReaderOptions {
-        deflate: false,
-        ..CLIENT
-    };
-    let small = |options| ReaderOptions {
-        max_payload: 4,
-        ..options
-    };
+    let no_deflate = ReaderOptions { deflate: false, ..CLIENT };
+    let max_4 = |options| ReaderOptions { max_payload: 4, ..options };
     for (options, bytes, error) in [
-        (CLIENT, &b"\x73\xff"[..], "UnexpectedRsv2Or3"),
-        (CLIENT, b"\x91\x00", "UnexpectedRsv2Or3"),
-        (CLIENT, b"\x43\xff", "UnexpectedMask"),
-        (SERVER, b"\x43\x7f", "ExpectedMask"),
-        (CLIENT, b"\x43\x7f", "ReservedOpcode(3)"),
-        (CLIENT, b"\x4f\x7f", "ReservedOpcode(15)"),
-        (small(plain), b"\xc0\x05", "UnexpectedOpcode(0)"),
-        (small(plain), b"\x01\x00\xc1\x05", "UnexpectedOpcode(1)"),
-        (small(plain), b"\x01\x00\xc2\x05", "UnexpectedOpcode(2)"),
-        (CLIENT, b"\x49\x7f", "ControlFrameIsFragmented"),
-        (CLIENT, b"\xc9\x7f", "UnexpectedRsv1"),
-        (small(CLIENT), b"\x41\x00\xc0\x05", "UnexpectedRsv1"),
-        (small(plain), b"\xc1\x05", "UnexpectedRsv1"),
-        (SERVER, b"\x89\xfe", "InvalidControlLength(126)"),
-        (SERVER, b"\x8a\xff", "InvalidControlLength(127)"),
-        (SERVER, b"\x88\x81", "InvalidControlLength(1)"),
-        (small(SERVER), b"\x82\x85", "MessageTooBig"),
-        (small(SERVER), b"\x82\xfe\x00\x05", "MessageTooBig"),
-        (small(CLIENT), b"\x02\x03abc\x80\x02", "MessageTooBig"),
-        (
-            small(SERVER),
-            b"\x82\xff\x00\x1f\xff\xff\xff\xff\xff\xff",
-            "MessageTooBig",
-        ),
-        (
-            small(SERVER),
-            b"\x82\xff\x00\x20\x00\x00\x00\x00\x00\x00",
-            "UnsupportedPayloadLength",
-        ),
+        (CLIENT,            &[RSV1 | RSV2 | RSV3 | 3, MASK | 127][..],                          UnexpectedRsv2Or3),
+        (CLIENT,            &[FIN | RSV2 | TEXT, 0],                                            UnexpectedRsv2Or3),
+        (CLIENT,            &[FIN | RSV3 | TEXT, 0],                                            UnexpectedRsv2Or3),
+        (CLIENT,            &[RSV1 | 3, MASK | 127],                                            UnexpectedMask),
+        (SERVER,            &[RSV1 | 3, 127],                                                   ExpectedMask),
+        (CLIENT,            &[RSV1 | 3, 127],                                                   ReservedOpcode(3)),
+        (CLIENT,            &[RSV1 | 15, 127],                                                  ReservedOpcode(15)),
+        (max_4(no_deflate), &[FIN | RSV1 | CONTINUE, 5],                                        UnexpectedOpcode(CONTINUE)),
+        (max_4(no_deflate), &[TEXT, 0, FIN | RSV1 | TEXT, 5],                                   UnexpectedOpcode(TEXT)),
+        (max_4(no_deflate), &[TEXT, 0, FIN | RSV1 | BINARY, 5],                                 UnexpectedOpcode(BINARY)),
+        (CLIENT,            &[RSV1 | PING, 127],                                                ControlFrameIsFragmented),
+        (CLIENT,            &[FIN | RSV1 | PING, 127],                                          UnexpectedRsv1),
+        (max_4(CLIENT),     &[RSV1 | TEXT, 0, FIN | RSV1 | CONTINUE, 5],                        UnexpectedRsv1),
+        (max_4(no_deflate), &[FIN | RSV1 | TEXT, 5],                                            UnexpectedRsv1),
+        (SERVER,            &[FIN | PING, MASK | 126],                                          InvalidControlLength(126)),
+        (SERVER,            &[FIN | PONG, MASK | 127],                                          InvalidControlLength(127)),
+        (SERVER,            &[FIN | CLOSE, MASK | 1],                                           InvalidControlLength(1)),
+        (max_4(SERVER),     &[FIN | BINARY, MASK | 5],                                          MessageTooBig),
+        (max_4(SERVER),     &[FIN | BINARY, MASK | 126, 0, 5],                                  MessageTooBig),
+        (max_4(CLIENT),     &[BINARY, 3, 0, 0, 0, FIN | CONTINUE, 2],                           MessageTooBig),
+        (max_4(SERVER),     &[FIN | BINARY, MASK | 127, 0, 0x1f, 255, 255, 255, 255, 255, 255], MessageTooBig),
+        (max_4(SERVER),     &[FIN | BINARY, MASK | 127, 0, 0x20, 0, 0, 0, 0, 0, 0],             UnsupportedPayloadLength),
     ] {
-        assert_eq!(events(options, bytes), [error]);
-        assert_eq!(events(options, &bytes[..bytes.len() - 1]), [""; 0]);
-        let followed = [bytes, &frame(options, 0x81, b"a")].concat();
-        assert_eq!(events(options, &followed), [error]);
+        assert_eq!(events(options, bytes), [(Error(error), "")]);
+        assert_eq!(events(options, &bytes[..bytes.len() - 1]), NOTHING);
+        let followed = [bytes, &frame(options, FIN | TEXT, b"a")].concat();
+        assert_eq!(events(options, &followed), [(Error(error), "")]);
     }
-    let at_the_limit = b"\x02\x02ab\x89\x05hello\x80\x02cd";
-    assert_eq!(
-        events(small(CLIENT), at_the_limit),
-        ["Ping hello", "Binary abcd"]
-    );
+    let at_the_limit = frames(CLIENT, &[(BINARY, "ab"), (FIN | PING, "hello"), (FIN | CONTINUE, "cd")]);
+    assert_eq!(events(max_4(CLIENT), &at_the_limit), [(Ping, "hello"), (Binary, "abcd")]);
 }
 
 #[test]
 fn a_huge_length_allocates_nothing() {
     let mut reader = Reader::new(CLIENT);
-    let bytes = b"\x82\x7f\x00\x1f\xff\xff\xff\xff\xff\xff";
-    assert_eq!(read(&mut reader, bytes), [""; 0]);
-    assert_eq!((reader.capacity(), reader.is_stopped()), (0, false));
+    let bytes = [FIN | BINARY, 127, 0, 0x1f, 255, 255, 255, 255, 255, 255];
+    assert_eq!(read(&mut reader, &bytes), NOTHING);
+    assert_eq!(reader.capacity(), 0);
+    assert!(!reader.is_stopped());
 }
 
 #[test]
@@ -293,29 +316,30 @@ fn a_message_that_is_whole_in_a_read_is_not_copied() {
             )
         })
     };
-    assert!(is_borrowed(CLIENT, &[b"\x81\x02ab"]));
-    assert!(is_borrowed(CLIENT, &[b"\x81", b"\x02", b"ab"]));
-    assert!(is_borrowed(CLIENT, &[b"\x01\x00\x80\x02ab"]));
-    assert!(!is_borrowed(CLIENT, &[b"\x81\x02a", b"b"]));
-    assert!(!is_borrowed(CLIENT, &[b"\x01\x01a\x80\x01b"]));
-    assert!(!is_borrowed(SERVER, &[&frame(SERVER, 0x81, b"ab")]));
+    let fragments = |first, last| frames(CLIENT, &[(TEXT, first), (FIN | CONTINUE, last)]);
+    assert!(is_borrowed(CLIENT, &[&[FIN | TEXT, 2, 0, 0]]));
+    assert!(is_borrowed(CLIENT, &[&[FIN | TEXT], &[2], &[0, 0]]));
+    assert!(is_borrowed(CLIENT, &[&fragments("", "ab")]));
+    assert!(!is_borrowed(CLIENT, &[&[FIN | TEXT, 2, 0], &[0]]));
+    assert!(!is_borrowed(CLIENT, &[&fragments("a", "b")]));
+    assert!(!is_borrowed(SERVER, &[&frame(SERVER, FIN | TEXT, b"ab")]));
 }
 
 #[test]
 fn the_buffer_is_kept_until_the_reader_stops() {
     let mut reader = Reader::new(SERVER);
     reader.reserve(64);
-    let bytes = frame(SERVER, 0x81, b"ab");
-    assert_eq!(read(&mut reader, &bytes), ["Text ab"]);
+    let bytes = frame(SERVER, FIN | TEXT, b"ab");
+    assert_eq!(read(&mut reader, &bytes), [(Text, "ab")]);
     assert_eq!(reader.capacity(), 64);
 
     let mut input = Input::new(&bytes);
     let event = reader.next(&mut input).unwrap();
     reader.stop();
-    assert_eq!(show(&event), "Text ab");
+    assert_eq!(seen(&event), (Text, "ab"));
     recycle(&mut reader, event);
     assert_eq!(reader.capacity(), 0);
-    assert_eq!(read(&mut reader, &bytes), [""; 0]);
+    assert_eq!(read(&mut reader, &bytes), NOTHING);
 
     let mut reader = Reader::new(SERVER);
     reader.reserve(64);
@@ -323,42 +347,95 @@ fn the_buffer_is_kept_until_the_reader_stops() {
     assert_eq!(reader.capacity(), 0);
 }
 
+fn first_events(options: ReaderOptions) -> [(Vec<u8>, Kind); 3] {
+    [
+        (frames(options, &[(FIN | TEXT, "first")]), Text),
+        (
+            frames(options, &[(TEXT, "fir"), (FIN | CONTINUE, "st")]),
+            Text,
+        ),
+        (frames(options, &[(FIN | PING, "first")]), Ping),
+    ]
+}
+
 /// The next read comes while the event that ended the last one is still being handled.
 #[test]
 fn a_read_inside_an_event() {
     for options in [CLIENT, SERVER] {
-        let rest = frames(
-            options,
-            &[
-                (0x42, b"sec"),
-                (0x89, b"ab\x89\x64xy"),
-                (0x80, b"ond"),
-                (0x81, &[b'l'; 130]),
-            ],
-        );
-        for (first, shown) in [
-            (frames(options, &[(0x81, b"first")]), "Text first"),
-            (
-                frames(options, &[(0x01, b"fir"), (0x80, b"st")]),
-                "Text first",
-            ),
-            (frames(options, &[(0x89, b"first")]), "Ping first"),
-        ] {
-            let expected = events(options, &rest);
-            let step = if cfg!(miri) { 23 } else { 1 };
+        let looks_like_a_header = [b'a', b'b', FIN | PING, 100, b'x', b'y'];
+        let rest = [
+            frame(options, RSV1 | BINARY, b"sec"),
+            frame(options, FIN | PING, &looks_like_a_header),
+            frame(options, FIN | CONTINUE, b"ond"),
+            frame(options, FIN | TEXT, &[b'l'; 130]),
+        ]
+        .concat();
+        let expected = events(options, &rest);
+        for (first, kind) in first_events(options) {
             for cut in [0, 1, 3, first.len() - 1] {
-                for nested in (0..=rest.len()).step_by(step) {
+                for nested in (0..=rest.len()).step_by(if cfg!(miri) { 23 } else { 1 }) {
                     let mut reader = Reader::new(options);
-                    assert_eq!(read(&mut reader, &first[..cut]), [""; 0]);
+                    assert_eq!(read(&mut reader, &first[..cut]), NOTHING);
                     let mut input = Input::new(&first[cut..]);
                     let event = reader.next(&mut input).unwrap();
-                    let mut seen = read(&mut reader, &rest[..nested]);
-                    assert_eq!(show(&event), shown);
+                    let mut later = read(&mut reader, &rest[..nested]);
+                    assert_eq!(seen(&event), (kind, "first"));
                     recycle(&mut reader, event);
-                    seen.extend(read(&mut reader, &rest[nested..]));
-                    assert_eq!(seen, expected, "{cut} {nested}");
+                    later.extend(drain(&mut reader, input));
+                    later.extend(read(&mut reader, &rest[nested..]));
+                    assert_eq!(later, expected, "{cut} {nested}");
                 }
             }
+        }
+    }
+}
+
+/// `outer` is one read. `nested` comes after it in the stream, and is read inside its first event.
+#[test]
+#[rustfmt::skip]
+fn a_nested_read_is_not_mixed_with_the_rest_of_the_outer_read() {
+    #[derive(Copy, Clone)]
+    enum Part { All, AllInTwoReads, FirstByte, AllButThePayload, AllButTheLastByte }
+    use Part::*;
+    let one_two = &[(FIN | TEXT, "one"), (FIN | TEXT, "two")][..];
+    let ping_in_ab = &[(TEXT, "a"), (FIN | PING, "p"), (FIN | CONTINUE, "b")][..];
+    let unexpected = |opcode| (Error(UnexpectedOpcode(opcode)), "");
+    for (outer, (part, nested), expected) in [
+        (one_two,          (All,               &[(FIN | TEXT, "six")][..]),            &[(Text, "one"), (Text, "six"), (Text, "two")][..]),
+        (one_two,          (All,               &[(TEXT, "s"), (FIN | CONTINUE, "ix")]), &[(Text, "one"), (Text, "six"), (Text, "two")]),
+        (one_two,          (AllInTwoReads,     &[(FIN | TEXT, "six")]),                &[(Text, "one"), (Text, "six"), (Text, "two")]),
+        (one_two,          (All,               &[(FIN | CLOSE, "")]),                  &[(Text, "one"), (Close(1005), "")]),
+        (one_two,          (FirstByte,         &[(FIN | BINARY, "six")]),              &[(Text, "one"), unexpected(TEXT)]),
+        (one_two,          (AllButThePayload,  &[(FIN | BINARY, "six")]),              &[(Text, "one"), unexpected(TEXT)]),
+        (one_two,          (AllButTheLastByte, &[(FIN | BINARY, "six")]),              &[(Text, "one"), unexpected(TEXT)]),
+        (one_two,          (AllButTheLastByte, &[(FIN | PING, "six")]),                &[(Text, "one"), unexpected(TEXT)]),
+        (one_two,          (All,               &[(BINARY, "s")]),                      &[(Text, "one"), unexpected(TEXT)]),
+        (&ping_in_ab[1..], (All,               &[(TEXT, "s")]),                        &[(Ping, "p"), unexpected(CONTINUE)]),
+        (ping_in_ab,       (All,               &[]),                                   &[(Ping, "p"), (Text, "ab")]),
+        (ping_in_ab,       (All,               &[(FIN | CONTINUE, "c")]),              &[(Ping, "p"), unexpected(CONTINUE)]),
+        (ping_in_ab,       (All,               &[(FIN | PONG, "six")]),                &[(Ping, "p"), unexpected(PONG)]),
+        (ping_in_ab,       (FirstByte,         &[(FIN | TEXT, "six")]),                &[(Ping, "p"), unexpected(TEXT)]),
+        (&ping_in_ab[..2], (All,               &[(FIN | CONTINUE, "c")]),              &[(Ping, "p"), (Text, "ac")]),
+    ] {
+        for options in [CLIENT, SERVER] {
+            let (outer, nested) = (frames(options, outer), frames(options, nested));
+            let reads = match part {
+                All => [&*nested, &[]],
+                AllInTwoReads => nested.split_at(nested.len() - 1).into(),
+                FirstByte => [&nested[..1], &[]],
+                AllButThePayload => [&nested[..nested.len() - "six".len()], &[]],
+                AllButTheLastByte => [&nested[..nested.len() - 1], &[]],
+            };
+            let mut reader = Reader::new(options);
+            let mut input = Input::new(&outer);
+            let mut events = vec![seen(&reader.next(&mut input).unwrap())];
+            events.extend(reads.iter().flat_map(|bytes| read(&mut reader, bytes)));
+            events.extend(drain(&mut reader, input));
+            assert_eq!(events, expected);
+
+            let has_ended = matches!(expected.last(), Some((Error(_) | Close(_), _)));
+            let later = read(&mut reader, &frame(options, FIN | TEXT, b"later"));
+            assert_eq!(later, if has_ended { &[][..] } else { &[(Text, "later")] });
         }
     }
 }

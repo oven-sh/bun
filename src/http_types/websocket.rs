@@ -3,6 +3,8 @@
 //! WebSocket frames without I/O: <https://datatracker.ietf.org/doc/html/rfc6455#section-5>
 #![forbid(unsafe_code)]
 
+use core::mem;
+
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::BoundedArray;
@@ -67,9 +69,6 @@ pub enum ProtocolError {
     UnsupportedPayloadLength,
     MessageTooBig,
     InvalidCloseCode(u16),
-    /// Found by whoever decodes the payload, like the next one.
-    InvalidUtf8,
-    InvalidCompressedData,
 }
 
 fn copy_masked(key: Option<MaskingKey>, output: &mut [u8], input: &[u8]) {
@@ -95,7 +94,7 @@ fn take<const N: usize>(bytes: &mut &[u8]) -> Option<[u8; N]> {
 pub fn close_payload(code: u16, reason: &[u8]) -> ControlPayload {
     let mut payload = ControlPayload::new();
     if code != NO_STATUS_RECEIVED {
-        payload.append_slice_assume_capacity(&code.to_be_bytes());
+        let _ = payload.append_slice(&code.to_be_bytes());
         let _ = payload.append_slice(reason);
     }
     payload
@@ -123,11 +122,13 @@ impl Header {
     }
 
     /// `frame` is [`Self::frame_size`] long and `payload` is `len` long.
+    #[inline(always)]
     pub fn encode(self, frame: &mut [u8], payload: &[u8]) {
         copy_masked(self.key, self.write(frame), payload);
     }
 
     /// [`Self::encode`] for a payload that `fill` writes, all `len` bytes of it.
+    #[inline(always)]
     pub fn encode_with(self, frame: &mut [u8], fill: impl FnOnce(&mut [u8])) {
         let payload = self.write(frame);
         fill(payload);
@@ -135,8 +136,9 @@ impl Header {
     }
 
     /// Returns the room for the payload.
+    #[inline(always)]
     fn write(self, frame: &mut [u8]) -> &mut [u8] {
-        let (head, payload) = frame.split_at_mut(self.frame_size() - self.len);
+        let (head, payload) = frame.split_at_mut(frame.len() - self.len);
         let bit = |is_set, bit| if is_set { bit } else { 0 };
         head[0] = bit(self.fin, FIN) | bit(self.compressed, RSV1) | self.opcode as u8;
         head[1] = bit(self.key.is_some(), MASK)
@@ -154,7 +156,7 @@ impl Header {
         if let (Some(key), Some(slot)) = (self.key, head.last_chunk_mut()) {
             *slot = key;
         }
-        &mut payload[..self.len]
+        payload
     }
 }
 
@@ -196,6 +198,7 @@ pub enum Event<'a> {
 pub struct Input<'a> {
     bytes: &'a [u8],
     control: ControlPayload,
+    is_past_event: bool,
 }
 
 impl<'a> Input<'a> {
@@ -203,6 +206,7 @@ impl<'a> Input<'a> {
         Self {
             bytes,
             control: ControlPayload::new(),
+            is_past_event: false,
         }
     }
 }
@@ -232,6 +236,8 @@ enum State {
     /// Holds the fragmented message that the next data frame continues.
     Head(Option<Message>),
     Body(Body),
+    /// In a Ping or Pong event inside this message. Only the rest of the same read continues it.
+    Suspended(Message),
     Stopped,
 }
 
@@ -281,7 +287,7 @@ impl Reader {
         self.buffer = Buffer::init();
     }
 
-    /// Takes back the allocation of a message, unless another message has started since.
+    /// Takes back the allocation of a message, unless bytes of another message are buffered.
     pub fn recycle(&mut self, payload: Payload<'_>) {
         if let Payload::Buffered(mut buffer) = payload
             && self.buffer.readable_length() == 0
@@ -299,26 +305,39 @@ impl Reader {
         &mut self,
         input: &'a mut Input<'_>,
     ) -> Option<Result<Event<'a>, ProtocolError>> {
+        let out_of_order = ProtocolError::UnexpectedOpcode(input.bytes.first()? & OPCODE);
+        if mem::replace(&mut input.is_past_event, true) {
+            match self.state {
+                State::Suspended(message) => self.state = State::Head(Some(message)),
+                State::Head(None) if self.held.is_empty() => {}
+                State::Stopped => {}
+                // Left by a read made inside the event, whose bytes come after the rest of this one.
+                State::Head(_) | State::Body(_) => return Some(Err(self.fail(out_of_order))),
+            }
+        }
         while !input.bytes.is_empty() {
             let body = match self.state {
                 State::Stopped => return None,
+                State::Suspended(_) => return Some(Err(self.fail(out_of_order))),
                 State::Body(body) => body,
                 State::Head(open) => match self.read_head(open, input)? {
                     Head::Data(body) => body,
-                    Head::Control(Opcode::Ping) => {
-                        return Some(Ok(Event::Ping(&input.control)));
-                    }
-                    Head::Control(Opcode::Pong) => {
-                        return Some(Ok(Event::Pong(&input.control)));
+                    Head::Control(opcode @ (Opcode::Ping | Opcode::Pong)) => {
+                        if let Some(message) = open
+                            && !input.bytes.is_empty()
+                        {
+                            self.state = State::Suspended(message);
+                        }
+                        return Some(Ok(match opcode {
+                            Opcode::Ping => Event::Ping(&input.control),
+                            _ => Event::Pong(&input.control),
+                        }));
                     }
                     Head::Control(_) => {
                         self.stop();
                         return Some(parse_close(&input.control));
                     }
-                    Head::Invalid(error) => {
-                        self.stop();
-                        return Some(Err(error));
-                    }
+                    Head::Invalid(error) => return Some(Err(self.fail(error))),
                 },
             };
             if let Some(payload) = self.read_body(body, &mut input.bytes) {
@@ -328,6 +347,12 @@ impl Reader {
         None
     }
 
+    fn fail(&mut self, error: ProtocolError) -> ProtocolError {
+        self.stop();
+        error
+    }
+
+    /// What is too short to parse fits in `held`.
     #[inline(always)]
     fn read_head(&mut self, open: Option<Message>, input: &mut Input<'_>) -> Option<Head> {
         let held = self.held.len();
@@ -339,13 +364,15 @@ impl Reader {
         }
         let available = bytes.len();
         let Some(head) = self.parse_head(open, &mut bytes, &mut input.control) else {
+            debug_assert_eq!(fits.len(), input.bytes.len());
             if held == 0 {
                 self.held.append_slice_assume_capacity(fits);
             }
             input.bytes = &[];
             return None;
         };
-        input.bytes = &input.bytes[available - bytes.len() - held..];
+        let consumed = (available - bytes.len()).saturating_sub(held);
+        input.bytes = input.bytes.get(consumed..).unwrap_or_default();
         self.held.clear();
         Some(head)
     }
@@ -396,7 +423,10 @@ impl Reader {
             }
             let key = self.take_key(bytes)?;
             control.clear();
-            control.append_slice_assume_capacity(bytes.split_off(..usize::from(short_len))?);
+            let payload = bytes.split_off(..usize::from(short_len))?;
+            if control.append_slice(payload).is_err() {
+                return Some(Head::Invalid(InvalidControlLength(short_len)));
+            }
             mask_in_place(key, control);
             return Some(Head::Control(opcode));
         };
@@ -447,7 +477,7 @@ impl Reader {
         self.buffer.update(chunk.len());
         if ended {
             self.state = State::Head(None);
-            let buffer = core::mem::replace(&mut self.buffer, Buffer::init());
+            let buffer = mem::replace(&mut self.buffer, Buffer::init());
             return Some(Payload::Buffered(buffer));
         }
         if let Some(key) = &mut body.key {

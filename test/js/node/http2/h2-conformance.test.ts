@@ -4466,6 +4466,77 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
+  test.each(["before", "after"])(
+    "destroy() closes client streams whose response nobody reads, with the listener added %s it arrived",
+    async when => {
+      const server = http2.createServer((req, res) => res.end("unread"));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+      try {
+        const refs: WeakRef<object>[] = [];
+        let closed = 0;
+        async function openAll() {
+          const requests = Array.from({ length: 32 }, () => client.request());
+          const listen = () => requests.forEach(req => req.on("close", () => closed++));
+          if (when === "before") listen();
+          await Promise.all(requests.map(req => once(req, "response")));
+          await new Promise(resolve => client.ping(resolve));
+          expect(requests.map(req => req.closed)).toEqual(Array(32).fill(true));
+          if (when === "after") listen();
+          refs.push(...requests.map(req => new WeakRef(req)));
+        }
+        await openAll();
+        expect(await liveCount(refs)).toBe(32);
+        client.destroy();
+        await once(client, "close");
+        expect(closed).toBe(32);
+        expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    },
+  );
+
+  test("releases client streams with a signal whose response nobody reads", async () => {
+    const server = http2.createServer((req, res) => res.end("unread"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const refs: WeakRef<object>[] = [];
+      const request = () =>
+        new Promise((resolve, reject) => {
+          const { signal } = new AbortController();
+          refs.push(new WeakRef(client.request({}, { signal }).on("response", resolve).on("error", reject)));
+        });
+      await Promise.all(Array.from({ length: 32 }, request));
+      await new Promise(resolve => client.ping(resolve));
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  test("releases a client stream that was waited for once it is read", async () => {
+    const server = http2.createServer((req, res) => res.end("unread"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      async function readLate() {
+        const requests = Array.from({ length: 32 }, () => client.request().on("close", () => {}));
+        await Promise.all(requests.map(req => once(req, "response")));
+        await new Promise(resolve => client.ping(resolve));
+        await Promise.all(requests.map(req => once(req.resume(), "close")));
+        return requests.map(req => new WeakRef<object>(req));
+      }
+      expect(await liveCount(await readLate())).toBeLessThanOrEqual(GC_STRAGGLERS);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
   test("counts the header fields of open requests against maxSessionMemory", async () => {
     const open: http2.ServerHttp2Stream[] = [];
     const server = http2.createServer({ maxSessionMemory: 1 });

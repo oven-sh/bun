@@ -404,6 +404,7 @@ let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kOpenPushes = Symbol("openPushes");
+const kAwaitedUnreadStreams = Symbol("awaitedUnreadStreams");
 // Set on a client request while it waits in its session's queue: the arguments it's submitted with.
 const kQueuedRequest = Symbol("queuedRequest");
 const kRemoveQueuedRequest = Symbol("removeQueuedRequest");
@@ -2066,6 +2067,8 @@ enum StreamState {
   AwaitsReader = 1 << 10,
   // The server ended the stream before respond(), which then puts END_STREAM on the HEADERS frame.
   EndedBeforeHeaders = 1 << 11,
+  // One 'close' listener is not the program's: it lets go of the request's AbortSignal.
+  HasSignal = 1 << 12,
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2307,6 +2310,7 @@ function setupRequestEndAndSignal(req: Http2Stream, options: any, signal: AbortS
     addAbortListener ??= require("internal/abort_listener").addAbortListener;
     const disposable = addAbortListener(signal, abortRequestStream.bind(req, signal));
     req.once("close", disposable[Symbol.dispose]);
+    req[bunHTTP2StreamStatus] |= StreamState.HasSignal;
   }
 }
 // node destroys every open stream synchronously from inside session.destroy(): a write() issued
@@ -2714,6 +2718,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // The client didn't ask for a pushed stream, so its 'error' is never uncaught. It stays errored, or a body the peer cut short would emit 'end'.
     if (err != null && this[kPush] && this.listenerCount("error") === 0) this.on("error", ignoreError);
 
+    session[kAwaitedUnreadStreams]?.delete(this);
     this[bunHTTP2Session] = null;
     // This notifies the session that this stream has been destroyed and
     // gives the session the opportunity to clean itself up. The session
@@ -5008,6 +5013,12 @@ function destroyClosedStream(session: Http2Session, stream: Http2Stream) {
     if (!stream.readableFlowing || stream.readableLength > 0) {
       stream[bunHTTP2StreamStatus] |= StreamState.AwaitsReader;
       session[bunHTTP2Native]?.releaseStream(stream.id, true);
+      // Not on a server, where the peer could make a session keep any number of them.
+      if (stream instanceof ClientHttp2Stream) {
+        const own = (stream[bunHTTP2StreamStatus] & StreamState.HasSignal) !== 0 ? 1 : 0;
+        if (stream.listenerCount("close") > own) keepUntilClose.$call(stream, "close");
+        else stream.on("newListener", keepUntilClose);
+      }
     }
   } else if (!stream.writableFinished && !stream.destroyed && stream.errored == null) {
     // END_STREAM closed the stream from inside end(), or from respond() just before its end(). Destroying now would swallow 'finish'. An errored stream never emits it.
@@ -5016,6 +5027,10 @@ function destroyClosedStream(session: Http2Session, stream: Http2Stream) {
   } else {
     stream.destroy();
   }
+}
+function keepUntilClose(this: ClientHttp2Stream, event: string | symbol) {
+  const session = this[bunHTTP2Session] as ClientHttp2Session | null;
+  if (event === "close" && session && !session.destroyed) (session[kAwaitedUnreadStreams] ??= new SafeSet()).add(this);
 }
 // Read before the parser is detached, which forgets them.
 function unreadClosedStreams(parser: $Bindgen.H2FrameParser | null) {
@@ -5109,6 +5124,8 @@ class ClientHttp2Session extends Http2Session {
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
   #maxReservedRemoteStreams: number = 200;
   [kOpenPushes]: number = 0;
+  // The unread streams whose 'close' somebody waits for. The parser only has weak references to them.
+  [kAwaitedUnreadStreams]: Set<Http2Stream> | null = null;
   #maxOriginSetSize: number = 128;
   #strictFieldWhitespaceValidation: boolean = true;
   // Requests without an id yet, like node's: they wait, in order, for the socket to connect or for a slot under the peer's SETTINGS_MAX_CONCURRENT_STREAMS.
@@ -5998,6 +6015,7 @@ class ClientHttp2Session extends Http2Session {
       throw e;
     }
     this.#parser = null;
+    this[kAwaitedUnreadStreams] = null;
     this[bunHTTP2Socket] = null;
     // No ACK can arrive now, so a retained session shouldn't pin its callers' callbacks and stores. `pendingSettingsAck` stays as it is.
     this.#pendingSettingsCallbacks.fill(null);

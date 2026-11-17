@@ -979,8 +979,7 @@ test.concurrent(
   async () => {
     const result = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
     expect(result).toSpawn();
-    // Of ten. A stale slot in a live native frame can hold one or two.
-    expect(result.stdout).toMatch(/^[0-2] left$/m);
+    expect(result.stdout.trim()).toBe("0 left");
   },
 );
 
@@ -1008,12 +1007,12 @@ test.concurrent.each([
       await new Promise(setImmediate);
     }
     Bun.gc(true);
-    console.log((require("bun:jsc").heapStats().objectTypeCounts.RedisClient ?? 0) <= 2);
+    console.log(require("bun:jsc").heapStats().objectTypeCounts.RedisClient ?? 0, "left");
     server.stop(true);
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "inherit" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "true", exitCode: 0 });
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "0 left", exitCode: 0 });
 });
 
 test.concurrent("new RedisClient(url) does not leak the URL and its components", async () => {

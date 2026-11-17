@@ -332,6 +332,23 @@ function suite(dialect: Dialect, url: () => string) {
       },
     );
 
+    test.skipIf(dialect !== "postgres").each(["1 as a", "1 as a, 2 as b"])(
+      "what it throws also rejects a query that it started on the same statement: select %s",
+      async columns => {
+        const thrown = new Error("from failed");
+        let nested: Promise<unknown> | undefined;
+        await using sql = connect({
+          column() {
+            nested ??= query();
+            throw thrown;
+          },
+        });
+        const query = () => sql`select ${sql.unsafe(columns)}`.execute().catch(e => e);
+        expect(await query()).toBe(thrown);
+        expect(await nested).toBe(thrown);
+      },
+    );
+
     test.skipIf(dialect === "sqlite")("what it throws at a later result of several statements", async () => {
       const thrown = new Error("from failed");
       const calls: string[] = [];

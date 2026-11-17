@@ -1,11 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("PBKDFD2")]
-    PBKDFD2,
-    #[error("InvalidServerKey")]
-    InvalidServerKey,
-    #[error("InvalidServerSignature")]
-    InvalidServerSignature,
     #[error("InvalidBinaryValue")]
     InvalidBinaryValue,
     #[error("Thrown")]
@@ -20,9 +14,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::PBKDFD2 => "PBKDFD2",
-            Self::InvalidServerKey => "InvalidServerKey",
-            Self::InvalidServerSignature => "InvalidServerSignature",
             Self::InvalidBinaryValue => "InvalidBinaryValue",
             Self::Thrown => "Thrown",
             Self::Alloc(_) => "OutOfMemory",

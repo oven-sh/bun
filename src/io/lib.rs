@@ -54,7 +54,7 @@ pub mod parent_death_watchdog;
 pub mod parent_death_watchdog {
     use core::ffi::c_void;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use std::os::windows::io::{AsRawHandle as _, HandleOrNull, IntoRawHandle as _, OwnedHandle};
+    use std::os::windows::io::{AsRawHandle as _, IntoRawHandle as _};
 
     use bun_core::wstr;
     use bun_sys::windows;
@@ -134,25 +134,17 @@ pub mod parent_death_watchdog {
     /// us via `CreateProcessAsUser`), skip the parent watch best-effort; the
     /// Job Object half already covers descendants.
     fn arm_parent_watch() {
-        const ERROR_INVALID_PARAMETER: u32 = 87;
-        let ppid = getppid();
-        if ppid == 0 {
+        let Some(ppid @ 1..) = windows::parent_process_id() else {
             return;
-        }
-        // SAFETY: Win32 FFI; by-value args, failure → NULL. SYNCHRONIZE for
-        // the wait, PROCESS_QUERY_LIMITED_INFORMATION for `GetProcessTimes`.
-        let parent = unsafe {
-            HandleOrNull::from_raw_handle(windows::OpenProcess(
-                windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION,
-                0,
-                ppid,
-            ))
         };
-        let Ok(parent) = OwnedHandle::try_from(parent) else {
-            if windows::GetLastError() == ERROR_INVALID_PARAMETER {
-                windows::kernel32::ExitProcess(EXIT_CODE as u32);
+        // For the wait and for `GetProcessTimes`.
+        let access = windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION;
+        let parent = match windows::OpenProcess(access, ppid) {
+            Ok(parent) => parent,
+            Err(windows::Win32Error::INVALID_PARAMETER) => {
+                windows::kernel32::ExitProcess(EXIT_CODE as u32)
             }
-            return;
+            Err(_) => return,
         };
         // PID-reuse guard: `InheritedFromUniqueProcessId` is frozen at our
         // creation, so if the creator already exited and its PID was reused we
@@ -161,45 +153,7 @@ pub mod parent_death_watchdog {
         if !is_original_parent(parent.as_raw_handle()) {
             windows::kernel32::ExitProcess(EXIT_CODE as u32);
         }
-        let mut wait: windows::HANDLE = core::ptr::null_mut();
-        // SAFETY: `&mut wait` is a valid out-param; `parent` is a valid
-        // waitable handle; `on_parent_exit_cb` has the `WAITORTIMERCALLBACK`
-        // ABI; `Context` is unused.
-        if unsafe {
-            windows::RegisterWaitForSingleObject(
-                &raw mut wait,
-                parent.as_raw_handle(),
-                on_parent_exit_cb,
-                core::ptr::null_mut(),
-                windows::INFINITE,
-                windows::WT_EXECUTEONLYONCE,
-            )
-        } != 0
-        {
-            let _ = parent.into_raw_handle();
-        }
-    }
-
-    /// `InheritedFromUniqueProcessId` via direct ntdll call. Not
-    /// `uv_os_getppid`: libuv loads `NtQueryInformationProcess` lazily in
-    /// `uv__winapi_init`, and `enable()` runs from `main()` before that.
-    fn getppid() -> u32 {
-        // SAFETY: out-param is a valid `PROCESS_BASIC_INFORMATION`; the pseudo
-        // handle needs no access rights.
-        unsafe {
-            let mut pbi: windows::PROCESS_BASIC_INFORMATION = bun_core::ffi::zeroed_unchecked();
-            let rc = windows::ntdll::NtQueryInformationProcess(
-                windows::GetCurrentProcess(),
-                windows::ProcessBasicInformation,
-                core::ptr::from_mut(&mut pbi).cast(),
-                core::mem::size_of::<windows::PROCESS_BASIC_INFORMATION>() as u32,
-                core::ptr::null_mut(),
-            );
-            if !windows::NT_SUCCESS(rc) {
-                return 0;
-            }
-            pbi.InheritedFromUniqueProcessId as u32
-        }
+        let _ = windows::call_when_signaled(parent, on_parent_exit_cb);
     }
 
     fn is_original_parent(parent: windows::HANDLE) -> bool {
@@ -215,7 +169,7 @@ pub mod parent_death_watchdog {
     /// Thread-pool callback: the parent's process object signaled. Matches the
     /// Linux `PR_SET_PDEATHSIG` SIGKILL path (hard exit, no Rust-side
     /// unwinding); the Job Object reaps descendants when our handles close.
-    unsafe extern "system" fn on_parent_exit_cb(_ctx: *mut c_void, _timed_out: windows::BOOLEAN) {
+    extern "system" fn on_parent_exit_cb(_ctx: *mut c_void, _timed_out: windows::BOOLEAN) {
         windows::kernel32::ExitProcess(EXIT_CODE as u32);
     }
 

@@ -60,17 +60,6 @@ pub struct WinRusage {
     // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: always zero — omitted
 }
 
-pub type IoCounters = bun_windows_sys::IO_COUNTERS;
-
-#[cfg(windows)]
-unsafe extern "system" {
-    // IoCounters = bun_windows_sys::IO_COUNTERS (alias resolves, no change)
-    fn GetProcessIoCounters(
-        handle: bun_sys::windows::HANDLE,
-        counters: *mut IoCounters,
-    ) -> core::ffi::c_int;
-}
-
 #[cfg(windows)]
 pub fn uv_getrusage(process: bun_sys::windows::HANDLE) -> WinRusage {
     let mut usage_info = Rusage::default();
@@ -88,9 +77,7 @@ pub fn uv_getrusage(process: bun_sys::windows::HANDLE) -> WinRusage {
         usage_info.utime.sec = (times.user / 10_000_000) as i64;
         usage_info.utime.usec = ((times.user % 10_000_000) / 10) as i64;
     }
-    let mut counters = IoCounters::default();
-    // SAFETY: FFI call with valid out-pointer
-    let _ = unsafe { GetProcessIoCounters(process, &mut counters) };
+    let counters = bun_sys::windows::GetProcessIoCounters(process).unwrap_or_default();
     usage_info.inblock = counters.ReadOperationCount;
     usage_info.oublock = counters.WriteOperationCount;
 

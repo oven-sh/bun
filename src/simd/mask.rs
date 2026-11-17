@@ -36,21 +36,10 @@ impl<T: Int<N>, const N: usize, I: Isa> Mask<T, N, I> {
         bits == u64::MAX >> (64 - N * bits_per_lane)
     }
 
-    /// Whether it is set wherever `other` is.
-    #[inline(always)]
-    pub fn covers(self, other: Self) -> bool {
-        I::movemask(self).0 | !I::movemask(other).0 == u64::MAX
-    }
-
     #[inline(always)]
     pub fn first_set(self) -> Option<usize> {
         let (bits, bits_per_lane) = I::movemask(self);
         (bits != 0).then(|| bits.trailing_zeros() as usize / bits_per_lane)
-    }
-
-    #[inline(always)]
-    pub fn last_set(self) -> Option<usize> {
-        I::nearest_set::<T, N, false>(&[(self, 0)], 0)
     }
 
     /// The number of lanes that are set.

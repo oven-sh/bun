@@ -192,6 +192,7 @@ fn nothing_is_left_after_reset() {
     let (first, second) = (random.mixed(5000, 512), random.mixed(700, 512));
     for (level, strategy) in [
         (0, 0),
+        (1, 0),
         (2, 0),
         (4, 0),
         (6, 0),

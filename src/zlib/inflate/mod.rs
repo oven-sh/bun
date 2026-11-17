@@ -525,6 +525,7 @@ impl Inflater {
         if window_bits > self.window_bits {
             return Err(Damage::WindowSize.into());
         }
+        // As with zlib's INFLATE_STRICT, which Node.js is built without.
         self.max_distance = 1 << window_bits;
         if self.verifies_adler32 {
             self.checksum = Checksum::ZLIB;

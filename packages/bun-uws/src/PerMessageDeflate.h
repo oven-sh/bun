@@ -98,7 +98,7 @@ namespace uWS {
 
 namespace uWS {
 
-/* src/uws_sys/permessage_deflate.rs */
+/* src/http_jsc/permessage_deflate.rs */
 namespace zlib {
 
 struct Buffer;

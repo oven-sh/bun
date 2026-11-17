@@ -320,6 +320,7 @@ impl Context {
             }
             Some(State::Inflate(inflater)) => inflater,
         };
+        let mut gives_dictionary = self.mode != NodeMode::INFLATERAW;
         loop {
             let status = if self.flush == Flush::Block {
                 inflater.inflate_block(input, out.reborrow())
@@ -332,12 +333,15 @@ impl Context {
                     if self.dictionary.is_empty() {
                         return Err(needs(c"Missing dictionary"));
                     }
-                    inflater
-                        .set_dictionary(&self.dictionary)
-                        .map_err(|error| match error {
-                            bun_zlib::Error::WrongDictionary => needs(c"Bad dictionary"),
-                            error => failed(error),
-                        })?;
+                    let result = if gives_dictionary {
+                        inflater.set_dictionary(&self.dictionary)
+                    } else {
+                        Err(bun_zlib::Error::WrongDictionary)
+                    };
+                    result.map_err(|error| match error {
+                        bun_zlib::Error::WrongDictionary => needs(c"Bad dictionary"),
+                        error => failed(error),
+                    })?;
                 }
                 // Another member of the archive, or trailing garbage. Trailing zero bytes are padding.
                 inflate::Status::StreamEnd
@@ -345,6 +349,7 @@ impl Context {
                         && input.first().is_some_and(|&byte| byte != 0) =>
                 {
                     inflater.reset();
+                    gives_dictionary = false;
                 }
                 inflate::Status::NeedsInput
                     if self.flush == Flush::Finish && out.capacity() != 0 =>

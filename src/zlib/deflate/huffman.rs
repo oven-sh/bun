@@ -1,6 +1,6 @@
 //! Code lengths from frequencies. Where several codes are as good, it picks the one that zlib picks.
 
-use bun_deflate::format::MAX_CODEWORD_LEN;
+use bun_deflate::format::{Codeword, MAX_CODEWORD_LEN};
 
 use crate::array::At;
 use crate::format::reversed;
@@ -83,13 +83,19 @@ pub(super) fn cost<const N: usize>(frequencies: &[u16; N], bits: &[u8; N]) -> u3
 /// For each length.
 type Counts = [u16; MAX_CODEWORD_LEN as usize + 1];
 
-fn first_codes(counts: &Counts) -> Counts {
-    let (mut first, mut code) = (Counts::default(), 0);
-    for (first, &shorter) in first.iter_mut().skip(1).zip(counts) {
-        code = (code + shorter) << 1;
-        *first = code;
+/// Leaves out the symbols that have no code, which are most in a short block.
+#[inline(never)]
+fn assign_codes(counts: &Counts, lengths: &[u8], codes: &mut [Codeword]) {
+    let (mut next, mut first) = (Counts::default(), 0);
+    for (next, &shorter) in next.iter_mut().skip(1).zip(counts) {
+        first = (first + shorter) << 1;
+        *next = first;
     }
-    first
+    for (code, &len) in codes.iter_mut().zip(lengths).filter(|&(_, &len)| len != 0) {
+        let next = next.at_mut(len.into());
+        (code.bits, code.len) = (reversed(*next, len.into()).into(), len.into());
+        *next += 1;
+    }
 }
 
 /// There is room for `N` symbols.
@@ -193,17 +199,9 @@ impl<const N: usize> Code<N> {
         self.lengths.get(..self.used).unwrap_or_default()
     }
 
-    /// In the order in which their bits are written.
-    pub(super) fn codes(&self) -> [u16; N] {
-        let mut next = first_codes(&self.counts);
-        let mut codes = [0; N];
-        for (code, &bits) in codes.iter_mut().zip(self.used_lengths()) {
-            if bits != 0 {
-                let next = next.at_mut(usize::from(bits));
-                *code = reversed(*next, u32::from(bits));
-                *next += 1;
-            }
-        }
+    pub(super) fn codes(&self) -> [Codeword; N] {
+        let mut codes = [Codeword::default(); N];
+        assign_codes(&self.counts, self.used_lengths(), &mut codes);
         codes
     }
 }

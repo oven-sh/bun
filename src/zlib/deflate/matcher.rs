@@ -145,13 +145,22 @@ impl<'a> Matcher<'a> {
         if !self.reaches(target.position, candidate) {
             return Match::NONE;
         }
-        self.longest_match(target, candidate, Match::NONE)
+        self.longest_match::<false>(target, candidate, Match::NONE)
     }
 
     /// The longest match that is longer than `best`, or that. `candidate` is within reach.
     #[inline(always)]
-    pub(super) fn longest_match(&self, target: Target<'_>, candidate: u32, best: Match) -> Match {
-        let found = self.search(target, candidate, best);
+    pub(super) fn longest_match<const ROLLING: bool>(
+        &self,
+        target: Target<'_>,
+        candidate: u32,
+        best: Match,
+    ) -> Match {
+        let found = if ROLLING {
+            self.search_any_chain(target.position, target.lookahead, candidate, best)
+        } else {
+            self.search(target, candidate, best)
+        };
         // Looking ahead inserts positions before their time.
         if found.start < target.position {
             found
@@ -249,7 +258,7 @@ impl<'a> Matcher<'a> {
 
     /// Follows the chain of that position in the best match that goes back the furthest. For the rolling hash.
     #[inline(never)]
-    pub(super) fn longest_match_on_any_chain(
+    fn search_any_chain(
         &self,
         position: u32,
         lookahead: u32,

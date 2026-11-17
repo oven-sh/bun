@@ -71,7 +71,7 @@ impl Chains {
         Index {
             window,
             heads: &mut self.heads,
-            link_mask: self.links.len().wrapping_sub(1),
+            link_mask: link_index(&self.links, usize::MAX),
             links: &mut self.links,
             rolling_hash: &mut self.rolling_hash,
         }
@@ -90,10 +90,15 @@ fn hash(bytes: [u8; HASHED_LEN as usize]) -> u32 {
     u32::from_le_bytes(bytes).wrapping_mul(2654435761) >> 16
 }
 
+#[inline(always)]
+fn link_index(links: &[u16], position: usize) -> usize {
+    position & links.len().wrapping_sub(1)
+}
+
 /// `None` if they wrap around.
 #[inline(always)]
 fn links_from(links: &mut [u16], position: usize, len: usize) -> Option<&mut [u16]> {
-    let first = position & links.len().wrapping_sub(1);
+    let first = link_index(links, position);
     links.get_mut(first..first + len)
 }
 
@@ -114,7 +119,7 @@ impl<'a> Index<'a> {
 
     #[inline(always)]
     pub(super) fn link(&self, position: u32) -> u32 {
-        let link = self.links.get(position as usize & self.link_mask);
+        let link = self.links.get(link_index(self.links, position as usize));
         link.copied().map_or(0, u32::from)
     }
 

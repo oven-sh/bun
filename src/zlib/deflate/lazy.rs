@@ -60,13 +60,7 @@ impl Deflater {
                     if lookahead >= HASHED_LEN {
                         let candidate = matcher.index.insert::<ROLLING>(position, target.hashed());
                         if matcher.reaches(position, candidate) && previous.len < tuning.max_lazy {
-                            found = if ROLLING {
-                                matcher.longest_match_on_any_chain(
-                                    position, lookahead, candidate, previous,
-                                )
-                            } else {
-                                matcher.longest_match(target, candidate, previous)
-                            };
+                            found = matcher.longest_match::<ROLLING>(target, candidate, previous);
                             if is_filtered && found.len <= MAX_FILTERED_LEN {
                                 found = Match::NONE;
                             }

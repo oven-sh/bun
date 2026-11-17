@@ -1,10 +1,11 @@
 //! Manages the DEFLATE compression and decompression streams for a WebSocket connection.
 
 use bun_core::{feature_flag, handle_oom};
-use bun_uws_sys::permessage_deflate::{
+use bun_zlib::{Deflater, Inflater, deflate, inflate};
+
+use crate::permessage_deflate::{
     InflateError, deflate_message, inflate_message, inflate_message_at_once,
 };
-use bun_zlib::{Deflater, Inflater, deflate, inflate};
 
 #[repr(C)]
 #[derive(Clone, Copy)]

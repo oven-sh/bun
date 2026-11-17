@@ -443,7 +443,6 @@ pub mod internal_loop_data;
 pub mod listen_socket;
 #[path = "Loop.rs"]
 pub mod loop_;
-pub mod permessage_deflate;
 #[path = "quic.rs"]
 pub mod quic;
 #[path = "Request.rs"]

@@ -1,8 +1,8 @@
 //! The bits that are written for each symbol.
 
 use bun_deflate::format::{
-    END_OF_BLOCK, FIRST_LENGTH_SYMBOL, MIN_MATCH_LEN, length_slot, length_slot_of, offset_slot,
-    static_litlen_codeword, static_offset_codeword,
+    Codeword, END_OF_BLOCK, FIRST_LENGTH_SYMBOL, MIN_MATCH_LEN, length_slot, length_slot_of,
+    offset_slot, static_litlen_codeword, static_offset_codeword,
 };
 use bun_highway::with_bmi2;
 
@@ -20,8 +20,8 @@ pub(super) const LITERAL_LENGTH_ROOM: usize = 320;
 struct PackedBits(u32);
 
 impl PackedBits {
-    const fn new(value: u32, len: u32) -> Self {
-        Self(len << 24 | value)
+    const fn with_extra(code: Codeword, extra: u32, extra_bits: u32) -> Self {
+        Self((code.len + extra_bits) << 24 | extra << code.len | code.bits)
     }
 
     #[inline(always)]
@@ -45,21 +45,14 @@ impl DistanceCode {
         all_bits: 0,
     };
 
-    const fn new(symbol: usize, code: u16, bits: u32) -> Self {
+    const fn new(symbol: usize, code: Codeword) -> Self {
         let range = offset_slot(symbol);
         Self {
-            offset: (code as u32).wrapping_sub((range.base - 1) << bits),
-            code_bits: bits as u16,
-            all_bits: (bits + range.extra_bits) as u16,
+            offset: code.bits.wrapping_sub((range.base - 1) << code.len),
+            code_bits: code.len as u16,
+            all_bits: (code.len + range.extra_bits) as u16,
         }
     }
-}
-
-const fn length_bits(symbol: usize, extra: u32, code: u16, bits: u32) -> PackedBits {
-    PackedBits::new(
-        code as u32 | extra << bits,
-        bits + length_slot(symbol).extra_bits,
-    )
 }
 
 pub(super) struct Encoding {
@@ -72,8 +65,7 @@ pub(super) struct Encoding {
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
 pub(super) static FIXED: Encoding = {
     const fn fixed(symbol: usize) -> PackedBits {
-        let code = static_litlen_codeword(symbol);
-        PackedBits::new(code.bits, code.len)
+        PackedBits::with_extra(static_litlen_codeword(symbol), 0, 0)
     }
     let mut encoding = Encoding {
         literal_lengths: [PackedBits(0); _],
@@ -83,14 +75,15 @@ pub(super) static FIXED: Encoding = {
     let mut index = 0;
     while index < 256 {
         let symbol = length_slot_of(index + MIN_MATCH_LEN);
-        let extra = (index + MIN_MATCH_LEN) as u32 - length_slot(symbol).base;
-        let code = static_litlen_codeword(FIRST_LENGTH_SYMBOL + symbol);
+        let range = length_slot(symbol);
         encoding.literal_lengths[index] = fixed(index);
-        encoding.literal_lengths[256 + index] =
-            length_bits(symbol, extra, code.bits as u16, code.len);
+        encoding.literal_lengths[256 + index] = PackedBits::with_extra(
+            static_litlen_codeword(FIRST_LENGTH_SYMBOL + symbol),
+            (index + MIN_MATCH_LEN) as u32 - range.base,
+            range.extra_bits,
+        );
         if index < DISTANCE_SYMBOLS {
-            let code = static_offset_codeword(index);
-            encoding.distances[index] = DistanceCode::new(index, code.bits as u16, code.len);
+            encoding.distances[index] = DistanceCode::new(index, static_offset_codeword(index));
         }
         index += 1;
     }
@@ -100,14 +93,7 @@ pub(super) static FIXED: Encoding = {
 impl Encoding {
     pub(super) fn new(literal_lengths: &Code<LITERAL_LENGTH_ROOM>, distances: &Code<32>) -> Self {
         let codes = literal_lengths.codes();
-        let bits_of = |symbol: usize| {
-            let bits = *literal_lengths.lengths.at(symbol);
-            (*codes.at(symbol), u32::from(bits))
-        };
-        let plain = |symbol: usize| {
-            let (code, bits) = bits_of(symbol);
-            PackedBits::new(code.into(), bits)
-        };
+        let plain = |symbol: usize| PackedBits::with_extra(*codes.at(symbol), 0, 0);
         let mut encoding = Self {
             literal_lengths: [PackedBits(0); _],
             distances: [DistanceCode::NONE; _],
@@ -118,19 +104,18 @@ impl Encoding {
             *bits = plain(literal);
         }
         for symbol in 0..LENGTH_SYMBOLS {
-            let (code, bits) = bits_of(FIRST_LENGTH_SYMBOL + symbol);
-            if bits == 0 {
+            let (code, range) = (*codes.at(FIRST_LENGTH_SYMBOL + symbol), length_slot(symbol));
+            if code.len == 0 {
                 continue;
             }
-            let range = length_slot(symbol);
             let of_symbol = lengths.iter_mut().skip(range.base as usize - MIN_MATCH_LEN);
             for (extra, slot) in (0..1 << range.extra_bits).zip(of_symbol) {
-                *slot = length_bits(symbol, extra, code, bits);
+                *slot = PackedBits::with_extra(code, extra, range.extra_bits);
             }
         }
-        let codes = distances.codes().into_iter().zip(distances.used_lengths());
-        for ((symbol, (code, &bits)), slot) in (0..).zip(codes).zip(&mut encoding.distances) {
-            *slot = DistanceCode::new(symbol, code, bits.into());
+        let codes = distances.codes().into_iter().take(distances.used);
+        for ((symbol, code), slot) in codes.enumerate().zip(&mut encoding.distances) {
+            *slot = DistanceCode::new(symbol, code);
         }
         encoding
     }

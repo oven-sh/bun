@@ -503,6 +503,12 @@ describe("a zlib stream", () => {
       expect(read("Gunzip", inGzip(match(7), plain), { dictionary })).toBe(tooFar);
     });
 
+    test("does not get it behind a gzip member in the same write", () => {
+      const data = concat(inGzip(body, plain), whole);
+      expect(inflate("Unzip", [data], { dictionary }).error).toBe("Z_NEED_DICT Bad dictionary");
+      expect(inflate("Unzip", [data]).error).toBe("Z_NEED_DICT Missing dictionary");
+    });
+
     test.each([9, 15])("has the end of it if it is longer than the window of windowBits %d", windowBits => {
       const [dictionary, window] = [input("noise", 50000), 1 << windowBits];
       const expected = dictionary.subarray(-window).toString("latin1", 0, 19);

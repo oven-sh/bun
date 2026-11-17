@@ -41,6 +41,7 @@ static LENGTH_EXTRA_BITS: [u8; LITERAL_LENGTH_ROOM] = table!(
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
 static DISTANCE_EXTRA_BITS: [u8; 32] =
     table!(|symbol| offset_slot(symbol).extra_bits, 0..DISTANCE_SYMBOLS);
+
 /// Adds to a block.
 pub(super) struct Tally<'a> {
     symbols: BorrowedCursor<'a, Symbol>,

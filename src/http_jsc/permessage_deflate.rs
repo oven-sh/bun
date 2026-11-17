@@ -7,14 +7,14 @@ const TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum InflateError {
+pub(crate) enum InflateError {
     Corrupt = 1,
     TooLarge,
     OutOfMemory,
 }
 
 /// Appends to `out`. After an error the peer expects nothing but another message, which may be this one uncompressed.
-pub fn deflate_message(
+pub(crate) fn deflate_message(
     deflater: &mut Deflater,
     message: &[u8],
     out: &mut Vec<u8>,
@@ -31,7 +31,7 @@ pub fn deflate_message(
 }
 
 /// Appends to `out`.
-pub fn inflate_message(
+pub(crate) fn inflate_message(
     inflater: &mut Inflater,
     payload: &[u8],
     out: &mut Vec<u8>,
@@ -58,7 +58,7 @@ pub fn inflate_message(
 }
 
 /// Only without context takeover. `None` if it fails, or takes more than `limit` bytes.
-pub fn inflate_message_at_once(
+pub(crate) fn inflate_message_at_once(
     payload: &[u8],
     out: &mut Vec<u8>,
     limit: usize,

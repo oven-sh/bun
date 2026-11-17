@@ -117,10 +117,10 @@ impl DynamicHeader {
         }
         let codes = self.code.codes();
         for &[symbol, extra] in self.code_lengths.symbols.iter().take(self.code_lengths.len) {
-            let bits = u32::from(*self.code.lengths.at(symbol.into()));
+            let code = codes.at(symbol.into());
             writer.put(Bits(
-                u64::from(*codes.at(symbol.into())) | u64::from(extra) << bits,
-                bits + u32::from(*EXTRA_BITS.at(symbol.into())),
+                u64::from(code.bits | u32::from(extra) << code.len),
+                code.len + u32::from(*EXTRA_BITS.at(symbol.into())),
             ));
         }
     }

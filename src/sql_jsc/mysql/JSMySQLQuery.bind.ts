@@ -14,7 +14,7 @@ export const MySQLQuery = b.class({
   internalFields: ["pendingValue", "target", "binding"],
   proto: {
     cancel: { capability: "js" },
-    describeResult: { ...js, args: { number: b.any }, returns: b.any.returning("object", "null") },
+    describeResult: { ...js, args: { number: b.usize }, returns: b.any.returning("object", "null") },
     run: { ...js, args: { connection: MySQLConnection, query: b.any }, passThis: true, rustName: "do_run" },
     setMode: { ...js, args: { mode: b.any } },
     setPendingValue: { args: { value: b.any }, rustName: "set_pending_value_from_js" },

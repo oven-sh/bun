@@ -295,30 +295,18 @@ fn fill_behind_end<'a>(
     if bytes.len() < FEWEST_BYTES {
         return Err(bytes);
     }
-    let first_page = position - position % MappedFile::page_size() as u64;
-    let skipped = (position - first_page) as usize;
     // With its blocks reserved, a page that is touched cannot find the disk full.
-    // SAFETY: fallocate has no precondition but a valid file descriptor.
-    let reserved = unsafe {
-        libc::fallocate(
-            file.handle().native(),
-            0,
-            position as i64,
-            bytes.len() as i64,
-        )
-    };
-    if reserved != 0 {
+    if !bun_sys::linux::fallocate(file.handle().native(), position as i64, bytes.len() as i64) {
         return Err(bytes);
     }
     let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
-    let length = skipped + bytes.len();
     let Ok(mut mapped) =
-        bun_sys::Mmap::new(length, access, flags, file.handle(), first_page as i64)
+        bun_sys::Mmap::new(bytes.len(), access, flags, file.handle(), position as i64)
     else {
         return Err(bytes);
     };
     // SAFETY: the mapping may be written, and nothing else has these bytes of the file.
-    let target = &mut unsafe { mapped.as_mut_slice() }[skipped..];
+    let target = unsafe { mapped.as_mut_slice() };
     let threads = usize::from(bun_core::get_thread_count()).clamp(1, MOST_THREADS);
     let share = bytes
         .len()

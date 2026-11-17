@@ -144,17 +144,6 @@ impl uv_buf_t {
             base: input.as_ptr().cast_mut(),
         }
     }
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        // `from_raw_parts` requires non-null, aligned even for len==0.
-        // libuv routinely hands back `{len:0, base:NULL}` (declined alloc_cb,
-        // `uv_buf_init(NULL,0)`), so guard the empty/null case explicitly.
-        if self.len == 0 || self.base.is_null() {
-            return &[];
-        }
-        // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
-        unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

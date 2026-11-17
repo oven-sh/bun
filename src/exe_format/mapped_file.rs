@@ -32,9 +32,14 @@ impl MappedFile {
             let size = (length.next_multiple_of(MappedFile::page_size())).checked_add(room)?;
             let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
             let pages = Mmap::new(size, access, flags, Fd::from_native(-1), 0).ok()?;
-            let flags = libc::MAP_PRIVATE | libc::MAP_FIXED;
-            bun_sys::mmap(pages.as_ptr(), length, access, flags, file.handle(), 0).ok()?;
-            pages
+            // An error leaks them: it can leave a gap where the file was to be mapped.
+            let pages = pages.into_raw();
+            let (start, flags) = (pages.as_ptr().cast(), libc::MAP_PRIVATE | libc::MAP_FIXED);
+            // SAFETY: the pages of the first `length` bytes lie in `pages`, to which nothing else refers.
+            unsafe {
+                bun_sys::mmap(start, length, access, flags, file.handle(), 0).ok()?;
+                Mmap::from_raw(pages)
+            }
         };
         Some(MappedFile {
             pages,

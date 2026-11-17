@@ -1253,10 +1253,6 @@ impl StreamBuffer {
         Ok(())
     }
 
-    pub fn write_type_as_bytes_assume_capacity<T: bun_core::NoUninit>(&mut self, data: T) {
-        self.list.extend_from_slice(bun_core::bytes_of(&data));
-    }
-
     pub fn write_latin1(&mut self, buffer: &[u8]) -> Result<(), OOM> {
         if bun_core::strings::is_all_ascii(buffer) {
             return self.write(buffer);

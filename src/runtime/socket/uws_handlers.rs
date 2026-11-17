@@ -702,48 +702,35 @@ pub(crate) type Valkey<const SSL: bool> =
     NsHandler<js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>, SSL>;
 
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
-// Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
-// `Bun.spawn({ipc})`. The IPC handlers are free functions, not
-// methods on SendQueue, so we adapt manually here.
 pub(crate) struct SpawnIPC;
-
-use IPC::IPCHandlers::PosixSocket as IpcH;
-type IpcS = NewSocketHandler<false>;
 
 impl VHandler for SpawnIPC {
     type Ext = ExtSlot<IPC::SendQueue>;
 
-    const HAS_ON_OPEN: bool = true;
     const HAS_ON_DATA: bool = true;
     const HAS_ON_FD: bool = true;
     const HAS_ON_WRITABLE: bool = true;
     const HAS_ON_CLOSE: bool = true;
-    const HAS_ON_TIMEOUT: bool = true;
     const HAS_ON_END: bool = true;
 
-    fn on_open(_ext: &mut Self::Ext, _s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {}
-    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
+    fn on_data(ext: &mut Self::Ext, _: *mut us_socket_t, data: &[u8]) {
         let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_data(this, IpcS::from(s), data);
+        this.on_data(data);
     }
-    fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
+    fn on_fd(ext: &mut Self::Ext, _: *mut us_socket_t, fd: c_int) {
         let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_fd(this, IpcS::from(s), fd);
+        this.on_fd(fd);
     }
-    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_writable(ext: &mut Self::Ext, _: *mut us_socket_t) {
         let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_writable(this, IpcS::from(s));
+        this.on_writable();
     }
-    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close(ext: &mut Self::Ext, _: *mut us_socket_t, _: i32, _: Option<*mut c_void>) {
         let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_close(this, IpcS::from(s), code, reason);
+        this.socket_closed();
     }
-    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_end(ext: &mut Self::Ext, _: *mut us_socket_t) {
         let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_timeout(this, IpcS::from(s));
-    }
-    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_end(this, IpcS::from(s));
+        this.on_end();
     }
 }

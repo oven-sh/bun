@@ -1,0 +1,18 @@
+[package]
+name = "bun_ipc"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+smallvec = { workspace = true, features = ["union"] }
+
+[[test]]
+name = "protocol"
+path = "tests/protocol.rs"

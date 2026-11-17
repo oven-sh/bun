@@ -11,7 +11,10 @@ import {
   tempDirWithFiles,
   tls as tlsCerts,
 } from "harness";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import net from "node:net";
+import { text } from "node:stream/consumers";
 
 test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -1531,4 +1534,68 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "loaded\n", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+test.concurrent("a worker that has exited can be garbage collected in the primary", async () => {
+  using dir = tempDir("cluster-worker-gc", {
+    "index.js": `
+      const cluster = require("node:cluster");
+      if (cluster.isWorker) process.exit(0);
+      let collected = 0;
+      const registry = new FinalizationRegistry(() => collected++);
+      await Promise.all(
+        Array.from({ length: 3 }, () => {
+          const worker = cluster.fork();
+          registry.register(worker, undefined);
+          return new Promise(resolve => worker.process.once("close", resolve));
+        }),
+      );
+      for (let i = 0; i < 20 && collected < 3; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(collected);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "3\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.skipIf(isWindows)("the channel closes while a worker replays the messages it queued", async () => {
+  using dir = tempDir("cluster-close-in-replay", {
+    "empty.js": "",
+    "index.js": `
+      process.on("message", () => {
+        process.on("internalMessage", ({ act }) => {
+          console.log(act);
+          if (act !== "second") return;
+          const { promise, resolve } = Promise.withResolvers();
+          process.once("disconnect", resolve);
+          // Bun.build() runs the event loop until the setup() of a plugin has settled.
+          Bun.build({ entrypoints: ["./empty.js"], plugins: [{ name: "wait", setup: () => promise }] });
+        });
+        require("node:cluster");
+        console.log("replayed");
+      });
+    `,
+  });
+  const proc = spawn(bunExe(), ["index.js"], {
+    env: { ...bunEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json", NODE_UNIQUE_ID: "1" },
+    cwd: String(dir),
+    stdio: ["ignore", "pipe", "pipe", "pipe"],
+  });
+  const channel = proc.stdio[3] as net.Socket;
+  channel.on("error", () => {}).resume();
+  channel.write('\x02{"act":"disconnect"}\n\x02{"act":"second"}\n\x02{"act":"third"}\n"load node:cluster"\n');
+  const [stdout, stderr, exit] = await Promise.all([text(proc.stdout!), text(proc.stderr!), once(proc, "exit")]);
+  expect({ stdout, stderr }).toEqual({ stdout: "disconnect\nsecond\nreplayed\n", stderr: "" });
+  expect(exit).toEqual([0, null]);
 });

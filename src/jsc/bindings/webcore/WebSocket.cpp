@@ -306,7 +306,7 @@ Ref<WebSocket> WebSocket::createOverStream(ScriptExecutionContext& context, WebS
     socket->m_extensions = WTF::move(options.extensions);
     socket->m_connectedOptions = options.connected;
     socket->m_connectionType = ConnectionType::Stream;
-    socket->m_connectedWebSocket.client = Bun__WebSocketClient__initOverStream(reinterpret_cast<CppWebSocket*>(socket.ptr()), context.jsGlobalObject(), &socket->m_connectedOptions, options.deflate ? &*options.deflate : nullptr);
+    socket->m_connectedWebSocket.client = Bun__WebSocketClient__initOverStream(reinterpret_cast<CppWebSocket*>(socket.ptr()), &socket->m_connectedOptions, options.deflate ? &*options.deflate : nullptr);
     socket->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     socket->m_state = OPEN;
     return socket;
@@ -1293,9 +1293,8 @@ void* WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMe
     // For Plain/ProxyPlain: socket is not TLS.
     bool useTLSSocket = usesTLSSocket();
 
-    auto* globalObject = scriptExecutionContext()->jsGlobalObject();
     auto* initClient = useTLSSocket ? Bun__WebSocketClientTLS__init : Bun__WebSocketClient__init;
-    void* client = initClient(reinterpret_cast<CppWebSocket*>(this), socket, globalObject, bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size(), &m_connectedOptions);
+    void* client = initClient(reinterpret_cast<CppWebSocket*>(this), socket, bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size(), &m_connectedOptions);
     // The socket was already closed or shut down by the time the 101 was parsed. init() has called didFail().
     if (!client)
         return nullptr;
@@ -1311,7 +1310,7 @@ void* WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMe
 }
 
 // Forward declarations for tunnel mode (defined outside namespace)
-extern "C" WebSocketClient* Bun__WebSocketClient__initWithTunnel(CppWebSocket* ws, void* tunnel, JSC::JSGlobalObject* globalObject, void* bufferedData, const PerMessageDeflateParams* deflate_params, const WebSocketConnectedOptions* options);
+extern "C" WebSocketClient* Bun__WebSocketClient__initWithTunnel(CppWebSocket* ws, void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params, const WebSocketConnectedOptions* options);
 extern "C" void WebSocketProxyTunnel__setConnectedWebSocket(void* tunnel, void* websocket);
 
 void* WebSocket::didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params)
@@ -1324,7 +1323,6 @@ void* WebSocket::didConnectWithTunnel(void* tunnel, void* bufferedData, const Pe
     this->m_connectedWebSocket.client = Bun__WebSocketClient__initWithTunnel(
         reinterpret_cast<CppWebSocket*>(this),
         tunnel,
-        this->scriptExecutionContext()->jsGlobalObject(),
         bufferedData,
         deflate_params,
         &m_connectedOptions);

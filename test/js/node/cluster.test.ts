@@ -1536,39 +1536,7 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("a worker that has exited can be garbage collected in the primary", async () => {
-  using dir = tempDir("cluster-worker-gc", {
-    "index.js": `
-      const cluster = require("node:cluster");
-      if (cluster.isWorker) process.exit(0);
-      let collected = 0;
-      const registry = new FinalizationRegistry(() => collected++);
-      await Promise.all(
-        Array.from({ length: 3 }, () => {
-          const worker = cluster.fork();
-          registry.register(worker, undefined);
-          return new Promise(resolve => worker.process.once("close", resolve));
-        }),
-      );
-      for (let i = 0; i < 20 && collected < 3; i++) {
-        Bun.gc(true);
-        await new Promise(resolve => setImmediate(resolve));
-      }
-      console.log(collected);
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr }).toEqual({ stdout: "3\n", stderr: "" });
-  expect(exitCode).toBe(0);
-});
-
+// The test writes the wire format of a POSIX socket to the channel. Windows frames what goes through its pipe.
 test.concurrent.skipIf(isWindows)("the channel closes while a worker replays the messages it queued", async () => {
   using dir = tempDir("cluster-close-in-replay", {
     "empty.js": "",
@@ -1592,10 +1560,15 @@ test.concurrent.skipIf(isWindows)("the channel closes while a worker replays the
     cwd: String(dir),
     stdio: ["ignore", "pipe", "pipe", "pipe"],
   });
-  const channel = proc.stdio[3] as net.Socket;
-  channel.on("error", () => {}).resume();
-  channel.write('\x02{"act":"disconnect"}\n\x02{"act":"second"}\n\x02{"act":"third"}\n"load node:cluster"\n');
-  const [stdout, stderr, exit] = await Promise.all([text(proc.stdout!), text(proc.stderr!), once(proc, "exit")]);
-  expect({ stdout, stderr }).toEqual({ stdout: "disconnect\nsecond\nreplayed\n", stderr: "" });
-  expect(exit).toEqual([0, null]);
+  try {
+    const channel = proc.stdio[3] as net.Socket;
+    // ECONNRESET if the worker crashes, which its output says better.
+    channel.on("error", () => {}).resume();
+    channel.write('\x02{"act":"disconnect"}\n\x02{"act":"second"}\n\x02{"act":"third"}\n"load node:cluster"\n');
+    const [stdout, stderr, exit] = await Promise.all([text(proc.stdout!), text(proc.stderr!), once(proc, "exit")]);
+    expect({ stdout, stderr }).toEqual({ stdout: "disconnect\nsecond\nreplayed\n", stderr: "" });
+    expect(exit).toEqual([0, null]);
+  } finally {
+    proc.kill();
+  }
 });

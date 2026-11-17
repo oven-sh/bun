@@ -66,19 +66,21 @@ impl Mode {
         }
     }
 
-    pub fn encode(self, kind: Kind, body: &[u8]) -> Vec<u8> {
-        match self {
+    /// `None`: the length does not fit in the header.
+    pub fn encode(self, kind: Kind, body: &[u8]) -> Option<Vec<u8>> {
+        Some(match self {
             Mode::Advanced => {
-                let len = u32::try_from(body.len()).expect("int cast").to_le_bytes();
-                [&[kind as u8], &len[..], body].concat()
+                let len = u32::try_from(body.len()).ok()?.to_le_bytes();
+                [&[kind as u8], len.as_slice(), body].concat()
             }
             Mode::Json if kind == Kind::Internal => [&[JSON_INTERNAL_TAG], body, b"\n"].concat(),
             Mode::Json => [body, b"\n"].concat(),
-        }
+        })
     }
 }
 
 /// `max_body`: a longer body is rejected from its header, before it is buffered.
+#[inline]
 pub fn advanced_frame(bytes: &[u8], max_body: usize) -> Framed<'_> {
     let Some((&[tag, len @ ..], rest)) = bytes.split_first_chunk::<HEADER_LEN>() else {
         return Ok(None);
@@ -102,6 +104,7 @@ pub fn advanced_frame(bytes: &[u8], max_body: usize) -> Framed<'_> {
 }
 
 /// `scanned`: how many of `bytes` are known to hold no newline, so that each byte is scanned once.
+#[inline]
 pub(crate) fn json_frame<'a>(
     bytes: &'a [u8],
     scanned: &mut usize,

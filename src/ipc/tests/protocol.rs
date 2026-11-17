@@ -1,6 +1,7 @@
 use bun_ipc::{
-    Event, Frame, FrameError, Inbox, Kind, Mode, Outbox, Payload, Phase, Reply, Wrote,
-    advanced_frame,
+    Event, Frame, FrameError, Inbox, Kind, Mode, Outbox, Payload, Phase, Reply,
+    WriteReason::{self, Queued, Writable},
+    Wrote, advanced_frame,
 };
 use core::cell::Cell;
 
@@ -39,21 +40,27 @@ fn first(mode: Mode, bytes: &[u8], max: usize) -> Read {
     next(&mut inbox, max)
 }
 
+fn encode(mode: Mode, kind: Kind, body: &[u8]) -> Vec<u8> {
+    mode.encode(kind, body).unwrap()
+}
+
 #[test]
 fn bytes_on_the_wire() {
     use {Kind::*, Mode::*};
     assert_eq!(Advanced.version_packet(), Some(&[1, 2, 0, 0, 0][..]));
     assert_eq!(Json.version_packet(), None);
-    assert_eq!(Advanced.encode(Data, b"ab"), b"\x02\x02\0\0\0ab");
-    assert_eq!(Advanced.encode(Internal, b"ab"), b"\x03\x02\0\0\0ab");
-    assert_eq!(Advanced.encode(DataWithBuffers, b""), b"\x04\0\0\0\0");
-    assert_eq!(Json.encode(Data, b"1"), b"1\n");
-    assert_eq!(Json.encode(Internal, b"1"), b"\x021\n");
+    assert_eq!(encode(Advanced, Data, b"ab"), b"\x02\x02\0\0\0ab");
+    assert_eq!(encode(Advanced, Internal, b"ab"), b"\x03\x02\0\0\0ab");
+    assert_eq!(encode(Advanced, DataWithBuffers, b""), b"\x04\0\0\0\0");
+    assert_eq!(encode(Json, Data, b"1"), b"1\n");
+    assert_eq!(encode(Json, Internal, b"1"), b"\x021\n");
+    let too_long_for_the_header = vec![0; u32::MAX as usize + 1];
+    assert_eq!(Advanced.encode(Data, &too_long_for_the_header), None);
     for mode in MODES {
         for reply in [Reply::Ack, Reply::Nack] {
             let packet = mode.reply_packet(reply);
             let (kind, body) = first(mode, packet, NO_LIMIT).unwrap().unwrap();
-            assert_eq!((kind, mode.encode(kind, &body)), (Data, packet.to_vec()));
+            assert_eq!((kind, encode(mode, kind, &body)), (Data, packet.to_vec()));
         }
     }
 }
@@ -67,7 +74,7 @@ fn any_split_gives_the_same_frames() {
             (Kind::Data, vec![b'7'; 40]),
         ];
         let mut stream = mode.version_packet().unwrap_or_default().to_vec();
-        stream.extend(frames.iter().flat_map(|(kind, it)| mode.encode(*kind, it)));
+        stream.extend(frames.iter().flat_map(|(kind, it)| encode(mode, *kind, it)));
         if mode == Mode::Advanced {
             frames.insert(0, (Kind::Version, Vec::new()));
         }
@@ -147,139 +154,157 @@ fn json_scans_each_byte_once() {
     assert_eq!(SCANNED.get(), 100 * 1000);
 }
 
-#[test]
-fn memory_of_the_inbox() {
-    for (mode, len, is_freed) in [
-        (Mode::Json, MB, false),
-        (Mode::Json, 16 * MB, true),
-        (Mode::Advanced, 16 * MB, false),
-    ] {
-        let mut inbox = Inbox::new(mode);
-        *inbox.buffer() = mode.encode(Kind::Data, &vec![b'1'; len]);
-        assert_eq!(
-            inbox.next(NO_LIMIT, |frame| frame.body.len()),
-            Ok(Some(len))
-        );
-        assert_eq!(inbox.buffer().capacity() == 0, is_freed);
-    }
-    for (mode, len, kept) in [
-        (Mode::Json, MB, MB + 2),
-        (Mode::Json, 16 * MB, 1),
-        (Mode::Advanced, MB, 1),
-    ] {
-        let mut inbox = Inbox::new(mode);
-        *inbox.buffer() = mode.encode(Kind::Data, &vec![b'1'; len]);
-        inbox.buffer().push(2);
-        while inbox.next(NO_LIMIT, |_| ()).unwrap().is_some() {}
-        assert_eq!(inbox.buffer().len(), kept);
-    }
+fn inbox_after_reading(mode: Mode, body_len: usize, unread: &[u8]) -> Inbox {
+    let mut inbox = Inbox::new(mode);
+    *inbox.buffer() = encode(mode, Kind::Data, &vec![b'1'; body_len]);
+    inbox.buffer().extend_from_slice(unread);
+    assert_eq!(
+        inbox.next(NO_LIMIT, |frame| frame.body.len()),
+        Ok(Some(body_len))
+    );
+    assert_eq!(next(&mut inbox, NO_LIMIT), Ok(None));
+    inbox
 }
 
-type Out = Outbox<&'static str, u8>;
+#[test]
+fn only_a_json_buffer_of_16_mb_is_freed() {
+    let is_freed = |mode, len| inbox_after_reading(mode, len, b"").buffer().capacity() == 0;
+    assert!(is_freed(Mode::Json, 16 * MB));
+    assert!(!is_freed(Mode::Json, MB));
+    assert!(!is_freed(Mode::Advanced, 16 * MB));
+}
 
-/// `"bytes+handle -> result"` of a write of which the transport takes at most `room` bytes.
-fn write(out: &mut Out, is_writable: bool, room: usize) -> String {
-    let Some((bytes, handle)) = out.begin_write(is_writable) else {
-        return "-".into();
-    };
-    let handle = handle.map_or(String::new(), |handle| format!("+{handle}"));
+#[test]
+fn json_moves_the_unread_bytes_only_after_16_mb() {
+    let is_moved = |mode, len| inbox_after_reading(mode, len, b"1").buffer() == b"1";
+    assert!(is_moved(Mode::Json, 16 * MB));
+    assert!(!is_moved(Mode::Json, MB));
+    assert!(is_moved(Mode::Advanced, MB));
+}
+
+type Out = Outbox<&'static str, Vec<u8>>;
+
+fn push(out: &mut Out, bytes: Vec<u8>, handle: Option<&'static str>, callback: Option<u8>) {
+    let pushed = out.push(bytes, handle, |callbacks| {
+        callbacks.extend(callback);
+        Ok::<_, ()>(())
+    });
+    assert_eq!(pushed, Ok(()));
+}
+
+/// One write, of which the transport takes at most `room` bytes: `"<bytes offered> with <handle>, <result>"`.
+fn write(out: &mut Out, reason: WriteReason, room: usize) -> Option<String> {
+    let (bytes, handle) = out.begin_write(reason)?;
+    let handle = handle.map_or(String::new(), |handle| format!(" with {handle}"));
     let (text, len) = (bytes.escape_ascii().to_string(), bytes.len());
-    match out.end_write(len.min(room) as i32) {
-        Wrote::Continue(callbacks) => format!("{text}{handle} -> {callbacks:?}"),
-        Wrote::Blocked => format!("{text}{handle} -> blocked"),
+    Some(match out.end_write(Some(len.min(room))) {
+        Wrote::Continue(it) if it.is_empty() => format!("{text}{handle}"),
+        Wrote::Continue(callbacks) => format!("{text}{handle}, calls {callbacks:?}"),
+        Wrote::Blocked => format!("{text}{handle}, blocked"),
         Wrote::Failed => unreachable!(),
-    }
+    })
 }
 
 fn flush(out: &mut Out) -> Vec<String> {
-    core::iter::from_fn(|| Some(write(out, true, usize::MAX)).filter(|it| it != "-")).collect()
+    core::iter::from_fn(|| write(out, Writable, usize::MAX)).collect()
 }
 
 #[test]
 fn plain_messages_are_written_together() {
     let mut out = Out::default();
-    out.push(b"a".into(), None, Some(1));
-    out.push(b"b".into(), None, None);
-    out.push(b"c".into(), None, Some(3));
-    out.push(b"H".into(), Some("h"), Some(4));
-    out.push(b"d".into(), None, Some(5));
+    push(&mut out, b"a".into(), None, Some(1));
+    push(&mut out, b"b".into(), None, None);
+    push(&mut out, b"c".into(), None, Some(3));
+    push(&mut out, b"H".into(), Some("h"), Some(4));
+    push(&mut out, b"d".into(), None, Some(5));
     assert!(!out.is_backed_up());
-    assert_eq!(flush(&mut out), ["abc -> [1, 3]", "H+h -> []"]);
+    assert_eq!(flush(&mut out), ["abc, calls [1, 3]", "H with h"]);
     assert!(out.is_backed_up() && out.unacked() == Some(&"h"));
     let offer = out.take_unacked().unwrap();
-    assert_eq!((offer.handle, offer.callback), ("h", Some(4)));
-    assert_eq!(flush(&mut out), ["d -> [5]"]);
+    assert_eq!((offer.handle, offer.callbacks), ("h", vec![4]));
+    assert_eq!(flush(&mut out), ["d, calls [5]"]);
     assert!(out.is_idle());
+}
+
+#[test]
+fn a_message_is_not_queued_without_its_callback() {
+    let mut out = Out::default();
+    assert_eq!(out.push(b"a".into(), None, |_| Err(1)), Err(1));
+    assert!(out.is_idle());
+    push(&mut out, b"b".into(), None, Some(2));
+    assert_eq!(out.push(b"c".into(), None, |_| Err(3)), Err(3));
+    assert_eq!(flush(&mut out), ["b, calls [2]"]);
 }
 
 #[test]
 fn nothing_joins_or_passes_what_the_transport_has() {
     let mut out = Out::default();
-    out.push(b"ab".into(), None, Some(1));
-    assert_eq!(write(&mut out, false, 0), "ab -> blocked");
-    out.push(b"c".into(), None, Some(2));
-    assert_eq!(write(&mut out, false, 1), "abc -> blocked");
-    assert_eq!(write(&mut out, false, 9), "-");
-    out.push(b"d".into(), None, Some(3));
+    push(&mut out, b"ab".into(), None, Some(1));
+    assert_eq!(write(&mut out, Queued, 0).unwrap(), "ab, blocked");
+    push(&mut out, b"c".into(), None, Some(2));
+    assert_eq!(write(&mut out, Queued, 1).unwrap(), "abc, blocked");
+    assert_eq!(write(&mut out, Queued, 9), None);
+    push(&mut out, b"d".into(), None, Some(3));
     out.push_reply(b"1");
     out.push_reply(b"2");
-    out.push(b"e".into(), None, None);
+    push(&mut out, b"e".into(), None, None);
     assert_eq!(
         flush(&mut out),
-        ["bc -> [1, 2]", "2 -> []", "1 -> []", "de -> [3]"]
+        ["bc, calls [1, 2]", "2", "1", "de, calls [3]"]
     );
 
-    out.push(b"a".into(), None, Some(1));
-    assert!(out.begin_write(false).is_some());
-    assert!(out.begin_write(true).is_none());
-    out.push(b"b".into(), None, Some(2));
-    out.push(b"c".into(), None, Some(3));
+    push(&mut out, b"a".into(), None, Some(1));
+    assert!(out.begin_write(Queued).is_some());
+    assert!(out.begin_write(Writable).is_none());
+    push(&mut out, b"b".into(), None, Some(2));
+    push(&mut out, b"c".into(), None, Some(3));
     out.push_reply(b"1");
-    assert!(matches!(out.end_write(1), Wrote::Continue(it) if it[..] == [1]));
-    assert_eq!(flush(&mut out), ["1 -> []", "bc -> [2, 3]"]);
+    assert!(matches!(out.end_write(Some(1)), Wrote::Continue(it) if it[..] == [1]));
+    assert_eq!(flush(&mut out), ["1", "bc, calls [2, 3]"]);
 }
 
 #[test]
 fn a_handle_goes_with_the_first_byte_three_times() {
     let mut out = Out::default();
     assert!(!out.resend(|_, _| unreachable!()));
-    out.push(b"HH".into(), Some("h"), Some(1));
-    out.push(b"a".into(), None, Some(2));
-    assert_eq!(write(&mut out, false, 0), "HH+h -> blocked");
-    assert_eq!(write(&mut out, false, 1), "HH+h -> blocked");
-    assert_eq!(flush(&mut out), ["H -> []"]);
+    push(&mut out, b"HH".into(), Some("h"), Some(1));
+    push(&mut out, b"a".into(), None, Some(2));
+    assert_eq!(write(&mut out, Queued, 0).unwrap(), "HH with h, blocked");
+    assert_eq!(write(&mut out, Queued, 1).unwrap(), "HH with h, blocked");
+    assert_eq!(flush(&mut out), ["H"]);
     out.push_reply(b"12");
-    assert_eq!(write(&mut out, false, 1), "12 -> blocked");
+    assert_eq!(write(&mut out, Queued, 1).unwrap(), "12, blocked");
     assert!(out.resend(|handle, bytes| (*handle, bytes[1]) = ("g", b'G')));
     assert_eq!(out.unacked(), None);
-    assert_eq!(flush(&mut out), ["2 -> []", "HG+g -> []"]);
+    assert_eq!(flush(&mut out), ["2", "HG with g"]);
     assert!(out.resend(|_, _| {}));
-    assert_eq!(flush(&mut out), ["HG+g -> []"]);
+    assert_eq!(flush(&mut out), ["HG with g"]);
     assert!(!out.resend(|_, _| unreachable!()));
     assert_eq!(out.unacked(), Some(&"g"));
     out.take_unacked();
-    out.push(b"I".into(), Some("i"), None);
-    assert_eq!(flush(&mut out), ["a -> [2]", "I+i -> []"]);
+    push(&mut out, b"I".into(), Some("i"), None);
+    assert_eq!(flush(&mut out), ["a, calls [2]", "I with i"]);
     assert!(out.resend(|_, _| {}));
 }
 
 #[test]
 fn a_write_is_capped_and_goes_on() {
     let mut out = Out::default();
-    out.push(vec![0; i32::MAX as usize + 1], None, Some(1));
-    assert_eq!(out.begin_write(false).unwrap().0.len(), i32::MAX as usize);
-    assert!(matches!(out.end_write(i32::MAX), Wrote::Continue(it) if it.is_empty()));
-    assert_eq!(flush(&mut out), ["\\x00 -> [1]"]);
+    push(&mut out, vec![0; i32::MAX as usize + 1], None, Some(1));
+    let capped = out.begin_write(Queued).unwrap().0.len();
+    assert_eq!(capped, i32::MAX as usize);
+    assert!(matches!(out.end_write(Some(capped)), Wrote::Continue(it) if it.is_empty()));
+    assert_eq!(flush(&mut out), ["\\x00, calls [1]"]);
 }
 
 #[test]
 fn what_is_left_at_the_close() {
     let mut out = Out::default();
-    out.push(b"a".into(), None, Some(1));
-    assert!(out.begin_write(false).is_some());
-    assert!(matches!(out.end_write(-1), Wrote::Failed));
-    out.push(b"H".into(), Some("h"), Some(2));
-    assert!(out.begin_write(false).is_some());
+    push(&mut out, b"a".into(), None, Some(1));
+    assert!(out.begin_write(Queued).is_some());
+    assert!(matches!(out.end_write(None), Wrote::Failed));
+    push(&mut out, b"H".into(), Some("h"), Some(2));
+    assert!(out.begin_write(Queued).is_some());
     out.push_reply(b"1");
     let unsent: Vec<_> = out.take_unsent().collect();
     assert!(matches!(
@@ -287,43 +312,43 @@ fn what_is_left_at_the_close() {
         [Payload::Plain(a), Payload::Reply, Payload::Handle(h)] if a[..] == [1] && h.handle == "h"
     ));
     out.push_reply(b"2");
-    assert_eq!(flush(&mut out), ["2 -> []"]);
+    assert_eq!(flush(&mut out), ["2"]);
 }
 
 #[test]
 fn every_phase_and_event() {
     use {Event::*, Phase::*};
-    let events = [
-        Disconnect { awaits_ack: false },
-        Disconnect { awaits_ack: true },
-        Idle,
-        PeerExited,
-        ReadFailed,
-        CloseBlocked,
-        TransportClosed,
+    let disconnect = Disconnect { awaits_ack: false };
+    let disconnect_before_ack = Disconnect { awaits_ack: true };
+    let transitions = [
+        (Open, disconnect, Closing),
+        (Open, disconnect_before_ack, Draining),
+        (Open, PeerExited, ClosingAfterRead),
+        (Open, ReadFailed, Closing),
+        (Open, CloseBlocked, ClosingAfterWrite),
+        (Open, TransportClosed, Closed),
+        (Draining, disconnect, Closing),
+        (Draining, Idle, Closing),
+        (Draining, PeerExited, ClosingAfterRead),
+        (Draining, ReadFailed, Closing),
+        (Draining, CloseBlocked, ClosingAfterWrite),
+        (Draining, TransportClosed, Closed),
+        (Closing, CloseBlocked, ClosingAfterWrite),
+        (Closing, TransportClosed, Closed),
+        (ClosingAfterRead, CloseBlocked, ClosingAfterWrite),
+        (ClosingAfterRead, TransportClosed, Closed),
+        (ClosingAfterWrite, TransportClosed, Closed),
     ];
-    let (read, write) = (ClosingAfterRead, ClosingAfterWrite);
-    for (phase, row) in [
-        (
-            Open,
-            [Closing, Draining, Open, read, Closing, write, Closed],
-        ),
-        (
-            Draining,
-            [Draining, Draining, Closing, read, Closing, write, Closed],
-        ),
-        (
-            Closing,
-            [Closing, Closing, Closing, Closing, Closing, write, Closed],
-        ),
-        (read, [read, read, read, read, read, write, Closed]),
-        (write, [write, write, write, write, write, write, Closed]),
-        (Closed, [Closed; 7]),
-        (Reported, [Reported; 7]),
-    ] {
-        assert_eq!(events.map(|event| phase.after(event).unwrap_or(phase)), row);
-        // One task for each time the phase is entered.
-        let is_entered_again = events.iter().any(|&it| phase.after(it) == Some(phase));
-        assert!(!(phase.needs_task() && is_entered_again));
+    // A pair that is not listed changes nothing.
+    for phase in transitions
+        .map(|it| it.0)
+        .into_iter()
+        .chain([Closed, Reported])
+    {
+        for event in transitions.map(|it| it.1) {
+            let listed = transitions.iter().find(|it| (it.0, it.1) == (phase, event));
+            let expected = listed.map(|it| it.2);
+            assert_eq!(phase.after(event), expected, "{phase:?} on {event:?}");
+        }
     }
 }

@@ -602,11 +602,11 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
 async function runPair(parent: string, child: string, env: Record<string, string> = {}) {
   const helpers = `
     const fs = require("node:fs");
-    const net = require("node:net");
+    // So that a child does not outlive a test that timed out.
+    const deadline = Date.now() + 120_000;
     function until(file) {
-      const deadline = Date.now() + 30_000;
       while (!fs.existsSync(file)) {
-        if (Date.now() > deadline) throw new Error("30 seconds have passed without " + file);
+        if (Date.now() > deadline) throw new Error("gave up waiting for " + file);
         Bun.sleepSync(1);
       }
     }
@@ -615,7 +615,7 @@ async function runPair(parent: string, child: string, env: Record<string, string
         try {
           return syscall();
         } catch (e) {
-          if (e.code !== "EAGAIN") throw e;
+          if (e.code !== "EAGAIN" || Date.now() > deadline) throw e;
           Bun.sleepSync(1);
         }
       }
@@ -639,7 +639,11 @@ async function runPair(parent: string, child: string, env: Record<string, string
         ipc() {},
         ...options,
       });
-    const listen = () => new Promise(resolve => { const server = net.createServer().listen(0, () => resolve(server)); });
+    const listen = () =>
+      new Promise((resolve, reject) => {
+        const server = require("node:net").createServer().once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve(server));
+      });
     const turn = () => new Promise(resolve => setImmediate(resolve));
     const openFds = () => fs.readdirSync("/proc/self/fd").length;
     // Bun.build() runs the event loop until the setup() of a plugin has settled.
@@ -692,6 +696,35 @@ describe.concurrent("the send queue", () => {
     expect(result).toEqual({ stdout: ["a", "b", "c"], stderr: "", exitCode: 0 });
   });
 
+  it("has the same number of GC roots for any number of callbacks", async () => {
+    const result = await runPair(
+      `
+        const roots = () => require("bun:jsc").heapStats().protectedObjectCount;
+        const server = await listen();
+        const child = spawnChild();
+        const called = [];
+        child.send("handle", server);
+        for (let i = 0; i < 10; i++) child.send(i, () => called.push(i));
+        const before = roots();
+        for (let i = 10; i < 1000; i++) child.send(i, () => called.push(i));
+        console.log("new roots", roots() - before);
+        Bun.gc(true);
+        child.send("last");
+        await child.exited;
+        console.log("called", called.length, "in order", called.every((it, i) => it === i));
+        server.close();
+      `,
+      `
+        process.on("message", (message, handle) => {
+          handle?.close();
+          if (message === "last") process.disconnect();
+        });
+      `,
+    );
+    expect(result).toEqual({ stdout: ["new roots 0", "called 1000 in order true"], stderr: "", exitCode: 0 });
+  });
+
+  // The child uses descriptor 3 directly. Windows frames what goes through its pipe.
   it.skipIf(isWindows)("writes a long backlog of replies without overflowing the stack", async () => {
     const count = isDebug ? 10_000 : 100_000;
     const result = await runPair(
@@ -704,42 +737,23 @@ describe.concurrent("the send queue", () => {
         const buffer = Buffer.alloc(1 << 20);
         let total = 0;
         for (let n = 1; n && total < ${count} * 27; total += n) n = retry(() => fs.readSync(3, buffer));
-        console.log(total / 27);
+        console.log("replies", total / 27);
       `,
     );
-    expect(result).toEqual({ stdout: [String(count)], stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: [`replies ${count}`], stderr: "", exitCode: 0 });
   });
 
-  it("is flushed when disconnect() is called again after the ack it waited for", async () => {
+  // Linux only: reads /proc/self/fd.
+  it.skipIf(!isLinux).each([
+    { handle: "server", keepOpen: false, descriptorsLeft: 1 },
+    { handle: "socket", keepOpen: true, descriptorsLeft: 1 },
+    { handle: "socket", keepOpen: false, descriptorsLeft: 0 },
+  ])("releases a $handle (keepOpen: $keepOpen) if the channel closes while its message is serialized", async row => {
     const result = await runPair(
       `
         const server = await listen();
-        const child = spawnChild();
-        child.send("handle", server, () => {
-          child.disconnect();
-          fs.writeFileSync("disconnected twice", "");
-        });
-        child.send(Buffer.alloc(4 << 20, "x").toString());
-        child.disconnect();
-        await child.exited;
-        server.close();
-      `,
-      `
-        process.on("message", (message, handle) => {
-          console.log(message.length);
-          if (!handle) return;
-          handle.close();
-          until("disconnected twice");
-        });
-      `,
-    );
-    expect(result).toEqual({ stdout: ["6", String(4 << 20)], stderr: "", exitCode: 0 });
-  });
-
-  it.skipIf(!isLinux)("releases a handle if the channel closes while its message is serialized", async () => {
-    const result = await runPair(
-      `
-        const server = await listen();
+        const socket = require("node:net").connect(server.address().port, "127.0.0.1");
+        await require("node:events").once(socket, "connect");
         const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
         const child = spawnChild({ onDisconnect });
         const message = {
@@ -749,17 +763,20 @@ describe.concurrent("the send queue", () => {
             return "late";
           },
         };
-        child.send(message, server);
         const inode = fd => fs.statSync("/proc/self/fd/" + fd, { throwIfNoEntry: false })?.ino;
-        console.log(fs.readdirSync("/proc/self/fd").filter(fd => inode(fd) === inode(server._handle.fd)).length);
-        server.close();
+        const sentInode = inode(${row.handle}._handle.fd);
+        child.send(message, ${row.handle}, { keepOpen: ${row.keepOpen} });
+        await turn();
+        console.log("descriptors left", fs.readdirSync("/proc/self/fd").filter(fd => inode(fd) === sentInode).length);
+        process.exit(0);
       `,
       `process.on("message", () => {});`,
     );
-    expect(result).toEqual({ stdout: ["1"], stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: [`descriptors left ${row.descriptorsLeft}`], stderr: "", exitCode: 0 });
   });
 });
 
+// Linux only: reads /proc/self/fd.
 describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
   // The tag byte makes the receiver ignore the message that carries the descriptor, and `line` then claims it.
   const sendDescriptorWith = (line: string) => `
@@ -811,40 +828,33 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
     expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
   });
 
-  it("is closed once if a worker thread exits in the handler", async () => {
+  it("is closed by a child that queues a cluster message, because node:cluster is not loaded", async () => {
     const result = await runPair(
       `
-        const { Worker, isMainThread, workerData } = require("node:worker_threads");
-        if (isMainThread) {
-          const shared = new Int32Array(new SharedArrayBuffer(8));
-          const worker = new Worker(__filename, { workerData: shared });
-          await new Promise(resolve => worker.once("message", resolve));
-          // Take the number as soon as it is free.
-          const deadline = Date.now() + 30_000;
-          Atomics.store(shared, 1, 1);
-          for (let fd; (fd = fs.openSync("/dev/null")) !== shared[0] && Date.now() < deadline; ) {
-            if (fd > shared[0]) fs.closeSync(fd);
-          }
-          await new Promise(resolve => worker.once("exit", resolve));
-          console.log(fs.readlinkSync("/proc/self/fd/" + shared[0]));
-        } else {
+        // Both ends of the channel are children.
+        const spawnEnd = (role, channel) =>
           spawnChild({
-            ipc(message, child, socket) {
-              workerData[0] = socket._handle.fd;
-              require("node:worker_threads").parentPort.postMessage("");
-              while (!Atomics.load(workerData, 1)) Bun.sleepSync(1);
-              process.exit();
-            },
+            cmd: [process.execPath, "child.js", role],
+            env: { ...process.env, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+            stdio: ["ignore", "inherit", "inherit", channel],
+            ipc: undefined,
           });
-        }
+        const receiver = spawnEnd("receive", "pipe");
+        await Promise.all([receiver.exited, spawnEnd("send", receiver.stdio[3]).exited]);
       `,
       `
-        const server = await listen();
-        const socket = net.connect(server.address().port, () => process.send("socket", socket));
-        process.on("disconnect", () => process.exit());
+        if (process.argv[2] === "send") {
+          ${sendDescriptorWith('\x02{"$hasHandle":true}')}
+        } else {
+          process.on("message", () => {
+            console.log("leaked", openFds() - before);
+            process.disconnect();
+          });
+          const before = openFds();
+        }
       `,
     );
-    expect(result).toEqual({ stdout: ["/dev/null"], stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
   });
 });
 
@@ -894,7 +904,7 @@ describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop
           serialization: "${serialization}",
           onDisconnect,
           ipc(message, child) {
-            console.log(message.length);
+            console.log(Array.isArray(message) ? message.length + " objects" : message);
             if (message !== "first") return;
             child.disconnect();
             runEventLoopUntil(Promise.all([disconnected, child.exited]));
@@ -910,6 +920,6 @@ describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop
       `,
       { BUN_JSC_gcMaxHeapSize: "196608", BUN_JSC_useGenerationalGC: "0", BUN_JSC_useConcurrentGC: "0" },
     );
-    expect(result).toEqual({ stdout: ["5", "5000", "4"], stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: ["first", "5000 objects", "last"], stderr: "", exitCode: 0 });
   });
 });

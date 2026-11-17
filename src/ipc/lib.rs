@@ -7,6 +7,6 @@ mod phase;
 mod wire;
 
 pub use inbox::Inbox;
-pub use outbox::{Offer, Outbox, Payload, Wrote};
+pub use outbox::{Offer, Outbox, Payload, WriteReason, Wrote};
 pub use phase::{Event, Phase};
 pub use wire::{Frame, FrameError, Kind, Mode, Reply, advanced_frame};

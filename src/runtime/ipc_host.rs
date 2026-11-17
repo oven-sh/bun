@@ -282,12 +282,6 @@ pub(crate) fn emit_handle_ipc_message<'a>(
                 cluster::handle_internal_message_child(global_this, message, handle);
                 return Ok(());
             }
-            let vm = global_this.bun_vm();
-            if get_ipc_instance(vm).is_none() {
-                // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
-                Process__emitMessageEvent(global_this, message, handle);
-                return Ok(());
-            }
             IPCInstance::handle_ipc_message(message, handle);
         }
     }

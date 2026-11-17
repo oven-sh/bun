@@ -1,11 +1,10 @@
-use smallvec::SmallVec;
 use std::collections::VecDeque;
 
 /// The transport returns the number of bytes written as an `i32`.
 const MAX_WRITE_LEN: usize = i32::MAX as usize;
 const MAX_HANDLE_TRANSMISSIONS: u8 = 3;
 
-/// What is still to be written. `H` is a handle that goes with a message, `C` the callback of a `send()`.
+/// What is still to be written. `H` is a handle that goes with a message, `C` the callbacks of what is written together.
 pub struct Outbox<H, C> {
     queue: VecDeque<Item<H, C>>,
     /// Written. Only replies go out until the peer answers.
@@ -23,20 +22,27 @@ struct Item<H, C> {
 pub enum Payload<H, C> {
     Reply,
     /// Messages that are written together.
-    Plain(SmallVec<[C; 1]>),
+    Plain(C),
     /// Alone in its item, so that it can be sent again.
     Handle(Offer<H, C>),
 }
 
 pub struct Offer<H, C> {
     pub handle: H,
-    pub callback: Option<C>,
+    pub callbacks: C,
     transmissions: u8,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum WriteReason {
+    /// The rest of a message that was partly written waits for `Writable`.
+    Queued,
+    Writable,
 }
 
 pub enum Wrote<C> {
     /// Call these, then write on.
-    Continue(SmallVec<[C; 1]>),
+    Continue(C),
     /// Wait until the transport is writable.
     Blocked,
     Failed,
@@ -52,7 +58,7 @@ impl<H, C> Default for Outbox<H, C> {
     }
 }
 
-impl<H, C> Outbox<H, C> {
+impl<H, C: Default> Outbox<H, C> {
     pub fn is_idle(&self) -> bool {
         self.unacked.is_none() && self.queue.is_empty()
     }
@@ -66,33 +72,42 @@ impl<H, C> Outbox<H, C> {
         self.unacked.as_ref().map(|(_, offer)| &offer.handle)
     }
 
-    pub fn push(&mut self, bytes: Vec<u8>, handle: Option<H>, callback: Option<C>) {
+    /// Nothing is queued if `add_callback` fails.
+    pub fn push<E>(
+        &mut self,
+        bytes: Vec<u8>,
+        handle: Option<H>,
+        add_callback: impl FnOnce(&mut C) -> Result<(), E>,
+    ) -> Result<(), E> {
         let last_is_in_flight = self.in_flight && self.queue.len() == 1;
-        let payload = match (handle, self.queue.back_mut()) {
-            (Some(handle), _) => Payload::Handle(Offer {
+        if handle.is_none()
+            && !last_is_in_flight
+            && let Some(Item {
+                bytes: last,
+                written: 0,
+                payload: Payload::Plain(callbacks),
+            }) = self.queue.back_mut()
+        {
+            add_callback(callbacks)?;
+            last.extend_from_slice(&bytes);
+            return Ok(());
+        }
+        let mut callbacks = C::default();
+        add_callback(&mut callbacks)?;
+        let payload = match handle {
+            Some(handle) => Payload::Handle(Offer {
                 handle,
-                callback,
+                callbacks,
                 transmissions: 1,
             }),
-            (
-                None,
-                Some(Item {
-                    bytes: last,
-                    written: 0,
-                    payload: Payload::Plain(callbacks),
-                }),
-            ) if !last_is_in_flight => {
-                last.extend_from_slice(&bytes);
-                callbacks.extend(callback);
-                return;
-            }
-            (None, _) => Payload::Plain(callback.into_iter().collect()),
+            None => Payload::Plain(callbacks),
         };
         self.queue.push_back(Item {
             bytes,
             written: 0,
             payload,
         });
+        Ok(())
     }
 
     pub fn push_reply(&mut self, packet: &[u8]) {
@@ -101,7 +116,7 @@ impl<H, C> Outbox<H, C> {
 
     /// Ahead of everything that the transport has no byte of.
     fn push_next(&mut self, bytes: Vec<u8>, payload: Payload<H, C>) {
-        let is_started = self.in_flight || self.queue.front().is_some_and(|it| it.written != 0);
+        let is_started = (self.queue.front()).is_some_and(|it| self.in_flight || it.written != 0);
         let item = Item {
             bytes,
             written: 0,
@@ -135,10 +150,10 @@ impl<H, C> Outbox<H, C> {
     }
 
     /// The bytes to write now and the handle that goes with them. [`Self::end_write`] takes the result.
-    pub fn begin_write(&mut self, is_writable: bool) -> Option<(&[u8], Option<&H>)> {
+    pub fn begin_write(&mut self, reason: WriteReason) -> Option<(&[u8], Option<&H>)> {
         let first = self.queue.front()?;
         let is_held = self.unacked.is_some() && !matches!(first.payload, Payload::Reply);
-        if self.in_flight || is_held || (first.written != 0 && !is_writable) {
+        if self.in_flight || is_held || (first.written != 0 && reason == WriteReason::Queued) {
             return None;
         }
         self.in_flight = true;
@@ -150,9 +165,10 @@ impl<H, C> Outbox<H, C> {
         Some((&rest[..rest.len().min(MAX_WRITE_LEN)], handle))
     }
 
-    pub fn end_write(&mut self, written: i32) -> Wrote<C> {
+    /// `None`: the write failed.
+    pub fn end_write(&mut self, written: Option<usize>) -> Wrote<C> {
         self.in_flight = false;
-        let Ok(written) = usize::try_from(written) else {
+        let Some(written) = written else {
             return Wrote::Failed;
         };
         let done = self.queue.pop_front_if(|first| {
@@ -167,6 +183,6 @@ impl<H, C> Outbox<H, C> {
             None if written == MAX_WRITE_LEN => {}
             None => return Wrote::Blocked,
         }
-        Wrote::Continue(SmallVec::new())
+        Wrote::Continue(C::default())
     }
 }

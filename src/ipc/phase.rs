@@ -2,7 +2,7 @@
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Phase {
     Open,
-    /// `disconnect()` waits for the ack of a handle and for what is queued behind it, as in Node.js.
+    /// `disconnect()` waits for the ack of a handle and for what is queued behind it.
     Draining,
     /// The task closes the transport.
     Closing,
@@ -38,13 +38,14 @@ impl Phase {
         match (self, event) {
             (Closed | Reported, _) => None,
             (_, TransportClosed) => Some(Closed),
+            (ClosingAfterWrite, _) => None,
             (_, CloseBlocked) => Some(ClosingAfterWrite),
-            (Closing | ClosingAfterRead | ClosingAfterWrite, _) => None,
+            (Closing | ClosingAfterRead, _) => None,
             (Open | Draining, PeerExited) => Some(ClosingAfterRead),
             (Open | Draining, ReadFailed) => Some(Closing),
             (Open, Disconnect { awaits_ack: true }) => Some(Draining),
-            (Open, Disconnect { awaits_ack: false }) | (Draining, Idle) => Some(Closing),
-            (Open, Idle) | (Draining, Disconnect { .. }) => None,
+            (Open | Draining, Disconnect { awaits_ack: false }) | (Draining, Idle) => Some(Closing),
+            (Open, Idle) | (Draining, Disconnect { awaits_ack: true }) => None,
         }
     }
 

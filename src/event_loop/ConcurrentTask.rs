@@ -141,7 +141,6 @@ pub mod task_tag {
         UvLoopDispatch,           // an addon's uv_async_send (posix)
         UvWorkDone,               // work that an addon thread queued (posix)
         ValkeyDeferredClose,
-        ValkeyDeferredFailure,
         WindowsNamedPipe,
         Write,
         Writev,

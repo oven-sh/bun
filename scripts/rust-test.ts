@@ -65,6 +65,7 @@ const crates = [
   "bun_sys",
   "bun_threading",
   "bun_trim",
+  "bun_valkey",
   "bun_webp",
   "bun_wyhash",
 ];

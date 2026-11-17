@@ -1399,18 +1399,8 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
-                this.check_server_identity = tls
-                    .get(global_object, "checkServerIdentity")?
-                    .filter(|callback| !callback.is_null());
-                if let Some(callback) = this.check_server_identity
-                    && !callback.is_callable()
-                {
-                    return Err(global_object.throw_invalid_property_type_value(
-                        b"tls.checkServerIdentity",
-                        b"function",
-                        callback,
-                    ));
-                }
+                this.check_server_identity = server_identity::callback_of(global_object, tls)?
+                    .map(|callback| callback.with_graph_context_if_needed(global_object));
                 let options = TLSOptions::from_js(global_object, tls)?;
                 this.tls = match ParsedTls::given(global_object, &options, false)? {
                     Some(given) => valkey::TLS::Custom(Box::new(given)),

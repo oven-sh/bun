@@ -10,7 +10,7 @@ unsafe extern "C" {
     safe fn Bun__X509__toJSLegacyEncoding(cert: &mut X509, global: &JSGlobalObject) -> JSValue;
 }
 
-pub(crate) fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
+pub fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
     if !tls.is_object() {
         return Ok(None);
     }

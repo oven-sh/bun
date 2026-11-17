@@ -38,7 +38,7 @@ declare module "bun" {
      * TLS options. `serverName` sets the SNI and the name the certificate is
      * verified against, which default to the URL host.
      * `checkServerIdentity(hostname, cert)` replaces that check, as in
-     * `node:tls`: return `undefined` to accept the certificate or an `Error`
+     * `node:tls`: return nothing to accept the certificate or an `Error`
      * to refuse it. It is not called with `rejectUnauthorized: false`.
      */
     tls?:

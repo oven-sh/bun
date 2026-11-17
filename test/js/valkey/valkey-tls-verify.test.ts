@@ -440,9 +440,13 @@ describe("RedisClient tls.checkServerIdentity", () => {
     });
   });
 
-  test("has to be a function", () => {
-    expect(() => new RedisClient("rediss://127.0.0.1:1", { tls: { ca, checkServerIdentity: true as any } })).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+  test("leaves the built-in check in place when it is not a function", async () => {
+    await withServer(localhost, async port => {
+      const tls = { ca: localhostTls.cert, checkServerIdentity: false as any };
+      expect(await ping(`rediss://127.0.0.1:${port}`, tls)).toBe("PONG");
+      expect(await ping(`rediss://127.0.0.1:${port}`, { ...tls, serverName: "other" })).toBe(
+        "ERR_TLS_CERT_ALTNAME_INVALID",
+      );
+    });
   });
 });

@@ -241,6 +241,9 @@ pub(crate) extern "C" fn us_dispatch_alpn_offer(
                     Ok(v) => v,
                     Err(err) => global.take_exception(err),
                 };
+            if result.is_termination_exception() {
+                return refuse();
+            }
             if let Some(err_value) = result.to_error() {
                 crate::dispatch::fold(
                     handlers.call_error_handler(this_value, &[this_value, err_value]),

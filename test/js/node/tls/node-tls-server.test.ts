@@ -760,6 +760,32 @@ describe.each(["TLSv1.3", "TLSv1.2"])("an ALPNCallback over a Duplex can drop it
   });
 });
 
+it.concurrent.each(["tls", "https"])("a Worker can end inside the ALPNCallback of its %s server", async module => {
+  using dir = tempDir("tls-alpn-worker-exit", {
+    "main.mjs": `
+      import { once } from "node:events";
+      import tls from "node:tls";
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(new URL("./server.mjs", import.meta.url));
+      const exited = once(worker, "exit");
+      const [port] = await once(worker, "message");
+      const client = tls.connect({ port, host: "127.0.0.1", ALPNProtocols: ["a"], rejectUnauthorized: false });
+      client.on("secureConnect", () => console.log("secureConnect")).on("error", () => {});
+      await new Promise(closed => client.on("close", closed));
+      console.log("exit", ...(await exited));
+    `,
+    "server.mjs": `
+      import { createServer } from "node:${module}";
+      import { parentPort } from "node:worker_threads";
+      const server = createServer({ ...${JSON.stringify(COMMON_CERT)}, ALPNCallback: () => process.exit(7) });
+      server.listen(0, "127.0.0.1", () => parentPort.postMessage(server.address().port));
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exit 7\n", stderr: "", exitCode: 0 });
+});
+
 describe("an SNICallback over a Duplex can drop its connection", () => {
   it.concurrent.each([
     ["emit", "TLSv1.3", 'server.emit("connection", duplex)'],

@@ -158,7 +158,7 @@ fn try_timer_all() -> Option<&'static timer::All> {
     try_runtime_state().map(|state| &state.timer)
 }
 
-/// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
+/// Per-VM lazy DNS resolver storage. Shared borrow only — script can
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
@@ -1406,7 +1406,7 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
-/// are all still live. See `Resolver::close_channel_for_terminate`.
+/// are all still live.
 fn stop_dns_for_vm_teardown() -> SweepResult {
     let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;

@@ -430,6 +430,7 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_opaque",
+ "enum-map",
  "libc",
  "strum",
 ]

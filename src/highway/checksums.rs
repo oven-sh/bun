@@ -179,11 +179,21 @@ fn in_pieces(adler: u32, bytes: &[u8], add: impl FnMut(u32, &[u8]) -> u32) -> u3
     bytes.chunks(ADLER32_PIECE).fold(adler, add)
 }
 
+/// It is worth two calls to have no load cross a cache line.
+#[inline(never)]
+fn long_adler32(adler: u32, bytes: &[u8]) -> u32 {
+    const LINE: usize = 64;
+    let (first, rest) = bytes.split_at(bytes.as_ptr().align_offset(LINE).min(bytes.len()));
+    let (lines, last) = rest.split_at(rest.len() / LINE * LINE);
+    let add = |adler, part| in_pieces(adler, part, adler32);
+    [first, lines, last].into_iter().fold(adler, add)
+}
+
 /// Continues an Adler-32, which is 1 for no bytes.
 #[inline]
 pub fn adler32(adler: u32, bytes: &[u8]) -> u32 {
     if bytes.len() > ADLER32_PIECE {
-        return in_pieces(adler, bytes, adler32);
+        return long_adler32(adler, bytes);
     }
     if scalar_only(bytes.len()) {
         return adler32_by_bytes(adler, bytes);

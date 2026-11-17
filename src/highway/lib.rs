@@ -1729,6 +1729,16 @@ pub use checksums::crc32;
 /// zlib's Adler-32 of `bytes`.
 #[inline(always)]
 pub fn adler32(bytes: &[u8]) -> u32 {
+    if bytes.len() < SCALAR_CUTOFF {
+        // Neither sum reaches the modulus.
+        const { assert!(128 * SCALAR_CUTOFF * SCALAR_CUTOFF < 65521) };
+        let (mut low, mut high) = (1, 0);
+        for &byte in bytes {
+            low += u32::from(byte);
+            high += low;
+        }
+        return (high << 16) | low;
+    }
     checksums::adler32(1, bytes)
 }
 

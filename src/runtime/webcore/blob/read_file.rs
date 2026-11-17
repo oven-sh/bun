@@ -262,7 +262,11 @@ impl FdOp for ReadFile {
         let mut stack_buffer = [const { MaybeUninit::uninit() }; 64 * 1024];
         loop {
             let max = (self.max_length as usize).saturating_sub(self.buffer.len());
-            if max == 0 {
+            // Opening a FIFO lets its writer go on, and closing it at once would break that pipe.
+            let waits_for_writer = self.max_length == 0
+                && !matches!(self.file, Target::Fd(_))
+                && !bun_sys::is_regular_file(self.cached_mode);
+            if max == 0 && !waits_for_writer {
                 break;
             }
             // The descriptor of stdin, for one, blocks in read().
@@ -271,6 +275,9 @@ impl FdOp for ReadFile {
                 && bun_core::is_readable(fd) == bun_core::Pollable::NotReady
             {
                 return Ok(Step::Wait);
+            }
+            if max == 0 {
+                break;
             }
             match self.read_some(fd, max, &mut stack_buffer) {
                 Ok(0) => break,

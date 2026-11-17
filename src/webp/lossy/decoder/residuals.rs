@@ -33,11 +33,20 @@ pub(super) struct Quantizers {
 
 type Tree = [u8; 11];
 
+/// How many coefficients are coded, be they zeros: three masks with a bit for each block. They share a word, so that a
+/// block costs one shift and one OR.
+type Coded = u64;
+const ANY: Coded = 1;
+const MORE_THAN_ONE: Coded = 1 << 24;
+/// For luma only. The bits of chroma are shifted out.
+const TWO_OR_THREE: Coded = 1 << 48;
+
 /// From one coefficient to the next.
 #[derive(Default)]
 struct Step {
+    /// If the block ends in front of the one that is left.
+    coded: Coded,
     /// Of the one that is left.
-    index: u8,
     position: u8,
     is_ac: bool,
     /// Of the next one, by context.
@@ -74,7 +83,11 @@ impl Probabilities {
             let (block_type, next) = (i / BANDS.len(), i % BANDS.len());
             let index = next.saturating_sub(1);
             *step = Step {
-                index: index as u8,
+                coded: match index {
+                    0..=1 => ANY,
+                    2..=3 => ANY | MORE_THAN_ONE | TWO_OR_THREE,
+                    _ => ANY | MORE_THAN_ONE,
+                },
                 position: *POSITIONS.at(index),
                 is_ac: index > 0,
                 trees: *by_band.at(block_type).at((*BANDS.at(next)).into()),
@@ -145,8 +158,7 @@ impl Residuals {
         left: &mut Context,
     ) {
         let mut reader = *partition;
-        // The blocks that may have a coefficient, and those that go on behind the first, be it with zeros.
-        let (mut with_any, mut with_more) = (0, 0);
+        let mut coded = 0;
         let [luma @ .., _, _] = &mut self.rows;
         let (luma_type, first) = if has_y2 {
             let mut y2 = [0; 64];
@@ -156,9 +168,10 @@ impl Residuals {
                 first: 0,
             };
             let context = [&mut above.y2, &mut left.y2];
-            if block.read(&mut reader, context, &mut y2, 0).is_some() {
+            block.read(&mut reader, context, &mut y2, 0, &mut coded);
+            if coded != 0 {
                 inverse_wht(&y2, luma);
-                with_any = 0xffff;
+                coded = ANY * 0xffff;
             }
             (BlockType::LumaWithoutDc, 1)
         } else {
@@ -174,10 +187,7 @@ impl Residuals {
         for i in 0..16 {
             let (x, y) = (i % 4, i / 4);
             let context = [above.luma.at_mut(x), left.luma.at_mut(y)];
-            if let Some(end) = block.read(&mut reader, context, luma.at_mut(y), x) {
-                with_any |= 1 << i;
-                with_more |= u32::from(end > 1) << i;
-            }
+            block.read(&mut reader, context, luma.at_mut(y), i, &mut coded);
         }
 
         let block = Block {
@@ -189,17 +199,28 @@ impl Residuals {
         for i in 0..8 {
             let (x, y) = (i / 4 * 2 + i % 2, i / 2 % 2);
             let context = [above.chroma.at_mut(x), left.chroma.at_mut(i / 2)];
-            if let Some(end) = block.read(&mut reader, context, chroma.at_mut(y), x) {
-                with_any |= 1 << (16 + 4 * y + x);
-                with_more |= u32::from(end > 1) << (16 + 4 * y + x);
-            }
+            let index = 16 + 4 * y + x;
+            block.read(&mut reader, context, chroma.at_mut(y), index, &mut coded);
         }
         *partition = reader;
+        let mask = |first: Coded| (coded >> first.trailing_zeros()) as u32 & 0xff_ffff;
+        let (with_any, mut with_more) = (mask(ANY), mask(MORE_THAN_ONE));
+        // The blocks of U are treated alike, and so are those of V.
+        for plane in [0x33_0000, 0xcc_0000] {
+            with_more |= if with_more & plane != 0 { plane } else { 0 };
+        }
 
         let (mut blocks, mut to_transform) = (15, 0);
+        // Of the coefficients to transform, ORed.
+        let mut magnitudes = [0; 8];
         for row in &mut self.rows {
             if with_more & blocks != 0 {
                 to_transform |= with_any & blocks;
+                // The first three coefficients are in the upper half.
+                for some in row.as_chunks::<8>().0.iter().take(4) {
+                    magnitudes =
+                        core::array::from_fn(|i| magnitudes.at(i) | some.at(i).unsigned_abs());
+                }
             } else if with_any & blocks != 0 && spread_first(row) {
                 self.non_zero |= blocks;
             }
@@ -207,7 +228,48 @@ impl Residuals {
         }
         if to_transform != 0 {
             self.non_zero |= to_transform;
+            if magnitudes.iter().fold(0, |all, it| all | it) >= LARGE {
+                let short = mask(TWO_OR_THREE) | to_transform & !with_more;
+                return self.transform_short_apart(to_transform, short);
+            }
             bun_highway::webp::inverse_dct(&mut self.rows, to_transform);
+        }
+    }
+
+    /// libwebp has 32 bits for the sums of a `short` block: luma with up to three coefficients, and chroma if all four
+    /// have up to one.
+    // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/dec/frame_dec.c#L54-L80
+    #[cold]
+    #[inline(never)]
+    fn transform_short_apart(&mut self, to_transform: u32, short: u32) {
+        let coefficients = self.rows;
+        bun_highway::webp::inverse_dct(&mut self.rows, to_transform);
+        for i in (0..24).filter(|i| short >> i & 1 != 0) {
+            spread_three(coefficients.at(i / 4), self.rows.at_mut(i / 4), i % 4);
+        }
+    }
+}
+
+/// The inverse DCT of three coefficients below this takes no more than 16 bits.
+const LARGE: u16 = 1 << 13;
+const _: () = assert!(LARGE.is_power_of_two());
+const _: () = assert!(LARGE as i32 + 4 + 2 * times_cos(LARGE as i32) <= i16::MAX as i32);
+
+const fn times_cos(it: i32) -> i32 {
+    it + ((it * 20091) >> 16)
+}
+
+/// The inverse DCT of the `x`-th block, which has no coefficient behind the third.
+fn spread_three(coefficients: &BlockRow, residuals: &mut BlockRow, x: usize) {
+    let terms = |it: i32| {
+        let (cos, sin) = (times_cos(it), (it * 35468) >> 16);
+        [cos, sin, -sin, -cos]
+    };
+    let [first, across, down] = [0, 1, 16].map(|at| i32::from(*coefficients.at(4 * x + at)));
+    for (row, down) in terms(down).into_iter().enumerate() {
+        for (column, across) in terms(across).into_iter().enumerate() {
+            *residuals.at_mut(16 * row + 4 * x + column) =
+                ((first + 4 + down + across) >> 3) as i16;
         }
     }
 }
@@ -229,23 +291,25 @@ struct Block<'a> {
 }
 
 impl Block<'_> {
-    /// Returns the index behind the last coefficient that was coded, if any was.
+    /// `index`: in the order of `Residuals::rows`.
     #[inline(always)]
     fn read(
         &self,
         reader: &mut BoolReader,
         [above, left]: [&mut bool; 2],
         row: &mut BlockRow,
-        x: usize,
-    ) -> Option<u8> {
+        index: usize,
+        coded: &mut Coded,
+    ) {
         let context = usize::from(*above) + usize::from(*left);
         let tree = self.steps.at(self.first).trees.at(context);
         if !reader.read(tree[0]) {
             (*above, *left) = (false, false);
-            return None;
+            return;
         }
         (*above, *left) = (true, true);
-        Some(self.read_to_end(reader, tree, row, x).unwrap_or(16))
+        let this = self.read_to_end(reader, tree, row, index % 4);
+        *coded |= this.unwrap_or(ANY | MORE_THAN_ONE) << index;
     }
 
     /// There is a coefficient to come. `None`: the block was coded up to its last.
@@ -256,7 +320,7 @@ impl Block<'_> {
         mut tree: &'a Tree,
         row: &mut BlockRow,
         x: usize,
-    ) -> Option<u8> {
+    ) -> Option<Coded> {
         let mut steps = self.steps.iter();
         let mut step = steps.nth(self.first + 1)?;
         loop {
@@ -275,7 +339,7 @@ impl Block<'_> {
             *row.at_mut(position) = (reader.read_sign(magnitude) * quantizer) as i16;
             step = steps.next()?;
             if !reader.read(tree[0]) {
-                return Some(step.index);
+                return Some(step.coded);
             }
         }
     }

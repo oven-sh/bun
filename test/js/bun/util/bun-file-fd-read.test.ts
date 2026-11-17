@@ -1,6 +1,6 @@
 import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync, readSync, writeSync } from "fs";
+import { closeSync, openSync, readSync, renameSync, writeSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { constants } from "os";
 import { join } from "path";
@@ -56,8 +56,26 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
 test.skipIf(isWindows)("an empty slice of a pipe that nobody writes to resolves", async () => {
   using dir = tempDir("bun-file-fd-read", {});
   using fifo = openFifo(String(dir));
-  expect(await Bun.file(fifo.path).slice(0, 0).text()).toBe("");
   expect(await Bun.file(fifo.reader).slice(0, 0).text()).toBe("");
+});
+
+test.skipIf(!isLinux)("an empty read of a FIFO by path stays open until its writer has written", async () => {
+  using dir = tempDir("bun-file-fd-read", {});
+  using fifo = openFifo(String(dir));
+  const text = Bun.file(fifo.path).slice(0, 0).text();
+  await untilWatched(fifo.reader);
+  fifo.close(fifo.reader);
+  expect(writeSync(fifo.writer, "x")).toBe(1);
+  expect(await text).toBe("");
+});
+
+test.skipIf(isWindows)("a file that was empty and is a silent FIFO now reads as empty", async () => {
+  using dir = tempDir("bun-file-fd-read", { file: "" });
+  using fifo = openFifo(String(dir));
+  const file = Bun.file(join(String(dir), "file"));
+  expect(file.size).toBe(0);
+  renameSync(fifo.path, file.name!);
+  expect(await file.text()).toBe("");
 });
 
 describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket", () => {

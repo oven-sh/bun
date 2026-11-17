@@ -21,74 +21,27 @@
 #pragma once
 
 #include "AbortController.h"
-#include "JSDOMWrapper.h"
-#include <wtf/NeverDestroyed.h>
+#include "JSDOMInterface.h"
 
 namespace WebCore {
 
-class JSAbortController : public JSDOMWrapper<AbortController> {
+class JSAbortController final : public JSDOMInterfaceWithAdditionalChildren<JSAbortController, AbortController> {
 public:
-    using Base = JSDOMWrapper<AbortController>;
-    static JSAbortController* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortController>&& impl)
-    {
-        auto& vm = JSC::getVM(globalObject);
-        JSAbortController* ptr = new (NotNull, JSC::allocateCell<JSAbortController>(vm)) JSAbortController(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static AbortController* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterfaceWithAdditionalChildren::JSDOMInterfaceWithAdditionalChildren;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForAbortController, m_subspaceForAbortController);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+
     DECLARE_VISIT_CHILDREN;
     template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
-
-    template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-protected:
-    JSAbortController(JSC::Structure*, JSDOMGlobalObject&, Ref<AbortController>&&);
-
-    void finishCreation(JSC::VM&);
+    bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral*) const { return false; }
 };
-
-class JSAbortControllerOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, AbortController*)
-{
-    static NeverDestroyed<JSAbortControllerOwner> owner;
-    return &owner.get();
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, AbortController&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, AbortController* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<AbortController>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<AbortController>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<AbortController> {
     using WrapperClass = JSAbortController;
-    using ToWrappedReturnType = AbortController*;
 };
 
 } // namespace WebCore

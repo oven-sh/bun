@@ -1,0 +1,25 @@
+# What a bundler leaves of `require("./shelf")` in a function is a call that asks for the module at every use. A module that has begun needs nothing: in a loop one byte says so
+# and the start is called on the rare arm alone; outside of loops the call stays, and the stub asks the same byte before it lays its frame.
+# inLoop: two asks a turn, two bytes read . once: no byte read in the unit . the body of the module runs once, at the first ask, whoever asks.
+# -- source: the-start-of-a-module-asked-for-in-a-loop-is-called-only-where-the-module-has-not-begun.cjs
+# var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+# var require_shelf = __commonJS((exports) => {
+#   say(-1);
+#   exports.add = function (a, b) { return a + b | 0; };
+#   exports.rate = 3;
+# });
+# function inLoop(t) { let s = t & 1; for (let i = 0; i < 9; i++) s = s + (require_shelf().add(i, t) + require_shelf().rate) | 0; return s; }
+# function once(t) { return require_shelf().rate + t | 0; }
+# say(0); say(inLoop(hidden())); say(once(hidden())); say(inLoop(hidden()));
+# -- end of source
+# RUN: emit f2:Body f3:Body mechanisms=all
+# CHECK-LABEL: unit f2:Body
+# CHECK-COUNT-2: = Load8Z({{*}}ExternalState
+# CHECK-LABEL: unit f3:Body
+# CHECK-NOT: = Load8Z(
+# RUN(SHELL): run-in-shell const all = [5, 7, 2]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
+# SHELL: 0
+# SHELL-NEXT: -1
+# SHELL-NEXT: 109
+# SHELL-NEXT: 10
+# SHELL-NEXT: 81

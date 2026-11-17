@@ -4,15 +4,14 @@
 /// prepared and stored in a linked list.
 pub(crate) struct DeferredRequest {
     pub(crate) route_bundle_index: route_bundle::Index,
-    pub(crate) handler: Handler,
-    pub(crate) dev: *const DevServer, // BACKREF: owned by dev.deferred_request_pool
-
-    /// This struct can be referenced by the dev server (`dev.current_bundle.requests`)
-    pub(crate) referenced_by_devserver: bool,
-    pub(crate) weakly_referenced_by_requestcontext: bool,
+    handler: Cell<Handler>,
+    /// Set when the request is made, and taken by `List::pop_first`.
+    next: Cell<Option<Handle>>,
 }
 
 bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
+
+use core::cell::Cell;
 
 use super::*;
 
@@ -21,8 +20,62 @@ use super::*;
 /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
 pub(crate) const MAX_PREALLOCATED: usize = 16;
 
-pub(crate) type List = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
-pub(crate) type Node = bun_collections::pool::Node<DeferredRequest>;
+/// Held by a `List` and by the request's `RequestContext`, if it has one.
+pub(crate) type Handle = bun_collections::HiveRefHandle<DeferredRequest, MAX_PREALLOCATED>;
+pub(crate) type Node = bun_collections::HiveRef<DeferredRequest, MAX_PREALLOCATED>;
+
+#[derive(Default)]
+pub(crate) struct List {
+    first: Option<Handle>,
+}
+
+impl List {
+    pub(super) fn first(&self) -> Option<&DeferredRequest> {
+        self.first.as_deref()
+    }
+
+    pub(super) fn pop_first(&mut self) -> Option<Handle> {
+        let first = self.first.take()?;
+        self.first = first.next.take();
+        Some(first)
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &DeferredRequest> {
+        core::iter::successors(self.first(), |request| {
+            // SAFETY: `request` is in this list only, and `pop_first` borrows the list exclusively.
+            unsafe { &*request.next.as_ptr() }.as_deref()
+        })
+    }
+}
+
+impl DevServer {
+    pub(super) fn queue_request(
+        &mut self,
+        queue: BundleQueueType,
+        route_bundle_index: route_bundle::Index,
+        handler: Handler,
+    ) -> &Handle {
+        let list = match queue {
+            BundleQueueType::CurrentBundle => {
+                &mut self
+                    .current_bundle
+                    .as_mut()
+                    .expect("infallible: bundle active")
+                    .requests
+            }
+            BundleQueueType::NextBundle => &mut self.next_bundle.requests,
+        };
+        let request = DeferredRequest {
+            route_bundle_index,
+            handler: Cell::new(handler),
+            next: Cell::new(list.first.take()),
+        };
+        // SAFETY: `Drop` empties the lists before the pool goes. Every other handle is held during a
+        // pending request of the server, which keeps `self` until it has none.
+        list.first
+            .insert(unsafe { Handle::new(request, &raw const self.deferred_request_pool) })
+    }
+}
 
 pub(crate) enum Handler {
     /// For a .framework route. This says to call and render the page.
@@ -44,121 +97,50 @@ pub(crate) enum HandlerKind {
 }
 
 impl DeferredRequest {
-    pub(crate) const MAX_PREALLOCATED: usize = MAX_PREALLOCATED;
-
-    pub(crate) fn is_alive(&self) -> bool {
-        self.referenced_by_devserver
+    /// Leaves `Handler::Aborted`.
+    pub(super) fn take_handler(&self) -> Handler {
+        self.handler.replace(Handler::Aborted)
     }
 
-    // NOTE: This should only be called from the DevServer which is the only
-    // place that can hold a strong reference
-    pub(crate) fn deref_(&mut self) {
-        self.referenced_by_devserver = false;
-        let should_free = !self.weakly_referenced_by_requestcontext;
-        self.__deinit();
-        if should_free {
-            self.__free();
+    pub(crate) fn on_abort(&self) {
+        debug_log_dr!("DeferredRequest({:p}) onAbort", self);
+        self.take_handler().abort();
+    }
+}
+
+impl Handler {
+    /// Dropping `self` completes the request, so the caller responds first.
+    pub(super) fn detach_response_for_error_page(&self) -> Option<AnyResponse> {
+        match self {
+            Handler::Aborted => None,
+            Handler::ServerHandler(saved) => {
+                saved.ctx.detach_response();
+                Some(saved.response)
+            }
+            Handler::BundledHtmlPage(ram) => Some(ram.response),
         }
     }
 
-    /// Ends the response before the deref because until then uWS has an abort callback that points to this node.
-    pub(super) fn abort_and_deref(&mut self) {
-        if let Handler::ServerHandler(saved) = &self.handler {
-            // Releases `prepare_and_save_js_request_context`'s ref. `deref_` releases
-            // `defer_request`'s.
+    /// Ends the response, which removes the abort callback that points to the request.
+    pub(super) fn fail(self) {
+        if let Handler::ServerHandler(saved) = self {
             saved.ctx.end_with_internal_server_error();
         } else {
             self.abort();
         }
-        self.deref_();
-    }
-
-    pub(crate) fn weak_ref(&mut self) {
-        debug_assert!(!self.weakly_referenced_by_requestcontext);
-        self.weakly_referenced_by_requestcontext = true;
-    }
-
-    pub(crate) fn weak_deref(&mut self) {
-        self.weakly_referenced_by_requestcontext = false;
-        if !self.referenced_by_devserver {
-            self.__free();
-        }
-    }
-
-    pub(super) fn on_abort_wrapper(this: *mut c_void) {
-        // SAFETY: this is &mut DeferredRequest registered in defer_request
-        let self_ = unsafe { bun_ptr::callback_ctx::<DeferredRequest>(this) };
-        if !self_.is_alive() {
-            return;
-        }
-        self_.on_abort_impl();
-    }
-
-    pub(super) fn on_abort(&mut self, _: AnyResponse) {
-        self.on_abort_impl();
-    }
-
-    fn on_abort_impl(&mut self) {
-        debug_log_dr!(
-            "DeferredRequest(0x{:x}) onAbort",
-            std::ptr::from_ref(self) as usize
-        );
-        self.abort();
-        debug_assert!(matches!(self.handler, Handler::Aborted));
-    }
-
-    /// Actually free the underlying allocation for the node, does not deinitialize children
-    fn __free(&mut self) {
-        // SAFETY: self is the .data field of a Node in deferred_request_pool
-        let node = unsafe { bun_core::from_field_ptr!(Node, data, std::ptr::from_mut(self)) };
-        // SAFETY: dev backref is valid while the pool entry exists; `node` is a
-        // fully-initialized hive slot. `pool::Node<T>` has no drop glue (`data`
-        // is `MaybeUninit`), so `put`'s in-place drop is a no-op — `__deinit`
-        // already tore down the payload.
-        unsafe {
-            (*self.dev.cast_mut()).deferred_request_pool.put(node);
-        }
-    }
-
-    /// *WARNING*: Do not call this directly, instead call `.deref_()`
-    fn __deinit(&mut self) {
-        debug_log_dr!(
-            "DeferredRequest(0x{:x}) deinitImpl",
-            std::ptr::from_ref(self) as usize
-        );
-        // Note: the pool stores `MaybeUninit<DeferredRequest>` (no `Drop`),
-        // so the `Handler` payload must be torn down explicitly here. Swap to
-        // `Aborted` (zero-payload) and let the moved-out value drop — for
-        // `ServerHandler` this releases `saved.js_request: Strong`.
-        let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
-        match handler {
-            Handler::ServerHandler(mut saved) => {
-                saved.deinit();
-                // `saved` (incl. `js_request: jsc::Strong`) drops at scope exit.
-            }
-            Handler::BundledHtmlPage(_) | Handler::Aborted => {}
-        }
     }
 
     /// Deinitializes state by aborting the connection.
-    pub(super) fn abort(&mut self) {
-        debug_log_dr!(
-            "DeferredRequest(0x{:x}) abort",
-            std::ptr::from_ref(self) as usize
-        );
-        let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
-        match handler {
-            Handler::ServerHandler(mut saved) => {
+    fn abort(self) {
+        match self {
+            Handler::ServerHandler(saved) => {
                 debug_log_dr!(
                     "  request url: {}",
-                    // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
-                    bstr::BStr::new(unsafe { (*saved.request).url.get() }.byte_slice())
+                    bstr::BStr::new(saved.request.url.get().byte_slice())
                 );
                 saved
                     .ctx
                     .set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
-                // Releases `defer_request`'s ref. The context's abort handler has its own.
-                saved.deinit();
             }
             Handler::BundledHtmlPage(r) => {
                 // Reached from JS event-loop tasks (on_plugins_rejected, the

@@ -1,8 +1,24 @@
+use super::lookup::Found;
 use super::references::ReferencePass;
-use super::{ImplicitReference, ImplicitReferenceKind};
+use super::{CommonJsVariable, ImplicitReference, ImplicitReferenceKind};
 use crate::atom::{Atom, known};
-use crate::bind::{Parent, ScopeId};
+use crate::bind::{Binding, Parent, ScopeId};
+use crate::fold::{DefineRoot, PathInPlace};
 use crate::hir::*;
+use crate::util::FxHashMap;
+
+fn find_root_of_written_path(hir: &File<'_>, path: ExprId, members: &[Atom]) -> Option<ExprId> {
+    let mut e = path;
+    for &member in members.iter().rev() {
+        match hir.member_key(e)? {
+            (object, MemberKey::Name(name)) if name == member => {
+                e = hir.skip_type_assertions(object);
+            }
+            _ => return None,
+        }
+    }
+    Some(e)
+}
 
 impl ReferencePass<'_, '_> {
     pub(super) fn resolve_classic_jsx(&mut self) {
@@ -36,6 +52,70 @@ impl ReferencePass<'_, '_> {
         }
     }
 
+    pub(super) fn find_name_in_place(
+        &self,
+        scope: ScopeId,
+        in_place: &PathInPlace<'_>,
+        pos: u32,
+    ) -> Option<Found> {
+        let found = self.lookup.find(scope, in_place.first_name, pos);
+        let is_seen = match found.binding {
+            Binding::Free => false,
+            Binding::CommonJs(CommonJsVariable::Require) => !in_place.is_in_bundle,
+            Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => {
+                !in_place.is_in_bundle || in_place.is_one_name || found.scope != ScopeId(0)
+            }
+        };
+        is_seen.then_some(found)
+    }
+
+    pub(super) fn resolve_defined_paths(&mut self) {
+        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let names_in_place = self.names_in_place;
+        if names_in_place.iter().all(|it| it.path.members.is_empty()) {
+            return;
+        }
+        let scopes_of_names: FxHashMap<ExprId, ScopeId> = self.idents.iter().copied().collect();
+        for index in 0..hir.exprs.len() {
+            let e = ExprId(index as u32);
+            let Some((_, MemberKey::Name(last))) = hir.member_key(e) else {
+                continue;
+            };
+            if hir.is_in_known_evaluation(hir[e].pos) {
+                continue;
+            }
+            let ends_alike = |it: &&PathInPlace<'_>| it.path.members.last() == Some(&last);
+            for in_place in names_in_place.iter().filter(ends_alike) {
+                let Some(root) = find_root_of_written_path(hir, e, in_place.path.members) else {
+                    continue;
+                };
+                let scope = match (hir[root].kind, in_place.path.root) {
+                    (ExprKind::ImportMeta, DefineRoot::ImportMeta) => bound.expr_scope.get(&root),
+                    (ExprKind::Ident(name), DefineRoot::Global(written)) if name == written => {
+                        scopes_of_names.get(&root)
+                    }
+                    _ => None,
+                };
+                let Some(&scope) = scope else {
+                    continue;
+                };
+                let is_free = match hir[root].kind {
+                    ExprKind::Ident(name) => self.lookup.find_binding(scope, name) == Binding::Free,
+                    _ => true,
+                };
+                if is_free
+                    && bound.parent_of_expr(e) != Parent::None
+                    && self
+                        .find_name_in_place(scope, in_place, hir[e].pos)
+                        .is_some()
+                {
+                    let (node, kind) = (NodeData::Expr(e), ImplicitReferenceKind::DefinedPath);
+                    self.add_implicit_reference(scope, in_place.first_name, node, kind);
+                }
+            }
+        }
+    }
+
     fn jsx_root(&self, pragma: Atom, option: Option<Atom>) -> Atom {
         if pragma.is_none() {
             return option.unwrap_or(known::React);
@@ -52,12 +132,20 @@ impl ReferencePass<'_, '_> {
         node: NodeData,
         kind: ImplicitReferenceKind,
     ) {
-        let binding = self.lookup.find_binding(scope, name);
+        let mut binding = self.lookup.find_binding(scope, name);
+        let mut member = Atom::NONE;
+        if binding == Binding::Free
+            && let Some((variable, key)) = self.lookup.hir.find_name_of_loaded_import(name)
+        {
+            binding = self.lookup.find_binding(scope, variable);
+            member = key;
+        }
         self.references.implicit_references.push(ImplicitReference {
             node,
             kind,
             name,
             binding,
+            member,
         });
     }
 }

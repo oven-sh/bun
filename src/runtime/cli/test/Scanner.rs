@@ -61,7 +61,7 @@ pub(crate) enum ScanError {
 bun_core::oom_from_alloc!(ScanError);
 
 impl DirEntryIterator for Scanner<'_> {
-    fn next<R: EntryKindResolver>(&mut self, rfs: &R, entry: &fs::Entry, _fd: Fd) {
+    fn next<R: EntryKindResolver>(&mut self, rfs: &R, entry: &fs::Entry) {
         Scanner::next(self, rfs, entry)
     }
 }
@@ -221,7 +221,7 @@ impl<'a> Scanner<'a> {
         &mut self,
         name: &[u8],
         handle: Option<Fd>,
-    ) -> crate::Result<&'static mut EntriesOption> {
+    ) -> crate::Result<&'static EntriesOption> {
         let fs_ptr = self.fs;
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }

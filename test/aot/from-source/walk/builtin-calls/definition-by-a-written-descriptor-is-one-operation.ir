@@ -1,0 +1,20 @@
+# `Object.defineProperty(o, "x", { value: v, enumerable: false })`: the flags become bits and the value an operand of one DefineOwnProperty, and the literal is never made. A descriptor that comes from elsewhere, one with a flag that nobody knows, and one with a name that is no part of a descriptor are read by the built-in
+# f1 = plain, f2 = accessor, f3 = handed, f4 = openFlag, f5 = otherName
+# -- source: definition-by-a-written-descriptor-is-one-operation.ts
+# declare function sink(...values: unknown[]): void;
+# function plain(o: object, v: number) { return Object.defineProperty(o, "x", { value: v, enumerable: false }); }
+# function accessor(o: object, g: () => number) { return Object.defineProperty(o, "y", { get: g, configurable: true }); }
+# function handed(o: object, d: PropertyDescriptor) { return Object.defineProperty(o, "x", d); }
+# function openFlag(o: object, v: number, e: boolean) { return Object.defineProperty(o, "x", { value: v, enumerable: e }); }
+# function otherName(o: object, v: number) { return Object.defineProperty(o, "x", { value: v, extra: 1 } as PropertyDescriptor); }
+# sink(plain, accessor, handed, openFlag, otherName);
+# -- end of source
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: NewObject
+# CHECK: = DefineOwnProperty {{*}}descriptorFlags=[HasValue, HasEnumerable]
+# RUN(ACCESSOR): walk f2 mechanisms=all-ParameterGuards
+# ACCESSOR-LABEL: code f2:Body
+# ACCESSOR: = DefineOwnProperty
+# RUN(OTHERS): walk f3 f4 f5 mechanisms=all-ParameterGuards
+# OTHERS-NOT: DefineOwnProperty

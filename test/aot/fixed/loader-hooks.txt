@@ -1,0 +1,19 @@
+#### require-hook-behind-two-requires.mjs
+import Module, { createRequire } from "node:module";
+// Whatever a call answers is no `require` that the build knows, so each name is looked up when the program runs.
+const made = () => createRequire("/nowhere/x.js");
+const original = Module.prototype.require;
+const asked = [];
+made()("node:util");
+made()("node:os");
+Module.prototype.require = function (name) {
+  asked.push(name);
+  return original.call(this, name);
+};
+made()("node:zlib");
+made()("node:path");
+Module.prototype.require = original;
+made()("node:events");
+console.log(asked.join());
+#### require-hook-behind-two-requires.mjs prints
+node:zlib,node:path

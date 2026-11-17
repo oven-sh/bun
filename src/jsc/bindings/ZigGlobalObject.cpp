@@ -91,11 +91,12 @@
 #include "FormatStackTraceForJS.h"
 #include "JSCommonJSModule.h"
 #include "JSCommonJSExtensions.h"
-#include "ConsoleObject.h"
+#include <JavaScriptCore/ConsoleClient.h>
 #include "DOMWrapperWorld-class.h"
 #include "ErrorStackTrace.h"
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
+#include <wtf/SetForScope.h>
 #include "JS2Native.h"
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
@@ -399,7 +400,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // the global `Loader` would let user code dereference a non-object
             // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
             JSC::Options::exposeInternalModuleLoader() = false;
-            JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::alwaysUseSharedArrayBuffer() = true;
             JSC::Options::useJITCage() = false;
 #if defined(BUN_DISABLE_SHADOW_REALM)
             JSC::Options::useShadowRealm() = false;
@@ -456,7 +457,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 JSC::Options::thresholdForFTLOptimizeAfterWarmUp() = 1000000;
             }
 
-            // The front end and the passes are Bun's own, so a build does not verify the program between them. Bun's tests do.
+            // The front end and the engine are Bun's own, so a build does not verify the program between them. Bun's tests do.
             JSC::Options::verifyAOTProgram() = false;
             Bun::saveBackEndOptionDefaults();
             if (envc > 0) [[likely]] {
@@ -500,7 +501,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
                 JSC::Options::disallowNonStaticCode() = true;
             if (Bun::isCodeGenerationStrictOnlyBesideCompiledProgram()) [[unlikely]]
-                JSC::Options::disallowNonStaticCodeOnlyBesideCompiledCode() = true;
+                JSC::Options::disallowNonStaticCodeOnlyWithCompiledCode() = true;
             if (JSC::isFeatureRemoved(JSC::RemovableFeature::Interpreter)) [[unlikely]] {
                 JSC::Options::functionOverrides() = nullptr;
                 JSC::Options::validateBytecode() = false;
@@ -666,7 +667,7 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 
 static constexpr int32_t contextOfMacros = std::numeric_limits<int32_t>::max();
 
-static const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId)
+const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId)
 {
     if (Bun__hasStandaloneModuleGraph())
         return Zig::StandaloneGlobalObject::globalObjectMethodTable();
@@ -681,7 +682,7 @@ static const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executio
     return Zig::GlobalObject::globalObjectMethodTable();
 }
 
-extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
@@ -761,7 +762,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         BUN_PANIC("Failed to allocate JavaScript global object. Did your computer run out of memory?");
     }
 
-    globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     setDefaultGlobalObject(vm, globalObject);
     JSC::gcProtect(globalObject);
@@ -856,7 +856,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 // Create a fresh Zig::GlobalObject on the *same* JSC::VM as `oldGlobal`, then unprotect
 // the old one so GC can reclaim its module graph. Used by `bun test --isolate` to give
 // each test file a clean global without paying for a new JSC::VM.
-extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal, void* console_client)
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal)
 {
     JSC::VM& vm = oldGlobal->vm();
     JSC::JSLockHolder locker(vm);
@@ -894,7 +894,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         BUN_PANIC("Failed to allocate global object for test isolation");
     }
 
-    globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     setDefaultGlobalObject(vm, globalObject);
     JSC::gcProtect(globalObject);
@@ -1010,6 +1009,28 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         }
         unfinished.append(WTF::move(key));
     });
+#if ENABLE(AOT)
+    // A compiled module that another imports by a statement is in no registry.
+    if (Bun::hasCompiledModules()) {
+        JSC::AOT::forEachTLASuspendedModule(globalObject, [&](int64_t order, const String& specifier) {
+            if (awaiting.containsIf([&](auto& entry) { return entry.second == specifier; }))
+                return;
+            size_t index = awaiting.size();
+            while (index && awaiting[index - 1].first > order)
+                --index;
+            awaiting.insert(index, std::pair { order, specifier });
+        });
+        const auto& plugins = globalObject->onLoadPlugins;
+        for (const auto& factory : plugins.compiledMockFactories.span().subspan(plugins.stashedFactoryCount)) {
+            // The loader fetches nothing for an import() of the mocked module itself.
+            if (!factory.isAwaitedByImporter || factory.patched->status() != JSC::JSPromise::Status::Pending)
+                continue;
+            String path = JSC::AOT::moduleFilePath(JSC::AOT::ModuleID(factory.module));
+            if (!fetching.contains(path))
+                fetching.append(path);
+        }
+    }
+#endif
     for (auto& key : unfinished)
         loader->removeEntry(key);
 
@@ -1038,7 +1059,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
     }
     if (count > maxNotes)
         notes.append("\nnote: and "_s, count - maxNotes, " more"_s);
-    return Bun::toStringRef(notes.toString());
+    return Bun::toStringRef(notes.toString()).leak();
 }
 
 // The loader whose registry require.cache / require() of `requirer` (a CommonJS module, or
@@ -1153,14 +1174,10 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-// Without an argument: whether the cache lists modules of the compiled program at all.
-// With a third: whether a require() has put the built-in module there. No entry is made.
 JSC_DEFINE_HOST_FUNCTION(functionRequireCacheCompiledEntry, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    if (!callFrame->argumentCount())
-        return JSValue::encode(jsBoolean(Bun::hasCompiledModules()));
-    JSValue keyValue = callFrame->uncheckedArgument(0);
+    JSValue keyValue = callFrame->argument(0);
     if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
         return JSValue::encode(jsUndefined());
     WTF::String key = asString(keyValue)->value(globalObject);
@@ -1177,7 +1194,7 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     if (!Bun::hasCompiledModules()) [[likely]]
         return JSValue::encode(jsBoolean(false));
     // A file can come back from the disk there: the cache shows it, as plain's does.
-    if (Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject)))
+    if (Bun::requireCacheListsCompiledFiles())
         return JSValue::encode(jsBoolean(false));
     if (!callFrame->argumentCount())
         return JSValue::encode(jsBoolean(true));
@@ -1187,7 +1204,8 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(Bun::isHiddenFromRequireCache(key)));
+    std::optional<bool> isHidden = Bun::isHiddenFromRequireCache(key);
+    return JSValue::encode(isHidden ? jsBoolean(*isHidden) : jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1202,7 +1220,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     };
     if (auto* loader = moduleLoaderOfRequirer(globalObject, callFrame->argument(0))) {
         Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
-            if (isModuleEvaluated(entry->record()))
+            if (isModuleEvaluated(entry->record()) && !Bun::isRecordOfCompiledFile(entry->record()))
                 add(String { specifier });
         });
     }
@@ -1380,7 +1398,6 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
         Zig::GlobalObject::createStructure(vm),
         ScriptExecutionContext::generateIdentifier(),
         methodTable);
-    shadow->setConsole(shadow);
     defaultGlobalObject(vm)->addDerivedRealm(shadow);
 
     return shadow;
@@ -1541,12 +1558,11 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
-    , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
-    , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
+    , globalEventScope(Bun::GlobalEventScope::create())
+    , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this)))
 {
-    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
-    globalEventScope->m_context = m_scriptExecutionContext;
+    globalEventScope->m_context = m_scriptExecutionContext.ptr();
 }
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId, const JSC::GlobalObjectMethodTable* methodTable)
@@ -1555,18 +1571,17 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
-    , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
-    , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
+    , globalEventScope(Bun::GlobalEventScope::create())
+    , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this, contextId)))
 {
-    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
-    globalEventScope->m_context = m_scriptExecutionContext;
+    globalEventScope->m_context = m_scriptExecutionContext.ptr();
 }
 
 GlobalObject::~GlobalObject()
 {
+    static_assert(OBJECT_OFFSETOF(GlobalObject, m_scriptExecutionContext) + sizeof(m_scriptExecutionContext) + alignof(GlobalObject) > sizeof(GlobalObject), "must be the last member");
     m_scriptExecutionContext->globalObjectDestroyed();
-    m_scriptExecutionContext->deref();
 }
 
 void GlobalObject::destroy(JSCell* cell)
@@ -1576,7 +1591,7 @@ void GlobalObject::destroy(JSCell* cell)
 
 WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 {
-    return m_scriptExecutionContext;
+    return m_scriptExecutionContext.ptr();
 }
 
 WebCore::ScriptExecutionContext* GlobalObject::currentScriptExecutionContext()
@@ -1585,7 +1600,7 @@ WebCore::ScriptExecutionContext* GlobalObject::currentScriptExecutionContext()
         if (auto* graph = Bun::currentModuleGraph(this))
             return &graph->context();
     }
-    return m_scriptExecutionContext;
+    return m_scriptExecutionContext.ptr();
 }
 
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
@@ -1616,11 +1631,6 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
             Bun__handleHandledPromise(globalObj, promise);
         break;
     }
-}
-
-void GlobalObject::setConsole(void* console)
-{
-    this->setConsoleClient(new Bun::ConsoleObject(console));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,
@@ -1655,7 +1665,7 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 // onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
 // with the property receiver as thisValue, which is not necessarily the global
-// object: `new Proxy(globalThis, {}).onmessage = fn` passes the Proxy.
+// object: the global of `vm.createContext(globalThis)` as a Reflect.set receiver.
 static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))
@@ -2465,7 +2475,7 @@ extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
 JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
 {
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
+    if (thisValue.isCell() && globalObject->vm().hasCompiledCode() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
         return JSC::JSValue::encode(JSC::AOT::hasESModuleMarker(thisValue.asCell()) ? jsBoolean(true) : jsUndefined());
     JSModuleNamespaceObject* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(thisValue);
     if (!moduleNamespaceObject || moduleNamespaceObject->m_hasESModuleMarker != WTF::TriState::True) {
@@ -2479,7 +2489,7 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
 {
     auto& vm = JSC::getVM(globalObject);
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell())) {
+    if (thisValue.isCell() && vm.hasCompiledCode() && JSC::AOT::isModuleNamespace(thisValue.asCell())) {
         JSC::AOT::setESModuleMarker(thisValue.asCell(), JSValue::decode(encodedValue).toBoolean(globalObject));
         return true;
     }
@@ -2587,7 +2597,7 @@ JSC_DEFINE_CUSTOM_GETTER(getDebugIDs, (JSGlobalObject * globalObject, EncodedJSV
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* debugIDs = constructEmptyObject(globalObject);
-    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapFileURL(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
+    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapDisplayPath(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
     if (JSObject* holder = JSValue::decode(thisValue).getObject())
         holder->putDirect(vm, property, debugIDs, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(debugIDs);
@@ -2599,8 +2609,12 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    setConsoleClient(WebCore::clientData(vm)->consoleClient());
+
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
+    if (Bun::isCodeGenerationDisallowedByFlags()) [[unlikely]]
+        JSC::AOT::disallowEvaluation(this);
 
     m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
@@ -3068,19 +3082,14 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(bunObject);
              // As for `process` below: require("bun") comes to the object without the name.
              if (init.vm.hasCompiledCode()) [[unlikely]]
-                 JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "Bun"_s).impl(), bunObject);
+                 JSC::AOT::hostDidCreateGlobalMember(init.owner, JSC::Identifier::fromString(init.vm, "Bun"_s).impl(), bunObject);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_subtleCryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto& global = *static_cast<Zig::GlobalObject*>(init.owner);
-
-             if (!global.m_subtleCrypto) {
-                 global.m_subtleCrypto = &WebCore::SubtleCrypto::create(global.scriptExecutionContext()).leakRef();
-             }
-
-             init.set(toJS<IDLInterface<SubtleCrypto>>(*init.owner, global, global.m_subtleCrypto).getObject());
+             init.set(toJSNewlyCreated(init.owner, &global, SubtleCrypto::create(global.scriptExecutionContext())).getObject());
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_performanceObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
@@ -3233,7 +3242,8 @@ void GlobalObject::finishCreation(VM& vm)
 
             init.set(process);
             // The global object adds its `process` at the first read of the name. A program may come to the object without it: import process from "node:process".
-            JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
+            if (init.vm.hasCompiledCode()) [[unlikely]]
+                JSC::AOT::hostDidCreateGlobalMember(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
         });
 
     m_streamsRuntime.initialize(this);
@@ -3279,7 +3289,8 @@ void GlobalObject::finishCreation(VM& vm)
 
 void GlobalObject::didCreateDOMConstructor(JSC::JSObject* constructor)
 {
-    JSC::AOT::hostDidCreateConstructor(this, constructor);
+    if (vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::hostDidCreateConstructor(this, constructor);
 }
 
 void GlobalObject::didCreateDOMStructure(JSC::Structure* structure)
@@ -3402,7 +3413,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
 
 #if ENABLE(AOT)
-    if (JSC::AOT::CompiledCallee::isCompiledCallee(target)) {
+    if (target->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(target)) {
         target->methodTable()->setPrototype(target, globalObject, base, true);
         RETURN_IF_EXCEPTION(scope, {});
         JSC::AOT::CompiledCallee::setPrototypeProperty(vm, target, prototype, PropertyAttribute::DontEnum | 0);
@@ -3410,12 +3421,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
         String ownName = JSC::AOT::CompiledCallee::name(target);
         JSC::AOT::CompiledCallee::setNameProperty(globalObject, target, jsString(vm, ownName), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
         RETURN_IF_EXCEPTION(scope, {});
-        if (name.isString()) {
-            String stored = asString(name)->value(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!stored.isEmpty() && stored != ownName)
-                JSC::AOT::CompiledCallee::showNameUntilLookedFor(vm, target, stored);
-        }
         return JSValue::encode(jsUndefined());
     }
 #endif
@@ -3455,10 +3460,7 @@ JSC::JSFunction* GlobalObject::utilInspectFunction()
 
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue inspectModule = BUN_REQUIRE_INTERNAL_MODULE(this, InternalUtilInspect, "Startup", "inspect"_s);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_ASSERT(inspectModule.isObject());
-    JSValue inspectValue = asObject(inspectModule)->get(this, Identifier::fromString(vm, "inspect"_s));
+    JSValue inspectValue = BUN_REQUIRE_INTERNAL_MODULE(this, InternalUtilInspect, "Startup", "inspect"_s);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* inspect = dynamicDowncast<JSFunction>(inspectValue);
     if (!inspect) [[unlikely]] {
@@ -3521,8 +3523,7 @@ JSC::JSObject* GlobalObject::processEnvObject()
 
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWorkerGlobalScope, m_subspaceForWorkerGlobalScope),
-        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
+    return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWorkerGlobalScope, m_subspaceForWorkerGlobalScope));
 }
 
 JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
@@ -3708,8 +3709,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     // A test's console in Jest and Vitest has none. Where there is one, React's development build reads into the props of what it renders.
-    // Compiled code doesn't look it up, so it has to be there.
-    if (isBunTest && !Bun::hasCompiledModules()) {
+    if (isBunTest) {
         consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -3989,7 +3989,7 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
-    task->performTask(*globalObject->scriptExecutionContext());
+    std::unique_ptr<WebCore::EventLoopTask> { task }->performTask(*globalObject->scriptExecutionContext());
 }
 
 extern "C" void Bun__deleteEventLoopTask(WebCore::EventLoopTask* task)
@@ -4160,7 +4160,17 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false) || (vm.hasCompiledCode() && globalObject->onLoadPlugins.hasVirtualModules() && JSC::AOT::isResolvingImportCall(vm));
+#else
     const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false);
+#endif
+
+    bool isImportStatement = !std::exchange(globalObject->onResolvePlugins.isResolvingImportCall, false);
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && JSC::AOT::isResolvingImportCall(vm))
+        isImportStatement = false;
+#endif
 
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
@@ -4224,7 +4234,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         ErrorableString res;
         BunString keyZ = Bun::toString(keyString);
         BunString referrerZ = Bun::toString(referrerString);
-        BunString queryZ = BunStringEmpty;
+        Bun::OwnedString queryZ;
+        SetForScope importStatement(globalObject->onResolvePlugins.isResolvingImportStatement, isImportStatement);
         Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
         RETURN_IF_EXCEPTION(scope, {});
         if (!res.success) {
@@ -4238,7 +4249,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
             resolved = makeString(resolved, query);
     }
     if (hasModuleMocks) [[unlikely]]
-        resolved = Bun::keyOfImportByPackage(globalObject, resolved, referrerString, true);
+        resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
     if (moduleMocksRun) [[unlikely]]
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
@@ -4249,8 +4260,18 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     // Only module mocks need these, and only the end of a test file is sure to clear them.
     if (isImportCall && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         globalObject->onLoadPlugins.keyOfImportCall = resolved;
-        if (globalObject->onLoadPlugins.modulesAskedFor.add(resolved).isNewEntry)
+        if (globalObject->onLoadPlugins.loadRoots.add(resolved).isNewEntry)
             globalObject->onLoadPlugins.hasNewLoad = true;
+    }
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        Bun::willResolveImport(globalObject, resolved, referrer);
+        RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+        if (JSC::AOT::isResolvingImportCallWithoutAttributes(vm)) {
+            Bun::throwIfOnlyTyped(globalObject, resolved, keyString, referrerString, false);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+#endif
     }
     return resolvedKey;
 }
@@ -4267,10 +4288,15 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
                 auto span = view->span8();
                 size_t canonicalLength = 0;
                 if (const Latin1Character* canonical = Bun__standaloneModuleKey(span.data(), span.size(), &canonicalLength)) {
+                    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
                     // The graph's spelling is the printed specifier's on POSIX; on Windows it fixes the separator form.
-                    if (canonicalLength == span.size() && !memcmp(canonical, span.data(), canonicalLength))
-                        return Identifier::fromString(globalObject->vm(), string->tryGetValue());
-                    return Identifier::fromString(globalObject->vm(), String({ canonical, canonicalLength }));
+                    bool isCanonical = canonicalLength == span.size() && !memcmp(canonical, span.data(), canonicalLength);
+                    Identifier resolved = isCanonical ? Identifier::fromString(globalObject->vm(), string->tryGetValue()) : Identifier::fromString(globalObject->vm(), String({ canonical, canonicalLength }));
+                    if (Bun::hasCompiledModules()) [[unlikely]] {
+                        Bun::willResolveImport(zigGlobalObject, resolved.string(), referrer);
+                        RETURN_IF_EXCEPTION(scope, {});
+                    }
+                    return resolved;
                 }
             }
         }
@@ -4336,18 +4362,26 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto referrer = JSC::Identifier::fromString(vm, sourceOriginStringHolder);
     globalObject->onLoadPlugins.isResolvingImportCall = globalObject->onLoadPlugins.hasVirtualModules();
+    globalObject->onResolvePlugins.isResolvingImportCall = true;
     JSC::Identifier key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, moduleName), referrer, nullptr, /* useImportMap */ true);
+    globalObject->onResolvePlugins.isResolvingImportCall = false;
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
-        Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadByName::Import);
+        Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadKind::Import);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-        JSC::AOT::AskerOfModule asker(globalObject, sourceOriginStringHolder);
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForUncompiledImportCall(sourceOriginStringHolder));
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+#if ENABLE(AOT)
+        if (imported && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
+            Bun::didStartDynamicImport(globalObject, imported, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+#endif
         if (imported)
             return imported;
     }
@@ -4403,13 +4437,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
-        JSC::AOT::AskerOfModule asker(globalObject, referrer);
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForImporter(referrer));
         JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
-        if (scope.exception()) [[unlikely]] {
-            JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
-            rejected->markAsHandled();
-            return rejected->rejectWithCaughtException(vm, scope);
-        }
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)
             return compiled;
     }
@@ -4511,15 +4541,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     ASSERT(result);
     if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
         // JSC doesn't add a registry entry for the module passed to import() until this settles.
-        if (!entry && plugins.modulesAskedFor.contains(moduleKey) && !plugins.moduleMocksBeingLoaded.contains(moduleKey))
-            plugins.fetchesOfModulesAskedFor.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
+        if (!entry && plugins.loadRoots.contains(moduleKey) && !plugins.moduleMocksBeingLoaded.contains(moduleKey))
+            plugins.loadRootFetches.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
         return unlessFetchedMeanwhile(promise);
     }
     return unlessFetchedMeanwhile(rejectedInternalPromise(globalObject, result));
 }
 
 extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject*, VM&, JSModuleLoader*, const Identifier&, const SourceCode&, bun_ModuleInfoDeserialized*);
-extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized*);
 
 // Synchronous fetch through Bun's loader (embedded modules are bytecode-backed and builtins are in-process, so neither
 // needs the transpiler thread).
@@ -4550,7 +4579,6 @@ static void releaseModuleInfo(Zig::GlobalObject* globalObject, JSSourceCode* jsS
     auto* provider = transpiledModuleProvider(jsSourceCode);
     // Same ownership rule as Bun__analyzeTranspiledModule: a provider shared across globals keeps its module_info.
     if (provider && !Bun::IsolatedModuleCache::canUse(globalObject->vm(), globalObject->bunVM())) {
-        zig__ModuleInfoDeserialized__deinit(provider->m_moduleInfo);
         provider->m_moduleInfo = nullptr;
     }
 }
@@ -4592,7 +4620,7 @@ static JSModuleRecord* createEmbeddedModuleRecord(Zig::GlobalObject* globalObjec
 {
     VM& vm = globalObject->vm();
     if (auto* provider = transpiledModuleProvider(source))
-        return zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, loader, key, source->sourceCode(), provider->m_moduleInfo);
+        return zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, loader, key, source->sourceCode(), provider->m_moduleInfo.get());
     uint32_t moduleIndex = PrelinkedModuleGraph::noModule;
     PrelinkedModuleGraph* graph = prelinkedGraphFor(globalObject, key.string(), moduleIndex);
     if (!graph || source->sourceCode().provider()->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule)
@@ -4968,6 +4996,8 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 {
     auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
     importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
+    // A module that the loader holds has a record. Only the engine asks without one, for a module of the executable.
+    importMeta->isOfCompiledModule = !record && Bun::hasCompiledModules();
     return importMeta;
 }
 
@@ -5220,7 +5250,7 @@ void GlobalObject::nodeWorkerEntryDidSettle()
 void GlobalObject::prepareForDestruction()
 {
     auto& vm = this->vm();
-    auto* context = m_scriptExecutionContext;
+    auto* context = m_scriptExecutionContext.ptr();
 
     // Whatever was queued before exit began does not resurrect during teardown: process.exit()
     // runs 'exit' handlers and nothing after them (Node), and a worker's stop phase dispatches

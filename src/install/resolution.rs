@@ -28,24 +28,24 @@ impl Resolution {
         dep_version_buf: &[u8],
         resolution_buf: &[u8],
     ) -> bool {
-        if self.tag == Tag::Npm && dep_version.tag == dependency::VersionTag::Npm {
-            return dep_version.npm().version.satisfies(
-                self.npm().version,
-                dep_version_buf,
-                resolution_buf,
-            );
+        if self.tag == Tag::Npm
+            && let dependency::Value::Npm(npm) = &dep_version.value
+        {
+            return npm
+                .version
+                .satisfies(self.npm().version, dep_version_buf, resolution_buf);
         }
 
-        if self.tag == Tag::Git && dep_version.tag == dependency::VersionTag::Git {
-            return self
-                .git()
-                .eql(dep_version.git(), resolution_buf, dep_version_buf);
+        if self.tag == Tag::Git
+            && let dependency::Value::Git(git) = &dep_version.value
+        {
+            return self.git().eql(git, resolution_buf, dep_version_buf);
         }
 
-        if self.tag == Tag::Github && dep_version.tag == dependency::VersionTag::Github {
-            return self
-                .github()
-                .eql(dep_version.github(), resolution_buf, dep_version_buf);
+        if self.tag == Tag::Github
+            && let dependency::Value::Github(github) = &dep_version.value
+        {
+            return self.github().eql(github, resolution_buf, dep_version_buf);
         }
 
         false

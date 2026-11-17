@@ -76,19 +76,14 @@ new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIM
 // Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
 new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
-// Canary builds only: an executable built with `--aot` starts with this entry point, given as its path below the root of the
-// build, in place of the first.
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_START_AT: string, "BUN_AOT_START_AT", {});
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", {});
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
-// A trial: `bun test --aot` compiles what the test files import and runs the test files themselves from disk.
-new!(pub BUN_AOT_TEST_FILES_FROM_DISK: boolean, "BUN_AOT_TEST_FILES_FROM_DISK", { default: false });
-new!(pub BUN_AOT_TESTS_NAME_WHAT_THEY_USE: boolean, "BUN_AOT_TESTS_NAME_WHAT_THEY_USE", { default: false });
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_ORDER_OUT: string, "BUN_AOT_ORDER_OUT", {});
+// Bun's own tests, behind BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: `bun build --compile --aot` writes the program alone where it would write an
+// executable.
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_WRITES_PROGRAM_ALONE: boolean, "BUN_AOT_WRITES_PROGRAM_ALONE", { default: false });
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });
@@ -146,7 +141,7 @@ new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
 // whole body first. Smaller tarballs stay on the buffered path where
 // the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
-// Compressed bytes to buffer in `TarballStream.pending` before the HTTP
+// Compressed bytes to buffer in `TarballStream.incoming` before the HTTP
 // thread schedules a drain; collapses the per-chunk thread-pool futex wake
 // into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
@@ -332,7 +327,7 @@ pub mod feature_flag {
     // CLI equivalent.
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT, "BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_IO_POOL, "BUN_FEATURE_FLAG_FORCE_IO_POOL", {});
-    // Linux: gives `bun --hot` the directory write events that `WATCH_DIRECTORY_WRITES` turns off.
+    // Linux: every watcher gets the write events of a directory, also `bun --hot`.
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES, "BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});

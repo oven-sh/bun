@@ -31,6 +31,7 @@ export function inCatchClause() {
 
 export function inFinalizer() {
   try {
+    use(0);
   } finally {
     return call();
   }

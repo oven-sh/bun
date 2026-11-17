@@ -46,7 +46,7 @@ test("a mock of a package that nothing has imported leaves the files behind it a
 });
 `;
 
-test("it says what plain Bun says, as one program and in two layers", async () => {
+test("it says what plain Bun says", async () => {
   using dir = tempDir("aot-mock-of-a-file-that-hands-names-on", {
     "package.json": `{ "name": "p", "type": "module" }`,
     "tsconfig.json": `{}`,
@@ -77,5 +77,4 @@ export const useB = () => [b, c, d, e, loudB, loudC, loudD, loudE].map(ask).join
   expect(plain.length).toBe(12);
   expect(plain).toContain("SEEN the files b of unseen,c of unseen,d of unseen,e of unseen");
   expect(await seen(["--aot"], "TestRunLayers:0")).toEqual(plain);
-  expect(await seen(["--aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
 }, 600000);

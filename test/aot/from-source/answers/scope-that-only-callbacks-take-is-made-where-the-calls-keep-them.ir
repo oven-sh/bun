@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const kept: (() => number)[] = [];
+# function lay(start: number): void { let count = start; kept.push(() => ++count); kept.push(() => count * 10); }
+# lay(4);
+# print(kept[0](), kept[1](), kept[0](), kept[1]());
+# -- end of source
+# Both closures over the scope of `lay` are written as arguments of calls, so the scope is not promoted though `lay` runs once. Whether a call keeps what it is handed is not asked: these keep it, the scope is made,
+# and both closures see one `count` behind the return of their maker.
+# RUN(PROMOTED): compile EnvironmentsPromotedToVariables mechanisms=all
+# PROMOTED: statistic EnvironmentsPromotedToVariables 0
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5 50 6 60
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 5 50 6 60

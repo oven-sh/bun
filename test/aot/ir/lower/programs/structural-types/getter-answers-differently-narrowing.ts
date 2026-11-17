@@ -133,98 +133,80 @@ attempt("honest again", () => [double({ v: 2 }), fixed({ v: 2 }), lengthOf({ nam
 
 // GENERATED: area alternating Flicker name
 // CHECK-LABEL: function {{*}}name="area"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|[[L_2]] site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_4]]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|[[L_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="kind"
-// CHECK-NEXT: SwitchString v1 strings=["circle", "square"] -> case b2(| 0), case b4(| 0), otherwise b6()
-// CHECK-NEXT: b2(v2):
+// CHECK-NEXT: SwitchString v1 strings=["circle", "square"] -> case b1(| 0), case b2(| 0), otherwise b3()
+// CHECK-NEXT: b1(v2):
 // CHECK-NEXT: v3 = NarrowByField v0, v2 key="kind"
-// CHECK-NEXT: Jump -> next b3()
+// CHECK-NEXT: v4 = PropGet v3 key="radius"
+// CHECK-NEXT: v5 = Integer integer=3
+// CHECK-NEXT: v6 = Mul v4, v5
+// CHECK-NEXT: v7 = Convert v6 declared={type=number}
+// CHECK-NEXT: Return v7
+// CHECK-NEXT: b2(v8):
+// CHECK-NEXT: v9 = NarrowByField v0, v8 key="kind"
+// CHECK-NEXT: v10 = PropGet v9 key="side"
+// CHECK-NEXT: v11 = PropGet v9 key="side"
+// CHECK-NEXT: v12 = Mul v10, v11
+// CHECK-NEXT: v13 = Convert v12 declared={type=number}
+// CHECK-NEXT: Return v13
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_1]]} illTypedCause=Assertion
-// CHECK-NEXT: v5 = PropGet v4 key="radius"
-// CHECK-NEXT: v6 = Integer integer=3
-// CHECK-NEXT: v7 = Mul v5, v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_4]]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: b4(v9):
-// CHECK-NEXT: v10 = NarrowByField v0, v9 key="kind"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|[[L_2]]} illTypedCause=Assertion
-// CHECK-NEXT: v12 = PropGet v11 key="side"
-// CHECK-NEXT: v13 = PropGet v11 key="side"
-// CHECK-NEXT: v14 = Mul v12, v13
-// CHECK-NEXT: v15 = Convert v14 declared={type=number site=[[w_4]]}
+// CHECK-NEXT: v14 = Undefined
+// CHECK-NEXT: v15 = Convert v14 declared={type=number}
 // CHECK-NEXT: Return v15
-// CHECK-NEXT: b6():
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: v17 = Convert v16 declared={type=number site=[[w_4]]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v17
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="alternating"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_5]] site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewObject layout=[[L_7]]
+// CHECK-NEXT: v0 = NewObject layout=[[L_4]]
 // CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_8]]}
-// CHECK-NEXT: PutEnvironmentField v0, v2 layout=[[L_7]]
-// CHECK-NEXT: v4 = NewObject layout=[[L_5]]
-// CHECK-NEXT: v5 = NewClosure v0 function=[[f_9]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=number}
+// CHECK-NEXT: PutEnvironmentField v0, v2 layout=[[L_4]]
+// CHECK-NEXT: v4 = NewObject layout=[[L_3]]
+// CHECK-NEXT: v5 = NewClosure v0 function=[[f_5]]
 // CHECK-NEXT: DefineGetter v4, v5 key="v"
 // CHECK-NEXT: v7 = FinishObject v4
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_5]] site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Flicker"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_10]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_10]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_10]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_11]]
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_6]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_6]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_6]]}
+// CHECK-NEXT: v4 = CallDirect v3 function=[[f_7]]
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="name"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_10]] site=[[w_12]]} results=[{type=undefined|null|string site=[[w_13]] flags=[OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_10]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_14]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_10]] field=1
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_6]]} results=[{type=undefined|null|string flags=[OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: [[L_6]]):
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
+// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_6]] field=1
 // CHECK-NEXT: v3 = ToNumeric v2
 // CHECK-NEXT: v4 = Increment v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_15]]}
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_14]]
-// CHECK-NEXT: PrivateSet v0, v6, v5 layout=[[L_10]] field=1
+// CHECK-NEXT: v5 = Convert v4 declared={type=number}
+// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_8]]
+// CHECK-NEXT: PrivateSet v0, v6, v5 layout=[[L_6]] field=1
 // CHECK-NEXT: v8 = Integer integer=2
 // CHECK-NEXT: v9 = Mod v3, v8
 // CHECK-NEXT: v10 = Integer
 // CHECK-NEXT: v11 = StrictEq v9, v10
-// CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
+// CHECK-NEXT: Branch v11 -> taken b1(), notTaken b2()
+// CHECK-NEXT: b1():
 // CHECK-NEXT: v12 = String string="name"
-// CHECK-NEXT: Jump -> next b4(v12)
-// CHECK-NEXT: b3():
+// CHECK-NEXT: Jump -> next b3(v12)
+// CHECK-NEXT: b2():
 // CHECK-NEXT: v13 = Null
-// CHECK-NEXT: Jump -> next b4(v13)
-// CHECK-NEXT: b4(v14):
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|string site=[[w_13]] flags=[OmitsUndefined]}
+// CHECK-NEXT: Jump -> next b3(v13)
+// CHECK-NEXT: b3(v14):
+// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsUndefined]}
 // CHECK-NEXT: Return v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="name"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_16]] flags=[OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }

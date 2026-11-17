@@ -140,10 +140,15 @@ test("crypto.Verify with ieee-p1363 rejects signatures that are not in P1363 for
 
   // When the caller requests ieee-p1363, a signature that is not 2*n bytes of
   // raw r||s must fail verification rather than being reinterpreted as DER.
+  // Like Node, Verify throws for one and crypto.verify() returns false.
   {
+    const key = { key: publicJwk, format: "jwk", dsaEncoding: "ieee-p1363" } as const;
     const verifier = crypto.createVerify("sha256");
     verifier.update(testData);
-    expect(verifier.verify({ key: publicJwk, format: "jwk", dsaEncoding: "ieee-p1363" }, derSignature)).toBe(false);
+    expect(() => verifier.verify(key, derSignature)).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED", message: "Malformed signature" }),
+    );
+    expect(crypto.verify("sha256", Buffer.from(testData), key, derSignature)).toBe(false);
   }
 
   // The legitimate case still works: a real 64-byte P1363 signature verifies.

@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
 use crate::jsc::{
@@ -10,7 +9,7 @@ use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSArray, JsCell};
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
+use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
@@ -64,17 +63,15 @@ impl JSMySQLQuery {
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
         query_ctor_args::validate(global_this, &query, values, simple)?;
 
-        let this_ptr = bun_core::heap::into_raw(Box::new(Self {
+        let this = RefPtr::new(Self {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
             global_object: BackRef::new(global_this),
             query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
             undescribed: JsCell::new(Undescribed::default()),
-        }));
-        let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
-
-        let this_value = js::to_js(this_ptr, global_this);
-        this_value.ensure_still_alive();
+        });
+        let this = js::wrap(this, global_this);
+        let this_value = this.to_js();
         this.this_value.with_mut(|v| v.set_weak(this_value));
 
         js::binding_set_cached(this_value, global_this, values);
@@ -221,8 +218,8 @@ impl JSMySQLQuery {
         let Some(target_value) = js::target_get_cached(this_value) else {
             return;
         };
-        let vm = VirtualMachine::get_mut();
-        let Some(function) = vm.sql_state().mysql_context.on_query_resolve_fn.get() else {
+        let vm = VirtualMachine::get();
+        let Some(function) = vm.sql_state().mysql_context.get().on_query_resolve_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
@@ -231,7 +228,7 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
 
-        vm.event_loop_mut().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
@@ -310,12 +307,12 @@ impl JSMySQLQuery {
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let vm = VirtualMachine::get_mut();
-        let Some(function) = vm.sql_state().mysql_context.on_query_reject_fn.get() else {
+        let vm = VirtualMachine::get();
+        let Some(function) = vm.sql_state().mysql_context.get().on_query_reject_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        vm.event_loop_mut().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),

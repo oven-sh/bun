@@ -36,12 +36,16 @@ test("a name that the nearest tsconfig.json leads elsewhere is not found by the 
     "packages/one/tsconfig.json": config({ "core/*": ["../../not-built/*"] }),
     "packages/one/one.test.ts": `import { expect, test } from "bun:test";\nimport { value } from "core/value";\ntest("one", () => {\n  expect(value).toBe(1);\n});\n`,
   });
+  // The test file fails when it loads, with the words of `bun test`.
+  const notFound = "error: Cannot find module 'core/value' from";
   const plain = await run(String(dir), "test");
+  expect(plain.said).toContain(notFound);
   expect(passed(plain.said)).toEqual(["root"]);
   const alone = await run(String(dir), "test", "--aot", "./packages/one/one.test.ts");
-  expect(errors(alone.said)).toEqual(["packages/one/one.test.ts:2 TS100150"]);
+  expect(alone.said).toContain(notFound);
+  expect(passed(alone.said)).toEqual([]);
   const together = await run(String(dir), "test", "--aot");
-  expect(errors(together.said)).toEqual(["packages/one/one.test.ts:2 TS100150"]);
+  expect(together.said).toContain(notFound);
   expect(passed(together.said)).toEqual(["root"]);
 }, 60_000);
 

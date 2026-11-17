@@ -1,5 +1,4 @@
 // Typed code reads and stores elements of typed arrays outside of them: at the length and past it, at -1, at fractions, NaN, 2 ** 32 and Infinity; on an empty view, a detached buffer, a view that tracks the length of a resizable buffer, a view of fixed length that a resizable buffer no longer covers, a growable shared buffer, a subclass, a view whose prototype has properties named like those keys. A read outside gives undefined whatever the prototypes hold, a store outside converts its value and does nothing else. In loops a callee shrinks, grows or transfers the buffer, or looks at the buffer of a small view, which moves its elements. Every kind of element takes part: what Uint8ClampedArray rounds, NaN in Float64Array with any bits, what BigInt64Array wraps and refuses.
-// STATISTIC: ElementPresenceTestsPlaced >= 10
 function show(value: unknown): string {
   if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
   if (typeof value === "bigint") return value + "n";

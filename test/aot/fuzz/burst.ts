@@ -20,24 +20,21 @@ const malformedSource = join(import.meta.dir, "malformed-source.ts");
 /**
  * README.md, "Options that find different bugs", explains the options. `share` is the lane's share of the cores. The
  * lanes that have found the most come first. `script` runs instead of run.ts. It must accept --minutes, --jobs, --out
- * and --bun like run.ts and write findings.tsv, as-tests/ and status.txt to its --out.
+ * and --bun like run.ts and write findings.tsv, as-tests/ and status.txt to its --out. A line of status.txt says
+ * `programs <n>`.
  */
 const lanes: { name: string; options: string[]; share: number; script?: string }[] = [
   { name: "default", options: [], share: 3 },
   { name: "scenes-few-to-a-build", script: scenes, options: ["--kind", "few"], share: 3 },
   { name: "rewritten", options: ["--rewritten"], share: 2 },
+  { name: "never-taken", options: ["--never-taken"], share: 2 },
+  { name: "another-call", options: ["--another-call"], share: 2 },
   { name: "scenes-many-to-a-build", script: scenes, options: ["--kind", "many"], share: 2 },
-  { name: "heats", options: ["--modes", "default,hot,cold"], share: 2 },
-  { name: "validated", options: ["--validate"], share: 2 },
   {
     name: "gc-stress",
     options: ["--gc-stress", "1,2,3,5,7,11", "--compiled-run-seconds", "60"],
     share: 2,
   },
-  { name: "very-large", options: ["--modes", "large,cold-large"], share: 1 },
-  { name: "checked", options: ["--modes", "check-moved-loads,check-claims"], share: 1 },
-  { name: "failed-predictions", options: ["--fail-predictions", "1,2,7"], share: 1 },
-  { name: "lowered-limits", options: ["--lowered-limits"], share: 1 },
   { name: "malformed-source", script: malformedSource, options: [], share: 1 },
   { name: "scenes-in-packages", script: scenes, options: ["--kind", "packages"], share: 1 },
   { name: "scenes-beside-an-external", script: scenes, options: ["--kind", "external"], share: 1 },
@@ -59,6 +56,11 @@ if (!out) {
   );
   process.exit(1);
 }
+const unknown = (only ?? []).filter(name => !lanes.some(lane => lane.name === name));
+if (unknown.length) {
+  console.error(`no lane is called ${unknown.join(" or ")}: the lanes are ${lanes.map(lane => lane.name).join(", ")}`);
+  process.exit(1);
+}
 
 const wanted = lanes.filter(lane => !only || only.includes(lane.name)).slice(0, Math.max(1, Math.floor(cores / 4)));
 const shares = wanted.reduce((sum, lane) => sum + lane.share, 0);
@@ -78,19 +80,18 @@ await Promise.all(runs.map(run => run.exited));
 clearInterval(stops);
 
 const found: string[] = [];
-for (const { name } of wanted) {
+for (const [at, { name }] of wanted.entries()) {
   const list = join(out, name, "findings.tsv");
   const lines = existsSync(list) ? readFileSync(list, "utf8").split("\n").filter(Boolean) : [];
   found.push(...lines.map(line => `${name}\t${line}`));
   if (existsSync(join(out, name, "as-tests")))
     cpSync(join(out, name, "as-tests"), join(out, "as-tests"), { recursive: true });
-  const status = existsSync(join(out, name, "status.txt"))
-    ? readFileSync(join(out, name, "status.txt"), "utf8")
-        .trimEnd()
-        .split("\n")
-        .at(-1)!
-    : "";
-  console.log(`${name}: ${status.match(/programs \d+/)?.[0] ?? "no program"}, ${lines.length} finds`);
+  const status = existsSync(join(out, name, "status.txt")) ? readFileSync(join(out, name, "status.txt"), "utf8") : "";
+  // The first count of the last line that has one: malformed-source.ts lists what it found behind that line.
+  const programs = [...status.matchAll(/^.*?(programs \d+)/gm)].at(-1)?.[1];
+  const { exitCode, signalCode } = runs[at];
+  const failure = exitCode === 0 ? "" : `ended with ${signalCode ?? `exit code ${exitCode}`}, `;
+  console.log(`${name}: ${failure}${programs ?? "no program"}, ${lines.length} finds`);
 }
 writeFileSync(join(out, "NEW.tsv"), found.map(line => line + "\n").join(""));
 console.log(`${found.length} finds: ${join(out, "NEW.tsv")}`);

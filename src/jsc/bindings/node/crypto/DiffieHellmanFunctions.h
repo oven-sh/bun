@@ -81,18 +81,21 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
     auto& dh = thisObject->getImpl();
 
     // Check the public key against our DH parameters
-    auto checkResult = dh.checkPublicKey(publicKey);
-    if (checkResult != ncrypto::DHPointer::CheckPublicKeyResult::NONE) {
-        switch (checkResult) {
-        // TOO_SMALL/TOO_LARGE only exist on OpenSSL builds; BoringSSL reports them as INVALID.
-        case ncrypto::DHPointer::CheckPublicKeyResult::INVALID:
-            throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, "Supplied key is invalid"_s);
-            return {};
-        case ncrypto::DHPointer::CheckPublicKeyResult::CHECK_FAILED:
-        default:
-            throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, "Unspecified validation error"_s);
-            return {};
-        }
+    switch (dh.checkPublicKey(publicKey)) {
+    case ncrypto::DHPointer::CheckPublicKeyResult::CHECK_FAILED:
+        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, "Unspecified validation error"_s);
+        return {};
+    case ncrypto::DHPointer::CheckPublicKeyResult::TOO_SMALL:
+        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYLEN, "Supplied key is too small"_s);
+        return {};
+    case ncrypto::DHPointer::CheckPublicKeyResult::TOO_LARGE:
+        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYLEN, "Supplied key is too large"_s);
+        return {};
+    case ncrypto::DHPointer::CheckPublicKeyResult::INVALID:
+        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, "Supplied key is invalid"_s);
+        return {};
+    case ncrypto::DHPointer::CheckPublicKeyResult::NONE:
+        break;
     }
 
     // Compute the shared secret

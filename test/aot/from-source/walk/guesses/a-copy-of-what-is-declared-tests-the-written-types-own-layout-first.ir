@@ -1,0 +1,23 @@
+# `{ ...state, c }`, state declared State. Nothing is proven of it: it was let go to the global object and unseen code has run. What is expected of it is the family of State: the layout that the
+# literal checked against State makes, and the wider layout that the copy itself makes, which passes for State. The walk over own keys guesses one layout in a loop: the written type's own.
+# f2 = main
+# -- source: main.ts
+# type State = { a: number; b: number };
+# function widen(state: State, c: number) { return { ...state, c }; }
+# const state: State = { a: 1, b: 2 };
+# (globalThis as any).state = state;
+# function main() {
+#   (0, eval)("1");
+#   let total = 0;
+#   for (let i = 0; i < 100; i++) { const wider = widen(state, i & 7); total += wider.a + wider.c; }
+#   print(total);
+# }
+# main();
+# -- end of source
+# RUN(WALK): walk f2:Body mechanisms=all
+# WALK: ShapeTest {{*}} layouts=[L1]
+# WALK: HasKeyOrder {{*}} layout=L1 fields=[0, 1]
+# WALK-NOT: HasKeyOrder {{*}} layout=L0
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 442
+# ANSWERS-NEXT: exited with 0

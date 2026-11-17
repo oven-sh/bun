@@ -10,6 +10,10 @@
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#if ENABLE(AOT)
+#include "BunCompiledModules.h"
+#include <JavaScriptCore/JSPromiseReaction.h>
+#endif
 
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
 extern "C" bool ViUtils__isLoadingPreload(Zig::GlobalObject*);
@@ -317,6 +321,37 @@ JSC_DEFINE_HOST_FUNCTION(jsViDynamicImportDidSettle, (JSGlobalObject * globalObj
     return JSValue::encode(jsUndefined());
 }
 
+#if ENABLE(AOT)
+// Plain Bun waits for a promise of the loader, which settles ahead of the one that the program has. Compiled code has the promise that is waited for: the reaction
+// runs ahead of the program's and behind those of earlier calls, and whether anybody handles a rejection is left as it is.
+static void reactAheadOfProgram(VM& vm, JSGlobalObject* globalObject, JSPromise* import, JSPromise* promise)
+{
+    auto isOfEarlierCall = [](JSPromiseReaction* reaction) {
+        auto* full = dynamicDowncast<JSFullPromiseReaction>(reaction);
+        auto* function = full ? dynamicDowncast<JSFunction>(full->onFulfilled()) : nullptr;
+        return function && function->isHostFunction() && function->nativeFunction() == toTagged(jsViDynamicImportDidSettle);
+    };
+    bool wasHandled = import->isHandled();
+    auto* didSettle = JSFunction::create(vm, globalObject, 2, String(), jsViDynamicImportDidSettle, ImplementationVisibility::Private);
+    import->performPromiseThenWithContext(vm, globalObject, didSettle, didSettle, jsUndefined(), promise);
+    if (!wasHandled)
+        import->setFlags(import->flags() & ~JSPromise::isHandledFlag);
+
+    // The latest reaction stands first in the list, and runs last.
+    auto* reaction = uncheckedDowncast<JSPromiseReaction>(import->payloadCell());
+    JSPromiseReaction* firstOfProgram = nullptr;
+    for (JSPromiseReaction* earlier = reaction->next(); earlier; earlier = earlier->next()) {
+        if (!isOfEarlierCall(earlier))
+            firstOfProgram = earlier;
+    }
+    if (!firstOfProgram)
+        return;
+    import->setPackedCell(vm, import->flags(), reaction->next());
+    reaction->setNext(vm, firstOfProgram->next());
+    firstOfProgram->setNext(vm, reaction);
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(jsViFulfillUnlessImporting, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -325,6 +360,12 @@ JSC_DEFINE_HOST_FUNCTION(jsViFulfillUnlessImporting, (JSGlobalObject * globalObj
     auto* promise = uncheckedDowncast<JSPromise>(callFrame->argument(0));
     JSPromise* pending = pendingDynamicImport(defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+    if (hasCompiledModules() && pending) [[unlikely]] {
+        reactAheadOfProgram(vm, globalObject, pending, promise);
+        return JSValue::encode(jsUndefined());
+    }
+#endif
     if (pending) {
         auto* didSettle = JSFunction::create(vm, globalObject, 2, String(), jsViDynamicImportDidSettle, ImplementationVisibility::Private);
         pending->performPromiseThenWithContext(vm, globalObject, didSettle, didSettle, jsUndefined(), promise);
@@ -339,6 +380,17 @@ JSC_DEFINE_HOST_FUNCTION(jsViDynamicImportSettled, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if ENABLE(AOT)
+    // Plain Bun reads a text on another thread, which takes longer than the timer below. A compiled module's comes one turn later, ahead of the timer where another timer is due first.
+    if (hasCompiledModules()) [[unlikely]] {
+        JSPromise* pending = pendingDynamicImport(defaultGlobalObject(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (pending) {
+            reactAheadOfProgram(vm, globalObject, pending, promise);
+            return JSValue::encode(promise);
+        }
+    }
+#endif
     fulfillOnceImportsSettle(globalObject, promise);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);

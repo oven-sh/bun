@@ -1,22 +1,18 @@
 use super::new_writer::NewWriter;
 use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::int32;
-use crate::shared::Data;
 
 #[derive(Default)]
-pub struct SASLResponse {
-    pub data: Data,
+pub struct SASLResponse<'a> {
+    pub data: &'a [u8],
 }
 
-// deinit: body only calls `this.data.deinit()` — Data's own Drop handles it.
-// (PORTING.md: delete deinit bodies that only free/deinit owned fields.)
-
-impl SASLResponse {
+impl SASLResponse<'_> {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), AnyPostgresError> {
-        let data = self.data.slice();
+        let data = self.data;
         let count: usize = core::mem::size_of::<u32>() + data.len();
         let mut header = [0u8; 5];
         header[0] = b'p';

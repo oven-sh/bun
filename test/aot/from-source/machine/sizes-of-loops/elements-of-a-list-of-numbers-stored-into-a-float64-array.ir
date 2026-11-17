@@ -1,0 +1,25 @@
+# f1 = fill
+# -- source: elements-of-a-list-of-numbers-stored-into-a-float64-array.ts
+# function fill(from: number[], to: Float64Array): void {
+#   for (let k = 0; k < to.length; k++) to[k] = from[k];
+# }
+# declare const input: any;
+# const numbers: number[] = [];
+# for (let k = 0; k < input; k++) numbers.push(k * 0.5);
+# const target = new Float64Array(input);
+# fill(numbers, target);
+# (globalThis as any).answer = target;
+# -- end of source
+# The compiler before this one: 19 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 137, patches 0, moves 0, unlikely 6 ; loop: operations 19, patches 1, moves 0, unlikely 0. The first is eight turns laid out: 17 an element; the second the loop as written.
+# The kind of `from` is read once in front of the turns: operations 121 ; 19: this loop is not come back to, so it has one set of eight turns for both kinds, and each turn branches on what was read: 15.1 an element.
+# Eight iterations for each kind of storage: 20 and 28 for 75, 2.5 and 3.5 an element.
+# RUN(X64): loops most:21,6,16,29,7,21 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 21
+# X64-NEXT: loop: at most 6
+# X64-NEXT: loop: at most 16
+# X64-NEXT: loop: at most 29
+# X64-NEXT: loop: at most 7
+# X64-NEXT: loop: at most 21

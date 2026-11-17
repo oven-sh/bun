@@ -65,72 +65,47 @@ console.log(run(250));
 
 // GENERATED: makeOrders groupBy
 // CHECK-LABEL: function {{*}}name="makeOrders"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Array<undefined|null|[[L_1]]> flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: v2 = Data data=[[d_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v6)
-// CHECK-NEXT: b2(v7):
+// CHECK-NEXT: v2 = Data data=[[d_1]]
+// CHECK-NEXT: v3 = Integer
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b1(v4)
+// CHECK-NEXT: b1(v5):
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: v9 = Convert v7 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v10 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v11 = Less v9, v10
-// CHECK-NEXT: Branch v11 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
-// CHECK-NEXT: b3(v12, v13):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v14 = PropGet v4 key="push"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v16 = Convert v12 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v17 = NewObject layout=[[L_1]]
-// CHECK-NEXT: PropDefine v17, v16 key="id"
-// CHECK-NEXT: v19 = String string="c"
-// CHECK-NEXT: v20 = Integer integer=23
-// CHECK-NEXT: v21 = Mod v16, v20
-// CHECK-NEXT: v22 = Add v19, v21
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v17, v23 key="customer"
-// CHECK-NEXT: v25 = Integer integer=37
-// CHECK-NEXT: v26 = Mul v16, v25
-// CHECK-NEXT: v27 = Integer integer=500
-// CHECK-NEXT: v28 = Mod v26, v27
-// CHECK-NEXT: v29 = Convert v28 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v17, v29 key="amount"
-// CHECK-NEXT: v31 = Integer integer=3
-// CHECK-NEXT: v32 = Mod v16, v31
-// CHECK-NEXT: v33 = Integer
-// CHECK-NEXT: v34 = StrictEq v32, v33
-// CHECK-NEXT: v35 = LogicalNot v34
-// CHECK-NEXT: v36 = Convert v35 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v17, v36 key="open"
-// CHECK-NEXT: v38 = FinishObject v17
-// CHECK-NEXT: v39 = Call v15, v4, v38 calleeKey="push" calleeName="orders.push"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v40 = Increment v16
-// CHECK-NEXT: v41 = Convert v40 declared={type=undefined|number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v41)
-// CHECK-NEXT: b6(v42, v43):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v44 = Convert v4 declared={type=undefined|null|Array<undefined|null|[[L_1]]> flags=[IsExpected]}
-// CHECK-NEXT: Return v44
+// CHECK-NEXT: v7 = Less v5, v0
+// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v8 = PropGet v2 key="push"
+// CHECK-NEXT: v9 = String string="c"
+// CHECK-NEXT: v10 = Integer integer=23
+// CHECK-NEXT: v11 = Mod v5, v10
+// CHECK-NEXT: v12 = Add v9, v11
+// CHECK-NEXT: v13 = Integer integer=37
+// CHECK-NEXT: v14 = Mul v5, v13
+// CHECK-NEXT: v15 = Integer integer=500
+// CHECK-NEXT: v16 = Mod v14, v15
+// CHECK-NEXT: v17 = Integer integer=3
+// CHECK-NEXT: v18 = Mod v5, v17
+// CHECK-NEXT: v19 = Integer
+// CHECK-NEXT: v20 = StrictEq v18, v19
+// CHECK-NEXT: v21 = LogicalNot v20
+// CHECK-NEXT: v22 = NewObject -, v5, v12, v16, v21 layout=[[L_2]] fields=[2, 1, 0, 3]
+// CHECK-NEXT: v23 = FinishObject v22
+// CHECK-NEXT: v24 = Call v8, v2, v23 calleeKey="push" calleeName="orders.push"
+// CHECK-NEXT: v25 = Increment v5
+// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b1(v26)
+// CHECK-NEXT: b3():
+// CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="groupBy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_2]]> flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_2]]>, v1: undefined|null|function):
 // CHECK-NEXT: v2 = PropGet v0 key="reduce"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v4 = NewClosure v1 function=[[f_4]]
-// CHECK-NEXT: v5 = Data data=[[d_5]]
-// CHECK-NEXT: v6 = Call v3, v0, v4, v5 calleeKey="reduce" calleeName="list.reduce"
-// CHECK-NEXT: ReturnCall v6
+// CHECK-NEXT: v3 = NewClosure v1 function=[[f_3]]
+// CHECK-NEXT: v4 = Data data=[[d_4]]
+// CHECK-NEXT: v5 = Call v2, v0, v3, v4 calleeKey="reduce" calleeName="list.reduce"
+// CHECK-NEXT: ReturnCall v5
 // CHECK-NEXT: }

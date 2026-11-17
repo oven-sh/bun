@@ -1,0 +1,14 @@
+# f1 = isEmpty
+# -- source: length-of-a-text-is-zero.ts
+# function isEmpty(text: string): boolean {
+#   return text.length === 0;
+# }
+# declare const input: any;
+# (globalThis as any).answer = isEmpty(input);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 0, unlikely or rare 18.
+# RUN(X64): steps most:6 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 6

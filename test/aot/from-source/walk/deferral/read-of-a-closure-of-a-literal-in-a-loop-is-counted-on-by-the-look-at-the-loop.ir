@@ -1,0 +1,17 @@
+# -- source: read-of-a-closure-of-a-literal-in-a-loop-is-counted-on-by-the-look-at-the-loop.ts
+# declare function print(...values: unknown[]): void;
+# function makeTools(seed: number) { let n = seed; return { bump: () => ++n, read: () => n }; }
+# const tools = makeTools(1);
+# let kept: unknown = undefined;
+# let sum = 0;
+# for (let turn = 0; turn < 1000; turn++) { sum = (sum + turn) | 0; if (turn % 100 === 99) kept = tools.read; }
+# print(sum, kept === tools.read, tools.read(), makeTools(5).read());
+# -- end of source
+# The receiver is proven and every construction fills the field, so a look at the loop is told that the read is typed and runs no code. It may make the closure and lay it into its slot all the same:
+# the look counts on an allocation and on a store under that name. If it did not, the walk would stop here: "an access in a loop does what the look at the loop has not counted on". Nothing else in the loop does as much.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: isLoopHead=true
+# CHECK: = GetDeferredClosureSlot {{*}}key="read"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 499500 true 1 5

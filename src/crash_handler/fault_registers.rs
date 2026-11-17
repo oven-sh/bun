@@ -2,8 +2,9 @@
 //! work for a build. No line gives away where anything was loaded: a value that may be an address is printed by what it points
 //! into, or by its place in its page alone.
 
-use core::ffi::c_void;
 use core::fmt::Write as _;
+
+use crate::SignalContext;
 
 #[cfg(target_arch = "x86_64")]
 const NAMES: [&str; 16] = [
@@ -33,7 +34,7 @@ const END_OF_ADDRESSES: usize = if cfg!(target_arch = "x86_64") {
 const REACH_OF_STACK: usize = 1 << 20;
 
 #[cfg(target_arch = "x86_64")]
-fn read(context: *mut c_void) -> ([usize; NAMES.len()], usize, usize) {
+fn read(machine: &libc::mcontext_t) -> ([usize; NAMES.len()], usize, usize) {
     const INDICES: [libc::c_int; NAMES.len()] = [
         libc::REG_RAX,
         libc::REG_RBX,
@@ -52,24 +53,21 @@ fn read(context: *mut c_void) -> ([usize; NAMES.len()], usize, usize) {
         libc::REG_R14,
         libc::REG_R15,
     ];
-    // SAFETY: the kernel passes a valid ucontext_t as the handler's third argument.
-    let gregs = unsafe {
-        &(*context.cast::<libc::ucontext_t>().cast_const())
-            .uc_mcontext
-            .gregs
-    };
-    let of = |index: libc::c_int| gregs[index as usize] as usize;
+    let of = |index: libc::c_int| machine.gregs[index as usize] as usize;
     (INDICES.map(of), of(libc::REG_RIP), of(libc::REG_RSP))
 }
 
 #[cfg(target_arch = "aarch64")]
-fn read(context: *mut c_void) -> ([usize; NAMES.len()], usize, usize) {
-    // SAFETY: the kernel passes a valid ucontext_t as the handler's third argument.
-    let machine = unsafe { &(*context.cast::<libc::ucontext_t>().cast_const()).uc_mcontext };
+fn read(machine: &libc::mcontext_t) -> ([usize; NAMES.len()], usize, usize) {
     let sp = machine.sp as usize;
     let mut registers = [sp; NAMES.len()];
     for (register, value) in registers.iter_mut().zip(machine.regs) {
         *register = value as usize;
+    }
+    // Signed from the first instruction of a function that signs to its first call. Between calls it may hold anything.
+    let link = bun_core::debug::strip_return_address_signature(registers[30]);
+    if may_be_address(link) {
+        registers[30] = link;
     }
     (registers, machine.pc as usize, sp)
 }
@@ -91,9 +89,12 @@ impl core::fmt::Write for Line {
     }
 }
 
+fn may_be_address(value: usize) -> bool {
+    (1 << 32..1 << 48).contains(&value)
+}
+
 fn write_value(line: &mut Line, value: usize, sp: usize) -> core::fmt::Result {
-    let may_be_address = (1 << 32..1 << 48).contains(&value);
-    if !may_be_address {
+    if !may_be_address(value) {
         write!(line, "{value:#x}")
     } else if let Some(offset) = crate::compiled_frames::offset_in_code(value) {
         write!(line, "code+{offset:#x}")
@@ -106,14 +107,17 @@ fn write_value(line: &mut Line, value: usize, sp: usize) -> core::fmt::Result {
     }
 }
 
-/// `context`: the third argument of the signal handler, which has not returned. `fault`: the address that could not be
-/// reached, where the signal has one.
-pub(crate) fn write_to(context: *mut c_void, fault: Option<usize>, write: &mut dyn FnMut(&[u8])) {
+/// `fault`: the address that could not be reached, where the signal has one.
+pub(crate) fn write_to(
+    context: SignalContext<'_>,
+    fault: Option<usize>,
+    write: &mut dyn FnMut(&[u8]),
+) {
     let holds_compiled_code = crate::build_id::build_id().is_some();
     if !holds_compiled_code && crate::stopped_builds::place_of_this_thread().is_none() {
         return;
     }
-    let (registers, pc, sp) = read(context);
+    let (registers, pc, sp) = read(context.mcontext());
     let could_not_fetch = fault.is_some_and(|fault| fault.wrapping_sub(pc) < BYTES_OF_CODE);
     let code = (!could_not_fetch && (PAGE..END_OF_ADDRESSES).contains(&pc)).then(|| {
         let length = BYTES_OF_CODE.min(PAGE - pc % PAGE);

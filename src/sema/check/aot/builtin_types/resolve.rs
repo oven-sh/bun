@@ -62,10 +62,8 @@ pub(super) fn collect_call_signatures<'a, 'b: 'a>(
     call_signatures
 }
 
-/// The paths that `collect_call_signatures` can enter a signature for.
 pub(super) enum Claimants {
     None,
-    /// A method is a declaration of the symbol that a table has under its name, and of no other.
     Named(Atom),
     Any,
 }
@@ -92,7 +90,6 @@ pub(super) fn find_claimants(files: &Files<'_>, signature: FunctionRef) -> Claim
 
 #[derive(Default)]
 struct MethodsOfName {
-    /// Indexes into the list of paths, in its order.
     paths: SmallVec<[u32; 4]>,
     signatures: OnceLock<FxHashMap<FunctionRef, BuiltinValueIndex>>,
 }
@@ -347,11 +344,15 @@ pub(super) fn collect_static_members(files: &Files<'_>) -> FxHashMap<Atom, Small
             };
             let symbol = files.canonical(files.sym(file, symbol));
             for name in static_member_names(hir, class.members) {
-                let declaring = classes.entry(name).or_default();
-                if !declaring.contains(&symbol) {
-                    declaring.push(symbol);
-                }
+                classes.entry(name).or_default().push(symbol);
             }
+        }
+    }
+    let mut seen = FxHashSet::default();
+    for declaring in classes.values_mut() {
+        if declaring.len() > 1 {
+            seen.clear();
+            declaring.retain(|symbol| seen.insert(*symbol));
         }
     }
     classes

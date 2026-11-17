@@ -1,3 +1,5 @@
+// Reference: bun build --compile
+// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 // A number that is printed otherwise than it is written, in the test or in the arm that a constant condition drops, is no part of what an error quotes.
 const F = false;
 const b: any = F ? 0x10 : null;

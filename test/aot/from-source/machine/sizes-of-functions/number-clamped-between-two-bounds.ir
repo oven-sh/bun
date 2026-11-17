@@ -1,0 +1,12 @@
+# f1 = clamp
+# -- source: number-clamped-between-two-bounds.ts
+# function clamp(value: number, low: number, high: number): number { return Math.min(Math.max(value, low), high); }
+# declare const input: any;
+# (globalThis as any).answer = clamp(+input, +input, +input);
+# -- end of source
+# The compiler before this one: 11 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:6 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 6

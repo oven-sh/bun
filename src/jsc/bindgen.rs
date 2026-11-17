@@ -4,10 +4,15 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
 
+use bun_core::Environment;
+
+use crate::virtual_machine::VirtualMachine;
 use crate::{
     ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
-    JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    JsClass, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    WrapperGuard,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -64,13 +69,10 @@ impl<'a> JsHeap<'a> {
 
     /// Debug check: an empty result means an exception is pending. Any other means none is, except a termination.
     fn exception_presence_matches(&self, should_have_exception: bool) -> bool {
-        // SAFETY: the global object is live.
-        unsafe {
-            extern_types::Bun__Bindgen__exceptionPresenceMatches(
-                self.global_ptr(),
-                should_have_exception,
-            )
-        }
+        extern_types::Bun__Bindgen__exceptionPresenceMatches(
+            self.global_object(),
+            should_have_exception,
+        )
     }
 
     /// `owner` has come to own `size` more bytes since it was created. From `estimated_size` alone the GC learns that
@@ -472,6 +474,20 @@ impl<'a, T> JsLocal<'a, T> {
     #[inline(always)]
     pub fn as_value(self) -> JsLocal<'a> {
         JsLocal::from_raw(self.0)
+    }
+
+    /// As [`JSValue::as_class_ref`].
+    #[inline]
+    pub fn as_class_ref<C: JsClass>(self) -> Option<WrapperGuard<'a, C>> {
+        // The guard copies the value, which the call holds for 'a.
+        let WrapperGuard {
+            native, wrapper, ..
+        } = C::from_js(&self.0)?;
+        Some(WrapperGuard {
+            native,
+            wrapper,
+            _value: PhantomData,
+        })
     }
 
     /// The collector sees the value up to here.
@@ -937,6 +953,9 @@ impl core::ops::Deref for PinnedBytes {
 pub unsafe trait JsPayload: Sized + 'static {
     #[doc(hidden)]
     const PAYLOAD_OFFSET: usize;
+    /// No member takes `&mut self`.
+    #[doc(hidden)]
+    const SHARED_THIS: bool;
     /// # Safety
     /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
     #[doc(hidden)]
@@ -1146,15 +1165,51 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
 
     #[inline(always)]
     fn payload(self) -> *mut T {
-        // SAFETY: generated offset inside the cell.
-        unsafe { self.0.as_ptr().byte_add(T::PAYLOAD_OFFSET).cast() }
+        self.payload_ptr().as_ptr()
     }
 
     /// The payload's address, which does not change. It is valid while the wrapper is alive.
     #[inline(always)]
     pub fn payload_ptr(self) -> NonNull<T> {
-        // SAFETY: inside the cell, which is not null.
-        unsafe { NonNull::new_unchecked(self.payload()) }
+        // SAFETY: generated offset inside the cell.
+        unsafe { self.0.byte_add(T::PAYLOAD_OFFSET).cast() }
+    }
+}
+
+/// A [`JsWrapper`] that outlives its call, as a GC root. The accessors panic once the VM is closed: the rest of its teardown destroys rooted cells too.
+pub struct StrongWrapper<T>(Strong, PhantomData<*const T>);
+
+// SAFETY: a `Strong`.
+unsafe impl<T> crate::job::JsAffine for StrongWrapper<T> {}
+
+fn rooted_value(root: &Strong) -> JSValue {
+    assert!(VirtualMachine::get_or_null().is_some_and(|vm| !vm.closed()));
+    root.get()
+}
+
+impl<T: JsPayload> StrongWrapper<T> {
+    pub fn new(wrapper: JsWrapper<'_, T>, global: &JSGlobalObject) -> Self {
+        const { assert!(T::SHARED_THIS) };
+        Self(Strong::create(wrapper.to_js(), global), PhantomData)
+    }
+
+    pub fn to_js(&self) -> JSValue {
+        rooted_value(&self.0)
+    }
+
+    pub fn payload(&self) -> &T {
+        // SAFETY: `to_js` checked that the root holds. No borrow is used after a later teardown:
+        // `global_exit` does not return, and the caller of `exit_and_free` vouches for it. `new`
+        // checked that the payload is only ever shared.
+        unsafe { &*(self.to_js().encoded() as *const T).byte_add(T::PAYLOAD_OFFSET) }
+    }
+
+    /// The global object of the wrapper's class. In a `ShadowRealm` it is not the VM's.
+    pub fn global(&self) -> &JSGlobalObject {
+        // SAFETY: as `payload`. Every structure that the cell takes holds this global object.
+        unsafe {
+            &*extern_types::Bun__Bindgen__globalObjectOf(self.to_js().encoded() as *mut c_void)
+        }
     }
 }
 
@@ -1372,22 +1427,90 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
     value
 }
 
-/// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.
+/// Whether this process holds native code to the types that `.bind.ts` files declare for its results.
+///
+/// An executable compiled ahead of time does: its code takes those types for proven. A build of Bun that asserts does, so that Bun's own tests find
+/// the native code that answers outside its type. Release `bun run` does not, and answers as it always has.
+///
+/// To hold every build of Bun to them, start this as `true`. Nothing else decides it.
+static HOLDS_RESULTS_TO_DECLARED_TYPES: AtomicBool = AtomicBool::new(Environment::CI_ASSERT);
+
+/// For [`crate::initialize`], which comes before any JavaScript.
+pub(crate) fn hold_results_to_declared_types() {
+    HOLDS_RESULTS_TO_DECLARED_TYPES.store(true, Ordering::Relaxed);
+}
+
+#[inline(always)]
+pub fn holds_results_to_declared_types() -> bool {
+    HOLDS_RESULTS_TO_DECLARED_TYPES.load(Ordering::Relaxed)
+}
+
+/// Holds what a thunk ends with to the type that its `.bind.ts` file declares. The empty value stands for a pending exception.
 #[doc(hidden)]
 #[inline(always)]
-pub fn host_fn_construct_return<'a, T, E: IntoError<'a>>(
+pub fn hold_to_declared_type<'a>(
     cx: &mut JsScope<'a>,
-    result: core::result::Result<*mut T, E>,
-) -> *mut c_void {
-    let wrapped: *mut c_void = match result {
-        Ok(wrapped) => wrapped.cast(),
+    returned: JSValue,
+    is_declared: impl FnOnce(JSValue) -> bool,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    if !holds_results_to_declared_types() || returned.is_empty() || is_declared(returned) {
+        return returned;
+    }
+    throw_outside_declared_type(cx, member, declared)
+}
+
+#[cold]
+#[inline(never)]
+fn throw_outside_declared_type<'a>(
+    cx: &mut JsScope<'a>,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    cx.heap
+        .type_error(format_args!(
+            "internal AOT error: type check failed: expected {declared} in the result of {member}. This is a bug in Bun, not in your code."
+        ))
+        .into_host_fn_return(cx)
+}
+
+/// As [`hold_to_declared_type`], for a value that Rust lays in the field a getter answers from. Compiled code reads that field itself, so a value
+/// outside the type must never lie there: the field is left empty, the next read asks the getter, and its thunk stops the program if the getter answers
+/// outside the type too. A build of Bun that asserts stops here, where the value comes from.
+#[doc(hidden)]
+#[inline(always)]
+pub fn hold_cached_to_declared_type(
+    value: JSValue,
+    is_declared: impl FnOnce(JSValue) -> bool,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    if !holds_results_to_declared_types() || value.is_empty() || is_declared(value) {
+        return value;
+    }
+    if Environment::CI_ASSERT {
+        panic!("{member} is declared as {declared}, and native code cached something else");
+    }
+    JSValue::ZERO
+}
+
+/// As [`host_fn_return`], for the constructor of a `refCounted` class: `None` if it failed.
+#[doc(hidden)]
+#[inline(always)]
+pub fn host_fn_construct_return<'a, T: bun_ptr::AnyRefCounted, E: IntoError<'a>>(
+    cx: &mut JsScope<'a>,
+    result: core::result::Result<bun_ptr::RefPtr<T>, E>,
+) -> Option<bun_ptr::RefPtr<T>> {
+    let wrapped = match result {
+        Ok(wrapped) => Some(wrapped),
         Err(error) => {
             error.into_error(&cx.heap).into_host_fn_return(cx);
-            core::ptr::null_mut()
+            None
         }
     };
     debug_assert!(
-        cx.heap.exception_presence_matches(wrapped.is_null()),
+        cx.heap.exception_presence_matches(wrapped.is_none()),
         "a constructor fails exactly when an exception is pending",
     );
     wrapped

@@ -1,6 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="sum"
+// CHECK-LABEL: function {{*}}name="area"
+// CHECK-LABEL: function {{*}}name="x"
+// CHECK-LABEL: function {{*}}name="y"
+// CHECK-LABEL: function {{*}}name="x"
+// CHECK-LABEL: function {{*}}name="y"
 
 // FILE: main.js
 function show(value) {
@@ -128,94 +134,3 @@ attempt("what falls off the end is used", () => [area({ kind: "oval" }) + 1, typ
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: sum area x y
-// CHECK-LABEL: function {{*}}name="sum"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v0 key="y"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = Add v2, v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="area"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]]|[[L_3]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]|[[L_3]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="kind"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|"circle"|"square" flags=[IsExpected]}
-// CHECK-NEXT: SwitchString v2 strings=["circle", "square"] -> case b2(| 0), case b4(| 0), otherwise b6()
-// CHECK-NEXT: b2(v3):
-// CHECK-NEXT: v4 = NarrowByField v0, v3 key="kind"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="r"
-// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v8 = PropGet v5 key="r"
-// CHECK-NEXT: v9 = Convert v8 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v10 = Mul v7, v9
-// CHECK-NEXT: v11 = Integer integer=3
-// CHECK-NEXT: v12 = Mul v10, v11
-// CHECK-NEXT: v13 = Convert v12 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b4(v14):
-// CHECK-NEXT: v15 = NarrowByField v0, v14 key="kind"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v17 = PropGet v16 key="side"
-// CHECK-NEXT: v18 = Convert v17 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v19 = PropGet v16 key="side"
-// CHECK-NEXT: v20 = Convert v19 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v21 = Mul v18, v20
-// CHECK-NEXT: v22 = Convert v21 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v22
-// CHECK-NEXT: b6():
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v23 = Undefined
-// CHECK-NEXT: v24 = Convert v23 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v24
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="x"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="got"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="y"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="x"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="y"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=2
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

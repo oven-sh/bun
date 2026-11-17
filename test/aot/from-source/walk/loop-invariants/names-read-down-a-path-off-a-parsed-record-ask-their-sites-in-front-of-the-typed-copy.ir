@@ -1,0 +1,23 @@
+# -- source: names-read-down-a-path-off-a-parsed-record-ask-their-sites-in-front-of-the-typed-copy.js
+# const raw = JSON.parse('{"server":{"port":8080,"size":100}}');
+# function sum(t) { let s = 0; for (let i = 0; i < 64; i++) s += raw.server.port + raw.server.size + t; return s; }
+# print(sum(1), sum(2));
+# -- end of source
+# Nobody knows what `raw` holds. In the typed copy each read asks its site alone, which runs no code. The holder stands in front of the copy and the turns write nothing, so the questions stand in front too, `raw.server` and what is read off it;
+# who finds nothing there takes the closed copy. The left side of the sum is asked for a number though the right side is not built yet, and `size` asks its site like any name. What is left of a turn: the bound, one sum, the step.
+# f1 = sum
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="server"
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less {{*}} form=Integers
+# CHECK-NEXT: Branch
+# CHECK-NEXT: isInLoop=true:
+# CHECK-NEXT: = Narrowed
+# CHECK-NEXT: = Add {{*}} form=Numbers
+# CHECK-NEXT: = Increment
+# CHECK-NEXT: Jump
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="port"
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="size"
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 523584 523648

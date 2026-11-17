@@ -63,14 +63,9 @@ pub const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
     ..JSONOptions::DEFAULT
 };
 
-static EMPTY_OBJECT: bun_core::RacyCell<E::Object> = bun_core::RacyCell::new(E::Object::EMPTY);
-
 #[inline]
 fn empty_object_expr() -> Expr {
-    Expr {
-        loc: bun_ast::Loc { start: 0 },
-        data: js_ast::expr::Data::EObject(js_ast::StoreRef::from_raw(EMPTY_OBJECT.get())),
-    }
+    Expr::init(E::Object::default(), bun_ast::Loc { start: 0 })
 }
 
 /// A parsed immutable-AST JSON document: the root expression plus the [`E::JsonTape`] it borrows.
@@ -522,15 +517,13 @@ pub fn parse_package_json_utf8_with_opts(
     })
 }
 
-pub fn parse_for_macro(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> crate::Result<Expr> {
-    if source.contents.is_empty() {
+/// The strings of the result are in `bump`: `json` belongs to an object that the next macro can free.
+pub fn parse_for_macro(json: &[u8], log: &mut bun_ast::Log, bump: &Bump) -> crate::Result<Expr> {
+    if json.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, false)?.root)
+    let source = bun_ast::Source::init_path_string(b"fetch.json", bump.alloc_slice_copy(json));
+    Ok(parse_classic(&source, log, bump, MACRO_JSON_OPTS, false)?.root)
 }
 
 /// `tsconfig.json` / `.jsonc` (comments, trailing commas) into the classic `E::Object` AST.

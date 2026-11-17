@@ -26,10 +26,10 @@ const files = {
   "read.cjs": `Object.keys(require.cache);\n${uses}`,
   "deleted.cjs": `require("./deletes-itself");\n${uses}`,
   "cycle.test.js": `
-    const { test } = require("node:test"), assert = require("node:assert");
+    const { test, expect } = require("bun:test");
     require("./deletes-itself");
     const Comparator = require("./comparator"), Range = require("./range");
-    test("a cycle", () => { assert.strictEqual(Range.saw, "function"); assert.ok(new Range().holds(new Comparator())); });
+    test("a cycle", () => { expect(Range.saw).toBe("function"); expect(new Range().holds(new Comparator())).toBe(true); });
   `,
 };
 const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };

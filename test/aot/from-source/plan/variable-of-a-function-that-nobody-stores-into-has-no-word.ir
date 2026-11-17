@@ -1,0 +1,26 @@
+# -- source: variable-of-a-function-that-nobody-stores-into-has-no-word.js
+# function helper(x) { return x + 1; }
+# function replaced(x) { return 1; }
+# function other(x) { return 2; }
+# function same(x) { return 3; }
+# function emptied(x) { return 4; }
+# function never(x) { return 5; }
+# function nobodyCalls() { return never; }
+# function stores() { replaced = other; same = same; emptied = undefined; }
+# function all() { return [helper, replaced, other, same, emptied]; }
+# sink(all, stores);
+# -- end of source
+# The word of a variable that is born as a function holds what a store has left there; whoever finds it empty takes the one closure of the function, which lies in the closure table.
+# Nobody stores into `helper` and `other`: they have no word. A store of anything keeps the word: another function, the same function (which leaves no edge for Link to see), undefined.
+# A function that is not reached has no closure, and nothing names its variable: it stays as it is, without a word and without its name in any table.
+# RUN: plan variables mechanisms=all
+# CHECK: variable g0 ClosureTable JSValue FunctionAsZero function=f1
+# CHECK-NEXT: variable g1 Statics JSValue FunctionAsZero function=f2
+# CHECK-NEXT: variable g2 ClosureTable JSValue FunctionAsZero function=f3
+# CHECK-NEXT: variable g3 Statics JSValue FunctionAsZero function=f4
+# CHECK-NEXT: variable g4 Statics JSValue FunctionAsZero function=f5
+# CHECK-NEXT: variable g5 Statics JSValue FunctionAsZero function=f6
+# RUN(WITHHELD): plan variables mechanisms=all-TypedSlots
+# WITHHELD-NOT: ClosureTable
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f6 unreached

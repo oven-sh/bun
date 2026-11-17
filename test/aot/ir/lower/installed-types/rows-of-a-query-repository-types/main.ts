@@ -1,6 +1,6 @@
 // RUN: link
 // CHECK: expectedresult {{*}} type=Array<undefined|null|[[row]]> layouts={{*}} flags=[IsRowsOfQuery]
-// CHECK: layout [[row]] name="Row"
+// CHECK: layout [[row]] {{*}}fields=[{key="id"
 // CHECK-NOT: IsNeverWritten
 // CHECK: {key="name" {{*}} flags=[IsRequired]}]
 // CHECK-LABEL: function {{*}}name="declared"

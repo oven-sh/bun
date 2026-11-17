@@ -1,9 +1,8 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="sequence"
-// CHECK: = Call {{*}}calleeName="f"
-// CHECK-NEXT: [[g]] = Convert {{*}} declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK: b0([[f]]: anything, [[g]]: anything, [[h]]: anything):
+// CHECK: = Call [[f]] calleeName="f"
 // CHECK-NEXT: = Call [[g]] calleeName="g"
-// CHECK-NEXT: [[h]] = Convert {{*}} declared={type=undefined|null|function flags=[IsExpected]}
 // CHECK-NEXT: [[last]] = Call [[h]] calleeName="h"
 // CHECK-NEXT: Return [[last]]
 

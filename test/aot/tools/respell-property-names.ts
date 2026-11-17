@@ -16,6 +16,7 @@
 //   - `constructor` in a class: `constructor() {}` and `"constructor"() {}` are the constructor, `["constructor"]() {}` is a method
 //   - `__proto__` in an object literal: `__proto__: v` and `"__proto__": v` set the prototype, `["__proto__"]: v` and `{ __proto__ }` make a property
 //   - the last name of `process.env.NAME`, `process.platform`, `process.arch` and `process.browser`: `bun build` puts a value there only behind a dot, unless it minifies syntax
+//   - what is updated (`x.name += 1`, `x.name ||= 1`, `x.name++`) is never named by a template: JSC tests the object of an update under brackets first, with a message of its own, unless a text or a number stands in the brackets
 //   - the first key of a pattern is never computed: the error for a value that cannot be taken apart names that key, unless it is computed
 //   - a class member named like a modifier (`get`, `static` ..) stays quoted, `let.x` stays dotted, and a member of an enum is never declared in brackets
 import { readdirSync, readFileSync, statSync, writeFileSync } from "fs";
@@ -61,6 +62,11 @@ function formOfAccess(node: ts.PropertyAccessExpression | ts.ElementAccessExpres
   if (node.expression.kind === ts.SyntaxKind.SuperKeyword) return "super";
   if (ts.isMetaProperty(node.expression)) return "meta";
   if (node.flags & ts.NodeFlags.OptionalChain) return "optional";
+  return useOfAccess(node);
+}
+
+/** What is done with the access, whatever its object is. */
+function useOfAccess(node: ts.PropertyAccessExpression | ts.ElementAccessExpression): Form {
   let child: ts.Node = node;
   let parent = node.parent;
   while (
@@ -169,6 +175,7 @@ export function respell(text: string, path: string, spelling: Spelling, choice: 
       !isAsked(formOfAccess(node), name, node)
     )
       return;
+    const spelled = useOfAccess(node) === "compound" ? JSON.stringify(name) : quoted(name);
     const afterObject = node.questionDotToken?.end ?? node.expression.end;
     const start = ts.skipTrivia(text, afterObject);
     if (ts.isPropertyAccessExpression(node)) {
@@ -176,16 +183,16 @@ export function respell(text: string, path: string, spelling: Spelling, choice: 
       if (ts.isIdentifier(node.expression) && node.expression.text === "let") return;
       const nameStart = node.name.getStart(file);
       // `a?.b` has no token of its own in front of the name, `a.b` has its dot.
-      if (node.questionDotToken) edits.push({ start: nameStart, end: node.name.end, text: `[${quoted(name)}]` });
+      if (node.questionDotToken) edits.push({ start: nameStart, end: node.name.end, text: `[${spelled}]` });
       else
         edits.push(
           { start, end: start + 1, text: "[" },
-          { start: nameStart, end: node.name.end, text: `${quoted(name)}]` },
+          { start: nameStart, end: node.name.end, text: `${spelled}]` },
         );
       return;
     }
     const key = node.argumentExpression;
-    if (spelling !== "names") return void edits.push({ start: key.getStart(file), end: key.end, text: quoted(name) });
+    if (spelling !== "names") return void edits.push({ start: key.getStart(file), end: key.end, text: spelled });
     if (ts.isNumericLiteral(node.expression)) return;
     const between = text.slice(start + 1, key.getStart(file)) + text.slice(key.end, node.end - 1);
     if (between.trim() !== "") return;

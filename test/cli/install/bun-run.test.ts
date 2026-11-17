@@ -1360,6 +1360,40 @@ describe.concurrent("bun run", () => {
     }
   });
 
+  it.if(isWindows)("refuses to pass an argument containing a cmd.exe special character to a .cmd bin", async () => {
+    using dir = tempDir("bun-run-cmd-bin-metachar", {
+      "package.json": JSON.stringify({ name: "cmd-bin-metachar" }),
+      "node_modules/.bin/say.cmd": "@echo off\r\necho %*\r\n",
+    });
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "say", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+    };
+
+    expect(await run("hello")).toMatchObject({ stdout: "hello", exitCode: 0 });
+    expect(await run('x" & echo marker & "')).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining(
+        'error: Failed to run "say.cmd": argument "x\\" & echo marker & \\"" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
+      ),
+      exitCode: 1,
+    });
+    expect(await run("hello", "%PATH%")).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining(
+        'error: Failed to run "say.cmd": argument "%PATH%" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
+      ),
+      exitCode: 1,
+    });
+  });
+
   // The node/bun shims live in one directory shared by every bun process of
   // the same build (and, for debug builds, by all debug builds). A bun that is
   // starting up may add the links but must never remove ones that already

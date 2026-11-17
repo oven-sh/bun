@@ -1,4 +1,11 @@
 // Each of twelve live instances has its own memory, more than plain Bun's limit on fast memories: compiled code runs with every one.
+// STATISTIC: WasmOptimizedCopies = 4
+// STATISTIC: WasmBaselineCopies = 4
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 4
+// COUNTER in every build: WasmInstancesUsingImageCode = 12
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 1
 /// <reference path="../wasm-files.d.ts" />
 // Env: BUN_AOT_TYPE_ERROR_LOG=stderr
 // Env: BUN_AOT_TYPE_ERROR_LOG_FORMAT=json

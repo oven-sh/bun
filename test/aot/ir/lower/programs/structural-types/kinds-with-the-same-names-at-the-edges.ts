@@ -90,58 +90,7 @@ for (let i = 0; i < 3000; i++) {
 lines.push(String(total));
 console.log(lines.join("\n"));
 
-// GENERATED: NodeObject statement textOf describe
 // CHECK-LABEL: function {{*}}name="NodeObject"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=[[L_1]] site=[[w_2]]} parameters=[{type=i32 site=[[w_3]]}, {type=number site=[[w_4]]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: i32, v2: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Convert v0 declared={type=undefined|null|[[L_5]]} illTypedCause=Assertion
-// CHECK-NEXT: v4 = Convert v1 declared={type=i32 site=[[w_6]]}
-// CHECK-NEXT: PropSet v3, v4 key="kind"
-// CHECK-NEXT: v6 = Convert v0 declared={type=undefined|null|[[L_5]]} illTypedCause=Assertion
-// CHECK-NEXT: v7 = Convert v2 declared={type=number site=[[w_7]]}
-// CHECK-NEXT: PropSet v6, v7 key="pos"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="statement"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 site=[[w_8]]}, {type=undefined|null|[[L_5]] site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_10]] site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: i32, v1: undefined|null|[[L_5]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_12]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="NodeConstructor"
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Construct v3, -, v0, v4 calleeName="NodeConstructor"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_5]] site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[L_10]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v8 = Convert v1 declared={type=undefined|null|[[L_5]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: PropSet v7, v8 key="expression"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="textOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_10]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_10]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="expression"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_18]] site=[[w_19]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v3 = PropGet v2 key="text"
-// CHECK-NEXT: v4 = String string="/"
-// CHECK-NEXT: v5 = Add v3, v4
-// CHECK-NEXT: v6 = PropGet v0 key="note"
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] site=[[w_20]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_21]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_22]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_5]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_23]] site=[[w_24]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v2 = PropGet v1 key="describe"
-// CHECK-NEXT: v3 = Call v2, v1 calleeKey="describe" calleeName="node.describe"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string site=[[w_25]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_21]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

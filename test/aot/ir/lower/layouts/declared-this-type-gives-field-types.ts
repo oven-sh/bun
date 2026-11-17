@@ -1,8 +1,8 @@
 // RUN: link
-// CHECK: layout {{*}}kind=Instance name="Made" {{*}}fields=[{key="id" declared={type=number site=[[w0]]} flags=[IsRequired] {{*}}}, {key="text" declared={type=undefined|null|string site=[[w1]] flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired] {{*}}}, {key="position" declared={type=undefined|number site=[[w2]]} flags=[IsRequired] {{*}}}, {key="extra" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
+// CHECK: layout {{*}}kind=Instance name="Made" {{*}}fields=[{key="id" declared={type=number} flags=[IsRequired] {{*}}}, {key="text" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired] {{*}}}, {key="position" declared={type=undefined|number} flags=[IsRequired] {{*}}}, {key="extra" declared={type=anything} flags=[IsRequired]}]
 
 // What a constructor function stores into a `this` with a declared type has the type that is declared there, a number like anything else. A name that the type does not declare
-// has the type of the first value stored, which is only expected.
+// is untyped: the engine follows what is stored there.
 interface Shape {
   id: number;
   text: string;

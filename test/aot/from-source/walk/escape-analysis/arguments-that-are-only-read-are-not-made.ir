@@ -1,0 +1,32 @@
+# -- source: arguments-that-are-only-read-are-not-made.js
+# function measured(a, b) { return arguments.length; }
+# function read(a, b) { return arguments[1]; }
+# function behind(a) { return arguments[2]; }
+# function kept(a) { return arguments; }
+# sink(measured, read, behind, kept);
+# -- end of source
+# `arguments` is made at the head of the function, as ever. What it holds is noted as it is made: the count under `length`, each parameter under its position, the list of the other arguments behind them.
+# A read of the length or by an index is answered out of that, nothing comes to need the object, and the sweep drops it. An object that leaves is made.
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[count]]: int[0, 4294967295]
+# CHECK: Return [[count]]
+# RUN(READ): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# READ-LABEL: code f2:Body
+# READ: b0([[count]]: int[0, 4294967295] {{*}}, [[a]]: anything{{*}}, [[b]]: anything
+# READ: Return [[b]]
+# RUN(BEHIND): walk f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# BEHIND-LABEL: code f3:Body
+# BEHIND: [[one]]: 1 {{*}} = Integer integer=1
+# BEHIND: [[element]]: {{*}} = GetArrayElement {{*}} level=Proven
+# BEHIND: Return [[element]]
+# RUN(NEVER): walk f1 f2 f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-NOT: = CreateUnmappedArguments
+# NEVER-NOT: PropGet
+# NEVER-NOT: ElemGet
+# NEVER-NOT: = Sub
+# RUN(KEPT): walk f4 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# KEPT: = CreateUnmappedArguments
+# RUN(WITHHELD): walk f1 f2 f3 mechanisms=none+TypedOperations+Folding
+# Where the length alone is read the front end hands on the count, and makes no object to begin with
+# WITHHELD-COUNT-2: = CreateUnmappedArguments

@@ -79,7 +79,7 @@ impl OutputFileJsc for OutputFile {
                 .to_js(global_object)
             }
             OutputFileValue::Saved(_) => {
-                let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
+                let path_to_use: &[u8] = owned_pathname.unwrap_or(&self.src_path);
 
                 let file_blob = match BlobStore::init_file(
                     PathOrFileDescriptor::Path(PathLike::owned(path_to_use.to_vec())),
@@ -109,7 +109,7 @@ impl OutputFileJsc for OutputFile {
 
                 let path: Box<[u8]> = match owned_pathname {
                     Some(p) => Box::from(p),
-                    None => Box::from(self.src_path.text),
+                    None => Box::from(&*self.src_path),
                 };
 
                 BuildArtifact {
@@ -142,7 +142,7 @@ impl OutputFileJsc for OutputFile {
 
         let mime = self
             .loader
-            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text]);
+            .to_mime_type(&[self.dest_path.as_ref(), &self.src_path]);
 
         match value {
             OutputFileValue::Copy(copy) => {
@@ -154,7 +154,7 @@ impl OutputFileJsc for OutputFile {
             }
             OutputFileValue::Saved(_) => {
                 let file_blob = BlobStore::init_file(
-                    PathOrFileDescriptor::Path(PathLike::owned(self.src_path.text.to_vec())),
+                    PathOrFileDescriptor::Path(PathLike::owned(self.src_path.to_vec())),
                     Some(mime),
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))

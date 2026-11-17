@@ -41,6 +41,7 @@ const fakeSocketSymbol = Symbol("fakeSocket");
 const eofInProgress = Symbol("eofInProgress");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+const kMadeOverHandle = Symbol("handle");
 const kOnReadParsed = Symbol("kOnReadParsed");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
@@ -78,10 +79,14 @@ const requestRoad: {
   continueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   queueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
-  beginDump?: (request: $Node.IncomingMessage) => void;
+  beginDump?: (request: $Node.IncomingMessage) => boolean;
+  readsUnseen?: (request: $Node.IncomingMessage) => boolean;
+  chainIsPlain?: () => boolean;
   readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
+  resumeUnlessFlowing?: (socket: $Node.HttpSocket, asksWhetherReadable: boolean) => void;
 } = {};
 const responseRoad: {
+  IncomingMessage?: $Node.IncomingMessageConstructor;
   makeExchange?: (
     response: $Node.ServerResponse,
     connection: $Node.HttpServerSocket | null,
@@ -89,16 +94,18 @@ const responseRoad: {
     requestState: $Node.ReadableState | null,
   ) => $Node.HttpExchange;
   storeHeader?: (exchange: $Node.HttpExchange, name: string, value: $Node.HttpHeaderValue) => void;
+  settleLeniency?: (exchange: $Node.HttpExchange, name: string) => void;
   spillHeaders?: (exchange: $Node.HttpExchange) => void;
   spillHeadersReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
+  spillStateReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
   hasHeaderUnderKey?: (
     exchange: $Node.HttpExchange,
     message: $Node.OutgoingMessage,
     key: string,
     bit: number,
   ) => boolean;
-  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[];
-  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined, message: $Node.OutgoingMessage) => unknown[] | undefined;
+  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[] | null;
+  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined) => unknown[] | null;
   pushRenderedHeader?: (
     flat: unknown[],
     message: $Node.OutgoingMessage,
@@ -108,6 +115,7 @@ const responseRoad: {
   ) => void;
   outgoingSetHeader?: $Node.OutgoingMessage["setHeader"];
   flushSocketHeldChunk?: (socket: object | null | undefined) => void;
+  noChunks?: (string | $Node.HttpChunk | $Node.HttpWriteCallback | null | undefined)[];
 } = {};
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -517,6 +525,14 @@ declare global {
       $resumeUnlessFlowing?(asksWhetherReadable: boolean): void;
     }
 
+    /** A stream that a program passes to a response in place of a connection. It may not be a `Duplex`. */
+    interface SubstituteSocket extends Writable, Omit<HttpSocket, keyof Writable> {
+      _readableState: ReadableState;
+      allowHalfOpen: boolean;
+      get readable(): boolean;
+      set readable(value: boolean);
+    }
+
     /** The server of a connection, as `node:http` reads it: an `http.Server`, or a `net.Server` (an `Http2SecureServer` that allows HTTP/1, a server whose sockets are handed on) that has some of an `http.Server`'s options or none. */
     interface HttpSocketServer extends EventEmitter {
       timeout?: number;
@@ -537,8 +553,8 @@ declare global {
       [kHandle]: NodeHTTPServerSocket | null | undefined;
       [kOnReadParsed]: ((socket: HttpSocket) => void) | undefined;
       [kHandoffResponse]: NodeHTTPResponse | undefined;
-      [kRequest]?: IncomingMessage;
-      [kCloseCallback]?: (this: HttpServerSocket) => void;
+      [kRequest]: IncomingMessage | undefined;
+      [kCloseCallback]: ((this: HttpServerSocket) => void) | undefined;
       [kClosedWithUnsentData]: boolean | undefined;
       readonly [kInternalSocketData]: NodeHTTPResponse | null | undefined;
       readonly [kHasQueuedReads]: boolean;
@@ -562,7 +578,7 @@ declare global {
       [kNeedDrain]: boolean;
       [kErrored]: Error | null | undefined;
       [kHighWaterMark]: number;
-      [kSocket]: HttpSocket | null;
+      [kSocket]: HttpSocket | SubstituteSocket | null;
       [kRejectNonStandardBodyWrites]: boolean | undefined;
       [kUniqueHeaders]?: Set<string> | null;
       /** Of a `ServerResponse`. */
@@ -572,9 +588,9 @@ declare global {
     interface ServerResponse {
       [kHandle]: NodeHTTPResponse | Http1ResponseHandle | undefined;
       [kPendingCallbacks]: HttpWriteCallback[] | undefined;
-      [fakeSocketSymbol]?: HttpSocket | null;
+      [fakeSocketSymbol]: HttpSocket | SubstituteSocket | null | undefined;
       [headerStateSymbol]: number;
-      [kCloseCallback]?: () => void;
+      [kCloseCallback]: (() => void) | undefined;
     }
 
     interface HttpServer {
@@ -800,6 +816,7 @@ export {
   kIncomingMessage,
   kInternalSocketData,
   kLenientValidation,
+  kMadeOverHandle,
   kNeedDrain,
   kOnReadParsed,
   kOutHeaders,

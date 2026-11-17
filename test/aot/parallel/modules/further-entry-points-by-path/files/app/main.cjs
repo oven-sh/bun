@@ -39,7 +39,7 @@ say("a folder that is listed and loaded", () =>
     .filter(file => file.endsWith(".cjs"))
     .map(file => require(path.join(__dirname, "plugins", file)).name),
 );
-import(path.join(__dirname, "plugins", "es.mjs"))
+module.exports = import(path.join(__dirname, "plugins", "es.mjs"))
   .then(
     ns => console.log("import()", ns.name, ns.default),
     e => console.log("import() THROWS", e.code ?? e.name),

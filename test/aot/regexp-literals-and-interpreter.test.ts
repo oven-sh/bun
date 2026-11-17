@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { locksEnvironment } from "./hardened";
 import { withoutCoreDump } from "./harness/commands";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -26,7 +27,7 @@ async function compileAndRun(source: string) {
       env: {
         ...bunEnv,
         BUN_JSC_crashIfInterpreterIsUsed: crashIfInterpreterIsUsed,
-        BUN_CRASH_REPORT_URL: "",
+        ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
         BUN_ENABLE_CRASH_REPORTING: "0",
       },
       stdout: "pipe",

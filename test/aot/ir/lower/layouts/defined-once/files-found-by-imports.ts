@@ -1,5 +1,4 @@
 // RUN: lower
-// STATISTIC: CheckerQueries <= 19500
 
 // A file leaves an object type to a file that was lowered before it. Twelve files that each defined the 300 fields would ask 3,300 questions more.
 

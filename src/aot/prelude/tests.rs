@@ -37,20 +37,16 @@ fn find_duplicate<T: Copy + Ord>(items: impl IntoIterator<Item = T>) -> Option<T
     runs.find(|run| run.len() > 1).map(|run| run[0])
 }
 
-fn has_line(text: &str, expected: &str) -> bool {
-    text.lines().any(|line| line.trim() == expected)
-}
-
 #[test]
 fn files_are_listed_once() {
     let names: Vec<&str> = FILES.iter().map(|(name, _)| *name).collect();
     let expected = [
         "array-search.ts",
         "array-sort.ts",
-        "array-traversal.ts",
         "decorators.ts",
         "iterator-consumers.ts",
         "rejected-imports.ts",
+        "test-files.ts",
         "written-lists.ts",
     ];
     assert_eq!(names, expected);
@@ -106,34 +102,4 @@ fn every_export_is_a_compiler_function() {
             );
         }
     }
-}
-
-#[test]
-fn chain_shape_constants() {
-    let text = file_text("array-traversal");
-    let lines = [
-        "const linkMap = 1;",
-        "const linkFilter = 2;",
-        "const endArray = 0;",
-        "const endLength = 1;",
-        "const endForEach = 2;",
-        "const endReduce = 3;",
-        "const endSome = 4;",
-        "const endEvery = 5;",
-        "const endFind = 6;",
-        "const endFindIndex = 7;",
-        "const endJoin = 8;",
-        "const endFlatMap = 9;",
-        "const firstLinkShift = 4;",
-        "const secondLinkShift = 6;",
-        "const thirdLinkShift = 8;",
-        "const hasInitialValueShift = 10;",
-    ];
-    for line in lines {
-        assert!(
-            has_line(text, line),
-            "array-traversal.ts has no line `{line}`"
-        );
-    }
-    assert!(!has_line(text, "const linkMap = 2;"));
 }

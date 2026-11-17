@@ -21,8 +21,6 @@ template<typename V>
 using NodeIdHashMap = WTF::HashMap<uint64_t, V, WTF::DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 using NodeIdHashSet = WTF::HashSet<uint64_t, WTF::DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
-BunString toStringRef(const WTF::String& wtfString);
-
 // Node data parsed from snapshot
 struct NodeData {
     uint64_t id;
@@ -952,11 +950,11 @@ static WTF::String generateHeapSnapshotV8(JSC::VM& vm)
 extern "C" BunString Bun__generateHeapProfile(JSC::VM* vm)
 {
     WTF::String result = Bun::generateHeapProfile(*vm);
-    return Bun::toStringRef(result);
+    return Bun::toStringRef(result).leak();
 }
 
 extern "C" BunString Bun__generateHeapSnapshotV8(JSC::VM* vm)
 {
     WTF::String result = Bun::generateHeapSnapshotV8(*vm);
-    return Bun::toStringRef(result);
+    return Bun::toStringRef(result).leak();
 }

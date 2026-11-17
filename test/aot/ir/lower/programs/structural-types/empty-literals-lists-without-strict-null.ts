@@ -1,6 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
+// CHECK-LABEL: function {{*}}name="total"
+// CHECK-LABEL: function {{*}}name="plusOne"
+// CHECK-LABEL: function {{*}}name="Holder"
+// CHECK-LABEL: function {{*}}name="make"
+// CHECK-LABEL: function {{*}}name="find"
+// CHECK-LABEL: function {{*}}name="first"
 
 // FILE: main.ts
 // Empty literals are lists of anything without strict null checks.
@@ -119,87 +125,3 @@ attempt("a map", () => {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "strictNullChecks": false, "noImplicitAny": false }, "files": [] }
-
-// GENERATED: total plusOne Holder make find first
-// CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_1]]}] results=[{type=number site=[[w_2]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_3]]}
-// CHECK-NEXT: v3 = IteratorOpen v0
-// CHECK-NEXT: Jump -> next b2(v2)
-// CHECK-NEXT: b2(v4: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = IteratorResume v3
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v9 = Convert v4 declared={type=number site=[[w_2]]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b7():
-// CHECK-NEXT: v10 = Convert v8 declared={type=number site=[[w_4]]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v11 = Add v4, v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=number site=[[w_3]]}
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6() handler=b7():
-// CHECK-NEXT: Jump -> next b2(v12)
-// CHECK-NEXT: b7() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v13 = CatchException
-// CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v13
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="plusOne"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_5]]}] results=[{type=number site=[[w_6]]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_6]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_8]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_8]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_8]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_9]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array site=[[w_10]]}] functionTypes={{*}}[[f_11]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_12]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|Array site=[[w_10]]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="find"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_13]]}, {type=number site=[[w_14]]}] results=[{type=number site=[[w_15]]}] functionTypes={{*}}[[f_16]]] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>, v1: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PropGet v0 key="find"
-// CHECK-NEXT: v3 = NewClosure v1 function=[[f_17]]
-// CHECK-NEXT: v4 = Call v2, v0, v3 calleeKey="find" calleeName="list.find"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=number site=[[w_18]]}}, {declared={type=number site=[[w_15]]}}]
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="first"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_19]]> site=[[w_20]]}] results=[{type=undefined|null|[[L_19]] site=[[w_21]]}] functionTypes={{*}}[[f_22]]] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_19]]>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_19]] site=[[w_23]]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

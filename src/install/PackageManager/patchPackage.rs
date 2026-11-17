@@ -353,7 +353,7 @@ fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, V
     let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
         Ok(p) => p,
         Err(err) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             bun_core::pretty_errorln!(
                 "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                 err.name(),
@@ -519,16 +519,16 @@ pub fn do_patch_commit(
         None,
     );
     let cache_dir = cache_result.cache_dir;
-    let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes().to_vec();
+    let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes();
     let cache_path = cache_dir_path(cache_dir);
     let old_folder =
-        resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
+        resolve_path::join::<platform::Posix>(&[&cache_path, cache_dir_subpath]).to_vec();
     let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
     make_bins_executable(
         &manager.lockfile,
         &pkg,
         cache_dir,
-        &cache_dir_subpath,
+        cache_dir_subpath,
         &new_folder,
     );
 
@@ -614,7 +614,7 @@ pub fn do_patch_commit(
     // install fail.
     if !patch_applies(
         cache_dir,
-        &cache_dir_subpath,
+        cache_dir_subpath,
         &new_folder,
         &bun_ast::Source::init_path_string(&patch_filename[..], &patchfile_contents[..]),
     ) {
@@ -712,7 +712,7 @@ fn patch_applies(
 ) -> bool {
     let mut log = bun_ast::Log::init();
     let patchfile = crate::patch_install::parse_patch_source(patch, &mut log);
-    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+    let _ = log.print(Output::error_writer());
     // An install only warns about the sections it skips, because older versions of Bun wrote patch
     // files that have them. A new patch must not have any.
     let Some(patchfile) = patchfile.filter(|patchfile| patchfile.skipped.is_empty()) else {
@@ -740,7 +740,7 @@ fn patch_applies(
 /// Returns `None` after printing an error. Calling `Global::crash()` in here would skip
 /// `HiddenFromDiff`'s drop.
 fn diff_against_cache(
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     old_folder: &[u8],
     new_folder: &[u8],
 ) -> Option<Vec<u8>> {
@@ -783,10 +783,8 @@ fn diff_against_cache(
         &from_cwd(cwd.as_bytes(), old_folder),
         &from_cwd(cwd.as_bytes(), new_folder),
     );
-    let (opts, _envp_guard) =
-        bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
-
-    let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
+    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, manager.event_loop);
+    let mut spawn_result = match spawned {
         Err(e) => {
             bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
             return None;
@@ -854,8 +852,8 @@ impl HiddenFromDiff {
             if entry.kind != sys::EntryKind::Directory
                 && strings::has_prefix(entry.name.slice_u8(), crate::bun_hash_tag)
             {
-                let name = ZBox::from_bytes(entry.name.slice_u8());
-                sys::renameat(self.folder.fd, &name, self.stash.fd, &name)?;
+                let name = entry.name.as_zstr();
+                sys::renameat(self.folder.fd, name, self.stash.fd, name)?;
             }
         }
 
@@ -918,14 +916,14 @@ fn move_entries_absent_from(
 ) -> sys::Result<()> {
     let mut iter = sys::iterate_dir(from.fd);
     while let Some(entry) = iter.next()? {
-        let name = ZBox::from_bytes(entry.name.slice_u8());
+        let name = entry.name.as_zstr();
         let Some(reference) = reference else {
-            sys::renameat(from.fd, &name, to.fd, &name)?;
+            sys::renameat(from.fd, name, to.fd, name)?;
             continue;
         };
-        match sys::exists_at_type(reference.fd, &name) {
+        match sys::exists_at_type(reference.fd, name) {
             Err(e) if e.get_errno() == sys::E::ENOENT => {
-                sys::renameat(from.fd, &name, to.fd, &name)?;
+                sys::renameat(from.fd, name, to.fd, name)?;
             }
             Err(e) => return Err(e),
             Ok(sys::ExistsAtType::Directory)
@@ -1089,7 +1087,7 @@ fn has_trusted_scripts(
     folder: &[u8],
 ) -> bool {
     if !manager.options.do_.run_scripts()
-        || !(manager.lockfile).has_trusted_dependency(name, name, &pkg.resolution)
+        || !(manager.lockfile).has_trusted_dependency(&manager.options, name, name, &pkg.resolution)
     {
         return false;
     }
@@ -1100,7 +1098,6 @@ fn has_trusted_scripts(
     let mut scripts = pkg.scripts;
     let list = scripts.get_list(
         &mut bun_ast::Log::init(),
-        &manager.lockfile,
         &mut folder_path,
         name,
         &pkg.resolution,
@@ -1129,9 +1126,7 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
         return;
     }
     if download_pinned_packages(manager, Some(pkg.meta.id), false).is_err() || !is_cached(manager) {
-        let _ = manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = manager.log_mut().print(Output::error_writer());
         bun_core::pretty_errorln!(
             "<r><red>error<r>: <b>{}<r> not in cache, re-download failed",
             bstr::BStr::new(&name),
@@ -1161,28 +1156,26 @@ fn make_bins_executable(
     ) else {
         return;
     };
-    let cache_entry = strings::StringOrTinyString::init(cache_dir_subpath);
     let mut abs_target_buf = bun_paths::path_buffer_pool::get();
     let mut abs_dest_buf = bun_paths::path_buffer_pool::get();
     let mut rel_buf = bun_paths::path_buffer_pool::get();
     bin::Linker {
         bin: pkg.bin,
-        target_node_modules_path: &raw const cache_path,
-        target_package_name: cache_entry,
+        target_node_modules_path: Some(&cache_path),
+        target_package_name: cache_dir_subpath,
         seen: None,
         node_modules_path: &mut links_path,
-        package_name: cache_entry,
+        package_name: cache_dir_subpath,
         global_bin_path: ZStr::EMPTY,
         string_buf: lockfile.buffers.string_bytes.as_slice(),
         extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
         abs_target_buf: abs_target_buf.as_mut_slice(),
-        abs_dest_buf: abs_dest_buf.as_mut_slice(),
         rel_buf: rel_buf.as_mut_slice(),
         is_behind_link: Some(false),
         err: None,
         skipped_due_to_missing_bin: false,
     }
-    .link(false);
+    .link(false, abs_dest_buf.as_mut_slice());
 }
 
 /// The patched package's cache entry can be missing, because an install that finds the patched
@@ -1503,8 +1496,8 @@ fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
 fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
     let mut iter = sys::iterate_dir(from.fd);
     while let Some(entry) = iter.next()? {
-        let name = ZBox::from_bytes(entry.name.slice_u8());
-        let Err(refused) = sys::renameat(from.fd, &name, to.fd, &name) else {
+        let name = entry.name.as_zstr();
+        let Err(refused) = sys::renameat(from.fd, name, to.fd, name) else {
             continue;
         };
         let kind = crate::prune::entry_kind(from, name.as_bytes(), entry.kind);
@@ -1515,7 +1508,7 @@ fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
             &from.open_dir(name.as_bytes(), ITERATE)?,
             &to.make_open_path(name.as_bytes(), Default::default())?,
         )?;
-        sys::rmdirat(from.fd, &name)?;
+        sys::rmdirat(from.fd, name)?;
     }
     Ok(())
 }

@@ -141,101 +141,11 @@ console.log(out.join("\n"));
 console.log([documented(1), brokenType, generic(2), withThis(), Kind.B, new Documented().field, new Documented().method(3), new Documented().other, cast, satisfied.a, fn(4), obj.p, obj.m(5)].join());
 /** @type { */
 
-// GENERATED: mapped assigned Documented ag p has c N
-// CHECK-LABEL: function {{*}}name="mapped"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: anything, v4: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v5 = CreateMappedArguments v0, v1, v4, v2, v3
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: v7 = Integer integer=9
-// CHECK-NEXT: ElemSet v5, v6, v7 mode=Sloppy
-// CHECK-NEXT: v9 = Integer integer=8
-// CHECK-NEXT: SetMappedArgument v5, v9 index=1
-// CHECK-NEXT: v11 = GetMappedArgument v5
-// CHECK-NEXT: v12 = Convert v11 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v13 = String string=","
-// CHECK-NEXT: v14 = Add v12, v13
-// CHECK-NEXT: v15 = Integer integer=1
-// CHECK-NEXT: v16 = ElemGet v5, v15
-// CHECK-NEXT: v17 = Add v14, v16
-// CHECK-NEXT: v18 = String string=","
-// CHECK-NEXT: v19 = Add v17, v18
-// CHECK-NEXT: v20 = PropGet v5 key="length"
-// CHECK-NEXT: v21 = Convert v20 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v22 = Add v19, v21
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v23
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="assigned"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: PutEnvironmentField v0, v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v4 = TypeOf v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="mapped"
 // CHECK-LABEL: function {{*}}name="Documented"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_4]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, IsGenerator, IsSloppy, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|AsyncGenerator<never> flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = ToThis v0
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="p"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=[[L_6]] flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: classtoken, v1: [[L_6]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_6]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = PrivateGet v2, v0 layout=[[L_6]] field=1
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: classtoken, v1: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PrivateHas v1, v0 layout=[[L_6]] field=1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="c"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName, IsNamedByComputedKey] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=5
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="N"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_9]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_9]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

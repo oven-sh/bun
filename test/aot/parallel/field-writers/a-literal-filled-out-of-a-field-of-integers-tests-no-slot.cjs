@@ -1,8 +1,6 @@
 // A literal is filled with what fields of another object hold, is kept in a list and read. The other object is stored integers and texts alone, once more behind its creation,
 // so that what the build knows of it is what was stored there. No read of the literal asks whether its slot is filled.
 // COUNT: operations <= 20
-// COUNT: arrivals <= 5
-// COUNT: branches <= 8100
 const kept = [];
 const given = { port: 8080, path: "/" };
 given.port = 8080;

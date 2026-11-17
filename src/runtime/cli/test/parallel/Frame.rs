@@ -17,18 +17,14 @@ pub(crate) enum Kind {
     /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
     TestDone,
     /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
-    /// files, shuffled, unhandled; u64 elapsed_ns; 4 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
-    /// the worker's peak RSS so far, and what it holds of its own now that the file has ended
-    /// then u32: 0, or one more than the `process.exitCode` that the file has left other than it found it
+    /// files, shuffled, unhandled; u64 elapsed_ns; 3 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
+    /// and the worker's peak RSS so far
     /// then str: `runner::first_loads`
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     // coordinator → worker
-    /// u32 file_idx, str path, u32: 0, or one more than the `process.exitCode` that the files before it have left,
-    /// str: what the last FileDone of the worker's slot said of first loads,
-    /// u32: 1 where the worker stands for the one process of plain `bun test` and prints what that prints,
-    /// u32: there, how many more failures `--bail` allows; 0 without it
+    /// u32 file_idx, str path, str: what the last FileDone of the worker's slot said of first loads
     Run,
     /// (empty)
     Shutdown,
@@ -38,9 +34,6 @@ pub(crate) enum Kind {
     CoverageFile,
     /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
     RefusedChange,
-    /// 5 × u32: the snapshots that this worker counted in all its files (total, passed, failed, added), and 1 where it could not
-    /// write an inline one; sent at exit by a worker that runs compiled code
-    Snapshots,
 }
 
 impl TryFrom<u8> for Kind {
@@ -57,15 +50,17 @@ impl TryFrom<u8> for Kind {
             6 => Kind::Shutdown,
             7 => Kind::CoverageFile,
             8 => Kind::RefusedChange,
-            9 => Kind::Snapshots,
             _ => return Err(()),
         })
     }
 }
 
+/// `payload_len` and `kind`.
+pub(crate) const HEADER_LEN: usize = 5;
+
 /// Upper bound on a single IPC frame payload. The protocol is internal but
 /// fd 3 is reachable from test JS via `fs.writeSync(3, ...)`; rejecting
-/// nonsensical lengths up-front prevents both a `5 + len` u32 overflow and
+/// nonsensical lengths up-front prevents both a `HEADER_LEN + len` u32 overflow and
 /// an unbounded allocation.
 pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 
@@ -101,7 +96,7 @@ impl Frame {
         // 4-byte prefixes of any further strings, which go empty) still fits.
         const TRUNC: &[u8] = b"\n... [output truncated: would exceed --parallel IPC frame limit]\n";
         const HEADROOM: usize = 4096;
-        let used: usize = (self.buf.len() - 5) + 4; // current payload + str-len prefix
+        let used: usize = (self.buf.len() - HEADER_LEN) + 4; // current payload + str-len prefix
         let room: usize = ((MAX_PAYLOAD as usize) - HEADROOM).saturating_sub(used);
         let (keep, marker): (usize, &[u8]) = if s.len() <= room {
             (s.len(), b"")
@@ -118,7 +113,7 @@ impl Frame {
     /// Finalize the header and return the encoded bytes. Caller hands them to
     /// `Channel.send`. Valid until the next `begin()`.
     pub(crate) fn finish(&mut self) -> &[u8] {
-        let payload_len: u32 = u32::try_from(self.buf.len() - 5).unwrap();
+        let payload_len: u32 = u32::try_from(self.buf.len() - HEADER_LEN).unwrap();
         debug_assert!(payload_len <= MAX_PAYLOAD);
         self.buf[0..4].copy_from_slice(&payload_len.to_le_bytes());
         &self.buf

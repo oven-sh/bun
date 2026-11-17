@@ -1,0 +1,20 @@
+# every way to pass a constant locale, in one program: no two parts pass the same one, and nothing keeps every locale
+# f1 = show
+# -- source: constants-of-every-kind-in-one-program.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# const locale = "uk";
+# function show(value: number) { return value.toLocaleString(locale); }
+# sink((1234.5).toLocaleString("de"), 10n.toLocaleString("de-AT"), new Date(0).toLocaleDateString("fr"), new Date(0).toLocaleTimeString("ja"));
+# sink("a".localeCompare("b", "sv"), "i".toLocaleUpperCase("tr"));
+# new Intl.NumberFormat("it"); new Intl.DateTimeFormat("es"); new Intl.Collator("fi"); new Intl.PluralRules("pl");
+# new Intl.ListFormat("nl"); new Intl.RelativeTimeFormat("pt-BR"); new Intl.Locale("ko"); new Intl.Segmenter("th"); new Intl.NumberFormat(["da", "en-GB"]);
+# sink((1).toLocaleString("EN-us"), (1).toLocaleString("cs"), "a".localeCompare("b", "el"), (2).toLocaleString("cs"), (1).toLocaleString(input ? "hu" : "ro"), show(1));
+# -- end of source
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault
+# REPEAT: name = A B C D E F G H I J K L M N O P Q R S T U V; tag = EN-us cs da de de-AT el en-GB es fi fr hu it ja ko nl pl pt-BR ro sv th tr uk
+# RUN(%(name)): locales
+# %(name): locale constant "%(tag)"
+# END REPEAT

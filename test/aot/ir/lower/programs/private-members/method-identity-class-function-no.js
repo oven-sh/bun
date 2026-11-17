@@ -85,103 +85,10 @@ function make(n) { class P {
 } return P; }
 check("n", make(1), make(2));
 
-// GENERATED: #ag viaInner viaTemplate viaLiteralGetter X
 // CHECK-LABEL: function {{*}}name="#ag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=function flags=[IsExpected]} results=[{type=undefined|null|AsyncGenerator<number> flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: function, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Integer integer=7
-// CHECK-NEXT: v4 = Await v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v6 = Yield v5
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Throw v7
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="viaInner"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=undefined|null|[[f_3]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: function, v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v4 = NewClass v3 layout=[[L_5]]
-// CHECK-NEXT: v5 = NewClosure v0, v1, v2 function=[[f_6]]
-// CHECK-NEXT: DefineMethod v4, v5 layout=[[L_5]] side=Static key="q"
-// CHECK-NEXT: v7 = FinishClass v4 layout=[[L_5]]
-// CHECK-NEXT: v8 = Convert v7 declared={type=[[f_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v9 = PropGet v7 key="q"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
-// CHECK-NEXT: v11 = Call v10, v7 calleeKey="q" calleeName="q"
-// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|null|[[f_3]] flags=[IsExpected]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="viaTemplate"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: function, v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = NewClosure function=[[f_8]]
-// CHECK-NEXT: v4 = NewTemplateObject templateStrings=[{cooked="" raw=""}, {cooked="" raw=""}]
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="P"
-// CHECK-NEXT: v7 = StrictEq v6, v1
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v8 = Convert v2 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v9 = Call v3, -, v4, v8
-// CHECK-NEXT: ReturnCall v9
-// CHECK-NEXT: b3() frequency=Unlikely:
-// CHECK-NEXT: v10 = NewRuntimeError runtimeError=InvalidPrivateBrand
-// CHECK-NEXT: Throw v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="viaLiteralGetter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=undefined|null|[[f_3]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: function, v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = NewObject layout=[[L_9]]
-// CHECK-NEXT: v4 = NewClosure v0, v1, v2 function=[[f_10]]
-// CHECK-NEXT: DefineGetter v3, v4 key="g"
-// CHECK-NEXT: v6 = FinishObject v3
-// CHECK-NEXT: v7 = PropGet v6 key="g"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="X"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_11]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_11]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="X"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_12]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_12]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_12]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="X"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_13]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_13]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_13]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

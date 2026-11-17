@@ -1,3 +1,3 @@
 import { irTests } from "./testaot";
 
-irTests(2, 6);
+irTests(2, 12);

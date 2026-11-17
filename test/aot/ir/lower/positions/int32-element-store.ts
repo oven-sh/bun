@@ -1,6 +1,6 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: [[converted]] = Convert {{*}}declared={type=i32 site=w{{*}} flags=[IsInt32Promise]}
+// CHECK: [[converted]] = Convert {{*}}declared={type=i32}
 // CHECK-NEXT: ElemSet {{*}}, [[converted]]
 
 /// <reference path="../types/imports/bun-declarations.d.ts" />

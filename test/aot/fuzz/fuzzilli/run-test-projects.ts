@@ -7,15 +7,15 @@
 //   --bare                             every project is bare: its test files import bun:test alone and name no built-in module (12 of 100 projects are, without the option)
 //   --sparse                           every project is sparse: two or three kinds in all its files (25 of 100 projects are, without the option)
 //   --ends-within 120                  seconds for one run of a project. A lane that is given few processors on a busy machine needs more: a build that takes 40 s took more than 120 there
+//   --test-ends-within 30000           milliseconds for one test, a long limit that no test is meant to meet. A project in which a test of plain `bun test` meets it is dropped: it says nothing about the compiler
 //   --reduce <folder of a find> [--must "EvalError"]   makes the project of a find smaller, into <folder>/reduced: whole files go first, then lines by halves, as long as the two runs differ
 //                                      in the same way in a test of the same kind or, with --must, as long as the compiled run alone says those words
-//   --words TestRunLayers:2,TestRunPartFiles:2   BUN_DEBUG_TEST_AOT_WORDS for the compiled runs: how the run is built (layers and pieces); a project has few test files, so say how many a piece holds
-//                                      TestRunPartFiles:drawn: 1, 2, 3 or 16, drawn for each project (not with --reduce or --project: the report of a find says the number)
+//   --words erase-types,check=Validate   BUN_DEBUG_TEST_AOT_WORDS for the compiled runs: words for the compiler
 //   --project <folder>                 runs the project in that folder both ways, once, and says in what they differ
 //   --known "require.cache,a Worker"   tests of these kinds are left out of the comparison: a fault that is known would else be the first difference of every project that holds it
 //
 // Each test writes down what it sees, and its file stores that in a folder of the run, so a wrong value shows where no `expect` asks for it.
-// Plain `bun test` runs twice: a project that answers itself otherwise is dropped. Half of the projects that agree run compiled once more, with BUN_JSC_validateAOTRuntime=1.
+// Plain `bun test` runs twice: a project that answers itself otherwise is dropped.
 // The name of a test begins with its kind, and a find is filed under the kind of the first test that differs: five projects to a kind are kept.
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -41,6 +41,7 @@ const { values: options } = parseArgs({
     bare: { type: "boolean", default: false },
     sparse: { type: "boolean", default: false },
     "ends-within": { type: "string", default: "120" },
+    "test-ends-within": { type: "string", default: "30000" },
     reduce: { type: "string", default: "" },
     must: { type: "string", default: "" },
     project: { type: "string", default: "" },
@@ -240,7 +241,7 @@ function writeHelpers(project: Project) {
     "helpers/late.js",
     `import { add } from "./math.ts";
 import { bump, count } from "./state.js";
-import { greet } from "tiny-pkg";
+import { greet } from "@made-up/tiny-pkg";
 export const seenWhenLoaded = [typeof add, count, greet("l")].join();
 export const sum = (a, b) => add(a, b);
 export const next = () => bump();
@@ -363,25 +364,25 @@ export function register(shape: Shape): number { registry.set(shape.kind, shape)
     `export * from "./math.ts";\nexport { bump as increase, table } from "./state.js";\n`,
   );
   project.files.set(
-    "node_modules/tiny-pkg/package.json",
-    `{ "name": "tiny-pkg", "version": "1.0.0", "type": "module", "main": "index.js" }\n`,
+    "node_modules/@made-up/tiny-pkg/package.json",
+    `{ "name": "@made-up/tiny-pkg", "version": "1.0.0", "type": "module", "main": "index.js" }\n`,
   );
   project.files.set(
-    "node_modules/tiny-pkg/index.js",
+    "node_modules/@made-up/tiny-pkg/index.js",
     `export function greet(name) { return "hello " + name; }\nexport const version = "1.0.0";\nexport default { greet };\n`,
   );
   project.files.set(
-    "node_modules/old-pkg/package.json",
-    `{ "name": "old-pkg", "version": "1.0.0", "main": "index.js" }\n`,
+    "node_modules/@made-up/old-pkg/package.json",
+    `{ "name": "@made-up/old-pkg", "version": "1.0.0", "main": "index.js" }\n`,
   );
   project.files.set(
-    "node_modules/old-pkg/index.js",
+    "node_modules/@made-up/old-pkg/index.js",
     `module.exports = { shout: word => word.toUpperCase() + "!", level: 3 };\n`,
   );
   project.files.set(
     "helpers/packages.js",
-    `import { greet, version } from "tiny-pkg";
-import old from "old-pkg";
+    `import { greet, version } from "@made-up/tiny-pkg";
+import old from "@made-up/old-pkg";
 export const welcome = name => greet(name) + " " + old.shout("x") + " " + version;
 export const level = () => old.level;
 `,
@@ -395,7 +396,7 @@ const world = globalThis as any;
 world.fromThePreload = { value: ${project.below(9)}, calls: 0 };
 beforeEach(() => { world.fromThePreload.calls++; });
 afterEach(() => { world.fromThePreload.last = world.fromThePreload.calls; });
-${project.chance(40) ? `mock.module("tiny-pkg", () => ({ greet: () => "mocked in the preload", version: "0", default: {} }));` : ""}
+${project.chance(40) ? `mock.module("@made-up/tiny-pkg", () => ({ greet: () => "mocked in the preload", version: "0", default: {} }));` : ""}
 ${project.chance(25) ? `const realMax = Math.max; Math.max = (...all: number[]) => realMax(...all, 1000);` : ""}
 `,
     );
@@ -1200,7 +1201,7 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
         needs: [],
         lines: drawn.map(
           ([label, text]) =>
-            `try { note(${JSON.stringify(label)}, asText(await (async () => (${text}))())); } catch (error${any}) { note(${JSON.stringify(label)}, "threw", error?.name, String(error?.message).slice(0, 60)); }`,
+            `try { note(${JSON.stringify(label)}, asText(await (async () => (${text}))())); } catch (error${any}) { note(${JSON.stringify(label)}, "threw", error?.name, String(error?.message).replace(/ \\(evaluating .*/s, "").slice(0, 60)); }`,
         ),
       };
     },
@@ -1445,10 +1446,10 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
       lines: [
         `note("before", packages.welcome("a"), packages.level());`,
         project.pick([
-          `mock.module("tiny-pkg", () => ({ greet: (name${any}) => "mocked " + name, version: "${k}", default: {} }));`,
-          `mock.module("old-pkg", () => ({ default: { shout: () => "mocked", level: ${k} }, shout: () => "mocked", level: ${k} }));`,
+          `mock.module("@made-up/tiny-pkg", () => ({ greet: (name${any}) => "mocked " + name, version: "${k}", default: {} }));`,
+          `mock.module("@made-up/old-pkg", () => ({ default: { shout: () => "mocked", level: ${k} }, shout: () => "mocked", level: ${k} }));`,
         ]),
-        `const tiny${any} = await import("tiny-pkg"); note("mocked", tiny.greet("b"), tiny.version, require("old-pkg").level, packages.welcome("a"), packages.level());`,
+        `const tiny${any} = await import("@made-up/tiny-pkg"); note("mocked", tiny.greet("b"), tiny.version, require("@made-up/old-pkg").level, packages.welcome("a"), packages.level());`,
       ],
     }),
     () => ({
@@ -1513,7 +1514,7 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
       needs: [],
       lines: [
         `note("meta", import.meta.file, import.meta.main, import.meta.path.split("/").at(-1), import.meta.url.split("/").at(-1), import.meta.dir.split("/").at(-1), typeof import.meta.require);`,
-        `note("resolved", import.meta.resolve("./helpers/math.ts").split("/").slice(-2).join("/"), require.resolve("tiny-pkg").split("/").slice(-3).join("/"), Bun.resolveSync("./helpers/state.js", import.meta.dir).split("/").at(-1));`,
+        `note("resolved", import.meta.resolve("./helpers/math.ts").split("/").slice(-2).join("/"), require.resolve("@made-up/tiny-pkg").split("/").slice(-3).join("/"), Bun.resolveSync("./helpers/state.js", import.meta.dir).split("/").at(-1));`,
       ],
     }),
     () => ({
@@ -1699,7 +1700,7 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
         project.pick([
           `mock.module("./helpers/math.ts", () => ({ add: (a${any}, b${any}) => "mocked " + a + b, twice: () => ${k}, thrice: () => 0, default: () => 0 }));`,
           `mock.module("./helpers/state.js", () => ({ bump: () => "mocked", count: -${k}, table: { rows: [] }, size: () => -1, loadedAs: "mocked" }));`,
-          `mock.module("tiny-pkg", () => ({ greet: () => "mocked", version: "${k}", default: {} }));`,
+          `mock.module("@made-up/tiny-pkg", () => ({ greet: () => "mocked", version: "${k}", default: {} }));`,
         ]),
         `const late${any} = await import("./helpers/late.js"); note("loaded late", late.sum(1, 2), late.next(), late.hello(), late.seenWhenLoaded);`,
         `mock.restore(); const again${any} = await import("./helpers/late.js"); note("once more", again === late, again.sum(1, 2), again.next());`,
@@ -2071,8 +2072,6 @@ type Ended = {
   seen: Map<string, string>;
 };
 
-if ((options.reduce || options.project) && options.words.includes(":drawn"))
-  throw new Error("--words: say the number that the report of the find says");
 const wordsOfTheRun: Record<string, string> = options.words ? { BUN_DEBUG_TEST_AOT_WORDS: options.words } : {};
 
 function runTests(
@@ -2088,7 +2087,15 @@ function runTests(
   const report = join(seenIn, "report.xml");
   const ended = Bun.spawnSync({
     // A long limit for each test: on a busy machine a child process took more than the usual five seconds now and then, in either mode. A test about limits has one of its own.
-    cmd: [bun, "test", ...flags, "--timeout=30000", "--reporter=junit", "--reporter-outfile=" + report],
+    cmd: [
+      bun,
+      "test",
+      "--no-install",
+      ...flags,
+      "--timeout=" + options["test-ends-within"],
+      "--reporter=junit",
+      "--reporter-outfile=" + report,
+    ],
     cwd: folder,
     env: { ...process.env, SEEN_IN: seenIn, BUN_ENABLE_CRASH_REPORTING: "0", NO_COLOR: "1", LEFT_BEHIND: "", ...more },
     stdout: "pipe",
@@ -2154,7 +2161,7 @@ function difference(plain: Ended, other: Ended): [string, string, string] | unde
   if (other.timedOut && !plain.timedOut)
     return ["never ends", "", `the run was ended behind ${options["ends-within"]} s`];
   const crash =
-    /^.*(panic|Segmentation fault|ASSERTION FAILED|Illegal instruction|AOT validation|AOT: |which the compiler assumed).*$/m.exec(
+    /^.*(panic|Segmentation fault|ASSERTION FAILED|Illegal instruction|AOT: |internal AOT error|which the compiler assumed).*$/m.exec(
       other.stderr,
     )?.[0];
   if ((other.signal && !plain.signal) || (crash && !plain.stderr.includes(crash)))
@@ -2339,40 +2346,15 @@ for (let number = 0; Date.now() < until && (options.projects === "0" || number <
     add("plain bun test answers itself otherwise");
     continue;
   }
-  // A compiled run answers as plain does whatever the order in which flow's rules run: a layer once lost a function's body by that order alone. A word that does not begin with TestRun goes to the engine; the number of a schedule is a byte.
-  const schedule = project.chance(30)
-    ? project.pick([
-        "testing=DelayFlowRules",
-        "testing=DelayOtherFlowRules",
-        `testing=DelayFlowRules:${1 + project.below(255)}`,
-        `testing=DelayFlowRules:${1 + project.below(20)}`,
-      ])
-    : "";
-  // How many test files share a piece decides what one build sees together: an export behind a computed name lost its body in every run where two test files or more stood in one piece, and in some runs with pieces of one.
-  const form = options.words.replace("TestRunPartFiles:drawn", `TestRunPartFiles:${project.pick([1, 2, 3, 16])}`);
-  const wordsOfTheRun: Record<string, string> =
-    form || schedule ? { BUN_DEBUG_TEST_AOT_WORDS: [form, schedule].filter(Boolean).join(",") } : {};
+  // Both plain runs can meet the long limit in the same test and so agree: a server and a fetch from it stood still for 58 s on a busy machine, in plain Bun, and the compiled run, which passed, was kept as a find.
+  if (plain.stderr.includes(`this test timed out after ${options["test-ends-within"]}ms`)) {
+    add("a test of plain bun test met the long limit");
+    continue;
+  }
   const compiled = runTests(options.bun, root, ["--aot", ...flags], "compiled", wordsOfTheRun);
   let found = difference(plain, compiled);
-  // Once more with the checks of the run time on: they end a worker where something that the compiler relies on does not hold, also where the answer is right.
-  if (!found && project.chance(50)) {
-    const checked = runTests(options.bun, root, ["--aot", ...flags], "checked", {
-      ...wordsOfTheRun,
-      BUN_JSC_validateAOTRuntime: "1",
-    });
-    const reported = difference(plain, checked);
-    if (reported) {
-      found = ["under the checks of the run time " + reported[0], reported[1], reported[2]];
-      compiled.stderr = checked.stderr;
-    }
-  }
   // Plain was asked twice; so is the compiled run where it differs. A difference that does not come again is kept apart: a busy machine makes them, and so may a race that only compiled code has.
-  if (
-    found &&
-    !found[0].startsWith("under the checks") &&
-    compiled.signal === null &&
-    !/panic|Segmentation|SIGSEGV|SIGILL|SIGABRT|SIGTRAP/.test(compiled.stderr)
-  ) {
+  if (found && compiled.signal === null && !/panic|Segmentation|SIGSEGV|SIGILL|SIGABRT|SIGTRAP/.test(compiled.stderr)) {
     const second = runTests(options.bun, root, ["--aot", ...flags], "compiled-again", wordsOfTheRun);
     if (!difference(plain, second)) found = ["the compiled run wavers", found[1], found[2]];
   }

@@ -1,0 +1,76 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# class Closed {
+#     count = 1;
+#     twice() { return this.count * 2; }
+#     get label() { return "label " + this.count; }
+#     static make() { return new Closed(); }
+# }
+# const kept = Closed.make();
+# const tell = () => kept.count + " " + kept.twice() + " " + kept.label + " " + (kept as any).late + " " + typeof Closed.make();
+# print(tell());
+# poke();
+# print(tell());
+# -- end of source
+# The program hands neither an object of the class, nor its prototype object, nor the class object to anybody, so linked() takes both holders to be changed in sight alone, and compiled code finds the members, and finds nothing under `late`, without a look.
+# `poke` is a free name that each run defines, and it is handed nothing. It takes an object out of the heap (aotFindObjectOfLayout()), a road that no program has, and climbs from it to the holders: each run does one deed that is ruled out. That is a false proof made on purpose, and the run time ends the process at the deed.
+# `late` is folded away, so the image does not spell it: the run time stops at a name whether or not the image has a number for it. A name of Object.prototype and a symbol are names like any other: Link takes a call of `toString` on an object of the class to find the built-in.
+# The run time looks at the holders behind the deed. What leaves every lookup as it was goes through: the same function stored again, `toString` laid with the very function that stands above, the object above set to what it is, and a freeze, which no compiled code leaves a look out for.
+# The same deeds where the program hands the prototype object over stop nothing: deeds-on-the-holders-of-a-class-that-unseen-code-was-handed-go-through.ir.
+# OPTIONS: mechanisms=all
+# RUN: run-in-shell globalThis.poke = () => { const above = Object.getPrototypeOf(aotFindObjectOfLayout(0)); above.twice = above.twice; above.toString = Object.prototype.toString; Object.setPrototypeOf(above, Object.prototype); Object.freeze(above); print(typeof above.twice, Object.isFrozen(above)); };
+# CHECK: 1 2 label 1 undefined object
+# CHECK-NEXT: function true
+# CHECK-NEXT: 1 2 label 1 undefined object
+# CHECK-NEXT: exited with 0
+# RUN(REPLACES): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).twice = function () { return 0; }; print("went on"); };
+# REPLACES: bun: internal AOT error: object mutation check failed
+# REPLACES-NEXT: ReplaceMember on the prototype of class 'Closed', but the compiler proved that this never happens
+# REPLACES-NOT: went on
+# REPLACES: crashed with
+# RUN(DELETES): run-in-shell globalThis.poke = () => { delete Object.getPrototypeOf(aotFindObjectOfLayout(0)).twice; print("went on"); };
+# DELETES: bun: internal AOT error: object mutation check failed
+# DELETES-NEXT: DeleteMember on the prototype of class 'Closed'
+# DELETES-NOT: went on
+# DELETES: crashed with
+# RUN(REDEFINES): run-in-shell globalThis.poke = () => { Object.defineProperty(Object.getPrototypeOf(aotFindObjectOfLayout(0)), "label", { get() { return "got"; } }); print("went on"); };
+# REDEFINES: bun: internal AOT error: object mutation check failed
+# REDEFINES-NEXT: ReplaceMember on the prototype of class 'Closed'
+# REDEFINES-NOT: went on
+# REDEFINES: crashed with
+# RUN(ADDS): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).late = "above"; print("went on"); };
+# ADDS: bun: internal AOT error: object mutation check failed
+# ADDS-NEXT: AddProperty on the prototype of class 'Closed'
+# ADDS-NOT: went on
+# ADDS: crashed with
+# RUN(OVERRIDES): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).toString = function () { return "own"; }; print("went on"); };
+# OVERRIDES: bun: internal AOT error: object mutation check failed
+# OVERRIDES-NEXT: AddProperty on the prototype of class 'Closed'
+# OVERRIDES-NOT: went on
+# OVERRIDES: crashed with
+# RUN(MARKS): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0))[Symbol.toPrimitive] = function () { return 1; }; print("went on"); };
+# MARKS: bun: internal AOT error: object mutation check failed
+# MARKS-NEXT: AddProperty on the prototype of class 'Closed'
+# MARKS-NOT: went on
+# MARKS: crashed with
+# RUN(RELINKS): run-in-shell globalThis.poke = () => { Object.setPrototypeOf(Object.getPrototypeOf(aotFindObjectOfLayout(0)), { late: "far above" }); print("went on"); };
+# RELINKS: bun: internal AOT error: object mutation check failed
+# RELINKS-NEXT: ChangePrototype on the prototype of class 'Closed'
+# RELINKS-NOT: went on
+# RELINKS: crashed with
+# RUN(OVERWRITES): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0).constructor.make = function () { return "other"; }; print("went on"); };
+# OVERWRITES: bun: internal AOT error: object mutation check failed
+# OVERWRITES-NEXT: ReplaceMember on the constructor of class 'Closed'
+# OVERWRITES-NOT: went on
+# OVERWRITES: crashed with
+# RUN(REMOVES): run-in-shell globalThis.poke = () => { delete aotFindObjectOfLayout(0).constructor.make; print("went on"); };
+# REMOVES: bun: internal AOT error: object mutation check failed
+# REMOVES-NEXT: DeleteMember on the constructor of class 'Closed'
+# REMOVES-NOT: went on
+# REMOVES: crashed with
+# RUN(REPARENTS): run-in-shell globalThis.poke = () => { Object.setPrototypeOf(aotFindObjectOfLayout(0).constructor, { make() { return "other"; } }); print("went on"); };
+# REPARENTS: bun: internal AOT error: object mutation check failed
+# REPARENTS-NEXT: ChangePrototype on the constructor of class 'Closed'
+# REPARENTS-NOT: went on
+# REPARENTS: crashed with

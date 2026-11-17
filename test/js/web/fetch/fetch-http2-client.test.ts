@@ -399,6 +399,33 @@ function dataFrames(streamId: number, body: Buffer) {
   return Buffer.concat(frames);
 }
 
+test.concurrent(
+  "h2: the idle deadline does not run while the body waits for its reader",
+  async () => {
+    const body = Buffer.alloc(1024 * 1024, "a");
+    const opened = Promise.withResolvers<RawConn>();
+    await withRawH2Server(
+      (conn, id, connIndex) => {
+        if (connIndex > 0) return;
+        conn.headers(id, hpackStatus(200));
+        conn.socket.write(dataFrames(id, body));
+        opened.resolve(conn);
+      },
+      async url => {
+        const response = await fetch(url, { ...h2, timeout: 1000 });
+        const conn = await opened.promise;
+        await conn.ping();
+        // Armed later, on a connection of its own, so it can't fire first.
+        using session = new Bun.FetchSession();
+        expect(await statusOrCode(fetch(url, { ...h2, timeout: 1000, session }))).toBe("TimeoutError");
+        conn.data(1, "", true);
+        expect(await response.bytes().then(bytes => bytes.length, errcode)).toBe(body.length);
+      },
+    );
+  },
+  30_000,
+);
+
 test.concurrent("h2: a stream gets no window while compressed bytes it delivered wait to be decoded", async () => {
   const member = zlib.gzipSync(Buffer.alloc(1024 * 1024));
   // More than half of the 16 MiB window, which is when a WINDOW_UPDATE is due.

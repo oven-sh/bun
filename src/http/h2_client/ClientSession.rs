@@ -268,6 +268,7 @@ impl ClientSession {
                 return s.maybe_release();
             }
             s.replenish_window();
+            s.rearm_timeout();
             if let Err(err) = s.flush() {
                 s.fail_all(err);
             }
@@ -583,9 +584,11 @@ impl ClientSession {
             any_unbounded |= eff == 0;
             want = want.max(eff);
         };
+        let mut waits_for_origin = !self.pending_attach.is_empty();
         for s in self.streams.values() {
             if let Some(c) = &s.client {
                 fold(c.effective_idle_timeout_seconds());
+                waits_for_origin |= !c.holds_stream_window();
             }
         }
         for c in &self.pending_attach {
@@ -601,6 +604,9 @@ impl ClientSession {
         if any_unbounded && want != 0 {
             let global = crate::idle_timeout_seconds();
             want = if global == 0 { 0 } else { want.max(global) };
+        }
+        if !waits_for_origin {
+            want = 0;
         }
         self.ping_cap_armed = false;
         if self.awaiting_ping_ack {

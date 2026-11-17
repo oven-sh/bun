@@ -37,7 +37,7 @@ test("only trusted/ has the words for what rustc does not check", () => {
 
 test("the unstable features outside of trusted/ are known", () => {
   expect(find(/\bfeature\s*[(/][^)]*\)/g)).toEqual([
-    "kernels/lib.rs: feature(loop_hints, trait_alias)",
+    "kernels/lib.rs: feature(hint_prefetch, loop_hints, trait_alias)",
     "kernels/lib.rs: feature(const_array, const_closures, const_trait_impl)",
     "lib.rs: feature(portable_simd, likely_unlikely, loop_hints, trait_alias, try_blocks)",
     "lib.rs: feature(const_array, const_closures, const_trait_impl)",

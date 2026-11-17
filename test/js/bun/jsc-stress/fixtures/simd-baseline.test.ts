@@ -326,6 +326,13 @@ describe("Brotli: Highway runtime dispatch", () => {
     expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(0x38d935b8);
   });
 
+  // Pairs of contexts cost the same to join, so their order decides.
+  test("short inputs", () => {
+    const starts = [100, 3936, 6308, 6336, 6772, 6836, 11384, 11688, 13124, 15672];
+    const streams = starts.map(start => brotliCompressSync(input.subarray(start, start + 150)));
+    expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(0x0b9294f1);
+  });
+
   // Each part takes its bytes from values that start `step` after those of the previous one.
   test.each([
     { seed: 7, parts: 10, size: 300, masks: [0xff, 0x0f], step: 0, expected: 0xeef0b62d },

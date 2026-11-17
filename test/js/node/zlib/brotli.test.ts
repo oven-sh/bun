@@ -403,6 +403,7 @@ it.each([
     "17 d01775f0",
   ],
   [{ [QUALITY]: 5 }, "00000000000000000000000000283d0000000000", "15 47be563f"],
+  [{ [QUALITY]: 5, [SIZE_HINT]: 1 << 20 }, "ffffffffff213fffffffffff00000000", "14 6a7355d2"],
   [{ [QUALITY]: 9, [LGWIN]: 10 }, "000000ffe7ffffffffff000000ff0000ffffffffffff", "22 f501c9a7"],
   [{ [QUALITY]: 11, [NO_CONTEXTS]: 0 }, "6567742d686f6f6b732d6c69737429207c207c0a0a652074657374", "31 73ed628f"],
   [{ [QUALITY]: 3 }, "7c4f00000000000000555527000000000000000000", "20 f318d844"],
@@ -424,6 +425,11 @@ it.each([
     { [QUALITY]: 11 },
     "161c16161c1629391c16169eb19e5c399e5c399e29295c399e29295c399e5c399e5c299e5c399e5c39689e5c3939399e5c292929392929292a62298a29292939",
     "65 ec545c4b",
+  ],
+  [
+    { [QUALITY]: 7, [SIZE_HINT]: 1 << 20 },
+    "6162636465666768696a6b6c6d6162636465ffffffffff515758ffffffffff00000000",
+    "33 370c8a12",
   ],
   [
     { [QUALITY]: 6 },
@@ -898,7 +904,7 @@ it.each([
       "xyz",
       Buffer.alloc(200),
       bytesOf(noise.length, i => noise[i] >> 1),
-      noise.subarray(0, 1100).map(byte => byte | 128),
+      bytesOf(1100, i => noise[i] | 128),
     ],
     "115900 027ee563",
   ],
@@ -911,8 +917,8 @@ it.each([
   [
     7,
     "the same hash for another start",
-    [Buffer.alloc(70000), "aV234567.13234!.........13234567~~~~~~~~"],
-    "40 d66d862c",
+    [Buffer.alloc(70000), "aV234567.1323!x132?.........x13234567~~~~~~~~"],
+    "51 cb142f73",
   ],
   [
     10,
@@ -1382,6 +1388,14 @@ it("stops trying recent distances where its buffer wraps around", () => {
   expect(roundTripInSteps(steps, { [QUALITY]: 5, [LGWIN]: 17 })).toMatchInlineSnapshot(`"78 58b7ac26"`);
 });
 
+it.each([
+  [5, "39 02ed03e6"],
+  [10, "42 9ac2e0cb"],
+])("finds three bytes that start at the last byte of its buffer at quality %d", (quality, expected) => {
+  const input = Buffer.concat([Buffer.alloc(2 ** 17 - 10), Buffer.from("01234567!01234567?012~~~~~~~~")]);
+  expect(roundTrip(input, { [QUALITY]: quality, [LGWIN]: 10 })).toBe(expected);
+});
+
 it("starts over with what occurred 65536 times", () => {
   const frequent = Buffer.alloc(40000, "abcd?");
   for (let i = 0; i < 8000; i++) frequent[i * 5 + 4] = noise[i];
@@ -1452,7 +1466,7 @@ it("has a block of 64 values that occur more than 4096 times each", () => {
     evenly[i] = evenly[j];
     evenly[j] = i & 63;
   }
-  const input = Buffer.concat([evenly, noise.subarray(0, 2000).map(byte => byte | 192)]);
+  const input = Buffer.concat([evenly, bytesOf(2000, i => noise[i] | 192)]);
   expect(roundTrip(input, { [QUALITY]: 10, [NO_CONTEXTS]: 1, [LGBLOCK]: 19 })).toMatchInlineSnapshot(
     `"201038 88bb46c5"`,
   );
@@ -1492,8 +1506,39 @@ it("counts 128 and more unused literals between others when it merges contexts",
   expect(roundTrip(input, { [QUALITY]: 10 })).toMatchInlineSnapshot(`"207 804c70f8"`);
 });
 
+it("counts more unused literals between others than there are literals", () => {
+  const record = (_, i) => (i < 86 ? "abcdefgh" : "ijklmnop") + String.fromCharCode(3 * (i % 86));
+  const input = Buffer.from("001011100" + Array.from({ length: 128 }, record).join(""), "latin1");
+  expect(roundTrip(input, { [QUALITY]: 10 })).toMatchInlineSnapshot(`"199 059333a3"`);
+});
+
+it("counts 256 and more unused commands between others when it merges blocks", () => {
+  const source = bytesOf(3100, i => noise[i] & 127);
+  const fresh = bytesOf(3000, i => noise[9000 + i] | 128);
+  let [from, next] = [0, 0];
+  // Without `skip`, the distance stays the same.
+  const each = (copies, inserts, skip) =>
+    copies.flatMap(copy =>
+      inserts.flatMap(insert => [
+        fresh.subarray(next, (next += insert)),
+        source.subarray((from = (from + (skip ?? insert)) % 2500), (from += copy)),
+      ]),
+    );
+  const copies = [54, 30, 14, 9, 7, 4];
+  const few = [0, 1, 2, 3, 4, 5, 6, 8];
+  const input = Buffer.concat([
+    source,
+    ...each(copies, few, 10),
+    ...each(copies, few.slice(1)),
+    ...each([4], Array(400).fill(1)),
+    ...each(copies, [10, 14, 18, 26, 34, 50, 66, 98], 10),
+    ...each([70, 198, 582], few, 10),
+  ]);
+  expect(roundTrip(input, { [QUALITY]: 10 })).toMatchInlineSnapshot(`"5653 33c9d353"`);
+});
+
 it("prices distances from 256 KiB on at quality 10", () => {
-  const bytes = noise.subarray(0, 5100).map(byte => byte & 63);
+  const bytes = bytesOf(5100, i => noise[i] & 63);
   const records = Array.from({ length: 20 }, (_, i) => {
     const at = 13 * ((i * 7) % 20);
     return [bytes.subarray(at, at + (i & 1 ? 5 : 8)), bytes.subarray(5000 + 3 * i, 5003 + 3 * i)];
@@ -1665,7 +1710,7 @@ it("weighs matches that start or end where its buffer wraps around", () => {
   const fresh = length => noise.subarray(next, (next += length));
   const [wanted, mark] = [noise.subarray(0, 24), Buffer.from("!")];
   const worse = [mark, wanted.subarray(0, 6), fresh(9)];
-  const shorter = [Buffer.alloc(300), wanted.subarray(0, 9), Buffer.alloc(4000), wanted.subarray(0, 8), mark];
+  const shorter = gap => [Buffer.alloc(gap), wanted.subarray(0, 17), Buffer.alloc(520), wanted.subarray(0, 16), mark];
   // What comes before the last few bytes of the buffer, how many those are, and the rest of one or two flushes.
   const cases = [
     ...[3, 4].map(left => [[], left, [wanted, fresh(9), wanted, fresh(9)]]),
@@ -1674,8 +1719,8 @@ it("weighs matches that start or end where its buffer wraps around", () => {
     [worse, 5, [wanted, fresh(21)], [mark, wanted, fresh(9)]],
     [worse, 5, [wanted, fresh(22)], [mark, wanted, fresh(9), Buffer.alloc(1100)]],
     [[...worse, wanted.subarray(0, 9), fresh(25)], 9, [mark, wanted.subarray(0, 9)]],
-    [[], 9, [wanted], [...shorter, wanted, fresh(9)]],
-    [[wanted, ...shorter], 9, [wanted, fresh(9)]],
+    [[], 17, [wanted], [...shorter(100), wanted, fresh(9)]],
+    [[wanted, ...shorter(200)], 17, [wanted, fresh(9)]],
   ];
   let at = 0;
   const steps = cases.flatMap(([before, left, first, second = []], i) => {
@@ -1685,8 +1730,8 @@ it("weighs matches that start or end where its buffer wraps around", () => {
     return [zeros, Buffer.concat(flushes.slice(0, 2)), flushes[2]].map(chunk => [FLUSH, chunk]);
   });
   steps.push([FINISH, Buffer.alloc(0)]);
-  expect(roundTripInSteps(steps, { [QUALITY]: 7, [LGWIN]: 17 })).toMatchInlineSnapshot(`"1053 36d3b605"`);
-  expect(roundTripInSteps(steps, { [QUALITY]: 9, [LGWIN]: 10 })).toMatchInlineSnapshot(`"1218 c3d09456"`);
+  expect(roundTripInSteps(steps, { [QUALITY]: 7, [LGWIN]: 17 })).toMatchInlineSnapshot(`"1051 2b9331cc"`);
+  expect(roundTripInSteps(steps, { [QUALITY]: 9, [LGWIN]: 10 })).toMatchInlineSnapshot(`"1171 f4b14828"`);
 });
 
 it.each([

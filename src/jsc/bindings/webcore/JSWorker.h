@@ -35,6 +35,7 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+    // JSDOMWrapperOwner checks pending activity first.
     bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral*) const { return false; }
 };
 

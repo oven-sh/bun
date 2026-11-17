@@ -37,13 +37,9 @@ template<> PerformanceMeasureOptions convertDictionary<PerformanceMeasureOptions
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     PerformanceMeasureOptions result;
     result.detail = jsUndefined();
-    if (value.isUndefinedOrNull())
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
         return result;
-    auto* object = value.getObject();
-    if (!object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     convertDictionaryMember<IDLAny>(lexicalGlobalObject, *object, Identifier::fromString(vm, "detail"_s), result.detail);
     RETURN_IF_EXCEPTION(throwScope, {});
     convertDictionaryMember<IDLDouble>(lexicalGlobalObject, *object, Identifier::fromString(vm, "duration"_s), result.duration);

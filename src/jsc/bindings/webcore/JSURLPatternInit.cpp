@@ -34,13 +34,9 @@ template<> URLPatternInit convertDictionary<URLPatternInit>(JSGlobalObject& lexi
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     URLPatternInit result;
-    if (value.isUndefinedOrNull())
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
         return result;
-    auto* object = value.getObject();
-    if (!object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "baseURL"_s), result.baseURL);
     RETURN_IF_EXCEPTION(throwScope, {});
     convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "hash"_s), result.hash);

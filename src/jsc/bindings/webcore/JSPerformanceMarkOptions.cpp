@@ -34,13 +34,9 @@ template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGl
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     PerformanceMarkOptions result;
     result.detail = jsUndefined();
-    if (value.isUndefinedOrNull())
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
         return result;
-    auto* object = value.getObject();
-    if (!object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     convertDictionaryMember<IDLAny>(lexicalGlobalObject, *object, Identifier::fromString(vm, "detail"_s), result.detail);
     RETURN_IF_EXCEPTION(throwScope, {});
     convertDictionaryMember<IDLDouble>(lexicalGlobalObject, *object, Identifier::fromString(vm, "startTime"_s), result.startTime);

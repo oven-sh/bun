@@ -32,13 +32,9 @@ template<> EventListenerOptions convertDictionary<EventListenerOptions>(JSGlobal
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     EventListenerOptions result;
-    if (value.isUndefinedOrNull())
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
         return result;
-    auto* object = value.getObject();
-    if (!object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "capture"_s), result.capture);
     RETURN_IF_EXCEPTION(throwScope, {});
     return result;

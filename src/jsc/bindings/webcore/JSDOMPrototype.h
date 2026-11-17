@@ -22,7 +22,6 @@ public:
         return prototype;
     }
 
-    // Must be defined for each specialization class.
     DECLARE_INFO;
 
     static JSC::EncodedJSValue JIT_OPERATION_ATTRIBUTES constructorGetter(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName)

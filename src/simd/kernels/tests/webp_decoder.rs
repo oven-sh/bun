@@ -67,9 +67,9 @@ fn inverse_dct() {
 }
 
 #[test]
-fn inverse_dct_saturates_when_it_rounds() {
-    for first in [32763, 32764, 32767] {
-        check([[4095; 64]; 6], || {
+fn inverse_dct_wraps_when_it_rounds() {
+    for (first, want) in [(32763, 4095), (32764, -4096), (32767, -4096)] {
+        check([[want; 64]; 6], || {
             let mut got = [from_fn(|i| if i < 16 && i % 4 == 0 { first } else { 0 }); 6];
             webp::inverse_dct(&mut got, u32::MAX);
             got

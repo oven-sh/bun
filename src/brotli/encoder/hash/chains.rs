@@ -4,7 +4,7 @@ use core::hint::{Locality, prefetch_read};
 
 use super::{Filter, Hasher, Match, RecentDistances, Search, score_of_recent};
 use crate::encoder::input_block::InputBlock;
-use crate::encoder::matching::hash_of_four;
+use crate::encoder::matching::{bytes_at, hash_of_four, load32, put_bytes};
 use crate::encoder::words::QuickWordSearch;
 use crate::memory::{self, Result};
 
@@ -212,8 +212,8 @@ impl Bank {
 /// New links replace the oldest ones of their bank (quality 9).
 pub(in crate::encoder) struct ForgetfulChains {
     common: Common,
-    /// The halves of the last entry, and the index of its link in the bank.
-    heads: Box<[[u16; 3]; 1 << KEY_BITS]>,
+    /// The last entry, and the index of its link in the bank.
+    heads: Box<[[u8; 6]; 1 << KEY_BITS]>,
     banks: Box<[Bank; BANKS]>,
     /// The index of the link of the position before, and above it the distance to that position.
     links: Vec<u32>,
@@ -241,19 +241,26 @@ impl ForgetfulChains {
     }
 
     #[inline(always)]
+    fn head(&self, key: usize) -> (u32, u16) {
+        let head = &self.heads[key];
+        (load32(head, 0), u16::from_le_bytes(bytes_at(head, 4)))
+    }
+
+    #[inline(always)]
     fn insert(&mut self, key: usize, position: usize) {
+        self.common.insert(key, position);
         let bank = &mut self.banks[key % BANKS];
         if bank.next_free == bank.size {
             bank.make_room(&mut self.links);
         }
         let index = bank.next_free;
-        bank.next_free += 1;
-        self.common.insert(key, position);
-        let entry = entry(position) as u32;
-        let new = [entry as u16, (entry >> 16) as u16, index];
-        let [low, high, head] = core::mem::replace(&mut self.heads[key], new);
-        let distance = entry - (u32::from(low) | (u32::from(high) << 16));
         let at = bank.start as usize + usize::from(index);
+        bank.next_free += 1;
+        let entry = entry(position) as u32;
+        let (last, head) = self.head(key);
+        put_bytes(&mut self.heads[key], 0, entry.to_le_bytes());
+        put_bytes(&mut self.heads[key], 4, index.to_le_bytes());
+        let distance = entry - last;
         self.links[at] = (distance.min(u32::MAX >> BANK_BITS) << BANK_BITS) | u32::from(head);
     }
 }
@@ -267,7 +274,7 @@ impl Hasher for ForgetfulChains {
 
     fn clear(&mut self) {
         self.common.clear();
-        self.heads.fill([0; 3]);
+        self.heads.fill([0; _]);
         for bank in &mut *self.banks {
             bank.next_free = 0;
         }
@@ -300,8 +307,9 @@ impl Hasher for ForgetfulChains {
         let key = key(search.first_eight());
         let mut best = self.common.try_recent(search, recent, key);
         let bank = &self.links[self.banks[key % BANKS].start as usize..];
-        let [low, high, mut index] = self.heads[key].map(usize::from);
-        let mut distance = entry(search.position) - (low | (high << 16));
+        let (last, head) = self.head(key);
+        let mut distance = entry(search.position) - last as usize;
+        let mut index = usize::from(head);
         let length = search.raise(best.length.max(3), distance, &self.common.words, &mut best);
         let mut filter = Filter::new(search, length);
         for _ in (0..self.common.max_hops).rev() {

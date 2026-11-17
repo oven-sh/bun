@@ -149,18 +149,18 @@ impl<'a> Search<'a> {
 
     #[inline(always)]
     fn match_length_at(&self, masked: usize) -> usize {
-        self.match_length_with(masked, self.difference_at(masked))
+        self.match_length_with::<true>(masked, self.difference_at(masked))
     }
 
     #[inline(always)]
-    fn match_length_with(&self, masked: usize, mut difference: u64) -> usize {
+    fn match_length_with<const MAY_CALL: bool>(&self, masked: usize, mut difference: u64) -> usize {
         let mut matched = 0;
         if difference == 0 {
             let other = &self.window.bytes[masked..];
             let length = other.len().min(self.padded.len());
             let (a, b) = (&other[..length], &self.padded[..length]);
             while difference == 0 && matched + 16 <= length {
-                if matched == LONG_MATCH {
+                if MAY_CALL && matched == LONG_MATCH {
                     return long_match_length(a, b).min(self.padded.len() - SLACK);
                 }
                 matched += 8;
@@ -314,7 +314,9 @@ impl<'a> Filter<'a> {
     #[inline(always)]
     fn try_passed(&mut self, search: &Search<'a>, position: usize, best: &mut Match) {
         let distance = search.position - position;
-        let length = search.match_length_at(search.window.index(position));
+        let masked = search.window.index(position);
+        // A call would slow the loops over the bucket down.
+        let length = search.match_length_with::<false>(masked, search.difference_at(masked));
         let score = score(length, distance);
         if best.score < score {
             *best = Match::new(length, distance, score);

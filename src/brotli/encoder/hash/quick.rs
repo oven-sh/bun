@@ -114,7 +114,7 @@ impl<S: Slots, const SWEEP: usize, const HASHED: u32, const USE_WORDS: bool> Has
         if let Some(difference) = promising_difference(search, earlier, longer_than)
             && search.reaches(distance)
         {
-            let length = search.match_length_with(earlier, difference);
+            let length = search.match_length_with::<true>(earlier, difference);
             best = Match::new(length, distance, score_of_recent(length, 0));
             if SWEEP == 1 {
                 return best;
@@ -168,7 +168,7 @@ fn try_candidate(search: &Search<'_>, candidate: u32, best: &mut Match) {
     if let Some(difference) = promising_difference(search, earlier, best.length) {
         let distance = search.position.wrapping_sub(candidate as usize);
         if search.reaches(distance) {
-            let length = search.match_length_with(earlier, difference);
+            let length = search.match_length_with::<true>(earlier, difference);
             let score = score(length, distance);
             if best.score < score {
                 *best = Match::new(length, distance, score);

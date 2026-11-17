@@ -1119,10 +1119,7 @@ impl BunTest {
         );
         if Timespec::order_ignore_epoch(*min_timeout, timer.next.get()) == core::cmp::Ordering::Less {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
-            if timer.next.get() != Timespec::EPOCH {
-                bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                timer_all().remove(timer);
-            }
+            timer.disarm();
             timer.next.set(*min_timeout);
             if timer.next.get() != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");

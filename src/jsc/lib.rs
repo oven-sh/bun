@@ -698,7 +698,7 @@ pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef, PendingAbortSignal};
 pub use script_execution_context::{
-    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
+    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ScriptExecutionContext, ScriptTimer,
     StopReason,
 };
 

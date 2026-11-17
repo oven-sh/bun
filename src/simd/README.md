@@ -225,4 +225,4 @@ LLVM can still pick such an instruction for plain code in a kernel. Read the dis
 | The same with `BUN_SIMD_BENCHMARK=1`, on a release build | Prints times                                                                             |
 | `bun scripts/verify-baseline.ts --simd-cpus`             | The same on emulated CPUs, and the instructions of each copy against its target          |
 
-With the feature `test_support`, `limit_to` picks a target for the thread and nothing is cached. `portable32` and `portable64` then run a kernel at those widths on any machine.
+With the feature `test_support`, `limit_to` picks a target for the thread and nothing is cached. `portable32` and `portable64` then run a kernel at those widths on any machine. `Memory` is exported, for a `Source` that counts its reads.

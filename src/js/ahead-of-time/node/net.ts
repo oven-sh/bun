@@ -613,6 +613,7 @@ const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
 const upgradeDuplexToTLS: (
   duplex: $Node.Duplex,
   options: $Node.TLSUpgradeOptions<$Node.Socket>,
+  halfOpen: boolean,
 ) => [handle: SocketHandle, events: [(chunk: Uint8Array) => void, () => void, () => void, () => void]] = $bindgen(
   "socket_body.bind.ts",
   "upgradeDuplexToTLS",
@@ -843,7 +844,9 @@ function onUpgradedEnd(connection: $Node.Socket, eof: () => void) {
   if (!connection.destroyed) eof();
 }
 function attachTLSEngine(self: $Node.Socket, connection: $Node.Socket, options: $Node.TLSUpgradeOptions<$Node.Socket>) {
-  const [handle, events] = upgradeDuplexToTLS(connection, options);
+  // Unlike Node, not over a Duplex with allowHalfOpen, which is its default: programs count on the close there.
+  const halfOpen = connection instanceof Socket || !self.allowHalfOpen;
+  const [handle, events] = upgradeDuplexToTLS(connection, options, halfOpen);
   connection.on("data", events[0]);
   connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
   connection.on("close", events[2]);

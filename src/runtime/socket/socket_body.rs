@@ -3758,6 +3758,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     cx: &mut JsScope<'a>,
     duplex: JsLocal<'a>,
     options: JsLocal<'a>,
+    half_open: bool,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     // The upgraded socket is the calling script's.
@@ -3777,6 +3778,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         options.ctx,
         !options.is_server,
         server_verify,
+        half_open,
     );
 
     let array = JSValue::create_empty_array(global, 2)?;

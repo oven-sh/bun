@@ -343,7 +343,7 @@ pub mod ssl_wrapper {
     //   bit  2:   received_ssl_shutdown
     //   bit  3:   sent_ssl_shutdown
     //   bit  4:   is_client
-    //   bit  5:   authorized
+    //   bit  5:   half_open
     //   bit  6:   fatal_error
     //   bit  7:   closed_notified
     impl Flags {
@@ -351,6 +351,7 @@ pub mod ssl_wrapper {
         const RECEIVED_SSL_SHUTDOWN: u8 = 1 << 2;
         const SENT_SSL_SHUTDOWN: u8 = 1 << 3;
         const IS_CLIENT: u8 = 1 << 4;
+        const HALF_OPEN: u8 = 1 << 5;
         const FATAL_ERROR: u8 = 1 << 6;
         const CLOSED_NOTIFIED: u8 = 1 << 7;
 
@@ -383,7 +384,7 @@ pub mod ssl_wrapper {
         }
 
         #[inline]
-        pub(crate) fn received_ssl_shutdown(&self) -> bool {
+        pub fn received_ssl_shutdown(&self) -> bool {
             self.bits() & Self::RECEIVED_SSL_SHUTDOWN != 0
         }
         #[inline]
@@ -405,6 +406,11 @@ pub mod ssl_wrapper {
         #[inline]
         pub(crate) fn set_is_client(&self, v: bool) {
             self.set_bit(Self::IS_CLIENT, v)
+        }
+        /// `Handler::on_end` has run.
+        #[inline]
+        fn half_open(&self) -> bool {
+            self.bits() & Self::HALF_OPEN != 0
         }
         #[inline]
         pub fn fatal_error(&self) -> bool {
@@ -455,6 +461,10 @@ pub mod ssl_wrapper {
         fn write(&mut self, data: &[u8]) -> usize;
         fn on_data(&mut self, data: &[u8]);
         fn on_close(&mut self);
+        /// The peer's close_notify, ahead of ours. True: the owner can still write, and its `shutdown` closes the wrapper.
+        fn on_end(&mut self) -> bool {
+            false
+        }
         /// See [`SSLWrapper::enable_server_identity_check`].
         fn server_identity(&mut self, _ssl: &mut boring_sys::SSL) -> ServerIdentity {
             ServerIdentity::Unchecked
@@ -664,6 +674,9 @@ pub mod ssl_wrapper {
             }
             // SSL_shutdown only queues close_notify, and nothing else hands it to the owner.
             self.handle_writing(handler);
+            if self.flags.half_open() {
+                self.trigger_close_callback(handler);
+            }
             ret == 1 // truly closed
         }
 
@@ -705,6 +718,11 @@ pub mod ssl_wrapper {
                 || self.flags.sent_ssl_shutdown()
         }
 
+        /// Nothing more can be written.
+        pub fn is_write_shutdown(&self) -> bool {
+            self.flags.closed_notified() || self.flags.sent_ssl_shutdown()
+        }
+
         /// We sent and received the shutdown (fully closed)
         pub fn is_closed(&self) -> bool {
             self.flags.received_ssl_shutdown() && self.flags.sent_ssl_shutdown()
@@ -712,7 +730,7 @@ pub mod ssl_wrapper {
 
         /// Receive data from the network (encrypted data)
         pub fn receive_data(&self, handler: &mut dyn Handler, data: &[u8]) {
-            if self.ssl.get().is_none() {
+            if self.ssl.get().is_none() || self.flags.half_open() {
                 return;
             }
             {
@@ -919,6 +937,7 @@ pub mod ssl_wrapper {
                 if (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
                     & boring_sys::SSL_RECEIVED_SHUTDOWN)
                     != 0
+                    && !self.flags.half_open()
                 {
                     // we received a shutdown
                     self.flags.set_received_ssl_shutdown(true);
@@ -1111,6 +1130,14 @@ pub mod ssl_wrapper {
                             return false;
                         }
                         if err == boring_sys::SSL_ERROR_ZERO_RETURN {
+                            if !self.flags.sent_ssl_shutdown() {
+                                self.flags.set_bit(Flags::HALF_OPEN, true);
+                                // BoringSSL reads nothing past the close_notify.
+                                self.ciphertext.incoming.take();
+                                if handler.on_end() {
+                                    return true;
+                                }
+                            }
                             // 2-step shutdown, last: write_data fails once our close_notify is out.
                             let _ = self.shutdown(handler, false);
                         }

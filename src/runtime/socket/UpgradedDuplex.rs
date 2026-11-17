@@ -50,6 +50,8 @@ pub(crate) struct UpgradedDuplex {
     is_open: Cell<bool>,
     is_client: bool,
     server_verify: ServerVerify,
+    /// The peer's close_notify ends the read side only.
+    half_open: bool,
     /// No uSockets group holds this socket, so the context that upgraded it closes it through this owner when it stops.
     abort_handle: bun_jsc::AbortHandle,
     /// That context.
@@ -86,6 +88,8 @@ pub(crate) struct UpgradedDuplex {
     pub pending_shutdown: Cell<bool>,
     /// `pause_stream` paused the wrapped stream and `resume_stream` has not run since.
     paused_origin: Cell<bool>,
+    /// Data was written after the peer's close_notify, so a reader waits for ours.
+    answered_after_end: Cell<bool>,
 }
 
 /// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
@@ -217,6 +221,15 @@ impl ssl_wrapper::Handler for &UpgradedDuplex {
         self.finish_close();
     }
 
+    fn on_end(&mut self) -> bool {
+        if self.half_open
+            && let Some(tls) = self.listener()
+        {
+            fold(TLSSocket::on_end(tls, self.socket()));
+        }
+        self.half_open
+    }
+
     fn write(&mut self, encoded_data: &[u8]) -> usize {
         self.write_encrypted(encoded_data);
         encoded_data.len()
@@ -284,7 +297,7 @@ impl UpgradedDuplex {
         // duplex whose write side already ended (TLS-inception teardown) only
         // surface a spurious EPIPE - drop them. Ordinary data writes skip the
         // probe so write-after-end still errors like node.
-        let teardown = data.is_none() || self.wrapper_ref().is_some_and(|w| w.is_shutdown());
+        let teardown = data.is_none() || self.is_shutdown();
         if teardown {
             // A teardown payload (close_notify) after the transport's readable
             // side ended has no reader behind it: node writes nothing there,
@@ -292,7 +305,7 @@ impl UpgradedDuplex {
             // throws writeAfterFIN (EPIPE). The trailing end() is not a write
             // and still goes through the writableEnded probe below, so a
             // half-open transport sees our FIN.
-            if data.is_some() {
+            if data.is_some() && !self.answered_after_end.get() {
                 match Self::transport_got_eof(duplex, &global) {
                     Ok(false) => {}
                     Ok(true) => return,
@@ -494,6 +507,7 @@ impl UpgradedDuplex {
         ctx: bun_boringssl_sys::OwnedSslCtx,
         is_client: bool,
         server_verify: ServerVerify,
+        half_open: bool,
     ) -> ThisPtr<Self> {
         js_TLSSocket::duplex_origin_set_cached(js_wrapper, global, origin);
         let this = bun_core::heap::into_raw(Box::new(UpgradedDuplex {
@@ -507,6 +521,7 @@ impl UpgradedDuplex {
             is_open: Cell::new(false),
             is_client,
             server_verify,
+            half_open,
             abort_handle: bun_jsc::AbortHandle::for_owner::<Self>(),
             context: context.id(),
             vm: global.bun_vm(),
@@ -521,6 +536,7 @@ impl UpgradedDuplex {
             pending_close: Cell::new(false),
             pending_shutdown: Cell::new(false),
             paused_origin: Cell::new(false),
+            answered_after_end: Cell::new(false),
         }));
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: the ref it was made with.
@@ -619,15 +635,19 @@ impl Transport for UpgradedDuplex {
 
     /// `None` means `start_tls` has not run yet, not shut down.
     fn is_shutdown(&self) -> bool {
-        self.wrapper_ref().is_some_and(|w| w.is_shutdown())
+        self.wrapper_ref().is_some_and(|w| w.is_write_shutdown())
     }
 
     fn write(&self, data: &[u8]) -> (i32, i32) {
         bun_output::scoped_log!(UpgradedDuplex, "write (len: {})", data.len());
         let _keep_alive = self.keep_alive();
-        let written = self
-            .wrapper_ref()
-            .map_or(0, |w| w.write_data(&mut &*self, data).unwrap_or(0));
+        let Some(w) = self.wrapper_ref() else {
+            return (0, 0);
+        };
+        if w.flags.received_ssl_shutdown() {
+            self.answered_after_end.set(true);
+        }
+        let written = w.write_data(&mut &*self, data).unwrap_or(0);
         (i32::try_from(written).expect("int cast"), 0)
     }
 

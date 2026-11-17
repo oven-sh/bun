@@ -488,7 +488,9 @@ function onUpgradedEnd(connection, eof) {
   if (!connection.destroyed) eof();
 }
 function attachTLSEngine(self, connection, options) {
-  const [handle, events] = upgradeDuplexToTLS(connection, options);
+  // Unlike Node, not over a Duplex with allowHalfOpen, which is its default: programs count on the close there.
+  const halfOpen = connection instanceof Socket || !self.allowHalfOpen;
+  const [handle, events] = upgradeDuplexToTLS(connection, options, halfOpen);
   connection.on("data", events[0]);
   connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
   connection.on("close", events[2]);

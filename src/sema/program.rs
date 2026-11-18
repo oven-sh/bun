@@ -105,9 +105,7 @@ struct TransientSymbol {
 pub enum Transient {
     /// `cloneTypeAsModuleType`, from `exportTypeLinks.target`.
     ModuleClone { alias: Sym, target: Sym },
-    /// `combineValueAndTypeSymbols`, from `type_symbol` and a property of the `export =` value. The
-    /// property is the value symbol, whose `Parent` and `Declarations` come first. Only a checker
-    /// finds it: `Checker::value_of_combined_symbol`.
+    /// `combineValueAndTypeSymbols`, from `type_symbol` and the property `Checker::value_of_combined_symbol` finds.
     Combined { alias: Sym, type_symbol: Sym },
 }
 
@@ -9847,8 +9845,7 @@ impl<'s> Files<'s> {
         )
     }
 
-    /// `getParentOfSymbol`. `None` for a symbol that `combineValueAndTypeSymbols` created: its parent is that of a
-    /// property, which only a checker finds (`Checker::value_of_combined_symbol`).
+    /// `getParentOfSymbol`. `None` for a combined symbol: `Checker::value_of_combined_symbol` has its parent.
     pub fn parent_of_symbol(&self, sym: Sym) -> Option<Sym> {
         let symbol = self.symbol(sym);
         // `mergeSymbolTable` only sets the parent of a transient symbol.
@@ -11336,10 +11333,7 @@ impl<'s> Files<'s> {
         (!created.is_combined).then_some(created.target)
     }
 
-    /// The type symbol of `symbol`, which `combineValueAndTypeSymbols` created, if `symbolFromModule` was an alias of
-    /// it. `getTargetOfAliasDeclaration` doesn't resolve that alias, for an import or an export specifier, so the
-    /// result is an alias and not a class or an interface (`valueSymbol.Flags|typeSymbol.Flags`): it has the declared
-    /// type of its target.
+    /// The type symbol of the combined `symbol`, if the module exports it through an alias, which tsc doesn't resolve.
     pub fn aliased_type_of_combined_symbol(&self, symbol: Sym) -> Option<Sym> {
         let created = self.transient_symbol(symbol)?;
         if !created.is_combined {

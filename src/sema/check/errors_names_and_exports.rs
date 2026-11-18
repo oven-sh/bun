@@ -408,8 +408,7 @@ fn fully_qualified_name_of_property(
     let Some((prop, _)) = c.get_property_of_type(object, name) else {
         return c.atoms().bytes(name).to_vec();
     };
-    // `getSpreadSymbol` keeps the `Parent` of the original property, and `createUnionOrIntersectionProperty` that of
-    // the one declaration its constituents share.
+    // A spread copy and a property of a union have the `Parent` of the one declaration they come from.
     match c.symbol_of_prop(object, prop) {
         Some(PropSymbol::Declared(symbol)) => fully_qualified_name(c, symbol, None),
         symbol => {

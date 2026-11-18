@@ -231,8 +231,7 @@ enum IteratorMethod {
 pub(super) enum PropSymbol {
     /// A member, or an export of a module or a namespace.
     Declared(Sym),
-    /// A property written in an object literal. Its parent is the `__object` symbol of the literal,
-    /// which the binder doesn't create.
+    /// A property written in an object literal, whose `__object` parent the binder doesn't create.
     InLiteral(FileId, hir::PropId),
     /// The `prototype` of this class, which nothing declares.
     PrototypeOf(Sym),
@@ -1660,17 +1659,14 @@ impl<'p, 's> Checker<'p, 's> {
         Some((object, name))
     }
 
-    /// `valueSymbol` of `combineValueAndTypeSymbols` for `alias`. `result.Parent` is its `Parent`,
-    /// and only without one that of the type symbol. Its `Declarations` come before those of the
-    /// type symbol.
+    /// `valueSymbol` of `combineValueAndTypeSymbols` for `alias`: its `Parent` and `Declarations` come first.
     pub(super) fn value_of_combined_symbol(&mut self, alias: Sym) -> Option<PropSymbol> {
         let (module, name) = self.imported_from_export_equals(alias)?;
         let (object, property) = self.exported_property(module, name)?;
         self.symbol_of_prop(object, property)
     }
 
-    /// What has the `Parent` of the symbol of `property`, a property of `object`. `None` if it has
-    /// none: it's synthesized, or the members of an intersection declare it in several places.
+    /// What has the `Parent` of `property`, a property of `object`. `None` if no one declaration has it.
     pub(super) fn symbol_of_prop(&self, object: TypeId, property: &Prop) -> Option<PropSymbol> {
         match Self::value_declaration(property) {
             Some(&PropSource::Symbol(symbol)) => Some(PropSymbol::Declared(symbol)),

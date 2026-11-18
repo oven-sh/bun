@@ -2522,8 +2522,7 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return self.with_alternative_containers(container, symbol, at, meaning);
             }
-            // `getWithAlternativeContainers`: the `__object` symbol is neither in scope nor the `export =` of a
-            // module, and has no chain. That leaves the variable and the modules.
+            // `getWithAlternativeContainers` of an `__object` symbol: only the variable and the modules name it.
             Some(Container::ObjectLiteral(file, literal)) => {
                 let literal = Decl::ObjectLiteral(literal);
                 let variable = match meaning.flags().intersects(SymFlags::VALUE) {

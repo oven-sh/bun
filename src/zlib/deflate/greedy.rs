@@ -21,7 +21,7 @@ impl Deflater {
                     && !block.is_full()
                     && let Some(target) = matcher.target(position, end - position)
                 {
-                    let found = matcher.insert_and_match::<false>(target);
+                    let found = matcher.insert_and_match::<false, false>(target);
                     if found.len < HASHED_LEN {
                         block.push_literal(target.scan[0]);
                         position += 1;

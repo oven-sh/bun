@@ -1,4 +1,4 @@
-//! Compression, byte for byte as by zlib-ng 2.3.3.
+//! Compression, with the methods and the parameters of zlib-ng 2.3.3.
 
 mod block;
 mod chains;
@@ -12,6 +12,7 @@ mod medium;
 mod pending;
 mod quick;
 mod runs;
+mod spare_steps;
 mod stored;
 mod symbol;
 mod window;
@@ -158,8 +159,12 @@ struct Tuning {
 impl Tuning {
     #[inline(always)]
     fn matcher<'a>(&self, chains: &'a mut Chains, window: &'a Window) -> Matcher<'a> {
+        let index = chains.over(&window.bytes);
+        index
+            .spare_steps
+            .check(window.position, self.effort.max_chain);
         Matcher {
-            index: chains.over(&window.bytes),
+            index,
             max_distance: window.max_distance(),
             effort: self.effort,
         }
@@ -308,9 +313,6 @@ impl Deflater {
         self.has_started = false;
         self.last_flush = None;
         self.forget_history();
-        self.window.forget_bytes();
-        self.chains.start_over();
-        self.missed_slides = 0;
         self.block.clear();
         self.pending.clear();
         self.quick_block = QuickBlock::None;
@@ -596,6 +598,9 @@ impl Deflater {
             _ => self.chains.clear(),
         }
         self.window.rewind();
+        self.window.forget_bytes();
+        self.chains.start_over();
+        self.missed_slides = 0;
     }
 
     fn hash_all(&mut self, start: u32, len: u32) {

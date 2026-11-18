@@ -297,8 +297,7 @@ for (const server of servers) {
         expect({ sessions: sessions.size, dials: connected.count }).toEqual({ sessions: 1, dials: 5 });
       });
 
-      // So the connections that the load does not need reach idleTimeout (#49268).
-      test.each<[string, (sql: SQL) => Promise<unknown>]>([
+      const oneAtATime: [string, (sql: SQL) => Promise<unknown>][] = [
         ["begin()", sql => sql.begin(tx => sessionId(tx))],
         [
           "reserve()",
@@ -314,7 +313,18 @@ for (const server of servers) {
             return await reserved.begin(tx => sessionId(tx));
           },
         ],
-      ])("%s one after the other uses the connection that the queries use", async (_, call) => {
+        [
+          "beginDistributed() that is then committed",
+          async sql => {
+            const name = `bun_pool_${(Math.random() * 2 ** 31) | 0}`;
+            const id = await sql.beginDistributed(name, tx => sessionId(tx));
+            await sql.commitDistributed(name);
+            return id;
+          },
+        ],
+      ];
+
+      test.each(oneAtATime)("%s one after the other uses the connection that the queries use", async (_, call) => {
         const connected = new Calls();
         await using sql = await pool({ max: 4, onconnect: connected.hit });
         const first = await sessionId(sql);
@@ -323,6 +333,27 @@ for (const server of servers) {
         for (let i = 0; i < 4; i++) sessions.push(await call(sql), await call(sql), await sessionId(sql));
         expect(sessions).toEqual(Array(12).fill(first));
       });
+
+      // #49268
+      test.each(oneAtATime.slice(0, 2))(
+        "%s one after the other lets the connections that it does not need reach idleTimeout",
+        async (_, call) => {
+          const connected = new Calls();
+          const idledOut = new Calls();
+          await using sql = await pool({
+            max: 4,
+            idleTimeout: 0.25,
+            onconnect: connected.hit,
+            onclose: (err: any) => void (err?.code === code("IDLE_TIMEOUT") && idledOut.hit()),
+          });
+          // Its one connection idles out after four times as long: by then the three have had their time.
+          let over = false;
+          await using clock = await pool({ idleTimeout: 1, onclose: () => void (over = true) });
+          await clock.connect();
+          while ((connected.count < 4 || idledOut.count < 3) && !over) await call(sql);
+          expect(idledOut.count).toBeGreaterThanOrEqual(3);
+        },
+      );
 
       test("reserve() gets the idle connection that logged in first, not the one that waited longest", async () => {
         const connected = new Calls();
@@ -481,9 +512,32 @@ for (const server of servers) {
         const other = held.wait(sql).execute();
         const commits = held.wait(sql, "; commit").simple().execute();
         await begins;
+        // Inside the transaction it is given to nobody: this one is sent behind the query on the other connection.
+        const inside = sessionId(sql);
         await held.open();
         await Promise.all([other, commits]);
-        expect([await sessionId(sql), await sql.begin(tx => sessionId(tx))]).toEqual([id, id]);
+        expect([(await inside) !== id, await sessionId(sql), await sql.begin(tx => sessionId(tx))]).toEqual([
+          true,
+          id,
+          id,
+        ]);
+      });
+
+      test("one that outlived maxLifetime while it is busy gets no new query", async () => {
+        await using sql = await pool({ maxLifetime: 0.2 });
+        await sql.connect();
+        await using held = await gate();
+        const busy = held.wait(sql).then(rows => rows[0].id);
+        {
+          // Dialed later, so it closes later.
+          const closed = Promise.withResolvers<unknown>();
+          await using later = await pool({ maxLifetime: 0.2, onclose: closed.resolve });
+          await later.connect();
+          await closed.promise;
+        }
+        const next = sessionId(sql);
+        await held.open();
+        expect((await next) !== (await busy)).toBe(true);
       });
 
       test("it stays while it has a prepared distributed transaction", async () => {

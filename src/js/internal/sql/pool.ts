@@ -750,10 +750,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     let found: PooledConnection | null = null;
     for (let i = 0; i < connections.length; i++) {
       const connection = connections[i];
-      if (connection.state !== PooledConnectionState.open) {
-        break;
-      }
-      if ((connection.flags & PooledConnectionFlags.notReady) !== 0) {
+      if (!isReady(connection)) {
         continue;
       }
       const queryCount = connection.queryCount;

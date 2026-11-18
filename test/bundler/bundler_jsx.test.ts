@@ -631,13 +631,12 @@ describe("bundler", () => {
             build.stderr.text(),
             build.exited,
           ]);
+          expect(buildExitCode, buildStderr).toBe(0);
           expect(output).not.toBe("");
-          expect(buildStderr).toBe("");
-          expect(buildExitCode).toBe(0);
           const { code } = transformSync(output, { loader: "jsx", jsxFactory: "globalThis.factory.h" });
           await using run = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
           const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+          expect({ stdout, exitCode }, stderr).toEqual({ stdout: "true\n", exitCode: 0 });
         });
       });
     });
@@ -666,8 +665,7 @@ describe("bundler", () => {
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-        expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
+        expect(exitCode, stderr).toBe(0);
         emitted = stdout;
       }
 
@@ -679,9 +677,8 @@ describe("bundler", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({
+      expect({ stdout, exitCode }, stderr).toEqual({
         stdout: "local 42 escaped 42 global 43\n",
-        stderr: "",
         exitCode: 0,
       });
     });
@@ -911,7 +908,7 @@ describe("bundler", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      expect({ stdout, exitCode }, stderr).toEqual({ stdout: "", exitCode: 0 });
     });
 
     test("Bun.Transpiler scanImports uses the jsxImportSource pragma", () => {

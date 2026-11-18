@@ -478,18 +478,7 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
         context => vm.context_of(context),
     };
     // SAFETY: as above.
-    let result = unsafe { ((*header).complete)(header, &global.js_thread(context)) };
-    if cfg!(all(windows, target_arch = "x86_64")) {
-        clear_stack_below_caller();
-    }
-    result
-}
-
-/// A mitigation: callees need not write their arguments' home slots, where the collector finds what a completion spilled.
-#[inline(never)]
-fn clear_stack_below_caller() {
-    // a-failed-stream-is-collected.test.ts had it in `JSC::profiledCall`. `vmEntryToJavaScript` is 0x4a0 below the queue.
-    core::hint::black_box(&mut [0u64; 256]);
+    unsafe { ((*header).complete)(header, &global.js_thread(context)) }
 }
 
 /// Teardown's release for a queued, never-dispatched `Job<C>` completion

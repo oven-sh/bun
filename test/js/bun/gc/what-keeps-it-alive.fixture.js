@@ -1,4 +1,4 @@
-// whatKeepsAlive(className) says, on Linux and Windows, why the collector still holds the objects of a class: the roots that reach them, and where on
+// whatKeepsAlive(className) says, on Linux, why the collector still holds the objects of a class: the roots that reach them, and where on
 // the stack the address of a cell that reaches them lies, with the way from that cell and the frame records around the word.
 // A place in code is `<file>+0x<offset in the file>`.
 const { closeSync, openSync, readFileSync, readSync } = require("fs");
@@ -39,53 +39,9 @@ function cellsThatReach(className) {
   return { listed, reaching: new Map([...next.keys()].map(id => [BigInt(byId.get(id).address), wayFrom(id)])) };
 }
 
-// Frames have no records there, so this lists each address in the executable around the word: some are return addresses of live frames.
-function placesOnWindows(wanted) {
-  const { dlopen, ptr, read, toArrayBuffer } = require("bun:ffi");
-  const { symbols: kernel } = dlopen("kernel32.dll", {
-    GetCurrentThreadStackLimits: { args: ["ptr", "ptr"], returns: "void" },
-    GetModuleHandleW: { args: ["ptr"], returns: "ptr" },
-    VirtualQuery: { args: ["u64", "ptr", "u64"], returns: "u64" },
-  });
-  const limits = new BigUint64Array(2);
-  kernel.GetCurrentThreadStackLimits(ptr(limits), ptr(limits, 8));
-  const region = Buffer.alloc(48);
-  const isReadable = page =>
-    kernel.VirtualQuery(page, ptr(region), 48n) &&
-    region.readUInt32LE(32) === 0x1000 &&
-    region.readUInt32LE(36) === 0x04;
-  const end = limits[1];
-  let start = end;
-  while (start > limits[0] && isReadable(start - 4096n)) start -= 4096n;
-  const words = new BigUint64Array(toArrayBuffer(Number(start), 0, Number(end - start)).slice(0));
-
-  const base = kernel.GetModuleHandleW(null);
-  const size = read.u32(base, read.u32(base, 0x3c) + 0x50);
-  const place = word => word >= base && word - BigInt(base) < size && `exe+0x${(word - BigInt(base)).toString(16)}`;
-  // What `deref()` returns is held until the end of the turn.
-  const cells = [...wanted].filter(([, way]) => !way.includes("WeakRef"));
-  // An address in a cell, or right behind it, holds it too. The snapshot only has estimates of sizes.
-  const held = word =>
-    cells
-      .filter(([address]) => address <= word && word - address <= 0x100n)
-      .map(([address, way]) => `>>> 0x${address.toString(16)}+0x${(word - address).toString(16)} ${way}`)
-      .join(" ");
-  const last = Math.max(0, words.findLastIndex(held) - 512);
-  const lines = [];
-  for (let index = words.length - 1; index >= last; index--) {
-    const what = held(words[index]) || place(words[index]);
-    if (what) lines.push(`0x${((words.length - index) * 8).toString(16)} below the end of the stack: ${what}`);
-  }
-  return lines;
-}
-
 function whatKeepsAlive(className) {
   const { listed, reaching: wanted } = cellsThatReach(className);
   const lines = [`${wanted.size} cells reach a ${className}`, ...listed];
-  if (process.platform === "win32") {
-    const hasFFI = process.env.BUN_JSC_useJIT !== "0";
-    return [...lines, ...(hasFFI ? placesOnWindows(wanted) : [])].join("\n");
-  }
   const mappings = readFileSync("/proc/self/maps", "utf8")
     .split("\n")
     .filter(line => line)

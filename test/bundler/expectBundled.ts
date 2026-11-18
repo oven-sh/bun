@@ -1226,7 +1226,7 @@ function expectBundled(
               throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
             }
 
-            checkCliWarnings();
+            if (bundleWarnings) checkCliWarnings();
             return testRef(id, opts);
           }
           if (allErrors.length === 0) {
@@ -1410,7 +1410,11 @@ for (const [key, blob] of build.outputs) {
           };
         };
 
-        const allWarnings = build.logs.filter(x => x.level === "warn").map(logToErrorMeta);
+        const checkApiWarnings = () => {
+          if (!bundleWarnings) return;
+          const warnings = build.logs.filter(x => x.level === "warn").map(logToErrorMeta);
+          checkWarnings(warnings);
+        };
         const buildLogs = build.logs.filter(x => x.level === "error");
         if (buildLogs.length) {
           const allErrors: ErrorMeta[] = [];
@@ -1467,7 +1471,7 @@ for (const [key, blob] of build.outputs) {
               throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
             }
 
-            checkWarnings(allWarnings);
+            checkApiWarnings();
             return testRef(id, opts);
           }
 
@@ -1475,7 +1479,7 @@ for (const [key, blob] of build.outputs) {
         } else if (expectedErrors && expectedErrors.length > 0) {
           throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
         }
-        checkWarnings(allWarnings);
+        checkApiWarnings();
       } else {
         await esbuild.build({
           bundle: true,

@@ -313,15 +313,6 @@ for (const server of servers) {
             return await reserved.begin(tx => sessionId(tx));
           },
         ],
-        [
-          "beginDistributed() that is then committed",
-          async sql => {
-            const name = `bun_pool_${(Math.random() * 2 ** 31) | 0}`;
-            const id = await sql.beginDistributed(name, tx => sessionId(tx));
-            await sql.commitDistributed(name);
-            return id;
-          },
-        ],
       ];
 
       test.each(oneAtATime)("%s one after the other uses the connection that the queries use", async (_, call) => {
@@ -346,11 +337,14 @@ for (const server of servers) {
             onconnect: connected.hit,
             onclose: (err: any) => void (err?.code === code("IDLE_TIMEOUT") && idledOut.hit()),
           });
-          // Its one connection idles out after four times as long: by then the three have had their time.
+          while (connected.count < 4) await call(sql);
+          // Dialed after the four have logged in, and its one connection idles out after four times as long: by
+          // then the three have had their time.
           let over = false;
           await using clock = await pool({ idleTimeout: 1, onclose: () => void (over = true) });
-          await clock.connect();
-          while ((connected.count < 4 || idledOut.count < 3) && !over) await call(sql);
+          const ticking = clock.connect();
+          while (idledOut.count < 3 && !over) await call(sql);
+          await ticking;
           expect(idledOut.count).toBeGreaterThanOrEqual(3);
         },
       );
@@ -524,12 +518,14 @@ for (const server of servers) {
       });
 
       test("one that outlived maxLifetime while it is busy gets no new query", async () => {
-        await using sql = await pool({ maxLifetime: 0.2 });
-        await sql.connect();
         await using held = await gate();
+        const connected = new Calls();
+        await using sql = await pool({ maxLifetime: 0.2, onconnect: connected.hit });
+        // Its query is what dials the connection, so it is busy from its login on.
         const busy = held.wait(sql).then(rows => rows[0].id);
+        await connected.reached(1);
         {
-          // Dialed later, so it closes later.
+          // Dialed after that login, so it closes later.
           const closed = Promise.withResolvers<unknown>();
           await using later = await pool({ maxLifetime: 0.2, onclose: closed.resolve });
           await later.connect();
@@ -554,6 +550,22 @@ for (const server of servers) {
         (other === first ? second : first).release();
         await sql.unsafe("select 1");
         expect([await outcome(sql.commitDistributed(name)), closed.count]).toEqual(["resolved", 0]);
+      });
+
+      test("one with a prepared distributed transaction is the last one that a caller gets", async () => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 3, onconnect: connected.hit });
+        await sql.connect();
+        await connected.reached(3);
+        const name = `bun_pool_${(Math.random() * 2 ** 31) | 0}`;
+        await sql.beginDistributed(name, tx => tx.unsafe("select 1"));
+        // MariaDB keeps it on that session, and refuses there whatever is not its commit or rollback.
+        const callers: string[] = [];
+        for (let i = 0; i < 4; i++) callers.push(await outcome(sql.begin(tx => tx.unsafe("select 1"))));
+        // The other two are reserved, so the commit gets the connection that has it.
+        using _first = await sql.reserve();
+        using _second = await sql.reserve();
+        expect([...callers, await outcome(sql.commitDistributed(name))]).toEqual(Array(5).fill("resolved"));
       });
 
       test("a transaction by hand on a pool of one connection keeps it", async () => {

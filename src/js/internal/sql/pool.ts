@@ -257,8 +257,14 @@ function closeTimeoutMs(options?: { timeout?: number }): number | undefined {
   return Math.min(seconds * 1000, 2 ** 31 - 1);
 }
 
+/// The fewest queries first. Of those, one without a prepared distributed transaction: a server that keeps that on
+/// its session refuses there whatever is not its commit or rollback.
+function rank(connection: PooledConnection): number {
+  return connection.queryCount * 2 + (connection.flags & PooledConnectionFlags.prepared ? 1 : 0);
+}
+
 function idleFirst(a: PooledConnection, b: PooledConnection) {
-  return a.queryCount - b.queryCount;
+  return rank(a) - rank(b);
 }
 
 /// Whether the pool can give it to a caller.
@@ -739,8 +745,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     }
   }
 
-  /// The ready connection that runs the fewest queries, if fewer than `limit`: of several, the one that logged
-  /// in first. The `setAside` that will be idle first are left to the reservations that wait ahead of the caller.
+  /// The ready connection of the lowest rank(), if it runs fewer than `limit` queries: of several, the one that
+  /// logged in first. The `setAside` that will be idle first are left to the reservations that wait ahead of the
+  /// caller.
   #leastBusy(limit: number, setAside: number): PooledConnection | null {
     const connections = this.connections;
     if (setAside !== 0) {
@@ -748,18 +755,19 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       return found !== undefined && found.queryCount < limit ? found : null;
     }
     let found: PooledConnection | null = null;
+    let lowest = limit * 2;
     for (let i = 0; i < connections.length; i++) {
       const connection = connections[i];
       if (!isReady(connection)) {
         continue;
       }
-      const queryCount = connection.queryCount;
-      if (queryCount < limit) {
+      const its = rank(connection);
+      if (its < lowest) {
         found = connection;
-        if (queryCount === 0) {
+        if (its === 0) {
           break;
         }
-        limit = queryCount;
+        lowest = its;
       }
     }
     return found;

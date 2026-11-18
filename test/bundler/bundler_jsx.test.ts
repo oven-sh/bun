@@ -1487,6 +1487,31 @@ describe("bundler", () => {
   });
 
   describe.each(["cli", "api"] as const)("key after spread (%s)", backend => {
+    itBundled(`jsx/BareKeyKeepsShorthandProp-${backend}`, {
+      files: {
+        "/in.jsx": `
+          /* @jsxRuntime react-jsx */
+          /* @jsxImportSource ./runtime */
+          const View = () => null, props = { id: 1 }, obj = { key: "shorthand" };
+          const ordinary = <View key {...props} {obj.key} />;
+          const explicit = <View key key="explicit" />;
+          console.log(ordinary.props.key, ordinary.key, ordinary.props.id, explicit.props.key, explicit.key);
+        `,
+        "/runtime/jsx-runtime.js": "export const jsx = (_, props, key) => ({ props, key });",
+        "/runtime/index.js": "export const createElement = (_, props) => ({ props });",
+      },
+      backend,
+      // Bare keys and attribute expressions are Bun extensions.
+      skipOnEsbuild: true,
+      bundleWarnings: {
+        "/in.jsx": [
+          '"key" prop ignored. Must be a string, number or symbol.',
+          '"key" prop ignored. Must be a string, number or symbol.',
+        ],
+      },
+      run: { stdout: "shorthand undefined 1 undefined explicit" },
+    });
+
     describe.each([
       ["automatic", "classic", false],
       ["classic", "automatic", true],

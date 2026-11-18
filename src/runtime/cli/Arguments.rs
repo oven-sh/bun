@@ -2011,7 +2011,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         || jsx_fragment.is_some()
         || jsx_import_source.is_some()
         || jsx_runtime.is_some()
-        || jsx_side_effects
     {
         let default_factory: &[u8] = b"";
         let default_fragment: &[u8] = b"";
@@ -2034,7 +2033,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 development: runtime_pair
                     .and_then(|runtime| runtime.development)
                     .unwrap_or(false),
-                side_effects: jsx_side_effects,
+                side_effects: false,
             });
         } else {
             let prev = opts.jsx.take().unwrap();
@@ -2050,9 +2049,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 development: runtime_pair
                     .and_then(|runtime| runtime.development)
                     .unwrap_or(false),
-                side_effects: jsx_side_effects || prev.side_effects,
+                side_effects: prev.side_effects,
             });
         }
+    }
+
+    if jsx_side_effects {
+        opts.jsx.get_or_insert_with(api::Jsx::default).side_effects = true;
     }
 
     if is_build {

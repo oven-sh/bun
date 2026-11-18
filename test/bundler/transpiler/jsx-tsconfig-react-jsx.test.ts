@@ -202,6 +202,26 @@ describe("tsconfig compilerOptions.jsx", () => {
     });
   });
 
+  test.concurrent("--jsx-side-effects preserves the bunfig JSX runtime", async () => {
+    using dir = tempDir("jsx-side-effects-bunfig", {
+      ...shimFiles,
+      "bunfig.toml": 'jsx = "react-jsxDEV"\njsxImportSource = "shim"',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "m.jsx", "--jsx-side-effects", "--external", "shim*"],
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"shim/jsx-dev-runtime"');
+    expect(stdout).toContain('jsxDEV("div"');
+    expect(stdout).not.toContain("@__PURE__");
+    expect(exitCode).toBe(0);
+  });
+
   // The Solid.js JSX transform was removed in 88538b7c2c.
   // jsxImportSource "solid-js" must not select a framework-specific runtime.
   test.concurrent('jsxImportSource "solid-js" uses the automatic runtime', async () => {

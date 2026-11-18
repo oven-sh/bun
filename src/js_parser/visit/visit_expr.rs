@@ -503,44 +503,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             options::JSX::Runtime::Automatic | options::JSX::Runtime::Classic
         ) && e_.flags.contains(Flags::JSXElement::HasBareKey)
         {
-            let mut i = 0;
-            while i < e_.properties.len() {
-                let property = &e_.properties.slice()[i];
-                if !property.flags.contains(Flags::Property::WasShorthand)
-                    || !Self::jsx_property_is_key(property)
+            let original_key_index = e_.key_prop_index;
+            let mut key_prop_index = original_key_index;
+            let properties = e_.properties.slice_mut();
+            let mut kept = 0;
+            for i in 0..properties.len() {
+                let property = properties[i];
+                if property.flags.contains(Flags::Property::WasShorthand)
+                    && Self::jsx_property_is_key(&property)
                 {
-                    i += 1;
+                    let key = property.key.expect("infallible: key prop has key");
+                    p.log().add_warning(
+                        Some(p.source),
+                        key.loc,
+                        b"\"key\" prop ignored. Must be a string, number or symbol.",
+                    );
                     continue;
                 }
-
-                let key = property.key.expect("infallible: key prop has key");
-                p.log().add_warning(
-                    Some(p.source),
-                    key.loc,
-                    b"\"key\" prop ignored. Must be a string, number or symbol.",
-                );
-                e_.properties.ordered_remove(i);
-            }
-
-            let mut first_spread_prop_index = -1;
-            let mut key_prop_index = -1;
-            for (i, property) in e_.properties.iter().enumerate() {
-                if property.kind == G::PropertyKind::Spread {
-                    if first_spread_prop_index == -1 {
-                        first_spread_prop_index = i as i32;
-                    }
-                } else if Self::jsx_property_is_key(property) {
-                    key_prop_index = i as i32;
+                if i as i32 == original_key_index {
+                    key_prop_index = kept as i32;
                 }
+                properties[kept] = property;
+                kept += 1;
             }
+            e_.properties.truncate(kept);
             e_.key_prop_index = key_prop_index;
-            let is_key_after_spread =
-                key_prop_index > first_spread_prop_index && first_spread_prop_index >= 0;
-            if is_key_after_spread {
-                e_.flags.insert(Flags::JSXElement::IsKeyAfterSpread);
-            } else {
-                e_.flags.remove(Flags::JSXElement::IsKeyAfterSpread);
-            }
             e_.flags.remove(Flags::JSXElement::HasBareKey);
         }
         // JSX is not a type parameter — dispatch on the runtime

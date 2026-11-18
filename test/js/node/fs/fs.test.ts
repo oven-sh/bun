@@ -6794,8 +6794,8 @@ console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder|link)/.test(
 });
 
 // The same for the calls that copy or send a file, list a folder or look a path up. bun makes most of them
-// with syscall(2), so the shim takes syscall() too. The first call of a kind on each file named "eintr-"
-// fails, and each failure is logged.
+// with syscall(2), so the shim takes syscall() too. The first call of a kind on each file of the test named
+// "eintr-" fails, and each failure is logged.
 const eintrShim = `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -6807,9 +6807,22 @@ const eintrShim = `
 #include <sys/syscall.h>
 #include <unistd.h>
 
+// The folder of the test is the working directory.
+static char root[PATH_MAX];
+__attribute__((constructor)) static void find_root(void) {
+  if (!getcwd(root, sizeof root)) root[0] = 0;
+}
+
+// The part of a path below the folder of the test, or "" for a file outside it.
+static const char *in_test(const char *path) {
+  size_t length = strlen(root);
+  if (path[0] != '/') return path;
+  return length && strncmp(path, root, length) == 0 && path[length] == '/' ? path + length + 1 : "";
+}
+
 // \`last\` is the file of the call that failed last.
 static int is_interrupted(const char *name, const char *path, char *last) {
-  if (!strstr(path, "eintr-") || strcmp(path, last) == 0) return 0;
+  if (!strstr(in_test(path), "eintr-") || strcmp(path, last) == 0) return 0;
   snprintf(last, PATH_MAX, "%s", path);
   dprintf(2, "%s\\n", name);
   errno = EINTR;
@@ -6851,14 +6864,14 @@ STAT(__xstat, (int version, const char *path, void *buffer), (version, path, buf
 STAT(__xstat64, (int version, const char *path, void *buffer), (version, path, buffer))
 
 // The files of the test are pipes without a name, so the first call of the process fails.
-ssize_t splice(int in, off64_t *in_offset, int out, off64_t *out_offset, size_t length, unsigned flags) {
+ssize_t splice(int in, off_t *in_offset, int out, off_t *out_offset, size_t length, unsigned flags) {
   static int calls;
   if (calls++ == 0) {
     dprintf(2, "splice\\n");
     errno = EINTR;
     return -1;
   }
-  return ((ssize_t (*)(int, off64_t *, int, off64_t *, size_t, unsigned)) dlsym(RTLD_NEXT, "splice"))(in, in_offset, out, out_offset, length, flags);
+  return ((ssize_t (*)(int, off_t *, int, off_t *, size_t, unsigned)) dlsym(RTLD_NEXT, "splice"))(in, in_offset, out, out_offset, length, flags);
 }
 
 long syscall(long number, ...) {
@@ -6870,7 +6883,7 @@ long syscall(long number, ...) {
   va_end(list);
   if (number == SYS_copy_file_range) {
     // A copy to a file named "enospc-" fails with another errno.
-    if (strstr(path_of(c), "enospc-")) {
+    if (strstr(in_test(path_of(c)), "enospc-")) {
       errno = ENOSPC;
       return -1;
     }
@@ -6881,7 +6894,7 @@ long syscall(long number, ...) {
   if (number == SYS_ioctl && b == 0x40049409) {
     // FICLONE. A file named "eintr-clone" is on a file system that has clones: the call after the failed one
     // succeeds, and clones nothing. Every other file is on a file system without them.
-    if (strstr(path_of(a), "eintr-clone")) return is_interrupted("ioctl_ficlone", path_of(a), cloned) ? -1 : 0;
+    if (strstr(in_test(path_of(a)), "eintr-clone")) return is_interrupted("ioctl_ficlone", path_of(a), cloned) ? -1 : 0;
     errno = EOPNOTSUPP;
     return -1;
   }
@@ -6911,7 +6924,7 @@ async function runUnderEintrShim(script: string) {
   return { stdout, stderr, exitCode };
 }
 
-it.skipIf(!isGlibc || !cc)("a copy is made again after EINTR", async () => {
+it.skipIf(!isLinux || !cc)("a copy is made again after EINTR", async () => {
   const result = await runUnderEintrShim(`
 import fs from "node:fs";
 import { promisify } from "node:util";
@@ -6971,11 +6984,10 @@ fs.writeFileSync("eintr-served", Buffer.alloc(1 << 20, "0123456789"));
   await row("Bun.serve", () => fetch(server.url).then(async response => (await response.arrayBuffer()).byteLength));
 }
 
-// Another errno is reported as before.
-const failure = ({ code, errno, syscall, path, dest }) => JSON.stringify({ code, errno, syscall, path, dest });
+// Another errno is not a reason to call again.
 fs.writeFileSync("enospc-source", text);
-try { fs.cpSync("enospc-source", "enospc-copy-1"); } catch (error) { console.log("cpSync", failure(error)); }
-try { fs.copyFileSync("enospc-source", "enospc-copy-2"); } catch (error) { console.log("copyFileSync", failure(error)); }
+await row("cpSync without space", () => fs.cpSync("enospc-source", "enospc-copy-1"));
+await row("copyFileSync without space", () => fs.copyFileSync("enospc-source", "enospc-copy-2"));
 `);
 
   expect(result).toEqual({
@@ -6987,7 +6999,6 @@ try { fs.copyFileSync("enospc-source", "enospc-copy-2"); } catch (error) { conso
         "cpSync onto a longer file true",
         "cp true",
         "promises.cp true",
-        // On main these two have their own EINTR arm.
         "copyFileSync true",
         "promises.copyFile true",
         "Bun.write [10000,true]",
@@ -6995,8 +7006,8 @@ try { fs.copyFileSync("enospc-source", "enospc-copy-2"); } catch (error) { conso
         "Bun.write in a pipeline 6",
         'fetch "1048576"',
         "Bun.serve 1048576",
-        'cpSync {"code":"ENOSPC","errno":-28,"syscall":"copy_file_range","path":"enospc-copy-1"}',
-        'copyFileSync {"code":"ENOSPC","errno":-28,"syscall":"copyfile","path":"enospc-source","dest":"enospc-copy-2"}',
+        'cpSync without space "ENOSPC"',
+        'copyFileSync without space "ENOSPC"',
       ].join("\n") + "\n",
     stderr:
       [
@@ -7008,7 +7019,7 @@ try { fs.copyFileSync("enospc-source", "enospc-copy-2"); } catch (error) { conso
   });
 });
 
-it.skipIf(!isGlibc || !cc)("a folder read and a path lookup are made again after EINTR", async () => {
+it.skipIf(!isLinux || !cc)("a folder read and a path lookup are made again after EINTR", async () => {
   const result = await runUnderEintrShim(`
 import fs from "node:fs";
 import module from "node:module";
@@ -7054,9 +7065,9 @@ await row("enableCompileCache", () => {
         "Bun.which true",
         "enableCompileCache true",
       ].join("\n") + "\n",
-    // No "access": the three exists calls ask the kernel without libc, where the shim cannot fail them.
-    // On main they call access(), which the shim fails, and answer false.
-    stderr: ["getdents64", "getdents64", "copy_file_range", "stat", "realpath"].join("\n") + "\n",
+    stderr:
+      ["getdents64", "getdents64", "copy_file_range", "access", "access", "access", "stat", "realpath"].join("\n") +
+      "\n",
     exitCode: 0,
   });
 });

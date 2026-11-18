@@ -2938,9 +2938,15 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// Windows uses `GetFileAttributesW`; posix is `faccessat(AT_FDCWD, path, F_OK)`.
+    /// Windows uses `GetFileAttributesW`; posix is plain `access`.
     pub fn exists_z(path: &ZStr) -> bool {
-        exists_at(Fd::cwd(), path)
+        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+        while unsafe { libc::access(path.as_ptr(), libc::F_OK) } != 0 {
+            if last_errno() != libc::EINTR {
+                return false;
+            }
+        }
+        true
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
@@ -2950,19 +2956,12 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            loop {
-                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-                // valid NUL-terminated C string.
-                if unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) } == 0 {
-                    return true;
-                }
-                if last_errno() != libc::EINTR {
-                    return false;
-                }
-            }
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
+            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
         }
     }
-    /// Calls extern C `is_executable_file` (c-bindings.cpp) via FFI.
+    /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
         unsafe extern "C" {
             // `c_char`, not `i8` — `char` is unsigned on aarch64/arm/ppc, so
@@ -6536,7 +6535,7 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
-/// [`exists_z`] on POSIX, where `file_only` is ignored.
+/// `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
 pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))]
     {

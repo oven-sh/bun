@@ -1,7 +1,7 @@
 //! For the prefix codes of Brotli, in the arithmetic of google/brotli (LICENSE.md). Its output depends on each rounding.
 
 use crate::Aligned;
-use bun_simd::{Out, Shuffle, Writer, opaque};
+use bun_simd::{Isa, Out, Shuffle, Writer, opaque};
 use core::array::from_fn;
 use core::hint::cold_path;
 use core::mem::MaybeUninit;
@@ -351,6 +351,30 @@ mod simd {
         four(differences).simd_lt(four(limit)).cast()
     }
 
+    /// In all lanes.
+    struct Best {
+        cost: F64,
+        pair: U64,
+        apart: I64,
+    }
+
+    #[inline(always)]
+    fn first_of(best: &Best) -> (f64, [u32; 2]) {
+        let ids: x256::U32 = best.pair.bitcast();
+        (best.cost[0], [ids[0], ids[1]])
+    }
+
+    /// Puts it into `lane`, and takes what was there.
+    #[inline(always)]
+    fn trade(best: &mut Best, costs: &mut F64, pairs: &mut U64, lane: usize, was: (f64, [u32; 2])) {
+        let (is_lane, (cost, [first, second])) = (U64::iota().simd_eq(lane as u64), was);
+        *costs = is_lane.cast().select(best.cost, *costs);
+        *pairs = is_lane.select(best.pair, *pairs);
+        best.cost = F64::splat(cost);
+        best.pair = U64::splat(u64::from(second) << 32 | u64::from(first));
+        best.apart = differences(best.pair) & if PAIRS_FIT { -1 << 32 } else { -1 };
+    }
+
     /// Returns how many have none of `merged`. One that costs less than the first, or as much with a smaller difference, trades places with it.
     #[export]
     pub fn remove_pairs(costs: &mut [f64], pairs: &mut [[u32; 2]], merged: [u32; 2]) -> usize {
@@ -358,26 +382,39 @@ mod simd {
         const LANES_IN: [u8; 16] = from_fn(const |bits| bits.count_ones() as u8);
         let count = costs.len();
         assert!(count >= PAIR_GROUP && count == pairs.len() && count.is_multiple_of(PAIR_GROUP));
-        let (mut best_cost, mut best_pair) = (F64::splat(TOO_MUCH), !U64::zero());
-        let (mut best_apart, mut at, mut kept, last) = (I64::zero(), 0, 0, count - PAIR_GROUP);
+        let mut best = Best {
+            cost: F64::splat(TOO_MUCH),
+            pair: !U64::zero(),
+            apart: I64::zero(),
+        };
+        let rank = |(cost, [a, b]): (f64, [u32; 2])| (cost, b.wrapping_sub(a) as i32);
+        let (mut at, mut kept, last) = (0, 0, count - PAIR_GROUP);
         while at <= last {
             let mut cost = F64::from_slice(&costs[at..]);
             let mut pair: U64 = x256::U32::from_slice(pairs[at..].as_flattened()).bitcast();
             let (staying, apart) = (without(pair, merged), differences(pair));
-            while let Some(lane) = {
+            let (these_costs, these) = (&costs[at..][..PAIR_GROUP], &pairs[at..][..PAIR_GROUP]);
+            let was = |lane: usize| (these_costs[lane % PAIR_GROUP], these[lane % PAIR_GROUP]);
+            while let better @ 1.. = {
                 // A second comparison of floats could lower the clock.
-                let is_tie = cost.bitcast::<U64>().simd_eq(best_cost.bitcast::<U64>());
-                let wins_tie = is_tie.cast() & is_nearer(apart, best_apart);
-                ((cost.simd_lt(best_cost) | wins_tie).to_bitmask() & staying).lowest_one()
+                let is_tie = cost.bitcast::<U64>().simd_eq(best.cost.bitcast::<U64>());
+                let wins_tie = is_tie.cast() & is_nearer(apart, best.apart);
+                (cost.simd_lt(best.cost) | wins_tie).to_bitmask() & staying
             } {
                 cold_path();
-                let is_lane = U64::iota().simd_eq(u64::from(lane));
-                cost = is_lane.cast().select(best_cost, cost);
-                pair = is_lane.select(best_pair, pair);
-                let [first, second] = pairs[at..][..PAIR_GROUP][lane as usize % PAIR_GROUP];
-                best_cost = F64::splat(costs[at..][..PAIR_GROUP][lane as usize % PAIR_GROUP]);
-                best_pair = U64::splat(u64::from(second) << 32 | u64::from(first));
-                best_apart = differences(best_pair) & if PAIRS_FIT { -1 << 32 } else { -1 };
+                if isa::Isa::HAS_SINGLE_CYCLE_OPS {
+                    let lane = better.trailing_zeros() as usize;
+                    trade(&mut best, &mut cost, &mut pair, lane, was(lane));
+                } else {
+                    // The way from a mask to a lane and back is long. Nothing waits for a branch.
+                    #[rustc_unroll(full)]
+                    for lane in 0..PAIR_GROUP {
+                        if better >> lane & 1 != 0 && rank(was(lane)) < rank(first_of(&best)) {
+                            trade(&mut best, &mut cost, &mut pair, lane, was(lane));
+                        }
+                    }
+                    break;
+                }
             }
             let staying = staying as usize % 16;
             let cost: F64 = cost.bitcast::<U64>().compress(staying).bitcast();
@@ -388,8 +425,7 @@ mod simd {
             kept += usize::from(LANES_IN[staying]);
             at += PAIR_GROUP;
         }
-        costs[0] = best_cost[0];
-        pairs[0] = [best_pair[0] as u32, (best_pair[0] >> 32) as u32];
+        (costs[0], pairs[0]) = first_of(&best);
         kept
     }
 

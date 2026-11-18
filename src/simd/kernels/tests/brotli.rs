@@ -244,12 +244,12 @@ fn remove_pairs() {
     let mut below = random();
     for round in sample(0..4000, 203) {
         let (count, clusters) = (4 * (1 + below([12, 200][round % 50 / 49])), 2 + below(12));
-        let (kinds, shift) = ([2, 5, 1000][round % 3], below(27));
+        let (kinds, shift) = ([2, 5, 1000][round % 3], below(29));
         let lowest = [0, (1 << 31) - (6 << shift)][round / 3 % 2];
-        let alike = [-1.0, 1.0, 1f64.next_up(), (-1f64).next_up()];
+        let alike = [-1.0, 1.0, 1f64.next_up(), (-1f64).next_up(), 1e99];
         let costs: Vec<f64> = (0..count)
             .map(|_| match round % 4 {
-                1 => alike[below(4)],
+                1 => alike[below(5)],
                 _ => below(kinds) as f64 * 0.3 - 1.0,
             })
             .collect();
@@ -259,7 +259,7 @@ fn remove_pairs() {
         };
         let (pairs, merged): (Vec<_>, _) = ((0..count).map(|_| pair()).collect(), pair());
 
-        let apart = |[first, second]: [u32; 2]| second - first;
+        let apart = |[first, second]: [u32; 2]| second.wrapping_sub(first) as i32;
         let (mut best, mut want) = ((1e99, [u32::MAX; 2]), vec![]);
         for mut it in costs.iter().copied().zip(pairs.iter().copied()) {
             if !it.1.iter().any(|id| merged.contains(id)) {

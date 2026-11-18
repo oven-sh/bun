@@ -8,10 +8,9 @@ Bun.build({
   splitting: false,
 });
 
-Bun.build({
-  entrypoints: ["hey"],
-  jsx: { runtime: "preserve" },
-});
+for (const runtime of ["preserve", "react", "react-jsx", "react-jsxdev"] as const) {
+  Bun.build({ entrypoints: ["hey"], jsx: { runtime } });
+}
 
 new Bun.Transpiler({
   loader: "tsx",

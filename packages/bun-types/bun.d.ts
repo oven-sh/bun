@@ -3692,7 +3692,7 @@ declare module "bun" {
        * compiler without adding JSX runtime imports. Executable, bytecode, and
        * standalone HTML builds require files without preserved JSX.
        */
-      runtime?: "automatic" | "classic" | "preserve";
+      runtime?: "automatic" | "classic" | "preserve" | "react" | "react-jsx" | "react-jsxdev";
       importSource?: string;
       factory?: string;
       fragment?: string;

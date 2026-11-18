@@ -93,7 +93,7 @@ HWY_AFTER_NAMESPACE();
 namespace bun {
 HWY_EXPORT(SubtractSaturating);
 
-// `period` is 1 to 31. Reads up to 32 bytes, then writes up to `len + 31`. Not dispatched, so that LTO inlines it.
+// `period` is 1 to 31. Reads so many bytes or 16, then writes up to `len + 31`. Not dispatched, so that LTO inlines it.
 extern "C" HWY_ATTR void highway_repeat(const uint8_t* from, uint8_t* to, size_t period, size_t len)
 {
     HWY_STATIC_DISPATCH(Repeat)(from, to, period, len);

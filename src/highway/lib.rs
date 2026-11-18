@@ -1,6 +1,6 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
-#![feature(core_io_borrowed_buf)]
+#![feature(core_io_borrowed_buf, hint_prefetch)]
 
 pub mod brotli;
 pub mod checksums;

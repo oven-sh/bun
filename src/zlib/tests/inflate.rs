@@ -1,5 +1,5 @@
 use bun_core::vec::BorrowedBuf;
-use bun_zlib::inflate::{Container, Status, has_zlib_header};
+use bun_zlib::inflate::{Container, SPARE_CAPACITY, Status, has_zlib_header};
 use bun_zlib::{Damage, Error, Inflater, Result};
 
 use crate::plain::{self, End, adler32, crc32};
@@ -15,20 +15,29 @@ fn step(
     room: usize,
     by_blocks: bool,
 ) -> (Vec<u8>, Result<Status>) {
-    let mut bytes = vec![0; room];
-    let mut out = BorrowedBuf::from(&mut bytes[..]);
-    let status = match by_blocks {
-        true => inflater.inflate_block(input, out.unfilled()),
-        false => inflater.inflate(input, out.unfilled()),
-    };
-    let written = out.len();
+    let (mut bytes, status);
+    if module_path!().ends_with("to_vec") && !by_blocks {
+        let capacities = [0, room / 2, room, room + SPARE_CAPACITY, 2 * room + 999];
+        bytes = Vec::with_capacity(3 + capacities[(input.len() + room) % 5]);
+        bytes.extend(b"old");
+        status = inflater.inflate_to_vec(input, &mut bytes, room);
+        assert!(bytes.drain(..3).eq(*b"old"));
+    } else {
+        bytes = vec![0; room];
+        let mut out = BorrowedBuf::from(&mut bytes[..]);
+        status = match by_blocks {
+            true => inflater.inflate_block(input, out.unfilled()),
+            false => inflater.inflate(input, out.unfilled()),
+        };
+        let written = out.len();
+        bytes.truncate(written);
+    }
     match status {
         Ok(Status::NeedsInput) => assert!(input.is_empty()),
-        Ok(Status::NeedsOutput) => assert_eq!(written, room),
+        Ok(Status::NeedsOutput) => assert_eq!(bytes.len(), room),
         Ok(Status::BlockEnd) => assert!(by_blocks),
         _ => {}
     }
-    bytes.truncate(written);
     (bytes, status)
 }
 
@@ -1154,6 +1163,130 @@ fn reset_and_wait_starts_another_stream() {
             let after = run(&mut inflater, next, false, || (999, 999));
             assert_eq!((&after.bytes[..], after.end), (bytes, end), "{cut}");
             inflater.reset_and_wait();
+        }
+    }
+}
+
+#[test]
+fn long_calls_follow_each_other() {
+    let mut random = Random::new(11);
+    let mut plain = random.mixed(150_000, WINDOW_SIZE);
+    for period in [1, 3, 31, 32, 255, 258, 700, 8193, WINDOW_SIZE] {
+        let start = plain.len() - period;
+        (start..start + 40_000 + random.below(9000)).for_each(|at| plain.push(plain[at]));
+        plain.extend(random.mixed(9000, WINDOW_SIZE));
+    }
+    let raw = crate::deflate::raw(&plain, 6, 8);
+    for (container, stream) in [
+        (Container::Raw, crate::deflate::raw(&plain, 6, 1)),
+        (Container::Zlib, in_zlib(&raw, &plain, None)),
+        (Container::Gzip, in_gzip(&raw, &plain)),
+    ] {
+        for largest in [70_000, 100_000, 140_000, 300_000, 999_999] {
+            let sizes = || (random.up_to(largest), largest - random.below(9000));
+            let result = run(&mut Inflater::new(container), &stream, false, sizes);
+            assert!(result.end == End::Stream(stream.len()) && result.bytes == plain);
+        }
+    }
+}
+
+#[test]
+fn what_an_earlier_call_wrote_is_within_reach_up_to_the_last_byte() {
+    let dictionary = Random::new(12).bytes(WINDOW_SIZE);
+    for written in WINDOW_SIZE - 4..WINDOW_SIZE + 2 {
+        let mut stream = Writer::default();
+        stream.stored(false, &Random::new(13).bytes(written));
+        stream
+            .fixed(true)
+            .copy(258, WINDOW_SIZE)
+            .literals(&[7; 999]);
+        check(
+            &stream.end_block().finish(),
+            &dictionary,
+            &mut Random::new(1),
+        );
+    }
+}
+
+#[test]
+fn a_long_period_ends_where_the_output_or_the_input_does() {
+    for period in [1, 2, 200, 257, 300] {
+        let mut stream = Writer::default();
+        stream.stored(false, &Random::new(14).bytes(period));
+        (0..2).for_each(|_| _ = stream.fixed(false).copy(258, period).end_block());
+        stream.fixed(true);
+        (0..40).for_each(|_| _ = stream.copy(258, period));
+        let stream = stream.literals(b"end").end_block().finish();
+        let plain = plain::inflate(&stream, &[]).bytes;
+        let rooms = (800..1500)
+            .step_by(7)
+            .chain(plain.len() - 600..plain.len() + 600);
+        let sizes = rooms.map(|room| (stream.len(), room));
+        let cuts = (period + 9..stream.len()).map(|len| (len, 99_999));
+        for first in sizes.chain(cuts) {
+            let mut first = Some(first);
+            let sizes = || first.take().unwrap_or((999, 99_999));
+            let result = run(&mut raw_with(&[]), &stream, false, sizes);
+            assert!(result.end == End::Stream(stream.len()) && result.bytes == plain);
+        }
+    }
+}
+
+#[test]
+fn what_is_in_a_vec_already_is_out_of_reach() {
+    for (written, distance) in [(0, 1), (5, 6), (300, 301)] {
+        for len in [3, 258] {
+            let mut stream = Writer::default();
+            stream.fixed(true).literals(&vec![7; written]);
+            let stream = stream.copy(len, distance).literals(&[7; 30]).finish();
+            let mut out = Vec::with_capacity(9999);
+            out.resize(999, 7);
+            let status = raw_with(&[]).inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
+            assert_eq!(status, Err(Damage::DistanceTooFarBack.into()));
+            assert_eq!(out.len(), 999 + written);
+        }
+    }
+}
+
+#[test]
+fn a_period_that_a_stored_block_has_broken_is_over() {
+    for len in 33_400..33_500 {
+        let pieces = [
+            Writer::default().stored(false, &[7; 20_000]).finish(),
+            Writer::default()
+                .stored(false, &vec![7; len - 20_000])
+                .finish(),
+            Writer::default()
+                .stored(false, &[8])
+                .fixed(true)
+                .copy(258, 1)
+                .literals(&[9; 20])
+                .end_block()
+                .finish(),
+        ];
+        let (stream, mut lens) = (pieces.concat(), pieces.iter().map(Vec::len));
+        let sizes = || (lens.next().unwrap(), 99_999);
+        let result = run(&mut raw_with(&[]), &stream, false, sizes);
+        assert!(result.bytes == plain::inflate(&stream, &[]).bytes, "{len}");
+    }
+}
+
+#[test]
+fn the_checksum_has_all_blocks_wherever_the_room_gets_short() {
+    let plain = Random::new(15).bytes(620);
+    let lengths = [vec![8; 255], vec![9; 2]].concat();
+    for first in 600..620 {
+        let (mut raw, (first, second)) = (Writer::default(), plain.split_at(first));
+        raw.fixed(false).literals(first).end_block();
+        raw.dynamic(true, &lengths, &[1, 1]).literals(second);
+        let raw = raw.end_block().finish();
+        for stream in [in_zlib(&raw, &plain, None), in_gzip(&raw, &plain)] {
+            for max in (0..4).map(|short| first.len() + SPARE_CAPACITY - short) {
+                let mut inflater = Inflater::new(Container::ZlibOrGzip);
+                let mut out = Vec::with_capacity(9999);
+                let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, max);
+                assert!(status == Ok(Status::StreamEnd) && out == plain);
+            }
         }
     }
 }

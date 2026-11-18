@@ -9,12 +9,7 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-#![feature(
-    allocator_ext,
-    core_io_borrowed_buf,
-    hint_prefetch,
-    stmt_expr_attributes
-)]
+#![feature(allocator_ext, core_io_borrowed_buf, stmt_expr_attributes)]
 
 mod array;
 mod checksum;

@@ -1,16 +1,15 @@
 //! The literals and matches of a compressed block.
 
 use core::cell::Cell;
-use core::hint::{Locality, cold_path, prefetch_write};
+use core::hint::cold_path;
 
 use bun_deflate::format::MAX_MATCH_LEN;
 use bun_highway::with_bmi2;
-use bun_highway::zlib::{MATCH_SPAN, repeat};
+use bun_highway::zlib::{Appender, Span, copy_match};
 
 use super::bits::{BitReader, REFILLED_BITS};
 use super::tables::{DISTANCE_BITS, Entry, LITERAL_LENGTH_BITS, Special, Tables};
 use super::window::{LAP, SLACK, Window};
-use crate::array::At;
 use crate::error::{Damage, Error, Result};
 
 /// How far back a match may start.
@@ -30,17 +29,11 @@ impl Reach {
     }
 }
 
-/// How far `decode_fast()` goes, and what for.
-pub(super) struct Goal {
-    pub(super) limit: usize,
-    /// From an address in the window to where that byte will be handed out.
-    pub(super) output_offset: usize,
-}
-
 pub(super) enum Stop {
     EndOfBlock,
-    /// Too little is left of the input or in front of the limit.
-    Limit,
+    /// Told apart from `LittleRoom` so that each gets a branch of its own.
+    LittleInput,
+    LittleRoom,
 }
 
 /// What one round of `decode_fast()` may write before the match it ends with, plus one byte of that.
@@ -48,134 +41,194 @@ pub(super) const FAST_ROOM: usize = 4;
 /// With less it does not get to the first round.
 pub(super) const FAST_INPUT: usize = 16;
 
-const CHUNK: usize = 32;
-
-/// A match is read from one and written to another, and they may overlap.
-type Span = [Cell<u8>; MATCH_SPAN];
-
-#[inline(always)]
-fn part<const N: usize>(cells: &[Cell<u8>], at: usize) -> Option<&[Cell<u8>; N]> {
-    cells.get(at..at + N)?.try_into().ok()
+/// What symbols are decoded to.
+pub(super) trait Tape {
+    fn position(&self) -> usize;
+    /// With less than `SLACK` nothing more is to be written.
+    fn room(&self) -> usize;
+    fn push(&mut self, bytes: [u8; 4], count: usize);
+    /// `false` if that is out of bounds.
+    fn copy(&mut self, distance: usize, len: usize) -> bool;
 }
 
-#[inline(always)]
-fn match_source(window: &[Cell<u8>], at: usize, distance: usize) -> Option<&Span> {
-    let (from, is_in_last_lap) = (at as u32).overflowing_sub(distance as u32);
-    let from = if is_in_last_lap {
-        from.wrapping_add(LAP as u32)
-    } else {
-        from
-    };
-    part(window, from as usize)
-}
-
-impl Goal {
-    /// With long matches, handing out would wait for memory.
+impl Tape for Appender<'_> {
     #[inline(always)]
-    fn prefetch_output(&self, span: &Span) {
-        const CACHE_LINE: usize = 64;
-        let output = span[0].as_ptr().wrapping_add(self.output_offset);
-        for line in 0..MAX_MATCH_LEN / CACHE_LINE {
-            prefetch_write(output.wrapping_add(CACHE_LINE * line), Locality::L1);
-        }
+    fn position(&self) -> usize {
+        self.position()
+    }
+
+    #[inline(always)]
+    fn room(&self) -> usize {
+        self.room()
+    }
+
+    #[inline(always)]
+    fn push(&mut self, bytes: [u8; 4], count: usize) {
+        self.push(bytes, count);
+    }
+
+    #[inline(always)]
+    fn copy(&mut self, distance: usize, len: usize) -> bool {
+        self.copy(distance, len)
     }
 }
 
-/// May write up to `CHUNK - 1` bytes too many.
-#[inline(always)]
-fn copy_match(from: &Span, to: &Span, distance: usize, len: usize, goal: Option<&Goal>) {
-    const LONG: usize = 3 * CHUNK;
-    if distance < len.min(CHUNK) {
-        if let Some(goal) = goal.filter(|_| len > LONG) {
-            goal.prefetch_output(to);
-        }
-        return repeat(from, to, distance, len);
+/// The window, whose end moves once this is dropped.
+pub(super) struct Lap<'a> {
+    all: &'a [Cell<u8>],
+    rest: &'a [Cell<u8>],
+    rest_end: usize,
+    end: &'a mut usize,
+    /// From an address in the window to where that byte will be handed out.
+    output_offset: Option<usize>,
+}
+
+impl<'a> Lap<'a> {
+    /// Nothing starts at or behind `limit`.
+    #[inline(always)]
+    pub(super) fn new(
+        window: &'a mut Window,
+        limit: usize,
+        output_offset: Option<usize>,
+    ) -> Result<Self> {
+        let all = Cell::from_mut(window.bytes.as_mut_slice()).as_slice_of_cells();
+        let rest_end = limit + SLACK - 1;
+        Ok(Self {
+            all,
+            rest: all.get(window.end..rest_end).ok_or(Error::Internal)?,
+            rest_end,
+            end: &mut window.end,
+            output_offset,
+        })
     }
-    let copy_chunk = |at| {
-        if let (Some(from), Some(to)) = (from.get(at..at + CHUNK), to.get(at..at + CHUNK)) {
-            let bytes: [u8; CHUNK] = core::array::from_fn(|i| from.get(i).map_or(0, Cell::get));
-            // Not `zip()`, which takes LTO to be inlined.
-            for (i, to) in to.iter().enumerate() {
-                to.set(*bytes.at(i));
+
+    #[inline(always)]
+    fn match_source(&self, distance: usize) -> Option<&'a Span> {
+        let (from, is_in_last_lap) = (self.position() as u32).overflowing_sub(distance as u32);
+        let from = if is_in_last_lap {
+            from.wrapping_add(LAP as u32)
+        } else {
+            from
+        } as usize;
+        self.all
+            .get(from..from + size_of::<Span>())?
+            .try_into()
+            .ok()
+    }
+}
+
+impl Tape for Lap<'_> {
+    #[inline(always)]
+    fn position(&self) -> usize {
+        self.rest_end - self.rest.len()
+    }
+
+    #[inline(always)]
+    fn room(&self) -> usize {
+        self.rest.len()
+    }
+
+    #[inline(always)]
+    fn push(&mut self, bytes: [u8; 4], count: usize) {
+        if let [first, second, third, fourth, ..] = self.rest {
+            first.set(bytes[0]);
+            second.set(bytes[1]);
+            third.set(bytes[2]);
+            fourth.set(bytes[3]);
+        }
+        self.rest = self.rest.get(count..).unwrap_or_default();
+    }
+
+    #[inline(always)]
+    fn copy(&mut self, distance: usize, len: usize) -> bool {
+        let (Some(from), Some(to)) = (self.match_source(distance), self.rest.first_chunk()) else {
+            return false;
+        };
+        copy_match(from, to, distance, len, self.output_offset);
+        self.rest = self.rest.get(len..).unwrap_or_default();
+        true
+    }
+}
+
+impl Drop for Lap<'_> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        *self.end = self.position();
+    }
+}
+
+macro_rules! fast_decoder {
+    ($(#[$meta:meta])* $name:ident($($arg:ident: $type:ty),*; $reach:ident) => $tape:expr) => {
+        $(#[$meta])*
+        #[inline(always)]
+        pub(super) fn $name(
+            tables: &Tables,
+            bits: &mut BitReader<'_>,
+            $($arg: $type,)*
+            $reach: Reach,
+            last_distance: &Cell<usize>,
+        ) -> Result<Stop> {
+            with_bmi2! {
+                /// The mask takes a register, of which there are too few.
+                fn unmasked(
+                    tables: &Tables,
+                    bits: &mut BitReader<'_>,
+                    $($arg: $type,)*
+                    $reach: Reach,
+                    last_distance: &Cell<usize>,
+                ) -> Result<Stop> {
+                    decode_fast::<false>(tables, bits, $tape, $reach, last_distance)
+                }
+            }
+            with_bmi2! {
+                fn masked(
+                    tables: &Tables,
+                    bits: &mut BitReader<'_>,
+                    $($arg: $type,)*
+                    $reach: Reach,
+                    last_distance: &Cell<usize>,
+                ) -> Result<Stop> {
+                    decode_fast::<true>(tables, bits, $tape, $reach, last_distance)
+                }
+            }
+            if tables.literal_length_mask == u64::MAX {
+                unmasked(tables, bits, $($arg,)* $reach, last_distance)
+            } else {
+                masked(tables, bits, $($arg,)* $reach, last_distance)
             }
         }
     };
-    copy_chunk(0);
-    for at in (CHUNK..MAX_MATCH_LEN).step_by(CHUNK) {
-        if at >= len {
-            break;
-        }
-        if let Some(goal) = goal.filter(|_| at == LONG) {
-            goal.prefetch_output(to);
-        }
-        copy_chunk(at);
-    }
 }
 
-/// Goes on for as long as the window ends below the limit and enough input is left for any symbol.
-#[inline(always)]
-pub(super) fn decode_fast(
-    tables: &Tables,
-    bits: &mut BitReader<'_>,
-    window: &mut Window,
-    goal: &Goal,
-    reach: Reach,
-    last_distance: &Cell<usize>,
-) -> Result<Stop> {
-    if tables.literal_length_mask == u64::MAX {
-        decode_unmasked(tables, bits, window, goal, reach, last_distance)
-    } else {
-        decode_masked(tables, bits, window, goal, reach, last_distance)
-    }
+fast_decoder! {
+    /// The arguments of `Lap::new()`.
+    decode_to_window(window: &mut Window, limit: usize, output_offset: usize; reach)
+        => Lap::new(window, limit, Some(output_offset))?
 }
 
-with_bmi2! {
-    /// The mask takes a register, of which there are too few.
-    fn decode_unmasked(
-        tables: &Tables,
-        bits: &mut BitReader<'_>,
-        window: &mut Window,
-        goal: &Goal,
-        reach: Reach,
-        last_distance: &Cell<usize>,
-    ) -> Result<Stop> {
-        decode_fast_with::<false>(tables, bits, window, goal, reach, last_distance)
-    }
-}
-
-with_bmi2! {
-    fn decode_masked(
-        tables: &Tables,
-        bits: &mut BitReader<'_>,
-        window: &mut Window,
-        goal: &Goal,
-        reach: Reach,
-        last_distance: &Cell<usize>,
-    ) -> Result<Stop> {
-        decode_fast_with::<true>(tables, bits, window, goal, reach, last_distance)
-    }
+fast_decoder! {
+    /// Positions count from the first byte that is within reach.
+    decode_to_vec(vec: &mut Vec<u8>, room: usize; reach)
+        => Appender::new(vec, reach.from, room)
 }
 
 enum Exit {
-    Limit,
+    LittleInput,
+    LittleRoom,
     EndOfBlock,
     Damaged(Damage),
     Internal,
 }
 
+/// Goes on for as long as there is room, and enough input for any symbol.
 #[inline(always)]
-fn decode_fast_with<const MASK: bool>(
+fn decode_fast<const MASK: bool>(
     tables: &Tables,
     bits: &mut BitReader<'_>,
-    window: &mut Window,
-    goal: &Goal,
+    mut tape: impl Tape,
     reach: Reach,
     last_distance: &Cell<usize>,
 ) -> Result<Stop> {
-    let position = &mut window.end;
-    let window = Cell::from_mut(window.bytes.as_mut_slice()).as_slice_of_cells();
-    let writable_end = goal.limit + SLACK - 1;
-    let mut writable = window.get(*position..writable_end).ok_or(Error::Internal)?;
     let (mut input, mut buffer) = (bits.rest, bits.buffer);
     // Only the lowest 6 bits are right.
     let mut count = bits.count;
@@ -184,7 +237,7 @@ fn decode_fast_with<const MASK: bool>(
     } else {
         u64::MAX
     };
-    let surely_in_reach = reach.max.min(reach.available_at(*position));
+    let surely_in_reach = reach.max.min(reach.available_at(tape.position()));
 
     macro_rules! skip {
         ($bits:expr) => {
@@ -203,12 +256,7 @@ fn decode_fast_with<const MASK: bool>(
 
     macro_rules! write_literals {
         ($entry:expr) => {
-            if let [first, second, ..] = writable {
-                let literals = $entry.literals();
-                first.set(literals[0]);
-                second.set(literals[1]);
-            }
-            writable = writable.get($entry.literal_count()..).unwrap_or_default();
+            tape.push($entry.literals(), $entry.literal_count());
         };
     }
 
@@ -222,10 +270,10 @@ fn decode_fast_with<const MASK: bool>(
             }};
         }
         let Some(mut word) = input.first_chunk() else {
-            stop!(Exit::Limit);
+            stop!(Exit::LittleInput);
         };
-        if writable.len() < SLACK {
-            stop!(Exit::Limit);
+        if tape.room() < SLACK {
+            stop!(Exit::LittleRoom);
         }
         // The lookup comes first as all else waits for it.
         macro_rules! take_literals {
@@ -249,7 +297,7 @@ fn decode_fast_with<const MASK: bool>(
         let (len, mut code);
         if entry.is_special() {
             if input.len() < 16 {
-                stop!(Exit::Limit);
+                stop!(Exit::LittleInput);
             }
             if let Special::Subtable = entry.kind() {
                 skip!(LITERAL_LENGTH_BITS);
@@ -300,26 +348,21 @@ fn decode_fast_with<const MASK: bool>(
         let distance = code.distance(stream);
         // A store, which the compiler does not move the lookup behind.
         last_distance.set(distance);
-        let at = writable_end - writable.len();
-        if distance > surely_in_reach && (distance > reach.max || distance > reach.available_at(at))
+        if distance > surely_in_reach
+            && (distance > reach.max || distance > reach.available_at(tape.position()))
         {
             stop!(Exit::Damaged(Damage::DistanceTooFarBack));
         }
         refill!(word);
-        let Some(from) = match_source(window, at, distance) else {
+        if !tape.copy(distance, len) {
             stop!(Exit::Internal);
-        };
-        let Some(to) = writable.first_chunk() else {
-            stop!(Exit::Internal);
-        };
-        copy_match(from, to, distance, len, Some(goal));
-        writable = writable.get(len..).unwrap_or_default();
+        }
     };
 
     (bits.rest, bits.buffer, bits.count) = (input, buffer, count % u64::BITS);
-    *position = writable_end - writable.len();
     match exit {
-        Exit::Limit => Ok(Stop::Limit),
+        Exit::LittleInput => Ok(Stop::LittleInput),
+        Exit::LittleRoom => Ok(Stop::LittleRoom),
         Exit::EndOfBlock => Ok(Stop::EndOfBlock),
         Exit::Damaged(damage) => Err(damage.into()),
         Exit::Internal => Err(Error::Internal),
@@ -398,7 +441,7 @@ pub(super) enum Step {
 pub(super) fn decode_one(
     tables: &Tables,
     bits: &mut BitReader<'_>,
-    window: &mut Window,
+    tape: &mut impl Tape,
     reach: Reach,
 ) -> Result<Step> {
     let Some((symbol, used)) = peek(tables, bits)? else {
@@ -407,25 +450,18 @@ pub(super) fn decode_one(
     bits.skip(used);
     match symbol {
         Symbol::Literal(literal) => {
-            *window.bytes.get_mut(window.end).ok_or(Error::Internal)? = literal;
-            window.end += 1;
+            tape.push([literal, 0, 0, 0], 1);
             Ok(Step::Literal)
         }
         Symbol::EndOfBlock => Ok(Step::EndOfBlock),
         Symbol::Match { distance, .. } if distance > reach.max => {
             Err(Damage::DistanceTooFarBack.into())
         }
-        Symbol::Match { distance, .. } if distance > reach.available_at(window.end) => {
+        Symbol::Match { distance, .. } if distance > reach.available_at(tape.position()) => {
             Ok(Step::OutOfReach)
         }
-        Symbol::Match { len, distance } => {
-            let cells = Cell::from_mut(window.bytes.as_mut_slice()).as_slice_of_cells();
-            let from = match_source(cells, window.end, distance).ok_or(Error::Internal)?;
-            let to = part(cells, window.end).ok_or(Error::Internal)?;
-            copy_match(from, to, distance, len, None);
-            window.end += len;
-            Ok(Step::Match(distance))
-        }
+        Symbol::Match { len, distance } if tape.copy(distance, len) => Ok(Step::Match(distance)),
+        Symbol::Match { .. } => Err(Error::Internal),
     }
 }
 
@@ -435,6 +471,7 @@ pub(super) enum NoMatch {
 }
 
 /// Takes nothing else, nor a literal that there is no room for.
+#[inline(always)]
 pub(super) fn take_unless_match(
     tables: &Tables,
     bits: &mut BitReader<'_>,

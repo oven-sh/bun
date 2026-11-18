@@ -1,5 +1,5 @@
 #![feature(adt_const_params, allocator_ext)]
-#![feature(core_io, core_io_borrowed_buf)]
+#![feature(core_io, core_io_borrowed_buf, vec_split_at_spare)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
 #![allow(non_snake_case)]
@@ -483,10 +483,20 @@ pub mod vec {
         max: usize,
         fill: impl FnOnce(BorrowedCursor<'_, T>) -> R,
     ) -> R {
-        let spare = v.spare_capacity_mut();
+        append_behind(v, max, |_, spare| fill(spare))
+    }
+
+    /// The same, and `fill` gets to see what is in `v`.
+    #[inline]
+    pub fn append_behind<T: Copy, R>(
+        v: &mut Vec<T>,
+        max: usize,
+        fill: impl FnOnce(&[T], BorrowedCursor<'_, T>) -> R,
+    ) -> R {
+        let (items, spare) = v.split_at_spare_mut();
         let max = max.min(spare.len());
         let mut buf = BorrowedBuf::from(&mut spare[..max]);
-        let result = fill(buf.unfilled());
+        let result = fill(items, buf.unfilled());
         let filled = buf.len();
         // SAFETY: the filled part of a `BorrowedBuf` is initialized, and starts where `v` ends.
         unsafe { v.set_len(v.len() + filled) };

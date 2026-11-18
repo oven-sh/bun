@@ -1,5 +1,5 @@
 use bun_core::vec::BorrowedCursor;
-use bun_highway::checksums::{copy_and_adler32, copy_and_crc32};
+use bun_highway::checksums::{adler32, copy_and_adler32, copy_and_crc32, crc32};
 
 const ADLER32_START: u32 = 1;
 
@@ -18,6 +18,17 @@ pub(crate) enum Checksum {
 impl Checksum {
     pub(crate) const ZLIB: Self = Self::Adler32(ADLER32_START);
     pub(crate) const GZIP: Self = Self::Crc32 { crc: 0, len: 0 };
+
+    pub(crate) fn add(&mut self, bytes: &[u8]) {
+        match self {
+            Self::None => {}
+            Self::Adler32(adler) => *adler = adler32(*adler, bytes),
+            Self::Crc32 { crc, len } => {
+                *crc = crc32(*crc, bytes);
+                *len = len.wrapping_add(bytes.len() as u32);
+            }
+        }
+    }
 
     /// Goes by the copy, as a script may be writing to `bytes`.
     #[inline(always)]

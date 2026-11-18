@@ -3,7 +3,7 @@ use std::cell::Cell;
 use std::fmt::Debug;
 
 use bun_zlib::deflate::{self, Flush, compress};
-use bun_zlib::inflate::{Container, Status};
+use bun_zlib::inflate::{Container, SPARE_CAPACITY, Status};
 use bun_zlib::{Deflater, Error, Inflater, Result};
 
 use crate::deflate::{options, raw};
@@ -302,14 +302,72 @@ fn short_or_stored_messages_do_not_take_the_memory_for_long_ones() {
 #[test]
 fn reset_keeps_the_memory_for_the_next_stream() {
     let stream = raw(&Random::new(6).mixed(50_000, 512), 6, 8);
-    let (mut inflater, mut out) = (Inflater::new(Container::Raw), Vec::with_capacity(100_001));
+    let (mut inflater, mut out) = (Inflater::new(Container::Raw), Vec::with_capacity(50_001));
     for grants in [None, Some((0, usize::MAX))] {
+        out.clear();
         GRANTS.set(grants);
         let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
         GRANTS.set(None);
         assert_eq!(status, Ok(Status::StreamEnd));
         inflater.reset();
     }
+}
+
+#[test]
+fn one_call_with_spare_capacity_needs_no_window() {
+    let input = Random::new(6).mixed(50_000, 512);
+    let stream = raw(&input, 6, 8);
+    let mut out = Vec::with_capacity(input.len() + SPARE_CAPACITY);
+    let (mut inflater, before) = (Inflater::new(Container::Raw), BYTES_IN_USE.get());
+    let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
+    assert!(status == Ok(Status::StreamEnd) && out == input);
+    assert_eq!(BYTES_IN_USE.get() - before, TABLES);
+}
+
+#[test]
+fn nor_does_one_with_a_vec_that_has_to_grow() {
+    let digits = Random::new(6).bytes(99_000).into_iter().map(|it| it % 8);
+    let digits: Vec<u8> = digits.collect();
+    let repeated = digits[..900].repeat(99);
+    for (input, capacity) in [
+        (&digits[..], 0),
+        (&digits, 9000),
+        (&digits[..900], 32),
+        (&digits[..900], 900),
+        (&repeated, 0),
+    ] {
+        let stream = raw(input, 6, 8);
+        let mut out = Vec::with_capacity(capacity);
+        let (mut inflater, before) = (Inflater::new(Container::Raw), BYTES_IN_USE.get());
+        let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
+        assert!(status == Ok(Status::StreamEnd) && out == input);
+        let grown = out.capacity() - capacity;
+        assert_eq!(BYTES_IN_USE.get() - before, TABLES + grown);
+    }
+}
+
+#[test]
+fn a_vec_that_is_just_long_enough_is_left_as_it_is() {
+    let input = Random::new(6).mixed(50_000, 512);
+    let stream = raw(&input, 6, 8);
+    let mut out = Vec::with_capacity(input.len());
+    let status = Inflater::new(Container::Raw).inflate_to_vec(&mut &stream[..], &mut out, 99_999);
+    assert!(status == Ok(Status::StreamEnd) && out == input);
+    assert_eq!(out.capacity(), input.len());
+}
+
+#[test]
+fn a_vec_that_cannot_grow_is_the_end_of_the_stream() {
+    let stream = raw(&[7; 9000], 0, 8);
+    let (mut inflater, mut out) = (Inflater::new(Container::Raw), Vec::with_capacity(5000));
+    let mut input = &stream[..];
+    GRANTS.set(Some((0, 2)));
+    let refused = inflater.inflate_to_vec(&mut input, &mut out, usize::MAX);
+    assert!(matches!(refused, Err(Error::Alloc(_))) && out == [7; 5000]);
+    assert_eq!(
+        inflater.inflate_to_vec(&mut input, &mut out, usize::MAX),
+        refused
+    );
 }
 
 #[test]

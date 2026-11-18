@@ -5,6 +5,9 @@
 mod checksums;
 mod deflate;
 mod inflate;
+#[expect(clippy::duplicate_mod, reason = "`step()` goes by the name")]
+#[path = "inflate.rs"]
+mod inflate_to_vec;
 mod kernels;
 mod plain;
 mod refusals;

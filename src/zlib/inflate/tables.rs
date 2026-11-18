@@ -128,8 +128,8 @@ impl Entry {
 
     /// The first `literal_count()` are.
     #[inline(always)]
-    pub(super) const fn literals(self) -> [u8; 2] {
-        ((self.0 >> Self::FIRST_SHIFT) as u16).to_le_bytes()
+    pub(super) const fn literals(self) -> [u8; 4] {
+        self.0.rotate_right(Self::FIRST_SHIFT).to_le_bytes()
     }
 
     #[inline(always)]

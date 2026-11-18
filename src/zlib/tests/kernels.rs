@@ -1,5 +1,6 @@
 //! In the place of Highway's, which are not linked.
 
+use std::mem::MaybeUninit;
 use std::slice;
 
 use crate::plain;
@@ -70,11 +71,11 @@ unsafe extern "C" fn highway_repeat(from: *const u8, to: *mut u8, period: usize,
     // SAFETY: both have 320 bytes, and `len` is at most 289.
     let (from, to) = unsafe {
         (
-            from.cast::<[u8; 32]>().read(),
-            slice::from_raw_parts_mut(to, len + 31),
+            from.cast::<[MaybeUninit<u8>; 32]>().read(),
+            slice::from_raw_parts_mut(to.cast::<MaybeUninit<u8>>(), len + 31),
         )
     };
-    to[len..].fill(0xa5);
+    to[len..].fill(MaybeUninit::new(0xa5));
     for (to, &from) in to[..len].iter_mut().zip(from[..period].iter().cycle()) {
         *to = from;
     }

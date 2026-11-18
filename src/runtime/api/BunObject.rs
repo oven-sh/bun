@@ -1668,16 +1668,17 @@ pub(crate) mod JSZlib {
             // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
             if estimated_size > 0 && estimated_size < 256 * 1024 * 1024 {
                 // The trailer is untrusted; if its size cannot be reserved, start small and grow.
-                reserved = list
-                    .try_reserve_exact((estimated_size as usize).max(64))
-                    .is_ok();
+                let size = estimated_size as usize;
+                let is_compressed = size > compressed.len();
+                let spare = usize::from(is_compressed) * inflate::SPARE_CAPACITY;
+                reserved = list.try_reserve_exact((size + spare).max(64)).is_ok();
             }
         }
         if !reserved {
             list.try_reserve_exact(if compressed.len() > 512 {
                 compressed.len()
             } else {
-                32
+                4 * compressed.len() + inflate::SPARE_CAPACITY
             })
             .map_err(|_| bun_alloc::AllocError)?;
         }

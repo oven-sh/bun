@@ -19,6 +19,11 @@ const MAX_WASTED: usize = 4096;
 /// With the slack.
 const SHORT_MESSAGE_ROOM: usize = 2048;
 
+/// Of as many as fit in `max` bytes, but at least one.
+pub(super) fn whole_periods_len(period: usize, max: usize) -> usize {
+    period.max(max - max % period)
+}
+
 pub(super) struct Window {
     /// Only as long as it has had to be.
     pub(super) bytes: Vec<u8>,
@@ -91,7 +96,7 @@ impl Window {
     /// The last ones, if `has_period()`.
     pub(super) fn periods(&self, period: usize) -> &[u8] {
         const CACHED_LEN: usize = 16 * 1024;
-        let len = period.max(CACHED_LEN - CACHED_LEN % period);
+        let len = whole_periods_len(period, CACHED_LEN);
         self.bytes.get(self.end - len..self.end).unwrap_or_default()
     }
 
@@ -198,13 +203,13 @@ impl Window {
 
     fn make_room_and_record(&mut self, bytes: &[u8], max: usize) -> Result<()> {
         let mut bytes = bytes.split_at(bytes.len().saturating_sub(max)).1;
-        if bytes.len() == max {
-            self.clear();
-        } else if self.end + bytes.len() > self.usual_capacity
-            && max < MAX_DISTANCE
-            && self.bytes.len() < FULL_LEN
-        {
-            self.slide_by_lines(self.end + bytes.len() - max)?;
+        // Starting over in each call would put the next lap where `slide_by_lines()` avoids it.
+        if self.bytes.len() < FULL_LEN {
+            if bytes.len() == max {
+                self.clear();
+            } else if self.end + bytes.len() > self.usual_capacity && max < MAX_DISTANCE {
+                self.slide_by_lines(self.end + bytes.len() - max)?;
+            }
         }
         while !bytes.is_empty() {
             if self.is_lap_over() {

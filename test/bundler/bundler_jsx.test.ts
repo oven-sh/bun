@@ -1031,6 +1031,24 @@ describe("bundler", () => {
       });
     });
 
+    test("runs with preserve when conditional and logical expressions discard all JSX", async () => {
+      using dir = tempDir("jsx-discarded-expressions", {
+        "in.jsx": `
+          console.log(false ? <Unused /> : 0, true ? 1 : <Unused />);
+          console.log(false && <Unused />, true || <Unused />, 2 ?? <Unused />);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--jsx-runtime=preserve", "in.jsx"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, exitCode }, stderr).toEqual({ stdout: "0 1\nfalse true 2\n", exitCode: 0 });
+    });
+
     describe.each([
       ["cli", "option"],
       ["cli", "pragma"],
@@ -1054,8 +1072,8 @@ describe("bundler", () => {
     });
 
     for (const backend of ["cli", "api"] as const) {
-      itBundled(`jsx/PreserveCompilePlain-${backend}`, {
-        files: { "/in.jsx": 'console.log("<div/>");' },
+      itBundled(`jsx/PreserveCompileDiscardedJsx-${backend}`, {
+        files: { "/in.jsx": 'console.log(false ? <div /> : "<div/>");' },
         backend,
         target: "bun",
         compile: true,

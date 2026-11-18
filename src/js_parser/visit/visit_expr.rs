@@ -43,6 +43,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_expr_in_out(e, ExprIn::default())
     }
 
+    /// Visit an expression that its parent will discard, preserving parser bookkeeping.
+    pub(crate) fn visit_discarded_expr(&mut self, e: &mut Expr) {
+        let was_dead = self.is_control_flow_dead;
+        let first_preserved_jsx = self.first_preserved_jsx;
+        self.is_control_flow_dead = true;
+        self.visit_expr(e);
+        self.is_control_flow_dead = was_dead;
+        self.first_preserved_jsx = first_preserved_jsx;
+    }
+
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             // The caller assumes `e` was visited, so replace it. Don't mutate it on a revisit
@@ -1931,10 +1941,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if side_effects.value {
             // "true ? live : dead"
             p.visit_expr(&mut e_.yes);
-            let old = p.is_control_flow_dead;
-            p.is_control_flow_dead = true;
-            p.visit_expr(&mut e_.no);
-            p.is_control_flow_dead = old;
+            p.visit_discarded_expr(&mut e_.no);
 
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
                 *e = SideEffects::simplify_unused_expr(p, e_.test)
@@ -1956,10 +1963,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             *e = e_.yes;
         } else {
             // "false ? dead : live"
-            let old = p.is_control_flow_dead;
-            p.is_control_flow_dead = true;
-            p.visit_expr(&mut e_.yes);
-            p.is_control_flow_dead = old;
+            p.visit_discarded_expr(&mut e_.yes);
             p.visit_expr(&mut e_.no);
 
             // "(a, false) ? b : c" => "a, c"

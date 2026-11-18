@@ -510,7 +510,7 @@ pub(crate) fn scan_imports_and_exports(
                         source_index_.get(),
                         &mut member_resolutions,
                         &mut jsx_imports,
-                    );
+                    )?;
 
                     if log.errors > 0 {
                         return Err(ScanImportsAndExportsError::ImportResolutionFailed);

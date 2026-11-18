@@ -3934,7 +3934,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         source_index: crate::IndexInt,
         member_resolutions: &mut ImportMemberResolutions,
         jsx_imports: &mut Vec<(Ref, Ref)>,
-    ) {
+    ) -> Result<(), bun_alloc::AllocError> {
         let has_preserved_jsx = self.graph.ast.items_flags()[source_index as usize]
             .contains(AstFlags::HAS_PRESERVED_JSX);
         let meta = self.graph.meta.split_mut();
@@ -4135,12 +4135,21 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             jsx_imports,
         );
         if !missing_jsx_imports.is_empty() {
-            self.bind_missing_jsx_imports(source_index, &missing_jsx_imports);
+            self.bind_missing_jsx_imports(source_index, &missing_jsx_imports)?;
         }
+        Ok(())
     }
 
     /// Bind missing exports used as tags to an undefined local with a JSX component name.
-    fn bind_missing_jsx_imports(&mut self, source_index: crate::IndexInt, imports: &[Ref]) {
+    fn bind_missing_jsx_imports(
+        &mut self,
+        source_index: crate::IndexInt,
+        imports: &[Ref],
+    ) -> Result<(), bun_alloc::AllocError> {
+        let imports_to_bind =
+            &mut self.graph.meta.items_imports_to_bind_mut()[source_index as usize];
+        imports_to_bind.ensure_total_capacity(imports_to_bind.len() + imports.len())?;
+
         let missing = self.graph.generate_new_symbol(
             source_index,
             bun_ast::symbol::Kind::Other,
@@ -4167,42 +4176,38 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             },
             loc,
         );
-        self.graph
-            .add_part_to_file(
-                source_index,
-                Part {
-                    stmts: bun_ast::StoreSlice::new(arena.alloc_slice_copy(&[stmt])),
-                    declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
-                        ref_: missing,
-                        is_top_level: true,
-                    }])
-                    .expect("OOM"),
-                    can_be_removed_if_unused: true,
-                    ..Default::default()
-                },
-            )
-            .expect("OOM");
+        self.graph.add_part_to_file(
+            source_index,
+            Part {
+                stmts: bun_ast::StoreSlice::new(arena.alloc_slice_copy(&[stmt])),
+                declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
+                    ref_: missing,
+                    is_top_level: true,
+                }])?,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            },
+        )?;
 
         let imports_to_bind =
             &mut self.graph.meta.items_imports_to_bind_mut()[source_index as usize];
         for &ref_ in imports {
+            imports_to_bind.put(
+                ref_,
+                crate::ImportData {
+                    data: ImportTracker {
+                        source_index: Index::init(source_index),
+                        import_ref: missing,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )?;
             let symbol = self.graph.symbols.get_mut(ref_).unwrap();
             symbol.import_item_status = ImportItemStatus::Generated;
             symbol.namespace_alias = None;
-            imports_to_bind
-                .put(
-                    ref_,
-                    crate::ImportData {
-                        data: ImportTracker {
-                            source_index: Index::init(source_index),
-                            import_ref: missing,
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    },
-                )
-                .expect("OOM");
         }
+        Ok(())
     }
 
     /// `import X from './a'; X.foo` where `X` resolved to the namespace of an

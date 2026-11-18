@@ -11013,12 +11013,33 @@ declare module "bun" {
    * The structure of Bun's lockfile, `bun.lock`
    */
   type BunLockFile = {
-    lockfileVersion: 0 | 1 | 2;
+    /**
+     * The version of the `bun.lock` format.
+     *
+     * - `0`: the first version of the text lockfile.
+     * - `1`: the entry of a workspace package in `packages` no longer lists its dependencies.
+     * - `2`: the same content as `1`, with stricter checks of integrity hashes and git tags when Bun
+     *   reads the lockfile.
+     * - `3`: `overrides` has a nested or version-scoped rule. Bun writes `3` only for such a lockfile.
+     *
+     * Bun v1.4.0 and later can read versions `2` and `3`.
+     *
+     * @see https://bun.com/docs/pm/lockfile
+     */
+    lockfileVersion: 0 | 1 | 2 | 3;
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
-    /** @see https://bun.com/docs/install/overrides */
-    overrides?: Record<string, string>;
+    /**
+     * A string value is the version to use for that package.
+     *
+     * An object value holds the rules for one selector (`name` or `name@range`). The `"."` key
+     * overrides the selected package itself. Each other key (`name` or `name@range`) overrides that
+     * dependency of the selected package.
+     *
+     * @see https://bun.com/docs/install/overrides
+     */
+    overrides?: Record<string, string | Record<string, string>>;
     /** @see https://bun.com/docs/install/patch */
     patchedDependencies?: Record<string, string>;
     /** @see https://bun.com/docs/install/lifecycle#trusteddependencies */

@@ -64,17 +64,32 @@ fn turned(case: &Case) -> Case {
 
 /// Forward and, with both turned around, back.
 #[track_caller]
+fn search(case @ [text, needle]: &Case) {
+    let want = (0..text.len()).find(|&at| text[at..].starts_with(needle));
+    let want_back = want.map(|at| text.len() - needle.len() - at);
+    let (forward, back) = (core::slice::from_ref(case), [turned(case)]);
+    assert_eq!(at_all_widths::<true>(forward, |_, _| 0), [want; 3]);
+    assert_eq!(at_all_widths::<false>(&back, |_, _| 0), [want_back; 3]);
+}
+
+#[track_caller]
 fn reads_at_most(most: usize, cases: impl IntoIterator<Item = Case>) {
+    let cases: Vec<_> = cases.into_iter().collect();
     READS.set(0);
     MOST.set(2 * most);
-    for case in cases {
-        let (back, [text, needle]) = (turned(&case), &case);
-        let want = (0..text.len()).find(|&at| text[at..].starts_with(needle));
-        let want_back = want.map(|at| text.len() - needle.len() - at);
-        assert_eq!(at_all_widths::<true>(&[case], |_, _| 0), [want; 3]);
-        assert_eq!(at_all_widths::<false>(&[back], |_, _| 0), [want_back; 3]);
+    for case in &cases {
+        search(case);
     }
-    assert!(READS.get() <= most, "{} reads", READS.get());
+    assert!(READS.get() <= most, "{} reads, not {most}", READS.get());
+    // A search that leaves something out reads little too.
+    MOST.set(usize::MAX);
+    for [text, needle] in cases {
+        let last = text.len().checked_sub(needle.len());
+        for at in last.into_iter().flat_map(|it| [it / 2, it]) {
+            let text = [&text[..at], &needle, &text[at + needle.len()..]].concat();
+            search(&[text, needle.clone()]);
+        }
+    }
 }
 
 fn cycle(period: &[u8], len: usize) -> Vec<u8> {
@@ -93,6 +108,7 @@ fn each<A: Copy, B: Copy>(a: &[A], b: &[B]) -> Vec<(A, B)> {
 }
 
 const LENGTHS: [usize; 9] = [3, 6, 9, 16, 17, 33, 70, 150, 700];
+const LETTERS: &[u8] = b"abcdefghijklmnopqrs";
 
 /// A length, and a place that is not at an end.
 fn inside(lengths: &[usize]) -> impl Iterator<Item = (usize, usize)> {
@@ -319,6 +335,8 @@ fn when_it_falls_back() {
         190_000,
         [[cycle(&dense_then_calm, 100_000), cycle(b"ne", 30)]],
     );
+    let almost = put(phases([b"a", b"."], [500, 100]), 443, b'#');
+    reads_at_most(155_000, [[cycle(&almost, 100_000), cycle(b"a", 500)]]);
     let islands = cycle(&phases([b"a", b"."], [6, 994]), 16_000);
     let text = [broken(b"a", 5, 17_500), islands].concat();
     reads_at_most(65_000, [[text, cycle(b"a", 7)]]);
@@ -376,6 +394,7 @@ fn in_periods_and_phases() {
         (105_000, b"aaa!a!aaaaaab", cycle(b"a", 70)),
         (57_000, b"!ba!aaaaaac!baaaaacbaaaabb!acaa", cycle(b"a", 150)),
         (92_500, b"!abababa", cycle(b"ba", 8)),
+        (61_000, b"aababaaaba!", cycle(b"aababa", 200)),
     ] {
         reads_at_most(most, [[cycle(period, 30_000), needle]]);
     }
@@ -389,6 +408,15 @@ fn in_periods_and_phases() {
         let text = cycle(&phases([b"cbbbbbb", second], [first_len, 6000]), 30_000);
         reads_at_most(most, [[text, b"abbbbbbbbbbb".into()]]);
     }
+    for (most, dense, lengths, needle) in [
+        (74_000, &b"aaaaaaa!a!"[..], [200, 300], cycle(b"a", 12)),
+        (76_500, b"aaaaaaa!a!", [600, 1000], cycle(b"a", 12)),
+        (24_500, b"aaaaaaa!a!", [120, 3000], cycle(b"a", 12)),
+        (63_500, b"abababa!", [1500, 400], cycle(b"ab", 8)),
+    ] {
+        let text = cycle(&phases([dense, b"."], lengths), 30_000);
+        reads_at_most(most, [[text, needle]]);
+    }
     let text = phases([b"abbbbbb", b"0bb0"], [10_000, 60_000]);
     reads_at_most(115_000, [[text, b"bbbbbbb0".into()]]);
 }
@@ -397,10 +425,13 @@ fn in_periods_and_phases() {
 fn in_copies_that_differ_at_one_place() {
     for (most, needle, at, unit, total) in [
         (57_500, thue_morse(7), 0, b'#', 30_000),
+        (108_000, b"aebfaebf".into(), 2, b'.', 30_000),
+        (64_000, b"aabaaaaa".into(), 1, b'#', 30_000),
         (62_500, b"aabaabaaaaaaaa".into(), 7, b'b', 30_000),
         (10_500, cycle(b"a", 16), 5, b'b', 1500),
         (85_000, noise(b"aaab", 16), 0, b'b', 30_000),
         (3350, cycle(b"ab", 17), 0, b'b', 6000),
+        (21_500, put(cycle(b"a", 20), 18, b'y'), 16, b'!', 30_000),
         (430, thue_morse(24), 12, b'#', 150),
         (81_500, cycle(b"aaab", 24), 18, b'#', 30_000),
         (19_400, cycle(b"a", 40), 30, b'#', 6000),
@@ -442,6 +473,7 @@ fn in_other_texts() {
         (600, noise(b"ab", 100), thue_morse(8)),
         (810, noise(b"aaab", 150), thue_morse(40)),
         (900, noise(b"abx", 700), cycle(b"abc", 8)),
+        (2400, noise(b"abc", 500), noise(b"abc", 24)),
         (265, cycle(b"b", 700), thue_morse(20)),
         (2350, cycle(b"aabab", 1500), b"abb".into()),
         (350, cycle(b".", 6000), noise(b"ab", 5000)),
@@ -457,6 +489,7 @@ fn in_other_texts() {
             put(cycle(b"abc", 100), 1, b'a'),
         ),
         (70_000, noise(b"abc", 60_000), noise(b"aaab", 150)),
+        (125_000, noise(b"abcdefgh", 100_000), cycle(b"hc", 1000)),
         (
             390_000,
             noise(b"aab", 60_000),
@@ -470,6 +503,16 @@ fn in_other_texts() {
     ] {
         reads_at_most(most, [[text, needle]]);
     }
+    for (most, len, step, before) in [
+        (38_500, 62, 13, 0),
+        (41_000, 62, 13, 5000),
+        (35_000, 70, 7, 0),
+    ] {
+        let needle = noise(LETTERS, len);
+        let copies = (0..30_000 / len).flat_map(|i| put(needle.clone(), step * i % len, b'#'));
+        let text = [cycle(&needle[..1], before), copies.collect()].concat();
+        reads_at_most(most, [[text, needle]]);
+    }
 }
 
 #[test]
@@ -481,6 +524,9 @@ fn in_ordinary_texts() {
     let rare = phases([&ends, b"."], [4200, 3000]);
     let zeros = noise(b"0000000000000002", 100_000);
     let with_ones = [[b'0'; 150], [b'1'; 150], [b'1'; 150], [b'0'; 150]].concat();
+    let now_and_then = |common| cycle(&put(common, 0, b'#'), 300_000);
+    let sparse = now_and_then(cycle(b"ab", 12_000));
+    let once_dense = [&sparse[..60_000], &cycle(b"a#b", 3000), &sparse].concat();
     for (most, text, needle) in [
         (29_000, digits.clone(), b"192.168.0.1".into()),
         (28_500, digits, b"2001-02-03".into()),
@@ -502,6 +548,12 @@ fn in_ordinary_texts() {
             58_500,
             [rare, cycle(&ends, 200_000)].concat(),
             b"z#x".into(),
+        ),
+        (127_000, once_dense, b"b#a".into()),
+        (
+            89_000,
+            now_and_then(noise(LETTERS, 7000)),
+            put(LETTERS.into(), 9, b'#'),
         ),
     ] {
         reads_at_most(most, [[text, needle]]);

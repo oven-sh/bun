@@ -282,6 +282,19 @@ test("the crash report lists the CPU features", async () => {
   expect(exitCode).not.toBe(0);
 });
 
+test("the trace string ends with the panic message as a zlib stream", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // "invoked crashByPanic() handler"
+  expect(stderr).toMatch(/A0eNrLzCvLz05NUUguSizOcKoMSMzLTNbQVMhIzEvJSS0CAK\/LCxc(\/view)?\s/);
+  expect(exitCode).not.toBe(0);
+});
+
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.
 describe.if(isPosix)("cwd deleted before startup", () => {
   test.concurrent.each(["install", "test"])("bun %s prints the cwd-deleted hint", async cmd => {

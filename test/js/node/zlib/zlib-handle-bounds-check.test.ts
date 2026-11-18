@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { totalmem } from "node:os";
+import zlib from "node:zlib";
+import { inflate, nothing, Z_FINISH } from "./zlib-golden/engine";
+import { input } from "./zlib-golden/inputs";
+import { Bits, inZlib, stored } from "./zlib-golden/write";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
 // These verify that user-controlled offset/length parameters are validated
@@ -323,7 +327,7 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       "threw ERR_INVALID_STATE: Write already in progress",
     ],
-    // init() that fails partway (zlib: deflateInit2_ rejects the arguments;
+    // init() that fails partway (zlib: the arguments are rejected;
     // brotli/zstd: a bad parameter key after the state was created) tears the
     // Context down; the handle has to reject further use.
     [
@@ -721,5 +725,198 @@ describe("zstd compressor with workers and a dictionary", () => {
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+  });
+});
+
+describe("zlib native handle errors and arguments", () => {
+  const { DEFLATE, INFLATE, GZIP, GUNZIP, DEFLATERAW, INFLATERAW, UNZIP } = zlib.constants;
+  const Handle = (zlib.createDeflate() as any)._handle.constructor;
+
+  function handleFor(mode: number) {
+    const [handle, state, errors] = [new Handle(mode), new Uint32Array(2), [] as unknown[]];
+    handle.onerror = (message: string, errno: number, code: string) => errors.push({ message, errno, code });
+    return {
+      handle,
+      errors,
+      init(windowBits = 15, level = 6, memLevel = 8, strategy = 0, dictionary?: Uint8Array) {
+        handle.init(windowBits, level, memLevel, strategy, state, () => {}, dictionary);
+      },
+      finish(data: Uint8Array) {
+        const out = Buffer.alloc(data.length + 100);
+        handle.writeSync(Z_FINISH, data, 0, data.length, out, 0, out.length);
+        return out.subarray(0, out.length - state[0]);
+      },
+      [Symbol.dispose]: () => handle.close(),
+    };
+  }
+
+  const plain = Buffer.from("plain");
+  const whole = (dictionary?: Uint8Array) => inZlib(stored(new Bits(), plain, true).end(), plain, 15, dictionary);
+
+  test.each([
+    ["incorrect header check", -3, "Z_DATA_ERROR", plain, undefined],
+    ["unexpected end of file", -5, "Z_BUF_ERROR", whole().subarray(0, -1), undefined],
+    ["Missing dictionary", 2, "Z_NEED_DICT", whole(plain), undefined],
+    ["Bad dictionary", 2, "Z_NEED_DICT", whole(plain), Buffer.from("other")],
+  ])("%p has the number %d", (message, errno, code, data, dictionary) => {
+    expect(() => zlib.inflateSync(data, { dictionary })).toThrow(expect.objectContaining({ message, errno, code }));
+  });
+
+  test("a stream that is cut short gives its output first, also if that takes all of the room", () => {
+    const data = input("noise", 128);
+    const { output, error } = inflate("InflateRaw", [stored(new Bits(), data, false).end()], { chunkSize: 64 });
+    expect([output.equals(data), error]).toEqual([true, "Z_BUF_ERROR unexpected end of file"]);
+  });
+
+  describe.each([DEFLATE, INFLATE])("before init(), in mode %d", mode => {
+    const failure = (message: string) => [{ message, errno: -2, code: "Z_STREAM_ERROR" }];
+
+    test("writeSync() fails", () => {
+      using it = handleFor(mode);
+      it.finish(nothing);
+      expect(it.errors).toEqual(failure("Zlib error"));
+    });
+
+    test("reset() fails", () => {
+      using it = handleFor(mode);
+      it.handle.reset();
+      expect(it.errors).toEqual(failure("Failed to reset stream"));
+    });
+
+    test("params() fails where it means something", () => {
+      using it = handleFor(mode);
+      it.handle.params(1, 0);
+      expect(it.errors).toEqual(mode === DEFLATE ? failure("Failed to set parameters") : []);
+    });
+  });
+
+  describe("init()", () => {
+    test.each([
+      [DEFLATE, [7]],
+      [DEFLATE, [16]],
+      [DEFLATE, [32]],
+      [DEFLATE, [16 + 256 + 9]],
+      [DEFLATERAW, [8]],
+      [DEFLATERAW, [16]],
+      [DEFLATERAW, [256 + 9]],
+      [GZIP, [8]],
+      [GZIP, [16]],
+      [DEFLATE, [15, -2]],
+      [DEFLATE, [15, 10]],
+      [DEFLATE, [15, 256 + 6]],
+      [DEFLATE, [15, 6, 0]],
+      [DEFLATE, [15, 6, 10]],
+      [DEFLATE, [15, 6, 256 + 8]],
+      [DEFLATE, [15, 6, 8, -1]],
+      [DEFLATE, [15, 6, 8, 5]],
+      [INFLATE, [7]],
+      [INFLATE, [17]],
+      [INFLATE, [48]],
+      [INFLATE, [256 + 9]],
+      [GUNZIP, [7]],
+      [INFLATERAW, [7]],
+      [INFLATERAW, [16]],
+      [UNZIP, [7]],
+      [UNZIP, [16]],
+    ])("closes a handle in mode %d for %j", (mode, args) => {
+      using it = handleFor(mode);
+      it.init(...args);
+      expect(() => it.finish(nothing)).toThrow("zlib binding closed");
+    });
+
+    const refused = (code: string, message: string) =>
+      expect.objectContaining({ code, message: expect.stringContaining(message) });
+    const notUint32Array = refused("ERR_INVALID_ARG_TYPE", '"writeResult"');
+    const tooShort = refused("ERR_INVALID_ARG_VALUE", "at least 2 elements");
+
+    test.each([
+      [[undefined, () => {}], notUint32Array],
+      [[[0, 0], () => {}], notUint32Array],
+      [[new ArrayBuffer(8), () => {}], notUint32Array],
+      [[new DataView(new ArrayBuffer(8)), () => {}], notUint32Array],
+      [[new Uint8Array(8), () => {}], notUint32Array],
+      [[new Int32Array(2), () => {}], notUint32Array],
+      [[new Uint32Array(0), () => {}], tooShort],
+      [[new Uint32Array(1), () => {}], tooShort],
+      [[new Uint32Array(new ArrayBuffer(8), 4), () => {}], tooShort],
+      [[new Uint32Array(2), {}], refused("ERR_INVALID_ARG_TYPE", '"writeCallback"')],
+      [[new Uint32Array(2), () => {}, "text"], refused("ERR_INVALID_ARG_TYPE", '"dictionary"')],
+    ])("refuses %p and changes nothing", (args, error) => {
+      using it = handleFor(DEFLATE);
+      it.init(15, 0);
+      expect(() => it.handle.init(15, 6, 8, 0, ...args)).toThrow(error);
+      expect(it.finish(plain)).toEqual(zlib.deflateSync(plain, { level: 0 }));
+    });
+
+    test("writes to the first two elements of a longer array", () => {
+      using it = handleFor(INFLATERAW);
+      const state = new Uint32Array(3).fill(9);
+      it.handle.init(15, 6, 8, 0, state, () => {}, undefined);
+      it.finish(Buffer.concat([stored(new Bits(), plain, true).end(), plain]));
+      expect([...state]).toEqual([110, 5, 9]);
+    });
+
+    test("leaves a write that is under way its array and its callback", async () => {
+      using it = handleFor(DEFLATERAW);
+      const [first, second] = [new Uint32Array(2), new Uint32Array(2)];
+      const { promise, resolve } = Promise.withResolvers();
+      it.handle.init(15, 0, 8, 0, first, () => resolve("first"), undefined);
+      it.handle.write(Z_FINISH, plain, 0, plain.length, Buffer.alloc(100), 0, 100);
+      expect(() => it.handle.init(15, 0, 8, 0, second, () => resolve("second"), undefined)).toThrow(
+        refused("ERR_INVALID_STATE", "Write already in progress"),
+      );
+      expect([await promise, ...first, ...second]).toEqual(["first", 90, 0, 0, 0]);
+    });
+
+    test("says that the handle is closing, or closed, before it looks at its arguments", async () => {
+      using it = handleFor(DEFLATERAW);
+      const init = () => it.handle.init(15, 0, 8, 0, undefined, undefined, undefined);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const written = () => Promise.try(init).then(reject, resolve);
+      it.handle.init(15, 0, 8, 0, new Uint32Array(2), written, undefined);
+      it.handle.write(Z_FINISH, plain, 0, plain.length, Buffer.alloc(100), 0, 100);
+      it.handle.close();
+      expect(await promise).toEqual(refused("ERR_INVALID_STATE", "Pending close"));
+      expect(init).toThrow(refused("ERR_INVALID_STATE", "zlib binding closed"));
+    });
+
+    test("starts over", () => {
+      using it = handleFor(DEFLATE);
+      it.init(15, 9, 8, 0, Buffer.from("first"));
+      it.finish(plain);
+      it.init(9, 0, 8, 0, plain);
+      expect(it.finish(plain)).toEqual(zlib.deflateSync(plain, { windowBits: 9, level: 0, dictionary: plain }));
+      it.init();
+      expect(it.finish(plain)).toEqual(zlib.deflateSync(plain));
+      expect(it.errors).toEqual([]);
+    });
+  });
+
+  describe("params()", () => {
+    test.each([
+      [-2, 0],
+      [10, 0],
+      [6, -1],
+      [6, 5],
+    ])("refuses level %d with strategy %d", (level, strategy) => {
+      using it = handleFor(DEFLATE);
+      it.init();
+      it.handle.params(level, strategy);
+      expect(it.errors).toEqual([{ message: "Failed to set parameters", errno: -2, code: "Z_STREAM_ERROR" }]);
+    });
+
+    test("takes -1 for the default level", () => {
+      using it = handleFor(DEFLATE);
+      it.init(15, 0);
+      it.handle.params(-1, 0);
+      expect(it.finish(plain)).toEqual(zlib.deflateSync(plain));
+    });
+
+    test("leaves gzip alone, as in Node.js", () => {
+      using it = handleFor(GZIP);
+      it.init();
+      it.handle.params(0, 0);
+      expect(it.finish(plain)).toEqual(zlib.gzipSync(plain));
+    });
   });
 });

@@ -405,7 +405,7 @@ impl SideEffects {
                     loc: expr.loc,
                 };
 
-                // Only side effects stay. A computed key stays in an object literal: ToPropertyKey.
+                // Each computed key stays, in an object literal: ToPropertyKey. So do side effects.
                 let mut keys_before_next_value: Option<G::PropertyList> = None;
                 let object_of_keys = |properties: G::PropertyList| E::Object {
                     properties,

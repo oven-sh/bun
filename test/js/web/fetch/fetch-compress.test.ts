@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
+import {
+  brotliCompressSync,
+  brotliDecompressSync,
+  constants,
+  gunzipSync,
+  inflateSync,
+  zstdDecompressSync,
+} from "node:zlib";
 
 const payload = JSON.stringify({
   msg: Buffer.alloc(1024, "abcdefghij").toString(),
@@ -221,6 +229,59 @@ describe("fetch compress option", () => {
     expect(json.sha).toBe(new Bun.CryptoHasher("sha1").update(big).digest("hex"));
   });
 
+  // The shared buffer holds 512 KiB. The bound of a 524,158-byte body is exactly that.
+  describe("br, in the shared buffer and spilled", () => {
+    async function sent(body: Uint8Array, compress: "br" | { encoding: "br"; level: number }) {
+      using server = Bun.serve({
+        port: 0,
+        fetch: async req =>
+          new Response(await req.bytes(), { headers: { "x-length": req.headers.get("content-length")! } }),
+      });
+      const res = await fetch(server.url, { method: "POST", body, compress });
+      const bytes = Buffer.from(await res.bytes());
+      expect(res.headers.get("x-length")).toBe(String(bytes.length));
+      return bytes;
+    }
+
+    describe.each([
+      [1, "0b0080", [0, 1, 2, 3, 5, 11]],
+      [100 * 1024, "abffc708", [0, 1, 2, 3, 5, 11]],
+      [524_158, "abbeff0b", [0, 1, 5]],
+      [524_159, "2bbfff0b", [0, 1, 5]],
+      [600 * 1024, "abffaf0c", [0, 1, 2, 3, 5]],
+    ])("%d incompressible bytes", (outputLength, header, levels) => {
+      const noise = createHash("shake256", { outputLength }).update("fetch-compress").digest();
+
+      test.concurrent.each(levels)("are stored at level %d", async level => {
+        const stored = Buffer.concat([Buffer.from(header, "hex"), noise, Buffer.of(3)]);
+        expect(Buffer.compare(await sent(noise, { encoding: "br", level }), stored)).toBe(0);
+      });
+    });
+
+    test.concurrent("a body may grow by more than three bytes for each 16 KiB", async () => {
+      const body = createHash("shake256", { outputLength: 600 * 1024 })
+        .update("fetch-compress")
+        .digest();
+      for (let at = 13000; at < body.length; at += 16 * 1024) body.fill(0, at, at + 20);
+      const compressed = await sent(body, { encoding: "br", level: 3 });
+      expect(compressed.length - body.length).toBe(130);
+      expect(brotliDecompressSync(compressed).equals(body)).toBe(true);
+    });
+
+    // No two qualities compress this to the same bytes.
+    const squares = Array.from({ length: 2000 }, (_, i) => (i * i).toString(4)).join(" ");
+
+    test.concurrent.each([
+      [100 * 1024, "br", 6],
+      [600 * 1024, "br", 6],
+      ...[0, 1, 4, 5, 7, 11].map(level => [16 * 1024, { encoding: "br", level }, level] as const),
+    ] as const)("%d bytes of text with %j take quality %d", async (length, compress, quality) => {
+      const text = Buffer.alloc(length, squares);
+      const params = { [constants.BROTLI_PARAM_QUALITY]: quality, [constants.BROTLI_PARAM_SIZE_HINT]: length };
+      expect(await sent(text, compress)).toEqual(brotliCompressSync(text, { params }));
+    });
+  });
+
   // 307 preserves method+body; the HTTP-thread compression must re-run on the
   // second hop from the original uncompressed slice (state.original_request_body
   // is never re-seated to the compressed bytes).
@@ -266,6 +327,12 @@ describe("fetch compress option", () => {
         compress: { encoding: "gzip", level } as any,
       }),
     ).toThrow(/compress\.level/);
+  });
+
+  test.each([-1, 12])("invalid br level %p throws", level => {
+    expect(() =>
+      fetch("http://127.0.0.1:1/", { method: "POST", body: "x", compress: { encoding: "br", level } }),
+    ).toThrow(`The value of "compress.level" is out of range. It must be >= 0 and <= 11. Received ${level}`);
   });
 
   // A Bun.file() body large enough to qualify for the sendfile fast path

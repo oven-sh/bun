@@ -407,7 +407,7 @@ describe("RedisClient tls.checkServerIdentity", () => {
       });
       try {
         await client.connect();
-        expect(await client.duplicate().then(String, e => e.code)).toBe("ERR_REDIS_CONNECTION_CLOSED");
+        expect(await client.duplicate().then(String, e => e.code)).toBe("REFUSED");
         expect(calls).toBe(2);
       } finally {
         client.close();
@@ -432,7 +432,7 @@ describe("RedisClient tls.checkServerIdentity", () => {
       });
       try {
         expect(await client.connect().catch(e => e.code)).toBe("ERR_REDIS_CONNECTION_CLOSED");
-        expect(await again).toBe("ERR_REDIS_CONNECTION_CLOSED");
+        expect(await again).toBe("REFUSED");
         expect(calls).toBe(2);
       } finally {
         client.close();

@@ -353,7 +353,7 @@ pub struct UniqueSslCtx(OwnedSslCtx);
 unsafe impl Send for UniqueSslCtx {}
 
 impl UniqueSslCtx {
-    /// SAFETY: `raw` is null, or carries the only reference to a context whose ex-data and callbacks need no particular thread.
+    /// SAFETY: `raw` is null, or carries the only reference to a context that nothing else can reach, and whose ex-data and callbacks need no particular thread.
     pub unsafe fn from_raw(raw: *mut SSL_CTX) -> Option<Self> {
         // SAFETY: the only reference is one the caller gives up.
         unsafe { OwnedSslCtx::from_raw(raw) }.map(Self)

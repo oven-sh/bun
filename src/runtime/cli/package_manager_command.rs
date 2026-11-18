@@ -5,7 +5,9 @@ use bun_collections::DynamicBitSet;
 use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
-use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, reachable, tree};
+use bun_install::lockfile::{
+    LoadResult, LoadResultErr, Lockfile, package::PackageColumns as _, reachable, tree,
+};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
@@ -130,35 +132,35 @@ pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
     pub(crate) fn handle_load_lockfile_errors_for(
+        pm: &mut PackageManager,
         load_lockfile: &LoadResult,
-        log_level: LogLevel,
         nothing_to: &str,
     ) {
-        let not_silent = log_level != LogLevel::Silent;
-
         match load_lockfile {
             LoadResult::NotFound => {
-                if not_silent {
+                if pm.options.log_level != LogLevel::Silent {
                     if nothing_to.is_empty() {
                         Output::err_generic("missing lockfile", ());
                     } else {
                         Output::err_generic("missing lockfile, nothing to {s}", (nothing_to,));
                     }
-                    bun_core::note!("run 'bun install' first");
+                    pm.print_missing_lockfile_note();
                 }
                 Global::exit(1);
             }
-            LoadResult::Err(err) => {
-                if not_silent && !migration::reported_unsupported_lockfile_version(err) {
-                    Output::err_generic(
-                        "failed to {s} lockfile: {s}",
-                        (err.step.verb(), err.value.name()),
-                    );
-                }
-                Global::exit(1);
-            }
+            LoadResult::Err(err) => Self::exit_on_lockfile_load_error(err, pm.options.log_level),
             LoadResult::Ok(_) => {}
         }
+    }
+
+    pub(crate) fn exit_on_lockfile_load_error(err: &LoadResultErr, log_level: LogLevel) -> ! {
+        if log_level != LogLevel::Silent && !migration::reported_unsupported_lockfile_version(err) {
+            Output::err_generic(
+                "failed to {s} lockfile: {s}",
+                (err.step.verb(), err.value.name()),
+            );
+        }
+        Global::exit(1);
     }
 
     #[cold]
@@ -173,7 +175,9 @@ impl PackageManagerCommand {
 
         let mut lockfile = Box::<Lockfile>::default();
         let load_lockfile = lockfile.load_from_bytes(None, bytes, log);
-        Self::handle_load_lockfile_errors_for(&load_lockfile, LogLevel::Default, "hash");
+        if let LoadResult::Err(err) = &load_lockfile {
+            Self::exit_on_lockfile_load_error(err, LogLevel::Default);
+        }
 
         Output::flush();
         {
@@ -372,9 +376,8 @@ impl PackageManagerCommand {
             Output::flush();
             return Ok(());
         } else if matches!(subcommand, b"hash" | b"hash-print" | b"hash-string") {
-            let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
+            Self::handle_load_lockfile_errors_for(pm, &load_lockfile, "hash");
 
             let print_string = strings::eql_comptime(subcommand, b"hash-string");
             if !strings::eql_comptime(subcommand, b"hash-print") {
@@ -392,9 +395,8 @@ impl PackageManagerCommand {
             let action: &[u8] = positionals.get(1).copied().unwrap_or(b"");
             if matches!(action, b"pack" | b"unpack") {
                 if strings::eql_comptime(action, b"pack") {
-                    let log_level = pm.options.log_level;
                     let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-                    Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "pack");
+                    Self::handle_load_lockfile_errors_for(pm, &load_lockfile, "pack");
                 }
                 bun_install::cache_pack::exec(pm, &cwd);
             }
@@ -619,7 +621,7 @@ impl PackageManagerCommand {
                 ));
                 Global::exit(0);
             }
-            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
+            Self::handle_load_lockfile_errors_for(pm, &load_lockfile, "list");
             let trusted_only = cli.trusted_only;
             if trusted_only {
                 read_trusted_dependencies(pm);
@@ -796,7 +798,9 @@ impl PackageManagerCommand {
                 bun_core::pretty_errorln!("<r><red>error<r>: could not find any other lockfile");
                 Global::exit(1);
             }
-            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "");
+            if let LoadResult::Err(err) = &load_lockfile {
+                Self::exit_on_lockfile_load_error(err, log_level);
+            }
             if pm.options.dry_run {
                 if log_level != LogLevel::Silent {
                     bun_core::prettyln!(

@@ -984,6 +984,13 @@ static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuf
 static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
 
+/// The note below the `error:` line of a command that has no lockfile it can use.
+pub(crate) enum LockfileNote {
+    RunInstall,
+    NothingToLock,
+    SavingOff(package_manager_options::LockfileSavingOff),
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
 // ──────────────────────────────────────────────────────────────────────────
@@ -1021,12 +1028,78 @@ impl PackageManager {
             lockfile::LoadResult::Ok(_) => return,
             lockfile::LoadResult::NotFound if !silent => {
                 Output::err_generic("missing lockfile, {s}", (nothing,));
-                bun_core::note!("run 'bun install' first");
+                self.print_missing_lockfile_note();
             }
             lockfile::LoadResult::Err(cause) if !silent => cause.report(self.log_mut()),
             _ => {}
         }
         Global::exit(1);
+    }
+
+    /// The note that bunfig.toml, .npmrc and the environment decide. `None` leaves it to package.json.
+    #[cold]
+    fn configured_lockfile_note(&self) -> Option<LockfileNote> {
+        let config = bun_options_types::context::try_get().and_then(|ctx| ctx.install.as_deref());
+        // Every command but `bun prune` migrates the yarn.lock that an install then writes.
+        if Options::writes_yarn_lock_by_config(config, self.env()) {
+            return Some(LockfileNote::RunInstall);
+        }
+        Options::lockfile_saving_off_by_config(config, self.env()).map(LockfileNote::SavingOff)
+    }
+
+    /// `RunInstall` only where `bun install` leaves a lockfile that the command can load.
+    #[cold]
+    pub(crate) fn missing_lockfile_note(&mut self) -> LockfileNote {
+        if let Some(note) = self.configured_lockfile_note() {
+            return note;
+        }
+        match workspace_manifests::ScratchManifests::root_has_nothing_to_lock(self) {
+            Some(true) => LockfileNote::NothingToLock,
+            Some(false) | None => LockfileNote::RunInstall,
+        }
+    }
+
+    /// For a lockfile that is there and does not match package.json.
+    #[cold]
+    pub(crate) fn stale_lockfile_note(&self) -> LockfileNote {
+        self.configured_lockfile_note()
+            .unwrap_or(LockfileNote::RunInstall)
+    }
+
+    #[cold]
+    pub(crate) fn print_lockfile_note(&self, note: LockfileNote) {
+        use package_manager_options::LockfileSavingOff;
+        match note {
+            LockfileNote::RunInstall => bun_core::note!("run 'bun install' first"),
+            LockfileNote::NothingToLock if self.options.global => {
+                bun_core::note!("no global packages are installed");
+            }
+            LockfileNote::NothingToLock => bun_core::note!(
+                "{} has no dependencies",
+                bun_core::fmt::quote(self.root_package_json_path.as_bytes()),
+            ),
+            LockfileNote::SavingOff(LockfileSavingOff::Env) => bun_core::note!(
+                "saving the lockfile is disabled: <b>BUN_CONFIG_SKIP_SAVE_LOCKFILE<r> is set"
+            ),
+            LockfileNote::SavingOff(LockfileSavingOff::Save) => bun_core::note!(
+                "saving the lockfile is disabled: <b>save = false<r> under <b>[install.lockfile]<r> in bunfig.toml"
+            ),
+            LockfileNote::SavingOff(LockfileSavingOff::FrozenLockfile) => bun_core::note!(
+                "lockfile is frozen: <b>frozenLockfile = true<r> under <b>[install]<r> in bunfig.toml"
+            ),
+            LockfileNote::SavingOff(LockfileSavingOff::Production) => bun_core::note!(
+                "lockfile is frozen: <b>production = true<r> under <b>[install]<r> in bunfig.toml"
+            ),
+            LockfileNote::SavingOff(LockfileSavingOff::DryRun) => bun_core::note!(
+                "install is a dry run: <b>dryRun = true<r> under <b>[install]<r> in bunfig.toml, or <b>dry-run=true<r> in .npmrc"
+            ),
+        }
+    }
+
+    #[cold]
+    pub fn print_missing_lockfile_note(&mut self) {
+        let note = self.missing_lockfile_note();
+        self.print_lockfile_note(note);
     }
 
     pub(crate) fn crash(&mut self) -> ! {

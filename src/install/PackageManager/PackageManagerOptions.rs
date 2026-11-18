@@ -1294,6 +1294,51 @@ impl Options {
         self.minimum_release_age_ms = self.minimum_release_age_ms.filter(|&ms| ms > 0.0);
         Ok(())
     }
+
+    /// `Do::SAVE_LOCKFILE` cannot tell: the flags of the running command clear it too.
+    #[cold]
+    pub(crate) fn lockfile_saving_off_by_config(
+        config: Option<&Api::BunInstall>,
+        env: &DotEnvLoader,
+    ) -> Option<LockfileSavingOff> {
+        // The variable replaces `save` of bunfig.toml, whichever way it points.
+        match env.get(b"BUN_CONFIG_SKIP_SAVE_LOCKFILE") {
+            Some(skip) if skip != b"0" => return Some(LockfileSavingOff::Env),
+            Some(_) => {}
+            None if config.is_some_and(|config| config.save_lockfile == Some(false)) => {
+                return Some(LockfileSavingOff::Save);
+            }
+            None => {}
+        }
+        let config = config?;
+        if config.frozen_lockfile == Some(true) {
+            return Some(LockfileSavingOff::FrozenLockfile);
+        }
+        if config.production == Some(true) {
+            return Some(LockfileSavingOff::Production);
+        }
+        (config.dry_run == Some(true)).then_some(LockfileSavingOff::DryRun)
+    }
+
+    /// An install writes yarn.lock whether or not it saves bun.lock, but not in a dry run.
+    #[cold]
+    pub(crate) fn writes_yarn_lock_by_config(
+        config: Option<&Api::BunInstall>,
+        env: &DotEnvLoader,
+    ) -> bool {
+        (config.is_some_and(|config| config.save_yarn_lockfile == Some(true))
+            || env.get(b"BUN_CONFIG_YARN_LOCKFILE").is_some())
+            && !config.is_some_and(|config| config.dry_run == Some(true))
+    }
+}
+
+/// A setting in bunfig.toml, .npmrc or the environment that keeps `bun install` from saving bun.lock.
+pub(crate) enum LockfileSavingOff {
+    Env,
+    Save,
+    FrozenLockfile,
+    Production,
+    DryRun,
 }
 
 bitflags::bitflags! {

@@ -270,12 +270,11 @@ Explain why a package is installed
         } else {
             pm.options.depth.unwrap_or(100)
         };
-        let log_level = pm.options.log_level;
 
         // Load into `pm.lockfile` itself, because a migration fetches the manifests of the packages
         // that it finds there.
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "");
+        PackageManagerCommand::handle_load_lockfile_errors_for(pm, &load_lockfile, "");
         let linker = load_lockfile.node_linker(&pm.lockfile, pm.options.node_linker);
 
         let lockfile: &Lockfile = &pm.lockfile;

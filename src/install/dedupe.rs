@@ -783,7 +783,7 @@ pub fn dedupe_before_install(
         LoadResult::NotFound => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to dedupe", ());
-                bun_core::note!("run 'bun install' first");
+                manager.print_missing_lockfile_note();
             }
             Global::exit(1);
         }
@@ -860,7 +860,7 @@ fn refuse_out_of_date(manager: &PackageManager) -> ! {
             "bun.lock does not match package.json, nothing to dedupe",
             (),
         );
-        bun_core::note!("run 'bun install' first");
+        manager.print_lockfile_note(manager.stale_lockfile_note());
         Output::flush();
     }
     Global::exit(1);

@@ -2938,10 +2938,9 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// Windows uses `GetFileAttributesW`; posix is plain `access`.
+    /// Windows uses `GetFileAttributesW`; posix is `faccessat(AT_FDCWD, path, F_OK)`.
     pub fn exists_z(path: &ZStr) -> bool {
-        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
-        unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 }
+        exists_at(Fd::cwd(), path)
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
@@ -2951,12 +2950,19 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-            // valid NUL-terminated C string.
-            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+            loop {
+                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+                // valid NUL-terminated C string.
+                if unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) } == 0 {
+                    return true;
+                }
+                if last_errno() != libc::EINTR {
+                    return false;
+                }
+            }
         }
     }
-    /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
+    /// Calls extern C `is_executable_file` (c-bindings.cpp) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
         unsafe extern "C" {
             // `c_char`, not `i8` — `char` is unsigned on aarch64/arm/ppc, so
@@ -2982,12 +2988,17 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         use libc::realpath as _realpath;
-        // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
-        // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
-        let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
-        if p.is_null() {
-            return Err(err_with_path(Tag::realpath, path));
-        }
+        let p = loop {
+            // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
+            // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
+            let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
+            if !p.is_null() {
+                break p;
+            }
+            if last_errno() != libc::EINTR {
+                return Err(err_with_path(Tag::realpath, path));
+            }
+        };
         // SAFETY: on success `realpath` returned `buf`'s pointer with a
         // NUL-terminated absolute path written into it.
         let len = unsafe { libc::strlen(p) };
@@ -5049,12 +5060,14 @@ pub mod linux {
     pub fn read(fd: c_int, buf: &mut [u8]) -> isize {
         super::linux_syscall::read_raw(fd, buf)
     }
-    /// Raw `splice(2)` at the position of each file; libc-convention return.
+    /// Raw `splice(2)` at the position of each file; libc-convention return. Runs again on EINTR.
     #[inline]
     pub fn splice(in_fd: c_int, out_fd: c_int, len: usize) -> isize {
         let no_offset = core::ptr::null_mut();
         // SAFETY: both offsets may be null.
-        unsafe { libc::splice(in_fd, no_offset, out_fd, no_offset, len, 0) }
+        super::linux_syscall::retry_raw(|| unsafe {
+            libc::splice(in_fd, no_offset, out_fd, no_offset, len, 0)
+        })
     }
     /// Whether the blocks are reserved. No retry: tmpfs starts again after each signal.
     pub fn fallocate(fd: c_int, offset: i64, len: i64) -> bool {
@@ -5118,21 +5131,21 @@ pub mod linux {
     // the kernel-convention `GetErrno for usize` impl which would mis-decode
     // every failure as EPERM (`-1 as usize` → errno 1).
 
-    /// `bun.linux.ioctl_ficlone`: raw FICLONE ioctl.
+    /// `bun.linux.ioctl_ficlone`: raw FICLONE ioctl. Runs again on EINTR.
     /// Support for FICLONE is dependent on the filesystem driver.
     #[inline]
     pub fn ioctl_ficlone(dest_fd: super::Fd, src_fd: super::Fd) -> isize {
         // FICLONE = _IOW(0x94, 9, c_int).
         const FICLONE: libc::c_ulong = 0x40049409;
         // SAFETY: raw `ioctl(2)`; both fds owned by caller.
-        unsafe {
+        super::linux_syscall::retry_raw(|| unsafe {
             libc::syscall(
                 libc::SYS_ioctl,
                 dest_fd.native() as libc::c_long,
                 FICLONE,
                 src_fd.native() as libc::c_long,
             ) as isize
-        }
+        })
     }
 
     /// `copy_file_range` raw syscall.
@@ -6523,13 +6536,12 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
-/// `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
+/// [`exists_z`] on POSIX, where `file_only` is ignored.
 pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))]
     {
         let _ = file_only;
-        // SAFETY: path is NUL-terminated.
-        unsafe { libc::access(path.as_ptr().cast(), libc::F_OK) == 0 }
+        exists_z(path)
     }
     #[cfg(windows)]
     {

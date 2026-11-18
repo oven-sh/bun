@@ -5762,7 +5762,6 @@ impl NodeFS {
                         dest,
                     ) {
                         match err.get_errno() {
-                            E::EINTR => continue,
                             E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
@@ -5794,7 +5793,6 @@ impl NodeFS {
                         dest,
                     ) {
                         match err.get_errno() {
-                            E::EINTR => continue,
                             E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();

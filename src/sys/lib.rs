@@ -5138,7 +5138,7 @@ pub mod linux {
 
     /// `bun.linux.ioctl_ficlone`: raw FICLONE ioctl.
     /// Support for FICLONE is dependent on the filesystem driver.
-    /// No retry, as in libuv: when a clone fails, a caller copies the bytes or reports the errno.
+    /// No retry: when a clone fails, a caller copies the bytes or reports the errno.
     #[inline]
     pub fn ioctl_ficlone(dest_fd: super::Fd, src_fd: super::Fd) -> isize {
         // FICLONE = _IOW(0x94, 9, c_int).

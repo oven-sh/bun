@@ -11,7 +11,7 @@
 //! `bun_sys::Error::from_code_int(e, tag)` — same shape as the existing
 //! `Maybe<T>` plumbing, just without the `last_errno()` round-trip.
 //!
-//! EINTR retry is handled here so callers don't need to loop, except for `close` and `read_raw`.
+//! EINTR retry is handled here so callers don't need to loop. Only `close` and `read_raw` can return EINTR.
 //!
 //! Android: bionic is just another userspace libc on the same Linux kernel —
 //! every raw syscall here is identical. Rust splits `target_os` into

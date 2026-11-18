@@ -6875,7 +6875,9 @@ ssize_t splice(int in, off_t *in_offset, int out, off_t *out_offset, size_t leng
 }
 
 long syscall(long number, ...) {
+  static long (*real)(long, ...);
   static char copied[PATH_MAX], sent[PATH_MAX], listed[PATH_MAX];
+  if (!real) real = dlsym(RTLD_NEXT, "syscall");
   va_list list;
   va_start(list, number);
   long a = va_arg(list, long), b = va_arg(list, long), c = va_arg(list, long);
@@ -6892,7 +6894,7 @@ long syscall(long number, ...) {
   }
   if (number == SYS_sendfile && is_interrupted("sendfile", path_of(b), sent)) return -1;
   if (number == SYS_getdents64 && is_interrupted("getdents64", path_of(a), listed)) return -1;
-  return ((long (*)(long, ...)) dlsym(RTLD_NEXT, "syscall"))(number, a, b, c, d, e, f);
+  return real(number, a, b, c, d, e, f);
 }
 `;
 
@@ -6916,7 +6918,10 @@ async function runUnderEintrShim(script: string) {
       LD_PRELOAD: bunEnv.LD_PRELOAD ? `./shim.so:${bunEnv.LD_PRELOAD}` : "./shim.so",
       // Without the clone, a copy reaches copy_file_range on every file system.
       BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1",
+      // The settings of the outer shell do not decide a row.
       BUN_CONFIG_DISABLE_COPY_FILE_RANGE: undefined,
+      NODE_COMPILE_CACHE: undefined,
+      NODE_COMPILE_CACHE_PORTABLE: undefined,
       NODE_DISABLE_COMPILE_CACHE: undefined,
     },
     cwd: String(dir),

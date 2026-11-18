@@ -496,7 +496,7 @@ impl Interpreter {
                 bun_sys::open(bun_core::zstr!("NUL"), bun_sys::O::RDONLY, 0)
             }
         } else {
-            shell_dup(Fd::stdin())
+            bun_sys::dup(Fd::stdin())
         };
         let stdin_fd = match stdin_fd_res {
             Ok(fd) => fd,
@@ -1100,7 +1100,7 @@ impl Interpreter {
         let stdout = File::from_fd(if bun_core::output::stdio::is_stdout_null() {
             open_null_device()?
         } else {
-            shell_dup(Fd::stdout())?
+            bun_sys::dup(Fd::stdout())?
         });
 
         // ── dup stderr ─────────────────────────────────────────────────────
@@ -1108,7 +1108,7 @@ impl Interpreter {
         let stderr_fd = if bun_core::output::stdio::is_stderr_null() {
             open_null_device()?
         } else {
-            shell_dup(Fd::stderr())?
+            bun_sys::dup(Fd::stderr())?
         };
 
         let stdout_fd = stdout.into_raw();
@@ -2000,23 +2000,6 @@ impl Drop for OwnedFd {
     }
 }
 
-/// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
-/// to a libuv-owned fd via `make_lib_uv_owned_for_syscall` so
-/// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
-/// instead of a raw NT handle.
-pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
-    #[cfg(windows)]
-    {
-        bun_sys::File::from_fd(bun_sys::dup(fd)?)
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
-            .map(bun_sys::File::into_raw)
-    }
-    #[cfg(not(windows))]
-    {
-        bun_sys::dup(fd)
-    }
-}
-
 /// Joins `parts` into an owned, normalized path. Fails with `ENAMETOOLONG` if the result is
 /// too long for the `MAX_PATH_BYTES` buffers that the fs layers copy paths into.
 pub(crate) fn shell_join_path(
@@ -2131,9 +2114,8 @@ pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<
 
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
-/// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)` +
-/// `makeLibUVOwnedForSyscall`; for file opens, resolve via `shell_get_path`
-/// then `bun_sys::open`.
+/// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)`; for file
+/// opens, resolve via `shell_get_path` then `bun_sys::open`.
 pub(crate) fn shell_openat(
     dir: Fd,
     path: &bun_core::ZStr,
@@ -2155,10 +2137,7 @@ pub(crate) fn shell_openat(
                         ..Default::default()
                     },
                 )
-                .map(bun_sys::File::from_fd)
-                .map_err(|e| e.with_path(path.as_bytes()))?
-                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
-                .map(bun_sys::File::into_raw);
+                .map_err(|e| e.with_path(path.as_bytes()));
             }
             return bun_sys::open_dir_at_windows_a(
                 dir,
@@ -2169,15 +2148,10 @@ pub(crate) fn shell_openat(
                     ..Default::default()
                 },
             )
-            .map(bun_sys::File::from_fd)
-            .map_err(|e| e.with_path(path.as_bytes()))?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
-            .map(bun_sys::File::into_raw);
+            .map_err(|e| e.with_path(path.as_bytes()));
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
-        // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
-        // routes through `sys_uv` and already yields a uv-owned fd.
         return bun_sys::open(p, flags, perm);
     }
     #[cfg(not(windows))]

@@ -26,7 +26,7 @@ use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
 #[cfg(unix)]
 pub type PidT = libc::pid_t;
 #[cfg(windows)]
-pub type PidT = bun_libuv_sys::uv_pid_t;
+pub type PidT = i32;
 
 #[cfg(unix)]
 pub type FdT = libc::c_int;
@@ -37,10 +37,7 @@ pub type FdT = libc::c_int;
 // One Bun-level type per target. On every Unix this is `libc::rusage` —
 // the libc crate defines `rusage` on FreeBSD with
 // the standard `ru_*` field names, so no hand-rolled FreeBSD struct is
-// needed. On Windows it is the value-typed `WinRusage` below (NOT
-// `uv_rusage_t` — that is vendor FFI ABI in `bun_libuv_sys` and stays
-// untouched; our Windows path fills `WinRusage` directly from Win32, not
-// via libuv).
+// needed. On Windows it is the value-typed `WinRusage` below.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone, Copy)]
@@ -61,12 +58,10 @@ pub struct WinRusage {
 }
 
 #[cfg(windows)]
-pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
-    use core::ffi::c_void;
+pub fn process_rusage(process: bun_sys::windows::HANDLE) -> WinRusage {
     let mut usage_info = Rusage::default();
-    let process_pid: *mut c_void = process.process_handle;
     // We at least get process times
-    if let Ok(times) = bun_sys::windows::GetProcessTimes(process_pid) {
+    if let Ok(times) = bun_sys::windows::GetProcessTimes(process) {
         // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
         // 10 ticks. A `ticks % 1_000_000` computation here would be
         // unit-mismatched (a 100-ns tick count modulo a microsecond
@@ -79,11 +74,11 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
         usage_info.utime.sec = (times.user / 10_000_000) as i64;
         usage_info.utime.usec = ((times.user % 10_000_000) / 10) as i64;
     }
-    let counters = bun_sys::windows::GetProcessIoCounters(process_pid).unwrap_or_default();
+    let counters = bun_sys::windows::GetProcessIoCounters(process).unwrap_or_default();
     usage_info.inblock = counters.ReadOperationCount;
     usage_info.oublock = counters.WriteOperationCount;
 
-    let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
+    let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process) else {
         return usage_info;
     };
     usage_info.maxrss = memory.PeakWorkingSetSize as u64;

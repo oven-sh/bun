@@ -1,15 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// Regression coverage for a Windows-only panic: integer overflow in
-// uv.Loop.active_handles during process teardown when a large number of
-// child processes are cleaned up at exit. Historically intermittent with
-// ~300+ children. The Windows active_handles counter now saturates like
-// the POSIX `active` counter does, so the teardown path cannot underflow.
-//
-// On POSIX this path was never affected (subActive already saturates), so
-// this test also passes there; it is kept enabled everywhere as a general
-// stress check of the many-subprocess teardown path.
+// A stress check of the many-subprocess teardown path. With ~300+ children it
+// used to panic on Windows, intermittently.
 test("tearing down hundreds of spawned subprocesses at exit does not overflow the loop active-handle counter", async () => {
   const N = 350;
   const fixture = /* js */ `

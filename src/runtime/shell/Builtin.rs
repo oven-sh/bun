@@ -435,7 +435,7 @@ impl Builtin {
                 };
 
                 if redirect.stdin() {
-                    let r = IOReader::init(redirfd, evtloop);
+                    let r = IOReader::init_for_one_command(redirfd, evtloop);
                     r.set_interp(interp);
                     Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
                 }
@@ -451,7 +451,9 @@ impl Builtin {
                     redirfd,
                     io_writer::Flags {
                         pollable: if cfg!(windows) { true } else { pollable },
+                        #[cfg(not(windows))]
                         nonblock: is_nonblocking,
+                        #[cfg(not(windows))]
                         is_socket,
                         ..Default::default()
                     },

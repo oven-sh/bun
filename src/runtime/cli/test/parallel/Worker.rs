@@ -4,7 +4,7 @@
 //! spawn/dispatch/shutdown mechanics.
 
 #[cfg(windows)]
-use std::os::windows::io::OwnedHandle;
+use std::os::windows::io::{AsHandle, OwnedHandle};
 
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
@@ -30,7 +30,7 @@ pub(crate) struct Worker {
     pub(crate) process: Option<spawn::ProcessHandle>,
 
     /// Bidirectional IPC over fd 3. POSIX: usockets adopted from a socketpair.
-    /// Windows: `uv.Pipe` (the parent end of `.buffer` extra-fd, full-duplex).
+    /// Windows: the parent end of a duplex pipe.
     /// Commands and results both flow through this channel; backpressure is
     /// handled by the loop, so a busy worker writing thousands of `test_done`
     /// frames never truncates and the coordinator never blocks.
@@ -58,7 +58,6 @@ pub(crate) struct SpawnContext<'a> {
     pub(crate) argv: bun_core::CStrList<'a>,
     pub(crate) envps: &'a [bun_core::CStringList],
     /// Windows hands it over as an inherited handle, which the worker's arguments name.
-    #[cfg_attr(windows, expect(dead_code))]
     pub(crate) compiled_program: Option<bun_sys::Fd>,
     #[cfg(windows)]
     pub(crate) windows_job: Option<&'a OwnedHandle>,
@@ -69,6 +68,17 @@ impl Worker {
     /// reports and what it prints come by different pipes, so a report can be read before the text that was written ahead of it,
     /// and the text would then be printed under no file, or under the next one.
     pub(crate) fn read_output_written_so_far(&mut self) {
+        #[cfg(windows)]
+        for kind in [Kind::Stdout, Kind::Stderr] {
+            let reader = if kind == Kind::Stdout {
+                &self.out
+            } else {
+                &self.err
+            };
+            if let Some(event) = reader.take_available() {
+                self.on_io(kind, event);
+            }
+        }
         #[cfg(unix)]
         for descriptor in [self.out.get_fd(), self.err.get_fd()]
             .into_iter()
@@ -180,13 +190,6 @@ impl Worker {
         }
         #[cfg(not(unix))]
         {
-            // Windows: `.ipc` extra_fd creates a duplex `uv.Pipe` (named pipe
-            // under the hood, UV_READABLE | UV_WRITABLE | UV_OVERLAPPED) and
-            // initialises the parent end with uv_pipe_init(loop, ipc=1) — the
-            // same dance Bun.spawn({ipc}) / process.send() use. The child opens
-            // CRT fd 3 with uv_pipe_init(ipc=1) + uv_pipe_open in Channel.adopt.
-            // Both ends agreeing on the libuv IPC framing is what matters; our
-            // own [u32 len][u8 kind] frames ride inside it unchanged.
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer,
@@ -197,6 +200,8 @@ impl Worker {
                     loop_: jsc::EventLoopHandle::init(coord.vm.event_loop_ptr()),
                     ..Default::default()
                 },
+                job: coord.windows_job.map(AsHandle::as_handle),
+                inherited_handle: coord.compiled_program.map(bun_sys::Fd::native),
                 stream: true,
                 ..Default::default()
             };
@@ -227,14 +232,6 @@ impl Worker {
         }
 
         let process = this.process.as_ref().expect("set above").this_ptr();
-        #[cfg(windows)]
-        {
-            if let Some(job) = coord.windows_job {
-                if let Some(handle) = process.os_handle() {
-                    let _ = bun_sys::windows::AssignProcessToJobObject(job, handle);
-                }
-            }
-        }
         this.alive = true;
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.

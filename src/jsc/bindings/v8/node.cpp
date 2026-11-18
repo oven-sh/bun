@@ -21,9 +21,7 @@ using v8::Value;
 using JSC::JSObject;
 using JSC::JSValue;
 
-#if !OS(WINDOWS)
 extern "C" struct uv_loop_s* Bun__VirtualMachine__uvLoop(void* bunVM);
-#endif
 
 namespace node {
 
@@ -43,11 +41,7 @@ void RemoveEnvironmentCleanupHook(v8::Isolate* isolate,
 
 struct uv_loop_s* GetCurrentEventLoop(v8::Isolate* isolate)
 {
-#if OS(WINDOWS)
-    return reinterpret_cast<struct uv_loop_s*>(isolate->globalObject()->uvLoop());
-#else
     return Bun__VirtualMachine__uvLoop(isolate->globalObject()->bunVM());
-#endif
 }
 
 async_id AsyncHooksGetExecutionAsyncId(v8::Local<v8::Context> context)

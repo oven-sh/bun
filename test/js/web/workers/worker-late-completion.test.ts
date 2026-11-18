@@ -63,6 +63,17 @@ const ROWS: Row[] = [
   },
   { name: "Bun.file().text()", worker: `Bun.file(process.execPath).slice(0, 65536).text();`, ticket: "read_file.rs" },
   {
+    name: "Bun.write() of bytes",
+    worker: `Bun.write(workerData.dir + "/out.bin", Buffer.alloc(1 << 20, 7));`,
+    ticket: "write_file.rs",
+  },
+  {
+    name: "Bun.write() of a file",
+    worker: `Bun.write(workerData.dir + "/out.bin", Bun.file(workerData.dir + "/in.bin"));`,
+    ticket: "copy_file.rs",
+    files: { "in.bin": "x" },
+  },
+  {
     // Same read job, different completion: the image's read chain is handed
     // ECANCELED at teardown and has to free itself.
     name: "Bun.Image(Bun.file()).metadata()",
@@ -114,6 +125,8 @@ const ROWS: Row[] = [
     name: "dns lookup on the thread pool",
     worker: `Bun.dns.lookup("localhost", { backend: "libc" });`,
     ticket: "dns.rs",
+    // On Windows the stop phase completes the job itself if the resolver has not answered yet.
+    skip: isWindows,
   },
   {
     name: "Bun.Transpiler.transform",

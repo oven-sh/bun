@@ -63,7 +63,7 @@ impl PipeReader {
         unsafe { this.reader.set_owner(owner) };
         #[cfg(windows)]
         if let StdioResult::Buffer(pipe) = result {
-            this.reader.set_source(bun_io::Source::Pipe(pipe));
+            this.reader.set_pipe(pipe);
         }
         this
     }
@@ -93,17 +93,25 @@ impl PipeReader {
         }
     }
 
+    /// What `read_all` does on POSIX.
+    #[cfg(windows)]
+    pub(crate) fn read_available(this: &RefPtr<Self>) {
+        if let Some(event) = this.reader.take_available() {
+            Self::on_read_result(this, this.reader.read(this.event_loop, Some(event)));
+        }
+    }
+
     pub(crate) fn start(this: &RefPtr<Self>, lazy: bool) {
         this.start_ref.set(Some(this.clone()));
         #[cfg(windows)]
         {
             if lazy {
-                // Leave IS_PAUSED set (the init default) so uv_read_start is
+                // Leave IS_PAUSED set (the init default) so the read is
                 // deferred until JS first pulls; the kernel pipe buffer then
                 // provides backpressure and the child blocks.
                 return;
             }
-            if let bun_sys::Result::Err(err) = this.reader.start_with_current_pipe() {
+            if let bun_sys::Result::Err(err) = this.reader.start_with_current_source() {
                 // As a read error, so that the caller proceeds to the sibling pipe.
                 Self::on_read_result(this, ReadResult::Err(err));
             }

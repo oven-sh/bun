@@ -43,9 +43,6 @@ pub(crate) struct FileResponseStream {
     state: Cell<State>,
     /// For the uWS callbacks and the reader, until `finish()`.
     self_ref: JsCell<Option<RefPtr<Self>>>,
-    /// A uv read in flight outlives `finish()`.
-    #[cfg(windows)]
-    read_ref: JsCell<Option<RefPtr<Self>>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
@@ -115,10 +112,7 @@ impl From<File> for StreamFd {
 impl Drop for StreamFd {
     fn drop(&mut self) {
         if let Self::Owned(fd) = *self {
-            #[cfg(windows)]
-            Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-            #[cfg(not(windows))]
-            Closer::close(fd, ());
+            Closer::close(fd);
         }
     }
 }
@@ -199,8 +193,6 @@ impl FileResponseStream {
             sendfile: JsCell::new(Sendfile::default()),
             state: Cell::new(State::default()),
             self_ref: JsCell::new(None),
-            #[cfg(windows)]
-            read_ref: JsCell::new(None),
         });
         owned.self_ref.set(Some(owned.clone()));
         let this = owned.as_ptr();
@@ -269,8 +261,6 @@ impl FileResponseStream {
 
         reader.update_ref(true);
 
-        #[cfg(windows)]
-        this_ref.hold_read_ref();
         this_ref.read(None);
     }
 
@@ -332,9 +322,6 @@ impl FileResponseStream {
 
         match resp.write(chunk) {
             WriteResult::Backpressure(_) => {
-                // `on_writable` takes it again.
-                #[cfg(windows)]
-                let _read_ref = self.read_ref.take();
                 self.arm_on_writable();
                 self.reader.pause();
                 false
@@ -345,18 +332,9 @@ impl FileResponseStream {
 
     fn on_read_result(&self, result: ReadResult) {
         match result {
-            ReadResult::Pending => return,
+            ReadResult::Pending => {}
             ReadResult::Done => self.finish(),
             ReadResult::Err(err) => self.fail_with(err),
-        }
-        #[cfg(windows)]
-        self.read_ref.set(None);
-    }
-
-    #[cfg(windows)]
-    fn hold_read_ref(&self) {
-        if self.read_ref.get().is_none() {
-            self.read_ref.set(self.self_ref.get().clone());
         }
     }
 
@@ -372,8 +350,6 @@ impl FileResponseStream {
             return true;
         }
         self.resp.get().timeout(self.idle_timeout.get());
-        #[cfg(windows)]
-        self.hold_read_ref();
         // A paused POSIX reader ignores `read()`.
         self.on_read_result(self.reader.unpause());
         self.read(None);

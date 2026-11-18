@@ -116,7 +116,7 @@ fn get_argv0(
 
     // This mimicks libuv's behavior, which mimicks execvpe
     // Only resolve from $PATH when the command is not an absolute path.
-    // libuv never appends .cmd/.bat, so a `\` path without one is still completed here.
+    // Spawning never appends .cmd/.bat, so a `\` path without one is still completed here.
     let names_a_file = strings::index_of_char(argv0_to_use, b'/').is_some()
         || (cfg!(windows) && bun_which::is_windows_path_with_executable_extension(argv0_to_use));
     let path_to_use: &[u8] = if names_a_file {
@@ -184,11 +184,7 @@ fn get_argv(
         cmds_array.next()?.unwrap(),
     )?;
 
-    // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
-    // re-tokenizes the command line with shell metacharacter rules
-    // (BatBadBut, CVE-2024-24576 / CVE-2024-27980). libuv's MSVCRT-style
-    // quoting cannot make that safe, so reject arguments that cmd.exe would
-    // reinterpret.
+    // See `bun_which::is_batch_file`.
     let is_batch_file = cfg!(windows) && bun_which::is_batch_file(argv0_result.argv0.as_bytes());
     if is_batch_file && bun_which::batch_arg_has_cmd_metachars(argv0_result.arg0.as_bytes()) {
         return Err(global_this
@@ -1197,8 +1193,6 @@ fn spawn_maybe_sync(
     let subprocess_ptr = subprocess_ref.as_ptr();
     // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
     let subprocess = unsafe { &*subprocess_ptr };
-    #[cfg(windows)]
-    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
     let subprocess_nn = subprocess_ref.as_non_null();
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
@@ -1381,13 +1375,7 @@ fn spawn_maybe_sync(
             let spawn::WindowsStdioResult::Buffer(ipc_pipe) = ipc_pipe else {
                 unreachable!("IPC channel stdio is not a buffer pipe");
             };
-            // `windows_configure_server` stores the pointer in `uv_handle_t.data`
-            // for the pipe's lifetime, so it must be the allocation root
-            // (write provenance), never one re-derived from `&SendQueue`.
-            // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
-            if let Err(err) =
-                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
-            {
+            if let Err(err) = ipc_data.windows_configure_server(ipc_pipe) {
                 return Err(cx.global().throw_value(err.to_js(cx.global())));
             }
         }

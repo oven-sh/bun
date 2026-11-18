@@ -158,7 +158,6 @@ codegen-for-zig-team.tar.gz
 /src/bun.js/WebKit
 /src/deps/boringssl
 /src/deps/c*ares
-/src/deps/libuv
 /src/deps/lol*html
 /src/deps/mimalloc
 /src/deps/tinycc

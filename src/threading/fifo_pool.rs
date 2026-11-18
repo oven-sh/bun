@@ -1,0 +1,175 @@
+//! Threads that start tasks in the order of their arrival, and end when there is nothing to do.
+
+use core::cell::Cell;
+use core::ptr;
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::time::Duration;
+use std::collections::VecDeque;
+use std::thread::JoinHandle;
+use std::time::Instant;
+
+use crate::spin::Spin;
+use crate::thread_pool::Task;
+use crate::{Condition, Guarded};
+
+struct Queued(*mut Task);
+
+// SAFETY: a task is made to be run by another thread.
+unsafe impl Send for Queued {}
+
+struct State {
+    tasks: VecDeque<Queued>,
+    threads: usize,
+    /// Those that are waiting or starting.
+    idle_threads: usize,
+    /// One of them is awake, and takes the next task without a signal.
+    is_spinning: bool,
+    spin: Spin,
+    /// When a thread last ran out of tasks.
+    idle_since: Option<Instant>,
+}
+
+pub struct Config {
+    pub name: &'static str,
+    pub max_threads: usize,
+    pub stack_size: usize,
+    pub on_thread_start: fn(),
+}
+
+pub struct FifoPool {
+    config: Config,
+    state: Guarded<State>,
+    queued: Condition,
+    /// For the one that is spinning.
+    has_task: AtomicBool,
+}
+
+thread_local! {
+    static POOL: Cell<*const FifoPool> = const { Cell::new(ptr::null()) };
+    static AFTER: Cell<*mut Task> = const { Cell::new(ptr::null_mut()) };
+}
+
+impl FifoPool {
+    pub const fn new(config: Config) -> FifoPool {
+        FifoPool {
+            config,
+            state: Guarded::new(State {
+                tasks: VecDeque::new(),
+                threads: 0,
+                idle_threads: 0,
+                is_spinning: false,
+                spin: Spin::new(),
+                idle_since: None,
+            }),
+            queued: Condition::new(),
+            has_task: AtomicBool::new(false),
+        }
+    }
+
+    pub fn schedule(&'static self, task: *mut Task) {
+        let mut state = self.state.lock();
+        state.tasks.push_back(Queued(task));
+        if state.is_spinning && state.tasks.len() == 1 {
+            return self.has_task.store(true, Ordering::SeqCst);
+        }
+        let is_short = state.idle_threads < state.tasks.len();
+        drop(state);
+        self.queued.notify_one();
+        if is_short {
+            self.add_threads();
+        }
+    }
+
+    /// If the system has none to give, tasks wait for the threads that there are.
+    fn add_threads(&'static self) {
+        loop {
+            let mut state = self.state.lock();
+            if state.idle_threads >= state.tasks.len() || state.threads == self.config.max_threads {
+                return;
+            }
+            state.threads += 1;
+            state.idle_threads += 1;
+            drop(state);
+            if self.spawn().is_ok() {
+                continue;
+            }
+            let mut state = self.state.lock();
+            state.threads -= 1;
+            state.idle_threads -= 1;
+            if state.threads > 0 {
+                return;
+            }
+            drop(state);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn spawn(&'static self) -> std::io::Result<JoinHandle<()>> {
+        std::thread::Builder::new()
+            .name(self.config.name.into())
+            .stack_size(self.config.stack_size)
+            .spawn(|| self.run())
+    }
+
+    pub fn has_this_thread(&self) -> bool {
+        ptr::eq(POOL.get(), self)
+    }
+
+    /// For the end of a task: the thread that it frees saves waking another one.
+    pub fn schedule_after_this_task(&'static self, task: *mut Task) {
+        match self.has_this_thread() && AFTER.get().is_null() {
+            true => AFTER.set(task),
+            false => self.schedule(task),
+        }
+    }
+
+    pub fn go(&'static self, run: impl FnOnce() + Send + 'static) {
+        self.schedule(crate::work_pool::task_from_fn(run));
+    }
+
+    fn run(&self) {
+        const IDLE_NS: u64 = 10_000_000_000;
+
+        (self.config.on_thread_start)();
+        POOL.set(self);
+        let mut state = self.state.lock();
+        loop {
+            while let Some(Queued(task)) = state.tasks.pop_front() {
+                state.idle_threads -= 1;
+                drop(state);
+                // SAFETY: what `schedule` was given, once.
+                unsafe { ((*task).callback)(task) };
+                state = self.state.lock();
+                state.idle_threads += 1;
+                let after = AFTER.replace(ptr::null_mut());
+                if !after.is_null() {
+                    state.tasks.push_back(Queued(after));
+                }
+            }
+            let (start, limit) = (Instant::now(), state.spin.limit_ns());
+            state.idle_since = Some(start);
+            if limit > 0 && !state.is_spinning {
+                state.is_spinning = true;
+                self.has_task.store(false, Ordering::SeqCst);
+                drop(state);
+                let awake_until = start + Duration::from_nanos(limit);
+                while !self.has_task.load(Ordering::SeqCst) && Instant::now() < awake_until {
+                    core::hint::spin_loop();
+                }
+                state = self.state.lock();
+                state.is_spinning = false;
+            }
+            if state.tasks.is_empty()
+                && self.queued.timed_wait_guarded(&mut state, IDLE_NS).is_err()
+                && state.tasks.is_empty()
+            {
+                state.threads -= 1;
+                state.idle_threads -= 1;
+                return;
+            }
+            if let Some(since) = state.idle_since.take() {
+                state.spin.waited(since.elapsed().as_nanos() as u64);
+            }
+        }
+    }
+}

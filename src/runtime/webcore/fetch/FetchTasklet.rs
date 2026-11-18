@@ -1183,7 +1183,7 @@ impl FetchTasklet {
         // The hostname never resolved: report the resolver error (`ENOTFOUND`,
         // ...) with `syscall`/`hostname`, the same shape `node:dns` produces,
         // rather than a generic connect-failure message. `dns_error` is the
-        // raw getaddrinfo(3) code and is nonzero on this path, so `init_eai`
+        // getaddrinfo(3) code and is nonzero on this path, so `init_eai`
         // is always `Some`.
         if fail == http::Error::DNSResolveFailed {
             if let Some(dns_err) = c_ares::Error::init_eai(self.result.dns_error) {

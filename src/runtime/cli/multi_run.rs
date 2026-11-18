@@ -157,7 +157,10 @@ impl<'a> PipeReader<'a> {
 
     /// After the exit: a leftover child may hold the pipe open, so its EOF may never come.
     fn drain_and_close(&mut self) {
-        // Windows has no synchronous drain.
+        #[cfg(windows)]
+        if let Some(event) = self.reader.take_available() {
+            self.read(Some(event));
+        }
         #[cfg(unix)]
         if !self.reader.is_done() && self.reader.get_fd() != bun_sys::Fd::INVALID {
             self.read(None);
@@ -227,14 +230,10 @@ impl<'a> ProcessHandle<'a> {
         #[cfg(windows)]
         {
             if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                self.stdout_reader
-                    .reader
-                    .set_source(bun_io::Source::Pipe(pipe));
+                self.stdout_reader.reader.set_pipe(pipe);
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                self.stderr_reader
-                    .reader
-                    .set_source(bun_io::Source::Pipe(pipe));
+                self.stderr_reader.reader.set_pipe(pipe);
             }
         }
 
@@ -253,11 +252,11 @@ impl<'a> ProcessHandle<'a> {
         {
             self.stdout_reader
                 .reader
-                .start_with_current_pipe()
+                .start_with_current_source()
                 .map_err(Error::from)?;
             self.stderr_reader
                 .reader
-                .start_with_current_pipe()
+                .start_with_current_source()
                 .map_err(Error::from)?;
         }
 
@@ -753,7 +752,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         Some(unsafe { &mut *env_ptr }),
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
-    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    // (which escape the spawn's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is

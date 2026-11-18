@@ -1359,15 +1359,12 @@ impl PipeReader {
         let owner = Owner::new(PollTag::ShellPipeReader, this_ptr.cast());
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { rc.reader.set_owner(owner) };
-        // `start()` goes through `start_with_current_pipe`.
+        // `start()` goes through `start_with_current_source`.
         #[cfg(windows)]
-        rc.reader.set_source(match result {
-            StdioResult::Buffer(buf) => bun_io::Source::Pipe(buf),
-            StdioResult::BufferFd(fd) => {
-                bun_io::Source::File(bun_io::Source::open_file(event_loop.loop_(), fd))
-            }
+        match result {
+            StdioResult::Buffer(pipe) => rc.reader.set_pipe(pipe),
             StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
-        });
+        }
 
         rc
     }
@@ -1376,7 +1373,7 @@ impl PipeReader {
         #[cfg(windows)]
         let started = self
             .reader
-            .start_with_current_pipe()
+            .start_with_current_source()
             .map(|()| ReadResult::Pending);
         // `reader` owns the fd from here.
         #[cfg(not(windows))]
@@ -1657,7 +1654,7 @@ impl Drop for PipeReader {
         debug_assert!(self.reader.is_done() || matches!(self.state, PipeReaderState::Err(_)));
 
         #[cfg(windows)]
-        debug_assert!(!self.reader.has_open_source());
+        debug_assert!(!self.reader.has_source());
 
         // PipeReaderState::Done(Box<[u8]>) drops its buffer automatically.
 

@@ -1,0 +1,478 @@
+use core::cell::{Cell, RefCell};
+use core::cmp::Reverse;
+use core::ffi::c_void;
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{BinaryHeap, VecDeque};
+use std::os::windows::io::OwnedHandle;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use bun_core::{Timespec, TimespecMockMode};
+use bun_threading::spin::Spin;
+use bun_threading::{Condition, Guarded};
+use bun_windows_sys::Win32Error;
+
+use crate::afd::{Readiness, Sockets};
+use crate::request::{Outcome, Requests};
+use crate::slab::Token;
+use crate::sys::{self, Packet, Timeout};
+use crate::timer::Timer;
+
+/// What a packet is about.
+pub(crate) mod key {
+    pub(crate) const SOCKET: usize = 1;
+    pub(crate) const REQUEST: usize = 2;
+    pub(crate) const TIMER: usize = 3;
+    pub(crate) const WAKE: usize = 4;
+    pub(crate) const OUTCOMES: usize = 5;
+    pub(crate) const POLL_AGAIN: usize = 6;
+    /// A request on a file that is bound to the port.
+    pub(crate) const FILE: usize = 7;
+}
+
+const BATCH: usize = 128;
+
+/// The part of a [`Port`] that other threads use.
+pub(crate) struct Shared {
+    pub(crate) handle: OwnedHandle,
+    is_wake_posted: AtomicBool,
+    is_parked: AtomicBool,
+    outcomes: Guarded<Vec<(Token, Outcome)>>,
+    pending_writes: Guarded<usize>,
+    all_written: Condition,
+}
+
+impl Shared {
+    pub(crate) fn send(&self, request: Token, outcome: Outcome) {
+        let was_empty = {
+            let mut outcomes = self.outcomes.lock();
+            outcomes.push((request, outcome));
+            outcomes.len() == 1
+        };
+        if was_empty {
+            sys::post(&self.handle, key::OUTCOMES, 0);
+        }
+    }
+
+    pub(crate) fn is_parked(&self) -> bool {
+        self.is_parked.load(Ordering::SeqCst)
+    }
+}
+
+/// Makes a [`Port`] report [`Event::Wake`], from any thread.
+pub struct Waker(Arc<Shared>);
+
+impl Waker {
+    pub fn wake(&self) {
+        if !self.0.is_wake_posted.swap(true, Ordering::SeqCst) {
+            sys::post(&self.0.handle, key::WAKE, 0);
+        }
+    }
+}
+
+/// A write that another thread makes, until it is dropped.
+pub struct PendingWrite(Arc<Shared>);
+
+impl Drop for PendingWrite {
+    fn drop(&mut self) {
+        let mut count = self.0.pending_writes.lock();
+        *count -= 1;
+        if *count == 0 {
+            self.0.all_written.notify_one();
+        }
+    }
+}
+
+/// What [`Port::dispatch`] leaves to its caller.
+pub enum Event {
+    Wake,
+    /// For a [`Watcher::Foreign`](crate::Watcher::Foreign).
+    Socket(NonNull<c_void>, Readiness),
+}
+
+/// A turn of the loop is [`prepare`](Port::prepare), [`wait`](Port::wait) and [`dispatch`](Port::dispatch). A callback may run turns of its own.
+pub struct Port {
+    pub(crate) shared: Arc<Shared>,
+    pub(crate) sockets: Sockets,
+    pub(crate) requests: Requests,
+    timer: Timer,
+    spin: Cell<Spin>,
+    /// Since the last wait. What is sent unasked comes in larger pieces to a thread that sleeps.
+    has_received: Cell<bool>,
+    has_sent: Cell<bool>,
+    /// `batch[next..end]` came from the system and is yet to be dispatched.
+    batch: [Cell<Packet>; BATCH],
+    next: Cell<usize>,
+    end: Cell<usize>,
+    /// The system may have had more than `batch` has room for.
+    was_full: Cell<bool>,
+    has_posted: Cell<bool>,
+    /// What ended without a packet from the system.
+    deferred: RefCell<VecDeque<Packet>>,
+    /// The same, for a turn that has not begun.
+    next_turn: RefCell<VecDeque<Packet>>,
+    /// When the last turn ended, if it had no time for all that was deferred.
+    ran_late_at: Cell<Option<u64>>,
+    /// The time when it is deferred, and the key and context of the packet.
+    delayed: RefCell<BinaryHeap<Reverse<(u64, usize, usize)>>>,
+    holds: Cell<usize>,
+    is_shut_down: Cell<bool>,
+}
+
+pub(crate) fn now_ns() -> u64 {
+    Timespec::now(TimespecMockMode::ForceRealTime).ns()
+}
+
+impl Port {
+    pub fn new() -> Result<Rc<Port>, Win32Error> {
+        Ok(Rc::new(Port {
+            shared: Arc::new(Shared {
+                handle: sys::create_port()?,
+                is_wake_posted: AtomicBool::new(false),
+                is_parked: AtomicBool::new(false),
+                outcomes: Guarded::default(),
+                pending_writes: Guarded::default(),
+                all_written: Condition::new(),
+            }),
+            sockets: Sockets::new(),
+            requests: Requests::new(),
+            timer: Timer::default(),
+            spin: Cell::new(Spin::new()),
+            has_received: Cell::new(false),
+            has_sent: Cell::new(false),
+            batch: [const { Cell::new(Packet::EMPTY) }; BATCH],
+            next: Cell::new(0),
+            end: Cell::new(0),
+            was_full: Cell::new(false),
+            has_posted: Cell::new(false),
+            deferred: RefCell::default(),
+            next_turn: RefCell::default(),
+            ran_late_at: Cell::new(None),
+            delayed: RefCell::default(),
+            holds: Cell::new(0),
+            is_shut_down: Cell::new(false),
+        }))
+    }
+
+    pub fn waker(&self) -> Waker {
+        Waker(Arc::clone(&self.shared))
+    }
+
+    pub fn pending_write(&self) -> PendingWrite {
+        *self.shared.pending_writes.lock() += 1;
+        PendingWrite(Arc::clone(&self.shared))
+    }
+
+    /// For a thread that is about to end. Not for long: `true` if some have ended and others have not.
+    pub fn wait_for_pending_writes(&self) -> bool {
+        let deadline = now_ns() + 500_000_000;
+        let mut count = self.shared.pending_writes.lock();
+        let before = *count;
+        while *count > 0 && now_ns() < deadline {
+            let left = deadline.saturating_sub(now_ns());
+            let _ = (self.shared.all_written).timed_wait_guarded(&mut count, left);
+        }
+        (1..before).contains(&*count)
+    }
+
+    pub fn did_receive(&self) {
+        self.has_received.set(true);
+    }
+
+    pub fn did_send(&self) {
+        self.has_sent.set(true);
+    }
+
+    /// Whether a [`Hold`] is set.
+    pub fn is_held(&self) -> bool {
+        self.holds.get() > 0
+    }
+
+    /// How many expect to be called, apart from each [`Watcher::Foreign`](crate::Watcher::Foreign).
+    pub fn callback_count(&self) -> usize {
+        self.requests.callback_count() + self.sockets.callback_count()
+    }
+
+    pub(crate) fn is_shut_down(&self) -> bool {
+        self.is_shut_down.get()
+    }
+
+    pub(crate) fn defer(&self, packet: Packet) {
+        self.deferred.borrow_mut().push_back(packet);
+    }
+
+    pub(crate) fn defer_to_next_turn(&self, packet: Packet) {
+        self.next_turn.borrow_mut().push_back(packet);
+    }
+
+    /// It comes after the packets that the system has by now.
+    pub(crate) fn post(&self, packet: Packet) {
+        sys::post(&self.shared.handle, packet.key, packet.context);
+        self.has_posted.set(true);
+    }
+
+    /// Spares the loop a turn for what was deferred a moment ago.
+    pub(crate) fn take_back(&self, request: Token) {
+        let address = (key::REQUEST, request.to_raw());
+        (self.deferred.borrow_mut()).pop_back_if(|packet| (packet.key, packet.context) == address);
+    }
+
+    pub(crate) fn delay(&self, key: usize, token: Token, delay_ns: u64) {
+        let entry = (now_ns() + delay_ns, key, token.to_raw());
+        self.delayed.borrow_mut().push(Reverse(entry));
+    }
+
+    fn defer_delayed(&self) {
+        let mut delayed = self.delayed.borrow_mut();
+        if delayed.is_empty() {
+            return;
+        }
+        let now = now_ns();
+        while let Some(&Reverse((due, key, context))) = delayed.peek()
+            && due <= now
+        {
+            delayed.pop();
+            self.defer(Packet::new(key, context));
+        }
+    }
+
+    fn undispatched(&self) -> usize {
+        let deferred = self.deferred.borrow().len() + self.next_turn.borrow().len();
+        self.end.get() - self.next.get() + deferred
+    }
+
+    fn has_work(&self) -> bool {
+        self.undispatched() > 0 || self.has_posted.get() || self.sockets.has_changed()
+    }
+
+    /// `true` if `wait` is known to return at once.
+    pub fn prepare(&self) -> bool {
+        self.sockets.submit_changed(self);
+        self.has_work()
+    }
+
+    /// Returns how many events there are at most. It neither allocates nor frees.
+    pub fn wait(&self, timeout_ns: Option<u64>) -> usize {
+        if self.next.get() == self.end.get() {
+            if timeout_ns == Some(0) || self.has_work() {
+                self.fill_batch(Timeout::Now);
+            } else {
+                self.shared.is_parked.store(true, Ordering::SeqCst);
+                self.park(timeout_ns);
+                self.shared.is_parked.store(false, Ordering::SeqCst);
+            }
+        }
+        self.undispatched()
+    }
+
+    fn park(&self, timeout_ns: Option<u64>) {
+        let (start, mut spin) = (now_ns(), self.spin.get());
+        let next_due = self.delayed.borrow().peek().map(|entry| entry.0.0);
+        let deadline = (timeout_ns.map_or(u64::MAX, |timeout| start.saturating_add(timeout)))
+            .min(next_due.unwrap_or(u64::MAX));
+        let only_receives = self.has_received.take() & !self.has_sent.take();
+        let awake_ns = if only_receives { 0 } else { spin.limit_ns() };
+        let (mut now, awake_until) = (start, start + awake_ns);
+        loop {
+            let timeout = match deadline {
+                _ if now < awake_until => Timeout::Now,
+                u64::MAX => Timeout::Never,
+                _ => (self.timer).timeout(&self.shared.handle, now, deadline.saturating_sub(now)),
+            };
+            let has_packets = self.fill_batch(timeout);
+            now = now_ns();
+            if has_packets || now >= deadline {
+                break;
+            }
+        }
+        if !only_receives {
+            spin.waited(now.saturating_sub(start));
+            self.spin.set(spin);
+        }
+    }
+
+    /// `false` if there is nothing to dispatch.
+    fn fill_batch(&self, timeout: Timeout) -> bool {
+        let removed = sys::remove_packets(&self.shared.handle, &self.batch, timeout);
+        self.was_full.set(removed == BATCH);
+        self.has_posted.set(false);
+        let mut end = 0;
+        for cell in &self.batch[..removed] {
+            let packet = cell.get();
+            if self.receive(packet) {
+                self.batch[end].set(packet);
+                end += 1;
+            }
+        }
+        self.next.set(0);
+        self.end.set(end);
+        end > 0
+    }
+
+    /// `false` if that is all there is to do for the packet.
+    fn receive(&self, packet: Packet) -> bool {
+        match packet.key {
+            key::TIMER => {
+                self.timer.fired();
+                false
+            }
+            key::SOCKET => self.sockets.receive(packet.context),
+            _ => true,
+        }
+    }
+
+    /// Takes packets from the system, which writes the results of requests then, and dispatches them later.
+    pub(crate) fn fetch(&self, timeout: Timeout) {
+        let packets = [const { Cell::new(Packet::EMPTY) }; 16];
+        let removed = sys::remove_packets(&self.shared.handle, &packets, timeout);
+        for packet in packets[..removed].iter().map(Cell::get) {
+            if self.receive(packet) {
+                self.defer(packet);
+            }
+        }
+    }
+
+    pub fn dispatch(&self, on_event: impl Fn(Event)) {
+        /// Bounds the time until timers run again.
+        const MAX_BATCHES: usize = 48;
+
+        self.deferred
+            .borrow_mut()
+            .append(&mut self.next_turn.borrow_mut());
+        self.defer_delayed();
+        self.dispatch_deferred(&on_event);
+        self.dispatch_batch(&on_event);
+        for _ in 1..MAX_BATCHES {
+            if !self.was_full.get() {
+                break;
+            }
+            self.prepare();
+            self.fill_batch(Timeout::Now);
+            self.dispatch_batch(&on_event);
+        }
+        self.prepare();
+        self.dispatch_deferred_for_a_while(&on_event);
+    }
+
+    /// For as long as everything else has taken, so that a slow turn does not hold up a stream.
+    fn dispatch_deferred_for_a_while(&self, on_event: &impl Fn(Event)) {
+        const MIN_ROUNDS: usize = 8;
+        const MIN_NS: u64 = 2_000_000;
+        const MAX_NS: u64 = 100_000_000;
+
+        let since = self.ran_late_at.take();
+        if !(0..MIN_ROUNDS).all(|_| self.dispatch_deferred(on_event)) {
+            return;
+        }
+        let start = now_ns();
+        let deadline = start + (start - since.unwrap_or(start)).clamp(MIN_NS, MAX_NS);
+        while self.dispatch_deferred(on_event) {
+            let now = now_ns();
+            if now > deadline {
+                return self.ran_late_at.set(Some(now));
+            }
+        }
+    }
+
+    fn dispatch_batch(&self, on_event: &impl Fn(Event)) {
+        while self.next.get() < self.end.get() {
+            let packet = self.batch[self.next.get()].get();
+            self.next.update(|next| next + 1);
+            self.deliver(packet, on_event);
+        }
+    }
+
+    /// Only what was deferred before the call. `false` if that is nothing.
+    fn dispatch_deferred(&self, on_event: &impl Fn(Event)) -> bool {
+        let count = self.deferred.borrow().len();
+        for _ in 0..count {
+            let Some(packet) = self.deferred.borrow_mut().pop_front() else {
+                break;
+            };
+            self.deliver(packet, on_event);
+        }
+        count > 0
+    }
+
+    fn deliver(&self, packet: Packet, on_event: &impl Fn(Event)) {
+        match packet.key {
+            key::SOCKET => self.sockets.complete(self, packet.context, on_event),
+            key::POLL_AGAIN => self.sockets.poll_again(packet.context),
+            key::REQUEST | key::FILE => self.requests.complete(self, packet),
+            key::WAKE => {
+                self.shared.is_wake_posted.swap(false, Ordering::SeqCst);
+                on_event(Event::Wake);
+            }
+            key::OUTCOMES => {
+                let outcomes = core::mem::take(&mut *self.shared.outcomes.lock());
+                for (token, outcome) in outcomes {
+                    if self.requests.store(token, outcome) {
+                        self.defer(Packet::new(key::REQUEST, token.to_raw()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Cancels everything, and nothing is called back from now on.
+    pub fn shut_down(&self) {
+        const PATIENCE_NS: u64 = 10_000_000_000;
+
+        self.is_shut_down.set(true);
+        self.sockets.abandon_all();
+        self.requests.abandon_all();
+        let deadline = now_ns() + PATIENCE_NS;
+        loop {
+            self.dispatch(|_| {});
+            let remaining = deadline.saturating_sub(now_ns());
+            if remaining == 0 || !self.is_system_writing() {
+                break;
+            }
+            self.fill_batch(Timeout::After(remaining.div_ceil(100) as i64));
+        }
+    }
+
+    fn is_system_writing(&self) -> bool {
+        self.sockets.is_system_writing() || self.requests.is_system_writing()
+    }
+}
+
+impl Drop for Port {
+    fn drop(&mut self) {
+        if !self.is_shut_down() {
+            self.shut_down();
+        }
+        self.sockets.leak_in_flight();
+        self.requests.leak_in_flight();
+    }
+}
+
+/// Keeps the loop of a port running while it is set.
+pub struct Hold {
+    port: Rc<Port>,
+    is_set: Cell<bool>,
+}
+
+impl Hold {
+    pub fn new(port: &Rc<Port>) -> Hold {
+        Hold {
+            port: Rc::clone(port),
+            is_set: Cell::new(false),
+        }
+    }
+
+    pub fn set(&self, value: bool) {
+        if self.is_set.replace(value) != value {
+            let holds = &self.port.holds;
+            holds.update(|holds| if value { holds + 1 } else { holds - 1 });
+        }
+    }
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        self.set(false);
+    }
+}

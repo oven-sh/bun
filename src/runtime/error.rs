@@ -48,10 +48,6 @@ pub enum Error {
     ConnectionFailed,
     #[error("InvalidOptions")]
     InvalidOptions,
-    #[error("FailedToInitPipe")]
-    FailedToInitPipe,
-    #[error("FailedToBindPipe")]
-    FailedToBindPipe,
     #[error("HTTPForbidden")]
     HTTPForbidden,
     #[error("ExampleNotFound")]
@@ -349,8 +345,6 @@ impl Error {
             Self::InvalidValue => "InvalidValue",
             Self::ConnectionFailed => "ConnectionFailed",
             Self::InvalidOptions => "InvalidOptions",
-            Self::FailedToInitPipe => "FailedToInitPipe",
-            Self::FailedToBindPipe => "FailedToBindPipe",
             Self::HTTPForbidden => "HTTPForbidden",
             Self::ExampleNotFound => "ExampleNotFound",
             Self::GitHubRepositoryNotFound => "GitHubRepositoryNotFound",

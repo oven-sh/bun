@@ -993,7 +993,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// `attempt` is the ref the failed attempt held.
     ///
-    /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
+    /// `dns_error` is the `getaddrinfo(3)` return code (Windows: `UV_E*`) when the name
     /// lookup itself failed; 0 for a connect failure past name resolution
     /// (then `errno` carries the connect error).
     /// `Err` is what the `connectError`/`error` handler or a promise
@@ -1115,8 +1115,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 BunString::static_("ECONNREFUSED")
             };
             #[cfg(windows)]
-            let errno_ = -sys::windows::libuv::e_discriminant_to_uv(errno_ as u16)
-                .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);
+            let errno_ = -bun_errno::e_discriminant_to_uv(errno_ as u16)
+                .unwrap_or(bun_errno::uv::UV_ECONNREFUSED);
             SystemError {
                 errno: -errno_,
                 message: BunString::static_("Failed to connect"),
@@ -3149,12 +3149,12 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn get_fd<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
         // On Windows the fd is a system-kind SOCKET handle; routing it through
-        // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
-        // kind (system→u64, uv→i32, posix→i32).
+        // `.crt()` panics for anything but stdio. The sys_jsc helper branches on
+        // kind (system→u64, crt→i32, posix→i32).
         use bun_sys_jsc::FdJsc as _;
         JsLocal::new(
             heap,
-            self.socket.get().fd().to_js_without_making_lib_uv_owned(),
+            self.socket.get().fd().to_js_without_making_crt_owned(),
         )
     }
 

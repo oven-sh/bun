@@ -577,9 +577,9 @@ test.concurrent.skipIf(!isLinux || !cc)(
   },
 );
 
-// JS can't make uv_read_start fail, so this uses the same debug-only fault injection as spawn-pipe-start-error.test.ts.
+// JS can't make the start of a read fail, so this uses the same debug-only fault injection as spawn-pipe-start-error.test.ts.
 test.concurrent.skipIf(!isWindows || !isDebug)(
-  "the command exits with the errno when uv_read_start fails on its stdout and stderr pipes",
+  "the command exits with the errno when reading cannot start on its stdout and stderr pipes",
   async () => {
     const fixture = /* js */ `
 import { $ } from "bun";

@@ -532,7 +532,7 @@ pub fn do_patch_commit(
         &new_folder,
     );
 
-    let Some(patchfile_contents) = diff_against_cache(manager, &old_folder, &new_folder) else {
+    let Some(patchfile_contents) = diff_against_cache(&old_folder, &new_folder) else {
         Global::crash();
     };
 
@@ -739,11 +739,7 @@ fn patch_applies(
 
 /// Returns `None` after printing an error. Calling `Global::crash()` in here would skip
 /// `HiddenFromDiff`'s drop.
-fn diff_against_cache(
-    manager: &PackageManager,
-    old_folder: &[u8],
-    new_folder: &[u8],
-) -> Option<Vec<u8>> {
+fn diff_against_cache(old_folder: &[u8], new_folder: &[u8]) -> Option<Vec<u8>> {
     let mut cwdbuf = bun_paths::path_buffer_pool::get();
     let cwd = match sys::getcwd_z(&mut cwdbuf) {
         Ok(fd) => fd,
@@ -783,7 +779,7 @@ fn diff_against_cache(
         &from_cwd(cwd.as_bytes(), old_folder),
         &from_cwd(cwd.as_bytes(), new_folder),
     );
-    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, manager.event_loop);
+    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git);
     let mut spawn_result = match spawned {
         Err(e) => {
             bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);

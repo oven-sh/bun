@@ -141,8 +141,8 @@ const patterns = {
     paths: [
       "packages/bun-usockets/src/*.c",
       "packages/bun-usockets/src/eventing/*.c",
-      "src/jsc/bindings/uv-posix-polyfills.c",
-      "src/jsc/bindings/uv-posix-stubs.c",
+      "src/jsc/bindings/uv-polyfills.c",
+      "src/jsc/bindings/uv-stubs.c",
     ],
   },
 } satisfies Record<string, SourcePattern>;

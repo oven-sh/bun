@@ -24,3 +24,21 @@ unsafe extern "C" fn highway_last_index_of_char(
     let haystack = unsafe { core::slice::from_raw_parts(haystack, len) };
     haystack.iter().rposition(|&it| it == needle).unwrap_or(len)
 }
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_memrmem16(
+    haystack: *const u16,
+    len: usize,
+    needle: *const u16,
+    needle_len: usize,
+) -> usize {
+    // SAFETY: `bun_highway` passes two slices.
+    let (haystack, needle) = unsafe {
+        (
+            core::slice::from_raw_parts(haystack, len),
+            core::slice::from_raw_parts(needle, needle_len),
+        )
+    };
+    let found = (0..len).rfind(|&at| haystack[at..].starts_with(needle));
+    found.unwrap_or(usize::MAX)
+}

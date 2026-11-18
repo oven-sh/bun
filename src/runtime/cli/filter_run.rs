@@ -194,10 +194,10 @@ impl<'a> ProcessHandle<'a> {
         #[cfg(windows)]
         {
             if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                handle.stdout.set_source(bun_io::Source::Pipe(pipe));
+                handle.stdout.set_pipe(pipe);
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                handle.stderr.set_source(bun_io::Source::Pipe(pipe));
+                handle.stderr.set_pipe(pipe);
             }
         }
 
@@ -211,8 +211,8 @@ impl<'a> ProcessHandle<'a> {
         }
         #[cfg(not(unix))]
         {
-            handle.stdout.start_with_current_pipe()?;
-            handle.stderr.start_with_current_pipe()?;
+            handle.stdout.start_with_current_source()?;
+            handle.stderr.start_with_current_source()?;
         }
 
         handle.process = Some(ProcessInfo {
@@ -266,7 +266,10 @@ impl<'a> ProcessHandle<'a> {
     /// After the exit: a leftover child may hold the pipes open, so their EOF may never come.
     fn drain_and_close_pipes(&mut self) {
         for kind in [Kind::Stdout, Kind::Stderr] {
-            // Windows has no synchronous drain.
+            #[cfg(windows)]
+            if let Some(event) = self.reader(kind).take_available() {
+                self.read(kind, Some(event));
+            }
             #[cfg(unix)]
             if !self.reader(kind).is_done() && self.reader(kind).get_fd() != bun_sys::Fd::INVALID {
                 self.read(kind, None);
@@ -881,7 +884,7 @@ pub(crate) fn run_scripts_with_filter(
         Some(unsafe { &mut *env_ptr }),
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
-    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    // (which escape the spawn's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is

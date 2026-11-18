@@ -1044,7 +1044,7 @@ function normalizeSpawnArguments(file, args, options?) {
       args = ["-c", command];
     }
   } else if (process.platform === "win32" && /\.(?:cmd|bat)[\s.]*$/i.exec(file) !== null) {
-    // CreateProcess routes .bat/.cmd through cmd.exe, which re-parses argv
+    // .bat/.cmd files run through cmd.exe, which re-parses argv
     // with shell metacharacter rules. Reject unless the caller explicitly
     // opted into shell semantics. Surface via the returned options so each
     // caller can deliver the error in its API-appropriate shape (synchronous
@@ -1421,7 +1421,7 @@ class ChildProcess extends EventEmitter {
     // double-closes it. Async path only: spawnSync never wraps extra fds in
     // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
     // them OwnedFd so finalize_streams still closes them. On Windows extra
-    // stdio is a libuv pipe handle with no raw-fd handoff, so leave as "pipe".
+    // stdio is a pipe handle with no raw-fd handoff, so leave as "pipe".
     if (process.platform !== "win32") {
       for (let i = 3; i < bunStdio.length; i++) {
         if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";

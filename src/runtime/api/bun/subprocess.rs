@@ -26,8 +26,6 @@ use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::streams::SourceHandle;
 use crate::webcore::{self, AbortSignal, FileSink};
-#[cfg(windows)]
-use bun_libuv_sys::UvHandle as _;
 
 #[path = "subprocess/ResourceUsage.rs"]
 pub(crate) mod resource_usage;
@@ -501,6 +499,8 @@ impl Subprocess<'_> {
     pub(crate) fn close_readable_pipes(&self) {
         for out in [&self.stdout, &self.stderr] {
             if let Some(pipe) = out.get().pipe() {
+                #[cfg(windows)]
+                PipeReader::read_available(&pipe);
                 PipeReader::close(&pipe);
             }
         }
@@ -632,7 +632,7 @@ impl Subprocess<'_> {
 
         // Once the values are visible to JS the caller owns them (it hands
         // them to `net.connect({ fd })`, which closes them with the socket).
-        // Our `uv_pipe_t` would close the same HANDLE again when this
+        // Our pipe would close the same HANDLE again when this
         // Subprocess is finalized, so expose a duplicate instead. The pipe is
         // closed right away: as long as our handle stayed open, the child
         // would not see EOF when the caller closes its copy. The duplicate is
@@ -647,12 +647,9 @@ impl Subprocess<'_> {
                         continue;
                     }
                 };
-                let handle = buffer.fd();
                 // On failure the slot stays `Unavailable` and reads as null.
-                if handle != bun_sys::windows::libuv::INVALID_HANDLE_VALUE {
-                    if let Ok(dup) = bun_sys::dup(bun_sys::Fd::from_system(handle)) {
-                        *slot = StdioResult::UnownedFd(dup);
-                    }
+                if let Ok(dup) = bun_sys::dup(buffer.fd()) {
+                    *slot = StdioResult::UnownedFd(dup);
                 }
             }
         });
@@ -808,6 +805,11 @@ impl Subprocess<'_> {
             pipe.on_attached_process_exit(status);
         }
 
+        // Whether or not the end of the channel has been read yet, the callbacks find it disconnected.
+        if let Some(ipc_data) = self.ipc() {
+            ipc_data.close_after_exit();
+        }
+
         let mut did_update_has_pending_activity = false;
 
         let event_loop = jsc_vm.event_loop();
@@ -891,9 +893,6 @@ impl Subprocess<'_> {
 
         if !did_update_has_pending_activity {
             self.update_has_pending_activity();
-        }
-        if let Some(ipc_data) = self.ipc() {
-            ipc_data.close_after_exit();
         }
     }
 
@@ -1150,39 +1149,14 @@ impl static_pipe_writer::Source for webcore::AnyBlob {
     }
 }
 
-/// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
-/// Subprocess owns without a reader/writer in front of them; record that so a
-/// thread teardown closes them through us (and `finalize_streams` then finds
-/// the slots empty) instead of anyone closing them twice.
-#[cfg(windows)]
-impl Subprocess<'_> {
-    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
-        // SAFETY: `this` is the live boxed Subprocess (stable address).
-        let me = unsafe { &*this };
-        for item in me.stdio_pipes.get().iter() {
-            if let StdioResult::Buffer(buffer) = item {
-                buffer.set_owner(this.cast(), Self::stop_for_vm_teardown);
-            }
-        }
-    }
-
-    /// `uv::open_handles` entry point: close every stdio pipe still held here.
-    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
-        // SAFETY: recorded by `record_stdio_pipe_ownership` for this live
-        // Subprocess; each pipe leaves the list as its uv_close is issued.
-        unsafe { &*this.cast::<Self>() }.stdio_pipes.set(Vec::new());
-    }
-}
-
 pub(crate) mod testing_apis {
     use super::*;
 
     /// Inject a synthetic read error into a subprocess's stdout/stderr
-    /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
-    /// callback (Windows) had failed with EBADF. Used by tests to exercise
+    /// PipeReader, as if the underlying read had failed with EBADF. Used by tests to exercise
     /// the `on_read_result` cleanup path, which is otherwise very hard to
     /// trigger deterministically — on Windows in particular, peer death on
-    /// a named pipe maps to UV_EOF rather than an error.
+    /// a named pipe maps to EOF rather than an error.
     ///
     /// Returns true if an error was injected, false if the given stdio is
     /// not (or no longer) a buffered pipe reader.

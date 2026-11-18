@@ -40,7 +40,7 @@ impl ConnectingSocket {
         us_connecting_socket_get_error(self)
     }
 
-    /// Raw `getaddrinfo(3)` return code when the name lookup itself failed;
+    /// `getaddrinfo(3)` return code (Windows: `UV_E*`) when the name lookup itself failed;
     /// 0 for a connect failure past name resolution. A different namespace
     /// from [`Self::get_error`] (errno).
     pub(crate) fn get_dns_error(&mut self) -> i32 {

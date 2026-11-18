@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -296,7 +296,7 @@ describe("tcp socket binaryType", () => {
   }
 });
 
-it.skipIf(isWindows)("stop(true) between ticks closes every socket when a close handler ticks the loop", async () => {
+it("stop(true) between ticks closes every socket when a close handler ticks the loop", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

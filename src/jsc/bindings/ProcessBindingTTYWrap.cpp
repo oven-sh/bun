@@ -23,7 +23,6 @@
 #include <unistd.h>
 #include <sys/utsname.h>
 #else
-#include <uv.h>
 #include <io.h>
 #include <fcntl.h>
 
@@ -31,28 +30,14 @@
 
 #if OS(WINDOWS)
 
-extern "C" int Source__setRawModeStdin(uv_loop_t* uv_loop, bool raw);
-
-namespace UV {
-
-class TTY {
-public:
-    uv_tty_t handle {};
-
-    uv_tty_t* tty() { return &handle; }
-
-    // The deleter once `uv_tty_init()` has succeeded.
-    struct Close {
-        void operator()(TTY* tty) const
-        {
-            uv_close((uv_handle_t*)(tty->tty()), [](uv_handle_t* handle) -> void {
-                delete (TTY*)((char*)handle - offsetof(TTY, handle));
-            });
-        }
-    };
+// The numbers of uv_tty_mode_t
+enum class ConsoleMode : int {
+    Normal = 0,
+    // The console makes the escape sequences. Only it knows of some, like those of bracketed paste.
+    RawVT = 3,
 };
 
-}
+extern "C" int Bun__setConsoleMode(int fd, int mode);
 
 #endif
 
@@ -140,9 +125,7 @@ public:
 
     int fd = -1;
 
-#if OS(WINDOWS)
-    std::unique_ptr<UV::TTY, UV::TTY::Close> handle;
-#else
+#if !OS(WINDOWS)
     BunTTYState ttyState {};
 #endif
 
@@ -162,10 +145,6 @@ private:
     }
 };
 
-#if OS(WINDOWS)
-extern "C" void Bun__setCTRLHandler(BOOL add);
-#endif
-
 const ClassInfo TTYWrapObject::s_info = {
     "LibuvStreamWrap"_s,
 
@@ -179,9 +158,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     auto flag = callFrame->argument(0);
     bool raw = flag.asBoolean();
 
-    Zig::GlobalObject* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-
-    return JSValue::encode(jsNumber(Source__setRawModeStdin(global->uvLoop(), raw)));
+    return JSValue::encode(jsNumber(Bun__setConsoleMode(0, static_cast<int>(raw ? ConsoleMode::RawVT : ConsoleMode::Normal))));
 #else
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -245,11 +222,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
 
     int modeInt = JSC::toInt32(mode.asNumber());
 #if OS(WINDOWS)
-    if (modeInt == 0) {
-        Bun__setCTRLHandler(1);
-    }
-
-    int err = uv_tty_set_mode(ttyWrap->handle->tty(), modeInt);
+    int err = Bun__setConsoleMode(fd, modeInt);
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fd, modeInt, &ttyWrap->ttyState, 1);
@@ -444,14 +417,11 @@ public:
         }
 
 #if OS(WINDOWS)
-        auto uninitialized = std::make_unique<UV::TTY>();
-        int rc = uv_tty_init(uncheckedDowncast<Zig::GlobalObject>(globalObject)->uvLoop(), uninitialized->tty(), fd, 0);
-        if (rc < 0) {
+        DWORD consoleMode;
+        if (!GetConsoleMode(reinterpret_cast<HANDLE>(_get_osfhandle(fd)), &consoleMode)) {
             throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);
             return {};
         }
-        std::unique_ptr<UV::TTY, UV::TTY::Close> handle { uninitialized.release() };
-        ASSERT(handle->tty()->loop);
 #else
         if (!isatty(fd)) {
             throwTypeError(globalObject, scope, makeString("fd"_s, fd, " is not a tty"_s));
@@ -461,10 +431,6 @@ public:
 
         auto* structure = TTYWrapObject::createStructure(vm, globalObject, prototypeValue.getObject());
         auto* object = TTYWrapObject::create(vm, globalObject, structure, fd);
-
-#if OS(WINDOWS)
-        object->handle = WTF::move(handle);
-#endif
 
         return JSValue::encode(object);
     }

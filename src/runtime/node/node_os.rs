@@ -6,6 +6,7 @@ use bun_jsc::bindgen::JsScope;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
+#[cfg(not(windows))]
 unsafe extern "C" {
     safe fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
 }
@@ -19,6 +20,7 @@ pub(crate) struct CPUTimes {
     pub irq: u64,
 }
 
+#[cfg(not(windows))]
 pub(crate) fn freemem() -> u64 {
     // OsBinding.cpp
     unsafe extern "C" {
@@ -27,19 +29,24 @@ pub(crate) fn freemem() -> u64 {
     Bun__Os__getFreeMemory()
 }
 
+#[cfg(windows)]
+#[unsafe(export_name = "Bun__Os__getFreeMemory")]
+pub(crate) extern "C" fn freemem() -> u64 {
+    bun_sys::windows::system::physical_memory().map_or(0, |memory| memory.available)
+}
+
 mod _impl {
     use super::*;
+    use bun_core::env_var;
     #[cfg(not(windows))]
-    use bun_core::strings;
-    use bun_core::{env_var, fmt as bun_fmt};
+    use bun_core::{fmt as bun_fmt, strings};
     use bun_jsc::{StringJsc as _, SysErrorJsc as _, SystemError};
 
-    #[cfg(windows)]
-    use bun_sys::ReturnCodeExt as _;
     #[cfg(not(windows))]
     use bun_sys::c;
     #[cfg(windows)]
-    use bun_sys::windows::{self, libuv};
+    use bun_sys::windows;
+    #[cfg(not(windows))]
     use std::io::Write as _;
 
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
@@ -69,15 +76,25 @@ mod _impl {
 
     // Neither `bun_core` nor `bun_sys` re-exports HOST_NAME_MAX yet; 256 is a
     // safe upper bound for the stack buffer on every platform.
+    #[cfg(not(windows))]
     const HOST_NAME_MAX: usize = 256;
 
     pub(crate) fn host_cpu_count() -> i32 {
-        bun_sysconf__SC_NPROCESSORS_ONLN().max(1)
+        #[cfg(not(windows))]
+        let count = bun_sysconf__SC_NPROCESSORS_ONLN();
+        #[cfg(windows)]
+        let count = windows::cpu::count() as i32;
+        count.max(1)
     }
 
     impl CPUTimes {
-        fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
+        pub(crate) fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
             let ret = JSValue::create_empty_object(global_this, 5);
+            self.put_into(ret, global_this);
+            ret
+        }
+
+        pub(crate) fn put_into(self, ret: JSValue, global_this: &JSGlobalObject) {
             ret.put(
                 global_this,
                 b"user",
@@ -103,7 +120,6 @@ mod _impl {
                 b"irq",
                 JSValue::js_number_from_uint64(self.irq),
             );
-            ret
         }
     }
 
@@ -470,59 +486,42 @@ mod _impl {
 
     #[cfg(windows)]
     fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
-        let infos = libuv::List::<libuv::uv_cpu_info_t>::get().map_err(|_| OsError::Any)?;
-        let values = JSValue::create_empty_array(global_this, infos.len())?;
-        for (i, cpu_info) in infos.iter().enumerate() {
-            let times = CPUTimes {
-                user: cpu_info.cpu_times.user,
-                nice: cpu_info.cpu_times.nice,
-                sys: cpu_info.cpu_times.sys,
-                idle: cpu_info.cpu_times.idle,
-                irq: cpu_info.cpu_times.irq,
-            };
-
-            let cpu = JSValue::create_empty_object(global_this, 3);
-            // SAFETY: cpu_info.model is a NUL-terminated C string from libuv
-            let model = unsafe { bun_core::ffi::cstr(cpu_info.model) }.to_bytes();
-            cpu.put(
-                global_this,
-                b"model",
-                bun_string_jsc::create_utf8_for_js(global_this, model)?,
-            );
-            cpu.put(
-                global_this,
-                b"speed",
-                JSValue::js_number(cpu_info.speed as f64),
-            );
-            cpu.put(global_this, b"times", times.to_value(global_this));
-
-            values.put_index(global_this, u32::try_from(i).expect("int cast"), cpu)?;
-        }
-
-        Ok(values)
+        crate::node::os_windows::cpus(global_this)?.ok_or(OsError::Any)
     }
 
-    unsafe extern "C" {
-        safe fn get_process_priority(pid: i32) -> i32;
+    #[cfg(not(windows))]
+    fn get_process_priority_impl(pid: i32) -> Result<i32, bun_sys::E> {
+        unsafe extern "C" {
+            safe fn get_process_priority(pid: i32) -> i32;
+        }
+        match get_process_priority(pid) {
+            i32::MAX => Err(bun_sys::E::ESRCH),
+            priority => Ok(priority),
+        }
+    }
+
+    #[cfg(windows)]
+    fn get_process_priority_impl(pid: i32) -> Result<i32, bun_sys::E> {
+        windows::process_info::priority(pid as u32)
+    }
+
+    fn throw_priority_error(
+        global: &JSGlobalObject,
+        errno: bun_sys::E,
+        syscall: &'static str,
+    ) -> bun_jsc::JsError {
+        let err = bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_setpriority);
+        let mut sys_err: SystemError = err.to_system_error().into();
+        sys_err.syscall = BunString::static_(syscall);
+        // Node's message here is the bare libuv label, not "ESRCH: …, uv_os_setpriority".
+        sys_err.message =
+            BunString::static_(err.uv_code_label().map_or("unknown error", |(_, l)| l));
+        global.throw_value(sys_err.to_error_instance_with_info_object(global))
     }
 
     pub(crate) fn get_priority(cx: &mut JsScope<'_>, pid: i32) -> JsResult<i32> {
-        let global = cx.global();
-        let result = get_process_priority(pid);
-        if result == i32::MAX {
-            let err = SystemError {
-                message: BunString::static_("no such process"),
-                code: BunString::static_("ESRCH"),
-                #[cfg(not(windows))]
-                errno: -(bun_sys::posix::E::ESRCH as c_int),
-                #[cfg(windows)]
-                errno: libuv::UV_ESRCH,
-                syscall: BunString::static_("uv_os_getpriority"),
-                ..Default::default()
-            };
-            return Err(global.throw_value(err.to_error_instance_with_info_object(global)));
-        }
-        Ok(result)
+        get_process_priority_impl(pid)
+            .map_err(|errno| throw_priority_error(cx.global(), errno, "uv_os_getpriority"))
     }
 
     pub(crate) fn homedir(cx: &mut JsScope<'_>) -> JsResult<BunString> {
@@ -530,15 +529,12 @@ mod _impl {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
         {
-            let mut out = bun_paths::path_buffer_pool::get();
-            let mut size: usize = out.len();
-            // SAFETY: valid buffer + size out-param
-            if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
-                .to_error(bun_sys::Tag::uv_os_homedir)
-            {
-                return Err(global.throw_value(err.to_js(global)));
-            }
-            return Ok(BunString::clone_utf8(&out[0..size]));
+            return match windows::home_directory() {
+                Ok(home) => Ok(BunString::clone_utf16(&home)),
+                Err(errno) => Err(global.throw_value(
+                    bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_homedir).to_js(global),
+                )),
+            };
         }
         #[cfg(not(windows))]
         {
@@ -703,10 +699,10 @@ mod _impl {
         result
     }
 
+    #[cfg(windows)]
+    pub(crate) use crate::node::os_windows::network_interfaces;
     #[cfg(unix)]
     pub(crate) use network_interfaces_posix as network_interfaces;
-    #[cfg(windows)]
-    pub(crate) use network_interfaces_windows as network_interfaces;
 
     #[cfg(unix)]
     pub(crate) fn network_interfaces_posix(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -920,137 +916,15 @@ mod _impl {
     }
 
     #[cfg(windows)]
-    pub(crate) fn network_interfaces_windows(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global_this = cx.global();
-        let iface_slice = libuv::List::<libuv::uv_interface_address_t>::get().map_err(|err| {
-            let sys_err = SystemError {
-                message: BunString::static_("uv_interface_addresses failed").into(),
-                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
-                //.info = info,
-                errno: err,
-                syscall: BunString::static_("uv_interface_addresses").into(),
-                ..Default::default()
-            };
-            global_this.throw_value(sys_err.to_error_instance(global_this))
-        })?;
-
-        let ret = JSValue::create_empty_object(global_this, 8);
-
-        // 65 comes from: https://stackoverflow.com/questions/39443413/why-is-inet6-addrstrlen-defined-as-46-in-c
-        let mut ip_buf = [0u8; 65];
-
-        for iface in iface_slice.iter() {
-            let interface = JSValue::create_empty_object(global_this, 7);
-            let addr = bun_sys::net::Address::from_bytes(&iface.address);
-            let netmask = bun_sys::net::Address::from_bytes(&iface.netmask);
-
-            // address <string> The assigned IPv4 or IPv6 address
-            // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.
-            let mut cidr = JSValue::NULL;
-            {
-                // Compute the CIDR suffix; returns null if the netmask cannot
-                //  be converted to a CIDR suffix
-                let maybe_suffix = cidr_suffix(&netmask);
-
-                // Format the address and then, if valid, the CIDR suffix; both
-                //  the address and cidr values can be slices into this same buffer
-                // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
-                let addr_str = bun_fmt::format_ip(&addr, &mut ip_buf).expect("unreachable");
-                let addr_len = addr_str.len();
-                let start = addr_str.as_ptr() as usize - ip_buf.as_ptr() as usize;
-                if let Some(suffix) = maybe_suffix {
-                    //NOTE addr_str might not start at buf[0] due to slicing in formatIp
-                    // Start writing the suffix immediately after the address
-                    let suffix_len = {
-                        let mut cursor = &mut ip_buf[start + addr_len..];
-                        write!(cursor, "/{}", suffix).expect("unreachable");
-                        let remaining = cursor.len();
-                        (ip_buf.len() - (start + addr_len)) - remaining
-                    };
-                    // The full cidr value is the address + the suffix
-                    let cidr_str = &ip_buf[start..start + addr_len + suffix_len];
-                    cidr = bun_string_jsc::create_utf8_for_js(global_this, cidr_str)?;
-                }
-
-                interface.put(
-                    global_this,
-                    b"address",
-                    bun_string_jsc::create_utf8_for_js(
-                        global_this,
-                        &ip_buf[start..start + addr_len],
-                    )?,
-                );
-            }
-
-            // netmask
-            {
-                let str = bun_fmt::format_ip(&netmask, &mut ip_buf).expect("unreachable");
-                interface.put(
-                    global_this,
-                    b"netmask",
-                    bun_string_jsc::create_utf8_for_js(global_this, str)?,
-                );
-            }
-            // family
-            interface.put(
-                global_this,
-                b"family",
-                match addr.family() {
-                    bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
-                    bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
-                    _ => global_this.common_strings().unknown(),
-                },
-            );
-
-            // mac
-            {
-                let mac_buf = bun_fmt::mac_address_lower(iface.phys_addr);
-                interface.put(
-                    global_this,
-                    b"mac",
-                    bun_string_jsc::create_utf8_for_js(global_this, &mac_buf)?,
-                );
-            }
-
-            // internal
-            {
-                interface.put(
-                    global_this,
-                    b"internal",
-                    JSValue::from(iface.is_internal != 0),
-                );
-            }
-
-            // cidr. this is here to keep ordering consistent with the node implementation
-            interface.put(global_this, b"cidr", cidr);
-
-            // scopeid
-            if let Some(addr) = addr.as_in6() {
-                let scope_id = JSValue::js_number(addr.scope_id as f64);
-                interface.put(global_this, b"scopeid", scope_id);
-            }
-
-            // Does this entry already exist?
-            // SAFETY: iface.name is a NUL-terminated C string from libuv
-            let interface_name = unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes();
-            // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::StringView::from_bytes(interface_name);
-            if let Some(array) = ret.get_own(global_this, &key)? {
-                // Add this interface entry to the existing array
-                let next_index: u32 =
-                    u32::try_from(array.get_length(global_this)?).expect("int cast");
-                array.put_index(global_this, next_index, interface)?;
-            } else {
-                // Add it as an array with this interface as an element
-                let array = JSValue::create_empty_array(global_this, 1)?;
-                array.put_index(global_this, 0, interface)?;
-                ret.put_may_be_index(global_this, &key, array)?;
-            }
-        }
-
-        Ok(ret)
+    pub(crate) fn release() -> BunString {
+        let version = windows::system::version();
+        BunString::create_format(format_args!(
+            "{}.{}.{}",
+            version.dwMajorVersion, version.dwMinorVersion, version.dwBuildNumber
+        ))
     }
 
+    #[cfg(not(windows))]
     pub(crate) fn release() -> BunString {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
 
@@ -1069,24 +943,13 @@ mod _impl {
             }
             bun_core::slice_to_nul(&name_buffer)
         };
-        #[cfg(windows)]
-        let value: &[u8] = 'slice: {
-            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
-            // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
-            if err != 0 {
-                break 'slice b"unknown";
-            }
-            let value = bun_core::slice_to_nul(&info.release);
-            name_buffer[0..value.len()].copy_from_slice(value);
-            &name_buffer[0..value.len()]
-        };
 
         BunString::clone_utf8(value)
     }
 
+    #[cfg(not(windows))]
     unsafe extern "C" {
-        pub(crate) safe fn set_process_priority(pid: i32, priority: i32) -> i32;
+        safe fn set_process_priority(pid: i32, priority: i32) -> i32;
     }
 
     fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
@@ -1094,15 +957,12 @@ mod _impl {
             return bun_sys::E::ESRCH;
         }
 
-        let code: i32 = set_process_priority(pid, priority);
-        if code == 0 {
-            return bun_sys::E::SUCCESS;
-        }
-        // POSIX `setpriority` returns -1 and sets errno; Windows returns a libuv code.
         #[cfg(windows)]
-        return bun_sys::windows::translate_uv_error_to_e(code);
+        return windows::process_info::set_priority(pid as u32, priority)
+            .err()
+            .unwrap_or(bun_sys::E::SUCCESS);
         #[cfg(not(windows))]
-        return bun_sys::get_errno(code);
+        return bun_sys::get_errno(set_process_priority(pid, priority));
     }
 
     pub(crate) fn set_priority_of_current_process(
@@ -1118,12 +978,7 @@ mod _impl {
         if errno == bun_sys::E::SUCCESS {
             return Ok(());
         }
-        let err = bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_setpriority);
-        let mut sys_err: SystemError = err.to_system_error().into();
-        // Node's message here is the bare libuv label, not "ESRCH: …, uv_os_setpriority".
-        sys_err.message =
-            BunString::static_(err.uv_code_label().map_or("unknown error", |(_, l)| l));
-        Err(global.throw_value(sys_err.to_error_instance_with_info_object(global)))
+        Err(throw_priority_error(global, errno, "uv_os_setpriority"))
     }
 
     pub(crate) fn totalmem() -> u64 {
@@ -1153,26 +1008,14 @@ mod _impl {
         }
         #[cfg(windows)]
         {
-            return libuv::uv_get_total_memory();
+            return windows::system::physical_memory().map_or(0, |memory| memory.total);
         }
     }
 
     pub(crate) fn uptime() -> Result<f64, Box<SystemError>> {
         #[cfg(windows)]
         {
-            let mut uptime_value: f64 = 0.0;
-            // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
-            if err != 0 {
-                return Err(Box::new(SystemError {
-                    message: BunString::static_("failed to get system uptime").into(),
-                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
-                    errno: err,
-                    syscall: BunString::static_("uv_uptime").into(),
-                    ..Default::default()
-                }));
-            }
-            return Ok(uptime_value);
+            return Ok(windows::system::GetTickCount64() as f64 / 1000.0);
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
@@ -1243,6 +1086,13 @@ mod _impl {
         Ok(result)
     }
 
+    #[cfg(windows)]
+    pub(crate) fn version() -> JsResult<BunString> {
+        let name = windows::system::version().product_name();
+        Ok(BunString::clone_utf8(&name))
+    }
+
+    #[cfg(not(windows))]
     pub(crate) fn version() -> JsResult<BunString> {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
 
@@ -1261,24 +1111,13 @@ mod _impl {
             name_buffer[..result.len()].copy_from_slice(result);
             &name_buffer[0..result.len()]
         };
-        #[cfg(windows)]
-        let slice: &[u8] = 'slice: {
-            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
-            // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
-            if err != 0 {
-                break 'slice b"unknown";
-            }
-            let s = bun_core::slice_to_nul(&info.version);
-            name_buffer[0..s.len()].copy_from_slice(s);
-            &name_buffer[0..s.len()]
-        };
 
         Ok(BunString::clone_utf8(slice))
     }
 } // mod _impl
 pub(crate) use _impl::*;
 
+#[cfg(unix)]
 fn cidr_suffix(netmask: &bun_sys::net::Address) -> Option<u8> {
     match netmask.as_in4() {
         Some(mask) => netmask_to_cidr_suffix(mask.addr),
@@ -1288,6 +1127,7 @@ fn cidr_suffix(netmask: &bun_sys::net::Address) -> Option<u8> {
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.
 /// `T` must be one of u32 (IPv4) or u128 (IPv6)
+#[cfg(unix)]
 fn netmask_to_cidr_suffix<T: NetmaskInt>(mask: T) -> Option<u8> {
     let mask_bits = mask.swap_bytes();
 
@@ -1301,12 +1141,14 @@ fn netmask_to_cidr_suffix<T: NetmaskInt>(mask: T) -> Option<u8> {
 }
 
 // Helper trait for netmask_to_cidr_suffix (u32 / u128)
+#[cfg(unix)]
 trait NetmaskInt: Copy + core::ops::Not<Output = Self> {
     const BITS: u32;
     fn swap_bytes(self) -> Self;
     fn leading_zeros(self) -> u32;
     fn trailing_zeros(self) -> u32;
 }
+#[cfg(unix)]
 impl NetmaskInt for u32 {
     const BITS: u32 = u32::BITS;
     fn swap_bytes(self) -> Self {
@@ -1319,6 +1161,7 @@ impl NetmaskInt for u32 {
         u32::trailing_zeros(self)
     }
 }
+#[cfg(unix)]
 impl NetmaskInt for u128 {
     const BITS: u32 = u128::BITS;
     fn swap_bytes(self) -> Self {

@@ -148,9 +148,7 @@ impl Lazy {
                         }
                     }
 
-                    sys::File::from_fd(fd)
-                        .make_lib_uv_owned_for_syscall(sys::Tag::dup)?
-                        .into_raw()
+                    fd
                 }
             }
             PathOrFileDescriptor::Path(path) => {
@@ -330,7 +328,7 @@ impl FileReader {
             // POSIX non-pollable regular file every read is synchronous
             // (`read_file` → `sys::pread`), so there is no such callback —
             // holding the Strong there would root an abandoned reader forever
-            // and leak its fd. Windows file reads are async via libuv even for
+            // and leak its fd. Windows file reads are async even for
             // regular files, so the ref is always taken there.
             #[cfg(unix)]
             let need_io_ref = pollable;
@@ -368,8 +366,7 @@ impl FileReader {
             #[cfg(windows)]
             {
                 // Non-lazy fromPipe path (Bun.spawn stdout/stderr): hold a
-                // ref across the pending uv_read_start so the source is not
-                // finalized while IOCP has a read queued on it.
+                // ref so the source is not finalized while it is read.
                 if !self.started.get()
                     && self.io_ref.get().is_none()
                     && self.reader.has_source()

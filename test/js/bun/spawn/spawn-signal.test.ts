@@ -136,6 +136,16 @@ test("spawnSync AbortSignal works as timeout", async () => {
   expect(end - start).toBeLessThan(100);
 });
 
+test("spawnSync ends the child at once when the time of its AbortSignal has passed", () => {
+  const signal = AbortSignal.timeout(1);
+  // The timer is due, and cannot fire before the event loop turns.
+  Bun.sleepSync(20);
+  const start = performance.now();
+  const { signalCode } = Bun.spawnSync({ cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"], env: bunEnv, signal });
+  expect(signalCode).toBe("SIGTERM");
+  expect(performance.now() - start).toBeLessThan(500);
+});
+
 test("spawn AbortSignal that nothing else references still kills the child after GC", async () => {
   // Nothing native holds the timeout source: it fires only if its wrapper survives the collections.
   const subprocess = Bun.spawn({

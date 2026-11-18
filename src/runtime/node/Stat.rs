@@ -8,7 +8,7 @@ use crate::generated_bindgen::stat::Ino;
 
 // `bun.sys.PosixStat` — uv-shaped stat struct. Re-exported from `bun_sys` now
 // that the crate declares it; `PosixStat::init(&bun_sys::Stat)` handles the
-// libc-stat → uv_stat_t field copy on both POSIX and Windows there.
+// field copy on both POSIX and Windows there.
 pub(crate) use bun_sys::PosixStat;
 
 /// Stats and BigIntStats classes from node:fs. `BIG` selects BigIntStats vs Stats.

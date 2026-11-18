@@ -449,10 +449,7 @@ impl Cmd {
                 format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
             );
         };
-        // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
-        // re-tokenizes the command line with shell metacharacter rules
-        // (BatBadBut). libuv's MSVCRT-style quoting cannot make that safe, so
-        // reject arguments that cmd.exe would reinterpret.
+        // See `bun_which::is_batch_file`.
         if cfg!(windows) && bun_which::is_batch_file(&resolved) {
             let unsafe_arg: Option<Vec<u8>> = interp
                 .as_cmd(this)

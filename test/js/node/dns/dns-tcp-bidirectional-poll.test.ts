@@ -10,10 +10,10 @@
 // the whole process, and the busy-loop on EPOLLOUT (pre-fix) would otherwise
 // starve the test runner.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
-test.skipIf(isWindows)("c-ares TCP DNS fd registers readable+writable on one FilePoll without asserting", async () => {
+test("c-ares TCP DNS fd registers readable+writable on one FilePoll without asserting", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "dns-tcp-bidirectional-poll-fixture.ts")],
     env: bunEnv,

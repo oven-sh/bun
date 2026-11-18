@@ -615,7 +615,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           ],
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
-          // C++ ones under their MSVC-mangled names; symbols.def adds libuv.
+          // C++ ones under their MSVC-mangled names; symbols.def adds uv_*.
           patterns: [
             "napi_*",
             "node_api_*",
@@ -635,16 +635,16 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "IPHLPAPI.DLL",
             "KERNEL32.dll",
             "OLEAUT32.dll",
-            "SHELL32.dll",
             "USER32.dll",
             "USERENV.dll",
             "WS2_32.dll",
             "WSOCK32.dll",
             "api-ms-win-core-synch-l1-2-0.dll",
             "bcryptprimitives.dll",
-            "dbghelp.dll",
             "ntdll.dll",
             "ole32.dll",
+            // WTF's backtraces, and a helper of its that release builds strip.
+            ...(cfg.debug ? ["SHELL32.dll", "dbghelp.dll"] : []),
           ],
           exact: true,
           allowed: sanitizerLibs,

@@ -19,10 +19,6 @@ use crate::webcore::jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsError, JsR
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-#[cfg(windows)]
-use bun_sys::windows::libuv::UvHandle as _;
 
 bun_core::declare_scope!(FileSink, visible);
 
@@ -185,11 +181,6 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
     #[cfg(windows)]
     {
-        if this.writer.set_blocking() {
-            return;
-        }
-
-        // Fallback to WriteFile() if it fails.
         this.force_sync.set(true);
     }
 }
@@ -426,8 +417,8 @@ impl FileSink {
         }));
     }
 
-    /// `writer.end()`; `on_close` follows, except (Windows) for an fd the writer
-    /// does not own, which is never closed: settle a piped stream here then.
+    /// `writer.end()`; `on_close` follows, except (Windows) for a synchronous writer
+    /// on an fd that it does not own: settle a piped stream here then.
     fn end_writer(&self) {
         #[cfg(windows)]
         if !self.writer.owns_fd() {
@@ -503,16 +494,9 @@ impl FileSink {
     #[cfg(windows)]
     pub(crate) fn create_with_pipe(
         event_loop_: impl Into<EventLoopHandle>,
-        pipe: uv::Owned<uv::Pipe>,
+        pipe: bun_io::Pipe,
     ) -> RefPtr<FileSink> {
-        // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
-        // INVALID_HANDLE_VALUE maps to `Fd::INVALID`, anything else is
-        // tagged as a system handle.
-        let fd = match pipe.fd() {
-            h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
-            h => Fd::from_system(h),
-        };
-        let this = Self::init(fd, event_loop_);
+        let this = Self::init(pipe.fd(), event_loop_);
         this.writer.set_pipe(pipe);
         this
     }
@@ -521,10 +505,10 @@ impl FileSink {
     #[cfg(windows)]
     pub(crate) fn start_writer(&self, owns_fd: bool, sync: bool) -> sys::Result<()> {
         self.writer.set_owns_fd(owns_fd);
-        let event_loop = self.event_loop_handle.as_event_loop_ctx();
         if sync {
-            self.writer.start_sync(self, event_loop, self.fd.get())
+            self.writer.start_sync(self, self.fd.get())
         } else {
+            let event_loop = self.event_loop_handle.as_event_loop_ctx();
             self.writer.start(self, event_loop, self.fd.get(), true)
         }
     }
@@ -632,7 +616,7 @@ impl FileSink {
         #[cfg(windows)]
         {
             if self.force_sync.get() {
-                self.writer.start_sync(self, event_loop, file.fd())?;
+                self.writer.start_sync(self, file.fd())?;
                 file.into_raw();
                 self.writer.set_owns_fd(true);
                 self.writer.update_ref(false);
@@ -647,9 +631,16 @@ impl FileSink {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(()) => {
                 // The writer closes it from now on.
+                #[cfg(not(windows))]
                 file.into_raw();
                 #[cfg(windows)]
-                self.writer.set_owns_fd(true);
+                {
+                    // Otherwise it has made a duplicate.
+                    if self.writer.owns_fd() {
+                        file.into_raw();
+                    }
+                    self.writer.set_owns_fd(true);
+                }
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer.update_ref(false);
@@ -841,6 +832,10 @@ impl FileSink {
         };
         // A flush takes no new chunk from the caller; a pending one reports the
         // bytes it pushed out. It only reaches here when no write is pending.
+        #[cfg(windows)]
+        if !self.writer.is_backed_up() && self.writer.is_writing_to_file() {
+            return sys::Result::Ok(self.pending_result(flushed).to_js(cx));
+        }
         match self.to_result(rc, flushed) {
             streams::Writable::Err(_) => unreachable!(),
             result => sys::Result::Ok(result.to_js(cx)),
@@ -1249,7 +1244,7 @@ impl FileSink {
         {
             match self.fd.get().decode_windows() {
                 bun_sys::fd::DecodeWindows::Windows(_) => -1, // TODO:
-                bun_sys::fd::DecodeWindows::Uv(num) => num,
+                bun_sys::fd::DecodeWindows::Crt(num) => num,
             }
         }
         #[cfg(not(windows))]
@@ -1301,8 +1296,10 @@ impl FileSink {
                 streams::Writable::Err(err)
             }
             WriteResult::Pending(_) => {
+                // `inflight_write_ref` does it on Windows.
+                #[cfg(not(windows))]
                 self.keep_alive_until_eof();
-                // A Windows uv_write is always async: Pending with an empty
+                // A Windows write is always async: Pending with an empty
                 // outgoing buffer is not backpressure, so keep the source flowing.
                 if !self.writer.is_backed_up() {
                     return streams::Writable::Owned(accepted);
@@ -1314,13 +1311,17 @@ impl FileSink {
                 ) {
                     return streams::Writable::Backpressure(accepted);
                 }
-                self.pending.with_mut(|p| {
-                    p.consumed += accepted;
-                    p.result = streams::Writable::Owned(p.consumed);
-                });
-                streams::Writable::Pending(self.pending.as_ptr())
+                self.pending_result(accepted)
             }
         }
+    }
+
+    fn pending_result(&self, accepted: u64) -> streams::Writable {
+        self.pending.with_mut(|p| {
+            p.consumed += accepted;
+            p.result = streams::Writable::Owned(p.consumed);
+        });
+        streams::Writable::Pending(self.pending.as_ptr())
     }
 
     // Helper for struct-init defaults. `EventLoopHandle` has

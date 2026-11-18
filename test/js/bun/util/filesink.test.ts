@@ -869,12 +869,21 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
   });
 });
 
-// Skipped on Windows: the Windows FileSink writer hands bytes to uv_fs_write on
-// the libuv threadpool and never registers an AutoFlusher synchronously, so the
-// on_exit drain this suite exercises is a no-op there and every process.exit()
-// variant is a threadpool-vs-ExitProcess race rather than the POSIX buffered
-// flush being tested here.
-describe.skipIf(isWindows)("FileSink buffered data is flushed on process exit", () => {
+it("flush() resolves once the bytes are in the file", async () => {
+  using dir = tempDir("filesink-flush", {});
+  const sizes = new Set<number>();
+  for (let i = 0; i < 100; i++) {
+    const path = join(String(dir), String(i));
+    const writer = Bun.file(path).writer();
+    writer.write("123456");
+    await writer.flush();
+    sizes.add(fs.statSync(path).size);
+    await writer.end();
+  }
+  expect([...sizes]).toEqual([6]);
+});
+
+describe("FileSink buffered data is flushed on process exit", () => {
   const line = "LAST-LOG-LINE:fatal error, exiting\n";
   async function check(tail: string, expected: string) {
     const dir = tmpdirSync();
@@ -1095,7 +1104,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
     return { stdoutLength: stdout.length, stderr, exitCode };
   }
 
-  // On Windows uv_write takes the whole chunk at once and end() can return a
+  // On Windows the writer takes the whole chunk at once and end() can return a
   // plain number, hence Promise.resolve().
   it.concurrent("end() without await", async () => {
     expect(
@@ -1159,7 +1168,8 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
         `
           const child = Bun.spawn(
             [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
-            { stdin: "pipe", stdout: "inherit", stderr: "inherit" },
+            // On Windows it would end with its parent, before it prints its count.
+            { stdin: "pipe", stdout: "inherit", stderr: "inherit", detached: ${isWindows} },
           );
           try {
             child.stdin.write(Buffer.alloc(${size}, 65));

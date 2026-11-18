@@ -29,7 +29,7 @@ it.todoIf(isWindows)("spawning a bun package script should inherit the ipc fd", 
   expect(testMessage).toBe("hello");
 });
 
-it.skipIf(isWindows)("bun exec doesn't pass NODE_CHANNEL_FD to a command that doesn't inherit the ipc fd", async () => {
+it("bun exec doesn't pass NODE_CHANNEL_FD to a command that doesn't inherit the ipc fd", async () => {
   await using proc = spawn({
     // Print the variables from sh, because bun and node delete them at startup.
     cmd: [bunExe(), "exec", `sh -c 'echo "[$NODE_CHANNEL_FD] [$NODE_CHANNEL_SERIALIZATION_MODE]"'`],

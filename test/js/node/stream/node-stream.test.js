@@ -479,7 +479,7 @@ it("Readable.fromWeb on an already-errored web stream emits 'error' and destroys
 
 // Delivering a 64 KiB file chunk re-enters the native reader: push() over the
 // highWaterMark pauses it, and the next _read unpauses it mid-delivery. On
-// Windows that used to free the buffer an in-flight libuv file read was still
+// Windows that used to free the buffer an in-flight file read was still
 // writing into, corrupting the heap (#39890).
 it("Readable.fromWeb(Bun.file().stream()) survives pause/unpause during chunk delivery (#39890)", async () => {
   using dir = tempDir("fromweb-file-39890", {

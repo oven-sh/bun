@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tty.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f7af17dd0e7cee3f8edd8045bf340969d085a3cea980ae78313995a3ad3cbb7f.
+// Written against that file with the SHA-256 f5a36c4456f3cb2161f0a32cd243956551e8c3a6ee997ee5bf1656e29b80aa23.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 // Hardcoded module "node:tty"
 
@@ -104,14 +104,12 @@ const prototypeOfReadStream = {
     Prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
       flag = !!flag;
 
-      // On windows, this goes through the stream handle itself, as it must call
-      // uv_tty_set_mode on the uv_tty_t.
+      // On windows, this goes through the stream handle itself.
       //
       // On POSIX, I tried to use the same approach, but it didn't work reliably,
       // so we just use the file descriptor and use termios APIs directly.
       if (process.platform === "win32") {
-        // Special case for stdin, as it has a shared uv_tty handle
-        // and it's stream is constructed differently
+        // Special case for stdin, as its stream is constructed differently
         if (this.fd === 0) {
           const err = ttySetMode(flag);
           if (err) {

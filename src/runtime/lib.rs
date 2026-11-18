@@ -59,6 +59,8 @@ pub(crate) mod dispatch;
 pub(crate) mod hw_exports;
 #[cfg(debug_assertions)]
 pub(crate) mod imported_class_test;
+#[cfg(windows)]
+pub(crate) mod io_order;
 pub(crate) mod ipc;
 pub(crate) mod ipc_host;
 pub(crate) mod jsc_hooks;

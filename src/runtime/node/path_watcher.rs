@@ -8,7 +8,7 @@
 //! lock-ordering workarounds, a WorkPool directory crawler, and a bolted-on FSEvents
 //! side-channel.
 //!
-//! The Windows backend (`win_watcher.rs`, libuv `uv_fs_event`) never went through
+//! The Windows backend (`win_watcher.rs`) never went through
 //! `bun.Watcher` and is a quarter of the size; this file gives Linux/macOS/FreeBSD
 //! the same shape:
 //!
@@ -61,7 +61,7 @@ use crate::node::fs_events as fsevents;
 bun_output::define_scoped_log!(log, fs_watch, hidden);
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
-/// the FSEvents loop and Windows libuv loop lifetimes).
+/// the FSEvents loop lifetime).
 static DEFAULT_MANAGER: OnceLock<Guarded<PathWatcherManager>> = OnceLock::new();
 /// Serializes the fallible init, which a later `get()` retries.
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();

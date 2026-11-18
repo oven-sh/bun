@@ -3,23 +3,32 @@ use core::ptr::NonNull;
 #[cfg(not(windows))]
 use core::sync::atomic::{AtomicU8, Ordering};
 
-#[cfg(not(windows))]
 use crate::Error;
 #[cfg(not(windows))]
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
-use bun_sys::{self as sys, Fd};
+use bun_sys as sys;
+#[cfg(not(windows))]
+use bun_sys::Fd;
 #[cfg(not(windows))]
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
+#[cfg(windows)]
+use crate::io_order::Turn;
 use crate::webcore::blob::{self, Blob, SizeType};
 #[cfg(not(windows))]
 use crate::webcore::blob::{
     ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry, mkdir_if_not_exists,
 };
+#[cfg(windows)]
+use crate::webcore::blob::{
+    blocking::BlockingPart,
+    job_file::{JobFile, Target, is_device},
+};
 use crate::webcore::body;
 
+#[cfg(not(windows))]
 bun_output::declare_scope!(WriteFile, hidden);
 
 /// One `write()` attempt on the pool thread.
@@ -38,20 +47,26 @@ pub(crate) enum WriteFileResultType {
 }
 
 /// The completion token a `WriteFile` keeps across its async I/O.
-#[cfg(not(windows))]
 pub(crate) type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
-#[cfg(not(windows))]
 impl bun_jsc::JobContext for WriteFile {
     const CANCELLABLE: bool = true;
+    /// Windows has no synchronous path for small writes, which a Worker that exits would lose.
+    const RUNS_IN_FINAL_WAIT: bool = cfg!(windows);
+    const IS_FILE_IO: bool = true;
     type OffThread = Self;
     /// Whom the write is reported to, and the global it was made in. (Dropped with the job when
     /// that is released unrun: the promise then stays pending.)
     type Js = (jsc::JSPromiseStrong, bun_ptr::BackRef<JSGlobalObject>);
+    #[cfg(not(windows))]
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
         None
+    }
+    #[cfg(windows)]
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        this.run(done)
     }
     fn then(
         this: Self,
@@ -62,6 +77,7 @@ impl bun_jsc::JobContext for WriteFile {
     }
     /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
     /// state this job can be stuck in.
+    #[cfg(not(windows))]
     unsafe fn cancel(this: *mut Self) {
         // SAFETY: fn contract; see `ReadFile::cancel`.
         unsafe {
@@ -70,9 +86,13 @@ impl bun_jsc::JobContext for WriteFile {
             }
         }
     }
+    #[cfg(windows)]
+    unsafe fn cancel(this: *mut Self) {
+        // SAFETY: fn contract. Nothing writes to the field.
+        unsafe { &(*this).blocking_part }.cancel();
+    }
 }
 
-#[cfg(not(windows))]
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
@@ -82,30 +102,60 @@ impl WriteFile {
         cx: &bun_jsc::JsThread<'_>,
     ) {
         let global_this = bun_ptr::BackRef::new(cx.global());
+        #[cfg(not(windows))]
         bun_jsc::Job::<WriteFile>::schedule(cx, this, (promise, global_this));
+        #[cfg(windows)]
+        {
+            let target = Target::new(this.destination());
+            let can_block = is_device(this.destination());
+            Turn::after_earlier(cx, target.key(this.destination()), true, |turn| {
+                let this = WriteFile {
+                    turn: Some(turn),
+                    target,
+                    ..this
+                };
+                bun_jsc::Job::<WriteFile>::create(cx, this, (promise, global_this))
+                    .for_device_if(can_block)
+            });
+        }
     }
 }
 
-#[cfg(not(windows))]
 pub(crate) struct WriteFile {
     pub(crate) file_blob: Blob,
     pub(crate) bytes_blob: Blob,
 
+    #[cfg(not(windows))]
     pub(crate) opened_fd: Fd,
     pub(crate) system_error: Option<SystemError>,
+    #[cfg(not(windows))]
     pub(crate) errno: Option<Error>,
+    #[cfg(not(windows))]
     pub task: WorkPoolTask,
+    #[cfg(not(windows))]
     pub(crate) io_task: Option<WriteFileTask>,
+    #[cfg(not(windows))]
     pub(crate) io_poll: io::Poll,
+    #[cfg(not(windows))]
     pub(crate) io_request: io::Request,
+    #[cfg(not(windows))]
     pub(crate) io_parking: super::IoParking,
+    #[cfg(not(windows))]
     pub(crate) state: AtomicU8, // ClosingState
 
     pub(crate) total_written: usize,
 
+    #[cfg(not(windows))]
     pub(crate) could_block: bool,
+    #[cfg(not(windows))]
     pub(crate) close_after_io: bool,
     pub(crate) mkdirp_if_not_exists: bool,
+    #[cfg(windows)]
+    turn: Option<Turn>,
+    #[cfg(windows)]
+    target: Target,
+    #[cfg(windows)]
+    blocking_part: BlockingPart<()>,
 }
 
 #[cfg(not(windows))]
@@ -256,7 +306,9 @@ impl WriteFile {
             .store_callback_seq_cst(Self::on_request_writable);
         io::IoRequestLoop::schedule(&mut self.io_request);
     }
+}
 
+impl WriteFile {
     pub(crate) fn create(
         file_blob: Blob,
         bytes_blob: Blob,
@@ -265,26 +317,45 @@ impl WriteFile {
         let write_file = WriteFile {
             file_blob,
             bytes_blob,
+            #[cfg(not(windows))]
             opened_fd: Fd::INVALID,
             system_error: None,
+            #[cfg(not(windows))]
             errno: None,
+            #[cfg(not(windows))]
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::do_write_loop_task,
             },
+            #[cfg(not(windows))]
             io_task: None,
+            #[cfg(not(windows))]
             io_poll: io::Poll::default(),
+            #[cfg(not(windows))]
             io_request: io::Request::new(Self::on_request_writable),
+            #[cfg(not(windows))]
             io_parking: super::IoParking::new(),
+            #[cfg(not(windows))]
             state: AtomicU8::new(ClosingState::Running as u8),
             total_written: 0,
+            #[cfg(not(windows))]
             could_block: false,
+            #[cfg(not(windows))]
             close_after_io: false,
             mkdirp_if_not_exists,
+            #[cfg(windows)]
+            turn: None,
+            #[cfg(windows)]
+            target: Target::default(),
+            #[cfg(windows)]
+            blocking_part: BlockingPart::default(),
         };
         Ok(write_file)
     }
+}
 
+#[cfg(not(windows))]
+impl WriteFile {
     // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     pub(crate) fn do_write(&mut self, off: usize, len: usize) -> WriteStep {
@@ -314,12 +385,18 @@ impl WriteFile {
             }
         }
     }
+}
 
+impl WriteFile {
     pub(crate) fn then(
         mut this: WriteFile,
         mut promise: jsc::JSPromiseStrong,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
+        #[cfg(windows)]
+        if let Some(result) = this.blocking_part.take_result() {
+            this.finish(result);
+        }
         let system_error = this.system_error.take();
         let total_written = this.total_written;
         if system_error.is_none() {
@@ -341,7 +418,10 @@ impl WriteFile {
             WriteFileResultType::Result(total_written as SizeType),
         )
     }
+}
 
+#[cfg(not(windows))]
+impl WriteFile {
     pub(crate) fn run(&mut self, task: WriteFileTask) {
         self.io_task = Some(task);
         self.run_async();
@@ -490,314 +570,52 @@ impl WriteFile {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// WriteFileWindows
-//
-// libuv-backed write path used by `Blob.writeFileInternal` on Windows. The
-// whole impl is `#[cfg(windows)]`-gated because `bun_sys::windows::libuv`
-// (and the libuv `fs_t`/`uv_buf_t` types) only exist when targeting Windows.
-// ──────────────────────────────────────────────────────────────────────────
+#[cfg(windows)]
+use sys::windows_format::open_flags::SEQUENTIAL;
 
 #[cfg(windows)]
-pub(crate) use self::windows_impl::WriteFileWindows;
-
-#[cfg(windows)]
-mod windows_impl {
-    use super::*;
-    use crate::dispatch::fold;
-    use bun_io::{self as aio, IntrusiveUvFs as _, JsKeepAlive};
-    // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
-    // lives one level deeper.
-    use bun_jsc::event_loop::EventLoop;
-    use bun_sys::ReturnCodeExt as _;
-    use bun_sys::windows::libuv as uv;
-
-    /// One owner at a time: a `Box` here, or libuv and the pool while they work for it.
-    pub(crate) struct WriteFileWindows {
-        pub(crate) io_request: uv::fs_t,
-        pub(crate) file_blob: Blob,
-        pub(crate) bytes_blob: Blob,
-        pub(crate) promise: jsc::JSPromiseStrong,
-        /// The global `promise` was made in.
-        pub(crate) global_this: bun_ptr::BackRef<JSGlobalObject>,
-        /// The context of the script that asked for the write.
-        pub(crate) context: bun_jsc::ContextId,
-        pub(crate) mkdirp_if_not_exists: bool,
-
-        pub(crate) fd: uv::uv_file,
-        pub(crate) err: Option<sys::Error>,
-        pub(crate) total_written: usize,
-        pub(crate) event_loop: &'static EventLoop,
-        _keep_alive: JsKeepAlive,
-
-        pub(crate) owned_fd: bool,
+impl WriteFile {
+    fn destination(&self) -> &PathOrFileDescriptor<'static> {
+        let store = self.file_blob.store().expect("infallible: store present");
+        &store.data.as_file().pathlike
     }
 
-    bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
-
-    impl crate::node::fs::async_::AsyncMkdirpTarget for WriteFileWindows {
-        fn directory(&self) -> &[u8] {
-            let path = self.path();
-            bun_core::dirname(path).unwrap_or(path)
-        }
-        fn set_error(&mut self, err: sys::Error) {
-            self.err = Some(err);
+    fn run(&mut self, done: WriteFileTask) -> Option<WriteFileTask> {
+        let turn = self.turn.take();
+        let target = core::mem::take(&mut self.target);
+        let bytes = self.bytes_blob.shared_view();
+        let (flags, mkdirp) = (sys::O::TRUNC | SEQUENTIAL, self.mkdirp_if_not_exists);
+        let file = JobFile::destination(target, self.destination(), flags, mkdirp);
+        match file {
+            // The write reports a bad descriptor.
+            Ok(file) if file.can_block().unwrap_or_default() => {
+                let store = self.bytes_blob.store().expect("infallible: store present");
+                let start = (self.bytes_blob.offset.get() as usize).min(store.shared_view().len());
+                let (store, range) = (store.clone(), start..start + bytes.len());
+                self.blocking_part.run(done, move |blocking| {
+                    let bytes = &store.shared_view()[range];
+                    let result = file.write_everything(bytes, Some(blocking));
+                    drop((file, turn));
+                    result
+                })
+            }
+            file => {
+                self.finish(file.and_then(|file| file.write_everything(bytes, None)));
+                Some(done)
+            }
         }
     }
 
-    /// `mkdirp` finished on the work pool: the hop back to the JS thread.
-    impl bun_event_loop::BoxedTask for WriteFileWindows {
-        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileWindowsMkdirp;
-        fn release_unrun(self: Box<Self>) {}
-        /// Enters no context.
-        fn context(&self) -> bun_event_loop::ContextId {
-            bun_event_loop::ContextId::NONE
-        }
-    }
-
-    impl WriteFileWindows {
-        pub(crate) fn start(
-            event_loop: &'static EventLoop,
-            script_context: &bun_jsc::ScriptExecutionContext,
-            file_blob: Blob,
-            bytes_blob: Blob,
-            promise: jsc::JSPromiseStrong,
-            global_this: &JSGlobalObject,
-            mkdirp_if_not_exists: bool,
-        ) -> jsc::JsResult<()> {
-            let mkdirp = mkdirp_if_not_exists
-                && file_blob
-                    .store
-                    .get()
-                    .as_ref()
-                    .unwrap()
-                    .data
-                    .as_file()
-                    .pathlike
-                    .is_path();
-            let mut write_file = Box::new(WriteFileWindows {
-                file_blob,
-                bytes_blob,
-                promise,
-                global_this: bun_ptr::BackRef::new(global_this),
-                context: script_context.id(),
-                mkdirp_if_not_exists: mkdirp,
-                io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
-                event_loop,
-                fd: -1,
-                err: None,
-                total_written: 0,
-                _keep_alive: JsKeepAlive::active(),
-                owned_fd: false,
-            });
-            write_file.io_request.loop_ = event_loop.uv_loop();
-
-            let store = write_file.file_blob.store.get().as_ref().unwrap();
-            let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
-                return write_file.open();
-            };
-            write_file.fd = fd.uv();
-
-            write_file.do_write_loop()
-        }
-
-        fn path(&self) -> &[u8] {
-            let store = self.file_blob.store.get().as_ref().unwrap();
-            store.data.as_file().pathlike.path().slice()
-        }
-
-        fn open(mut self: Box<Self>) -> jsc::JsResult<()> {
-            let Ok(posix_path) = sys::to_posix_path(self.path()) else {
-                return self.throw(sys::Error {
-                    errno: sys::E::NAMETOOLONG as _,
-                    syscall: sys::Tag::open,
-                    ..Default::default()
-                });
-            };
-            self.owned_fd = true;
-            let loop_ = self.event_loop.uv_loop();
-            let this = bun_core::heap::into_raw(self);
-            // SAFETY: the VM's loop outlives the request, libuv copies the NUL-terminated path
-            // before it returns, and it has `this` until `on_open`.
-            let rc = unsafe {
-                uv::uv_fs_open(
-                    loop_,
-                    &raw mut (*this).io_request,
-                    posix_path.as_ptr(),
-                    uv::O::CREAT
-                        | uv::O::WRONLY
-                        | uv::O::NOCTTY
-                        | uv::O::NONBLOCK
-                        | uv::O::SEQUENTIAL
-                        | uv::O::TRUNC,
-                    0o644,
-                    Some(Self::on_open),
-                )
-            };
-
-            if let Some(err) = rc.to_error(sys::Tag::open) {
-                debug_assert!(err.get_errno() != sys::E::NOENT);
-                // SAFETY: libuv keeps nothing of a request that it refuses.
-                return unsafe { bun_core::heap::take(this) }.throw(err);
-            }
-            Ok(())
-        }
-
-        extern "C" fn on_open(req: *mut uv::fs_t) {
-            // SAFETY: `req` is the `io_request` of the box that `open` left to libuv.
-            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
-            let rc = this.io_request.result;
-            #[cfg(debug_assertions)]
-            bun_output::scoped_log!(
-                WriteFile,
-                "onOpen({}) = {}",
-                bstr::BStr::new(this.path()),
-                rc
-            );
-
-            if let Some(err) = rc.errno() {
-                if err == sys::E::NOENT && this.mkdirp_if_not_exists {
-                    // cleanup the request so we can reuse it later.
-                    this.io_request.deinit();
-
-                    // attempt to create the directory on another thread
-                    this.mkdirp();
-                    return;
-                }
-
-                fold(this.throw(sys::Error::from_code(err, sys::Tag::open)));
-                return;
-            }
-
-            this.fd = i32::try_from(rc.int()).expect("int cast");
-
-            fold(this.do_write_loop());
-        }
-
-        fn mkdirp(mut self: Box<Self>) {
-            bun_output::scoped_log!(WriteFile, "mkdirp");
-            self.mkdirp_if_not_exists = false;
-            crate::node::fs::async_::AsyncMkdirp::schedule(self);
-        }
-
-        pub(crate) fn on_mkdirp_complete(mut self: Box<Self>) {
-            fold(match self.err.take() {
-                Some(err) => self.throw(err),
-                None => self.open(),
-            });
-        }
-
-        extern "C" fn on_write_complete(req: *mut uv::fs_t) {
-            // SAFETY: `req` is the `io_request` of the box that `do_write_loop` left to libuv.
-            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
-            let rc = this.io_request.result;
-            if let Some(err) = rc.to_error(sys::Tag::write) {
-                fold(this.throw(err));
-                return;
-            }
-
-            this.total_written += usize::try_from(rc.int()).expect("int cast");
-            fold(this.do_write_loop());
-        }
-
-        fn on_finish(mut self: Box<Self>) -> jsc::JsResult<()> {
-            let _exit = self.event_loop.enter_scope();
-
-            let (mut promise, global_this) = (self.promise.take(), self.global_this);
-            let _context =
-                bun_jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
-
-            let result = if let Some(err) = self.to_system_error() {
-                WriteFileResultType::Err(Box::new(err))
-            } else {
-                note_written(&self.file_blob);
-                WriteFileResultType::Result(self.total_written as SizeType)
-            };
-            drop(self);
-
-            settle(promise.swap(), &global_this, result)
-        }
-
-        fn throw(mut self: Box<Self>, err: sys::Error) -> jsc::JsResult<()> {
-            debug_assert!(self.err.is_none());
-            self.err = Some(err);
-            self.on_finish()
-        }
-
-        pub(crate) fn to_system_error(&self) -> Option<SystemError> {
-            if let Some(err) = &self.err {
-                let mut sys_err = err.clone();
-                sys_err = match &self
-                    .file_blob
-                    .store
-                    .get()
-                    .as_ref()
-                    .unwrap()
-                    .data
-                    .as_file()
-                    .pathlike
-                {
-                    PathOrFileDescriptor::Path(path) => sys_err.with_path(path.slice()),
-                    PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),
-                };
-
-                return Some(sys_err.to_system_error().into());
-            }
-            None
-        }
-
-        fn do_write_loop(mut self: Box<Self>) -> jsc::JsResult<()> {
-            let remain_full = self.bytes_blob.shared_view();
-            let off = self.total_written.min(remain_full.len());
-            let remain = &remain_full[off..];
-
-            if remain.is_empty() {
-                return self.on_finish();
-            }
-
-            let buf = uv::uv_buf_t {
-                base: remain.as_ptr().cast_mut(),
-                len: remain.len() as u32,
-            };
-            self.io_request.deinit();
-
-            let (loop_, fd) = (self.event_loop.uv_loop(), self.fd);
-            let this = bun_core::heap::into_raw(self);
-            // SAFETY: the VM's loop outlives the request, libuv copies `buf` before it returns, and
-            // it has `this`, whose blob keeps the bytes, until `on_write_complete`.
-            let rc = unsafe {
-                uv::uv_fs_write(
-                    loop_,
-                    &raw mut (*this).io_request,
-                    fd,
-                    &raw const buf,
-                    1,
-                    -1,
-                    Some(Self::on_write_complete),
-                )
-            };
-            if rc.int() == 0 {
-                // EINPROGRESS
-                return Ok(());
-            }
-
-            let Some(err) = rc.to_error(sys::Tag::write) else {
-                bun_core::Output::panic(format_args!(
-                    "unexpected return code from uv_fs_write: {}",
-                    rc.int()
-                ));
-            };
-            // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.throw(err)
-        }
-    }
-
-    impl Drop for WriteFileWindows {
-        fn drop(&mut self) {
-            if self.fd > 0 && self.owned_fd {
-                aio::Closer::close(Fd::from_uv(self.fd), self.io_request.loop_);
-            }
-        }
+    fn finish(&mut self, result: sys::Result<()>) {
+        let Err(err) = result else {
+            self.total_written = self.bytes_blob.shared_view().len();
+            return;
+        };
+        let err = match self.destination() {
+            PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
+            PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd),
+        };
+        self.system_error = Some(err.to_system_error().into());
     }
 }
 

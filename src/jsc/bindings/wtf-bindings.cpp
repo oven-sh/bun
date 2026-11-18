@@ -15,9 +15,6 @@
 static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_TIME in WTF.rs must match");
 
 #include "wtf/SIMDUTF.h"
-#if OS(WINDOWS)
-#include <uv.h>
-#endif
 
 #if !OS(WINDOWS)
 #include <stdatomic.h>

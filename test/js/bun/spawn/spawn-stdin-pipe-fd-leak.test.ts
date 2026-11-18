@@ -24,8 +24,7 @@ function countOpenFds(): number {
   }
 }
 
-// Windows has no /proc/self/fd equivalent; the observable leak is
-// POSIX-specific anyway (libuv pipe close on Windows is async regardless).
+// Windows has no /proc/self/fd equivalent.
 test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading .stdin", async () => {
   const N = 100;
 
@@ -139,7 +138,7 @@ test.skipIf(!isASAN || isWindows)(
 
 // Reading `.stdin` after the child has already exited should still return
 // the FileSink (not `undefined`) — the fix must not regress this.
-test.skipIf(!isPosix)("reading .stdin after child exit still returns a FileSink", async () => {
+test("reading .stdin after child exit still returns a FileSink", async () => {
   const p = Bun.spawn({ cmd: ["true"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
   await p.exited;
   const stdin = p.stdin;

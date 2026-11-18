@@ -2948,9 +2948,7 @@ it("onread: a swallowed throw does not drop the rest of the current native read"
   expect(exitCode).toBe(0);
 });
 
-// On Windows the native layer does not report fatal send errors yet (the WSA
-// error translation is a follow-up), so the write error never surfaces there.
-it.skipIf(isWindows)("a write after the peer reset the connection fails with a write error", async () => {
+it("a write after the peer reset the connection fails with a write error", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   // resetAndDestroy() sends an RST (not a FIN); allowHalfOpen keeps the client's
   // writable side open like Node, so the failure must surface from the write
@@ -3645,3 +3643,332 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
     expect(thrown).toEqual(thrownBy(() => set(undefined)));
   },
 );
+
+describe.concurrent.skipIf(!isWindows)("named pipes", () => {
+  const pipeName = (suffix = "") => `\\\\.\\pipe\\bun-test-${randomUUID()}${suffix}`;
+  async function listen(onConnection: (socket: Socket) => void, name = pipeName()) {
+    const sockets = new Set<Socket>();
+    const server = createServer(socket => {
+      sockets.add(socket);
+      onConnection(socket);
+    });
+    await once(server.listen(name), "listening");
+    return {
+      name,
+      server,
+      [Symbol.dispose]() {
+        server.close();
+        for (const socket of sockets) socket.destroy();
+      },
+    };
+  }
+  const echo = (socket: Socket) => socket.on("error", () => {}).on("data", chunk => socket.write(chunk));
+  const all = async (socket: Socket) => Buffer.concat(await Array.fromAsync<Buffer>(socket));
+  async function roundTrip(name: string, message: string) {
+    const client = connect(name);
+    try {
+      client.write(message);
+      return String((await once(client, "data"))[0]);
+    } finally {
+      client.destroy();
+    }
+  }
+  async function run(script: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const printed = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  const range = (n: number) => Array.from({ length: n }, (_, i) => String(i));
+
+  it.serial("serve 200 clients that connect in the same tick", async () => {
+    using pipe = await listen(echo);
+    expect(await Promise.all(range(200).map(i => roundTrip(pipe.name, i)))).toEqual(range(200));
+  });
+
+  it.serial("serve 200 clients of Bun.connect() with Bun.listen()", async () => {
+    const unix = pipeName();
+    using _ = Bun.listen({ unix, socket: { data: (socket, data) => void socket.write(data) } });
+    const answers = range(200).map(i => {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      Bun.connect({
+        unix,
+        socket: {
+          open: socket => void socket.write(i),
+          data: (socket, data) => (resolve(String(data)), socket.end()),
+          close: () => reject(new Error("closed")),
+        },
+      }).catch(reject);
+      return promise;
+    });
+    expect(await Promise.all(answers)).toEqual(range(200));
+  });
+
+  it("serve bursts from several processes", async () => {
+    using pipe = await listen(echo);
+    const burst = `
+      let left = 50;
+      for (let i = 0; i < 50; i++) {
+        const client = require("net").connect(process.argv[1]);
+        client.once("data", data => { if (data == String(i)) left--; client.destroy(); }).write(String(i));
+      }
+      process.on("exit", () => console.log(left));
+    `;
+    expect(await Promise.all(range(4).map(() => run(burst, pipe.name)))).toEqual(range(4).map(() => printed("0\n")));
+  });
+
+  it.each([1, 20])("close %d clients that are destroyed in the tick they connect", async count => {
+    using pipe = await listen(echo);
+    const events: string[] = [];
+    const closed = range(count).map(() => {
+      const client = connect(pipe.name);
+      client.on("connect", () => events.push("connect")).on("error", error => events.push(error.message));
+      client.write("unsent");
+      client.destroy();
+      return once(client, "close");
+    });
+    expect(await Promise.all(closed)).toEqual(range(count).map(() => [false]));
+    expect(events).toEqual([]);
+    expect(await roundTrip(pipe.name, "still here")).toBe("still here");
+  });
+
+  it("fail the clients that still wait when the server closes", async () => {
+    using pipe = await listen(socket => socket.on("error", () => {}).destroy());
+    const ends = range(20).map(() => {
+      const client = connect(pipe.name).resume();
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let code = "none";
+      client.on("error", (error: any) => (code = error.code)).on("close", () => resolve(code));
+      return promise;
+    });
+    pipe.server.close();
+    expect((await Promise.all(ends)).filter(code => !/^(none|ENOENT|EPIPE|ECONNRESET)$/.test(code))).toEqual([]);
+  });
+
+  it("give the name back on close", async () => {
+    const name = pipeName();
+    for (let i = 0; i < 5; i++) {
+      using pipe = await listen(echo, name);
+      expect(await roundTrip(name, `round ${i}`)).toBe(`round ${i}`);
+      pipe[Symbol.dispose]();
+      await once(pipe.server, "close");
+      expect((await once(connect(name), "error"))[0]).toMatchObject({ code: "ENOENT", syscall: "connect" });
+    }
+  });
+
+  it("keep a connection after its server has closed", async () => {
+    using pipe = await listen(echo);
+    const client = connect(pipe.name);
+    try {
+      for (const message of ["before", "after"]) {
+        client.write(message);
+        expect(String((await once(client, "data"))[0])).toBe(message);
+        pipe.server.close();
+      }
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it.each([
+    ["200 characters", Buffer.alloc(150, "n").toString()],
+    ["spaces and separators", " a b\\c/d"],
+    ["characters outside ASCII", "é世\u{1F600}"],
+  ])("can have a name with %s", async (_, suffix) => {
+    using pipe = await listen(echo, pipeName(suffix));
+    expect(pipe.server.address()).toBe(pipe.name);
+    expect(await roundTrip(pipe.name, "hi")).toBe("hi");
+    expect(await roundTrip(pipe.name.replace("bun-test", "BUN-TEST"), "hi")).toBe("hi");
+  });
+
+  describe.each(["client", "server"])("the %s", side => {
+    /** This side and the other one of a new connection. */
+    async function pair() {
+      const accepted = Promise.withResolvers<Socket>();
+      const pipe = await listen(accepted.resolve);
+      const client = connect(pipe.name);
+      const [server] = await Promise.all([accepted.promise, once(client, "connect")]);
+      return {
+        near: side === "client" ? client : server,
+        far: side === "client" ? server : client,
+        [Symbol.dispose]() {
+          client.destroy();
+          pipe[Symbol.dispose]();
+        },
+      };
+    }
+    const big = Buffer.alloc(2 * 1024 * 1024 + 1, "0123456789|");
+
+    it.each([0, 1, 65536, 65537, big.length])("delivers %d bytes given to end(), then the end", async size => {
+      using sockets = await pair();
+      sockets.near.end(big.subarray(0, size));
+      expect((await all(sockets.far)).equals(big.subarray(0, size))).toBe(true);
+    });
+
+    it("loses nothing while the peer is paused", async () => {
+      using sockets = await pair();
+      sockets.far.pause();
+      sockets.near.write(big);
+      await new Promise(setImmediate);
+      sockets.near.end("tail");
+      expect((await all(sockets.far)).equals(Buffer.concat([big, Buffer.from("tail")]))).toBe(true);
+    });
+
+    it("keeps what it got while paused when the peer is gone", async () => {
+      using sockets = await pair();
+      sockets.near.pause();
+      sockets.far.end("left behind");
+      await once(sockets.far, "close");
+      expect(String(await all(sockets.near))).toBe("left behind");
+    });
+
+    it("can be destroyed while a write waits", async () => {
+      using sockets = await pair();
+      sockets.far.pause();
+      const written = new Promise(resolve => sockets.near.write(big, resolve));
+      sockets.near.destroy();
+      await Promise.all([written, once(sockets.near, "close")]);
+      const got = await all(sockets.far);
+      expect(got.equals(big.subarray(0, got.length))).toBe(true);
+    });
+
+    it("closes when the peer goes away under a write that waits", async () => {
+      using sockets = await pair();
+      sockets.far.pause();
+      sockets.near.on("error", () => {}).write(big);
+      const closed = new Promise(resolve => sockets.near.once("close", resolve));
+      sockets.far.destroy();
+      await closed;
+    });
+
+    it("takes an empty write for nothing", async () => {
+      using sockets = await pair();
+      await new Promise(resolve => sockets.near.write("", resolve));
+      sockets.near.end("after");
+      expect(String(await all(sockets.far))).toBe("after");
+    });
+
+    // end() closes the pipe: the answer fails with EPIPE.
+    it.todo("still reads the answer to what it gave to end()", async () => {
+      using sockets = await pair();
+      sockets.far.once("data", () => sockets.far.end("pong"));
+      sockets.near.end("ping");
+      expect(String(await all(sockets.near))).toBe("pong");
+    });
+  });
+
+  it("carry data both ways at the same time", async () => {
+    const size = 2 * 1024 * 1024;
+    const collect = (socket: Socket) => {
+      const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+      const chunks: Buffer[] = [];
+      let left = size;
+      socket.on(
+        "data",
+        chunk => chunks.push(chunk as Buffer) && (left -= chunk.length) === 0 && resolve(Buffer.concat(chunks)),
+      );
+      socket.on("error", reject).on("close", () => reject(new Error("closed")));
+      return promise;
+    };
+    const atServer = Promise.withResolvers<Buffer>();
+    using pipe = await listen(socket => (atServer.resolve(collect(socket)), socket.write(Buffer.alloc(size, "down|"))));
+    const client = connect(pipe.name);
+    try {
+      client.write(Buffer.alloc(size, "up|"));
+      const [up, down] = await Promise.all([atServer.promise, collect(client)]);
+      expect([up.equals(Buffer.alloc(size, "up|")), down.equals(Buffer.alloc(size, "down|"))]).toEqual([true, true]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("finish the write of a socket that was unref'd before the process ends", async () => {
+    const received = Promise.withResolvers<Buffer>();
+    using pipe = await listen(socket => received.resolve(all(socket)));
+    const result = run(
+      `const client = require("net").connect(process.argv[1], () => client.unref().write(Buffer.alloc(1 << 20, "x")));`,
+      pipe.name,
+    );
+    expect((await received.promise).length).toBe(1 << 20);
+    expect(await result).toEqual(printed(""));
+  });
+
+  describe("that another program made", () => {
+    const made = `
+      const net = require("net"), { once } = require("events");
+      const k32 = require("bun:ffi").dlopen("kernel32.dll", {
+        CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "i64" },
+        WriteFile: { args: ["i64", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+        ReadFile: { args: ["i64", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+        DisconnectNamedPipe: { args: ["i64"], returns: "i32" },
+        CloseHandle: { args: ["i64"], returns: "i32" },
+      }).symbols;
+      const name = process.argv[1], count = new Uint32Array(1);
+      const INBOUND = 1, OUTBOUND = 2, DUPLEX = 3, MESSAGE = 4 | 2;
+      const create = (access, mode = 0) =>
+        k32.CreateNamedPipeW(Buffer.from(name + "\\0", "utf16le"), access, mode, 1, 200000, 200000, 0, null);
+      const write = (handle, data) => k32.WriteFile(handle, Buffer.concat([data, Buffer.alloc(1)]), data.length, count, null);
+      const text = async socket => Buffer.concat(await Array.fromAsync(socket)).toString();
+    `;
+
+    it.each([
+      [
+        "for the client to read only",
+        `const handle = create(OUTBOUND), client = net.connect(name);
+         await once(client, "connect");
+         write(handle, Buffer.from("down")); k32.CloseHandle(handle);
+         console.log(await text(client));`,
+        "down\n",
+      ],
+      [
+        "with messages, an empty and a long one among them",
+        `const handle = create(DUPLEX, MESSAGE), client = net.connect(name);
+         await once(client, "connect");
+         const got = text(client);
+         for (const size of [0, 3, 0, 100000, 1]) { write(handle, Buffer.alloc(size, "m")); await new Promise(setImmediate); }
+         k32.CloseHandle(handle);
+         console.log((await got).length);`,
+        "100004\n",
+      ],
+      [
+        "and disconnects",
+        `const handle = create(DUPLEX), client = net.connect(name).on("error", () => {}).resume();
+         await once(client, "connect");
+         const closed = new Promise(resolve => client.once("close", resolve));
+         k32.DisconnectNamedPipe(handle);
+         await closed;
+         console.log("closed");`,
+        "closed\n",
+      ],
+      [
+        "and that is busy until later",
+        `const handle = create(DUPLEX), first = require("fs").openSync(name, "r+"), client = net.connect(name);
+         await new Promise(setImmediate);
+         console.log(client.connecting);
+         require("fs").closeSync(first); k32.CloseHandle(handle);
+         console.log((await once(client, "error"))[0].code);`,
+        "true\nENOENT\n",
+      ],
+    ])("%s", async (_, script, expected) => {
+      expect(await run(made + script, pipeName())).toEqual(printed(expected));
+    });
+
+    it("for the client to write only", async () => {
+      const script = `
+        const handle = create(INBOUND), client = net.connect(name);
+        await once(client, "connect");
+        await new Promise((resolve, reject) => client.on("error", reject).write("up", resolve));
+        const buffer = Buffer.alloc(8);
+        k32.ReadFile(handle, buffer, 8, count, null);
+        console.log(buffer.toString("utf8", 0, count[0]));
+        client.destroy();
+      `;
+      expect(await run(made + script, pipeName())).toEqual(printed("up\n"));
+    });
+  });
+});

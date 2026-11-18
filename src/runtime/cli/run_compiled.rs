@@ -865,31 +865,13 @@ fn start_second_process(
     Global::exit(1)
 }
 
-/// `block` is what a parent process hands to the C runtime of its child: a count, then a byte of flags for each
-/// descriptor, then a handle for each. The answer starts at descriptor 3.
-#[cfg(any(windows, test))]
-fn list_open_extra_descriptors(block: &[u8]) -> Vec<bool> {
-    const IS_OPEN: u8 = 1;
-    const MOST_THAT_LIBUV_HANDS_ON: usize = 255;
-    let Some((count, rest)) = block.split_first_chunk::<4>() else {
-        return Vec::new();
-    };
-    let count = (u32::from_ne_bytes(*count) as usize)
-        .min(rest.len() / (1 + size_of::<usize>()))
-        .min(MOST_THAT_LIBUV_HANDS_ON);
-    let flags_from_3_up = rest[..count].iter().skip(3);
-    flags_from_3_up
-        .map(|flags| (flags & IS_OPEN) != 0)
-        .collect()
-}
-
+/// From descriptor 3 on.
 #[cfg(windows)]
 fn list_inherited_extra_descriptors() -> Box<[bool]> {
-    let is_still_open = |index: usize| Fd::from_uv(3 + index as i32).native() as isize > 0;
-    list_open_extra_descriptors(bun_sys::windows::inherited_descriptors())
-        .into_iter()
-        .enumerate()
-        .map(|(index, was_open)| was_open && is_still_open(index))
+    use bun_sys::windows_format::crt_descriptors::{MAX_COUNT, are_open};
+    let were_open = are_open(bun_sys::windows::inherited_descriptors()).take(MAX_COUNT);
+    ((0..).zip(were_open).skip(3))
+        .map(|(number, was_open)| was_open && Fd::from_crt(number).native() as isize > 0)
         .collect()
 }
 
@@ -934,12 +916,6 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
         stderr: sync::SyncStdio::Inherit,
         stdout: sync::SyncStdio::Inherit,
         stdin: sync::SyncStdio::Inherit,
-        windows: crate::api::bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None,
-            )),
-            ..Default::default()
-        },
         inherited_extra_fds: list_inherited_extra_descriptors(),
         ..Default::default()
     });

@@ -101,14 +101,12 @@ const prototypeOfReadStream = {
     Prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
       flag = !!flag;
 
-      // On windows, this goes through the stream handle itself, as it must call
-      // uv_tty_set_mode on the uv_tty_t.
+      // On windows, this goes through the stream handle itself.
       //
       // On POSIX, I tried to use the same approach, but it didn't work reliably,
       // so we just use the file descriptor and use termios APIs directly.
       if (process.platform === "win32") {
-        // Special case for stdin, as it has a shared uv_tty handle
-        // and it's stream is constructed differently
+        // Special case for stdin, as its stream is constructed differently
         if (this.fd === 0) {
           const err = ttySetMode(flag);
           if (err) {

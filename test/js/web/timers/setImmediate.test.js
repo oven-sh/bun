@@ -79,3 +79,24 @@ it("setImmediate should not keep the process alive forever", async () => {
 
   expect(await Promise.race([success(), fail()])).toBe(true);
 });
+
+it("a promise that native code waits for can be settled by an immediate", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const socket = await Bun.udpSocket({});
+      const setup = () => new Promise(resolve => setImmediate(resolve));
+      for (let i = 0; i < 3; i++) {
+        await Bun.build({ entrypoints: ["/e.js"], files: { "/e.js": "" }, plugins: [{ name: "a", setup }] });
+      }
+      socket.close();
+      console.log("built");`,
+    ],
+    // Its timer would wake the loop.
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "built\n", exitCode: 0 });
+});

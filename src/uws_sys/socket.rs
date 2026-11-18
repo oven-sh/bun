@@ -322,7 +322,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// Raw `getaddrinfo(3)` return code for a pending connect whose name
+    /// `getaddrinfo(3)` return code (Windows: `UV_E*`) for a pending connect whose name
     /// lookup failed; 0 otherwise (a connect failure past name resolution, or
     /// any non-connecting handle). A different namespace from
     /// [`Self::get_error`] (errno).
@@ -404,7 +404,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Write `data` and pass `file_descriptor` over the socket via SCM_RIGHTS.
-    /// POSIX-only — Windows IPC fd passing goes through libuv pipes instead.
+    /// POSIX-only — Windows IPC fd passing goes through pipes instead.
     ///
     /// LAYERING: takes the raw POSIX fd (`c_int`) rather than `bun_sys::Fd` —
     /// `bun_uws_sys` sits below `bun_sys`; callers extract `.native()` at the

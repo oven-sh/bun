@@ -35,11 +35,17 @@ use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
 pub(crate) use store::Store;
 use store::{FileExt as _, S3Ext as _, StoreExt as _};
 
+#[cfg(windows)]
+#[path = "blob/blocking.rs"]
+mod blocking;
 #[path = "blob/copy_file.rs"]
 pub(crate) mod copy_file;
 #[cfg(not(windows))]
 #[path = "blob/io_parking.rs"]
 pub(crate) mod io_parking;
+#[cfg(windows)]
+#[path = "blob/job_file.rs"]
+mod job_file;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "blob/memfd.rs"]
 mod memfd;
@@ -405,31 +411,18 @@ impl BlobExt for Blob {
         // an owning dupe so the handler outliving the source can't dangle.
         let mut handler = Box::new(Handler::<F>::new(self.dupe(), cx.global()));
 
-        #[cfg(windows)]
-        {
-            handler.promise = jsc::JSPromiseStrong::init(cx.global());
-            let promise_value = handler.promise.value();
-            promise_value.ensure_still_alive();
+        let file_read = read_file::ReadFile::create(self);
+        // Create the Promise only after the store has been ref()'d.
+        handler.promise = jsc::JSPromiseStrong::init(cx.global());
+        let promise_value = handler.promise.value();
+        promise_value.ensure_still_alive();
 
-            read_file::ReadFileUV::start(self, handler, cx);
-            return promise_value;
-        }
+        read_file::ReadFile::schedule(file_read, handler, cx);
 
-        #[cfg(not(windows))]
-        {
-            let file_read = read_file::ReadFile::create(self);
-            // Create the Promise only after the store has been ref()'d.
-            handler.promise = jsc::JSPromiseStrong::init(cx.global());
-            let promise_value = handler.promise.value();
-            promise_value.ensure_still_alive();
-
-            read_file::ReadFile::schedule(file_read, handler, cx);
-
-            debug!("doReadFile: read_file_task scheduled");
-            promise_value
-        }
+        debug!("doReadFile: read_file_task scheduled");
+        promise_value
     }
-    /// Read this Blob's bytes — file (`ReadFile`/`ReadFileUV`), S3 (`S3.download`),
+    /// Read this Blob's bytes — file (`ReadFile`), S3 (`S3.download`),
     /// or in-memory — and deliver them to `Handler::on_read_bytes(ctx, result)` on the
     /// JS thread without ever materialising a JSValue. `.ok` bytes are
     /// global-allocator-OWNED by the callback. The point is to give callers
@@ -529,15 +522,8 @@ impl BlobExt for Blob {
         ctx: Box<dyn read_file::ReadFileCompletion>,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        #[cfg(windows)]
-        {
-            read_file::ReadFileUV::start(self, ctx, cx);
-        }
-        #[cfg(not(windows))]
-        {
-            let file_read = read_file::ReadFile::create(self);
-            read_file::ReadFile::schedule(file_read, ctx, cx);
-        }
+        let file_read = read_file::ReadFile::create(self);
+        read_file::ReadFile::schedule(file_read, ctx, cx);
     }
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
         let ct = self.content_type_slice();
@@ -815,12 +801,12 @@ impl BlobExt for Blob {
                         PathOrFileDescriptor::Fd(fd) => {
                             #[cfg(windows)]
                             match fd.decode_windows() {
-                                bun_sys::fd::DecodeWindows::Uv(uv_file) => {
+                                bun_sys::fd::DecodeWindows::Crt(number) => {
                                     bun_core::write_pretty!(
                                         writer,
                                         ENABLE_ANSI_COLORS,
                                         " (<r>fd<d>:<r> <yellow>{d}<r>)<r>",
-                                        uv_file,
+                                        number,
                                     )?;
                                 }
                                 bun_sys::fd::DecodeWindows::Windows(handle) => {
@@ -1205,10 +1191,7 @@ impl BlobExt for Blob {
                 } else {
                     let mut file_path = bun_paths::path_buffer_pool::get();
                     let path = pathlike.path().slice_z(&mut file_path);
-                    let flags = bun_sys::O::WRONLY
-                        | bun_sys::O::CREAT
-                        | bun_sys::O::TRUNC
-                        | bun_sys::O::NONBLOCK;
+                    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
                     let mode = options.mode.unwrap_or(WRITE_PERMISSIONS);
                     let mut result = bun_sys::open(path, flags, mode);
                     if let bun_sys::Result::Err(err) = &result {
@@ -1395,7 +1378,7 @@ impl BlobExt for Blob {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
                     let mut file_path = bun_paths::path_buffer_pool::get();
-                    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
+                    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT;
                     if let Some(err) = node::fs::refuse_open_for_write(p.slice(), flags) {
                         return Err(global_this.throw_value(err.to_js(global_this)));
                     }
@@ -3317,9 +3300,13 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
             bun_sys::Tag::mkdir,
         ));
     };
+    mkdirp(dirname)
+}
+
+fn mkdirp(directory: &[u8]) -> bun_sys::Result<()> {
     node::fs::NodeFS::default()
         .mkdir_recursive(&node::fs::args::Mkdir {
-            path: PathLike::borrowed(dirname),
+            path: PathLike::borrowed(directory),
             recursive: true,
             always_return_none: true,
             ..Default::default()
@@ -3584,66 +3571,31 @@ pub(crate) fn write_file_with_source_destination(
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
         // The borrowed views below are +0 on the store ref;
         // `WriteFile::create` takes its own ref.
-        #[cfg(windows)]
-        {
-            let promise_value = JSPromise::create(cx.global()).to_js();
-            promise_value.ensure_still_alive();
-            let mut promise = jsc::JSPromiseStrong::default();
-            promise.set(cx.global(), promise_value);
-            write_file::WriteFileWindows::start(
-                cx.global().bun_vm().event_loop(),
-                cx.context(),
-                destination_blob.borrowed_view(),
-                source_blob.borrowed_view(),
-                promise,
-                cx.global(),
-                options.mkdirp_if_not_exists.unwrap_or(true),
-            )?;
-            return Ok(promise_value);
-        }
-
-        #[cfg(not(windows))]
-        {
-            let file_copier = write_file::WriteFile::create(
-                destination_blob.borrowed_view(),
-                source_blob.borrowed_view(),
-                options.mkdirp_if_not_exists.unwrap_or(true),
-            )
-            .expect("unreachable");
-            // Defer promise creation until we're just about to schedule the task.
-            let promise = jsc::JSPromiseStrong::init(cx.global());
-            let promise_value = promise.value();
-            promise_value.ensure_still_alive();
-            write_file::WriteFile::schedule(file_copier, promise, cx);
-            return Ok(promise_value);
-        }
+        let file_copier = write_file::WriteFile::create(
+            destination_blob.borrowed_view(),
+            source_blob.borrowed_view(),
+            options.mkdirp_if_not_exists.unwrap_or(true),
+        )
+        .expect("unreachable");
+        // Defer promise creation until we're just about to schedule the task.
+        let promise = jsc::JSPromiseStrong::init(cx.global());
+        let promise_value = promise.value();
+        promise_value.ensure_still_alive();
+        write_file::WriteFile::schedule(file_copier, promise, cx);
+        return Ok(promise_value);
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
-        #[cfg(windows)]
-        {
-            return Ok(copy_file::CopyFileWindows::init(
-                destination_store,
-                source_store,
-                cx.global().bun_vm().event_loop(),
-                cx.context(),
-                options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
-                options.mode,
-            ));
-        }
-        #[cfg(not(windows))]
-        {
-            return Ok(copy_file::CopyFile::create(
-                destination_store,
-                source_store,
-                destination_blob.offset.get(),
-                destination_blob.size.get(),
-                cx,
-                options.mkdirp_if_not_exists.unwrap_or(true),
-                options.mode,
-            ));
-        }
+        return Ok(copy_file::CopyFile::create(
+            destination_store,
+            source_store,
+            #[cfg(not(windows))]
+            destination_blob.offset.get(),
+            destination_blob.size.get(),
+            cx,
+            options.mkdirp_if_not_exists.unwrap_or(true),
+            options.mode,
+        ));
     } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
         let s3 = source_store.data.as_s3();
         if let Some(stream) = ReadableStream::from_js(
@@ -4948,19 +4900,10 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     }
 }
 
-/// `stat.{st_mtime, st_mtime_nsec}` → JS epoch ms. `bun_sys::Stat` is
-/// `libc::stat` on POSIX (fields) and `uv_stat_t` on Windows (`mtim` timespec);
-/// cfg-split here so the call sites stay shared.
 #[inline]
 fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
-    #[cfg(not(windows))]
-    {
-        jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize)
-    }
-    #[cfg(windows)]
-    {
-        jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize)
-    }
+    let mtime = bun_sys::stat_mtime(stat);
+    jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize)
 }
 
 /// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an

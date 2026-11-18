@@ -57,15 +57,17 @@ impl File {
     pub fn into_raw(self) -> Fd {
         core::mem::ManuallyDrop::new(self).handle
     }
-    /// As [`FdExt::make_lib_uv_owned`].
-    pub fn make_lib_uv_owned(mut self) -> core::result::Result<Self, MakeLibUvOwnedError> {
-        self.handle = self.handle.make_lib_uv_owned()?;
-        Ok(self)
-    }
-    /// As [`FdExt::make_lib_uv_owned_for_syscall`].
-    pub fn make_lib_uv_owned_for_syscall(mut self, syscall_tag: Tag) -> Maybe<Self> {
-        self.handle = self.handle.make_lib_uv_owned_for_syscall(syscall_tag)?;
-        Ok(self)
+    /// With a number that a script can use. `None` if the C runtime has no descriptor left.
+    pub fn make_crt_owned(self) -> Option<Self> {
+        #[cfg(windows)]
+        if self.handle.kind() == bun_core::FdKind::System {
+            let number = crate::windows::open_osfhandle(self.handle.native());
+            return (number != -1).then(|| {
+                self.into_raw();
+                Self::from_fd(Fd::from_crt(number))
+            });
+        }
+        Some(self)
     }
     /// Non-owning `&File` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
     #[inline]
@@ -220,7 +222,7 @@ impl File {
     }
     pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Maybe<()> {
         while !buf.is_empty() {
-            let n = pwrite(self.handle, buf, off)?;
+            let n = pwrite_owned(self.handle, buf, off)?;
             if n == 0 {
                 return Ok(());
             }
@@ -238,7 +240,7 @@ impl File {
         let start = cursor.written();
         while cursor.capacity() != 0 {
             let at = offset as i64 + (cursor.written() - start) as i64;
-            if pread_buf(self.handle, cursor.reborrow(), at)? == 0 {
+            if pread_owned_buf(self.handle, cursor.reborrow(), at)? == 0 {
                 break;
             }
         }
@@ -259,8 +261,6 @@ impl File {
         lseek(self.handle, 0, libc::SEEK_CUR).map(|p| p as u64)
     }
     /// The file's size in bytes.
-    /// On Windows that's `GetFileSizeEx` directly on the HANDLE (NOT via
-    /// libuv `fstat`, which would require a uv-kind fd).
     pub fn get_end_pos(&self) -> Maybe<usize> {
         get_file_size(self.handle).map(|n| n as usize)
     }

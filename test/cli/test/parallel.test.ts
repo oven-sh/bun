@@ -1261,9 +1261,7 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("PARALLEL");
-  // fd 3 is the worker's IPC channel. On POSIX the coordinator's own frame
-  // decoder rejects the bytes; on Windows they break libuv's IPC framing
-  // underneath it and surface as a read error. Both must end the same way:
+  // fd 3 is the worker's IPC channel. The frame decoder rejects the bytes:
   // the coordinator kills that worker and says so, rather than printing the
   // status the kill produced (SIGKILL) or, when the kill was skipped, the
   // "exit code 0" of a worker that later shut itself down. Writing to the
@@ -1346,8 +1344,7 @@ async function runOnOneWorker(dir: string, ...flags: string[]) {
   return { results: stderr.match(/^(\(pass\) \w+|✗ .*| \d+ (pass|fail))/gm), exitCode };
 }
 
-// On Windows the bytes break libuv's framing before they can be read as a frame.
-describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () => {
+describe("--parallel: a frame that a test writes to fd 3", () => {
   test.concurrent("Ready does not take the place of the file that runs", async () => {
     using dir = tempDir("parallel-forged-ready", {
       "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
@@ -1360,7 +1357,8 @@ describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () 
     });
   });
 
-  test.concurrent("Ready is answered with Shutdown when no file is left", async () => {
+  // On Windows the answer goes to the read that the worker has waiting on the pipe.
+  test.concurrent.skipIf(isWindows)("Ready is answered with Shutdown when no file is left", async () => {
     using dir = tempDir("parallel-forged-ready-in-last-file", {
       "a.test.js": `import {test} from "bun:test"; test("a", () => {});`,
       "b.test.js": `import {expect, test} from "bun:test"; import {readSync, writeSync} from "fs";

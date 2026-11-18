@@ -41,8 +41,7 @@ pub(crate) fn uv_translate_sys_error(errno: f64) -> i32 {
     }
     #[cfg(windows)]
     {
-        let uv_err = bun_libuv_sys::uv_translate_sys_error(n);
-        if uv_err != 0 { uv_err } else { -UV_E::INVAL }
+        bun_errno::uv_translate_sys_error(n)
     }
     #[cfg(not(windows))]
     {

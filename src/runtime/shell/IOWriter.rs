@@ -100,7 +100,9 @@ pub(crate) enum WriterTag {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Flags {
     pub(crate) pollable: bool,
+    #[cfg(not(windows))]
     pub(crate) nonblock: bool,
+    #[cfg(not(windows))]
     pub(crate) is_socket: bool,
     pub(crate) broken_pipe: bool,
 }
@@ -292,6 +294,7 @@ impl IOWriter {
         let (fd, pollable) = (self.fd(), self.state().flags.pollable);
         crate::shell_log!("IOWriter(fd={}) __start()", fd);
         let started = self.writer.start(self, self.io_evtloop(), fd, pollable);
+        #[cfg(not(windows))]
         let s = self.state();
         if let Err(e) = started {
             #[cfg(not(windows))]
@@ -323,29 +326,7 @@ impl IOWriter {
                     }
                 }
             }
-            #[cfg(windows)]
-            {
-                // This might happen if the file descriptor points to NUL.
-                // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
-                // `this.writer.start()` will try to open it as a tty with
-                // uv_tty_init, but this returns EBADF. As a workaround,
-                // we'll try opening the file descriptor as a file.
-                if e.get_errno() == E::EBADF {
-                    s.flags.pollable = false;
-                    s.flags.nonblock = false;
-                    s.flags.is_socket = false;
-                    self.writer.start_with_file(self, self.io_evtloop(), fd);
-                    return Ok(());
-                }
-            }
             return Err(e);
-        }
-        #[cfg(windows)]
-        {
-            // libuv closes the HANDLE of a pipe or a tty.
-            if self.writer.is_stream() {
-                s.fd = Fd::INVALID;
-            }
         }
         #[cfg(not(windows))]
         {
@@ -380,7 +361,7 @@ impl IOWriter {
             // Set before the fallible `__start` so a later enqueue does not
             // retry it.
             s.started = true;
-            // A first write that libuv refuses runs the children, which may drop every other `Rc`.
+            // A first write that is refused runs the children, which may drop every other `Rc`.
             #[cfg(windows)]
             let _keepalive = self.keepalive();
             if let Err(e) = self.__start() {
@@ -407,7 +388,7 @@ impl IOWriter {
                 return WriteOutcome::Suspended;
             }
             s.is_writing = true;
-            self.writer.start_with_current_pipe(self);
+            self.writer.start_with_current_source(self);
             return WriteOutcome::Suspended;
         }
 

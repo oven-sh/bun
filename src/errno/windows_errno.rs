@@ -6,23 +6,21 @@
 
 use core::ffi::c_int;
 
-// `uv::UV_E*` constants come from `bun_libuv_sys` (leaf);
 // `Win32Error` / `NTSTATUS` / the NTSTATUS→errno mapper live locally in this
 // module (their only external use is via `SystemErrno::init`, defined here).
 pub use self::windows::{NTSTATUS, Win32Error, Win32ErrorExt};
-use bun_libuv_sys as uv;
+use crate::uv;
 
 // ──────────────────────────────────────────────────────────────────────────
 // UV_* errno X-macro
 //
 // Single source of truth for the 86 UV_* variants that form the tail of BOTH
-// `enum E` and `enum SystemErrno`. Both enum tails are
-// driven from this one list so they cannot drift. (The UV_*→E* fold-down
-// lives in `bun_libuv_sys::uv_err_to_e_discriminant`.)
+// `enum E` and `enum SystemErrno`. Both enum tails and the conversions between
+// libuv codes and discriminants are driven from this one list so they cannot drift.
 //
 // Entry shape:
-//   [UV_X => EX]   — UV_X has a non-UV_ counterpart `SystemErrno::EX`
-//   [UV_X]         — no counterpart (EAI_* resolver codes, UNKNOWN, ERRNO_MAX)
+//   [UV_X => EX]   — the code UV_X stands for `SystemErrno::EX`
+//   [UV_X]         — not an error code (ERRNO_MAX)
 //
 // ORDER IS LOAD-BEARING: `enum_map::Enum` derives ordinals from declaration
 // order, and `SystemErrno::to_e` maps by discriminant, so the two enums
@@ -35,10 +33,15 @@ macro_rules! for_each_uv_errno {
         $cb! { $($pre)* @uv
             [UV_E2BIG => E2BIG] [UV_EACCES => EACCES] [UV_EADDRINUSE => EADDRINUSE]
             [UV_EADDRNOTAVAIL => EADDRNOTAVAIL] [UV_EAFNOSUPPORT => EAFNOSUPPORT]
-            [UV_EAGAIN => EAGAIN] [UV_EAI_ADDRFAMILY] [UV_EAI_AGAIN] [UV_EAI_BADFLAGS]
-            [UV_EAI_BADHINTS] [UV_EAI_CANCELED] [UV_EAI_FAIL] [UV_EAI_FAMILY]
-            [UV_EAI_MEMORY] [UV_EAI_NODATA] [UV_EAI_NONAME] [UV_EAI_OVERFLOW]
-            [UV_EAI_PROTOCOL] [UV_EAI_SERVICE] [UV_EAI_SOCKTYPE] [UV_EALREADY => EALREADY]
+            [UV_EAGAIN => EAGAIN]
+            [UV_EAI_ADDRFAMILY => UV_EAI_ADDRFAMILY] [UV_EAI_AGAIN => UV_EAI_AGAIN]
+            [UV_EAI_BADFLAGS => UV_EAI_BADFLAGS] [UV_EAI_BADHINTS => UV_EAI_BADHINTS]
+            [UV_EAI_CANCELED => UV_EAI_CANCELED] [UV_EAI_FAIL => UV_EAI_FAIL]
+            [UV_EAI_FAMILY => UV_EAI_FAMILY] [UV_EAI_MEMORY => UV_EAI_MEMORY]
+            [UV_EAI_NODATA => UV_EAI_NODATA] [UV_EAI_NONAME => UV_EAI_NONAME]
+            [UV_EAI_OVERFLOW => UV_EAI_OVERFLOW] [UV_EAI_PROTOCOL => UV_EAI_PROTOCOL]
+            [UV_EAI_SERVICE => UV_EAI_SERVICE] [UV_EAI_SOCKTYPE => UV_EAI_SOCKTYPE]
+            [UV_EALREADY => EALREADY]
             [UV_EBADF => EBADF] [UV_EBUSY => EBUSY] [UV_ECANCELED => ECANCELED]
             [UV_ECHARSET => ECHARSET] [UV_ECONNABORTED => ECONNABORTED]
             [UV_ECONNREFUSED => ECONNREFUSED] [UV_ECONNRESET => ECONNRESET]
@@ -56,7 +59,7 @@ macro_rules! for_each_uv_errno {
             [UV_EPROTO => EPROTO] [UV_ERANGE => ERANGE] [UV_EPROTOTYPE => EPROTOTYPE]
             [UV_ESHUTDOWN => ESHUTDOWN] [UV_EROFS => EROFS] [UV_ESRCH => ESRCH]
             [UV_ESPIPE => ESPIPE] [UV_ETXTBSY => ETXTBSY] [UV_ETIMEDOUT => ETIMEDOUT]
-            [UV_UNKNOWN] [UV_EXDEV => EXDEV] [UV_ENXIO => ENXIO] [UV_EOF => EOF]
+            [UV_UNKNOWN => EUNKNOWN] [UV_EXDEV => EXDEV] [UV_ENXIO => ENXIO] [UV_EOF => EOF]
             [UV_EHOSTDOWN => EHOSTDOWN] [UV_EMLINK => EMLINK] [UV_ENOTTY => ENOTTY]
             [UV_EREMOTEIO => EREMOTEIO] [UV_EILSEQ => EILSEQ] [UV_EFTYPE => EFTYPE]
             [UV_ENODATA => ENODATA] [UV_ESOCKTNOSUPPORT => ESOCKTNOSUPPORT] [UV_ERRNO_MAX]
@@ -754,17 +757,42 @@ impl SystemErrno {
     }
 }
 
-/// A negative libuv return code → `E`; a code libuv does not define is `UNKNOWN`.
-pub fn translate_uv_error_to_e(code: c_int) -> E {
-    uv::uv_err_to_e_discriminant(code)
-        .and_then(E::try_from_raw)
-        .unwrap_or(E::UNKNOWN)
+macro_rules! __uv_code_conversions {
+    (@uv $( [ $uv:ident $(=> $sys:ident)? ] )*) => {
+        /// A negative libuv code → its `E` discriminant (`UV_ENOENT`, -4058 → 2).
+        pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
+            match code {
+                $($( uv::$uv => Some(SystemErrno::$sys as u16), )?)*
+                _ => None,
+            }
+        }
+
+        /// An `E` discriminant → the code Node.js reports in `err.errno` (2 → `UV_ENOENT`, -4058).
+        pub const fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
+            match SystemErrno::from_repr(discriminant) {
+                $($( Some(SystemErrno::$sys) => Some(uv::$uv), )?)*
+                _ => None,
+            }
+        }
+    };
+}
+for_each_uv_errno! { __uv_code_conversions {} }
+
+pub fn e_to_uv(e: E) -> c_int {
+    e_discriminant_to_uv(e as u16).unwrap_or(uv::UV_UNKNOWN)
 }
 
-// Thin adapter over the canonical row table in `bun_libuv_sys::uv_err_to_e_discriminant`.
+/// A Win32 or Winsock error code → the libuv code for it. Values up to 0 are libuv codes already.
+pub fn uv_translate_sys_error(code: c_int) -> c_int {
+    if code <= 0 {
+        return code;
+    }
+    e_to_uv(u16::try_from(code).map_or(E::UNKNOWN, |code| Win32Error(code).to_node_e()))
+}
+
 #[inline]
 fn uv_code_to_system_errno(mag: u16) -> Option<SystemErrno> {
-    let d = uv::uv_err_to_e_discriminant(-c_int::from(mag))?;
+    let d = uv_err_to_e_discriminant(-c_int::from(mag))?;
     // UV_EAI_* (≥3000) / UV_UNKNOWN have no non-UV_ counterpart.
     if d >= 3000 || d == SystemErrno::EUNKNOWN as u16 {
         return None;
@@ -781,7 +809,7 @@ pub mod uv_e {
     // libuv-synthetic `-UV_E*` constant.
     macro_rules! __v {
         ($i:tt, $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -crate::uv::$uv
         };
     }
     crate::__uv_e_rows!(__v);
@@ -818,11 +846,25 @@ pub mod windows {
         fn to_e(self) -> E {
             self.to_system_errno().to_e()
         }
+        /// Like `to_e`, but what Node.js reports where that is something else.
+        fn to_node_e(self) -> E;
     }
     impl Win32ErrorExt for Win32Error {
         #[inline]
         fn to_system_errno(self) -> SystemErrno {
             SystemErrno::init_win32_error(self).unwrap_or(SystemErrno::EUNKNOWN)
+        }
+
+        fn to_node_e(self) -> E {
+            match self {
+                Win32Error::BROKEN_PIPE => E::EOF,
+                Win32Error::BUFFER_OVERFLOW => E::NAMETOOLONG,
+                Win32Error::DIRECTORY => E::NOENT,
+                Win32Error::NO_DATA => E::AGAIN,
+                Win32Error::NOACCESS => E::FAULT,
+                Win32Error::DELETE_PENDING | Win32Error::WSAEOPNOTSUPP => E::UNKNOWN,
+                _ => self.to_e(),
+            }
         }
     }
 

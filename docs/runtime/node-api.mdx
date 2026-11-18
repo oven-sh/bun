@@ -17,3 +17,18 @@ Alternatively, use `process.dlopen`:
 let mod = { exports: {} };
 process.dlopen(mod, "./my-node-module.node");
 ```
+
+## libuv functions
+
+Bun does not use libuv. It exports the functions of libuv 1.51 so that add-ons load, and implements these on every platform:
+
+| Area     | Functions                                                                                                                                                             |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Loop     | `uv_default_loop`, `uv_loop_get_data`, `uv_loop_set_data`, `uv_now`, `uv_update_time`                                                                                 |
+| Handles  | `uv_async_*`, `uv_check_*`, `uv_idle_*`, `uv_prepare_*`, `uv_timer_*`, `uv_handle_*`, `uv_close`, `uv_ref`, `uv_unref`, `uv_has_ref`, `uv_is_active`, `uv_is_closing` |
+| Requests | `uv_queue_work`, `uv_cancel`, `uv_req_*`                                                                                                                              |
+| Threads  | `uv_mutex_*`, `uv_once`                                                                                                                                               |
+| Errors   | `uv_err_name`, `uv_err_name_r`, `uv_strerror`, `uv_strerror_r`, `uv_translate_sys_error`                                                                              |
+| System   | `uv_cwd`, `uv_hrtime`, `uv_os_getpid`, `uv_os_getppid`, `uv_get_osfhandle`, `uv_open_osfhandle`, `uv_tty_reset_mode`, `uv_version`, `uv_version_string`               |
+
+A call to one of the other functions ends the process with a message that names the function. [#18546](https://github.com/oven-sh/bun/issues/18546) tracks the missing functions.

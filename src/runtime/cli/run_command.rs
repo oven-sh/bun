@@ -440,16 +440,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             ipc: ipc_fd,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: `env` outlives the mini event loop.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Err(err) => {
@@ -1659,7 +1649,7 @@ impl Run<'_> {
         }
 
         // These create undefined references to externally-defined C symbols
-        // (uv_* posix stubs, v8:: shims) so the linker pulls those archive
+        // (uv_* stubs, v8:: shims) so the linker pulls those archive
         // members from libbun.a in CI's split link-only mode and keeps them
         // through `--gc-sections`. Without them, dlopen'd NAPI modules see
         // `undefined symbol: uv_*` instead of the friendly crash message.
@@ -2156,16 +2146,6 @@ impl RunCommand {
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             use_execve_on_macos: silent,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: env loader is process-lifetime.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Ok(r) => r,
@@ -2909,9 +2889,7 @@ impl RunCommand {
         let open_z = bun_core::ZStr::nul_terminate(&mut script_name_buf, open_len);
 
         let absolute_script_path: Box<[u8]> = {
-            let Ok(file) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0)
-                .map(sys::CloseOnDrop::new)
-                .and_then(|file| file.make_lib_uv_owned_for_syscall(sys::Tag::open))
+            let Ok(file) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0).map(sys::CloseOnDrop::new)
             else {
                 return false;
             };
@@ -3072,8 +3050,7 @@ impl RunCommand {
         if ctx.positionals.is_empty() {
             // Node: bare `node` on a TTY starts the REPL. Only in emulation
             // mode; bun's own `bun` with no args stays the help text. Use
-            // Output's cached stdio flag (set at startup via libuv's handle
-            // probe), which is the same check `bun update --interactive` uses.
+            // Output's cached stdio flag, as `bun update --interactive` does.
             if Output::is_stdin_tty() {
                 return Self::exec_node_repl(ctx);
             }
@@ -3807,7 +3784,7 @@ impl BunXFastPath {
             return warg.len() + 2;
         }
 
-        // Complex case: libuv reverse-walk backslash escaping.
+        // Complex case: backslash escaping.
         let mut pos: usize = 0;
         buffer[pos] = b'"' as u16;
         pos += 1;

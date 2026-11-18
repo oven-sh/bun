@@ -113,7 +113,7 @@ impl PipeHandle {
             return false;
         }
         if close_async && close_fd {
-            crate::closer::Closer::close(fd, ());
+            crate::closer::Closer::close(fd);
         } else if close_fd {
             let _ = fd.close_allowing_bad_file_descriptor(None);
         }
@@ -145,6 +145,7 @@ pub enum ReadState {
 /// One delivery from a `BufferedReader`. The variant says who owns the bytes, so a consumer never has to work that out from the pointer.
 pub enum Chunk<'a> {
     /// The loop's shared scratch: gone once the closure returns. Copy what you keep.
+    #[cfg(not(windows))]
     Scratch(&'a [u8]),
     /// The reader's own buffer, which it clears and reuses after the call. Copy what you keep, or `take()` it when moving beats copying.
     Buffer(&'a mut Vec<u8>),
@@ -156,6 +157,7 @@ impl Chunk<'_> {
     /// The bytes as an owned `Vec`, moving rather than copying where the variant allows.
     pub fn take(self) -> Vec<u8> {
         match self {
+            #[cfg(not(windows))]
             Chunk::Scratch(bytes) => bytes.to_vec(),
             Chunk::Buffer(buffer) => core::mem::take(buffer),
             Chunk::Owned(buffer) => buffer,
@@ -171,6 +173,7 @@ impl core::ops::Deref for Chunk<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
+            #[cfg(not(windows))]
             Chunk::Scratch(bytes) => bytes,
             Chunk::Buffer(buffer) => buffer,
             Chunk::Owned(buffer) => buffer,

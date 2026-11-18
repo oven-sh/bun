@@ -26,7 +26,7 @@ pub struct WindowsWatcher {
     pub(crate) base_idx: usize,
 }
 
-// SAFETY: `overlapped` points at nothing.
+// SAFETY: `overlapped` points at nothing, and a read on a handle that is bound to a port belongs to no thread.
 unsafe impl Send for WindowsWatcher {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, thiserror::Error)]
@@ -87,7 +87,7 @@ const _: () = assert!(
 impl DirWatcher {
     /// invalidates any EventIterators. No-op if the previous read is still pending, which happens
     /// after a poll times out.
-    fn prepare(&mut self) -> bun_sys::Result<()> {
+    pub(crate) fn prepare(&mut self) -> bun_sys::Result<()> {
         if self.read_pending {
             return Ok(());
         }

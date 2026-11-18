@@ -1018,7 +1018,6 @@ impl File {
     pub fn stat(&self) -> Stat {
         let mut result: Stat = bun_core::ffi::zeroed();
         result.st_size = self.utf8_contents().len() as _;
-        // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
         result
     }

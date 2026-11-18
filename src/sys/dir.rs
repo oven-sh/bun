@@ -335,8 +335,7 @@ impl Dir {
 
     /// `symlinkat(target, self.fd, link)`. The
     /// `is_directory` flag is a no-op on POSIX;
-    /// on Windows it selects junction vs. file-symlink and
-    /// callers route through `sys_uv::symlink_uv` instead.
+    /// on Windows callers use `windows::junction` instead.
     pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
         let mut tbuf = bun_paths::path_buffer_pool::get();
         let tlen = target.len().min(tbuf.0.len() - 1);

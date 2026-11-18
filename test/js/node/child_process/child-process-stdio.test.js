@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -219,4 +219,174 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
     expect(stdout).toBe("spawnSync: ok 0\nspawn: 0\n");
     expect(exitCode).toBe(0);
   });
+});
+
+describe.concurrent("a pipe at fd 3", () => {
+  function start(script) {
+    const child = spawn(bunExe(), ["-e", script], { env: bunEnv, stdio: ["ignore", "pipe", "pipe", "pipe"] });
+    const text = async stream => Buffer.concat(await Array.fromAsync(stream)).toString();
+    const ended = Promise.all([text(child.stdout), text(child.stderr), once(child, "exit")]);
+    return {
+      pipe: child.stdio[3],
+      result: () => ended.then(([stdout, stderr, [exitCode]]) => ({ stdout, stderr, exitCode })),
+      async [Symbol.asyncDispose]() {
+        child.stdio[3].destroy();
+        child.kill();
+        await ended;
+      },
+    };
+  }
+  function receive(stream, length) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const chunks = [];
+    stream.on("data", chunk => {
+      chunks.push(chunk);
+      if ((length -= chunk.length) <= 0) resolve(Buffer.concat(chunks));
+    });
+    stream.on("error", reject).on("close", () => reject(new Error(`closed with ${length} bytes to go`)));
+    return promise;
+  }
+
+  it("carries data both ways at the same time", async () => {
+    const size = 2 * 1024 * 1024;
+    await using child = start(`
+      const pipe = require("net").connect({ fd: 3 });
+      const hash = new Bun.CryptoHasher("sha1");
+      let left = ${size};
+      pipe.on("data", chunk => {
+        hash.update(chunk);
+        if ((left -= chunk.length) === 0) console.log(hash.digest("hex"));
+      });
+      pipe.write(Buffer.alloc(${size}, "from child|"));
+    `);
+    const sent = Buffer.alloc(size, "from parent|");
+    const written = new Promise(resolve => child.pipe.write(sent, resolve));
+    expect((await receive(child.pipe, size)).equals(Buffer.alloc(size, "from child|"))).toBe(true);
+    await written;
+    child.pipe.end();
+    expect(await child.result()).toEqual({ stdout: Bun.SHA1.hash(sent, "hex") + "\n", stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    ["net.connect()", `const pipe = require("net").connect({ fd: 3 }); pipe.on("data", chunk => pipe.write(chunk))`],
+    [
+      "fs streams",
+      `fs.createReadStream(null, { fd: 3, autoClose: false }).on("data", chunk => fs.writeSync(3, chunk)).on("error", () => {})`,
+    ],
+    ["Bun.file(3)", `for await (const chunk of Bun.file(3).stream()) await Bun.write(Bun.file(3), chunk)`],
+  ])("answers message by message through %s", async (_, echo) => {
+    await using child = start(`import fs from "fs"; ${echo}`);
+    for (let i = 0; i < 50; i++) {
+      child.pipe.write(`message ${i}`);
+      expect(String((await once(child.pipe, "data"))[0])).toBe(`message ${i}`);
+    }
+    child.pipe.end();
+    expect(await child.result()).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    ["exits", "process.exit(0)"],
+    ["closes it", "fs.closeSync(3); setInterval(() => {}, 1e6)"],
+    ["is killed", "process.kill(process.pid, 'SIGKILL')"],
+  ])("still gives what the child wrote before it %s, then ends", async (_, leave) => {
+    await using child = start(`const fs = require("fs"); fs.writeSync(3, Buffer.alloc(8000, "x")); ${leave}`);
+    expect(Buffer.concat(await Array.fromAsync(child.pipe)).toString()).toBe(Buffer.alloc(8000, "x").toString());
+  });
+});
+
+describe.concurrent("writes to a child's stdin that have to wait", () => {
+  const megabyte = 1024 * 1024;
+  // Reads nothing until it is told to, over IPC.
+  function start(onMessage) {
+    const child = spawn(
+      bunExe(),
+      ["-e", `process.once("message", () => { process.disconnect(); ${onMessage} }); console.log("ready");`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "inherit", "ipc"] },
+    );
+    child.stdout.setEncoding("utf8");
+    child[Symbol.asyncDispose] = async () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      child.kill("SIGKILL");
+      await once(child, "exit");
+    };
+    return child;
+  }
+  const rest = async child => (await Array.fromAsync(child.stdout)).join("");
+  const count = `let n = 0; process.stdin.on("data", chunk => (n += chunk.length)).on("end", () => console.log(n));`;
+
+  it("arrive in order, and their callbacks run in order", async () => {
+    await using child = start(`Bun.stdin.bytes().then(bytes => console.log(Bun.SHA1.hash(bytes, "hex")))`);
+    await once(child.stdout, "data");
+    const chunks = Array.from({ length: 8 }, (_, i) => Buffer.alloc(i % 2 ? 3 : megabyte / 2, `${i}|`));
+    const order = [];
+    chunks.forEach((chunk, i) => child.stdin.write(chunk, error => order.push(error ?? i)));
+    child.stdin.end();
+    child.send("read");
+    expect(await rest(child)).toBe(Bun.SHA1.hash(Buffer.concat(chunks), "hex") + "\n");
+    expect(order).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  // On Windows the callback runs at once, with null.
+  it.todoIf(isWindows).each([
+    ["is killed", child => child.kill("SIGKILL")],
+    ["exits", child => child.send("exit")],
+  ])("fail once when the child %s", async (_, leave) => {
+    await using child = start("process.exit(0)");
+    await once(child.stdout, "data");
+    const errors = [];
+    child.stdin.on("error", error => errors.push(error.code));
+    const { promise, resolve } = Promise.withResolvers();
+    child.stdin.write(Buffer.alloc(4 * megabyte), resolve);
+    const closed = once(child, "close");
+    leave(child);
+    expect(await promise).toBeInstanceOf(Error);
+    await closed;
+    expect(errors.length).toBeLessThanOrEqual(1);
+    expect(child.stdin.destroyed).toBe(true);
+  });
+
+  it("do not keep the child from seeing the end after destroy()", async () => {
+    await using child = start(count);
+    await once(child.stdout, "data");
+    child.stdin.on("error", () => {});
+    child.stdin.write(Buffer.alloc(4 * megabyte));
+    child.stdin.destroy();
+    child.send("read");
+    expect(await rest(child)).toMatch(/^\d+\n$/);
+  });
+
+  it("are all delivered by end() before the child sees the end", async () => {
+    await using child = start(count);
+    await once(child.stdout, "data");
+    child.stdin.end(Buffer.alloc(4 * megabyte));
+    child.send("read");
+    expect(await rest(child)).toBe(`${4 * megabyte}\n`);
+  });
+
+  it.each(["process.exit(0)", "child.kill()", "child.stdin.end(); child.kill()"])(
+    "do not keep the parent from ending with %s",
+    async leave => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 20_000)"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+           process.on("exit", () => child.kill());
+           Promise.resolve(child.stdin.write(Buffer.alloc(${4 * megabyte}))).catch(() => {});
+           process.on("unhandledRejection", () => {});
+           setImmediate(() => { console.log("leaving"); ${leave}; });`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "leaving\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
 });

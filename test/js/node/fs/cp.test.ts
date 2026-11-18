@@ -655,7 +655,7 @@ test.skipIf(!isPosix)(
   },
 );
 
-describe.skipIf(!isPosix).concurrent("fs.promises.cp recursive rejects an empty destination with ENOENT", () => {
+describe.concurrent("fs.promises.cp recursive rejects an empty destination with ENOENT", () => {
   test.each([
     ["src is a directory", `fs.mkdirSync("src");`],
     // Outside macOS, JavaScript copies directories itself, so `src` becomes one after its last check.

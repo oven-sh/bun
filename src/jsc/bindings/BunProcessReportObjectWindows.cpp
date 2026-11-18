@@ -27,7 +27,6 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/Interpreter.h"
 #include "wtf/text/OrdinalNumber.h"
-#include <uv.h>
 #include <windows.h>
 #include <psapi.h>
 #include <versionhelpers.h>
@@ -39,22 +38,8 @@ using namespace JSC;
 
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
-
-template<typename T, void (*freeItems)(T*, int)>
-struct UVList {
-    WTF_MAKE_NONCOPYABLE(UVList);
-    UVList() = default;
-    ~UVList()
-    {
-        if (items)
-            freeItems(items, count);
-    }
-
-    T& operator[](int index) const { return items[index]; }
-
-    T* items { nullptr };
-    int count { 0 };
-};
+extern "C" EncodedJSValue Bun__Os__createReportCpus(JSGlobalObject*);
+extern "C" EncodedJSValue Bun__Os__createReportNetworkInterfaces(JSGlobalObject*);
 
 JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
 {
@@ -117,7 +102,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         JSObject* versions = constructEmptyObject(globalObject, globalObject->objectPrototype());
         Bun::putDirectNamed(vm, versions, "node"_s, jsString(vm, String(REPORTED_NODEJS_VERSION ""_s)));
         Bun::putDirectNamed(vm, versions, "v8"_s, jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_V8_VERSION))));
-        Bun::putDirectNamed(vm, versions, "uv"_s, jsString(vm, String::fromLatin1(uv_version_string())));
+        Bun::putDirectNamed(vm, versions, "uv"_s, jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(reportedLibuvVersion))));
         Bun::putDirectNamed(vm, versions, "modules"_s, jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(STRINGIFY(REPORTED_NODEJS_ABI_VERSION)))));
         Bun::putDirectNamed(vm, header, "componentVersions"_s, versions);
         RETURN_IF_EXCEPTION(scope, {});
@@ -171,83 +156,13 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             }
         }
 
-        // CPU info using libuv
-        if (UVList<uv_cpu_info_t, uv_free_cpu_info> cpu_infos; uv_cpu_info(&cpu_infos.items, &cpu_infos.count) == 0) {
-            JSArray* cpuArray = constructEmptyArray(globalObject, nullptr, cpu_infos.count);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            for (int i = 0; i < cpu_infos.count; i++) {
-                JSObject* cpu = constructEmptyObject(globalObject);
-                Bun::putDirectNamed(vm, cpu, "model"_s, jsString(vm, String::fromUTF8(cpu_infos[i].model)));
-                Bun::putDirectNamed(vm, cpu, "speed"_s, jsNumber(cpu_infos[i].speed));
-                Bun::putDirectNamed(vm, cpu, "user"_s, jsNumber(cpu_infos[i].cpu_times.user));
-                Bun::putDirectNamed(vm, cpu, "nice"_s, jsNumber(cpu_infos[i].cpu_times.nice));
-                Bun::putDirectNamed(vm, cpu, "sys"_s, jsNumber(cpu_infos[i].cpu_times.sys));
-                Bun::putDirectNamed(vm, cpu, "idle"_s, jsNumber(cpu_infos[i].cpu_times.idle));
-                Bun::putDirectNamed(vm, cpu, "irq"_s, jsNumber(cpu_infos[i].cpu_times.irq));
-                cpuArray->putDirectIndex(globalObject, i, cpu);
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-            Bun::putDirectNamed(vm, header, "cpus"_s, cpuArray);
-        } else {
-            JSArray* emptyCpus = constructEmptyArray(globalObject, nullptr);
-            RETURN_IF_EXCEPTION(scope, {});
-            Bun::putDirectNamed(vm, header, "cpus"_s, emptyCpus);
-        }
+        JSValue cpus = JSValue::decode(Bun__Os__createReportCpus(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
+        Bun::putDirectNamed(vm, header, "cpus"_s, cpus);
 
-        // Network interfaces using libuv
-        if (UVList<uv_interface_address_t, uv_free_interface_addresses> interfaces; uv_interface_addresses(&interfaces.items, &interfaces.count) == 0) {
-            JSArray* interfacesArray = constructEmptyArray(globalObject, nullptr, interfaces.count);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            for (int i = 0; i < interfaces.count; i++) {
-                JSObject* iface = constructEmptyObject(globalObject);
-                Bun::putDirectNamed(vm, iface, "name"_s, jsString(vm, String::fromUTF8(interfaces[i].name)));
-                Bun::putDirectNamed(vm, iface, "internal"_s, jsBoolean(interfaces[i].is_internal));
-
-                char addr[INET6_ADDRSTRLEN];
-                if (interfaces[i].address.address4.sin_family == AF_INET) {
-                    uv_inet_ntop(AF_INET, &interfaces[i].address.address4.sin_addr, addr, sizeof(addr));
-                    Bun::putDirectNamed(vm, iface, "address"_s, jsString(vm, String::fromUTF8(addr)));
-
-                    char netmask[INET_ADDRSTRLEN];
-                    uv_inet_ntop(AF_INET, &interfaces[i].netmask.netmask4.sin_addr, netmask, sizeof(netmask));
-                    Bun::putDirectNamed(vm, iface, "netmask"_s, jsString(vm, String::fromUTF8(netmask)));
-
-                    Bun::putDirectNamed(vm, iface, "family"_s, jsString(vm, String::fromLatin1("IPv4")));
-                } else if (interfaces[i].address.address6.sin6_family == AF_INET6) {
-                    uv_inet_ntop(AF_INET6, &interfaces[i].address.address6.sin6_addr, addr, sizeof(addr));
-                    Bun::putDirectNamed(vm, iface, "address"_s, jsString(vm, String::fromUTF8(addr)));
-
-                    char netmask[INET6_ADDRSTRLEN];
-                    uv_inet_ntop(AF_INET6, &interfaces[i].netmask.netmask6.sin6_addr, netmask, sizeof(netmask));
-                    Bun::putDirectNamed(vm, iface, "netmask"_s, jsString(vm, String::fromUTF8(netmask)));
-
-                    Bun::putDirectNamed(vm, iface, "family"_s, jsString(vm, String::fromLatin1("IPv6")));
-                    Bun::putDirectNamed(vm, iface, "scopeid"_s, jsNumber(interfaces[i].address.address6.sin6_scope_id));
-                }
-
-                // MAC address
-                char mac[18];
-                snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
-                    static_cast<unsigned char>(interfaces[i].phys_addr[0]),
-                    static_cast<unsigned char>(interfaces[i].phys_addr[1]),
-                    static_cast<unsigned char>(interfaces[i].phys_addr[2]),
-                    static_cast<unsigned char>(interfaces[i].phys_addr[3]),
-                    static_cast<unsigned char>(interfaces[i].phys_addr[4]),
-                    static_cast<unsigned char>(interfaces[i].phys_addr[5]));
-                Bun::putDirectNamed(vm, iface, "mac"_s, jsString(vm, String::fromUTF8(mac)));
-
-                interfacesArray->putDirectIndex(globalObject, i, iface);
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-            Bun::putDirectNamed(vm, header, "networkInterfaces"_s, interfacesArray);
-        } else {
-            JSArray* emptyInterfaces = constructEmptyArray(globalObject, nullptr);
-            RETURN_IF_EXCEPTION(scope, {});
-            Bun::putDirectNamed(vm, header, "networkInterfaces"_s, emptyInterfaces);
-        }
+        JSValue networkInterfaces = JSValue::decode(Bun__Os__createReportNetworkInterfaces(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+        Bun::putDirectNamed(vm, header, "networkInterfaces"_s, networkInterfaces);
 
         Bun::putDirectNamed(vm, report, "header"_s, header);
         RETURN_IF_EXCEPTION(scope, {});

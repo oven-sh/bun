@@ -1930,11 +1930,9 @@ pub(crate) fn pack(
                 0,
             )
             .map(CloseOnDrop::new)
-            .and_then(|file| file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open))
             .unwrap_or_else(|err| fail_file(err, "open", path));
 
-            let stat = bun_sys::sys_uv::fstat(file.fd())
-                .unwrap_or_else(|err| fail_file(err, "stat", path));
+            let stat = bun_sys::fstat(file.fd()).unwrap_or_else(|err| fail_file(err, "stat", path));
 
             pack_list.push(PackListEntry {
                 subpath: ZBox::from_bytes(path),

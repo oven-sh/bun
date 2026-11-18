@@ -49,7 +49,7 @@ pub(crate) struct FSWatcher {
     /// JS-thread uses only.
     ctx: bun_ptr::BackRef<VirtualMachine>,
     /// How the (process-wide) watcher thread delivers event batches to the
-    /// VM while this watcher is attached (POSIX; on Windows libuv delivers fs
+    /// VM while this watcher is attached (POSIX; on Windows the loop delivers fs
     /// events on the JS thread). Weak: `detach()` — close, the VM's stop
     /// phase, or finalize — is what ends the thread's access to `self`.
     #[cfg(not(windows))]
@@ -66,8 +66,7 @@ pub(crate) struct FSWatcher {
     global_this: GlobalRef,
     /// The JS wrapper, held strong while the watcher is open so that the listener stays callable.
     js_this: JsCell<JsRef>,
-    // pub(super): read directly by `win_watcher::PathWatcher::emit`.
-    pub(super) encoding: Encoding,
+    encoding: Encoding,
 
     /// User can call close and pre-detach so we need to track this
     closed: Cell<bool>,
@@ -236,8 +235,7 @@ pub(crate) enum Event {
         close: bool,
     },
     /// An event with no filename, surfaced to JS with `null`, matching node:
-    /// `Change` when the OS event queue overflowed and changes were lost,
-    /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
+    /// `Change` when the OS event queue overflowed and changes were lost.
     #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     NoFilename(WatchEventKind),
     Abort,
@@ -907,7 +905,8 @@ impl FSWatcher {
             // backend dropped the callback parameters — only one valid
             // value each), so the call is cfg-split.
             #[cfg(windows)]
-            let r = path_watcher::watch(vm_ref, file_path, args.recursive, ctx as *mut c_void);
+            let r =
+                path_watcher::watch(vm_ref, file_path, args.recursive, args.encoding, ctx.cast());
             #[cfg(not(windows))]
             let r = path_watcher::watch(
                 vm_ref,

@@ -805,7 +805,7 @@ impl RuntimeTranspilerCache {
             None
         } else {
             let dir = sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-            Some(sys::File::from_fd(dir.into_raw()).make_lib_uv_owned()?)
+            Some(sys::File::from_fd(dir.into_raw()))
         };
 
         Entry::save(

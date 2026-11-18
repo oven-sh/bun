@@ -304,7 +304,7 @@ impl WritablePending {
                 global,
                 context,
             } => {
-                // A sink settles a write from its own completion (a libuv write callback on
+                // A sink settles a write from its own completion (a write callback on
                 // Windows), not from a queued task: for the script that is writing.
                 let entered = global.bun_vm().enter_context(context);
                 Writable::fulfill_promise(

@@ -184,6 +184,12 @@ pub enum PollTag {
     TerminalWriter,
     #[cfg(windows)]
     WindowsNamedPipe,
+    #[cfg(windows)]
+    IpcChannel,
+    #[cfg(windows)]
+    TestParallelChannel,
+    #[cfg(windows)]
+    ChromePipes,
     #[cfg(target_os = "macos")]
     ParentDeathWatchdog,
     #[cfg(not(windows))]
@@ -1332,7 +1338,7 @@ impl Pollable {
 }
 
 // `current_ready_poll`/`ready_polls` only exist on the POSIX uws loop layout;
-// on Windows the libuv loop drives readiness, so this entry point is never
+// on Windows the completion port drives readiness, so this entry point is never
 // linked there. Restrict to the platforms where the fields are present.
 #[cfg(any(
     target_os = "linux",

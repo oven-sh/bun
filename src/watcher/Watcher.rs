@@ -130,12 +130,16 @@ impl Watcher {
         ctx: Box<dyn WatcherContext>,
         top_level_dir: &'static [u8],
     ) -> Result<OwnedWatcher, crate::Error> {
-        let thread = Box::new(WatcherThread {
+        #[cfg_attr(not(windows), expect(unused_mut))]
+        let mut thread = Box::new(WatcherThread {
             watch_events: [WatchEvent::default(); MAX_COUNT],
             #[cfg(windows)]
             platform: Platform::new(top_level_dir)?,
             ctx,
         });
+        // What changes before the first read is not reported. An error comes back in `watch_loop`.
+        #[cfg(windows)]
+        let _ = thread.platform.watcher.prepare();
         let this = Arc::new(Watcher {
             #[cfg(not(windows))]
             platform: Platform::new(top_level_dir)?,

@@ -240,6 +240,7 @@ platform_specific_new!(pub TMP: string, posix = "TMP", windows = "TMP", {});
 platform_specific_new!(pub TMPDIR: string, posix = "TMPDIR", windows = "TMPDIR", {});
 new!(pub TMUX: string, "TMUX", {});
 new!(pub TODIUM: string, "TODIUM", {});
+new!(pub UV_THREADPOOL_SIZE: unsigned, "UV_THREADPOOL_SIZE", {});
 platform_specific_new!(pub USER: string, posix = "USER", windows = "USERNAME", {});
 new!(pub WANTS_LOUD: boolean, "WANTS_LOUD", { default: false });
 // The same as system_root.

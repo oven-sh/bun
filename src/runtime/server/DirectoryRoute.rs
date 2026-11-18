@@ -304,9 +304,7 @@ impl DirectoryRoute {
         };
         #[cfg(windows)]
         let fd = bun_sys::openat(self.root.fd(), zrel, flags, 0).ok()?;
-        // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
-        // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
-        File::from_fd(fd).make_lib_uv_owned().ok()
+        Some(File::from_fd(fd))
     }
 
     fn stat_cache_lookup(&self, rel: &[u8], stat: &bun_sys::Stat) -> (u64, [u8; 32], usize) {

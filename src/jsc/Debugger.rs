@@ -245,35 +245,6 @@ impl Debugger {
             bun_core::Timespec { sec: 0, nsec: 0 }
         };
 
-        #[cfg(windows)]
-        {
-            // Arm a one-shot libuv timer that unrefs `poll_ref` after the
-            // delay (Windows lacks a working `tickWithTimeout`). TODO: remove
-            // this when tickWithTimeout actually works properly on Windows.
-            use bun_sys::windows::libuv as uv;
-            if wait == Wait::Shortly {
-                let uv_loop = this.uv_loop();
-                // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
-                unsafe { uv::uv_update_time(uv_loop) };
-                let mut timer = uv::Owned::<uv::Timer>::zeroed();
-                timer.init(uv_loop);
-
-                extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
-                    if let Some(d) = VirtualMachine::get().debugger.get() {
-                        d.poll_ref.unref(js_vm_ctx());
-                    }
-                    // SAFETY: the timer given up below, which fires once.
-                    drop(unsafe { uv::Owned::from_raw(handle) });
-                }
-                timer.start(
-                    WAIT_FOR_CONNECTION_DELAY_MS as u64,
-                    0,
-                    Some(on_debugger_timer),
-                );
-                let _ = timer.into_raw();
-            }
-        }
-
         while dbg.wait_for_connection.get() != Wait::Off {
             this.event_loop().tick();
             // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.
@@ -291,16 +262,14 @@ impl Debugger {
                 }
                 Wait::Shortly => {
                     // Handle .incrementRefConcurrently
-                    #[cfg(unix)]
-                    {
-                        let pending_unref = this.take_pending_unref();
-                        if pending_unref > 0 {
-                            this.uws_loop().unref_count(pending_unref);
-                        }
+                    let pending_unref = this.take_pending_unref();
+                    if pending_unref > 0 {
+                        this.uws_loop().unref_count(pending_unref);
                     }
 
-                    this.uws_loop()
-                        .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
+                    let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+                    let timeout = deadline.duration(&now.min_ignore_epoch(deadline));
+                    this.uws_loop().tick_with_timeout(Some(&timeout), now.ns());
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(

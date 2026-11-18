@@ -38,7 +38,7 @@ Bun statically links these libraries:
 | [`c-ares`](https://github.com/c-ares/c-ares) | MIT licensed |
 | [`libicu`](https://github.com/unicode-org/icu) 78 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
-| [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
+| [`libuv`](https://github.com/libuv/libuv) (not linked: `src/jsc/bindings/libuv` has its headers, and some Windows code is derived from it) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) (not linked: `src/deflate` and its checksum kernels are derived from it) | [MIT](https://github.com/ebiggers/libdeflate/blob/master/COPYING) |
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) (not linked: the JPEG codec is derived from parts of it, and so based in part on the work of the Independent JPEG Group) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
 | [`libspng`](https://github.com/randy408/libspng) (not linked: `src/png` is derived from parts of it) | BSD 2-Clause |

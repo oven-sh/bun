@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
-describe.if(isPosix)("IOWriter epipe", () => {
+describe("IOWriter epipe", () => {
   TestBuilder.command`yes | head`
     .exitCode(0)
     .stdout("y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n")

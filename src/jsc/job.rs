@@ -24,6 +24,10 @@ use core::ptr::NonNull;
 
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_io::{JsKeepAlive, KeepAlive};
+#[cfg(windows)]
+use bun_threading::fifo_pool::FifoPool;
+#[cfg(windows)]
+use bun_threading::work_pool::{DEVICE_POOL, FilePool};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::debugger::AsyncTaskTracker;
@@ -189,7 +193,13 @@ pub trait JobContext: Sized + 'static {
     /// Whether the job is queued under `ContextId::NONE`: [`then`](Self::then) also runs after the scheduling context stops or `bun test --isolate` moves on.
     const OUTLIVES_SCRIPT: bool = false;
 
-    /// Pool thread, VM not yet in its final wait when the pool reached the job
+    /// Whether [`run`](Self::run) is also called for a job that the pool reaches during the VM's final wait.
+    const RUNS_IN_FINAL_WAIT: bool = false;
+
+    /// Whether it is for the `FilePool` of Windows.
+    const IS_FILE_IO: bool = false;
+
+    /// Pool thread (or that of `Unstarted::run_here`), VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
     /// it (e.g. across async I/O that finishes on another thread) and call
@@ -332,6 +342,12 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        Self::create(cx, off, js).start();
+    }
+
+    /// As [`schedule`](Self::schedule), but the caller says when the pool gets the job.
+    #[track_caller]
+    pub fn create(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) -> Unstarted {
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -362,12 +378,16 @@ impl<C: JobContext> Job<C> {
             off,
             js,
         }));
-        // SAFETY: live until completed/released on this thread; the pool owns it now.
+        // SAFETY: live until completed/released on this thread, which is after it was started.
         unsafe {
             if C::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            WorkPool::schedule(&raw mut (*job).task);
+            Unstarted {
+                task: &raw mut (*job).task,
+                #[cfg(windows)]
+                pool: C::IS_FILE_IO.then(FilePool::get),
+            }
         }
     }
 
@@ -382,7 +402,7 @@ impl<C: JobContext> Job<C> {
             job: NonNull::new(this).expect("job"),
             ticket,
         };
-        if done.ticket().cancelled() {
+        if !C::RUNS_IN_FINAL_WAIT && done.ticket().cancelled() {
             return done.finish();
         }
         if let Some(done) = C::run(off, done) {
@@ -412,6 +432,51 @@ impl<C: JobContext> Job<C> {
         // SAFETY: fn contract.
         let (off, js) = unsafe { Self::take(this, cx.vm()) };
         C::then(off, js, cx)
+    }
+}
+
+/// A job that the pool does not have yet. Its VM waits for it like for any other.
+#[must_use = "a job must be started"]
+pub struct Unstarted {
+    task: *mut WorkPoolTask,
+    /// In place of the [`WorkPool`].
+    #[cfg(windows)]
+    pool: Option<&'static FifoPool>,
+}
+// SAFETY: a task can be scheduled by any thread, and run on any thread.
+unsafe impl Send for Unstarted {}
+impl Unstarted {
+    #[inline]
+    pub fn start(self) {
+        #[cfg(windows)]
+        if let Some(pool) = self.pool {
+            return pool.schedule(self.task);
+        }
+        WorkPool::schedule(self.task);
+    }
+
+    /// See [`FifoPool::schedule_after_this_task`].
+    #[cfg(windows)]
+    pub fn start_after_this_task(self) {
+        match self.pool {
+            Some(pool) => pool.schedule_after_this_task(self.task),
+            None => self.start(),
+        }
+    }
+
+    /// On this thread, in place of one of the pool.
+    #[cfg(windows)]
+    pub fn run_here(self) {
+        // SAFETY: what the pool does with the task of a job.
+        unsafe { ((*self.task).callback)(self.task) };
+    }
+
+    #[cfg(windows)]
+    pub fn for_device_if(mut self, can_block: bool) -> Self {
+        if can_block {
+            self.pool = Some(&DEVICE_POOL);
+        }
+        self
     }
 }
 

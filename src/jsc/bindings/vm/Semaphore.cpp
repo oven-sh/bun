@@ -5,7 +5,7 @@ namespace Bun {
 Semaphore::Semaphore(unsigned int value)
 {
 #if OS(WINDOWS)
-    uv_sem_init(&m_semaphore, value);
+    m_value = value;
 #elif OS(DARWIN)
     semaphore_create(mach_task_self(), &m_semaphore, SYNC_POLICY_FIFO, value);
 #else
@@ -15,11 +15,9 @@ Semaphore::Semaphore(unsigned int value)
 
 Semaphore::~Semaphore()
 {
-#if OS(WINDOWS)
-    uv_sem_destroy(&m_semaphore);
-#elif OS(DARWIN)
+#if OS(DARWIN)
     semaphore_destroy(mach_task_self(), m_semaphore);
-#else
+#elif !OS(WINDOWS)
     sem_destroy(&m_semaphore);
 #endif
 }
@@ -27,7 +25,9 @@ Semaphore::~Semaphore()
 bool Semaphore::signal()
 {
 #if OS(WINDOWS)
-    uv_sem_post(&m_semaphore);
+    WTF::Locker locker { m_lock };
+    m_value++;
+    m_condition.notifyOne();
     return true;
 #elif OS(DARWIN)
     return semaphore_signal(m_semaphore) == KERN_SUCCESS;
@@ -39,7 +39,10 @@ bool Semaphore::signal()
 bool Semaphore::wait()
 {
 #if OS(WINDOWS)
-    uv_sem_wait(&m_semaphore);
+    WTF::Locker locker { m_lock };
+    while (!m_value)
+        m_condition.wait(m_lock);
+    m_value--;
     return true;
 #elif OS(DARWIN)
     return semaphore_wait(m_semaphore) == KERN_SUCCESS;

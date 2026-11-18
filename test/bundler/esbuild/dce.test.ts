@@ -1649,6 +1649,7 @@ describe("bundler", () => {
         };
       `,
     },
+    skipOnEsbuild: true,
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("({ [sym]: 0 });");
       api.expectFile("/out.js").toContain("({ [Symbol.toStringTag]: 0 });");

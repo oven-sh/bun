@@ -1103,8 +1103,6 @@ function handACallbackToNativeCode(text: string) {
 function rewritten(text: string, extension: string) {
   const random = randomFrom("rewritten" + text);
   const isTypeScript = extension.endsWith("ts");
-  // `bun run` turns an object literal that nothing uses into its computed keys, each made a string, which throws where a key is a symbol. As the operand of a call the literal stays.
-  text = text.replace(/^(\s*)\((\{ \[.*)\);$/gm, "$1Object($2);");
   // Such scenes bring files of their own, and the splitter knows only functions that end in a line of their own.
   const hasSizes = random() * 100 < Number(options["scenes-of-every-size"]);
   if (hasSizes) text = writeScenesOfEverySize(text, isTypeScript);

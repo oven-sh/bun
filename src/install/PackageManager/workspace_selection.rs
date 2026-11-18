@@ -8,7 +8,6 @@ use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf_checked, platform, platform_to_posix_in_place};
 
 use crate::bun_fs::FileSystem;
-use crate::dependency::Behavior;
 use crate::lockfile::Lockfile;
 use crate::lockfile::package::PackageColumns as _;
 use crate::resolution::Tag as ResolutionTag;
@@ -372,7 +371,7 @@ impl WorkspaceGraph {
             let deps = dep_lists[pkg_id].get(dependencies);
             for (dep, &dep_pkg) in deps.iter().zip(res_lists[pkg_id].get(resolutions)) {
                 // The root's `workspaces` entries are not dependencies on the workspaces.
-                if dep.behavior == Behavior::WORKSPACE {
+                if dep.behavior.is_workspace_only() {
                     continue;
                 }
                 let Some(&to) = candidate_of.get(dep_pkg as usize) else {

@@ -123,12 +123,11 @@ impl PmLicensesCommand {
         path.set_length(top_len);
 
         let filter_patterns = pm.options.filter_patterns;
-        let (roots, follow_workspace_edges): (Vec<PackageID>, bool) = if filter_patterns.is_empty()
-        {
-            (
-                vec![pm.root_package_id.get(lockfile, pm.workspace_name_hash)],
-                true,
-            )
+        let cwd_workspace: PackageID;
+        let selected: Vec<PackageID>;
+        let start = if filter_patterns.is_empty() {
+            cwd_workspace = pm.root_package_id.get(lockfile, pm.workspace_name_hash);
+            reachable::Start::cwd(&cwd_workspace)
         } else {
             let selection = workspace_selection::select_lockfile_workspaces(
                 lockfile,
@@ -150,7 +149,8 @@ impl PmLicensesCommand {
             if not_silent {
                 workspace_selection::warn_unmatched(filter_patterns, &selection.unmatched_patterns);
             }
-            (selection.ids, false)
+            selected = selection.ids;
+            reachable::Start::Packages(&selected)
         };
 
         // After the exits above so error output keeps a clean stdout.
@@ -163,7 +163,6 @@ impl PmLicensesCommand {
         }
 
         let options = reachable::Options {
-            root: 0,
             dev: features.dev_dependencies,
             optional: features.optional_dependencies,
             peer: features.peer_dependencies,
@@ -177,20 +176,13 @@ impl PmLicensesCommand {
         } else {
             reachable::packages_from
         };
-        let wanted = walk(
-            lockfile,
-            resolutions,
-            &roots,
-            follow_workspace_edges,
-            options,
-        );
+        let wanted = walk(lockfile, resolutions, start, options);
         let production: Option<DynamicBitSet> =
             (!json_output && features.dev_dependencies).then(|| {
                 reachable::packages_from(
                     lockfile,
                     resolutions,
-                    &roots,
-                    follow_workspace_edges,
+                    start,
                     reachable::Options {
                         dev: false,
                         ..options

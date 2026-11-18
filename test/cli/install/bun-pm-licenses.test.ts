@@ -1461,6 +1461,155 @@ describe("bun pm licenses", () => {
     });
   });
 
+  // The root's `workspaces` list names its members. It is not a dependency of the root, but `kept` is one.
+  test.concurrent.each(["hoisted", "isolated"] as const)(
+    "%s: a member that depends on the root lists the root's dependencies and no other member's",
+    async linker => {
+      const dir = await setup(linker, {
+        "package.json": JSON.stringify({
+          name: "mono",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: { "one-dep": "1.0.0", "kept": "workspace:*" },
+        }),
+        "packages/kept/package.json": JSON.stringify({
+          name: "kept",
+          version: "1.0.0",
+          dependencies: { "basic-1": "1.0.0" },
+        }),
+        "packages/foo/package.json": JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0", "mono": "workspace:*" },
+        }),
+        "packages/tools/package.json": JSON.stringify({
+          name: "tools",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+          devDependencies: { mono: "file:../.." },
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { foo: "workspace:*" },
+        }),
+        "packages/bar/package.json": JSON.stringify({
+          name: "bar",
+          version: "1.0.0",
+          dependencies: { resolve: "1.9.0" },
+          devDependencies: { "a-dep": "1.0.1" },
+        }),
+      });
+      const listings = async (member: string, ...filter: string[]) => {
+        const cwd = join(dir, "packages", member);
+        const [all, prod, dev] = await Promise.all([
+          licensesJson(cwd, ...filter),
+          licensesJson(cwd, ...filter, "--prod"),
+          licensesJson(cwd, ...filter, "--dev"),
+        ]);
+        return { all, prod, dev };
+      };
+
+      const [foo, fooFiltered, tools, toolsFiltered, app, appFiltered, rootOnly, toolsText] = await Promise.all([
+        listings("foo"),
+        listings("foo", "--filter", "foo"),
+        listings("tools"),
+        listings("tools", "--filter", "tools"),
+        listings("app"),
+        listings("app", "--filter", "app"),
+        listings("foo", "--filter", "mono"),
+        licensesText(join(dir, "packages", "tools")),
+      ]);
+      const own = { Unknown: [u("no-deps", "1.0.0")] };
+      const ofRoot = { Unknown: [u("basic-1", "1.0.0"), u("no-deps", "1.0.1"), u("one-dep", "1.0.0")] };
+      const both = { Unknown: [u("basic-1", "1.0.0"), u("no-deps", "1.0.0", "1.0.1"), u("one-dep", "1.0.0")] };
+      expect(foo).toStrictEqual({ all: both, prod: both, dev: {} });
+      expect(fooFiltered).toStrictEqual(foo);
+      expect(tools).toStrictEqual({ all: both, prod: own, dev: ofRoot });
+      expect(toolsFiltered).toStrictEqual(tools);
+      expect(app).toStrictEqual(foo);
+      expect(appFiltered).toStrictEqual(foo);
+      expect(rootOnly).toStrictEqual({ all: ofRoot, prod: ofRoot, dev: {} });
+      expect(normalizeBunSnapshot(toolsText)).toMatchInlineSnapshot(`
+        "bun pm licenses <version> (<revision>)
+
+        Unknown (4)
+        ├── basic-1@1.0.0 (dev)
+        ├── no-deps@1.0.0
+        ├── no-deps@1.0.1 (dev)
+        └── one-dep@1.0.0 (dev)
+
+        4 packages across 1 license (checked 4 packages in bun.lock)"
+      `);
+    },
+  );
+
+  // Before Bun 1.2.19, the dependencies of a workspace could have the workspace bit too. Bun 1.2.18 wrote
+  // fixtures/bun.lockb.v1.2.18-workspaces for this project, with a registry at http://localhost:1/.
+  test.concurrent("a bun.lockb from Bun 1.2.18 lists the dependencies of its workspaces", async () => {
+    const installed = (name: string, version: string) => JSON.stringify({ name, version });
+    using project = tempDir("licenses-lockb-1.2.18", {
+      "bun.lockb": readFileSync(join(import.meta.dir, "fixtures", "bun.lockb.v1.2.18-workspaces")),
+      "package.json": JSON.stringify({
+        name: "mono",
+        private: true,
+        workspaces: ["packages/*"],
+        dependencies: { "one-dep": "1.0.0" },
+      }),
+      "packages/foo/package.json": JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: { "one-range-dep": "1.0.0", "bar": "workspace:*" },
+        devDependencies: { "a-dep": "1.0.1" },
+      }),
+      "packages/bar/package.json": JSON.stringify({
+        name: "bar",
+        version: "1.0.0",
+        dependencies: { "a-dep": "1.0.2", "no-deps": "1.0.0" },
+      }),
+      "node_modules/a-dep/package.json": installed("a-dep", "1.0.2"),
+      "node_modules/no-deps/package.json": installed("no-deps", "1.0.0"),
+      "node_modules/one-dep/package.json": installed("one-dep", "1.0.0"),
+      "node_modules/one-dep/node_modules/no-deps/package.json": installed("no-deps", "1.0.1"),
+      "node_modules/one-range-dep/package.json": installed("one-range-dep", "1.0.0"),
+      // An install links node_modules/foo to packages/foo.
+      "node_modules/foo/node_modules/a-dep/package.json": installed("a-dep", "1.0.1"),
+    });
+    const dir = String(project);
+    const foo = join(dir, "packages", "foo");
+    const listings = async (cwd: string, ...filter: string[]) => {
+      const [all, prod, dev] = await Promise.all([
+        licensesJson(cwd, ...filter),
+        licensesJson(cwd, ...filter, "--prod"),
+        licensesJson(cwd, ...filter, "--dev"),
+      ]);
+      return { all, prod, dev };
+    };
+
+    const [fromFoo, fooFiltered, fromRoot, everyWorkspace] = await Promise.all([
+      listings(foo),
+      listings(foo, "--filter", "foo"),
+      listings(dir),
+      listings(dir, "--filter", "*"),
+    ]);
+    const devOfFoo = { Unknown: [u("a-dep", "1.0.1")] };
+    const oneRangeDep = u("one-range-dep", "1.0.0");
+    expect(fromFoo).toStrictEqual({
+      all: { Unknown: [u("a-dep", "1.0.1", "1.0.2"), u("no-deps", "1.0.0"), oneRangeDep] },
+      prod: { Unknown: [u("a-dep", "1.0.2"), u("no-deps", "1.0.0"), oneRangeDep] },
+      dev: devOfFoo,
+    });
+    expect(fooFiltered).toStrictEqual(fromFoo);
+    expect(fromRoot).toStrictEqual({
+      all: {
+        Unknown: [u("a-dep", "1.0.1", "1.0.2"), u("no-deps", "1.0.0", "1.0.1"), u("one-dep", "1.0.0"), oneRangeDep],
+      },
+      prod: { Unknown: [u("a-dep", "1.0.2"), u("no-deps", "1.0.0", "1.0.1"), u("one-dep", "1.0.0"), oneRangeDep] },
+      dev: devOfFoo,
+    });
+    expect(everyWorkspace).toStrictEqual(fromRoot);
+  });
+
   test.concurrent("--filter matching nothing is an error", async () => {
     const [stdout, stderr, exitCode] = await licenses(monoDir, "--filter", "nope", "--json");
     expect(stdout).toBe("");

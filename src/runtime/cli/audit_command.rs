@@ -424,11 +424,11 @@ fn collect_packages_for_audit(
             && features.optional_dependencies
             && features.peer_dependencies);
     let wanted_packages: Option<DynamicBitSet> = omits_something.then(|| {
-        reachable::packages(
+        reachable::packages_from(
             &pm.lockfile,
             pm.lockfile.buffers.resolutions.as_slice(),
+            reachable::Start::cwd(&root_id),
             reachable::Options {
-                root: root_id,
                 dev: features.dev_dependencies,
                 optional: features.optional_dependencies,
                 peer: features.peer_dependencies,

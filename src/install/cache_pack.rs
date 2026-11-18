@@ -228,7 +228,7 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
     // A bundled dependency ships inside its parent's entry and doesn't have its own.
     let anywhere = reachable::Options {
         bundled: false,
-        ..reachable::Options::all(0)
+        ..reachable::Options::all()
     };
     let here = reachable::Options {
         platform: Some((pm.options.cpu, pm.options.os, pm.options.libc)),

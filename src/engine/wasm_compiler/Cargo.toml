@@ -1,0 +1,21 @@
+[package]
+name = "bun_engine_wasm_compiler"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_asm.workspace = true
+bun_engine_codegen.workspace = true
+bun_engine_wasm_format.workspace = true
+bitflags.workspace = true
+hashbrown.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

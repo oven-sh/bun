@@ -1,0 +1,17 @@
+[package]
+name = "bun_engine_wasm_format"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_asm.workspace = true
+bun_threading.workspace = true
+bitflags.workspace = true
+smallvec.workspace = true
+hashbrown.workspace = true

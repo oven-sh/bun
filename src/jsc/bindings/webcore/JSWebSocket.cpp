@@ -21,11 +21,7 @@
 #include "config.h"
 #include "JSWebSocket.h"
 
-#include "ActiveDOMObject.h"
-
 #include "EventNames.h"
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
@@ -45,21 +41,14 @@
 #include "JSDOMIterator.h"
 #include "JSDOMOperation.h"
 #include "JSDOMExceptionHandling.h"
-#include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSEventListener.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include "IDLTypes.h"
 #include "FetchHeaders.h"
@@ -97,7 +86,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsWebSocketRemoteAddressForWs);
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsWebSocketConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_URL);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_url);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_readyState);
@@ -116,38 +104,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_extensions);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_binaryType);
 static JSC_DECLARE_CUSTOM_SETTER(setJSWebSocket_binaryType);
 
-class JSWebSocketPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSWebSocketPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSWebSocketPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWebSocketPrototype))) JSWebSocketPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWebSocketPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSWebSocketPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWebSocketPrototype, JSWebSocketPrototype::Base);
-
+using JSWebSocketPrototype = JSDOMPrototype<JSWebSocket>;
 using JSWebSocketDOMConstructor = JSDOMConstructor<JSWebSocket>;
 
 /* Hash table for constructor */
@@ -364,11 +321,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSWebSocketConstructorConstruct, JSWebSocketDOMConstr
 
 template<> const ClassInfo JSWebSocketDOMConstructor::s_info = { "WebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebSocketDOMConstructor) };
 
-template<> JSValue JSWebSocketDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSEventTarget::getConstructor(vm, &globalObject);
-}
-
 template<> void JSWebSocketDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 1, "WebSocket"_s, JSWebSocket::prototype(vm, globalObject));
@@ -378,7 +330,7 @@ template<> void JSWebSocketDOMConstructor::initializeProperties(VM& vm, JSDOMGlo
 /* Hash table for prototype */
 
 static const HashTableValue JSWebSocketPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocketConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSWebSocketPrototype::constructorGetter, 0 } },
     { "URL"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_URL, 0 } },
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_url, 0 } },
     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_readyState, 0 } },
@@ -404,9 +356,9 @@ static const HashTableValue JSWebSocketPrototypeTableValues[] = {
     { "CLOSED"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 3 } },
 };
 
-const ClassInfo JSWebSocketPrototype::s_info = { "WebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebSocketPrototype) };
+template<> const ClassInfo JSWebSocketPrototype::s_info = { "WebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebSocketPrototype) };
 
-void JSWebSocketPrototype::finishCreation(VM& vm)
+template<> void JSWebSocketPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSWebSocket::info(), JSWebSocketPrototypeTableValues, *this);
@@ -415,42 +367,14 @@ void JSWebSocketPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSWebSocket::s_info = { "WebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebSocket) };
 
-JSWebSocket::JSWebSocket(Structure* structure, JSDOMGlobalObject& globalObject, Ref<WebSocket>&& impl)
-    : JSEventTarget(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSWebSocket::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    static_assert(std::is_base_of<ActiveDOMObject, WebSocket>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
-}
-
 JSObject* JSWebSocket::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSWebSocketPrototype::create(vm, &globalObject, JSWebSocketPrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject)));
-}
-
-JSObject* JSWebSocket::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSWebSocket>(vm, globalObject);
+    return JSWebSocketPrototype::create(vm, globalObject, JSEventTarget::prototype(vm, globalObject));
 }
 
 JSValue JSWebSocket::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSWebSocketDOMConstructor, DOMConstructorID::WebSocket>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocketConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSWebSocketPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSWebSocket::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsWebSocket_URLGetter(JSGlobalObject& lexicalGlobalObject, JSWebSocket& thisObject)
@@ -855,11 +779,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_resume, (JSGlobalObject * 
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_resumeBody>(*lexicalGlobalObject, *callFrame, "resume");
 }
 
-JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSWebSocket, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWebSocket, m_subspaceForWebSocket));
-}
-
 template<typename Visitor>
 void JSWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -881,88 +800,10 @@ size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
     return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
 
-void JSWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    auto* jsWebSocket = uncheckedDowncast<JSWebSocket>(handle.slot()->asCell());
-    auto& wrapped = jsWebSocket->wrapped();
-    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (reason) [[unlikely]]
-            *reason = "ActiveDOMObject with pending activity"_s;
-        return true;
-    }
-    if (jsWebSocket->wrapped().isFiringEventListeners()) {
-        if (reason) [[unlikely]]
-            *reason = "EventTarget firing event listeners"_s;
-        return true;
-    }
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-JSC::WeakHandleOwner::FinalizeResult JSWebSocketOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsWebSocket = static_cast<JSWebSocket*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsWebSocket->wrapped(), jsWebSocket);
-    return FinalizeResult::KeepImpl;
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7WebSocket@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore9WebSocketE[];
-}
-#endif
-#endif
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<WebSocket>&& impl)
-{
-
-    if constexpr (std::is_polymorphic_v<WebSocket>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7WebSocket@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore9WebSocketE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // WebSocket has subclasses. If WebSocket has subclasses that get passed
-        // to toJS() we currently require WebSocket you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
-    return createWrapper<WebSocket>(globalObject, WTF::move(impl));
-}
-
-NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebSocket& impl)
+template<> NEVER_INLINE JSC::JSValue toJS<WebSocket>(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebSocket& impl)
 {
     BUN_REMOVABLE_DEFINITION(WebSocket, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, WebSocket&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-WebSocket* JSWebSocket::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSWebSocket>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 // https://github.com/oven-sh/bun/issues/11866

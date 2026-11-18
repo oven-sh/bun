@@ -108,6 +108,10 @@ fn windows_stay_inside() {
     assert_eq!(windows::<_, 6>(&all, starts), None);
     assert_eq!(windows(&all[5..], starts), Some([&[]; 4]));
     assert_eq!(windows(&[(); usize::MAX], starts), Some([&[(); 2]; 4]));
+    let (all, starts) = (vec![0u8; 1 << 20], [0xF_0E0D, 0x1_0203, 0xF_FFF8, 0x8_0000]);
+    let got = windows::<_, 8>(&all, Simd::from_array(starts)).unwrap();
+    let got = got.map(|it| (it.as_ptr().addr() - all.as_ptr().addr()) as u32);
+    assert_eq!(got, starts);
 }
 
 #[test]

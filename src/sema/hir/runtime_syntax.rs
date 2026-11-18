@@ -1,10 +1,11 @@
 use super::{
-    ClassId, Expr, ExprFlags, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList,
-    MemberId, MemberKind, ModifierId, ModifierKind, ModuleId, ModuleName, NameKind, ParamId,
-    PatKind, PatPropId, Prop, PropId, PropKey, PropKind, Span, Stmt, StmtId, StmtKind, Storage,
-    VarDeclId, has_body, is_nested_namespace,
+    ClassId, Diagnostic, DiagnosticKind, Expr, ExprFlags, ExprId, ExprKind, File, FileIn, Flags,
+    FnBody, FnId, FnKind, IdList, MemberId, MemberKind, ModifierId, ModifierKind, ModuleId,
+    ModuleName, NameKind, Node, NodeData, ParamId, PatKind, PatPropId, Prop, PropId, PropKey,
+    PropKind, Span, Stmt, StmtId, StmtKind, Storage, VarDeclId, has_body, is_nested_namespace,
 };
 use crate::atom::{Atom, known};
+use crate::file_analysis::has_written_top_level_await;
 use bun_core::strings;
 use std::ops::Range;
 
@@ -216,7 +217,145 @@ impl<S: Storage> FileIn<S> {
     }
 }
 
+impl<S: Storage> FileIn<S> {
+    /// The first of `marks`, the sorted starts of the legacy HTML comment marks, that lies between two tokens of a JSX tag and in no expression of it. Every reader refuses a mark there.
+    pub fn find_mark_between_tokens_of_jsx_tag(&self, marks: &[u32]) -> Option<u32> {
+        let mut found: Option<u32> = None;
+        for element in self.exprs.iter() {
+            let ExprKind::Jsx(jsx) = element.kind else {
+                continue;
+            };
+            let jsx = &self[jsx];
+            let is_in_expression_of = |tag: (u32, u32), mark: u32| {
+                let is_around = |(from, to): (u32, u32)| from < mark && mark < to;
+                let mut braces = self.jsx_expressions.iter().map(|it| (it.1, it.2));
+                let mut spreads = jsx.attrs.iter().map(|attribute| &self[attribute]);
+                braces.any(|it| tag.0 < it.0 && it.1 <= tag.1 && is_around(it))
+                    || spreads
+                        .any(|it| it.kind == PropKind::Spread && is_around((it.start, it.end)))
+            };
+            for tag in [(element.pos, jsx.opening_end), (jsx.close_pos, jsx.end)] {
+                let first = marks.partition_point(|&mark| mark <= tag.0);
+                let in_tag = marks[first..].iter().take_while(|&&mark| mark < tag.1);
+                let between_tokens = in_tag
+                    .copied()
+                    .find(|&mark| !is_in_expression_of(tag, mark));
+                found = match (found, between_tokens) {
+                    (Some(found), Some(mark)) => Some(found.min(mark)),
+                    (found, mark) => found.or(mark),
+                };
+            }
+        }
+        found
+    }
+}
+
+/// "Invalid character."
+pub const INVALID_CHARACTER: u32 = 1127;
+
+/// Where the legacy HTML comment mark starts that ends at `end` in `text`: `<!--` or `-->`.
+fn find_html_comment_mark(text: &[u8], end: u32) -> u32 {
+    let is_open = text
+        .get(..end as usize)
+        .is_some_and(|it| it.ends_with(b"<!--"));
+    end.saturating_sub(if is_open { 4 } else { 3 })
+}
+
+/// Who reads a text of a compiled file when the program starts under `bun run`, and so gives the early errors of that text.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Reader {
+    /// The parser of `bun run`. What it prints holds none of the forms that only sloppy mode code has, so it alone reports them: in a module that `import`, `export` or a top-level `await` proves, under a `"use strict"` directive and in a class. A file that only runs as a module is sloppy mode code to it.
+    ParserOfBunRun,
+    /// JavaScriptCore reads the text as it is written: a file that `bun build` wrote, and a text that the program evaluates. To it a module is strict mode code.
+    Engine,
+}
+
 impl File<'_> {
+    /// `bun run` hands the text at `pos` to the engine as it is written.
+    pub fn stands_as_written(&self, pos: u32) -> bool {
+        find_transpiled_mark(&self.text).is_some() || self.is_in_known_evaluation(pos)
+    }
+
+    pub fn reader_at(&self, pos: u32) -> Reader {
+        match self.stands_as_written(pos) {
+            true => Reader::Engine,
+            false => Reader::ParserOfBunRun,
+        }
+    }
+
+    /// True if all of the file is strict mode code to `reader`.
+    pub fn is_strict_file_to(&self, reader: Reader) -> bool {
+        match reader {
+            Reader::ParserOfBunRun => self.is_strict_by_syntax || self.is_proved_module,
+            Reader::Engine => self.is_strict,
+        }
+    }
+
+    /// True if the code of `function` is strict mode code to `reader`. False says nothing of the file around it.
+    pub fn is_strict_function_to(&self, function: FnId, reader: Reader) -> bool {
+        self.fns.get(function.idx()).is_some_and(|it| match reader {
+            Reader::ParserOfBunRun => it.is_strict_by_syntax,
+            Reader::Engine => it.is_strict,
+        })
+    }
+
+    /// True if `node` is strict mode code to `reader`.
+    pub fn is_strict_to(&self, node: Node, reader: Reader) -> bool {
+        let class = self.get_containing_class_excluding_class_decorators(node);
+        if self.is_strict_file_to(reader) || class.is_some() {
+            return true;
+        }
+        let function = self.function_of(self.get_containing_function(node));
+        let is_strict_namespace = |ancestor: Node| match self.data(ancestor) {
+            NodeData::Stmt(statement) => {
+                matches!(self[statement].kind, StmtKind::Module(it) if self.is_strict_namespace(it))
+            }
+            _ => false,
+        };
+        self.is_strict_function_to(function, reader)
+            || self.find_ancestor(node, is_strict_namespace).is_some()
+    }
+
+    /// True if `node` is strict mode code to the one that reads its text. A form that only sloppy mode code has is an early error there, and nowhere else.
+    pub fn is_strict_to_its_reader(&self, node: Node) -> bool {
+        self.is_strict_to(node, self.reader_at(self.start(node)))
+    }
+
+    /// Where the first legacy HTML comment mark of the text is, if it has one that is not reported yet. It starts a comment, and the one that knows whether the file is a module says whether that is an error.
+    #[inline]
+    pub fn legacy_html_comment(&self) -> Option<(u32, u32)> {
+        match self.html_comment_end {
+            0 => None,
+            end => Some((find_html_comment_mark(&self.text, end), end)),
+        }
+    }
+
+    /// For a compiled text, right after its parse: a top-level `await` makes the file a module for the parser of `bun run` too, and the legacy HTML comment of such a module is reported.
+    #[inline]
+    pub fn judge_as_parsed_by_bun_run(&mut self, text: &[u8]) {
+        if !self.is_proved_module && self.has_top_level_await() {
+            self.is_proved_module = has_written_top_level_await(self);
+        }
+        if self.html_comment_end != 0 {
+            self.report_html_comment_of_proved_module(text);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_html_comment_of_proved_module(&mut self, text: &[u8]) {
+        if !self.is_proved_module || find_transpiled_mark(text).is_some() {
+            return;
+        }
+        // A parse error, as the mark was when the lexer reported it.
+        let end = self.html_comment_end;
+        let at = (find_html_comment_mark(text, end), end);
+        let error = Diagnostic::new(DiagnosticKind::Parse, at, INVALID_CHARACTER, &[]);
+        self.diagnostics.to_mut().push(error);
+        self.has_parse_diagnostics = true;
+        self.html_comment_end = 0;
+    }
+
     /// `Function` makes sloppy functions in strict code too.
     pub fn makes_sloppy_functions(&self) -> bool {
         self.known_evaluations

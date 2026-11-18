@@ -5,9 +5,9 @@ linters, coverage tools, formatters and bundlers, JSX pragmas in files without J
 "use asm" ..), licence banners, conditional compilation of old tools, odd white space, a line of 70,000 bytes; at the top, on
 the second line, behind a hashbang, in a function, between statements, at the end with and without a line end; hints inside
 import(), require() and import statements and in front of calls; byte order marks, CRLF and CR. One file a case; other.js and
-other.cjs go with the cases that name them. Left out: `<!--` and `// @bun` heads (`bun <file>` itself stops or takes the file
-for something else), and in .ts files `-->`, U+2028 in a line comment and a reference to a file or lib that is not there:
-there the checker stops the build, as tsc would.
+other.cjs go with the cases that name them. Left out: `// @bun` heads (`bun <file>` takes the file for something else), `<!--`
+(an error in a module, and three operators to the checker in a .ts file), and in .ts files `-->`, U+2028 in a line comment and a
+reference to a file or lib that is not there: there the checker stops the build, as tsc would.
 """
 import itertools, os, sys
 

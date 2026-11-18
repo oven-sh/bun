@@ -292,8 +292,10 @@ fn is_javascript_too(typescript_options: &CompileParseOptions<'_>, text: &[u8]) 
     };
     let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
     let mut diagnostics = hir.diagnostics.iter();
+    // TypeScript reads `<!--` and `-->` as operators, so a text with a legacy HTML comment is another program there.
     !hir.has_errors
         && !hir.ran_out_of_stack
+        && hir.html_comment_end == 0
         && diagnostics.all(|it| it.class != hir::DiagnosticClass::EarlyError)
 }
 

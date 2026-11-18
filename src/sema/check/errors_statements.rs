@@ -65,11 +65,12 @@ fn next_token(text: &[u8], mut at: usize) -> (usize, bool) {
 }
 
 /// Position of the `await` of the `for await` at `at`.
-fn await_after_for(text: &[u8], at: u32) -> Option<u32> {
+fn await_after_for(hir: &File, at: u32) -> Option<u32> {
+    let text = &hir.text[..];
     if !is_word_at(text, at as usize, b"for") {
         return None;
     }
-    let next = skip_trivia(text, at as usize + 3);
+    let next = skip_trivia_of(hir, at as usize + 3);
     is_word_at(text, next, b"await").then_some(next as u32)
 }
 
@@ -435,7 +436,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let container = hir.get_containing_function_or_class_static_block(hir.node(s));
         if hir.kind(container) == Kind::ClassStaticBlockDeclaration
-            && let Some(start) = await_after_for(&hir.text, hir[s].start)
+            && let Some(start) = await_after_for(hir, hir[s].start)
         {
             self.early_grammar_error_at((file, start, 0), 18038, &[]);
         }
@@ -456,7 +457,7 @@ impl Checker<'_, '_> {
         let is_for_in = matches!(hir[s].kind, StmtKind::ForIn { .. });
         if matches!(hir[s].kind, StmtKind::ForOf { is_await: true, .. })
             && !has_parse_diagnostics(hir)
-            && let Some(start) = await_after_for(&hir.text, hir[s].start)
+            && let Some(start) = await_after_for(hir, hir[s].start)
         {
             match self.await_context_of(file, hir.node(s)) {
                 AwaitContext::Allowed | AwaitContext::StaticBlock => {}
@@ -508,7 +509,9 @@ impl Checker<'_, '_> {
             let is_annex_b = is_for_in
                 && first.kind == VarKind::Var
                 && matches!(hir[first.pat].kind, PatKind::Ident(_));
-            if is_annex_b {
+            let is_strict =
+                || self.is_in_compile_build(file) && hir.is_strict_to_its_reader(hir.node(s));
+            if is_annex_b && !is_strict() {
                 self.grammar_error_on_node(file, first.pat, 1189, &[])
             } else {
                 let code = if is_for_in { 1189 } else { 1190 };

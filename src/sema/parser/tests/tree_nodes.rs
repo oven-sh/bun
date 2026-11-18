@@ -6,7 +6,6 @@ use DiagnosticClass::EarlyError;
 use ExprSelector::{Dot, Tag};
 
 const DEFAULT_PATH: &str = "a.cjs";
-const INVALID_CHARACTER: u32 = 1127;
 
 const NO_FLAGS: ExprFlags = ExprFlags::empty();
 const PARENTHESIZED: ExprFlags = ExprFlags::PARENTHESIZED;
@@ -174,6 +173,91 @@ const BODIES_WITHOUT_USE_STRICT: &[&str] = &[
 ];
 
 const HTML_CLOSE_COMMENT: &str = "a\n--> b";
+
+/// A text that is compiled, and where its first legacy HTML comment mark is. The parser reports none of them: what the file is decides.
+#[rustfmt::skip]
+const HTML_COMMENT_MARKS: &[(&str, &str, Option<(u32, u32)>)] = &[
+    ("a.js", "a <!-- b", Some((2, 6))),
+    ("a.js", "a /* c */ <!-- b", Some((10, 14))),
+    ("a.js", "a\n<!-- b\n--> c", Some((2, 6))),
+    ("a.js", "a\n--> b\n<!-- c", Some((2, 5))),
+    ("a.js", "--> a", Some((0, 3))),
+    ("a.js", "a /*\n*/ --> b", Some((8, 11))),
+    ("a.mjs", "a <!-- b", Some((2, 6))),
+    ("a.cjs", "\"use strict\"; class A { m() { return 1 <!-- b\n; } }", Some((39, 43))),
+    ("a.js", "/** @type {number} */\n<!-- b\nvar a = 1;", Some((22, 26))),
+    ("a.js", "var a = 1; /** @type {number} */ <!-- b\nvar c = 2;", Some((33, 37))),
+    ("a.js", "/** @type {number} */ var a = 1 <!-- b\n; /** @type {number} */ var c = 2;", Some((32, 36))),
+    ("a.jsx", "<!-- b\nconst e = <a b=\"x\" c=\"y\"/>;", Some((0, 4))),
+    ("a.jsx", "const e = <a b={1 <!-- c\n} />;", Some((18, 22))),
+    ("a.jsx", "const e = <a {... <!-- c\nb} />;", Some((18, 22))),
+    ("a.jsx", "const e = <a>{1 <!-- c\n}</a>;", Some((16, 20))),
+    ("a.js", "// @bun\nexport {};\n--> c", Some((19, 22))),
+    ("a.js", "a = \"<!--\"; b = `-->`; c = /<!--/; // <!--\n/* --> */ d = a-- > b;", None),
+    ("a.js", "a = b\n--c > d;", None),
+    ("a.js", "#!/usr/bin/env bun\na;", None),
+    ("a.ts", "var b = 1; var a = 1 <!-- b\n;", None),
+];
+
+/// The same in a file that `import`, `export` or a top-level `await` makes a module for the parser of `bun run`: the first mark is a parse error.
+#[rustfmt::skip]
+const HTML_COMMENT_MARKS_OF_PROVED_MODULES: &[(&str, &str, (u32, u32))] = &[
+    ("a.js", "a <!-- b\nexport {};", (2, 6)),
+    ("a.cjs", "a <!-- b\nexport {};", (2, 6)),
+    ("a.mjs", "import \"b\";\n--> c", (12, 15)),
+    ("a.js", "await 0;\n<!-- c\n--> d", (9, 13)),
+    ("a.js", "/** @type {number} */ <!-- b\nexport var a = 1;", (22, 26)),
+];
+
+/// A mark between two tokens of a JSX tag is a parse error in every file: only the expressions of a tag hold JavaScript trivia.
+#[rustfmt::skip]
+const HTML_COMMENT_MARKS_IN_JSX_TAGS: &[(&str, (u32, u32))] = &[
+    ("const e = <a <!-- c\nb=\"x\" />;", (13, 17)),
+    ("const e = <a b <!-- c\n=\"x\" />;", (15, 19)),
+    ("const e = <a b=\"x\" <!-- c\n/>;", (19, 23)),
+    ("const e = <a>x</a <!-- c\n>;", (18, 22)),
+    ("const e = <a\n--> c\nb=\"x\" />;", (13, 16)),
+    ("const e = <a b={<c <!-- d\n/>} />;", (19, 23)),
+];
+
+/// Whether the parser of `bun run` reads the file as a module.
+#[rustfmt::skip]
+const MODULE_PROOFS: &[(&str, &str, bool)] = &[
+    ("a.js", "import \"b\";", true),
+    ("a.cjs", "import a from \"b\";", true),
+    ("a.js", "export {};", true),
+    ("a.js", "export default 1;", true),
+    ("a.js", "export * from \"b\";", true),
+    ("a.js", "a; export function f() {}", true),
+    ("a.js", "await 0;", true),
+    ("a.js", "{ for await (const a of []) {} }", true),
+    ("a.js", "if (a) { await using b = null; }", true),
+    ("a.js", "class A { [await 0]() {} }", true),
+    ("a.js", "", false),
+    ("a.mjs", "a;", false),
+    ("a.js", "import.meta.url;", false),
+    ("a.js", "import(\"b\");", false),
+    ("a.js", "require(\"b\"); module.exports = 1;", false),
+    ("a.js", "async function f() { await 0; for await (const a of []) {} }", false),
+    ("a.js", "\"use strict\";", false),
+    ("a.js", "/** @import { A } from \"b\" */\n/** @typedef {number} B */\na;", false),
+    ("a.ts", "import \"b\";", true),
+    ("a.ts", "import { a } from \"b\";", true),
+    ("a.ts", "import {} from \"b\";", true),
+    ("a.ts", "import type { A } from \"b\";", false),
+    ("a.ts", "import { type A } from \"b\";", false),
+    ("a.ts", "import a = require(\"b\");", false),
+    ("a.ts", "export import a = require(\"b\");", true),
+    ("a.ts", "export type A = number;", true),
+    ("a.ts", "export interface A {}", true),
+    ("a.ts", "export declare const a: number;", true),
+    ("a.ts", "type A = number; export type { A };", true),
+    ("a.ts", "export as namespace NS;", true),
+    ("a.ts", "import type { A } from \"b\"; export as namespace NS;", true),
+    ("a.cts", "export = 1;", false),
+    ("a.ts", "declare module \"b\" { export const a: number; }", false),
+    ("a.ts", "namespace N { export const a = 1; }", false),
+];
 
 const ACCEPTED_JAVASCRIPT: &[&str] = &[
     r#"import a from "b"; module.exports = a;"#,
@@ -828,15 +912,46 @@ fn html_like_comments() {
             unreachable!()
         };
         assert_eq!(op, BinOp::Gt);
+        assert_eq!(hir.legacy_html_comment(), None);
     });
-    for text in ["a <!-- b", "a /* c */ <!-- b", "a\n<!-- b"] {
-        parsed("a.js", text, |_, hir| {
+    for &(path, text, mark) in HTML_COMMENT_MARKS {
+        parsed(path, text, |_, hir| {
+            assert_none_of_class(hir, EarlyError);
+            assert!(!hir.has_parse_diagnostics, "{path}: {text}");
+            assert_eq!(hir.legacy_html_comment(), mark, "{path}: {text}");
+        });
+    }
+    for &(path, text, mark) in HTML_COMMENT_MARKS_OF_PROVED_MODULES {
+        parsed(path, text, |_, hir| {
             let errors = of_class(hir, EarlyError);
-            let is_invalid_character = |error: &&Diagnostic| error.code == INVALID_CHARACTER;
+            let [error] = errors[..] else {
+                panic!("{path}: {text}: {errors:?}");
+            };
+            let found = (error.kind, error.code, (error.start, error.end));
+            let expected = (DiagnosticKind::Parse, INVALID_CHARACTER, mark);
+            assert_eq!(found, expected, "{path}: {text}");
             assert!(
-                errors.iter().any(is_invalid_character),
-                "{text}: {errors:?}"
+                hir.has_parse_diagnostics && !hir.has_errors,
+                "{path}: {text}"
             );
+            assert!(hir.is_proved_module, "{path}: {text}");
+            assert_eq!(hir.legacy_html_comment(), None, "{path}: {text}");
+        });
+    }
+    for &(text, mark) in HTML_COMMENT_MARKS_IN_JSX_TAGS {
+        parsed("a.jsx", text, |_, hir| {
+            let errors = of_class(hir, EarlyError);
+            let [error] = errors[..] else {
+                panic!("{text}: {errors:?}");
+            };
+            let found = (error.kind, error.code, (error.start, error.end));
+            assert_eq!(
+                found,
+                (DiagnosticKind::Parse, INVALID_CHARACTER, mark),
+                "{text}"
+            );
+            assert!(hir.has_parse_diagnostics && !hir.has_errors, "{text}");
+            assert_eq!(hir.legacy_html_comment(), None, "{text}");
         });
     }
     with_workspace(|w| {
@@ -844,7 +959,17 @@ fn html_like_comments() {
         let is_invalid_character = |error: &Diagnostic| error.code == INVALID_CHARACTER;
         let has_invalid_character = hir.diagnostics.iter().any(is_invalid_character);
         assert!(!has_invalid_character, "{:?}", hir.diagnostics);
+        assert_eq!(hir.legacy_html_comment(), None);
     });
+}
+
+#[test]
+fn module_proof_of_bun_run() {
+    for &(path, text, is_proved) in MODULE_PROOFS {
+        parsed(path, text, |_, hir| {
+            assert_eq!(hir.is_proved_module, is_proved, "{path}: {text}");
+        });
+    }
 }
 
 #[test]

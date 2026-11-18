@@ -32,6 +32,7 @@ fn javascript_module_file() -> FileBuilder {
         has_module_syntax: true,
         is_strict: true,
         is_strict_by_syntax: true,
+        is_proved_module: true,
         ..Default::default()
     }
 }

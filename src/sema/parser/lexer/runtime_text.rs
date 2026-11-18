@@ -1,5 +1,4 @@
-use super::{Lexer, fix_whitespace_and_decode_jsx_entities, is_utf8};
-use crate::Rejection;
+use super::{HTML_COMMENT_MARK, Lexer, fix_whitespace_and_decode_jsx_entities, is_utf8};
 use crate::names::Text;
 use crate::token::T;
 use bun_core::lexer::{is_white_space_single_line, is_whitespace};
@@ -43,10 +42,18 @@ impl Lexer<'_> {
         }
     }
 
+    /// Records the legacy HTML comment mark at `pos` of a compiled text. Whether it is an error is known after the parse at the earliest: `FileIn::html_comment_end`.
     #[cold]
     #[inline(never)]
-    pub(super) fn html_open_error(&mut self, pos: usize) -> bool {
-        self.error(Rejection::UnexpectedCharacter, 1127, (pos, pos + 4), &[])
+    pub(super) fn flag_html_comment(&mut self, pos: usize) {
+        let length = match (self.at(pos), self.is_script) {
+            (b'<', _) => 4,
+            (b'-', false) => 3,
+            // A `#!` line, or a `-->` in a text that the program evaluates: a script to the engine, which the build follows as before.
+            _ => return,
+        };
+        self.flagged
+            .push((HTML_COMMENT_MARK, pos as u32, (pos + length) as u32));
     }
 
     pub(super) fn decode_escaped_byte(&self, at: usize) -> (u32, usize) {

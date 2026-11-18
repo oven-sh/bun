@@ -1,29 +1,14 @@
 use crate::bind::{Binding, BindingStability};
 use crate::check::Checker;
 use crate::check::aot::DiagnosticClass;
-use crate::hir::{ExprId, Flags, StmtKind, has_body_node, rare};
+use crate::hir::{ExprId, Flags, Reader, has_body_node, rare};
 use crate::node::{Kind, Node, NodeData};
 use crate::program::FileId;
 
 impl Checker<'_, '_> {
+    /// Strict mode code when the program runs. For a form that `bun run` prints as it is written.
     pub(in crate::check) fn is_strict_mode_code(&self, file: FileId, node: Node) -> bool {
-        let hir = self.hir(file);
-        let class = hir.get_containing_class_excluding_class_decorators(node);
-        if hir.is_strict || class.is_some() {
-            return true;
-        }
-        let function = hir.function_of(hir.get_containing_function(node));
-        let is_in_strict_function = hir
-            .fns
-            .get(function.idx())
-            .is_some_and(|function| function.is_strict);
-        let is_strict_namespace = |ancestor: Node| match hir.data(ancestor) {
-            NodeData::Stmt(statement) => {
-                matches!(hir[statement].kind, StmtKind::Module(it) if hir.is_strict_namespace(it))
-            }
-            _ => false,
-        };
-        is_in_strict_function || hir.find_ancestor(node, is_strict_namespace).is_some()
+        self.hir(file).is_strict_to(node, Reader::Engine)
     }
 
     pub(in crate::check) fn is_erased_syntax(&self, file: FileId, node: Node) -> bool {

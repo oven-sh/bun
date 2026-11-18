@@ -21,7 +21,7 @@ mod skipped_blocks;
 mod stmt;
 mod ty;
 
-use crate::lexer::{Lexer, Mark};
+use crate::lexer::{HTML_COMMENT_MARK, Lexer, Mark};
 use crate::token::T;
 use crate::{Options, Parsed, Rejected, Rejection, Scratch};
 use bun_sema::atom::{Atom, Intern, known};
@@ -865,6 +865,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;
                 self.module_statements.1 += 1;
+                if self.options.compiles && !self.f.is_proved_module {
+                    self.f.is_proved_module = self.f.proves_module_to_bun_run(statement);
+                }
             }
             if self.reads_jsdoc() {
                 self.statement_jsdoc(statement);
@@ -876,6 +879,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.end_of_file_jsdoc(reparsed);
         }
         self.f.body = self.take_ids(base);
+        // A module declaration has an `export` or is an import of JavaScript: each proves a module to the parser of `bun run`, also `export as namespace`.
+        if has_module_declaration && self.options.compiles {
+            self.f.is_proved_module = true;
+        }
         self.set_file_strictness(has_module_declaration);
         // A statement that was parsed twice is counted twice, so the flag only means "maybe".
         if self.module_statements.0 > self.module_statements.1 {
@@ -1047,9 +1054,37 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// Turns `Lexer::flagged` into diagnostics.
+    /// Notes the first legacy HTML comment mark of a compiled text for those that know what the file is. One between the tokens of a JSX tag is a parse error at once.
+    #[cold]
+    #[inline(never)]
+    fn note_html_comment_marks(&mut self, flagged: &[(u32, u32, u32)]) {
+        let marks = flagged.iter().filter(|it| it.0 == HTML_COMMENT_MARK);
+        let starts: Vec<u32> = marks.clone().map(|it| it.1).collect();
+        let in_tag = match self.f.jsx.is_empty() {
+            true => None,
+            false => self.f.find_mark_between_tokens_of_jsx_tag(&starts),
+        };
+        let mut marks = marks.map(|&(_, start, end)| (start, end));
+        match in_tag.and_then(|start| marks.clone().find(|it| it.0 == start)) {
+            Some(at) => {
+                let error = Diagnostic::new(DiagnosticKind::Parse, at, HTML_COMMENT_MARK, &[]);
+                self.f.diagnostics.push(error);
+                self.f.has_parse_diagnostics = true;
+            }
+            None => self.f.html_comment_end = marks.next().map_or(0, |it| it.1),
+        }
+    }
+
+    /// Turns `Lexer::flagged` into diagnostics. A legacy HTML comment mark is none yet: see `note_html_comment_marks`.
     fn report_scanner_flagged_errors(&mut self) {
-        for (code, start, end) in std::mem::take(&mut self.lx.flagged) {
+        let flagged = std::mem::take(&mut self.lx.flagged);
+        if flagged.iter().any(|it| it.0 == HTML_COMMENT_MARK) {
+            self.note_html_comment_marks(&flagged);
+        }
+        for (code, start, end) in flagged {
+            if code == HTML_COMMENT_MARK {
+                continue;
+            }
             let raw = self
                 .lx
                 .src

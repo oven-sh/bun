@@ -239,11 +239,12 @@ impl Checker<'_, '_> {
             outer = parent;
             is_labeled = true;
         }
-        // The rest of the file is printed anew, without its directives.
-        let is_strict_text =
-            hir.is_in_known_evaluation(hir[s].start) && self.is_strict_mode_code(file, hir.node(s));
+        // A signature has no body. `bun run` erases it, so it is no declaration in strict mode code either.
+        let is_erased =
+            matches!(declaration, BodyDeclaration::Function(f) if !crate::hir::has_body(&hir[f]));
+        let is_strict_text = || !is_erased && hir.is_strict_to_its_reader(hir.node(s));
         let enclosing_statement = statement_parent(bound, outer);
-        if is_strict_text && is_labeled && enclosing_statement.is_none() {
+        if is_labeled && enclosing_statement.is_none() && is_strict_text() {
             let at = (file, hir[s].start, hir[s].loc.end);
             self.early_error_at(at, 1156, &[Arg::Text("function")]);
             return;
@@ -265,7 +266,7 @@ impl Checker<'_, '_> {
             hir[enclosing_statement].kind,
             StmtKind::If { yes, no, .. } if yes == outer || no == outer
         );
-        if !is_loop_or_with_body && !is_if_branch && !(is_strict_text && is_labeled) {
+        if !is_loop_or_with_body && !is_if_branch && !(is_labeled && is_strict_text()) {
             return;
         }
         let (keyword, is_error) = match declaration {
@@ -273,8 +274,8 @@ impl Checker<'_, '_> {
                 "function",
                 is_loop_or_with_body
                     || is_labeled
-                    || is_strict_text
-                    || hir[f].flags.intersects(Flags::ASYNC | Flags::GENERATOR),
+                    || hir[f].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
+                    || is_strict_text(),
             ),
             BodyDeclaration::Class => ("class", true),
         };

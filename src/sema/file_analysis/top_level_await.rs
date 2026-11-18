@@ -8,8 +8,11 @@ pub(crate) fn has_live_top_level_await(hir: &File<'_>, decisions: &Decisions<'_>
 }
 
 pub(crate) fn has_written_top_level_await(hir: &File<'_>) -> bool {
+    if !hir.has_top_level_await() {
+        return false;
+    }
     let roots = hir.ids(hir.body).map(TreeNode::Stmt).collect();
-    hir.has_top_level_await() && has_await_below(hir, &Decisions::default(), roots, Sought::Written)
+    has_await_below(hir, &Decisions::default(), roots, Sought::Written)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

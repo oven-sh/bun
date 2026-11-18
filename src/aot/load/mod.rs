@@ -24,6 +24,8 @@ pub(crate) mod manual_mocks;
 pub(crate) mod module_paths;
 pub(crate) mod modules_with_queries;
 pub(crate) mod objects_created_below;
+#[cfg(test)]
+mod parser_of_bun_run;
 pub(crate) mod plugin_modules;
 pub mod project;
 pub(crate) mod react_compiler;
@@ -31,6 +33,8 @@ pub(crate) mod runtime_host;
 pub(crate) mod runtime_modules;
 pub(crate) mod runtime_roots;
 pub(crate) mod runtime_types;
+#[cfg(test)]
+mod sloppy_only_grid;
 #[cfg(test)]
 pub mod source_provider;
 pub mod sources;

@@ -164,6 +164,30 @@ pub(super) fn skip_trivia_ex(text: &[u8], mut at: usize, stop_after_line_break: 
     }
 }
 
+/// `skip_trivia` from the end of a token of `hir`. In a compiled text that has a legacy HTML comment, such a comment is trivia too, as it is to the lexer.
+pub(super) fn skip_trivia_of(hir: &File, at: usize) -> usize {
+    let next = skip_trivia(&hir.text, at);
+    match hir.html_comment_end {
+        0 => next,
+        _ => skip_html_comments(&hir.text, at, next),
+    }
+}
+
+/// `at` is where `skip_trivia` stopped after the token that ends at `from`.
+#[cold]
+fn skip_html_comments(text: &[u8], from: usize, mut at: usize) -> usize {
+    loop {
+        let rest = text.get(at..).unwrap_or_default();
+        // `-->` is a comment where only whitespace and comments stand before it on its line.
+        let is_comment = rest.starts_with(b"<!--")
+            || rest.starts_with(b"-->") && (from == 0 || line_end(text, from) < at);
+        if !is_comment {
+            return at;
+        }
+        at = skip_trivia(text, line_end(text, at));
+    }
+}
+
 /// `GetLeadingCommentRanges`
 pub(super) fn get_leading_comment_ranges(text: &[u8], pos: usize) -> Vec<(usize, usize)> {
     iterate_comment_ranges(text, pos, false)
@@ -222,12 +246,14 @@ fn iterate_comment_ranges(text: &[u8], mut pos: usize, trailing: bool) -> Vec<(u
     ranges
 }
 
-/// Start of the `//` comment that ends `line`.
-fn line_comment_start(line: &[u8]) -> Option<usize> {
+/// Start of the `//` comment that ends `line`. With `HTML`, also of a `<!--`, and of a `-->` that only whitespace and comments precede.
+fn line_comment_start<const HTML: bool>(line: &[u8]) -> Option<usize> {
     let mut at = 0;
+    let mut is_at_line_start = HTML;
     while let Some(&c) = line.get(at) {
         match c {
             b'"' | b'\'' | b'`' => {
+                is_at_line_start = false;
                 at += 1;
                 while let Some(&s) = line.get(at) {
                     at += 1;
@@ -242,7 +268,14 @@ fn line_comment_start(line: &[u8]) -> Option<usize> {
             b'/' if line.get(at + 1) == Some(&b'*') => {
                 at = bun_core::strings::index_of(&line[at + 2..], b"*/").map(|end| at + end + 4)?;
             }
-            _ => at += 1,
+            b'<' if HTML && line[at..].starts_with(b"<!--") => return Some(at),
+            b'-' if is_at_line_start && line[at..].starts_with(b"-->") => return Some(at),
+            _ => {
+                if HTML && !matches!(c, b' ' | b'\t' | 0x0B | 0x0C) {
+                    is_at_line_start = false;
+                }
+                at += 1;
+            }
         }
     }
     None
@@ -251,6 +284,18 @@ fn line_comment_start(line: &[u8]) -> Option<usize> {
 /// Returns the end of the token before `pos` by scanning back over whitespace and comments. A
 /// missing node is positioned there (`createMissingNode`).
 pub fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
+    skip_trivia_back_over::<false>(text, pos)
+}
+
+/// `skip_trivia_back` in the text of `hir`, where a legacy HTML comment is a comment too if the file has one. See `skip_trivia_of`.
+pub(super) fn skip_trivia_back_of(hir: &File, pos: usize) -> usize {
+    match hir.html_comment_end {
+        0 => skip_trivia_back(&hir.text, pos),
+        _ => skip_trivia_back_over::<true>(&hir.text, pos),
+    }
+}
+
+fn skip_trivia_back_over<const HTML: bool>(text: &[u8], pos: usize) -> usize {
     let mut at = pos.min(text.len());
     loop {
         let before = at;
@@ -260,7 +305,7 @@ pub fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
                 at -= 1;
                 let line =
                     bun_core::strings::last_index_of_any(&text[..at], b"\n\r").map_or(0, |i| i + 1);
-                if let Some(comment) = line_comment_start(&text[line..at]) {
+                if let Some(comment) = line_comment_start::<HTML>(&text[line..at]) {
                     at = line + comment;
                 }
             } else if matches!(b, b' ' | b'\t' | 0x0B | 0x0C) {
@@ -301,6 +346,14 @@ pub(crate) fn start_of_token_before(text: &[u8], at: u32, token_text: &[u8]) -> 
     before
         .ends_with(token_text)
         .then(|| (before.len() - token_text.len()) as u32)
+}
+
+/// `start_of_token_before` in the text of `hir`. See `skip_trivia_of`.
+pub(crate) fn start_of_token_before_of(hir: &File, at: u32, token_text: &[u8]) -> Option<u32> {
+    let end = skip_trivia_back_of(hir, at as usize);
+    hir.text[..end]
+        .ends_with(token_text)
+        .then(|| (end - token_text.len()) as u32)
 }
 
 /// The name or keyword that starts at `at`, possibly empty.

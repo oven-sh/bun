@@ -58,6 +58,7 @@ pub(crate) struct Lexer<'a> {
     pub(crate) comments: Vec<Comment>,
     /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
     /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
+    /// In a compiled text it holds the legacy HTML comment marks alone, under [`HTML_COMMENT_MARK`].
     pub(crate) flagged: Vec<(u32, u32, u32)>,
     /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
     /// the order they were reported.
@@ -112,6 +113,9 @@ pub(crate) struct Lexer<'a> {
     /// `skipJSDocLeadingAsterisks`: the lexer is inside a type in a JSDoc comment.
     pub(crate) skips_jsdoc_asterisks: bool,
 }
+
+/// The code of an entry of `Lexer::flagged` for a legacy HTML comment mark: the message that the mark gets where it is an error.
+pub(crate) const HTML_COMMENT_MARK: u32 = bun_sema::hir::INVALID_CHARACTER;
 
 /// Outside a script: the position of the first `<!--` that was scanned as `<`, and of the first one preceded only by
 /// whitespace and comments on its line. For oxc, the former starts a comment unless the file's name makes it a module,
@@ -806,8 +810,8 @@ impl<'a> Lexer<'a> {
                 b' ' | b'\t' | 0x0B | 0x0C => Some(pos + 1),
                 b'<' | b'-' | b'#' => match self.end_of_html_or_hashbang_comment(pos) {
                     Some(end) => {
-                        if self.compiles() && self.at(pos) == b'<' && !self.html_open_error(pos) {
-                            return;
+                        if self.compiles() {
+                            self.flag_html_comment(pos);
                         }
                         // A formatter has to print `<!-- comment` and `--> comment` too.
                         if self.attach_comments && self.at(pos) != b'#' {
@@ -2323,7 +2327,7 @@ impl Lexer<'_> {
             true if self.token != T::String => return,
             // The string reads the same in JSX as in JavaScript.
             true if self.plain_string == self.start
-                && self.flagged.is_empty()
+                && self.flagged.last().is_none_or(|last| last.1 < self.start)
                 && self.errors.is_empty() =>
             {
                 return;

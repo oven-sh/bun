@@ -107,13 +107,17 @@ function errorParser(text: string) {
   return list;
 }
 
-function warnParser(text: string): [message: string, fileLine: string | null][] {
+function warnParser(text: string, root: string): ErrorMeta[] {
   const diagnostics = text.split(/^(?=(?:error|warn|note|debug|verbose): )/m);
   return diagnostics.flatMap(diagnostic => {
     const header = /^warn: (.*)/.exec(diagnostic);
     if (!header) return [];
-    const location = /^ {3}at (.+:\d+:\d+)$/m.exec(diagnostic);
-    return [[header[1], location?.[1] ?? null]];
+    const [, error] = header;
+    const location = /^ {3}at (.+):(\d+):(\d+)$/m.exec(diagnostic);
+    if (!location) return [{ error, file: "<bun>" }];
+    const [, filename, line, col] = location;
+    const file = "/" + path.relative(root, path.resolve(root, filename)).replaceAll(path.sep, "/");
+    return [{ error, file, line, col }];
   });
 }
 
@@ -1133,15 +1137,7 @@ function expectBundled(
       const checkCliWarnings = () => {
         if (ESBUILD) return;
         const warningText = Bun.stripANSI(stderr.toUnixString());
-        const allWarnings = warnParser(warningText).flatMap(([error, source]) => {
-          if (source == null) return [{ error, file: "<bun>" }];
-          const location = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/);
-          if (!location) return [];
-          const [, fullFilename, line, col] = location;
-          const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
-          return [{ error, file, line, col }];
-        });
-        checkWarnings(allWarnings);
+        checkWarnings(warnParser(warningText, root));
       };
       if (buildProc.signalCode) {
         throw new Error(
